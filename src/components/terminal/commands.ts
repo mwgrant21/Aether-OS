@@ -150,7 +150,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
 
     case 'renderer': {
       const rd = (args[0] || '').toLowerCase();
-      if (!['nebula', 'classic', 'volumetric', 'warp'].includes(rd)) {
+      if (!['nebula', 'volumetric', 'warp'].includes(rd)) {
         out.push(line('✗ usage: renderer nebula|volumetric|warp', BAD));
         return { kind: 'append', lines: out };
       }

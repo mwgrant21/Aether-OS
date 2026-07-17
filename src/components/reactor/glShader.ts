@@ -34,11 +34,15 @@ export function initGL(el: HTMLCanvasElement): GLProgram | null {
     const sh = gl.createShader(type)!;
     gl.shaderSource(sh, src);
     gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) return null;
     return sh;
   };
   const prog = gl.createProgram()!;
-  gl.attachShader(prog, mk(gl.VERTEX_SHADER, VERTEX_SHADER));
-  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FRAGMENT_SHADER));
+  const vs = mk(gl.VERTEX_SHADER, VERTEX_SHADER);
+  const fs = mk(gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+  if (!vs || !fs) return null;
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
   gl.linkProgram(prog);
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
   gl.useProgram(prog);

@@ -13,8 +13,7 @@ export type Action =
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
-  | { type: 'TICK' }
-  | { type: 'HYDRATE'; state: Partial<AetherState> };
+  | { type: 'TICK' };
 
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
@@ -94,9 +93,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'TICK':
       return { ...state, ...computeTick(state) };
-
-    case 'HYDRATE':
-      return { ...state, ...action.state };
 
     default:
       return state;

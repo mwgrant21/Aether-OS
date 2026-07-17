@@ -55,10 +55,4 @@ describe('reducer', () => {
     expect(next).toBe(initialState);
   });
 
-  it('HYDRATE merges persisted state over defaults', () => {
-    const next = reducer(initialState, { type: 'HYDRATE', state: { activeTab: 'Grid', unread: 4 } });
-    expect(next.activeTab).toBe('Grid');
-    expect(next.unread).toBe(4);
-    expect(next.used).toBe(initialState.used);
-  });
 });

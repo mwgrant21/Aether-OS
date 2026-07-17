@@ -8,6 +8,7 @@ export function Footer() {
   const label = state.alarmLevel === 'crit' ? 'BURN ALARM' : state.alarmLevel === 'warn' ? 'BURN ELEVATED' : 'ALL GOOD';
   return (
     <div style={rootStyle}>
+      {/* Product display version from the design source — intentionally independent of package.json's dev version */}
       <span>◇ AETHER OS v1.0.0</span>
       <span style={{ color: colors.textMuted }}>Reactor draws power on demand — tokens are contained, never wasted.</span>
       <span style={{ marginLeft: 'auto' }}>Uptime 3h 42m</span>
