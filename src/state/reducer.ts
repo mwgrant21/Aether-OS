@@ -93,7 +93,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
     }
 
     case 'NEW_PROJECT': {
-      const pool = ['CLI Companion', 'Mobile Beta', 'Analytics Pipeline'];
+      const pool = ['Support Portal', 'Internal Tools', 'Marketing Site'];
       const taken = new Set(state.projects.map((p) => p.name));
       const name = pool.find((n) => !taken.has(n)) ?? `Project ${state.projects.length + 1}`;
       const hues = ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'];

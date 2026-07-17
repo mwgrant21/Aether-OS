@@ -59,18 +59,19 @@ describe('reducer', () => {
     const next = reducer(initialState, { type: 'NEW_PROJECT' });
     expect(next.projects).toHaveLength(initialState.projects.length + 1);
     const added = next.projects[0];
+    expect(added.name).toBe('Support Portal');
     expect(added.status).toBe('QUEUED');
     expect(added.pct).toBe(0);
-    expect(['CLI Companion', 'Mobile Beta', 'Analytics Pipeline']).not.toContain(undefined);
+    expect(added.hue).toBe('#9bd0ff');
   });
 
   it('NEW_PROJECT falls back to a numbered name once the pool is exhausted', () => {
     const withAllTaken = {
       ...initialState,
       projects: [
-        { name: 'CLI Companion', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
-        { name: 'Mobile Beta', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
-        { name: 'Analytics Pipeline', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+        { name: 'Support Portal', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+        { name: 'Internal Tools', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+        { name: 'Marketing Site', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
       ],
     };
     const next = reducer(withAllTaken, { type: 'NEW_PROJECT' });
