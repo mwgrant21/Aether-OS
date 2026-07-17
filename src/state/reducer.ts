@@ -13,6 +13,7 @@ export type Action =
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
+  | { type: 'NEW_PROJECT' }
   | { type: 'TICK' };
 
 export function reducer(state: AetherState, action: Action): AetherState {
@@ -88,6 +89,17 @@ export function reducer(state: AetherState, action: Action): AetherState {
         cmdHist: [...base.cmdHist, action.raw].slice(-30),
         histIdx: -1,
         commandsRun: base.commandsRun + 1,
+      };
+    }
+
+    case 'NEW_PROJECT': {
+      const pool = ['CLI Companion', 'Mobile Beta', 'Analytics Pipeline'];
+      const taken = new Set(state.projects.map((p) => p.name));
+      const name = pool.find((n) => !taken.has(n)) ?? `Project ${state.projects.length + 1}`;
+      const hues = ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'];
+      return {
+        ...state,
+        projects: [{ name, status: 'QUEUED', pct: 0, hue: hues[state.projects.length % hues.length] }, ...state.projects],
       };
     }
 

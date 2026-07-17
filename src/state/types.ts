@@ -55,10 +55,18 @@ export interface TermLine {
   c: string;
 }
 
+export type ProjectStatus = 'BUILDING' | 'REVIEW' | 'QUEUED' | 'SHIPPED';
+
 export interface ProjectStub {
   name: string;
-  status: string;
+  status: ProjectStatus;
   pct: number;
+  hue: string;
+}
+
+export interface Provider {
+  name: string;
+  connected: boolean;
 }
 
 export interface MemoryStub {
@@ -81,6 +89,7 @@ export interface Cfg {
   capM: number;
   alarm: number;
   autoThrottle: boolean;
+  sound: boolean;
 }
 
 export interface AetherState {
@@ -109,6 +118,8 @@ export interface AetherState {
   logs: LogEntry[];
   projects: ProjectStub[];
   memories: MemoryStub[];
+  providers: Provider[];
+  routeDefault: string;
 }
 
 export type CommandResult =

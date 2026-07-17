@@ -48,6 +48,7 @@ export const initialState: AetherState = {
     capM: 2.0,
     alarm: 120,
     autoThrottle: true,
+    sound: false,
   },
   agents: [
     {
@@ -123,6 +124,17 @@ export const initialState: AetherState = {
     { label: 'DISK', val: 31, hist: [30, 31, 30, 32, 31, 30, 31, 31] },
   ],
   logs: [],
-  projects: [],
+  projects: [
+    { name: 'CLI Companion', status: 'BUILDING', pct: 62, hue: '#7ef0ff' },
+    { name: 'Mobile Beta', status: 'REVIEW', pct: 88, hue: '#8ab6ff' },
+    { name: 'Analytics Pipeline', status: 'QUEUED', pct: 0, hue: '#5fffe0' },
+    { name: 'Docs Portal', status: 'SHIPPED', pct: 100, hue: '#7fd8ef' },
+  ],
   memories: [],
+  providers: [
+    { name: 'Aether Core', connected: true },
+    { name: 'OpenAI/Codex', connected: false },
+    { name: 'Local Ollama', connected: false },
+  ],
+  routeDefault: 'Auto',
 };

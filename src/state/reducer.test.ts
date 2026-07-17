@@ -55,4 +55,26 @@ describe('reducer', () => {
     expect(next).toBe(initialState);
   });
 
+  it('NEW_PROJECT adds an unused project from the pool, cycling hues', () => {
+    const next = reducer(initialState, { type: 'NEW_PROJECT' });
+    expect(next.projects).toHaveLength(initialState.projects.length + 1);
+    const added = next.projects[0];
+    expect(added.status).toBe('QUEUED');
+    expect(added.pct).toBe(0);
+    expect(['CLI Companion', 'Mobile Beta', 'Analytics Pipeline']).not.toContain(undefined);
+  });
+
+  it('NEW_PROJECT falls back to a numbered name once the pool is exhausted', () => {
+    const withAllTaken = {
+      ...initialState,
+      projects: [
+        { name: 'CLI Companion', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+        { name: 'Mobile Beta', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+        { name: 'Analytics Pipeline', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+      ],
+    };
+    const next = reducer(withAllTaken, { type: 'NEW_PROJECT' });
+    expect(next.projects[0].name).toBe('Project 4');
+  });
+
 });
