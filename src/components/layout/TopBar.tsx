@@ -2,8 +2,9 @@ import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
+import { VIEWS } from '../../viewRegistry';
 
-const TAB_LABELS = ['Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Files'];
+const TOP_BAR_IDS = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
 const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
   { key: 'PLAN', label: '◇ PLAN', tip: 'Brainstorm & plan — throttled burn, everything queued for approval' },
   { key: 'EDITS', label: '✎ EDITS', tip: 'Accept edits — agents work, risky actions queue for approval' },
@@ -27,7 +28,7 @@ export function TopBar() {
       </div>
 
       <div style={{ flex: 1, display: 'flex', gap: 4 }}>
-        {TAB_LABELS.map((label) => {
+        {TOP_BAR_IDS.map((label) => {
           const on = label === state.activeTab;
           return (
             <div key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={tabStyle(on)}>

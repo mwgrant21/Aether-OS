@@ -1,9 +1,9 @@
 import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { VIEWS } from '../../viewRegistry';
 
-const NAV_ITEMS = ['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Uplinks', 'Settings'];
-const CLICKABLE = new Set(['Dashboard', 'Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Settings', 'Files', 'Uplinks']);
+const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const RECENT_AGENTS = [
   { i: 'CB', label: 'Code Builder', ring: '#7ef0ff' },
   { i: 'UI', label: 'UI Designer', ring: '#8ab6ff' },
@@ -16,15 +16,10 @@ export function Sidebar() {
   return (
     <div style={rootStyle}>
       <div style={sectionLabelStyle}>NAVIGATION</div>
-      {NAV_ITEMS.map((label) => {
+      {SIDEBAR_IDS.map((label) => {
         const on = label === state.activeTab;
-        const clickable = CLICKABLE.has(label);
         return (
-          <div
-            key={label}
-            onClick={clickable ? () => dispatch({ type: 'SET_ACTIVE_TAB', tab: label }) : undefined}
-            style={navItemStyle(on, clickable)}
-          >
+          <div key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(on)}>
             <span style={navDotWrapStyle(on)}>
               <span style={navDotStyle(on)} />
             </span>
@@ -64,14 +59,14 @@ const rootStyle: CSSProperties = {
   overflow: 'auto',
 };
 const sectionLabelStyle: CSSProperties = { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
-function navItemStyle(on: boolean, clickable: boolean): CSSProperties {
+function navItemStyle(on: boolean): CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
     gap: 11,
     padding: '9px 10px',
     borderRadius: 9,
-    cursor: clickable ? 'pointer' : 'default',
+    cursor: 'pointer',
     background: on ? 'linear-gradient(90deg, rgba(23,184,216,.18), rgba(23,184,216,.02))' : undefined,
     border: on ? '1px solid rgba(95,220,255,.4)' : '1px solid transparent',
     color: on ? colors.textPrimary : '#7f9fac',
