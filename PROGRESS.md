@@ -5,13 +5,13 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 ## Right now
 
 **Plan:** [Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md)
-**Status:** Task 1 of 7 done. Task 2 next.
+**Status:** Task 2 of 7 done. Task 3 next.
 
 | # | Task | Status |
 |---|------|--------|
 | 1 | Nav / view registry refactor | ✅ done (`25c41cc`, reviewed clean) |
-| 2 | Extend AetherState for Dashboard (projects/providers/routeDefault/NEW_PROJECT) | ⏳ starting |
-| 3 | `dashboardMath.ts` (KPI/status derivation) | ⏳ not started |
+| 2 | Extend AetherState for Dashboard (projects/providers/routeDefault/NEW_PROJECT) | ✅ done (`6da3d33` + fix `1bf2a5d`, reviewed clean) |
+| 3 | `dashboardMath.ts` (KPI/status derivation) | ⏳ starting |
 | 4 | `ReactorStatusCard` (hero card, KPIs, quick actions) | ⏳ not started |
 | 5 | `ActiveAgentsDigest` + `ProjectsDigest` | ⏳ not started |
 | 6 | `RecentAlertsCard` + `SystemsCard` + `DashboardView` + registry wiring | ⏳ not started |
