@@ -4,6 +4,7 @@ import { useAetherStore } from '../../state/store';
 import { SystemOverviewCard } from './SystemOverviewCard';
 import { ActiveAgentsCard } from './ActiveAgentsCard';
 import { LiveOutputCard } from './LiveOutputCard';
+import { ReactorCore } from '../reactor/ReactorCore';
 
 const SPAWN_NAMES = ['UI Designer', 'Code Builder', 'Content Writer', 'Test Runner', 'Deploy Bot'];
 const BUILD_STEPS = [
@@ -94,8 +95,7 @@ export function TerminalView() {
         </div>
 
         <div style={coreFloatWrapStyle}>
-          {/* Task 17 replaces this placeholder with <ReactorCore /> */}
-          <div style={coreCircleStyle} />
+          <ReactorCore />
         </div>
         <div style={calloutStyle}>Reactor nominal — {state.agents.length} agents drawing power.</div>
 
@@ -184,13 +184,6 @@ const coreFloatWrapStyle: CSSProperties = {
   display: 'grid',
   placeItems: 'center',
   pointerEvents: 'none',
-};
-const coreCircleStyle: CSSProperties = {
-  width: 224,
-  height: 224,
-  borderRadius: '50%',
-  border: '1px solid rgba(95,220,255,.25)',
-  background: 'radial-gradient(circle, rgba(23,184,216,.15), transparent 70%)',
 };
 const calloutStyle: CSSProperties = {
   position: 'absolute',
