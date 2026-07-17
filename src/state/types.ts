@@ -110,3 +110,7 @@ export interface AetherState {
   projects: ProjectStub[];
   memories: MemoryStub[];
 }
+
+export type CommandResult =
+  | { kind: 'clear' }
+  | { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };
