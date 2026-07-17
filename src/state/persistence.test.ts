@@ -1,0 +1,33 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadPersisted, savePersisted } from './persistence';
+import { initialState } from './initialState';
+
+beforeEach(() => {
+  localStorage.clear();
+});
+
+describe('persistence', () => {
+  it('round-trips a whitelisted slice of state through localStorage', () => {
+    savePersisted({ ...initialState, activeTab: 'Grid', unread: 5 });
+    const loaded = loadPersisted();
+    expect(loaded?.activeTab).toBe('Grid');
+    expect(loaded?.unread).toBe(5);
+  });
+
+  it('returns null when nothing is stored', () => {
+    expect(loadPersisted()).toBeNull();
+  });
+
+  it('returns null on malformed JSON instead of throwing', () => {
+    localStorage.setItem('aetheros-v1', '{not json');
+    expect(loadPersisted()).toBeNull();
+  });
+
+  it('does not throw when localStorage.setItem throws', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+    expect(() => savePersisted(initialState)).not.toThrow();
+    vi.restoreAllMocks();
+  });
+});
