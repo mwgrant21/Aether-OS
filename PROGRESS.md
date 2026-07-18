@@ -4,7 +4,25 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-**Plan:** [Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Dashboard is live: sidebar → Dashboard shows the full 5-cell grid (reactor hero, Active Agents, Projects, Recent Alerts, Systems), manually QA'd in a real browser.
+**Plan:** [Agents View](docs/superpowers/plans/2026-07-18-agents-view.md) — 7/7 tasks complete, manually QA'd in a real browser. Awaiting whole-branch review.
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | Reducer: `TOGGLE_AGENT_PAUSE` + `REACTIVATE_AGENT` | ✅ done (`79139aa`, reviewed clean) |
+| 2 | `agentsMath.ts` (selected-agent fallback, agent approvals, status label) | ✅ done (`249a48c`, reviewed clean) |
+| 3 | `AgentRosterCard` (active roster + idle pool) | ✅ done (`3c0023b`, reviewed clean) |
+| 4 | `AgentDetailCard` (progress, sparkline, files, approvals, pause/terminate) | ✅ done (`495a864`, reviewed clean) |
+| 5 | `AgentsView` composition + registry wiring | ✅ done (`4baf60c`, reviewed clean — Agents tab is now live) |
+| 6 | Sidebar "Recent Agents" fix (was hardcoded + non-clickable) | ✅ done (`c9744fe`, reviewed clean) |
+| 7 | Final integration QA | ✅ done — automated suite green (69/69, tsc, build); fixed a persistence gap (`9085454`: `selected` wasn't in `persistence.ts`'s whitelist, so the selected agent reset to the roster's first entry on reload); manually QA'd in Chrome: roster/detail swap, pause/resume, terminate→idle fallback, reactivate (fresh agent, carries forward name-keyed approvals), agent-tied approve/deny (confirmed shared queue with TopBar), sidebar routing, reload persistence, no regressions on Terminal/Dashboard |
+
+**Known pre-existing issue, NOT introduced by this plan (flagged during Task 1/2/3 review, confirmed by reading `commands.ts` directly):** `spawn <name>` with an explicit name bypasses the dedup check entirely (only the auto-name-picker path checks `agents`/`idleList` for collisions) — a user can end up with two agents sharing the same name. `REACTIVATE_AGENT` mirrors this by design (same `makeAgent()` call `spawn` already uses), so it doesn't make the exposure worse, just inherits it. Worth a dedicated fix in a future plan if it becomes a real problem — not touched here, consistent with the project's "document, don't silently rewrite shared logic" precedent.
+
+---
+
+## Previous plan (done, shipped)
+
+[Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Dashboard is live: sidebar → Dashboard shows the full 5-cell grid (reactor hero, Active Agents, Projects, Recent Alerts, Systems), manually QA'd in a real browser.
 
 | # | Task | Status |
 |---|------|--------|
@@ -28,4 +46,4 @@ Each task in a plan gets: a fresh implementer subagent → a fresh reviewer suba
 
 ## Still out of scope (honest placeholders, not bugs)
 
-Chat, Agents (full view), Grid, Projects (full view), Memory, Analytics, Uplinks, Files, Settings — all show a "not built yet" panel. Dashboard (this plan) only builds *summary digests* of some of that data, not those views themselves.
+Chat, Grid, Projects (full view), Memory, Analytics, Uplinks, Files, Settings — all still show a "not built yet" panel. Agents and Dashboard are now real, built views; Dashboard's Projects digest and row clicks still point at the (not yet built) full Projects view.
