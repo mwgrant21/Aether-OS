@@ -16,14 +16,24 @@ export function toRecentTurns(messages: ChatMessage[], limit: number = RECENT_TU
     .map((m) => ({ role: m.role, text: m.text }));
 }
 
-// Phase 2 (a separate, future plan) replaces this stub's internals with a
-// real call to a Vite dev-server middleware proxy (`POST /api/chat`) that
-// forwards `{ system, messages }` to the Anthropic Messages API — never
-// exposing the API key client-side. This function's signature, and the
-// message-send flow's "on failure, fall back to `localResponder`" branch
-// (see `useChatChannels.ts`), are the seam Phase 2 lands on; only what runs
-// inside this function's body changes then. In Phase 1 it always resolves to
-// `null`, so that fallback path is real, exercised code today, not dead code.
-export async function askClaude(_system: string, _messages: ChatTurn[]): Promise<string | null> {
-  return null;
+// Calls the Vite dev-server middleware proxy (Task 5's POST /api/chat),
+// which forwards { system, messages } to the Anthropic Messages API
+// server-side -- the API key never reaches this client-side code. Returns
+// the reply string on success, or null on ANY failure (network error,
+// non-2xx status, missing/empty reply field, malformed response body) so
+// useChatChannels.ts's existing "fall back to localResponder on null" branch
+// (unchanged from Phase 1) is always safe to await unconditionally.
+export async function askClaude(system: string, messages: ChatTurn[]): Promise<string | null> {
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system, messages }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { reply?: unknown };
+    return typeof data.reply === 'string' && data.reply.length > 0 ? data.reply : null;
+  } catch {
+    return null;
+  }
 }

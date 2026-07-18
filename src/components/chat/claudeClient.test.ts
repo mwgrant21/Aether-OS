@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { askClaude, toRecentTurns } from './claudeClient';
 import type { ChatMessage } from './chatPersistence';
 
@@ -6,13 +6,50 @@ function msg(role: ChatMessage['role'], text: string): ChatMessage {
   return { id: text, role, text, t: '00:00' };
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('askClaude', () => {
-  it('is an unimplemented Phase 2 seam that always resolves to null in Phase 1', async () => {
+  it('returns the reply string on a successful proxy response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply: 'Hello, Operator.' }) }),
+    );
+    await expect(askClaude('system prompt', [{ role: 'user', text: 'hi' }])).resolves.toBe('Hello, Operator.');
+  });
+
+  it('posts { system, messages } as the request body to /api/chat', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply: 'ok' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await askClaude('sys', [{ role: 'user', text: 'hi' }]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/chat',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ system: 'sys', messages: [{ role: 'user', text: 'hi' }] }),
+      }),
+    );
+  });
+
+  it('resolves to null on a non-2xx response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: 'nope' }) }));
     await expect(askClaude('system prompt', [{ role: 'user', text: 'hi' }])).resolves.toBeNull();
   });
 
-  it('never throws regardless of input, so the send-flow fallback is safe to await unconditionally', async () => {
+  it('resolves to null when the reply field is missing or empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reply: '' }) }));
+    await expect(askClaude('system prompt', [])).resolves.toBeNull();
+  });
+
+  it('resolves to null on a network error, never throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
     await expect(askClaude('', [])).resolves.toBeNull();
+  });
+
+  it('resolves to null on a malformed (non-JSON) response body, never throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => { throw new SyntaxError('bad json'); } }));
+    await expect(askClaude('system prompt', [{ role: 'user', text: 'hi' }])).resolves.toBeNull();
   });
 });
 
