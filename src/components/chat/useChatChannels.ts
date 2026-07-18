@@ -4,6 +4,7 @@ import { AETHER_CHANNEL_ID, deriveChannels, findChannel, type ChatChannel } from
 import { appendChannelMessage, loadChannelMessages, type ChatMessage } from './chatPersistence';
 import { askClaude, toRecentTurns } from './claudeClient';
 import { localResponder } from './localResponder';
+import { buildSystemPrompt } from './systemPrompt';
 import { nowShort } from '../../utils/format';
 
 function makeMessageId(): string {
@@ -63,10 +64,10 @@ export function useChatChannels(state: AetherState): UseChatChannelsResult {
     setMessagesByChannel((prev) => ({ ...prev, [channelId]: historyWithUserMsg }));
     setTypingChannelIds((prev) => new Set(prev).add(channelId));
 
-    // Phase 2 (a separate, future plan) replaces this one-line placeholder
-    // with the full Persona + live-state-snapshot + Rules system prompt the
-    // designer's spec describes (see Global Constraints) — out of scope here.
-    const system = `You are ${channel.name}, a channel inside the Aether OS comms system.`;
+    // Phase 2a's real Persona + live-state-snapshot + Rules system prompt.
+    // Everything below this line (askClaude call, catch, localResponder
+    // fallback, persistence, unread bookkeeping) is unchanged from Phase 1.
+    const system = buildSystemPrompt(channel, state);
 
     askClaude(system, toRecentTurns(historyWithUserMsg))
       .catch(() => null)
