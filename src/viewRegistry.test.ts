@@ -26,4 +26,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Agents now that it is built', () => {
     expect(getViewComponent('Agents')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Grid now that it is built', () => {
+    expect(getViewComponent('Grid')).not.toBeNull();
+  });
 });
