@@ -4,7 +4,23 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-**Plan:** [Agents View](docs/superpowers/plans/2026-07-18-agents-view.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Agents tab is live: roster + detail two-column view with pause/resume, terminate, reactivate, and agent-tied approvals, manually QA'd in a real browser.
+**Plan:** [Grid ("Orchestration Grid") View](docs/superpowers/plans/2026-07-18-grid-view.md) — 4/5 tasks complete, manually QA'd during Task 4 (browser render + click-through). Task 5 (final integration QA) in progress.
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | State: `ProjectStub.crew` (agent-name assignments per project) | ✅ done (`dc824a5`, reviewed clean — crew names cross-checked exactly against seed `Agent.name` values) |
+| 2 | `gridMath.ts` (polar layout, circular-mean project angle, anti-overlap slot algorithm) | ✅ done (`21aeed7`, reviewed clean — reviewer independently hand-verified the trig, not just diffed) |
+| 3 | `OrchestrationGrid.tsx` (SVG hub/rings/animated links + HTML label overlay) | ✅ done (`72b9be7`, reviewed clean) |
+| 4 | `GridView` composition + registry wiring | ✅ done (`78f6298`, reviewed clean — Grid tab is now live; browser-verified render, agent-click→Agents nav, project-click→Projects `ComingSoonPanel`, no crash) |
+| 5 | Final integration QA | ⏳ in progress |
+
+**New state added:** `ProjectStub.crew: string[]` (agent names) — seeded on the 4 existing projects, original-flavored (no upstream source captured), same "trimmed but real" disclosure as Dashboard's `providers`/`routeDefault`. `NEW_PROJECT` seeds `crew: []` for freshly-queued projects.
+
+---
+
+## Previous plan (done, shipped)
+
+[Agents View](docs/superpowers/plans/2026-07-18-agents-view.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Agents tab is live: roster + detail two-column view with pause/resume, terminate, reactivate, and agent-tied approvals, manually QA'd in a real browser.
 
 | # | Task | Status |
 |---|------|--------|
@@ -20,9 +36,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 **Known pre-existing issue, NOT introduced by this plan (flagged during Task 1/2/3 review, confirmed by reading `commands.ts` directly):** `spawn <name>` with an explicit name bypasses the dedup check entirely (only the auto-name-picker path checks `agents`/`idleList` for collisions) — a user can end up with two agents sharing the same name. `REACTIVATE_AGENT` mirrors this by design (same `makeAgent()` call `spawn` already uses), so it doesn't make the exposure worse, just inherits it. Worth a dedicated fix in a future plan if it becomes a real problem — not touched here, consistent with the project's "document, don't silently rewrite shared logic" precedent.
 
----
-
-## Previous plan (done, shipped)
+## Two plans back (done, shipped)
 
 [Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Dashboard is live: sidebar → Dashboard shows the full 5-cell grid (reactor hero, Active Agents, Projects, Recent Alerts, Systems), manually QA'd in a real browser.
 
