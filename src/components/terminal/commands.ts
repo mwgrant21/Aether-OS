@@ -35,13 +35,14 @@ export function makeAgent(name: string): Agent {
   };
 }
 
-function nextAutoName(state: AetherState): string {
+export function nextAutoName(state: AetherState): string {
   const pool = ['Image Gen', 'Sentry', 'Doc Writer', 'Optimizer', 'Auditor'];
   const taken = new Set([...state.agents.map((a) => a.name), ...state.idleList.map((x) => x.name)]);
   return pool.find((n) => !taken.has(n)) || `Auxiliary ${state.agents.length + 1}`;
 }
 
-const THEME_NAMES: ThemeName[] = ['cyan', 'blue', 'teal', 'violet', 'amber', 'red'];
+export const THEME_NAMES: ThemeName[] = ['cyan', 'blue', 'teal', 'violet', 'amber', 'red'];
+export const RENDERER_WORDS = ['nebula', 'volumetric', 'warp'] as const;
 
 export function runCommand(state: AetherState, raw: string): CommandResult {
   const trimmed = raw.trim();
@@ -150,7 +151,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
 
     case 'renderer': {
       const rd = (args[0] || '').toLowerCase();
-      if (!['nebula', 'volumetric', 'warp'].includes(rd)) {
+      if (!(RENDERER_WORDS as readonly string[]).includes(rd)) {
         out.push(line('✗ usage: renderer nebula|volumetric|warp', BAD));
         return { kind: 'append', lines: out };
       }

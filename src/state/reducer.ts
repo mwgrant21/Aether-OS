@@ -1,7 +1,8 @@
-import type { AetherState, OpMode } from './types';
+import type { Approval, AetherState, OpMode } from './types';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
+import { buildChatActionResultText } from './chatActionResult';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
@@ -10,6 +11,8 @@ export type Action =
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
   | { type: 'RESOLVE_APPROVAL'; id: number; approve: boolean }
+  | { type: 'ADD_APPROVAL'; approval: Omit<Approval, 'id'> }
+  | { type: 'CLEAR_CHAT_ACTION_RESULTS'; count: number }
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
@@ -17,6 +20,8 @@ export type Action =
   | { type: 'TICK' }
   | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
   | { type: 'REACTIVATE_AGENT'; name: string };
+
+const THROTTLE_SHARE_CEILING = 0.08;
 
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
@@ -55,12 +60,59 @@ export function reducer(state: AetherState, action: Action): AetherState {
         unread: state.unread + 1,
       };
 
+    case 'ADD_APPROVAL':
+      return {
+        ...state,
+        approvals: [...state.approvals, { ...action.approval, id: state.apprSeq }],
+        apprSeq: state.apprSeq + 1,
+      };
+
+    case 'CLEAR_CHAT_ACTION_RESULTS':
+      return { ...state, chatActionResults: state.chatActionResults.slice(action.count) };
+
     case 'RESOLVE_APPROVAL': {
       const req = state.approvals.find((a) => a.id === action.id);
       if (!req) return state;
       const ok = action.approve;
+
+      // Phase 2b: verb-specific execution, mirroring the identical AetherState
+      // mutation Terminal's own spawn/kill would produce (or, for throttle, a
+      // new minimal Agent.share cap) -- applied only on approval, and only for
+      // approvals Phase 2b itself created (req.verb set). Every pre-existing
+      // (seed + tick.ts) approval has no verb and is completely unaffected.
+      let agents = state.agents;
+      let idleList = state.idleList;
+      let rate = state.rate;
+      if (ok && req.verb === 'spawn' && req.targetAgentName) {
+        agents = [...agents, makeAgent(req.targetAgentName)];
+        rate = Math.min(168000, rate + 18000); // identical to Terminal's spawn
+      } else if (ok && req.verb === 'kill' && req.targetAgentName) {
+        const hit = agents.find((a) => a.name === req.targetAgentName);
+        if (hit) {
+          agents = agents.filter((a) => a.name !== hit.name);
+          idleList = [...idleList, { name: hit.name, last: 'just now' }];
+        }
+        // no rate change -- identical to Terminal's kill
+      } else if (ok && req.verb === 'throttle' && req.targetAgentName) {
+        agents = agents.map((a) => (a.name === req.targetAgentName ? { ...a, share: Math.min(a.share, THROTTLE_SHARE_CEILING) } : a));
+      } else if (ok && req.risk === 'HIGH') {
+        // Pre-existing generic shorthand -- only applies to no-verb approvals,
+        // since a verb-carrying approval's own specific mutation above (or
+        // deliberate lack of one, for kill/throttle) is the real effect now;
+        // applying both would double up or contradict it.
+        rate = Math.min(168000, rate + 9000);
+      }
+
+      const chatActionResults = req.channelId
+        ? [...state.chatActionResults, { channelId: req.channelId, text: buildChatActionResultText(req, ok) }]
+        : state.chatActionResults;
+
       return {
         ...state,
+        agents,
+        idleList,
+        rate,
+        chatActionResults,
         approvals: state.approvals.filter((a) => a.id !== action.id),
         notifs: [
           { t: nowShort(), m: `${ok ? 'Approved: ' : 'Denied: '}${req.action} (${req.agent})`, c: ok ? '#3be0a0' : '#ff9d9d' },
@@ -74,7 +126,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
             c: ok ? '#3be0a0' : '#ff9d9d',
           },
         ].slice(-14),
-        rate: ok && req.risk === 'HIGH' ? Math.min(168000, state.rate + 9000) : state.rate,
       };
     }
 

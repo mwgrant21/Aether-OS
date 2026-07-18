@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runCommand } from './commands';
+import { runCommand, THEME_NAMES, RENDERER_WORDS, nextAutoName } from './commands';
 import { initialState } from '../../state/initialState';
 
 describe('runCommand', () => {
@@ -85,5 +85,11 @@ describe('runCommand', () => {
 
   it('clear returns the clear variant', () => {
     expect(runCommand(initialState, 'clear')).toEqual({ kind: 'clear' });
+  });
+
+  it('exports THEME_NAMES, RENDERER_WORDS, and nextAutoName for reuse by the chat action executor', () => {
+    expect(THEME_NAMES).toContain('violet');
+    expect(RENDERER_WORDS).toContain('volumetric');
+    expect(nextAutoName(initialState)).toBe('Image Gen');
   });
 });

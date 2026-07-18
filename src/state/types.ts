@@ -36,6 +36,17 @@ export interface Approval {
   action: string;
   detail: string;
   risk: 'HIGH' | 'MED' | 'LOW';
+  // Phase 2b (chat action-JSON pipeline) — optional, so every pre-existing
+  // (seed + tick.ts-generated) approval is unaffected. Set together only by
+  // the chat feature's risky-verb path (see actionExecutor.ts).
+  verb?: 'spawn' | 'kill' | 'throttle';
+  targetAgentName?: string; // spawn: name of the agent to create; kill/throttle: name of the existing agent targeted
+  channelId?: string; // originating chat channel id, so resolution can post a confirmation back to it
+}
+
+export interface ChatActionResult {
+  channelId: string;
+  text: string;
 }
 
 export interface Notif {
@@ -121,6 +132,7 @@ export interface AetherState {
   memories: MemoryStub[];
   providers: Provider[];
   routeDefault: string;
+  chatActionResults: ChatActionResult[];
 }
 
 export type CommandResult =

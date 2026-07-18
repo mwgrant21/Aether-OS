@@ -28,6 +28,13 @@ describe('persistence', () => {
     expect(loaded?.selected).toBe('Database Agent');
   });
 
+  it('persists chatActionResults across reloads', () => {
+    const pending = [{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }];
+    savePersisted({ ...initialState, chatActionResults: pending });
+    const loaded = loadPersisted();
+    expect(loaded?.chatActionResults).toEqual(pending);
+  });
+
   it('returns null when nothing is stored', () => {
     expect(loadPersisted()).toBeNull();
   });

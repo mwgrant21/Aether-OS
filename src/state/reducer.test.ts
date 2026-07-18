@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { reducer } from './reducer';
 import { initialState } from './initialState';
+import type { Approval } from './types';
 
 describe('reducer', () => {
   it('SET_ACTIVE_TAB switches the active tab', () => {
@@ -104,4 +105,65 @@ describe('reducer', () => {
     expect(next).toBe(initialState);
   });
 
+});
+
+function chatApproval(overrides: Partial<Approval>): Approval {
+  return { id: 100, agent: 'AETHER', i: 'AE', hue: '#7fd8ef', action: 'Spawn Nightwatch', detail: 'requested via chat', risk: 'MED', ...overrides };
+}
+
+describe('reducer — Phase 2b chat action pipeline', () => {
+  it('ADD_APPROVAL appends using apprSeq and increments it, leaving existing approvals untouched', () => {
+    const next = reducer(initialState, { type: 'ADD_APPROVAL', approval: chatApproval({ id: undefined as any }) as any });
+    expect(next.approvals).toHaveLength(3);
+    expect(next.approvals[2].id).toBe(initialState.apprSeq);
+    expect(next.apprSeq).toBe(initialState.apprSeq + 1);
+  });
+
+  it('RESOLVE_APPROVAL on an approved spawn approval creates the agent and bumps rate by 18000 (identical to Terminal spawn), skipping the generic HIGH-risk shorthand', () => {
+    const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 50, verb: 'spawn', targetAgentName: 'Nightwatch', risk: 'MED', channelId: 'AETHER' })] };
+    const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 50, approve: true });
+    expect(next.agents.map((a) => a.name)).toContain('Nightwatch');
+    expect(next.rate).toBe(initialState.rate + 18000);
+    expect(next.chatActionResults).toEqual([{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }]);
+  });
+
+  it('RESOLVE_APPROVAL on an approved kill approval moves the target agent to idleList and does not touch rate', () => {
+    const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 51, verb: 'kill', targetAgentName: 'Test Runner', risk: 'HIGH', agent: 'AETHER', channelId: 'AETHER' })] };
+    const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 51, approve: true });
+    expect(next.agents.map((a) => a.name)).not.toContain('Test Runner');
+    expect(next.idleList.map((i) => i.name)).toContain('Test Runner');
+    expect(next.rate).toBe(initialState.rate);
+  });
+
+  it('RESOLVE_APPROVAL on an approved throttle approval caps the target agent share at 0.08', () => {
+    const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 52, verb: 'throttle', targetAgentName: 'Code Builder', risk: 'LOW', channelId: 'Code Builder' })] };
+    const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 52, approve: true });
+    expect(next.agents.find((a) => a.name === 'Code Builder')?.share).toBe(0.08);
+  });
+
+  it('RESOLVE_APPROVAL gracefully no-ops the mutation (but still resolves + emits the result) when the target agent is already gone', () => {
+    const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 53, verb: 'kill', targetAgentName: 'Nobody', risk: 'HIGH', channelId: 'AETHER' })] };
+    const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 53, approve: true });
+    expect(next.approvals.map((a) => a.id)).not.toContain(53);
+    expect(next.chatActionResults).toHaveLength(1);
+  });
+
+  it('RESOLVE_APPROVAL on a denied chat approval emits a denial line to its channel and applies no mutation', () => {
+    const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 54, verb: 'spawn', targetAgentName: 'Nightwatch', risk: 'MED', channelId: 'AETHER' })] };
+    const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 54, approve: false });
+    expect(next.agents.map((a) => a.name)).not.toContain('Nightwatch');
+    expect(next.chatActionResults).toEqual([{ channelId: 'AETHER', text: '✗ Denied: Spawn Nightwatch.' }]);
+  });
+
+  it('RESOLVE_APPROVAL on the pre-existing seed approvals is byte-for-byte unchanged (no verb, no chatActionResults emitted)', () => {
+    const next = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: true });
+    expect(next.rate).toBe(initialState.rate + 9000);
+    expect(next.chatActionResults).toEqual([]);
+  });
+
+  it('CLEAR_CHAT_ACTION_RESULTS removes exactly the first N entries, preserving any added after', () => {
+    const withResults = { ...initialState, chatActionResults: [{ channelId: 'a', text: '1' }, { channelId: 'b', text: '2' }, { channelId: 'c', text: '3' }] };
+    const next = reducer(withResults, { type: 'CLEAR_CHAT_ACTION_RESULTS', count: 2 });
+    expect(next.chatActionResults).toEqual([{ channelId: 'c', text: '3' }]);
+  });
 });
