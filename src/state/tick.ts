@@ -37,7 +37,7 @@ export function computeTick(state: AetherState): Partial<AetherState> {
   const agents = state.agents.map((a) => ({
     ...a,
     pct: a.paused ? a.pct : Math.min(99, a.pct + (Math.random() - 0.3) * 1.5),
-    hist: a.hist.slice(-15).concat(rate * a.share * (0.85 + Math.random() * 0.3)),
+    hist: a.paused ? a.hist : a.hist.slice(-15).concat(rate * a.share * (0.85 + Math.random() * 0.3)),
   }));
 
   const sys = state.sys.map((m) => {

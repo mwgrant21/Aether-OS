@@ -40,6 +40,21 @@ describe('computeTick', () => {
     expect(result.unread).toBe(1);
   });
 
+  it('freezes both pct and hist for a paused agent, leaving unpaused agents unaffected', () => {
+    const state = {
+      ...initialState,
+      agents: [
+        { ...initialState.agents[0], paused: true, pct: 40, hist: [10, 20] },
+        { ...initialState.agents[1], paused: false, pct: 40, hist: [10, 20] },
+      ],
+    };
+    const result = computeTick(state);
+    const [paused, active] = result.agents!;
+    expect(paused.pct).toBe(40);
+    expect(paused.hist).toEqual([10, 20]);
+    expect(active.hist).not.toEqual([10, 20]);
+  });
+
   it('never grows the approvals queue past 3 pending requests', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.01);
     const state = {
