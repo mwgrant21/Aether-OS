@@ -1,5 +1,5 @@
 import type { AetherState, OpMode } from './types';
-import { runCommand } from '../components/terminal/commands';
+import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
 
@@ -14,7 +14,9 @@ export type Action =
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
   | { type: 'NEW_PROJECT' }
-  | { type: 'TICK' };
+  | { type: 'TICK' }
+  | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
+  | { type: 'REACTIVATE_AGENT'; name: string };
 
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
@@ -105,6 +107,24 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'TICK':
       return { ...state, ...computeTick(state) };
+
+    case 'TOGGLE_AGENT_PAUSE':
+      return {
+        ...state,
+        agents: state.agents.map((a) => (a.name === action.name ? { ...a, paused: !a.paused } : a)),
+      };
+
+    case 'REACTIVATE_AGENT': {
+      const hit = state.idleList.find((i) => i.name === action.name);
+      if (!hit) return state;
+      return {
+        ...state,
+        idleList: state.idleList.filter((i) => i.name !== action.name),
+        agents: [...state.agents, makeAgent(hit.name)],
+        selected: hit.name,
+        rate: Math.min(168000, state.rate + 18000),
+      };
+    }
 
     default:
       return state;
