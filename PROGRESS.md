@@ -4,62 +4,21 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-**Plan:** [Grid ("Orchestration Grid") View](docs/superpowers/plans/2026-07-18-grid-view.md) — ✅ **all 5 tasks complete.** Grid tab is live: radial hub-and-spoke SVG map (agent ring, project ring, animated feed/assignment links), manually QA'd in a real browser under both fresh and heavily-accumulated session state. Awaiting whole-branch review.
+No plan in progress. Four view-building plans have shipped so far (Terminal, Dashboard, Agents, Grid); see "Shipped plans" below. Next candidate: whichever of Chat/Projects/Memory/Analytics/Uplinks/Files/Settings gets picked next (see "Still out of scope").
 
-| # | Task | Status |
-|---|------|--------|
-| 1 | State: `ProjectStub.crew` (agent-name assignments per project) | ✅ done (`dc824a5`, reviewed clean — crew names cross-checked exactly against seed `Agent.name` values) |
-| 2 | `gridMath.ts` (polar layout, circular-mean project angle, anti-overlap slot algorithm) | ✅ done (`21aeed7`, reviewed clean — reviewer independently hand-verified the trig, not just diffed) |
-| 3 | `OrchestrationGrid.tsx` (SVG hub/rings/animated links + HTML label overlay) | ✅ done (`72b9be7`, reviewed clean) |
-| 4 | `GridView` composition + registry wiring | ✅ done (`78f6298`, reviewed clean — Grid tab is now live; browser-verified render, agent-click→Agents nav, project-click→Projects `ComingSoonPanel`, no crash) |
-| 5 | Final integration QA | ✅ done — found and fixed a real crash (`9ec5785`): `computeProjectNodes`/`computeAssignmentLinks` threw on any project persisted before this plan added `crew` (legacy localStorage data has no `crew` key at all — "Cannot read properties of undefined (reading 'map')" / "crew is not iterable"). Defaulted both access points to `[]`. Verified live with two scenarios: a 9-project session accumulated from earlier QA (legacy, crew-less — correctly renders 0 assignment links, no crash, anti-overlap holds with zero visual overlap across all 9 boxes) and a freshly-cleared 4-project seed session (real crew data — CLI Companion correctly clusters between its 2 crew members with 2 converging assignment links, other 3 projects get 1 link each, header reads "10 LINKS" = 5 feed + 5 assignment, matching the math exactly) |
+## Shipped plans (newest first)
 
-**New state added:** `ProjectStub.crew: string[]` (agent names) — seeded on the 4 existing projects, original-flavored (no upstream source captured), same "trimmed but real" disclosure as Dashboard's `providers`/`routeDefault`. `NEW_PROJECT` seeds `crew: []` for freshly-queued projects.
+- **[Grid ("Orchestration Grid") View](docs/superpowers/plans/2026-07-18-grid-view.md)** — ✅ all 5 tasks + whole-branch review passed. Radial hub-and-spoke SVG map (agent ring, project ring, animated dashed feed/assignment links), built on a new `ProjectStub.crew: string[]` state field. **Found & fixed during QA (`9ec5785`):** `computeProjectNodes`/`computeAssignmentLinks` crashed on any project persisted before this plan added `crew` (legacy localStorage data has no `crew` key at all) — defaulted both access points to `[]`. Verified live against both a 9-project legacy-data session (0 assignment links, correct, no crash) and a fresh 4-project seed session (full crew-driven layout + link count verified by hand).
+- **[Agents View](docs/superpowers/plans/2026-07-18-agents-view.md)** — ✅ all 7 tasks + whole-branch review passed. Roster + detail two-column view: pause/resume, terminate, reactivate, agent-tied approvals. **Fixed during QA (`9085454`):** `state.selected` missing from `persistence.ts`'s whitelist. **Fixed after whole-branch review (`a83f606`):** a paused agent's `hist` kept accumulating (sparkline kept climbing) even though `pct` correctly froze — gated both on the same check. **Known pre-existing issue, not introduced here:** `spawn <name>` with an explicit name bypasses the dedup check that only the auto-name-picker path uses, so two agents can end up sharing a name; `REACTIVATE_AGENT` mirrors this by design. Worth a dedicated fix in a future plan if it becomes a real problem.
+- **[Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md)** — ✅ all 7 tasks + whole-branch review passed. 5-cell grid (reactor hero, Active Agents, Projects, Recent Alerts, Systems) on top of a single view registry replacing 3 hand-maintained nav lists. **Fixed during QA (`96899de`):** `projects`/`providers`/`routeDefault` missing from the persistence whitelist. **Fixed after whole-branch review (`5014c11`):** `--pulse-dur` was only ever set while the Terminal view's `ReactorCore` was mounted, so a Dashboard-first session never synced the reactor pulse to burn rate — extracted `usePulseDurationVar()` to the App root.
+- **[Scaffold + Terminal View](docs/superpowers/plans/2026-07-16-aether-os-scaffold-terminal.md)** — ✅ all 17 tasks + whole-branch review passed. App scaffold, shared chrome (top bar/sidebar/footer/bottom metrics), Terminal view, full 3-renderer canvas/WebGL reactor core.
 
----
-
-## Previous plan (done, shipped)
-
-[Agents View](docs/superpowers/plans/2026-07-18-agents-view.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Agents tab is live: roster + detail two-column view with pause/resume, terminate, reactivate, and agent-tied approvals, manually QA'd in a real browser.
-
-| # | Task | Status |
-|---|------|--------|
-| 1 | Reducer: `TOGGLE_AGENT_PAUSE` + `REACTIVATE_AGENT` | ✅ done (`79139aa`, reviewed clean) |
-| 2 | `agentsMath.ts` (selected-agent fallback, agent approvals, status label) | ✅ done (`249a48c`, reviewed clean) |
-| 3 | `AgentRosterCard` (active roster + idle pool) | ✅ done (`3c0023b`, reviewed clean) |
-| 4 | `AgentDetailCard` (progress, sparkline, files, approvals, pause/terminate) | ✅ done (`495a864`, reviewed clean) |
-| 5 | `AgentsView` composition + registry wiring | ✅ done (`4baf60c`, reviewed clean — Agents tab is now live) |
-| 6 | Sidebar "Recent Agents" fix (was hardcoded + non-clickable) | ✅ done (`c9744fe`, reviewed clean) |
-| 7 | Final integration QA | ✅ done — automated suite green (69/69, tsc, build); fixed a persistence gap (`9085454`: `selected` wasn't in `persistence.ts`'s whitelist, so the selected agent reset to the roster's first entry on reload); manually QA'd in Chrome: roster/detail swap, pause/resume, terminate→idle fallback, reactivate (fresh agent, carries forward name-keyed approvals), agent-tied approve/deny (confirmed shared queue with TopBar), sidebar routing, reload persistence, no regressions on Terminal/Dashboard |
-
-**Follow-up fix after whole-branch review:** `a83f606` — `tick.ts` froze a paused agent's `pct` but kept concatenating to its `hist` regardless, so the Agent Detail panel's TOKEN DRAW sparkline kept climbing for an agent showing PAUSED. This plan is what first exposed pause to the UI, so the mismatch was invisible until now. Fixed by gating `hist` accumulation on the same `paused` check `pct` already used.
-
-**Known pre-existing issue, NOT introduced by this plan (flagged during Task 1/2/3 review, confirmed by reading `commands.ts` directly):** `spawn <name>` with an explicit name bypasses the dedup check entirely (only the auto-name-picker path checks `agents`/`idleList` for collisions) — a user can end up with two agents sharing the same name. `REACTIVATE_AGENT` mirrors this by design (same `makeAgent()` call `spawn` already uses), so it doesn't make the exposure worse, just inherits it. Worth a dedicated fix in a future plan if it becomes a real problem — not touched here, consistent with the project's "document, don't silently rewrite shared logic" precedent.
-
-## Two plans back (done, shipped)
-
-[Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Dashboard is live: sidebar → Dashboard shows the full 5-cell grid (reactor hero, Active Agents, Projects, Recent Alerts, Systems), manually QA'd in a real browser.
-
-| # | Task | Status |
-|---|------|--------|
-| 1 | Nav / view registry refactor | ✅ done (`25c41cc`, reviewed clean) |
-| 2 | Extend AetherState for Dashboard (projects/providers/routeDefault/NEW_PROJECT) | ✅ done (`6da3d33` + fix `1bf2a5d`, reviewed clean) |
-| 3 | `dashboardMath.ts` (KPI/status derivation) | ✅ done (`c5182d4`) — fixed a stale test expectation inherited from the plan doc: `short(24391)` was expected to be `'24.39K'`, but `short()` has an established 1-decimal K contract used elsewhere; corrected to `'24.4K'` |
-| 4 | `ReactorStatusCard` (hero card, KPIs, quick actions) | ✅ done (`9db2f159a7b7`, reviewed clean, no findings) |
-| 5 | `ActiveAgentsDigest` + `ProjectsDigest` | ✅ done (`ff5c3c44`, reviewed clean, no findings) |
-| 6 | `RecentAlertsCard` + `SystemsCard` + `DashboardView` + registry wiring | ✅ done (`e89dd75`, reviewed clean, no findings — 55/55 tests, build succeeds; Dashboard mounts via the same generic `getViewComponent` path as Terminal, no special-case risk) |
-| 7 | Final integration QA | ✅ done — automated suite green (56/56, tsc, build); fixed a real persistence gap (`96899de`: `projects`/`providers`/`routeDefault` weren't in `persistence.ts`'s whitelist, so new projects/spawned agents vanished on reload); manually QA'd the running app in Chrome (grid layout, KPI formatting, SPAWN AGENT/NEW PROJECT/MEMORY SWEEP/OPEN TERMINAL/COMPOSE MISSION, nav regressions, reload persistence) |
-
-**Follow-up fix after whole-branch review:** `5014c11` — `--pulse-dur` was only ever set by `useReactorCanvas`'s effect, which runs solely while `ReactorCore` is mounted (Terminal only), so a Dashboard-first session never synced the mini reactor core's pulse to burn rate (silently stuck at its 2.4s CSS fallback). My own manual QA didn't catch this because I'd visited Terminal earlier in the same session, which masked the gap. Fixed by extracting `usePulseDurationVar()` and mounting it once at the App root, independent of which view is active.
-
-## Prior plan (done, shipped)
-
-[Scaffold + Terminal View](docs/superpowers/plans/2026-07-16-aether-os-scaffold-terminal.md) — all 17 tasks complete, final whole-branch review passed, follow-up fixes applied. Terminal view + shared chrome (top bar/sidebar/footer/bottom metrics) + the full 3-renderer canvas/WebGL reactor core are live.
+Each plan doc contains the exact per-task code and commit SHAs — this file is a pointer, not the record.
 
 ## How this repo is being built
 
-Each task in a plan gets: a fresh implementer subagent → a fresh reviewer subagent (spec compliance + code quality) → fix loop if needed → commit. After all tasks in a plan: one broad whole-branch review, then a small fix pass if warranted. See `docs/superpowers/plans/` for the plan documents themselves — they contain the exact code each task was built from.
+Each task in a plan gets: a fresh implementer subagent → a fresh reviewer subagent (spec compliance + code quality) → fix loop if needed → commit. After all tasks in a plan: one broad whole-branch review, then a small fix pass if warranted. See `docs/superpowers/plans/` for the plan documents themselves.
 
 ## Still out of scope (honest placeholders, not bugs)
 
-Chat, Grid, Projects (full view), Memory, Analytics, Uplinks, Files, Settings — all still show a "not built yet" panel. Agents and Dashboard are now real, built views; Dashboard's Projects digest and row clicks still point at the (not yet built) full Projects view.
+Chat, Projects (full view), Memory, Analytics, Uplinks, Files, Settings — all still show a "not built yet" panel. Grid, Agents, and Dashboard are real, built views. Grid's project-box clicks and Dashboard's Projects digest both route to the (not yet built) full Projects view.
