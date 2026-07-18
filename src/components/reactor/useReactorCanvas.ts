@@ -15,6 +15,16 @@ export interface ReactorFrame {
   conduitCtx: CanvasRenderingContext2D;
 }
 
+// Kept mounted independently of ReactorCore (see App.tsx) so `--pulse-dur` tracks the
+// burn rate even when the Terminal view (the only place ReactorCore mounts) isn't open.
+export function usePulseDurationVar() {
+  const { state } = useAetherStore();
+  useEffect(() => {
+    const dur = computePulseDuration(state.rate, state.cfg.pulseMode, state.alarmLevel);
+    document.documentElement.style.setProperty('--pulse-dur', `${dur.toFixed(2)}s`);
+  }, [state.rate, state.cfg.pulseMode, state.alarmLevel]);
+}
+
 export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
   const { state } = useAetherStore();
   const coreRef = useRef<HTMLCanvasElement>(null);
@@ -30,10 +40,7 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  useEffect(() => {
-    const dur = computePulseDuration(state.rate, state.cfg.pulseMode, state.alarmLevel);
-    document.documentElement.style.setProperty('--pulse-dur', `${dur.toFixed(2)}s`);
-  }, [state.rate, state.cfg.pulseMode, state.alarmLevel]);
+  usePulseDurationVar();
 
   useEffect(() => {
     let cancelled = false;
