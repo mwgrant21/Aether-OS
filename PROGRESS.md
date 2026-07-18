@@ -4,7 +4,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-No plan in progress. Four view-building plans have shipped so far (Terminal, Dashboard, Agents, Grid); see "Shipped plans" below. Next candidate: whichever of Chat/Projects/Memory/Analytics/Uplinks/Files/Settings gets picked next (see "Still out of scope").
+**Plan:** [Chat View (Phase 1)](docs/superpowers/plans/2026-07-18-chat-view-phase1.md) — 6/7 tasks complete, browser-verified during Task 6 (real contextual `[offline]` reply seen). Task 7 (final integration QA) in progress. Phase 1 is UI shell + channel model + a state-aware local responder only — the real Claude-backed backend, personas, and action-execution pipeline are an explicitly separate Phase 2 plan, not started.
 
 ## Shipped plans (newest first)
 
