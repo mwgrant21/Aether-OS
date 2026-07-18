@@ -114,6 +114,11 @@ a:hover {
     stroke-dashoffset: -20;
   }
 }
+@keyframes dashFlowRev {
+  to {
+    stroke-dashoffset: 20;
+  }
+}
 @keyframes slideIn {
   from {
     transform: translateX(36px);
