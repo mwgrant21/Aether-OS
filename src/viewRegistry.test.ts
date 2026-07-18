@@ -22,4 +22,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Dashboard now that it is built', () => {
     expect(getViewComponent('Dashboard')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Agents now that it is built', () => {
+    expect(getViewComponent('Agents')).not.toBeNull();
+  });
 });
