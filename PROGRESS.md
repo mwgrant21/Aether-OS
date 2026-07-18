@@ -5,7 +5,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 ## Right now
 
 **Plan:** [Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md)
-**Status:** Task 4 of 7 done. Task 5 next.
+**Status:** Task 5 of 7 done. Task 6 next.
 
 | # | Task | Status |
 |---|------|--------|
@@ -13,8 +13,8 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 | 2 | Extend AetherState for Dashboard (projects/providers/routeDefault/NEW_PROJECT) | ✅ done (`6da3d33` + fix `1bf2a5d`, reviewed clean) |
 | 3 | `dashboardMath.ts` (KPI/status derivation) | ✅ done (`c5182d4`) — fixed a stale test expectation inherited from the plan doc: `short(24391)` was expected to be `'24.39K'`, but `short()` has an established 1-decimal K contract used elsewhere; corrected to `'24.4K'` |
 | 4 | `ReactorStatusCard` (hero card, KPIs, quick actions) | ✅ done (`9db2f159a7b7`, reviewed clean, no findings) |
-| 5 | `ActiveAgentsDigest` + `ProjectsDigest` | ⏳ starting |
-| 6 | `RecentAlertsCard` + `SystemsCard` + `DashboardView` + registry wiring | ⏳ not started |
+| 5 | `ActiveAgentsDigest` + `ProjectsDigest` | ✅ done (`ff5c3c44`, reviewed clean, no findings) |
+| 6 | `RecentAlertsCard` + `SystemsCard` + `DashboardView` + registry wiring | ⏳ starting |
 | 7 | Final integration QA | ⏳ not started |
 
 ## Prior plan (done, shipped)
