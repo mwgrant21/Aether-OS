@@ -22,6 +22,12 @@ describe('persistence', () => {
     expect(loaded?.routeDefault).toBe('Manual');
   });
 
+  it('persists the selected agent across reloads', () => {
+    savePersisted({ ...initialState, selected: 'Database Agent' });
+    const loaded = loadPersisted();
+    expect(loaded?.selected).toBe('Database Agent');
+  });
+
   it('returns null when nothing is stored', () => {
     expect(loadPersisted()).toBeNull();
   });

@@ -28,6 +28,7 @@ export function savePersisted(state: AetherState): void {
       projects: state.projects,
       providers: state.providers,
       routeDefault: state.routeDefault,
+      selected: state.selected,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slice));
   } catch {
