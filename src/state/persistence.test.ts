@@ -14,6 +14,14 @@ describe('persistence', () => {
     expect(loaded?.unread).toBe(5);
   });
 
+  it('persists Dashboard state (projects/providers/routeDefault) across reloads', () => {
+    savePersisted({ ...initialState, routeDefault: 'Manual' });
+    const loaded = loadPersisted();
+    expect(loaded?.projects).toEqual(initialState.projects);
+    expect(loaded?.providers).toEqual(initialState.providers);
+    expect(loaded?.routeDefault).toBe('Manual');
+  });
+
   it('returns null when nothing is stored', () => {
     expect(loadPersisted()).toBeNull();
   });
