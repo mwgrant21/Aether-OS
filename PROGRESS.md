@@ -4,7 +4,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-**Plan:** [Grid ("Orchestration Grid") View](docs/superpowers/plans/2026-07-18-grid-view.md) — 4/5 tasks complete, manually QA'd during Task 4 (browser render + click-through). Task 5 (final integration QA) in progress.
+**Plan:** [Grid ("Orchestration Grid") View](docs/superpowers/plans/2026-07-18-grid-view.md) — ✅ **all 5 tasks complete.** Grid tab is live: radial hub-and-spoke SVG map (agent ring, project ring, animated feed/assignment links), manually QA'd in a real browser under both fresh and heavily-accumulated session state. Awaiting whole-branch review.
 
 | # | Task | Status |
 |---|------|--------|
@@ -12,7 +12,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 | 2 | `gridMath.ts` (polar layout, circular-mean project angle, anti-overlap slot algorithm) | ✅ done (`21aeed7`, reviewed clean — reviewer independently hand-verified the trig, not just diffed) |
 | 3 | `OrchestrationGrid.tsx` (SVG hub/rings/animated links + HTML label overlay) | ✅ done (`72b9be7`, reviewed clean) |
 | 4 | `GridView` composition + registry wiring | ✅ done (`78f6298`, reviewed clean — Grid tab is now live; browser-verified render, agent-click→Agents nav, project-click→Projects `ComingSoonPanel`, no crash) |
-| 5 | Final integration QA | ⏳ in progress |
+| 5 | Final integration QA | ✅ done — found and fixed a real crash (`9ec5785`): `computeProjectNodes`/`computeAssignmentLinks` threw on any project persisted before this plan added `crew` (legacy localStorage data has no `crew` key at all — "Cannot read properties of undefined (reading 'map')" / "crew is not iterable"). Defaulted both access points to `[]`. Verified live with two scenarios: a 9-project session accumulated from earlier QA (legacy, crew-less — correctly renders 0 assignment links, no crash, anti-overlap holds with zero visual overlap across all 9 boxes) and a freshly-cleared 4-project seed session (real crew data — CLI Companion correctly clusters between its 2 crew members with 2 converging assignment links, other 3 projects get 1 link each, header reads "10 LINKS" = 5 feed + 5 assignment, matching the math exactly) |
 
 **New state added:** `ProjectStub.crew: string[]` (agent names) — seeded on the 4 existing projects, original-flavored (no upstream source captured), same "trimmed but real" disclosure as Dashboard's `providers`/`routeDefault`. `NEW_PROJECT` seeds `crew: []` for freshly-queued projects.
 
