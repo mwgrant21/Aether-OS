@@ -7,8 +7,8 @@ import { MessageThread } from './MessageThread';
 import { MessageInput } from './MessageInput';
 
 export function ChatView() {
-  const { state } = useAetherStore();
-  const chat = useChatChannels(state);
+  const { state, dispatch } = useAetherStore();
+  const chat = useChatChannels(state, dispatch);
   const [draft, setDraft] = useState('');
 
   function send() {
