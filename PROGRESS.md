@@ -4,8 +4,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-**Plan:** [Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md)
-**Status:** Task 6 of 7 done. Task 7 (final) next.
+**Plan:** [Nav Registry + Dashboard View](docs/superpowers/plans/2026-07-17-nav-registry-dashboard.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Dashboard is live: sidebar → Dashboard shows the full 5-cell grid (reactor hero, Active Agents, Projects, Recent Alerts, Systems), manually QA'd in a real browser.
 
 | # | Task | Status |
 |---|------|--------|
@@ -15,7 +14,9 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 | 4 | `ReactorStatusCard` (hero card, KPIs, quick actions) | ✅ done (`9db2f159a7b7`, reviewed clean, no findings) |
 | 5 | `ActiveAgentsDigest` + `ProjectsDigest` | ✅ done (`ff5c3c44`, reviewed clean, no findings) |
 | 6 | `RecentAlertsCard` + `SystemsCard` + `DashboardView` + registry wiring | ✅ done (`e89dd75`, reviewed clean, no findings — 55/55 tests, build succeeds; Dashboard mounts via the same generic `getViewComponent` path as Terminal, no special-case risk) |
-| 7 | Final integration QA | ⏳ starting |
+| 7 | Final integration QA | ✅ done — automated suite green (56/56, tsc, build); fixed a real persistence gap (`96899de`: `projects`/`providers`/`routeDefault` weren't in `persistence.ts`'s whitelist, so new projects/spawned agents vanished on reload); manually QA'd the running app in Chrome (grid layout, KPI formatting, SPAWN AGENT/NEW PROJECT/MEMORY SWEEP/OPEN TERMINAL/COMPOSE MISSION, nav regressions, reload persistence) |
+
+**Follow-up fix after whole-branch review:** `5014c11` — `--pulse-dur` was only ever set by `useReactorCanvas`'s effect, which runs solely while `ReactorCore` is mounted (Terminal only), so a Dashboard-first session never synced the mini reactor core's pulse to burn rate (silently stuck at its 2.4s CSS fallback). My own manual QA didn't catch this because I'd visited Terminal earlier in the same session, which masked the gap. Fixed by extracting `usePulseDurationVar()` and mounting it once at the App root, independent of which view is active.
 
 ## Prior plan (done, shipped)
 
