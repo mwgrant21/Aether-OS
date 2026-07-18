@@ -3,6 +3,7 @@ import { TerminalView } from './components/terminal/TerminalView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { AgentsView } from './components/agents/AgentsView';
 import { GridView } from './components/grid/GridView';
+import { ChatView } from './components/chat/ChatView';
 
 export interface ViewDef {
   id: string;
@@ -14,7 +15,7 @@ export interface ViewDef {
 export const VIEWS: ViewDef[] = [
   { id: 'Dashboard', inTopBar: false, inSidebar: true, component: DashboardView },
   { id: 'Terminal', inTopBar: true, inSidebar: true, component: TerminalView },
-  { id: 'Chat', inTopBar: true, inSidebar: false, component: null },
+  { id: 'Chat', inTopBar: true, inSidebar: false, component: ChatView },
   { id: 'Agents', inTopBar: true, inSidebar: true, component: AgentsView },
   { id: 'Grid', inTopBar: true, inSidebar: true, component: GridView },
   { id: 'Projects', inTopBar: true, inSidebar: true, component: null },

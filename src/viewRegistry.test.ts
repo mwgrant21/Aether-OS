@@ -15,8 +15,11 @@ describe('viewRegistry', () => {
   });
 
   it('getViewComponent returns null for ids with no built component', () => {
-    expect(getViewComponent('Chat')).toBeNull();
     expect(getViewComponent('NotARealTab')).toBeNull();
+  });
+
+  it('getViewComponent resolves Chat now that it is built', () => {
+    expect(getViewComponent('Chat')).not.toBeNull();
   });
 
   it('getViewComponent resolves Dashboard now that it is built', () => {
