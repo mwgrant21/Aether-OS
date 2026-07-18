@@ -4,7 +4,7 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 
 ## Right now
 
-**Plan:** [Agents View](docs/superpowers/plans/2026-07-18-agents-view.md) — 7/7 tasks complete, manually QA'd in a real browser. Awaiting whole-branch review.
+**Plan:** [Agents View](docs/superpowers/plans/2026-07-18-agents-view.md) — ✅ **all 7 tasks complete, whole-branch review passed, follow-up fix applied.** Agents tab is live: roster + detail two-column view with pause/resume, terminate, reactivate, and agent-tied approvals, manually QA'd in a real browser.
 
 | # | Task | Status |
 |---|------|--------|
@@ -15,6 +15,8 @@ Auto-updated by the agent working this repo — safe to read for a quick "where 
 | 5 | `AgentsView` composition + registry wiring | ✅ done (`4baf60c`, reviewed clean — Agents tab is now live) |
 | 6 | Sidebar "Recent Agents" fix (was hardcoded + non-clickable) | ✅ done (`c9744fe`, reviewed clean) |
 | 7 | Final integration QA | ✅ done — automated suite green (69/69, tsc, build); fixed a persistence gap (`9085454`: `selected` wasn't in `persistence.ts`'s whitelist, so the selected agent reset to the roster's first entry on reload); manually QA'd in Chrome: roster/detail swap, pause/resume, terminate→idle fallback, reactivate (fresh agent, carries forward name-keyed approvals), agent-tied approve/deny (confirmed shared queue with TopBar), sidebar routing, reload persistence, no regressions on Terminal/Dashboard |
+
+**Follow-up fix after whole-branch review:** `a83f606` — `tick.ts` froze a paused agent's `pct` but kept concatenating to its `hist` regardless, so the Agent Detail panel's TOKEN DRAW sparkline kept climbing for an agent showing PAUSED. This plan is what first exposed pause to the UI, so the mismatch was invisible until now. Fixed by gating `hist` accumulation on the same `paused` check `pct` already used.
 
 **Known pre-existing issue, NOT introduced by this plan (flagged during Task 1/2/3 review, confirmed by reading `commands.ts` directly):** `spawn <name>` with an explicit name bypasses the dedup check entirely (only the auto-name-picker path checks `agents`/`idleList` for collisions) — a user can end up with two agents sharing the same name. `REACTIVATE_AGENT` mirrors this by design (same `makeAgent()` call `spawn` already uses), so it doesn't make the exposure worse, just inherits it. Worth a dedicated fix in a future plan if it becomes a real problem — not touched here, consistent with the project's "document, don't silently rewrite shared logic" precedent.
 
