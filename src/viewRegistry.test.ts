@@ -18,4 +18,8 @@ describe('viewRegistry', () => {
     expect(getViewComponent('Chat')).toBeNull();
     expect(getViewComponent('NotARealTab')).toBeNull();
   });
+
+  it('getViewComponent resolves Dashboard now that it is built', () => {
+    expect(getViewComponent('Dashboard')).not.toBeNull();
+  });
 });

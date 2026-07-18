@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { TerminalView } from './components/terminal/TerminalView';
+import { DashboardView } from './components/dashboard/DashboardView';
 
 export interface ViewDef {
   id: string;
@@ -9,7 +10,7 @@ export interface ViewDef {
 }
 
 export const VIEWS: ViewDef[] = [
-  { id: 'Dashboard', inTopBar: false, inSidebar: true, component: null },
+  { id: 'Dashboard', inTopBar: false, inSidebar: true, component: DashboardView },
   { id: 'Terminal', inTopBar: true, inSidebar: true, component: TerminalView },
   { id: 'Chat', inTopBar: true, inSidebar: false, component: null },
   { id: 'Agents', inTopBar: true, inSidebar: true, component: null },
