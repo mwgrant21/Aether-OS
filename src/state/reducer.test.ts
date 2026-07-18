@@ -69,9 +69,9 @@ describe('reducer', () => {
     const withAllTaken = {
       ...initialState,
       projects: [
-        { name: 'Support Portal', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
-        { name: 'Internal Tools', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
-        { name: 'Marketing Site', status: 'BUILDING' as const, pct: 10, hue: '#fff' },
+        { name: 'Support Portal', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
+        { name: 'Internal Tools', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
+        { name: 'Marketing Site', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
       ],
     };
     const next = reducer(withAllTaken, { type: 'NEW_PROJECT' });

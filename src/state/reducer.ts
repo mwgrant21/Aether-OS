@@ -101,7 +101,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
       const hues = ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'];
       return {
         ...state,
-        projects: [{ name, status: 'QUEUED', pct: 0, hue: hues[state.projects.length % hues.length] }, ...state.projects],
+        projects: [{ name, status: 'QUEUED', pct: 0, hue: hues[state.projects.length % hues.length], crew: [] }, ...state.projects],
       };
     }
 

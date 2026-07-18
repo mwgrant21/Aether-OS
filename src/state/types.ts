@@ -62,6 +62,7 @@ export interface ProjectStub {
   status: ProjectStatus;
   pct: number;
   hue: string;
+  crew: string[];
 }
 
 export interface Provider {

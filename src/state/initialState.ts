@@ -125,10 +125,10 @@ export const initialState: AetherState = {
   ],
   logs: [],
   projects: [
-    { name: 'CLI Companion', status: 'BUILDING', pct: 62, hue: '#7ef0ff' },
-    { name: 'Mobile Beta', status: 'REVIEW', pct: 88, hue: '#8ab6ff' },
-    { name: 'Analytics Pipeline', status: 'QUEUED', pct: 0, hue: '#5fffe0' },
-    { name: 'Docs Portal', status: 'SHIPPED', pct: 100, hue: '#7fd8ef' },
+    { name: 'CLI Companion', status: 'BUILDING', pct: 62, hue: '#7ef0ff', crew: ['Code Builder', 'UI Designer'] },
+    { name: 'Mobile Beta', status: 'REVIEW', pct: 88, hue: '#8ab6ff', crew: ['Test Runner'] },
+    { name: 'Analytics Pipeline', status: 'QUEUED', pct: 0, hue: '#5fffe0', crew: ['Database Agent'] },
+    { name: 'Docs Portal', status: 'SHIPPED', pct: 100, hue: '#7fd8ef', crew: ['Doc Writer'] },
   ],
   memories: [],
   providers: [
