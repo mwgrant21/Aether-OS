@@ -167,3 +167,62 @@ describe('reducer — Phase 2b chat action pipeline', () => {
     expect(next.chatActionResults).toEqual([{ channelId: 'c', text: '3' }]);
   });
 });
+
+describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-mode race)', () => {
+  it('autoResolve: true immediately executes the mutation and emits chatActionResults, never adding the approval to state.approvals', () => {
+    const payload = chatApproval({ id: undefined as any, verb: 'throttle', targetAgentName: 'Code Builder', risk: 'LOW', channelId: 'Code Builder' }) as any;
+    const next = reducer(initialState, { type: 'ADD_APPROVAL', approval: payload, autoResolve: true });
+
+    // The mutation happened immediately.
+    expect(next.agents.find((a) => a.name === 'Code Builder')?.share).toBe(0.08);
+    // The chat confirmation was emitted immediately.
+    expect(next.chatActionResults).toHaveLength(1);
+    expect(next.chatActionResults[0].channelId).toBe('Code Builder');
+    // apprSeq still advances (the id was assigned and consumed)...
+    expect(next.apprSeq).toBe(initialState.apprSeq + 1);
+    // ...but the approval itself never appears in the queue, not even transiently.
+    expect(next.approvals).toEqual(initialState.approvals);
+  });
+
+  it('autoResolve: false (or omitted) behaves exactly as plain ADD_APPROVAL: appended to the queue, no immediate mutation', () => {
+    const payload = chatApproval({ id: undefined as any, verb: 'spawn', targetAgentName: 'Nightwatch', risk: 'MED', channelId: 'AETHER' }) as any;
+
+    const withFalse = reducer(initialState, { type: 'ADD_APPROVAL', approval: payload, autoResolve: false });
+    const withOmitted = reducer(initialState, { type: 'ADD_APPROVAL', approval: payload });
+
+    for (const next of [withFalse, withOmitted]) {
+      expect(next.agents.map((a) => a.name)).not.toContain('Nightwatch');
+      expect(next.chatActionResults).toEqual([]);
+      expect(next.approvals).toHaveLength(initialState.approvals.length + 1);
+      expect(next.approvals[next.approvals.length - 1].id).toBe(initialState.apprSeq);
+      expect(next.apprSeq).toBe(initialState.apprSeq + 1);
+    }
+  });
+
+  it('closes the reported race: a concurrent (e.g. tick-generated) ADD_APPROVAL followed by the chat one with autoResolve only ever affects the chat one\'s own target', () => {
+    // Simulates the interleaving from the bug report: some other approval
+    // (standing in for a tick.ts-generated one) gets added first, claiming an
+    // id and bumping apprSeq -- exactly the kind of concurrent dispatch that
+    // used to shift apprSeq out from under a caller-predicted id.
+    const concurrent = reducer(initialState, {
+      type: 'ADD_APPROVAL',
+      approval: chatApproval({ verb: 'kill', targetAgentName: 'Test Runner', risk: 'HIGH', channelId: 'AETHER' }),
+    });
+    expect(concurrent.approvals).toHaveLength(initialState.approvals.length + 1);
+    const concurrentApprovalId = concurrent.approvals[concurrent.approvals.length - 1].id;
+
+    // Now the chat's own risky-verb dispatch arrives, auto-approved.
+    const next = reducer(concurrent, {
+      type: 'ADD_APPROVAL',
+      approval: chatApproval({ verb: 'throttle', targetAgentName: 'Code Builder', risk: 'LOW', channelId: 'Code Builder' }),
+      autoResolve: true,
+    });
+
+    // Only Code Builder (the chat's own target) was throttled...
+    expect(next.agents.find((a) => a.name === 'Code Builder')?.share).toBe(0.08);
+    // ...Test Runner (the concurrent approval's target) is untouched and still queued, unaffected.
+    expect(next.agents.map((a) => a.name)).toContain('Test Runner');
+    expect(next.approvals.map((a) => a.id)).toContain(concurrentApprovalId);
+    expect(next.approvals).toHaveLength(concurrent.approvals.length);
+  });
+});

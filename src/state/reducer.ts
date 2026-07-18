@@ -11,7 +11,7 @@ export type Action =
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
   | { type: 'RESOLVE_APPROVAL'; id: number; approve: boolean }
-  | { type: 'ADD_APPROVAL'; approval: Omit<Approval, 'id'> }
+  | { type: 'ADD_APPROVAL'; approval: Omit<Approval, 'id'>; autoResolve?: boolean }
   | { type: 'CLEAR_CHAT_ACTION_RESULTS'; count: number }
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
@@ -22,6 +22,74 @@ export type Action =
   | { type: 'REACTIVATE_AGENT'; name: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
+
+// Shared by RESOLVE_APPROVAL (existing, queued approval resolved later) and
+// ADD_APPROVAL's autoResolve path (Phase 2b chat auto-approve, resolved in
+// the same dispatch it's created in -- see ADD_APPROVAL below). Applying the
+// verb-specific mutation, the HIGH-risk legacy shorthand, the
+// chatActionResults emission, and the notif/log push all in one place means
+// there is exactly one implementation of "what resolving an approval does",
+// so the two callers can never drift out of sync with each other.
+//
+// `req` need not be present in `state.approvals` when this is called -- the
+// `approvals.filter` below is a harmless no-op in that case (ADD_APPROVAL's
+// autoResolve path never adds the approval to the queue in the first place).
+function applyApprovalResolution(state: AetherState, req: Approval, approve: boolean): AetherState {
+  const ok = approve;
+
+  // Phase 2b: verb-specific execution, mirroring the identical AetherState
+  // mutation Terminal's own spawn/kill would produce (or, for throttle, a
+  // new minimal Agent.share cap) -- applied only on approval, and only for
+  // approvals Phase 2b itself created (req.verb set). Every pre-existing
+  // (seed + tick.ts) approval has no verb and is completely unaffected.
+  let agents = state.agents;
+  let idleList = state.idleList;
+  let rate = state.rate;
+  if (ok && req.verb === 'spawn' && req.targetAgentName) {
+    agents = [...agents, makeAgent(req.targetAgentName)];
+    rate = Math.min(168000, rate + 18000); // identical to Terminal's spawn
+  } else if (ok && req.verb === 'kill' && req.targetAgentName) {
+    const hit = agents.find((a) => a.name === req.targetAgentName);
+    if (hit) {
+      agents = agents.filter((a) => a.name !== hit.name);
+      idleList = [...idleList, { name: hit.name, last: 'just now' }];
+    }
+    // no rate change -- identical to Terminal's kill
+  } else if (ok && req.verb === 'throttle' && req.targetAgentName) {
+    agents = agents.map((a) => (a.name === req.targetAgentName ? { ...a, share: Math.min(a.share, THROTTLE_SHARE_CEILING) } : a));
+  } else if (ok && req.risk === 'HIGH') {
+    // Pre-existing generic shorthand -- only applies to no-verb approvals,
+    // since a verb-carrying approval's own specific mutation above (or
+    // deliberate lack of one, for kill/throttle) is the real effect now;
+    // applying both would double up or contradict it.
+    rate = Math.min(168000, rate + 9000);
+  }
+
+  const chatActionResults = req.channelId
+    ? [...state.chatActionResults, { channelId: req.channelId, text: buildChatActionResultText(req, ok) }]
+    : state.chatActionResults;
+
+  return {
+    ...state,
+    agents,
+    idleList,
+    rate,
+    chatActionResults,
+    approvals: state.approvals.filter((a) => a.id !== req.id),
+    notifs: [
+      { t: nowShort(), m: `${ok ? 'Approved: ' : 'Denied: '}${req.action} (${req.agent})`, c: ok ? '#3be0a0' : '#ff9d9d' },
+      ...state.notifs,
+    ].slice(0, 12),
+    logs: [
+      ...state.logs,
+      {
+        t: nowShort(),
+        m: `${req.agent}: ${ok ? 'authorization granted — ' : 'request denied — '}${req.action.toLowerCase()}`,
+        c: ok ? '#3be0a0' : '#ff9d9d',
+      },
+    ].slice(-14),
+  };
+}
 
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
@@ -60,12 +128,23 @@ export function reducer(state: AetherState, action: Action): AetherState {
         unread: state.unread + 1,
       };
 
-    case 'ADD_APPROVAL':
-      return {
-        ...state,
-        approvals: [...state.approvals, { ...action.approval, id: state.apprSeq }],
-        apprSeq: state.apprSeq + 1,
-      };
+    case 'ADD_APPROVAL': {
+      const newApproval: Approval = { ...action.approval, id: state.apprSeq };
+      const bumped = { ...state, apprSeq: state.apprSeq + 1 };
+      if (action.autoResolve) {
+        // Atomic auto-approve: the approval is never added to state.approvals
+        // at all (not even transiently) -- it goes straight into
+        // applyApprovalResolution against `bumped`, so there is no window
+        // between "id assigned" and "resolved" for a concurrent dispatch
+        // (e.g. tick.ts's own apprSeq-bumping approval generation) to shift
+        // apprSeq and cause a caller-predicted id to resolve the wrong
+        // approval. See useChatChannels.ts's risky-verb path, which used to
+        // predict this id across two dispatches -- that race is why this
+        // exists.
+        return applyApprovalResolution(bumped, newApproval, true);
+      }
+      return { ...bumped, approvals: [...state.approvals, newApproval] };
+    }
 
     case 'CLEAR_CHAT_ACTION_RESULTS':
       return { ...state, chatActionResults: state.chatActionResults.slice(action.count) };
@@ -73,60 +152,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'RESOLVE_APPROVAL': {
       const req = state.approvals.find((a) => a.id === action.id);
       if (!req) return state;
-      const ok = action.approve;
-
-      // Phase 2b: verb-specific execution, mirroring the identical AetherState
-      // mutation Terminal's own spawn/kill would produce (or, for throttle, a
-      // new minimal Agent.share cap) -- applied only on approval, and only for
-      // approvals Phase 2b itself created (req.verb set). Every pre-existing
-      // (seed + tick.ts) approval has no verb and is completely unaffected.
-      let agents = state.agents;
-      let idleList = state.idleList;
-      let rate = state.rate;
-      if (ok && req.verb === 'spawn' && req.targetAgentName) {
-        agents = [...agents, makeAgent(req.targetAgentName)];
-        rate = Math.min(168000, rate + 18000); // identical to Terminal's spawn
-      } else if (ok && req.verb === 'kill' && req.targetAgentName) {
-        const hit = agents.find((a) => a.name === req.targetAgentName);
-        if (hit) {
-          agents = agents.filter((a) => a.name !== hit.name);
-          idleList = [...idleList, { name: hit.name, last: 'just now' }];
-        }
-        // no rate change -- identical to Terminal's kill
-      } else if (ok && req.verb === 'throttle' && req.targetAgentName) {
-        agents = agents.map((a) => (a.name === req.targetAgentName ? { ...a, share: Math.min(a.share, THROTTLE_SHARE_CEILING) } : a));
-      } else if (ok && req.risk === 'HIGH') {
-        // Pre-existing generic shorthand -- only applies to no-verb approvals,
-        // since a verb-carrying approval's own specific mutation above (or
-        // deliberate lack of one, for kill/throttle) is the real effect now;
-        // applying both would double up or contradict it.
-        rate = Math.min(168000, rate + 9000);
-      }
-
-      const chatActionResults = req.channelId
-        ? [...state.chatActionResults, { channelId: req.channelId, text: buildChatActionResultText(req, ok) }]
-        : state.chatActionResults;
-
-      return {
-        ...state,
-        agents,
-        idleList,
-        rate,
-        chatActionResults,
-        approvals: state.approvals.filter((a) => a.id !== action.id),
-        notifs: [
-          { t: nowShort(), m: `${ok ? 'Approved: ' : 'Denied: '}${req.action} (${req.agent})`, c: ok ? '#3be0a0' : '#ff9d9d' },
-          ...state.notifs,
-        ].slice(0, 12),
-        logs: [
-          ...state.logs,
-          {
-            t: nowShort(),
-            m: `${req.agent}: ${ok ? 'authorization granted — ' : 'request denied — '}${req.action.toLowerCase()}`,
-            c: ok ? '#3be0a0' : '#ff9d9d',
-          },
-        ].slice(-14),
-      };
+      return applyApprovalResolution(state, req, action.approve);
     }
 
     case 'RUN_COMMAND': {

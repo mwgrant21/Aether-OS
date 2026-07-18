@@ -116,11 +116,13 @@ export function useChatChannels(state: AetherState, dispatch: Dispatch<Action>):
           } else if ((RISKY_VERBS as readonly string[]).includes(action.verb)) {
             const payload = buildApprovalPayload(channel, action);
             if (payload) {
-              const newId = state.apprSeq;
-              dispatch({ type: 'ADD_APPROVAL', approval: payload });
-              if (shouldAutoApprove(payload.risk, state.cfg.opMode)) {
-                dispatch({ type: 'RESOLVE_APPROVAL', id: newId, approve: true });
-              }
+              // Single dispatch: the reducer assigns the id and, when
+              // autoResolve is set, resolves it atomically in the same
+              // dispatch -- no id is predicted across dispatches here, so a
+              // concurrent tick-generated approval can never shift apprSeq
+              // out from under this one (see reducer.ts's ADD_APPROVAL case
+              // and applyApprovalResolution).
+              dispatch({ type: 'ADD_APPROVAL', approval: payload, autoResolve: shouldAutoApprove(payload.risk, state.cfg.opMode) });
               // No inline "queued" confirmation here -- the one, single
               // source of truth for a risky verb's outcome (auto-approved,
               // manually approved later, or denied later) is the
