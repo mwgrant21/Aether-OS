@@ -136,6 +136,15 @@ describe('computeProjectNodes', () => {
   it('returns an empty array with zero projects', () => {
     expect(computeProjectNodes(computeAgentNodes([mockAgent('A0')]), [])).toEqual([]);
   });
+
+  it('tolerates a project with no crew field at all (legacy persisted data predating ProjectStub.crew) instead of throwing', () => {
+    const agentNodes = computeAgentNodes([mockAgent('A0')]);
+    const legacyProject = { name: 'Legacy', status: 'BUILDING' as const, pct: 10, hue: '#fff' } as ProjectStub;
+    const nodes = computeProjectNodes(agentNodes, [legacyProject]);
+    expect(nodes).toHaveLength(1);
+    expect(Number.isFinite(nodes[0].x)).toBe(true);
+    expect(Number.isFinite(nodes[0].y)).toBe(true);
+  });
 });
 
 describe('computeFeedLinks / computeAssignmentLinks', () => {
@@ -157,6 +166,13 @@ describe('computeFeedLinks / computeAssignmentLinks', () => {
     expect(links).toHaveLength(1);
     expect(links[0].agentName).toBe('A0');
     expect(links[0].hue).toBe('#ff6b7a');
+  });
+
+  it('produces no assignment links, without throwing, for a legacy project with no crew field at all', () => {
+    const agentNodes = computeAgentNodes([mockAgent('A0')]);
+    const legacyProject = { name: 'Legacy', status: 'BUILDING' as const, pct: 10, hue: '#fff' } as ProjectStub;
+    const projectNodes = computeProjectNodes(agentNodes, [legacyProject]);
+    expect(computeAssignmentLinks(agentNodes, projectNodes)).toEqual([]);
   });
 });
 

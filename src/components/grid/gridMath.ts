@@ -128,7 +128,7 @@ export function computeProjectNodes(agentNodes: AgentNode[], projects: ProjectSt
   const angleByAgentName = new Map(agentNodes.map((n) => [n.agent.name, n.angle]));
 
   const withDesiredAngle = projects.map((project, index) => {
-    const crewAngles = project.crew
+    const crewAngles = (project.crew ?? [])
       .map((name) => angleByAgentName.get(name))
       .filter((a): a is number => a !== undefined);
     const desiredAngle = crewAngles.length ? circularMeanAngle(crewAngles) : agentAngle(index, total);
@@ -172,7 +172,7 @@ export function computeAssignmentLinks(agentNodes: AgentNode[], projectNodes: Pr
   const nodeByAgentName = new Map(agentNodes.map((n) => [n.agent.name, n]));
   const links: AssignmentLink[] = [];
   for (const pNode of projectNodes) {
-    for (const crewName of pNode.project.crew) {
+    for (const crewName of pNode.project.crew ?? []) {
       const aNode = nodeByAgentName.get(crewName);
       if (!aNode) continue;
       links.push({
