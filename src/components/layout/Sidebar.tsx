@@ -4,12 +4,6 @@ import { useAetherStore } from '../../state/store';
 import { VIEWS } from '../../viewRegistry';
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
-const RECENT_AGENTS = [
-  { i: 'CB', label: 'Code Builder', ring: '#7ef0ff' },
-  { i: 'UI', label: 'UI Designer', ring: '#8ab6ff' },
-  { i: 'DB', label: 'Database Agent', ring: '#5fffe0' },
-  { i: 'TR', label: 'Test Runner', ring: '#7fd8ef' },
-];
 
 export function Sidebar() {
   const { state, dispatch } = useAetherStore();
@@ -29,12 +23,20 @@ export function Sidebar() {
       })}
 
       <div style={{ ...sectionLabelStyle, marginTop: 14 }}>RECENT AGENTS</div>
-      {RECENT_AGENTS.map((r) => (
-        <div key={r.i} style={recentRowStyle}>
-          <span style={recentAvatarStyle(r.ring)}>{r.i}</span>
-          <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{r.label}</span>
+      {state.agents.slice(0, 4).map((a) => (
+        <div
+          key={a.name}
+          onClick={() => {
+            dispatch({ type: 'SELECT_AGENT', name: a.name });
+            dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
+          }}
+          style={recentRowStyle}
+        >
+          <span style={recentAvatarStyle(a.hue)}>{a.i}</span>
+          <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{a.name}</span>
         </div>
       ))}
+      {!state.agents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
 
       <div style={tipCardStyle}>
         <div style={tipGlowStyle} />
@@ -87,7 +89,7 @@ function navDotWrapStyle(on: boolean): CSSProperties {
 function navDotStyle(on: boolean): CSSProperties {
   return { width: 7, height: 7, borderRadius: 2, background: on ? colors.accentCyan : '#3d6572' };
 }
-const recentRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 8 };
+const recentRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 8, cursor: 'pointer' };
 function recentAvatarStyle(ring: string): CSSProperties {
   return {
     width: 22,
