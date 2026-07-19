@@ -1,5 +1,5 @@
-import type { Agent, AetherState, CommandResult, TermLine, ThemeName, RendererMode } from '../../state/types';
-import { fmt, fmtEta } from '../../utils/format';
+import type { Agent, AetherState, CommandResult, MemoryStub, TermLine, ThemeName, RendererMode } from '../../state/types';
+import { fmt, fmtEta, nowShort } from '../../utils/format';
 
 const PROMPT = '#7fd8ef';
 const BODY = '#9fc4d1';
@@ -60,6 +60,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         line('  budget              token budget & burn'),
         line('  projects            list projects'),
         line('  sweep               run memory consolidation'),
+        line('  remember <text>     log a manual memory'),
         line('  approvals           list pending authorizations'),
         line('  approve <n>         grant request n'),
         line('  deny <n>            reject request n'),
@@ -107,12 +108,23 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         return { kind: 'append', lines: out };
       }
       out.push(line(`✓ ${hit.name} terminated — returned to idle pool`, GOOD));
+      const memory: MemoryStub = {
+        id: state.memSeq,
+        name: `${hit.name} decommissioned`,
+        content: `${hit.name} was terminated and returned to the idle pool.`,
+        source: hit.name,
+        ts: nowShort(),
+        pinned: false,
+        strength: 100,
+      };
       return {
         kind: 'append',
         lines: out,
         patch: {
           agents: state.agents.filter((a) => a.name !== hit.name),
           idleList: [...state.idleList, { name: hit.name, last: 'just now' }],
+          memories: [...state.memories, memory],
+          memSeq: state.memSeq + 1,
         },
       };
     }
@@ -137,6 +149,25 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
       const weak = state.memories.filter((m) => !m.pinned && m.strength <= 30).length;
       out.push(line(`✓ consolidation sweep complete — ${weak} weak engrams compacted`, GOOD));
       return { kind: 'append', lines: out, patch: { memories: state.memories.filter((m) => m.pinned || m.strength > 30) } };
+    }
+
+    case 'remember': {
+      const text = args.join(' ').trim();
+      if (!text) {
+        out.push(line('✗ usage: remember <text>', BAD));
+        return { kind: 'append', lines: out };
+      }
+      const memory: MemoryStub = {
+        id: state.memSeq,
+        name: text.length > 40 ? `${text.slice(0, 40)}…` : text,
+        content: text,
+        source: 'operator',
+        ts: nowShort(),
+        pinned: false,
+        strength: 100,
+      };
+      out.push(line(`✓ memory logged — "${memory.name}"`, GOOD));
+      return { kind: 'append', lines: out, patch: { memories: [...state.memories, memory], memSeq: state.memSeq + 1 } };
     }
 
     case 'theme': {
@@ -181,12 +212,29 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
       // Deviation from source: the original built this message via `cmd.toLowerCase() + 'd'`,
       // which produces "denyd" for the deny path. This port says "denied" correctly.
       out.push(line(`✓ ${approve ? 'approved' : 'denied'}: ${req.action}`, approve ? GOOD : BAD));
+      let memories = state.memories;
+      let memSeq = state.memSeq;
+      if (req.risk === 'HIGH') {
+        const memory: MemoryStub = {
+          id: memSeq,
+          name: `${approve ? 'Approved' : 'Denied'}: ${req.action}`,
+          content: `${req.agent} — HIGH-risk request ${approve ? 'approved' : 'denied'}: ${req.action}`,
+          source: req.agent,
+          ts: nowShort(),
+          pinned: false,
+          strength: 100,
+        };
+        memories = [...memories, memory];
+        memSeq += 1;
+      }
       return {
         kind: 'append',
         lines: out,
         patch: {
           approvals: state.approvals.filter((a) => a.id !== req.id),
           rate: approve && req.risk === 'HIGH' ? Math.min(168000, state.rate + 9000) : state.rate,
+          memories,
+          memSeq,
         },
       };
     }

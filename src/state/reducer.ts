@@ -1,4 +1,4 @@
-import type { Approval, AetherState, OpMode } from './types';
+import type { Approval, AetherState, MemoryStub, OpMode } from './types';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
@@ -68,6 +68,25 @@ function applyApprovalResolution(state: AetherState, req: Approval, approve: boo
     rate = Math.min(168000, rate + 9000);
   }
 
+  // A HIGH-risk request being resolved is notable regardless of outcome --
+  // unlike the mutation branches above (which only ever apply on approve),
+  // this fires on both approve and deny.
+  let memories = state.memories;
+  let memSeq = state.memSeq;
+  if (req.risk === 'HIGH') {
+    const memory: MemoryStub = {
+      id: memSeq,
+      name: `${ok ? 'Approved' : 'Denied'}: ${req.action}`,
+      content: `${req.agent} — HIGH-risk request ${ok ? 'approved' : 'denied'}: ${req.action}`,
+      source: req.agent,
+      ts: nowShort(),
+      pinned: false,
+      strength: 100,
+    };
+    memories = [...memories, memory];
+    memSeq += 1;
+  }
+
   const chatActionResults = req.channelId
     ? [...state.chatActionResults, { channelId: req.channelId, text: buildChatActionResultText(req, ok) }]
     : state.chatActionResults;
@@ -77,6 +96,8 @@ function applyApprovalResolution(state: AetherState, req: Approval, approve: boo
     agents,
     idleList,
     rate,
+    memories,
+    memSeq,
     chatActionResults,
     approvals: state.approvals.filter((a) => a.id !== req.id),
     notifs: [

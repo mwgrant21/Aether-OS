@@ -8,7 +8,7 @@ describe('runCommand', () => {
     expect(result.kind).toBe('append');
     if (result.kind !== 'append') throw new Error('unreachable');
     const text = result.lines.map((l) => l.t).join('\n');
-    ['status', 'agents', 'spawn <name>', 'kill <name>', 'budget', 'projects', 'sweep', 'approvals', 'approve <n>', 'deny <n>', 'theme <name>', 'renderer <mode>', 'clear'].forEach(
+    ['status', 'agents', 'spawn <name>', 'kill <name>', 'budget', 'projects', 'sweep', 'remember <text>', 'approvals', 'approve <n>', 'deny <n>', 'theme <name>', 'renderer <mode>', 'clear'].forEach(
       (cmd) => expect(text).toContain(cmd),
     );
   });
@@ -48,6 +48,14 @@ describe('runCommand', () => {
     expect(result.patch).toBeUndefined();
   });
 
+  it('kill appends a memory referencing the terminated agent', () => {
+    const result = runCommand(initialState, 'kill code builder');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.patch?.memories).toHaveLength(initialState.memories.length + 1);
+    expect(result.patch?.memories?.at(-1)?.name).toBe('Code Builder decommissioned');
+    expect(result.patch?.memSeq).toBe(initialState.memSeq + 1);
+  });
+
   it('theme accepts only the six known names', () => {
     const ok = runCommand(initialState, 'theme violet');
     if (ok.kind !== 'append') throw new Error('unreachable');
@@ -81,6 +89,43 @@ describe('runCommand', () => {
     const result = runCommand(initialState, 'approve 99');
     if (result.kind !== 'append') throw new Error('unreachable');
     expect(result.lines[1].t).toContain('no request [99]');
+  });
+
+  it('approve on a HIGH-risk request appends a memory; a MED-risk deny does not', () => {
+    const approveHigh = runCommand(initialState, 'approve 1');
+    if (approveHigh.kind !== 'append') throw new Error('unreachable');
+    expect(approveHigh.patch?.memories?.at(-1)?.name).toBe('Approved: Deploy build #214 to production');
+    expect(approveHigh.patch?.memSeq).toBe(initialState.memSeq + 1);
+
+    const denyMed = runCommand(initialState, 'deny 2');
+    if (denyMed.kind !== 'append') throw new Error('unreachable');
+    expect(denyMed.patch?.memories).toEqual(initialState.memories);
+    expect(denyMed.patch?.memSeq).toBe(initialState.memSeq);
+  });
+
+  it('deny on a HIGH-risk request also appends a memory', () => {
+    const denyHigh = runCommand(initialState, 'deny 1');
+    if (denyHigh.kind !== 'append') throw new Error('unreachable');
+    expect(denyHigh.patch?.memories?.at(-1)?.name).toBe('Denied: Deploy build #214 to production');
+    expect(denyHigh.patch?.memSeq).toBe(initialState.memSeq + 1);
+  });
+
+  it('remember <text> logs a manual memory at full strength', () => {
+    const result = runCommand(initialState, 'remember check the CDN purge before next deploy');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    const added = result.patch?.memories?.at(-1);
+    expect(added?.content).toBe('check the CDN purge before next deploy');
+    expect(added?.source).toBe('operator');
+    expect(added?.pinned).toBe(false);
+    expect(added?.strength).toBe(100);
+    expect(result.patch?.memSeq).toBe(initialState.memSeq + 1);
+  });
+
+  it('remember with no text reports a usage error and no patch', () => {
+    const result = runCommand(initialState, 'remember');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines[1].t).toContain('usage: remember <text>');
+    expect(result.patch).toBeUndefined();
   });
 
   it('clear returns the clear variant', () => {

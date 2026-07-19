@@ -74,6 +74,21 @@ describe('reducer', () => {
     expect(next).toBe(initialState);
   });
 
+  it('RESOLVE_APPROVAL appends a memory for HIGH-risk approvals on both approve and deny, but not for MED/LOW', () => {
+    const approved = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: true });
+    expect(approved.memories).toHaveLength(initialState.memories.length + 1);
+    expect(approved.memories.at(-1)?.name).toBe('Approved: Deploy build #214 to production');
+    expect(approved.memSeq).toBe(initialState.memSeq + 1);
+
+    const denied = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: false });
+    expect(denied.memories).toHaveLength(initialState.memories.length + 1);
+    expect(denied.memories.at(-1)?.name).toBe('Denied: Deploy build #214 to production');
+
+    const medResolved = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 2, approve: true });
+    expect(medResolved.memories).toEqual(initialState.memories);
+    expect(medResolved.memSeq).toBe(initialState.memSeq);
+  });
+
   it('NEW_PROJECT adds an unused project from the pool, cycling hues', () => {
     const next = reducer(initialState, { type: 'NEW_PROJECT' });
     expect(next.projects).toHaveLength(initialState.projects.length + 1);
