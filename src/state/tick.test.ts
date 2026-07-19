@@ -64,4 +64,23 @@ describe('computeTick', () => {
     const result = computeTick(state);
     expect(result.approvals!.length).toBeLessThanOrEqual(3);
   });
+
+  it('decays unpinned memory strength by a fixed amount per tick, leaving pinned memories untouched', () => {
+    const state = {
+      ...initialState,
+      memories: [
+        { id: 1, name: 'A', content: 'a', source: 'x', ts: '00:00', pinned: true, strength: 50 },
+        { id: 2, name: 'B', content: 'b', source: 'x', ts: '00:00', pinned: false, strength: 50 },
+      ],
+    };
+    const result = computeTick(state);
+    expect(result.memories?.find((m) => m.id === 1)?.strength).toBe(50);
+    expect(result.memories?.find((m) => m.id === 2)?.strength).toBeCloseTo(49.6, 5);
+  });
+
+  it('floors decayed memory strength at 0', () => {
+    const state = { ...initialState, memories: [{ id: 1, name: 'A', content: 'a', source: 'x', ts: '00:00', pinned: false, strength: 0.1 }] };
+    const result = computeTick(state);
+    expect(result.memories?.[0].strength).toBe(0);
+  });
 });
