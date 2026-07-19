@@ -33,4 +33,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Grid now that it is built', () => {
     expect(getViewComponent('Grid')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Projects now that it is built', () => {
+    expect(getViewComponent('Projects')).not.toBeNull();
+  });
 });
