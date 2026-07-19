@@ -28,6 +28,12 @@ describe('persistence', () => {
     expect(loaded?.selected).toBe('Database Agent');
   });
 
+  it('persists the selected project across reloads', () => {
+    savePersisted({ ...initialState, selectedProject: 'Mobile Beta' });
+    const loaded = loadPersisted();
+    expect(loaded?.selectedProject).toBe('Mobile Beta');
+  });
+
   it('persists chatActionResults across reloads', () => {
     const pending = [{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }];
     savePersisted({ ...initialState, chatActionResults: pending });

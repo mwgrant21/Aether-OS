@@ -8,6 +8,7 @@ export const initialState: AetherState = {
   commandsRun: 163,
   activeTab: 'Terminal',
   selected: null,
+  selectedProject: null,
   cmdVal: '',
   termHist: [],
   cmdHist: [],

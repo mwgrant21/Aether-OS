@@ -19,7 +19,8 @@ export type Action =
   | { type: 'NEW_PROJECT' }
   | { type: 'TICK' }
   | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
-  | { type: 'REACTIVATE_AGENT'; name: string };
+  | { type: 'REACTIVATE_AGENT'; name: string }
+  | { type: 'SELECT_PROJECT'; name: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -119,6 +120,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SELECT_AGENT':
       return { ...state, selected: action.name };
+
+    case 'SELECT_PROJECT':
+      return { ...state, selectedProject: action.name };
 
     case 'SET_OP_MODE':
       return {

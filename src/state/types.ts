@@ -112,6 +112,7 @@ export interface AetherState {
   commandsRun: number;
   activeTab: string;
   selected: string | null;
+  selectedProject: string | null;
   cmdVal: string;
   termHist: TermLine[];
   cmdHist: string[];

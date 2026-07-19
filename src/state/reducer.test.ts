@@ -26,6 +26,11 @@ describe('reducer', () => {
     expect(next.selected).toBe('Code Builder');
   });
 
+  it('SELECT_PROJECT sets selectedProject', () => {
+    const next = reducer(initialState, { type: 'SELECT_PROJECT', name: 'Mobile Beta' });
+    expect(next.selectedProject).toBe('Mobile Beta');
+  });
+
   it('HIST_NAV walks command history backwards then forwards to empty', () => {
     const withHist = { ...initialState, cmdHist: ['status', 'agents'], histIdx: -1 };
     const up1 = reducer(withHist, { type: 'HIST_NAV', up: true });
