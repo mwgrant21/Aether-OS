@@ -75,12 +75,26 @@ export function buildAgentSnapshot(state: AetherState, agent: Agent): AgentSnaps
 // pitfall (it can nudge some models toward the very formatting being
 // forbidden). Naming the concrete elements to avoid achieves the same intent
 // without that risk.
+//
+// The per-verb args shapes were added after live-model QA (funded credits,
+// 2026-07-19): the original prompt said only `"args": {...}}`, and the real
+// model reasonably inferred `{"color":"violet"}` for a theme change instead
+// of the `actionExecutor.ts`-required `{"name":"violet"}` -- parseActionLine
+// still stripped the (wrong-shaped) JSON cleanly, but buildSafeCommandRaw
+// silently no-op'd since `args.name` was absent, so the theme never actually
+// changed despite a plausible-looking, in-character confirmation reply. This
+// was a genuine prompt/executor contract gap, not a one-off model quirk --
+// any model would have to guess at an unspecified schema. Naming every key
+// verbatim closes it at the source.
 const RULES =
   'Reply in at most 3 sentences. Stay in character. Reply in plain prose only -- no bold, italics, ' +
   'headers, bullet lists, or code fences. ' +
   'If your reply implies a concrete action you could take (spawn, kill, theme, renderer, throttle), ' +
-  'you may end your reply with one extra line containing a compact JSON object of the shape ' +
-  '{"verb": "spawn|kill|theme|renderer|throttle", "args": {...}}. This is optional and only ' +
+  'you may end your reply with one extra line containing a compact JSON object using EXACTLY one of ' +
+  'these shapes -- the args key names matter and must be used verbatim, not a synonym: ' +
+  '{"verb":"theme","args":{"name":"cyan|blue|teal|violet|amber|red"}}, ' +
+  '{"verb":"renderer","args":{"mode":"nebula|volumetric|warp"}}, or ' +
+  '{"verb":"spawn|kill|throttle","args":{"name":"<agent name>"}}. This is optional and only ' +
   'meaningful for actions in your own domain -- omit it for ordinary conversational replies.';
 
 // Composes Persona + live-state snapshot (JSON) + Rules into the exact
