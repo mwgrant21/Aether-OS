@@ -6,6 +6,7 @@ import { GridView } from './components/grid/GridView';
 import { ChatView } from './components/chat/ChatView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { MemoryView } from './components/memory/MemoryView';
+import { AnalyticsView } from './components/analytics/AnalyticsView';
 
 export interface ViewDef {
   id: string;
@@ -22,7 +23,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Grid', inTopBar: true, inSidebar: true, component: GridView },
   { id: 'Projects', inTopBar: true, inSidebar: true, component: ProjectsView },
   { id: 'Memory', inTopBar: true, inSidebar: true, component: MemoryView },
-  { id: 'Analytics', inTopBar: true, inSidebar: true, component: null },
+  { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
   { id: 'Files', inTopBar: true, inSidebar: false, component: null },
   { id: 'Uplinks', inTopBar: false, inSidebar: true, component: null },
   { id: 'Settings', inTopBar: false, inSidebar: true, component: null },

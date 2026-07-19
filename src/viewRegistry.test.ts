@@ -41,4 +41,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Memory now that it is built', () => {
     expect(getViewComponent('Memory')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Analytics now that it is built', () => {
+    expect(getViewComponent('Analytics')).not.toBeNull();
+  });
 });
