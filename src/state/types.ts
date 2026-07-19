@@ -82,6 +82,11 @@ export interface Provider {
 }
 
 export interface MemoryStub {
+  id: number;
+  name: string;
+  content: string;
+  source: string;
+  ts: string;
   pinned: boolean;
   strength: number;
 }
@@ -113,6 +118,7 @@ export interface AetherState {
   activeTab: string;
   selected: string | null;
   selectedProject: string | null;
+  selectedMemory: string | null;
   cmdVal: string;
   termHist: TermLine[];
   cmdHist: string[];
@@ -131,6 +137,7 @@ export interface AetherState {
   logs: LogEntry[];
   projects: ProjectStub[];
   memories: MemoryStub[];
+  memSeq: number;
   providers: Provider[];
   routeDefault: string;
   chatActionResults: ChatActionResult[];

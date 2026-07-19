@@ -34,6 +34,13 @@ describe('persistence', () => {
     expect(loaded?.selectedProject).toBe('Mobile Beta');
   });
 
+  it('persists memories and selectedMemory across reloads', () => {
+    savePersisted({ ...initialState, selectedMemory: '2' });
+    const loaded = loadPersisted();
+    expect(loaded?.memories).toEqual(initialState.memories);
+    expect(loaded?.selectedMemory).toBe('2');
+  });
+
   it('persists chatActionResults across reloads', () => {
     const pending = [{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }];
     savePersisted({ ...initialState, chatActionResults: pending });

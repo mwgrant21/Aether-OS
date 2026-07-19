@@ -20,7 +20,9 @@ export type Action =
   | { type: 'TICK' }
   | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
   | { type: 'REACTIVATE_AGENT'; name: string }
-  | { type: 'SELECT_PROJECT'; name: string };
+  | { type: 'SELECT_PROJECT'; name: string }
+  | { type: 'SELECT_MEMORY'; id: number }
+  | { type: 'TOGGLE_MEMORY_PIN'; id: number };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -123,6 +125,15 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SELECT_PROJECT':
       return { ...state, selectedProject: action.name };
+
+    case 'SELECT_MEMORY':
+      return { ...state, selectedMemory: String(action.id) };
+
+    case 'TOGGLE_MEMORY_PIN':
+      return {
+        ...state,
+        memories: state.memories.map((m) => (m.id === action.id ? { ...m, pinned: !m.pinned } : m)),
+      };
 
     case 'SET_OP_MODE':
       return {

@@ -31,6 +31,19 @@ describe('reducer', () => {
     expect(next.selectedProject).toBe('Mobile Beta');
   });
 
+  it('SELECT_MEMORY sets selectedMemory to the stringified id', () => {
+    const next = reducer(initialState, { type: 'SELECT_MEMORY', id: 2 });
+    expect(next.selectedMemory).toBe('2');
+  });
+
+  it('TOGGLE_MEMORY_PIN flips pinned on the matching memory only', () => {
+    const next = reducer(initialState, { type: 'TOGGLE_MEMORY_PIN', id: 2 });
+    expect(next.memories.find((m) => m.id === 2)?.pinned).toBe(true);
+    expect(next.memories.find((m) => m.id === 1)?.pinned).toBe(true); // unchanged (already pinned in seed data)
+    const restored = reducer(next, { type: 'TOGGLE_MEMORY_PIN', id: 2 });
+    expect(restored.memories.find((m) => m.id === 2)?.pinned).toBe(false);
+  });
+
   it('HIST_NAV walks command history backwards then forwards to empty', () => {
     const withHist = { ...initialState, cmdHist: ['status', 'agents'], histIdx: -1 };
     const up1 = reducer(withHist, { type: 'HIST_NAV', up: true });
