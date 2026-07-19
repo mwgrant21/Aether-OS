@@ -15,16 +15,12 @@ export interface AgentNode {
   angle: number;
   x: number;
   y: number;
-  xPct: number;
-  yPct: number;
 }
 
 export interface ProjectNode {
   project: ProjectStub;
   x: number;
   y: number;
-  xPct: number;
-  yPct: number;
 }
 
 export interface FeedLink {
@@ -57,8 +53,34 @@ export interface GridLayout {
   linkCount: number;
 }
 
-function toPct(x: number, y: number): { xPct: number; yPct: number } {
-  return { xPct: (x / VIEWBOX_W) * 100, yPct: (y / VIEWBOX_H) * 100 };
+export interface ViewportTransform {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+// Mirrors the browser's own preserveAspectRatio="xMidYMid meet" scaling, so
+// the HTML-overlay labels (hub/agent/project name+status text -- kept as
+// HTML rather than SVG <text> for CSS ellipsis truncation) land in the same
+// screen pixels as their SVG counterparts. A container whose aspect ratio
+// doesn't exactly match the 1000x630 viewBox (true for almost any real
+// window size, since this panel resizes with the rest of the app's chrome)
+// gets letterboxed by "meet" -- naive percentage-of-container positioning
+// ignores that letterbox and drifts in proportion to distance from the hub,
+// which is why left/right agents visibly detached from their circles while
+// the hub label (dead center, unaffected by centered scaling) did not.
+export function computeViewportTransform(containerWidth: number, containerHeight: number): ViewportTransform {
+  if (containerWidth <= 0 || containerHeight <= 0) return { scale: 0, offsetX: 0, offsetY: 0 };
+  const scale = Math.min(containerWidth / VIEWBOX_W, containerHeight / VIEWBOX_H);
+  return {
+    scale,
+    offsetX: (containerWidth - VIEWBOX_W * scale) / 2,
+    offsetY: (containerHeight - VIEWBOX_H * scale) / 2,
+  };
+}
+
+export function toScreenPoint(x: number, y: number, transform: ViewportTransform): { screenX: number; screenY: number } {
+  return { screenX: transform.offsetX + x * transform.scale, screenY: transform.offsetY + y * transform.scale };
 }
 
 // 12 o'clock start (-pi/2), evenly distributed clockwise. With zero agents
@@ -87,7 +109,7 @@ export function computeAgentNodes(agents: Agent[]): AgentNode[] {
     const angle = agentAngle(index, total);
     const x = HUB_X + AGENT_RING_RADIUS * Math.cos(angle);
     const y = HUB_Y + AGENT_RING_RADIUS * Math.sin(angle);
-    return { agent, angle, x, y, ...toPct(x, y) };
+    return { agent, angle, x, y };
   });
 }
 
@@ -147,7 +169,7 @@ export function computeProjectNodes(agentNodes: AgentNode[], projects: ProjectSt
     const rawX = HUB_X + PROJECT_RING_RADIUS * Math.cos(angle);
     const rawY = HUB_Y + PROJECT_RING_RADIUS * Math.sin(angle);
     const { x, y } = clampBoxCenter(rawX, rawY);
-    return { project, x, y, ...toPct(x, y) };
+    return { project, x, y };
   });
 }
 

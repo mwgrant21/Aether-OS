@@ -7,7 +7,9 @@ import {
   computeFeedStrokeWidth,
   computeGridLayout,
   computeProjectNodes,
+  computeViewportTransform,
   formatHubRate,
+  toScreenPoint,
 } from './gridMath';
 import type { Agent, ProjectStub } from '../../state/types';
 
@@ -50,14 +52,53 @@ describe('computeAgentNodes', () => {
     expect(nodes[3].y).toBeCloseTo(315);
   });
 
-  it('converts x/y into viewBox percentages for the HTML label overlay', () => {
-    const [node] = computeAgentNodes([mockAgent('A0')]);
-    expect(node.xPct).toBeCloseTo((500 / 1000) * 100);
-    expect(node.yPct).toBeCloseTo((150 / 630) * 100);
-  });
-
   it('returns an empty array with zero agents instead of dividing by zero', () => {
     expect(computeAgentNodes([])).toEqual([]);
+  });
+});
+
+describe('computeViewportTransform', () => {
+  it('has zero letterbox and unit scale when the container matches the viewBox aspect ratio exactly', () => {
+    const t = computeViewportTransform(1000, 630);
+    expect(t.scale).toBeCloseTo(1);
+    expect(t.offsetX).toBeCloseTo(0);
+    expect(t.offsetY).toBeCloseTo(0);
+  });
+
+  it('letterboxes horizontally when the container is proportionally wider than the viewBox', () => {
+    // Regression fixture: measured live in Chrome at a real Grid panel size
+    // (containerRatio 1.882 vs the viewBox's 1.587) where labels visibly
+    // detached from their SVG circles before this fix.
+    const t = computeViewportTransform(1264.666748046875, 672);
+    expect(t.scale).toBeCloseTo(672 / 630);
+    expect(t.offsetX).toBeCloseTo(99, 0);
+    expect(t.offsetY).toBeCloseTo(0);
+  });
+
+  it('letterboxes vertically when the container is proportionally taller than the viewBox', () => {
+    const t = computeViewportTransform(500, 630);
+    expect(t.scale).toBeCloseTo(500 / 1000);
+    expect(t.offsetX).toBeCloseTo(0);
+    expect(t.offsetY).toBeGreaterThan(0);
+  });
+
+  it('returns a zero transform for an unmeasured (zero-size) container instead of dividing by zero', () => {
+    expect(computeViewportTransform(0, 0)).toEqual({ scale: 0, offsetX: 0, offsetY: 0 });
+  });
+});
+
+describe('toScreenPoint', () => {
+  it('maps the hub (500,315) to the exact container center regardless of letterbox direction', () => {
+    const t = computeViewportTransform(1264.666748046875, 672);
+    const { screenX, screenY } = toScreenPoint(500, 315, t);
+    expect(screenX).toBeCloseTo(1264.666748046875 / 2, 1);
+    expect(screenY).toBeCloseTo(672 / 2, 1);
+  });
+
+  it('matches the measured real-browser screen position for a right-side agent node under horizontal letterbox', () => {
+    const t = computeViewportTransform(1264.666748046875, 672);
+    const { screenX } = toScreenPoint(665, 315, t);
+    expect(screenX).toBeCloseTo(808.33, 1);
   });
 });
 

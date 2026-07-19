@@ -1,7 +1,16 @@
-import { useMemo, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import type { Agent, ProjectStub } from '../../state/types';
-import { AGENT_NODE_RADIUS, computeGridLayout, formatHubRate, type AgentNode, type ProjectNode } from './gridMath';
+import {
+  AGENT_NODE_RADIUS,
+  computeGridLayout,
+  computeViewportTransform,
+  formatHubRate,
+  toScreenPoint,
+  type AgentNode,
+  type ProjectNode,
+  type ViewportTransform,
+} from './gridMath';
 
 interface OrchestrationGridProps {
   agents: Agent[];
@@ -14,6 +23,29 @@ interface OrchestrationGridProps {
 export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpenProjects }: OrchestrationGridProps) {
   const layout = useMemo(() => computeGridLayout(agents, projects), [agents, projects]);
 
+  // The SVG scales via preserveAspectRatio="xMidYMid meet", which letterboxes
+  // whenever this panel's aspect ratio doesn't exactly match the 1000x630
+  // viewBox (true for almost any real window size). The HTML label overlay
+  // below can't inherit that transform, so its screen position is derived
+  // from the panel's actual measured size instead of a naive percentage --
+  // see gridMath.ts#computeViewportTransform for why.
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const [sceneSize, setSceneSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = sceneRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSceneSize({ width, height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const viewport: ViewportTransform = useMemo(
+    () => computeViewportTransform(sceneSize.width, sceneSize.height),
+    [sceneSize.width, sceneSize.height],
+  );
+
   return (
     <div style={rootStyle}>
       <div style={headerStyle}>
@@ -23,7 +55,7 @@ export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpe
         </div>
       </div>
 
-      <div style={sceneStyle}>
+      <div style={sceneStyle} ref={sceneRef}>
         <svg viewBox="0 0 1000 630" preserveAspectRatio="xMidYMid meet" style={svgStyle}>
           <defs>
             <radialGradient id="gridHubCore" cx="44%" cy="38%" r="65%">
@@ -106,26 +138,30 @@ export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpe
         </svg>
 
         <div style={overlayStyle}>
-          <div style={hubLabelWrapStyle(layout.hub.x, layout.hub.y)}>
-            <div style={hubNameStyle}>AETHER CORE</div>
-            <div style={hubRateStyle}>{formatHubRate(rate)}</div>
-          </div>
-
-          {layout.agentNodes.map((node: AgentNode) => (
-            <div key={node.agent.name} style={agentLabelWrapStyle(node)}>
-              <div style={agentNameStyle}>{node.agent.name}</div>
-              <div style={agentRoleStyle}>{node.agent.task}</div>
-            </div>
-          ))}
-
-          {layout.projectNodes.map((node: ProjectNode) => (
-            <div key={node.project.name} style={projectLabelWrapStyle(node)}>
-              <div style={projectNameStyle}>{node.project.name}</div>
-              <div style={{ ...projectMetaStyle, color: node.project.hue }}>
-                {node.project.status} · {node.project.pct}%
+          {viewport.scale > 0 && (
+            <>
+              <div style={hubLabelWrapStyle(layout.hub.x, layout.hub.y, viewport)}>
+                <div style={hubNameStyle}>AETHER CORE</div>
+                <div style={hubRateStyle}>{formatHubRate(rate)}</div>
               </div>
-            </div>
-          ))}
+
+              {layout.agentNodes.map((node: AgentNode) => (
+                <div key={node.agent.name} style={agentLabelWrapStyle(node, viewport)}>
+                  <div style={agentNameStyle}>{node.agent.name}</div>
+                  <div style={agentRoleStyle}>{node.agent.task}</div>
+                </div>
+              ))}
+
+              {layout.projectNodes.map((node: ProjectNode) => (
+                <div key={node.project.name} style={projectLabelWrapStyle(node, viewport)}>
+                  <div style={projectNameStyle}>{node.project.name}</div>
+                  <div style={{ ...projectMetaStyle, color: node.project.hue }}>
+                    {node.project.status} · {node.project.pct}%
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -149,11 +185,12 @@ const sceneStyle: CSSProperties = { position: 'relative', flex: 1, minHeight: 0,
 const svgStyle: CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%' };
 const overlayStyle: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none' };
 
-function hubLabelWrapStyle(x: number, y: number): CSSProperties {
+function hubLabelWrapStyle(x: number, y: number, viewport: ViewportTransform): CSSProperties {
+  const { screenX, screenY } = toScreenPoint(x, y, viewport);
   return {
     position: 'absolute',
-    left: `${(x / 1000) * 100}%`,
-    top: `${(y / 630) * 100}%`,
+    left: `${screenX}px`,
+    top: `${screenY}px`,
     transform: 'translate(-50%, 34px)',
     textAlign: 'center',
   };
@@ -161,11 +198,12 @@ function hubLabelWrapStyle(x: number, y: number): CSSProperties {
 const hubNameStyle: CSSProperties = { font: `700 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textPrimary };
 const hubRateStyle: CSSProperties = { marginTop: 4, font: `400 10px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
 
-function agentLabelWrapStyle(node: AgentNode): CSSProperties {
+function agentLabelWrapStyle(node: AgentNode, viewport: ViewportTransform): CSSProperties {
+  const { screenX, screenY } = toScreenPoint(node.x, node.y, viewport);
   return {
     position: 'absolute',
-    left: `${node.xPct}%`,
-    top: `${node.yPct}%`,
+    left: `${screenX}px`,
+    top: `${screenY}px`,
     transform: 'translate(-50%, 38px)',
     width: 130,
     textAlign: 'center',
@@ -187,11 +225,12 @@ const agentRoleStyle: CSSProperties = {
   textOverflow: 'ellipsis',
 };
 
-function projectLabelWrapStyle(node: ProjectNode): CSSProperties {
+function projectLabelWrapStyle(node: ProjectNode, viewport: ViewportTransform): CSSProperties {
+  const { screenX, screenY } = toScreenPoint(node.x, node.y, viewport);
   return {
     position: 'absolute',
-    left: `${node.xPct}%`,
-    top: `${node.yPct}%`,
+    left: `${screenX}px`,
+    top: `${screenY}px`,
     transform: 'translate(-50%, -50%)',
     width: 140,
     textAlign: 'center',
