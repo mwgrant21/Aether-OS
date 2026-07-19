@@ -41,6 +41,12 @@ describe('persistence', () => {
     expect(loaded?.selectedMemory).toBe('2');
   });
 
+  it('persists memSeq across reloads', () => {
+    savePersisted({ ...initialState, memSeq: 42 });
+    const loaded = loadPersisted();
+    expect(loaded?.memSeq).toBe(42);
+  });
+
   it('persists chatActionResults across reloads', () => {
     const pending = [{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }];
     savePersisted({ ...initialState, chatActionResults: pending });
