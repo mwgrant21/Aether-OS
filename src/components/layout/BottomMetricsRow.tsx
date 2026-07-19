@@ -2,18 +2,13 @@ import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { fmt } from '../../utils/format';
+import { computeTopCommands } from '../analytics/analyticsMath';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const TOP_COMMANDS = [
-  { n: 1, name: 'build', count: '128×', w: 100 },
-  { n: 2, name: 'deploy', count: '84×', w: 66 },
-  { n: 3, name: 'analyze', count: '67×', w: 52 },
-  { n: 4, name: 'refactor', count: '52×', w: 41 },
-  { n: 5, name: 'doc', count: '41×', w: 32 },
-];
 
 export function BottomMetricsRow() {
   const { state } = useAetherStore();
+  const topCommands = computeTopCommands(state.cmdHist);
 
   const maxBar = Math.max(...state.weekRaw);
   const weekly = state.weekRaw.map((v, i) => ({ d: DAY_LABELS[i], h: Math.round(20 + (v / maxBar) * 52) }));
@@ -108,19 +103,28 @@ export function BottomMetricsRow() {
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={cardTitleStyle}>TOP COMMANDS</div>
-          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>THIS WEEK</div>
+          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>RECENT</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 13 }}>
-          {TOP_COMMANDS.map((c) => (
-            <div key={c.n} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, width: 12 }}>{c.n}</span>
+          {topCommands.map((c, i) => (
+            <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, width: 12 }}>{i + 1}</span>
               <span style={{ font: `600 12px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textBody, width: 58 }}>{c.name}</span>
               <span style={{ flex: 1, height: 5, borderRadius: 3, background: 'rgba(20,50,64,.7)', overflow: 'hidden' }}>
-                <span style={{ display: 'block', height: '100%', width: `${c.w}%`, background: 'linear-gradient(90deg,#0f7f97,#7ef0ff)', boxShadow: '0 0 8px rgba(95,240,255,.5)' }} />
+                <span
+                  style={{
+                    display: 'block',
+                    height: '100%',
+                    width: `${(c.count / (topCommands[0]?.count ?? 1)) * 100}%`,
+                    background: 'linear-gradient(90deg,#0f7f97,#7ef0ff)',
+                    boxShadow: '0 0 8px rgba(95,240,255,.5)',
+                  }}
+                />
               </span>
-              <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft, width: 34, textAlign: 'right' }}>{c.count}</span>
+              <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft, width: 34, textAlign: 'right' }}>{c.count}×</span>
             </div>
           ))}
+          {!topCommands.length && <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' }}>no commands run yet</div>}
         </div>
       </div>
 
