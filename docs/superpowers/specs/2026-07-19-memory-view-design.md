@@ -123,7 +123,8 @@ Unit tests for the pure functions in `memoryMath.ts` (see Testing below).
 - **HIGH-approval auto-trigger**: this has two independent call sites today and both need the
   same one-line addition —
   - `applyApprovalResolution` in `reducer.ts` (used by `RESOLVE_APPROVAL` and chat's
-    `autoResolve` path): when `ok && req.risk === 'HIGH'`, append a memory
+    `autoResolve` path): when `req.risk === 'HIGH'` (regardless of `ok` — both approve and
+    deny are notable outcomes for a HIGH-risk request), append a memory
     (`name: "{approve|deny}d: {req.action}"`, `source: req.agent`, `strength: 100`).
   - `commands.ts`'s own separate `approve`/`deny` case (typed `approve <n>`/`deny <n>` in the
     terminal — this does not call `applyApprovalResolution`, it has its own patch): identical
