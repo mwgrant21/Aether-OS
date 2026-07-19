@@ -1010,19 +1010,23 @@ Expected: all PASS, 0 type errors, build succeeds.
 
 This step's remaining checklist items require a real Anthropic API key in a local `.env` (`ANTHROPIC_API_KEY=sk-ant-...`), which the user adds themselves per this plan's Global Constraints — **the implementer/reviewer running this plan must never generate, guess, or ask the user to paste that key into chat.** If `.env` doesn't exist yet or `ANTHROPIC_API_KEY` is empty when this task is reached, **mark the remaining steps below as BLOCKED/DEFERRED** (do not silently skip them, and do not fake a "pass" by only exercising the offline-fallback path) — note explicitly in the handoff which checklist items were deferred and why, so a follow-up session can complete them once the key is present.
 
-- [ ] **Step 3: Manual QA checklist (requires the real key from Step 2)**
+- [x] **Step 3: Manual QA checklist (requires the real key from Step 2)** — completed 2026-07-19, funded credits.
 
 Run: `npm run dev` (after adding the real key to `.env`), open the browser.
 
-- [ ] Send a message in AETHER — confirm the reply is a real, in-character Claude response (dry, mission-control tone, addresses you as "Operator"), not `[offline]`-prefixed.
-- [ ] Send a message in an active agent's channel (e.g. Code Builder) — confirm the reply reflects that agent's distinct persona (terse/technical) and, where relevant, its actual live task/progress from the state snapshot.
-- [ ] Send a message in a different active agent's channel (e.g. UI Designer or Database Agent) — confirm the voice is genuinely different from Code Builder's, not a repeated generic tone.
-- [ ] Spawn a custom-named agent via Terminal (`spawn Whatever Name`), open its chat channel, and send a message — confirm it gets `FALLBACK_PERSONA`'s generic voice (not a crash, not an empty reply).
-- [ ] Open the browser Network tab and inspect one `/api/chat` request — confirm the request body's `system` field contains the live burn rate / agent task / etc. matching what's currently shown elsewhere in the dashboard, and that no API key appears anywhere in the request or response bodies visible to the client.
-- [ ] Temporarily rename/remove `.env` (or blank out the key) and restart `npm run dev` — confirm chat replies fall back to the `[offline]`-prefixed `localResponder` exactly as in Phase 1, with no crash in the terminal running the dev server. Restore the real key afterward.
-- [ ] Confirm no regressions: Terminal, Dashboard, Agents, Grid still route and function correctly; Chat Phase 1's full manual QA checklist (channel rail, archived channels, unread badges, 50-message cap, reload persistence) still holds with the real backend wired in.
+- [x] Send a message in AETHER — confirm the reply is a real, in-character Claude response (dry, mission-control tone, addresses you as "Operator"), not `[offline]`-prefixed. **PASS.**
+- [x] Send a message in an active agent's channel (e.g. Code Builder) — confirm the reply reflects that agent's distinct persona (terse/technical) and, where relevant, its actual live task/progress from the state snapshot. **PASS** — cited real file paths (`routes/auth.js`, `middleware/session.js`) and exact progress/ETA.
+- [x] Send a message in a different active agent's channel (e.g. UI Designer or Database Agent) — confirm the voice is genuinely different from Code Builder's, not a repeated generic tone. **PASS** — UI Designer's reply used design vocabulary ("breathe", "vertical rhythm"), longer/more expressive sentences, clearly distinct from Code Builder's clipped technical style.
+- [x] Spawn a custom-named agent via Terminal (`spawn Whatever Name`), open its chat channel, and send a message — confirm it gets `FALLBACK_PERSONA`'s generic voice (not a crash, not an empty reply). **PASS** — spawned "Nightwatch", got a sensible generic just-initializing reply.
+- [x] Open the browser Network tab and inspect one `/api/chat` request — confirm the request body's `system` field contains the live burn rate / agent task / etc. matching what's currently shown elsewhere in the dashboard, and that no API key appears anywhere in the request or response bodies visible to the client. **PASS** — verified via a temporary fetch interceptor: `system` field contained the live burn rate (matching the dashboard exactly) and real per-agent task data; regex-scanned the full request body for an `sk-ant-` pattern, none found.
+- [x] Temporarily rename/remove `.env` (or blank out the key) and restart `npm run dev` — confirm chat replies fall back to the `[offline]`-prefixed `localResponder` exactly as in Phase 1, with no crash in the terminal running the dev server. Restore the real key afterward. **PASS** — blanked the key (backed up first, restored after), got `[offline] Acknowledged: "Still there?"...`, dev server log had zero error/exception/500 lines.
+- [x] Confirm no regressions: Terminal, Dashboard, Agents, Grid still route and function correctly; Chat Phase 1's full manual QA checklist (channel rail, archived channels, unread badges, 50-message cap, reload persistence) still holds with the real backend wired in. **PASS** — spot-checked Terminal/Dashboard/Agents/Grid, all healthy; reload persistence confirmed (full AETHER history + both new agents survived a hard reload); archived channels (Web Scraper, Doc Helper) correctly show "TERMINATED".
 
-- [ ] **Step 4: Record the outcome**
+- [x] **Step 4: Record the outcome**
+
+Phase 2a is now fully verified end-to-end (2026-07-19). All Step 3 items passed. One genuine bug was found during this QA pass — not in Phase 2a's own code, but exposed by it once a real model was in the loop — and fixed separately (commit `45af729`, see Phase 2b's Task 6 below, since the bug was in the shared `RULES`/action-JSON schema that only Phase 2b's executor consumes). No commit was needed against Phase 2a's own files.
+
+<details><summary>Original (superseded) Step 4 instructions</summary>
 
 No commit is expected from Step 3 unless a real gap is found. If every item passed, note in the handoff that Phase 2a is fully verified end-to-end. If Step 2 found no key present, note explicitly which Step 3 items are deferred pending the user adding their key, and that this is expected per the Global Constraints (not a bug, not skipped silently). If a genuine bug is found, fix and commit it as its own small fix:
 
@@ -1030,6 +1034,8 @@ No commit is expected from Step 3 unless a real gap is found. If every item pass
 git add <touched files>
 git commit -m "fix: <describe the gap found during Chat Phase 2a end-to-end QA>"
 ```
+
+</details>
 
 ---
 

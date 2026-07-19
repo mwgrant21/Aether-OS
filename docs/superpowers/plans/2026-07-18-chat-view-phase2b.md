@@ -813,11 +813,11 @@ Expected: all PASS (~190+ total), 0 type errors, build succeeds.
 
 Per the user's current situation, there are no Anthropic billing credits, so `ANTHROPIC_API_KEY` is either absent or every real call returns a billing/auth error and `askClaude` resolves `null`. **Mark Step 3 below BLOCKED/DEFERRED** — do not silently skip it, and do not fake a pass by only exercising the offline path. Note explicitly which items are deferred so a follow-up session can complete them once a funded key is present.
 
-- [ ] **Step 3: Manual QA checklist — BLOCKED/DEFERRED (requires a real, funded `ANTHROPIC_API_KEY`)**
+- [x] **Step 3: Manual QA checklist — completed 2026-07-19, funded credits.**
 
-- [ ] Ask AETHER something that plausibly implies a theme/renderer change and confirm the *real* model actually emits the documented action-JSON convention reliably (not just when explicitly instructed in a fixture) — this is the one thing genuinely impossible to verify without live credits.
-- [ ] Confirm the real model's action-JSON line, when emitted, is well-formed enough for `parseActionLine` to strip it in practice (not just in hand-written fixtures).
-- [ ] Confirm no persona voice ever leaks the JSON line into visible prose (i.e., the model reliably puts it on its own last line as instructed).
+- [x] Ask AETHER something that plausibly implies a theme/renderer change and confirm the *real* model actually emits the documented action-JSON convention reliably (not just when explicitly instructed in a fixture) — this is the one thing genuinely impossible to verify without live credits. **Initial FAIL, then PASS after a fix.** Asked AETHER to switch to the violet theme; the real model replied in-character ("Applying violet theme now, Operator.") but emitted `{"verb":"theme","args":{"color":"violet"}}` — `"color"` instead of the `actionExecutor.ts`-required `"name"`. The system prompt only said `"args": {...}}`, never specifying per-verb key names, so the model's guess was reasonable but wrong; the theme silently never changed. Fixed by spelling out the exact args shape for all five verbs in `systemPrompt.ts`'s `RULES` (commit `45af729`). Re-tested live post-fix: `{"verb":"theme","args":{"name":"amber"}}` — correct schema, and the Reactor Core visibly changed color (confirmed via screenshot + `cfg.theme` state inspection). Also re-tested a risky verb (`spawn`): model emitted `{"verb":"spawn","args":{"name":"Nightwatch2"}}`, correctly queued as MED risk "requested via AETHER chat channel", approved through the real TopBar UI, confirmation posted back into the AETHER channel, agent genuinely appeared in the roster.
+- [x] Confirm the real model's action-JSON line, when emitted, is well-formed enough for `parseActionLine` to strip it in practice (not just in hand-written fixtures). **PASS** — verified via a temporary response-body interceptor across every test message; `parseActionLine` correctly stripped the JSON line in all cases (both the pre-fix wrong-schema case and the post-fix correct-schema case — parseActionLine only validates the envelope shape, not per-verb args keys, so it worked in both).
+- [x] Confirm no persona voice ever leaks the JSON line into visible prose (i.e., the model reliably puts it on its own last line as instructed). **PASS** — zero raw JSON ever visible in any chat bubble across the full session (AETHER, Code Builder, UI Designer, Nightwatch, and the theme/spawn action tests).
 
 - [ ] **Step 4: Non-gated manual QA — click-test the full pipeline via a temporary fixture injection (works today, no credits needed)**
 
@@ -839,9 +839,9 @@ Since the parser/executor/reducer pipeline needs no live model, this is testable
 
 This monkey-patch-and-revert approach was chosen over a permanent dev-only affordance (e.g. a `?debug=` query flag or a localStorage override baked into `claudeClient.ts`) specifically so that **no test-only injection code ships** — confirm via `git status` after Step 4.8 that `claudeClient.ts` carries no leftover diff.
 
-- [ ] **Step 5: Record the outcome**
+- [x] **Step 5: Record the outcome**
 
-No commit expected unless a genuine bug was found during Step 4 (fix and commit separately, `fix: <description>`). Note in the handoff: Step 4's non-gated pipeline QA is fully verified; Step 3's live-model QA is explicitly BLOCKED/DEFERRED pending a funded `ANTHROPIC_API_KEY`, consistent with Phase 2a's Task 7 precedent.
+Both Step 3 (live-model) and Step 4 (fixture-based pipeline click-test) are now fully verified (2026-07-19). Step 4 found no bugs. Step 3 found one genuine bug — the system prompt's `args` schema was underspecified, causing the real model to emit a plausible-but-wrong key for `theme` — fixed in commit `45af729` (see `systemPrompt.ts`) and re-verified live post-fix for both a safe verb (theme) and a risky verb (spawn), including a full approve-through-the-real-UI round trip. Phase 2b is now fully verified end-to-end against the real Anthropic API, closing the last deferred item from Chat's designer-spec'd feature set.
 
 ---
 
