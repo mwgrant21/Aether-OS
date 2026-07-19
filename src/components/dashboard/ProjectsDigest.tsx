@@ -1,20 +1,13 @@
 import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
-import type { ProjectStatus } from '../../state/types';
-
-const STATUS_COLOR: Record<ProjectStatus, string> = {
-  BUILDING: '#7ef0ff',
-  REVIEW: '#f5c66b',
-  QUEUED: '#5f8a97',
-  SHIPPED: '#3be0a0',
-};
+import { STATUS_COLOR, computeLiveProjectPct } from '../projects/projectsMath';
 
 export function ProjectsDigest() {
   const { state, dispatch } = useAetherStore();
   const projects = state.projects.slice(0, 6).map((p) => ({
     ...p,
-    pct: p.status === 'BUILDING' ? Math.min(99, Math.round(p.pct + (state.used - 24391) / 30000)) : p.pct,
+    pct: computeLiveProjectPct(p, state.used),
   }));
 
   return (
