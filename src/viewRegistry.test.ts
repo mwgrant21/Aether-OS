@@ -53,4 +53,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Uplinks now that it is built', () => {
     expect(getViewComponent('Uplinks')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Files now that it is built', () => {
+    expect(getViewComponent('Files')).not.toBeNull();
+  });
 });
