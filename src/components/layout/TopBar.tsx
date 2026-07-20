@@ -3,6 +3,7 @@ import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
 import { VIEWS } from '../../viewRegistry';
+import { resolveOperatorName } from '../../utils/format';
 
 const TOP_BAR_IDS = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
 const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
@@ -104,7 +105,7 @@ export function TopBar() {
       <div style={operatorChipStyle}>
         <div style={operatorAvatarStyle} />
         <div>
-          <div style={{ font: `600 13px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textPrimary }}>operator</div>
+          <div style={{ font: `600 13px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textPrimary }}>{resolveOperatorName(state.operatorName)}</div>
           <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>COMMAND DECK</div>
         </div>
       </div>
