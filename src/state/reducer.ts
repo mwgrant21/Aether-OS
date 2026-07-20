@@ -23,7 +23,9 @@ export type Action =
   | { type: 'SELECT_PROJECT'; name: string }
   | { type: 'SELECT_MEMORY'; id: number }
   | { type: 'TOGGLE_MEMORY_PIN'; id: number }
-  | { type: 'UPDATE_CFG'; patch: Partial<Cfg> };
+  | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
+  | { type: 'TOGGLE_PROVIDER_CONNECTION'; name: string }
+  | { type: 'SET_ROUTE_DEFAULT'; value: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -167,6 +169,15 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'UPDATE_CFG':
       return { ...state, cfg: { ...state.cfg, ...action.patch } };
+
+    case 'TOGGLE_PROVIDER_CONNECTION':
+      return {
+        ...state,
+        providers: state.providers.map((p) => (p.name === action.name ? { ...p, connected: !p.connected } : p)),
+      };
+
+    case 'SET_ROUTE_DEFAULT':
+      return { ...state, routeDefault: action.value };
 
     case 'ADD_APPROVAL': {
       const newApproval: Approval = { ...action.approval, id: state.apprSeq };

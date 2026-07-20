@@ -147,6 +147,24 @@ describe('reducer', () => {
     expect(next.cfg.alarm).toBe(initialState.cfg.alarm);
   });
 
+  it('TOGGLE_PROVIDER_CONNECTION flips the named provider\'s connected state only', () => {
+    const next = reducer(initialState, { type: 'TOGGLE_PROVIDER_CONNECTION', name: 'OpenAI/Codex' });
+    expect(next.providers.find((p) => p.name === 'OpenAI/Codex')?.connected).toBe(true);
+    expect(next.providers.find((p) => p.name === 'Aether Core')?.connected).toBe(true);
+    expect(next.providers.find((p) => p.name === 'Local Ollama')?.connected).toBe(false);
+  });
+
+  it('TOGGLE_PROVIDER_CONNECTION on an unrecognized name is a no-op', () => {
+    const next = reducer(initialState, { type: 'TOGGLE_PROVIDER_CONNECTION', name: 'Nobody' });
+    expect(next.providers).toEqual(initialState.providers);
+  });
+
+  it('SET_ROUTE_DEFAULT sets routeDefault, leaving providers unchanged', () => {
+    const next = reducer(initialState, { type: 'SET_ROUTE_DEFAULT', value: 'Local Ollama' });
+    expect(next.routeDefault).toBe('Local Ollama');
+    expect(next.providers).toEqual(initialState.providers);
+  });
+
 });
 
 function chatApproval(overrides: Partial<Approval>): Approval {
