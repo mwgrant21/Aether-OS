@@ -8,6 +8,7 @@ import { ProjectsView } from './components/projects/ProjectsView';
 import { MemoryView } from './components/memory/MemoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { SettingsView } from './components/settings/SettingsView';
+import { UplinksView } from './components/uplinks/UplinksView';
 
 export interface ViewDef {
   id: string;
@@ -26,7 +27,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Memory', inTopBar: true, inSidebar: true, component: MemoryView },
   { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
   { id: 'Files', inTopBar: true, inSidebar: false, component: null },
-  { id: 'Uplinks', inTopBar: false, inSidebar: true, component: null },
+  { id: 'Uplinks', inTopBar: false, inSidebar: true, component: UplinksView },
   { id: 'Settings', inTopBar: false, inSidebar: true, component: SettingsView },
 ];
 

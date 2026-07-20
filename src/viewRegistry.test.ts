@@ -49,4 +49,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Settings now that it is built', () => {
     expect(getViewComponent('Settings')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Uplinks now that it is built', () => {
+    expect(getViewComponent('Uplinks')).not.toBeNull();
+  });
 });
