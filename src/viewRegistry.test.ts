@@ -45,4 +45,8 @@ describe('viewRegistry', () => {
   it('getViewComponent resolves Analytics now that it is built', () => {
     expect(getViewComponent('Analytics')).not.toBeNull();
   });
+
+  it('getViewComponent resolves Settings now that it is built', () => {
+    expect(getViewComponent('Settings')).not.toBeNull();
+  });
 });

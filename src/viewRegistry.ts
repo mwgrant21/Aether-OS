@@ -7,6 +7,7 @@ import { ChatView } from './components/chat/ChatView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { MemoryView } from './components/memory/MemoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { SettingsView } from './components/settings/SettingsView';
 
 export interface ViewDef {
   id: string;
@@ -26,7 +27,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
   { id: 'Files', inTopBar: true, inSidebar: false, component: null },
   { id: 'Uplinks', inTopBar: false, inSidebar: true, component: null },
-  { id: 'Settings', inTopBar: false, inSidebar: true, component: null },
+  { id: 'Settings', inTopBar: false, inSidebar: true, component: SettingsView },
 ];
 
 export function getViewComponent(id: string): ComponentType | null {
