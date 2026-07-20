@@ -10,9 +10,9 @@ export function BottomMetricsRow() {
   const { state } = useAetherStore();
   const topCommands = computeTopCommands(state.cmdHist);
 
-  const maxBar = Math.max(...state.weekRaw);
-  const weekly = state.weekRaw.map((v, i) => ({ d: DAY_LABELS[i], h: Math.round(20 + (v / maxBar) * 52) }));
-  const weekTotal = fmt(327841 + (state.used - 24391));
+  const maxBar = Math.max(...state.realUsage.weeklyTokens, 1); // avoid /0 before the first real scan completes
+  const weekly = state.realUsage.weeklyTokens.map((v, i) => ({ d: DAY_LABELS[i], h: Math.round(20 + (v / maxBar) * 52) }));
+  const weekTotal = fmt(state.realUsage.weeklyTokens.reduce((sum, v) => sum + v, 0));
 
   const ctxTotal = 125000;
   const ctxPct = Math.round((state.ctxUsed / ctxTotal) * 100);
@@ -26,7 +26,7 @@ export function BottomMetricsRow() {
     { k: 'Uptime', v: '3h 42m' },
     { k: 'Commands run', v: fmt(state.commandsRun) },
     { k: 'Agents active', v: String(state.agents.length) },
-    { k: 'Tokens used', v: fmt(state.used) },
+    { k: 'Tokens used', v: fmt(state.realUsage.usedThisMonth) },
   ];
 
   return (
@@ -53,7 +53,17 @@ export function BottomMetricsRow() {
             <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>THIS WEEK</div>
             <div style={{ font: `700 24px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 6 }}>{weekTotal}</div>
             <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 4 }}>tokens</div>
-            <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.success, marginTop: 6 }}>▼ 12% vs last wk</div>
+            {state.realUsage.weekOverWeekPct !== null && (
+              <div
+                style={{
+                  font: `400 11px/1 ${fonts.ui}`,
+                  color: state.realUsage.weekOverWeekPct <= 0 ? colors.success : colors.warn,
+                  marginTop: 6,
+                }}
+              >
+                {state.realUsage.weekOverWeekPct <= 0 ? '▼' : '▲'} {Math.abs(state.realUsage.weekOverWeekPct)}% vs last wk
+              </div>
+            )}
           </div>
         </div>
       </div>

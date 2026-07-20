@@ -21,9 +21,14 @@ describe('computeDashPulseMode', () => {
 
 describe('computeDashKpis', () => {
   it('derives all four KPI tiles from state', () => {
-    const kpis = computeDashKpis({ ...initialState, used: 24391, rate: 92000, ctxUsed: 78432, cfg: { ...initialState.cfg, capM: 2.0 } });
+    const kpis = computeDashKpis({
+      ...initialState,
+      realUsage: { ...initialState.realUsage, usedThisMonth: 24391, burnRatePerMin: 92000 },
+      ctxUsed: 78432,
+      cfg: { ...initialState.cfg, capM: 2.0 },
+    });
     expect(kpis).toHaveLength(4);
-    expect(kpis[0]).toEqual({ k: 'SESSION TOKENS', v: '24.4K', s: '$0.44 spend' });
+    expect(kpis[0]).toEqual({ k: 'SESSION TOKENS', v: '24.4K', s: 'this month' });
     expect(kpis[1].k).toBe('BUDGET LEFT');
     expect(kpis[1].v).toBe('98.8%');
     expect(kpis[1].s).toBe('of 2.0M cap');
@@ -32,7 +37,11 @@ describe('computeDashKpis', () => {
   });
 
   it('clamps budget-left at 0% instead of going negative', () => {
-    const kpis = computeDashKpis({ ...initialState, used: 5_000_000, cfg: { ...initialState.cfg, capM: 2.0 } });
+    const kpis = computeDashKpis({
+      ...initialState,
+      realUsage: { ...initialState.realUsage, usedThisMonth: 5_000_000 },
+      cfg: { ...initialState.cfg, capM: 2.0 },
+    });
     expect(kpis[1].v).toBe('0.0%');
   });
 });

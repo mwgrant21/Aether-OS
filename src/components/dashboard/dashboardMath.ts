@@ -20,14 +20,15 @@ export interface DashKpi {
 
 export function computeDashKpis(state: AetherState): DashKpi[] {
   const capTokens = state.cfg.capM * 1e6;
-  const budgetLeftPct = Math.max(0, 100 - (state.used / capTokens) * 100);
-  const remaining = Math.max(0, capTokens - state.used);
+  const used = state.realUsage.usedThisMonth;
+  const budgetLeftPct = Math.max(0, 100 - (used / capTokens) * 100);
+  const remaining = Math.max(0, capTokens - used);
   const ctxPct = Math.round(state.ctxUsed / 1250);
 
   return [
-    { k: 'SESSION TOKENS', v: short(state.used), s: `$${(state.used * 0.000018).toFixed(2)} spend` },
+    { k: 'SESSION TOKENS', v: short(used), s: 'this month' },
     { k: 'BUDGET LEFT', v: `${budgetLeftPct.toFixed(1)}%`, s: `of ${state.cfg.capM.toFixed(1)}M cap` },
-    { k: 'DEPLETION ETA', v: fmtEta(remaining / (state.rate / 60)), s: 'at current draw' },
+    { k: 'DEPLETION ETA', v: fmtEta(remaining / (state.realUsage.burnRatePerMin / 60)), s: 'at current draw' },
     { k: 'CONTEXT', v: `${ctxPct}%`, s: `${short(state.ctxUsed)} / 125K` },
   ];
 }

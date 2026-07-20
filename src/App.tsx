@@ -4,6 +4,7 @@ import { ComingSoonPanel } from './components/layout/ComingSoonPanel';
 import { BottomMetricsRow } from './components/layout/BottomMetricsRow';
 import { getViewComponent } from './viewRegistry';
 import { usePulseDurationVar } from './components/reactor/useReactorCanvas';
+import { useRealUsageSync } from './components/dashboard/useRealUsageSync';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -17,6 +18,7 @@ export default function App() {
     <AetherStoreProvider>
       <AppShell>
         <PulseDurationSync />
+        <RealUsageSync />
         <ActiveView />
         <BottomMetricsRow />
       </AppShell>
@@ -26,5 +28,10 @@ export default function App() {
 
 function PulseDurationSync() {
   usePulseDurationVar();
+  return null;
+}
+
+function RealUsageSync() {
+  useRealUsageSync();
   return null;
 }
