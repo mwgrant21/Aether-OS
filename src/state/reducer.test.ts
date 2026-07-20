@@ -138,6 +138,15 @@ describe('reducer', () => {
     expect(next).toBe(initialState);
   });
 
+  it('UPDATE_CFG merges a partial patch into cfg, leaving other cfg fields untouched', () => {
+    const next = reducer(initialState, { type: 'UPDATE_CFG', patch: { glow: 100, sound: true } });
+    expect(next.cfg.glow).toBe(100);
+    expect(next.cfg.sound).toBe(true);
+    expect(next.cfg.theme).toBe(initialState.cfg.theme);
+    expect(next.cfg.opMode).toBe(initialState.cfg.opMode);
+    expect(next.cfg.alarm).toBe(initialState.cfg.alarm);
+  });
+
 });
 
 function chatApproval(overrides: Partial<Approval>): Approval {

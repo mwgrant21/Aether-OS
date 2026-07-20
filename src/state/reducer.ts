@@ -1,4 +1,4 @@
-import type { Approval, AetherState, MemoryStub, OpMode } from './types';
+import type { Approval, AetherState, Cfg, MemoryStub, OpMode } from './types';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
@@ -22,7 +22,8 @@ export type Action =
   | { type: 'REACTIVATE_AGENT'; name: string }
   | { type: 'SELECT_PROJECT'; name: string }
   | { type: 'SELECT_MEMORY'; id: number }
-  | { type: 'TOGGLE_MEMORY_PIN'; id: number };
+  | { type: 'TOGGLE_MEMORY_PIN'; id: number }
+  | { type: 'UPDATE_CFG'; patch: Partial<Cfg> };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -163,6 +164,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
         notifs: [{ t: nowShort(), m: `Operating mode set to ${action.mode}`, c: '#7fd8ef' }, ...state.notifs].slice(0, 12),
         unread: state.unread + 1,
       };
+
+    case 'UPDATE_CFG':
+      return { ...state, cfg: { ...state.cfg, ...action.patch } };
 
     case 'ADD_APPROVAL': {
       const newApproval: Approval = { ...action.approval, id: state.apprSeq };
