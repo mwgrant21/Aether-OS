@@ -35,3 +35,7 @@ export function nowLong(): string {
 export function nowShort(): string {
   return nowLong().slice(0, 5);
 }
+
+export function resolveOperatorName(name: string): string {
+  return name.trim() || 'Operator';
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmt, fmtEta, nowLong, nowShort, short, spark } from './format';
+import { fmt, fmtEta, nowLong, nowShort, resolveOperatorName, short, spark } from './format';
 
 describe('fmt', () => {
   it('adds thousands separators to a rounded integer', () => {
@@ -43,5 +43,19 @@ describe('nowLong/nowShort', () => {
   it('formats as HH:MM:SS and HH:MM', () => {
     expect(nowLong()).toMatch(/^\d{2}:\d{2}:\d{2}$/);
     expect(nowShort()).toMatch(/^\d{2}:\d{2}$/);
+  });
+});
+
+describe('resolveOperatorName', () => {
+  it('returns the trimmed name when non-blank', () => {
+    expect(resolveOperatorName('  Matt  ')).toBe('Matt');
+  });
+
+  it('falls back to "Operator" for an empty string', () => {
+    expect(resolveOperatorName('')).toBe('Operator');
+  });
+
+  it('falls back to "Operator" for a whitespace-only string', () => {
+    expect(resolveOperatorName('   ')).toBe('Operator');
   });
 });
