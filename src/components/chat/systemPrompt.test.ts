@@ -94,4 +94,21 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('{"verb":"renderer","args":{"mode":"nebula|volumetric|warp"}}');
     expect(prompt).toContain('{"verb":"spawn|kill|throttle","args":{"name":"<agent name>"}}');
   });
+
+  it('AETHER prompt addresses the user by a custom operatorName instead of the literal "Operator"', () => {
+    const named: AetherState = { ...initialState, operatorName: 'Matt' };
+    const prompt = buildSystemPrompt(aether, named);
+    expect(prompt).toContain('"Matt."');
+    expect(prompt).not.toContain('"Operator."');
+  });
+
+  it('per-agent channel prompt now also addresses the user by name (previously only AETHER did)', () => {
+    const prompt = buildSystemPrompt(codeBuilder, initialState);
+    expect(prompt).toContain('"Operator."');
+  });
+
+  it('archived-channel prompt also addresses the user by name', () => {
+    const prompt = buildSystemPrompt(webScraper, initialState);
+    expect(prompt).toContain('"Operator."');
+  });
 });

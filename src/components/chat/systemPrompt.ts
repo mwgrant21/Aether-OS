@@ -1,10 +1,19 @@
 import type { Agent, AetherState } from '../../state/types';
 import type { ChatChannel } from './chatChannels';
 import { resolvePersona } from './personas';
+import { resolveOperatorName } from '../../utils/format';
 
-const AETHER_VOICE =
-  'You are AETHER, the mission-control intelligence of this dashboard. ' +
-  'Dry, precise, and economical with words. You refer to the user as "Operator."';
+function referAsInstruction(operatorName: string): string {
+  return `You refer to the user as "${resolveOperatorName(operatorName)}."`;
+}
+
+function aetherVoice(operatorName: string): string {
+  return (
+    'You are AETHER, the mission-control intelligence of this dashboard. ' +
+    'Dry, precise, and economical with words. ' +
+    referAsInstruction(operatorName)
+  );
+}
 
 // AETHER "knows everything" -- a full fleet snapshot.
 export interface AetherSnapshot {
@@ -103,7 +112,7 @@ const RULES =
 export function buildSystemPrompt(channel: ChatChannel, state: AetherState): string {
   if (channel.kind === 'aether') {
     const snapshot = buildAetherSnapshot(state);
-    return `${AETHER_VOICE}\n\nCurrent state:\n${JSON.stringify(snapshot)}\n\n${RULES}`;
+    return `${aetherVoice(state.operatorName)}\n\nCurrent state:\n${JSON.stringify(snapshot)}\n\n${RULES}`;
   }
 
   const persona = resolvePersona(channel.name);
@@ -112,9 +121,9 @@ export function buildSystemPrompt(channel: ChatChannel, state: AetherState): str
     // Archived channels never reach askClaude in practice (useChatChannels
     // blocks sending when channel.archived is true), but build a safe
     // prompt anyway rather than assume every future caller guards this.
-    return `You are ${channel.name}. ${persona.voice}\n\nYou are currently offline/archived.\n\n${RULES}`;
+    return `You are ${channel.name}. ${persona.voice} ${referAsInstruction(state.operatorName)}\n\nYou are currently offline/archived.\n\n${RULES}`;
   }
 
   const snapshot = buildAgentSnapshot(state, agent);
-  return `You are ${channel.name}. ${persona.voice}\n\nYour current state:\n${JSON.stringify(snapshot)}\n\n${RULES}`;
+  return `You are ${channel.name}. ${persona.voice} ${referAsInstruction(state.operatorName)}\n\nYour current state:\n${JSON.stringify(snapshot)}\n\n${RULES}`;
 }
