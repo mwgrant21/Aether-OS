@@ -28,6 +28,7 @@ export function savePersisted(state: AetherState): void {
       projects: state.projects,
       providers: state.providers,
       routeDefault: state.routeDefault,
+      operatorName: state.operatorName,
       selected: state.selected,
       selectedProject: state.selectedProject,
       selectedMemory: state.selectedMemory,

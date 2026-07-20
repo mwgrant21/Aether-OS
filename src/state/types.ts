@@ -140,6 +140,7 @@ export interface AetherState {
   memSeq: number;
   providers: Provider[];
   routeDefault: string;
+  operatorName: string;
   chatActionResults: ChatActionResult[];
 }
 

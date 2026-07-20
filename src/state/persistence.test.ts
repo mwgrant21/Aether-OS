@@ -54,6 +54,12 @@ describe('persistence', () => {
     expect(loaded?.chatActionResults).toEqual(pending);
   });
 
+  it('persists operatorName across reloads', () => {
+    savePersisted({ ...initialState, operatorName: 'Matt' });
+    const loaded = loadPersisted();
+    expect(loaded?.operatorName).toBe('Matt');
+  });
+
   it('returns null when nothing is stored', () => {
     expect(loadPersisted()).toBeNull();
   });

@@ -165,6 +165,17 @@ describe('reducer', () => {
     expect(next.providers).toEqual(initialState.providers);
   });
 
+  it('SET_OPERATOR_NAME sets operatorName verbatim, leaving other state untouched', () => {
+    const next = reducer(initialState, { type: 'SET_OPERATOR_NAME', name: 'Matt' });
+    expect(next.operatorName).toBe('Matt');
+    expect(next.routeDefault).toBe(initialState.routeDefault);
+  });
+
+  it('SET_OPERATOR_NAME accepts an empty string without trimming at the reducer layer', () => {
+    const next = reducer(initialState, { type: 'SET_OPERATOR_NAME', name: '' });
+    expect(next.operatorName).toBe('');
+  });
+
 });
 
 function chatApproval(overrides: Partial<Approval>): Approval {

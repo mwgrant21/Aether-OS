@@ -25,7 +25,8 @@ export type Action =
   | { type: 'TOGGLE_MEMORY_PIN'; id: number }
   | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
   | { type: 'TOGGLE_PROVIDER_CONNECTION'; name: string }
-  | { type: 'SET_ROUTE_DEFAULT'; value: string };
+  | { type: 'SET_ROUTE_DEFAULT'; value: string }
+  | { type: 'SET_OPERATOR_NAME'; name: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -178,6 +179,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_ROUTE_DEFAULT':
       return { ...state, routeDefault: action.value };
+
+    case 'SET_OPERATOR_NAME':
+      return { ...state, operatorName: action.name };
 
     case 'ADD_APPROVAL': {
       const newApproval: Approval = { ...action.approval, id: state.apprSeq };

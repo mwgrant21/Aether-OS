@@ -177,5 +177,6 @@ export const initialState: AetherState = {
     { name: 'Local Ollama', connected: false },
   ],
   routeDefault: 'Auto',
+  operatorName: 'Operator',
   chatActionResults: [],
 };
