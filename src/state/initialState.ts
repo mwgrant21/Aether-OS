@@ -176,4 +176,5 @@ export const initialState: AetherState = {
   routeDefault: 'Auto',
   operatorName: 'Operator',
   chatActionResults: [],
+  realUsage: { weeklyTokens: [0, 0, 0, 0, 0, 0, 0], usedThisMonth: 0, burnRatePerMin: 0, weekOverWeekPct: null, lastScanAt: null },
 };

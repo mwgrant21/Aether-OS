@@ -1,6 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
+import os from 'node:os';
 import { spawnPty } from './ptyManager';
+import { scanAllProjects } from './historyScanner';
+import { computeWeeklyTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct } from '../src/components/dashboard/realUsageMath';
+
+let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -10,6 +15,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/preload.cjs'),
     },
   });
+  mainWindow = win;
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
@@ -18,12 +24,31 @@ function createWindow(): void {
   }
 }
 
+const USAGE_SCAN_INTERVAL_MS = 60000;
+
+async function scanAndPushUsage(): Promise<void> {
+  if (!mainWindow) return;
+  const projectsRoot = join(os.homedir(), '.claude', 'projects');
+  const events = await scanAllProjects(projectsRoot);
+  const now = new Date();
+  mainWindow.webContents.send('usage:snapshot', {
+    weeklyTokens: computeWeeklyTokens(events, now),
+    usedThisMonth: computeUsedThisMonth(events, now),
+    burnRatePerMin: computeBurnRatePerMin(events, now),
+    weekOverWeekPct: computeWeekOverWeekPct(events, now),
+    lastScanAt: now.toISOString(),
+  });
+}
+
 app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  scanAndPushUsage();
+  setInterval(scanAndPushUsage, USAGE_SCAN_INTERVAL_MS);
 });
 
 app.on('window-all-closed', () => {
@@ -33,10 +58,6 @@ app.on('window-all-closed', () => {
 let activePty: ReturnType<typeof spawnPty> | null = null;
 
 ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
-  // Kills any prior pty so a renderer reload doesn't orphan its shell/claude
-  // session. In normal use this only ever fires once per app launch --
-  // PtyTerminal.tsx's module-level singleton means pty:start is only called
-  // the first time the Terminal tab is ever visited, not on every remount.
   if (activePty) {
     activePty.kill();
     activePty = null;

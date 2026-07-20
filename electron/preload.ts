@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { RealUsageSnapshot } from '../src/state/types';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -8,11 +9,14 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     onData: (callback: (data: string) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
       ipcRenderer.on('pty:data', listener);
-      // Returned so a caller CAN unsubscribe if it ever needs to -- Task 2's
-      // PtyTerminal deliberately does not call this (the singleton's pty
-      // connection is meant to live for the app's whole lifetime), but the
-      // capability should exist rather than be silently impossible.
       return () => ipcRenderer.removeListener('pty:data', listener);
+    },
+  },
+  usage: {
+    onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: RealUsageSnapshot) => callback(snapshot);
+      ipcRenderer.on('usage:snapshot', listener);
+      return () => ipcRenderer.removeListener('usage:snapshot', listener);
     },
   },
 });

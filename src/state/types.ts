@@ -66,6 +66,14 @@ export interface TermLine {
   c: string;
 }
 
+export interface RealUsageSnapshot {
+  weeklyTokens: number[];
+  usedThisMonth: number;
+  burnRatePerMin: number;
+  weekOverWeekPct: number | null;
+  lastScanAt: string | null;
+}
+
 export type ProjectStatus = 'BUILDING' | 'REVIEW' | 'QUEUED' | 'SHIPPED';
 
 export interface ProjectStub {
@@ -139,6 +147,7 @@ export interface AetherState {
   routeDefault: string;
   operatorName: string;
   chatActionResults: ChatActionResult[];
+  realUsage: RealUsageSnapshot;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

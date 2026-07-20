@@ -1,4 +1,4 @@
-import type { Approval, AetherState, Cfg, MemoryStub, OpMode } from './types';
+import type { Approval, AetherState, Cfg, MemoryStub, OpMode, RealUsageSnapshot } from './types';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
@@ -24,7 +24,8 @@ export type Action =
   | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
   | { type: 'TOGGLE_PROVIDER_CONNECTION'; name: string }
   | { type: 'SET_ROUTE_DEFAULT'; value: string }
-  | { type: 'SET_OPERATOR_NAME'; name: string };
+  | { type: 'SET_OPERATOR_NAME'; name: string }
+  | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -165,6 +166,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_OPERATOR_NAME':
       return { ...state, operatorName: action.name };
+
+    case 'SET_REAL_USAGE':
+      return { ...state, realUsage: action.snapshot };
 
     case 'ADD_APPROVAL': {
       const newApproval: Approval = { ...action.approval, id: state.apprSeq };
