@@ -8,7 +8,7 @@ describe('runCommand', () => {
     expect(result.kind).toBe('append');
     if (result.kind !== 'append') throw new Error('unreachable');
     const text = result.lines.map((l) => l.t).join('\n');
-    ['status', 'agents', 'spawn <name>', 'kill <name>', 'budget', 'projects', 'sweep', 'remember <text>', 'approvals', 'approve <n>', 'deny <n>', 'theme <name>', 'renderer <mode>', 'clear'].forEach(
+    ['status', 'agents', 'spawn <name>', 'kill <name>', 'budget', 'projects', 'sweep', 'remember <text>', 'approvals', 'approve <n>', 'deny <n>', 'theme <name>', 'renderer <mode>'].forEach(
       (cmd) => expect(text).toContain(cmd),
     );
   });
@@ -126,10 +126,6 @@ describe('runCommand', () => {
     if (result.kind !== 'append') throw new Error('unreachable');
     expect(result.lines[1].t).toContain('usage: remember <text>');
     expect(result.patch).toBeUndefined();
-  });
-
-  it('clear returns the clear variant', () => {
-    expect(runCommand(initialState, 'clear')).toEqual({ kind: 'clear' });
   });
 
   it('exports THEME_NAMES, RENDERER_WORDS, and nextAutoName for reuse by the chat action executor', () => {

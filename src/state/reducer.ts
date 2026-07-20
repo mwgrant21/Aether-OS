@@ -6,8 +6,6 @@ import { buildChatActionResultText } from './chatActionResult';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
-  | { type: 'SET_CMD_VAL'; value: string }
-  | { type: 'HIST_NAV'; up: boolean }
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
   | { type: 'RESOLVE_APPROVAL'; id: number; approve: boolean }
@@ -124,21 +122,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.tab };
 
-    case 'SET_CMD_VAL':
-      return { ...state, cmdVal: action.value };
-
-    case 'HIST_NAV': {
-      const h = state.cmdHist;
-      if (!h.length) return state;
-      let i: number;
-      if (action.up) i = state.histIdx < 0 ? h.length - 1 : Math.max(0, state.histIdx - 1);
-      else {
-        i = state.histIdx < 0 ? -1 : state.histIdx + 1;
-        if (i >= h.length) i = -1;
-      }
-      return { ...state, histIdx: i, cmdVal: i < 0 ? '' : h[i] };
-    }
-
     case 'TOGGLE_APPROVALS':
       return { ...state, apprOpen: !state.apprOpen };
 
@@ -212,16 +195,10 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'RUN_COMMAND': {
       const result = runCommand(state, action.raw);
-      if (result.kind === 'clear') {
-        return { ...state, termHist: [], cmdVal: '' };
-      }
       const base = result.patch ? { ...state, ...result.patch } : state;
       return {
         ...base,
-        termHist: [...base.termHist, ...result.lines].slice(-60),
-        cmdVal: '',
         cmdHist: [...base.cmdHist, action.raw].slice(-30),
-        histIdx: -1,
         commandsRun: base.commandsRun + 1,
       };
     }

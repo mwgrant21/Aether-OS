@@ -119,10 +119,7 @@ export interface AetherState {
   selected: string | null;
   selectedProject: string | null;
   selectedMemory: string | null;
-  cmdVal: string;
-  termHist: TermLine[];
   cmdHist: string[];
-  histIdx: number;
   notifs: Notif[];
   unread: number;
   notifOpen: boolean;
@@ -144,6 +141,4 @@ export interface AetherState {
   chatActionResults: ChatActionResult[];
 }
 
-export type CommandResult =
-  | { kind: 'clear' }
-  | { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };
+export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

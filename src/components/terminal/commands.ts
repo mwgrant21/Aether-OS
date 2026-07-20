@@ -66,7 +66,6 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         line('  deny <n>            reject request n'),
         line('  theme <name>        cyan|blue|teal|violet|amber|red'),
         line('  renderer <mode>     nebula|volumetric|warp core renderer'),
-        line('  clear               clear the terminal'),
       );
       return { kind: 'append', lines: out };
     }
@@ -238,9 +237,6 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         },
       };
     }
-
-    case 'clear':
-      return { kind: 'clear' };
 
     default:
       out.push(line(`✗ unknown command: ${cmd} — type 'help'`, BAD));

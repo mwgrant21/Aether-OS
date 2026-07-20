@@ -44,20 +44,6 @@ describe('reducer', () => {
     expect(restored.memories.find((m) => m.id === 2)?.pinned).toBe(false);
   });
 
-  it('HIST_NAV walks command history backwards then forwards to empty', () => {
-    const withHist = { ...initialState, cmdHist: ['status', 'agents'], histIdx: -1 };
-    const up1 = reducer(withHist, { type: 'HIST_NAV', up: true });
-    expect(up1.cmdVal).toBe('agents');
-    expect(up1.histIdx).toBe(1);
-    const up2 = reducer(up1, { type: 'HIST_NAV', up: true });
-    expect(up2.cmdVal).toBe('status');
-    const down1 = reducer(up2, { type: 'HIST_NAV', up: false });
-    expect(down1.cmdVal).toBe('agents');
-    const down2 = reducer(down1, { type: 'HIST_NAV', up: false });
-    expect(down2.cmdVal).toBe('');
-    expect(down2.histIdx).toBe(-1);
-  });
-
   it('RESOLVE_APPROVAL removes the request and bumps rate only for HIGH risk approvals', () => {
     const next = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: true });
     expect(next.approvals.map((a) => a.id)).toEqual([2]);
