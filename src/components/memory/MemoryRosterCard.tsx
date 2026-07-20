@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
@@ -7,6 +8,14 @@ import { STRENGTH_TIER_COLOR, groupMemoriesForRoster } from './memoryMath';
 export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) {
   const { state, dispatch } = useAetherStore();
   const { pinned, unpinned } = groupMemoriesForRoster(state.memories);
+  const [rememberText, setRememberText] = useState('');
+
+  function submitRemember() {
+    const text = rememberText.trim();
+    if (!text) return;
+    dispatch({ type: 'RUN_COMMAND', raw: `remember ${text}` });
+    setRememberText('');
+  }
 
   const row = (m: MemoryStub) => {
     const on = m.id === selectedId;
@@ -23,6 +32,22 @@ export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) 
     <div style={cardStyle}>
       <div style={{ flex: 'none' }}>
         <div style={titleStyle}>MEMORY</div>
+      </div>
+
+      <div style={{ flex: 'none', display: 'flex', gap: 6, marginTop: 10 }}>
+        <input
+          value={rememberText}
+          onChange={(e) => setRememberText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submitRemember();
+          }}
+          placeholder="remember something..."
+          spellCheck={false}
+          style={rememberInputStyle}
+        />
+        <span onClick={submitRemember} style={rememberButtonStyle}>
+          +
+        </span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -90,3 +115,24 @@ const sourceBadgeStyle: CSSProperties = {
   textAlign: 'center',
 };
 const emptyStyle: CSSProperties = { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
+const rememberInputStyle: CSSProperties = {
+  flex: 1,
+  font: `400 12px/1 ${fonts.mono}`,
+  color: colors.textBody,
+  background: 'rgba(6,20,28,.7)',
+  border: '1px solid rgba(80,190,220,.25)',
+  borderRadius: 7,
+  padding: '7px 9px',
+  outline: 'none',
+};
+const rememberButtonStyle: CSSProperties = {
+  flex: 'none',
+  width: 30,
+  cursor: 'pointer',
+  display: 'grid',
+  placeItems: 'center',
+  borderRadius: 7,
+  border: '1px solid rgba(80,190,220,.25)',
+  color: colors.accentCyanSoft,
+  font: `700 14px/1 ${fonts.ui}`,
+};
