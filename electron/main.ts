@@ -1,5 +1,6 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
+import { spawnPty } from './ptyManager';
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -27,4 +28,29 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+let activePty: ReturnType<typeof spawnPty> | null = null;
+
+ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
+  // Kills any prior pty so a renderer reload doesn't orphan its shell/claude
+  // session. In normal use this only ever fires once per app launch --
+  // PtyTerminal.tsx's module-level singleton means pty:start is only called
+  // the first time the Terminal tab is ever visited, not on every remount.
+  if (activePty) {
+    activePty.kill();
+    activePty = null;
+  }
+  activePty = spawnPty(cols, rows);
+  activePty.onData((data) => {
+    event.sender.send('pty:data', data);
+  });
+});
+
+ipcMain.on('pty:write', (_event, input: string) => {
+  activePty?.write(input);
+});
+
+ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
+  activePty?.resize(cols, rows);
 });
