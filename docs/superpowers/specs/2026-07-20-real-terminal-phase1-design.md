@@ -145,31 +145,75 @@ contextBridge.exposeInMainWorld('aetherElectron', {
 
 ### `src/components/terminal/PtyTerminal.tsx` (new)
 
-A React component mounting `@xterm/xterm` (the actively-maintained
-successor package — no compatibility reason to match TokenMonitor's older
-`xterm`/`xterm-addon-fit`, since aether-os has no native-module ABI
-constraint on this choice, unlike Electron/`node-pty` version pinning).
-Adapted to React's lifecycle (TokenMonitor's `terminal.js` is plain
-DOM/script code with no component lifecycle to manage):
+**Amended after initial approval** to solve a real usability gap found
+while planning: aether-os's `viewRegistry.ts`/`App.tsx` fully unmounts a
+view's component tree when the active tab changes (unlike TokenMonitor,
+whose terminal is never conditionally unmounted during a session). A naive
+"create fresh on mount, dispose on unmount" `PtyTerminal` would mean
+`pty:start`'s existing "kill any prior pty first" guard fires every time the
+user navigates away from Terminal and back — killing the real `claude`
+session and starting a new one on every tab revisit. Confirmed with the user
+this must be solved in this phase, not deferred, since it undermines the
+whole point of a real daily-use terminal.
 
-- `useEffect` on mount: create the `Terminal` + `FitAddon` instances, call
-  `term.open(containerRef.current)`, call `fit.fit()`, call
-  `window.aetherElectron.pty.start({ cols: term.cols, rows: term.rows })`,
-  wire `pty.onData` → `term.write`, wire `term.onData` → `pty.write`, wire
-  `term.onResize` → `pty.resize`, attach a `ResizeObserver` on the container
-  calling `fit.fit()` on size changes.
-- Cleanup on unmount: dispose the `Terminal` instance and disconnect the
-  `ResizeObserver`. The pty itself lives in the main process and is not
-  explicitly killed on unmount — `pty:start`'s existing "kill any prior pty
-  first" guard (mirrored from TokenMonitor) handles a remount cleanly.
+The fix: the expensive, stateful part (the `@xterm/xterm` `Terminal`
+instance, its `FitAddon`, and the pty connection) lives in **module-level
+singletons**, not React component state — deliberately outside React's
+normal lifecycle, so it survives `PtyTerminal` being unmounted and remounted
+as the user switches tabs and back. A detached `HTMLDivElement` hosts the
+actual xterm canvas; each mount physically re-parents that *same* element
+(`anchorEl.appendChild(hostEl)`) into wherever `PtyTerminal` currently
+renders, rather than recreating the terminal. Detaching it on unmount
+(`hostEl.remove()`) does not destroy it — a detached DOM node stays fully
+alive in memory as long as something still references it, which the
+module-level singleton does.
+
+```ts
+// Module-level (not component state) so the real claude session survives
+// PtyTerminal being unmounted/remounted on every Terminal <-> other-tab
+// switch -- viewRegistry.ts fully unmounts view components, unlike
+// TokenMonitor's terminal, which is never conditionally unmounted.
+let sharedHostEl: HTMLDivElement | null = null;
+let sharedTerm: Terminal | null = null;
+let sharedFit: FitAddon | null = null;
+
+function getOrCreateHost() {
+  if (!sharedHostEl) {
+    sharedHostEl = document.createElement('div');
+    sharedTerm = new Terminal({ /* theme, font */ });
+    sharedFit = new FitAddon();
+    sharedTerm.loadAddon(sharedFit);
+    sharedTerm.open(sharedHostEl);
+
+    const pty = window.aetherElectron!.pty;
+    pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once
+    pty.onData((data) => sharedTerm!.write(data));
+    sharedTerm.onData((input) => pty.write(input));
+    sharedTerm.onResize(({ cols, rows }) => pty.resize(cols, rows));
+  }
+  return { hostEl: sharedHostEl, fit: sharedFit! };
+}
+```
+
+- `useEffect` on mount: guard on `window.aetherElectron?.pty` (absent under
+  plain `npm run dev` — renders a centered "Real terminal requires the
+  Electron app — run `npm run electron:dev`" message instead, matching this
+  project's empty-state-message convention rather than crashing). If
+  present: call `getOrCreateHost()`, `anchorRef.current.appendChild(hostEl)`,
+  `fit.fit()`, attach a `ResizeObserver` on the anchor calling `fit.fit()` on
+  size changes.
+- Cleanup on unmount: disconnect the `ResizeObserver` and `hostEl.remove()`
+  (detaches, does not destroy — the module-level singleton keeps it alive).
+  The `Terminal` instance itself is never disposed and `pty:start` is never
+  called again after the first mount, so the same real session persists for
+  the app's entire lifetime, not just while the Terminal tab is visible.
 - Since aether-os is already a real Vite/ES-module app (confirmed in Phase
   0's research), this is a plain `import { Terminal } from '@xterm/xterm'` —
   none of TokenMonitor's UMD-script-tag workaround is needed.
-- Guards on `window.aetherElectron?.pty` before doing any of the above: if
-  absent (i.e. running under plain `npm run dev` in a browser tab, not
-  Electron), renders a centered "Real terminal requires the Electron app —
-  run `npm run electron:dev`" message instead, matching this project's
-  existing empty-state-message convention rather than crashing.
+- React StrictMode's dev-mode double-invoke (mount → cleanup → remount) is
+  handled correctly for free: `getOrCreateHost()`'s `if (!sharedHostEl)`
+  guard makes it idempotent — a double-invoke just re-attaches the same
+  already-created host, it never spawns a second session.
 
 ### `src/components/terminal/TerminalView.tsx` (modified)
 
@@ -273,9 +317,14 @@ session.
 - **pty spawn failure** (e.g. `claude` not on `PATH`): no special handling in
   this phase — whatever the shell itself prints (a "command not found"-style
   error) renders naturally in xterm, since that's just the shell's own stdout.
-- **Component remount** (e.g. hot-reload during dev): `pty:start`'s existing
-  "kill any prior pty first" guard prevents an orphaned shell/claude session
-  from a previous mount.
+- **Component remount** (tab switch away and back, or dev hot-reload):
+  handled by the module-level singleton (see Architecture) — `pty:start` is
+  only ever called once per app lifetime, so a remount re-attaches the
+  existing session instead of triggering `main.ts`'s "kill any prior pty
+  first" guard at all. That guard now only matters for a genuine full app
+  restart, where the singleton itself is gone and a fresh `pty:start`
+  legitimately needs to replace whatever the main process still thinks is
+  active from before.
 - **Window/container resize**: handled via `ResizeObserver` + `fit.fit()` +
   `term.onResize` → `pty:resize`, matching TokenMonitor's proven pattern.
 
@@ -303,13 +352,18 @@ files needed beyond touch-ups):
    one-shot echo).
 3. Resize the Electron window and confirm the terminal's visible grid
    resizes correctly (no clipped or stretched text).
-4. Confirm the Memory view's new `remember` input creates a real memory
+4. **Navigate away from Terminal to another tab (e.g. Agents) and back.**
+   Confirm the same real session is still there — the same conversation
+   scrollback, not a fresh `claude` banner — proving the module-level
+   singleton correctly survived the unmount/remount instead of `pty:start`
+   killing and respawning it.
+5. Confirm the Memory view's new `remember` input creates a real memory
    entry identical in shape to what typing `remember <text>` used to
    produce (same `source: 'operator'` tag, same 40-char truncation).
-5. Confirm every other simulated surface still works unchanged: Agents'
+6. Confirm every other simulated surface still works unchanged: Agents'
    spawn/kill buttons, Dashboard's spawn/sweep, Settings' theme/renderer
    toggles, and Terminal's own side-rail spawn button.
-6. Confirm `npm run dev` (plain browser, no Electron) still loads without
+7. Confirm `npm run dev` (plain browser, no Electron) still loads without
    crashing. `window.aetherElectron` is `undefined` there, so `PtyTerminal`
    guards on `window.aetherElectron?.pty` before mounting xterm at all; if
    absent, it renders a simple centered message ("Real terminal requires the
