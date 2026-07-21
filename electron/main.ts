@@ -4,6 +4,7 @@ import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
 import { computeWeeklyTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct } from '../src/components/dashboard/realUsageMath';
+import { createLiveAgentTracker } from './liveAgentTracker';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -25,6 +26,7 @@ function createWindow(): void {
 }
 
 const USAGE_SCAN_INTERVAL_MS = 60000;
+const AGENT_TICK_INTERVAL_MS = 1000;
 
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
@@ -40,6 +42,14 @@ async function scanAndPushUsage(): Promise<void> {
   });
 }
 
+const liveAgentTracker = createLiveAgentTracker(join(os.homedir(), '.claude', 'projects'));
+
+async function tickAndPushAgents(): Promise<void> {
+  if (!mainWindow) return;
+  const dispatches = await liveAgentTracker.tick();
+  mainWindow.webContents.send('agents:snapshot', dispatches);
+}
+
 app.whenReady().then(() => {
   createWindow();
 
@@ -49,6 +59,9 @@ app.whenReady().then(() => {
 
   scanAndPushUsage();
   setInterval(scanAndPushUsage, USAGE_SCAN_INTERVAL_MS);
+
+  tickAndPushAgents();
+  setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
 });
 
 app.on('window-all-closed', () => {

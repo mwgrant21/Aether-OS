@@ -1,4 +1,5 @@
 import type { RealUsageSnapshot } from './state/types';
+import type { RealAgentDispatch } from './state/liveAgentsMath';
 
 export {};
 
@@ -13,6 +14,9 @@ declare global {
       };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;
+      };
+      agents: {
+        onSnapshot: (callback: (dispatches: RealAgentDispatch[]) => void) => () => void;
       };
     };
   }

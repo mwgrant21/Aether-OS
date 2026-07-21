@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RealUsageSnapshot } from '../src/state/types';
+import type { RealAgentDispatch } from '../src/state/liveAgentsMath';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -17,6 +18,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, snapshot: RealUsageSnapshot) => callback(snapshot);
       ipcRenderer.on('usage:snapshot', listener);
       return () => ipcRenderer.removeListener('usage:snapshot', listener);
+    },
+  },
+  agents: {
+    onSnapshot: (callback: (dispatches: RealAgentDispatch[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, dispatches: RealAgentDispatch[]) => callback(dispatches);
+      ipcRenderer.on('agents:snapshot', listener);
+      return () => ipcRenderer.removeListener('agents:snapshot', listener);
     },
   },
 });
