@@ -49,6 +49,17 @@ describe('computeUsedThisMonth', () => {
   it('returns 0 for an empty event array', () => {
     expect(computeUsedThisMonth([], NOW)).toBe(0);
   });
+
+  it('excludes cacheCreationInputTokens and cacheReadInputTokens from the total', () => {
+    const events: UsageEvent[] = [
+      {
+        kind: 'assistant',
+        timestamp: new Date(2026, 0, 7, 9, 0),
+        usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10_000, cacheReadInputTokens: 5_000_000 },
+      },
+    ];
+    expect(computeUsedThisMonth(events, NOW)).toBe(150);
+  });
 });
 
 describe('computeBurnRatePerMin', () => {

@@ -14,9 +14,16 @@ export interface UsageEvent {
 const BURN_WINDOW_MIN = 10;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Deliberately excludes cacheCreationInputTokens/cacheReadInputTokens. Every
+// turn in a conversation re-reads the entire accumulated context from cache,
+// so cacheReadInputTokens alone compounds into billions over a real month of
+// use (confirmed against this machine's actual ~/.claude/projects data: 4.68B
+// cache-read tokens vs. 25.5M input+output) despite representing cheap
+// (~10% cost) re-reads of context that already existed, not new work. Input
+// + output is the standard "tokens used" definition (actual new work done).
 function usageTokens(usage: UsageEventUsage | null): number {
   if (!usage) return 0;
-  return usage.inputTokens + usage.outputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens;
+  return usage.inputTokens + usage.outputTokens;
 }
 
 function mondayOf(d: Date): Date {
