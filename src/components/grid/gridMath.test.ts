@@ -10,8 +10,13 @@ import {
   computeViewportTransform,
   formatHubRate,
   toScreenPoint,
+  computeRealAgentNodes,
+  computeFeedStrokeWidthByElapsed,
+  computeRealFeedLinks,
+  computeRealGridLayout,
 } from './gridMath';
 import type { Agent, ProjectStub } from '../../state/types';
+import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 function mockAgent(name: string, share = 0.2, hue = '#7ef0ff'): Agent {
   return { i: name.slice(0, 2).toUpperCase(), name, task: 'Working', pct: 50, hue, eta: '5m', share, hist: [], files: [] };
@@ -19,6 +24,10 @@ function mockAgent(name: string, share = 0.2, hue = '#7ef0ff'): Agent {
 
 function mockProject(name: string, crew: string[], hue = '#7ef0ff'): ProjectStub {
   return { name, status: 'BUILDING', pct: 50, hue, crew };
+}
+
+function mockRealAgent(toolUseId: string, startedAt: string, subagentType = 'general-purpose'): RealAgentDispatch {
+  return { toolUseId, subagentType, description: 'Working', startedAt, prompt: 'do work', model: null };
 }
 
 describe('agentAngle', () => {
@@ -243,5 +252,83 @@ describe('formatHubRate', () => {
   it('formats the live burn rate as a rounded K tok/min readout', () => {
     expect(formatHubRate(92000)).toBe('92K tok/min');
     expect(formatHubRate(92549)).toBe('93K tok/min');
+  });
+});
+
+describe('computeRealAgentNodes', () => {
+  it('places 4 real dispatches evenly on the 165-radius ring around the (500, 315) hub', () => {
+    const nodes = computeRealAgentNodes([
+      mockRealAgent('tu_0', '2026-07-21T10:00:00.000Z'),
+      mockRealAgent('tu_1', '2026-07-21T10:00:00.000Z'),
+      mockRealAgent('tu_2', '2026-07-21T10:00:00.000Z'),
+      mockRealAgent('tu_3', '2026-07-21T10:00:00.000Z'),
+    ]);
+    expect(nodes).toHaveLength(4);
+    expect(nodes[0].x).toBeCloseTo(500);
+    expect(nodes[0].y).toBeCloseTo(150);
+    expect(nodes[1].x).toBeCloseTo(665);
+    expect(nodes[1].y).toBeCloseTo(315);
+    expect(nodes[2].x).toBeCloseTo(500);
+    expect(nodes[2].y).toBeCloseTo(480);
+    expect(nodes[3].x).toBeCloseTo(335);
+    expect(nodes[3].y).toBeCloseTo(315);
+  });
+
+  it('returns an empty array with zero real dispatches instead of dividing by zero', () => {
+    expect(computeRealAgentNodes([])).toEqual([]);
+  });
+});
+
+describe('computeFeedStrokeWidthByElapsed', () => {
+  it('scales linearly between a 1.5 floor and an 8.5 ceiling across the 10-minute window', () => {
+    expect(computeFeedStrokeWidthByElapsed(0)).toBeCloseTo(1.5);
+    expect(computeFeedStrokeWidthByElapsed(10 * 60 * 1000)).toBeCloseTo(8.5);
+    expect(computeFeedStrokeWidthByElapsed(5 * 60 * 1000)).toBeCloseTo(5.0);
+  });
+
+  it('clamps beyond the 10-minute window instead of exceeding the ceiling', () => {
+    expect(computeFeedStrokeWidthByElapsed(60 * 60 * 1000)).toBeCloseTo(8.5);
+  });
+
+  it('clamps negative elapsed time instead of producing a degenerate stroke', () => {
+    expect(computeFeedStrokeWidthByElapsed(-500)).toBeCloseTo(1.5);
+  });
+});
+
+describe('computeRealFeedLinks', () => {
+  it('draws one feed link per real dispatch from the hub, widened by elapsed time', () => {
+    const now = new Date('2026-07-21T10:05:00.000Z').getTime();
+    const agentNodes = computeRealAgentNodes([mockRealAgent('tu_0', '2026-07-21T10:00:00.000Z')]);
+    const [link] = computeRealFeedLinks(agentNodes, now);
+    expect(link.toolUseId).toBe('tu_0');
+    expect(link.x1).toBe(500);
+    expect(link.y1).toBe(315);
+    expect(link.x2).toBeCloseTo(agentNodes[0].x);
+    expect(link.y2).toBeCloseTo(agentNodes[0].y);
+    expect(link.strokeWidth).toBeCloseTo(5.0);
+  });
+});
+
+describe('computeRealGridLayout', () => {
+  it('composes real agent nodes and feed links, deriving header stats from them, with no project fields', () => {
+    const now = new Date('2026-07-21T10:05:00.000Z').getTime();
+    const layout = computeRealGridLayout(
+      [mockRealAgent('tu_0', '2026-07-21T10:00:00.000Z'), mockRealAgent('tu_1', '2026-07-21T10:00:00.000Z')],
+      now,
+    );
+    expect(layout.agentCount).toBe(2);
+    expect(layout.linkCount).toBe(layout.feedLinks.length);
+    expect(layout.linkCount).toBe(2);
+    expect('projectNodes' in layout).toBe(false);
+    expect('assignmentLinks' in layout).toBe(false);
+  });
+
+  it('renders just the hub, with no nodes or links, for zero open dispatches', () => {
+    const layout = computeRealGridLayout([], Date.now());
+    expect(layout.hub).toEqual({ x: 500, y: 315 });
+    expect(layout.agentNodes).toEqual([]);
+    expect(layout.feedLinks).toEqual([]);
+    expect(layout.agentCount).toBe(0);
+    expect(layout.linkCount).toBe(0);
   });
 });

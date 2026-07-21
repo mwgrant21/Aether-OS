@@ -1,4 +1,5 @@
 import type { Agent, ProjectStub } from '../../state/types';
+import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 export const VIEWBOX_W = 1000;
 export const VIEWBOX_H = 630;
@@ -229,4 +230,74 @@ export function computeGridLayout(agents: Agent[], projects: ProjectStub[]): Gri
 
 export function formatHubRate(rate: number): string {
   return `${Math.round(rate / 1000)}K tok/min`;
+}
+
+export interface RealAgentNode {
+  agent: RealAgentDispatch;
+  angle: number;
+  x: number;
+  y: number;
+}
+
+export interface RealFeedLink {
+  toolUseId: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  strokeWidth: number;
+}
+
+export interface RealGridLayout {
+  hub: { x: number; y: number };
+  agentNodes: RealAgentNode[];
+  feedLinks: RealFeedLink[];
+  agentCount: number;
+  linkCount: number;
+}
+
+export function computeRealAgentNodes(agents: RealAgentDispatch[]): RealAgentNode[] {
+  const total = agents.length;
+  return agents.map((agent, index) => {
+    const angle = agentAngle(index, total);
+    const x = HUB_X + AGENT_RING_RADIUS * Math.cos(angle);
+    const y = HUB_Y + AGENT_RING_RADIUS * Math.sin(angle);
+    return { agent, angle, x, y };
+  });
+}
+
+// Matches realUsageMath.ts's BURN_WINDOW_MIN (10 minutes) in spirit -- a
+// dispatch's feed link thickens toward the same max width
+// computeFeedStrokeWidth(share) already produces, reaching it once the
+// dispatch has been running about as long as that already-established
+// "significant" window, rather than an arbitrary new cutoff. Not an actual
+// import, since BURN_WINDOW_MIN is a private const in a different file.
+const ELAPSED_STROKE_WINDOW_MS = 10 * 60 * 1000;
+
+export function computeFeedStrokeWidthByElapsed(elapsedMs: number): number {
+  const clamped = Math.max(0, Math.min(1, elapsedMs / ELAPSED_STROKE_WINDOW_MS));
+  return 1.5 + clamped * 7;
+}
+
+export function computeRealFeedLinks(agentNodes: RealAgentNode[], now: number): RealFeedLink[] {
+  return agentNodes.map((n) => ({
+    toolUseId: n.agent.toolUseId,
+    x1: HUB_X,
+    y1: HUB_Y,
+    x2: n.x,
+    y2: n.y,
+    strokeWidth: computeFeedStrokeWidthByElapsed(now - new Date(n.agent.startedAt).getTime()),
+  }));
+}
+
+export function computeRealGridLayout(agents: RealAgentDispatch[], now: number): RealGridLayout {
+  const agentNodes = computeRealAgentNodes(agents);
+  const feedLinks = computeRealFeedLinks(agentNodes, now);
+  return {
+    hub: { x: HUB_X, y: HUB_Y },
+    agentNodes,
+    feedLinks,
+    agentCount: agents.length,
+    linkCount: feedLinks.length,
+  };
 }
