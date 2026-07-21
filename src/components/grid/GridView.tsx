@@ -6,14 +6,12 @@ export function GridView() {
 
   return (
     <OrchestrationGrid
-      agents={state.agents}
-      projects={state.projects}
+      agents={state.realAgents}
       rate={state.rate}
-      onSelectAgent={(name) => {
-        dispatch({ type: 'SELECT_AGENT', name });
+      onSelectRealAgent={(toolUseId) => {
+        dispatch({ type: 'SELECT_REAL_AGENT', toolUseId });
         dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
       }}
-      onOpenProjects={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Projects' })}
     />
   );
 }
