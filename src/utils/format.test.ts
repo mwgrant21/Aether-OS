@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmt, fmtEta, nowLong, nowShort, resolveOperatorName, short, spark } from './format';
+import { fmt, fmtElapsed, fmtEta, nowLong, nowShort, resolveOperatorName, short, spark } from './format';
 
 describe('fmt', () => {
   it('adds thousands separators to a rounded integer', () => {
@@ -57,5 +57,24 @@ describe('resolveOperatorName', () => {
 
   it('falls back to "Operator" for a whitespace-only string', () => {
     expect(resolveOperatorName('   ')).toBe('Operator');
+  });
+});
+
+describe('fmtElapsed', () => {
+  it('formats sub-minute durations as seconds', () => {
+    expect(fmtElapsed(45_000)).toBe('45s');
+  });
+
+  it('formats minute-scale durations as minutes and seconds', () => {
+    expect(fmtElapsed(2 * 60_000 + 14_000)).toBe('2m 14s');
+  });
+
+  it('formats hour-scale durations as hours and minutes', () => {
+    expect(fmtElapsed(90 * 60_000)).toBe('1h 30m');
+  });
+
+  it('returns 0s for zero or negative elapsed time', () => {
+    expect(fmtElapsed(0)).toBe('0s');
+    expect(fmtElapsed(-500)).toBe('0s');
   });
 });
