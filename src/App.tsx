@@ -5,6 +5,7 @@ import { BottomMetricsRow } from './components/layout/BottomMetricsRow';
 import { getViewComponent } from './viewRegistry';
 import { usePulseDurationVar } from './components/reactor/useReactorCanvas';
 import { useRealUsageSync } from './components/dashboard/useRealUsageSync';
+import { useRealAgentsSync } from './state/useRealAgentsSync';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -19,6 +20,7 @@ export default function App() {
       <AppShell>
         <PulseDurationSync />
         <RealUsageSync />
+        <RealAgentsSync />
         <ActiveView />
         <BottomMetricsRow />
       </AppShell>
@@ -33,5 +35,10 @@ function PulseDurationSync() {
 
 function RealUsageSync() {
   useRealUsageSync();
+  return null;
+}
+
+function RealAgentsSync() {
+  useRealAgentsSync();
   return null;
 }

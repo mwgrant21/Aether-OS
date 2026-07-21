@@ -66,6 +66,8 @@ export interface TermLine {
   c: string;
 }
 
+import type { RealAgentDispatch } from './liveAgentsMath';
+
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
   usedThisMonth: number;
@@ -148,6 +150,7 @@ export interface AetherState {
   operatorName: string;
   chatActionResults: ChatActionResult[];
   realUsage: RealUsageSnapshot;
+  realAgents: RealAgentDispatch[];
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };
