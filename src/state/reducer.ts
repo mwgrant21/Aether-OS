@@ -27,7 +27,8 @@ export type Action =
   | { type: 'SET_ROUTE_DEFAULT'; value: string }
   | { type: 'SET_OPERATOR_NAME'; name: string }
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
-  | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] };
+  | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
+  | { type: 'SELECT_REAL_AGENT'; toolUseId: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -174,6 +175,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_REAL_AGENTS':
       return { ...state, realAgents: action.agents };
+
+    case 'SELECT_REAL_AGENT':
+      return { ...state, selectedRealAgent: action.toolUseId };
 
     case 'ADD_APPROVAL': {
       const newApproval: Approval = { ...action.approval, id: state.apprSeq };

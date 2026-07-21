@@ -10,6 +10,7 @@ export const initialState: AetherState = {
   selected: null,
   selectedProject: null,
   selectedMemory: null,
+  selectedRealAgent: null,
   cmdHist: [],
   notifs: [],
   unread: 0,

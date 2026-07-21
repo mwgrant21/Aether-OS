@@ -129,6 +129,7 @@ export interface AetherState {
   selected: string | null;
   selectedProject: string | null;
   selectedMemory: string | null;
+  selectedRealAgent: string | null;
   cmdHist: string[];
   notifs: Notif[];
   unread: number;
