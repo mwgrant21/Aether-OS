@@ -43,11 +43,17 @@ async function scanAndPushUsage(): Promise<void> {
 }
 
 const liveAgentTracker = createLiveAgentTracker(join(os.homedir(), '.claude', 'projects'));
+let agentTickInFlight = false;
 
 async function tickAndPushAgents(): Promise<void> {
-  if (!mainWindow) return;
-  const dispatches = await liveAgentTracker.tick();
-  mainWindow.webContents.send('agents:snapshot', dispatches);
+  if (!mainWindow || agentTickInFlight) return;
+  agentTickInFlight = true;
+  try {
+    const dispatches = await liveAgentTracker.tick();
+    mainWindow.webContents.send('agents:snapshot', dispatches);
+  } finally {
+    agentTickInFlight = false;
+  }
 }
 
 app.whenReady().then(() => {
