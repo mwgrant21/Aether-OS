@@ -2,8 +2,13 @@ import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { VIEWS } from '../../viewRegistry';
+import { ReactorCore } from '../reactor/ReactorCore';
+import { short } from '../../utils/format';
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
+const REACTOR_NATIVE_SIZE = 334;
+const REACTOR_MINI_SIZE = 150;
+const REACTOR_MINI_SCALE = REACTOR_MINI_SIZE / REACTOR_NATIVE_SIZE;
 
 export function Sidebar() {
   const { state, dispatch } = useAetherStore();
@@ -37,6 +42,20 @@ export function Sidebar() {
         </div>
       ))}
       {!state.agents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
+
+      <div style={reactorMiniWrapStyle}>
+        <div style={reactorMiniScaleStyle}>
+          <div style={reactorMiniInnerStyle}>
+            <ReactorCore />
+          </div>
+        </div>
+        <div style={{ font: `700 11px/1 ${fonts.mono}`, letterSpacing: 1, color: colors.accentCyanSoft, textAlign: 'center', marginTop: 6 }}>
+          REACTOR · {short(state.rate)} TOK/MIN
+        </div>
+        <div style={{ font: `400 10px/1.4 ${fonts.ui}`, color: colors.textDim, textAlign: 'center', marginTop: 3 }}>
+          Reactor nominal — {state.agents.length} agents drawing power.
+        </div>
+      </div>
 
       <div style={tipCardStyle}>
         <div style={tipGlowStyle} />
@@ -103,6 +122,34 @@ function recentAvatarStyle(ring: string): CSSProperties {
     color: ring,
   };
 }
+const reactorMiniWrapStyle: CSSProperties = {
+  marginTop: 10,
+  padding: '10px 0',
+  borderRadius: 12,
+  background: 'radial-gradient(closest-side, rgba(10,34,45,.55), transparent)',
+};
+const reactorMiniScaleStyle: CSSProperties = {
+  position: 'relative',
+  width: REACTOR_MINI_SIZE,
+  height: REACTOR_MINI_SIZE,
+  margin: '0 auto',
+  overflow: 'hidden',
+};
+const reactorMiniInnerStyle: CSSProperties = {
+  position: 'absolute',
+  top: '50%',
+  left: '50%',
+  width: REACTOR_NATIVE_SIZE,
+  height: REACTOR_NATIVE_SIZE,
+  // ReactorCore's own canvases don't all self-center: the conduit layer has
+  // explicit inset:0, but the glow/core layers have no offsets at all and
+  // rely on their parent being a `display:grid; placeItems:center` container
+  // (exactly what TerminalView's original wrapper was) to center them. Drop
+  // this and two of the three layers drift from the conduit layer.
+  display: 'grid',
+  placeItems: 'center',
+  transform: `translate(-50%, -50%) scale(${REACTOR_MINI_SCALE})`,
+};
 const tipCardStyle: CSSProperties = {
   marginTop: 'auto',
   padding: 13,

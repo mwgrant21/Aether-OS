@@ -1,15 +1,11 @@
 import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
-import { useAetherStore } from '../../state/store';
 import { SystemOverviewCard } from './SystemOverviewCard';
 import { ActiveAgentsCard } from './ActiveAgentsCard';
 import { LiveOutputCard } from './LiveOutputCard';
-import { ReactorCore } from '../reactor/ReactorCore';
 import { PtyTerminal } from './PtyTerminal';
 
 export function TerminalView() {
-  const { state } = useAetherStore();
-
   return (
     <div style={rootStyle}>
       <div style={terminalCardStyle}>
@@ -24,11 +20,6 @@ export function TerminalView() {
         <div style={termHostStyle}>
           <PtyTerminal />
         </div>
-
-        <div style={coreFloatWrapStyle}>
-          <ReactorCore />
-        </div>
-        <div style={calloutStyle}>Reactor nominal — {state.agents.length} agents drawing power.</div>
       </div>
 
       <div style={railStyle}>
@@ -72,28 +63,4 @@ const headerStyle: CSSProperties = {
 };
 const liveDotStyle: CSSProperties = { width: 10, height: 10, borderRadius: '50%', background: colors.accentCyanDeep, boxShadow: '0 0 8px rgba(95,240,255,.8)' };
 const termHostStyle: CSSProperties = { flex: 1, minHeight: 0, position: 'relative' };
-const coreFloatWrapStyle: CSSProperties = {
-  position: 'absolute',
-  right: 6,
-  top: '52%',
-  transform: 'translateY(-50%)',
-  width: 334,
-  height: 334,
-  display: 'grid',
-  placeItems: 'center',
-  pointerEvents: 'none',
-};
-const calloutStyle: CSSProperties = {
-  position: 'absolute',
-  right: 100,
-  top: 'calc(52% + 176px)',
-  padding: '9px 13px',
-  borderRadius: '2px 10px 10px 10px',
-  border: '1px solid rgba(95,220,255,.3)',
-  background: 'rgba(10,34,45,.9)',
-  font: `400 12px/1.4 ${fonts.ui}`,
-  color: '#bff4ff',
-  maxWidth: 146,
-  textAlign: 'left',
-};
 const railStyle: CSSProperties = { width: 332, flex: 'none', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 };
