@@ -1,16 +1,16 @@
 import type { CSSProperties } from 'react';
 import { useAetherStore } from '../../state/store';
-import { pickSelectedAgent } from './agentsMath';
+import { pickSelectedRealAgent } from './agentsMath';
 import { AgentRosterCard } from './AgentRosterCard';
 import { AgentDetailCard } from './AgentDetailCard';
 
 export function AgentsView() {
   const { state } = useAetherStore();
-  const selectedAgent = pickSelectedAgent(state.agents, state.selected);
+  const selectedAgent = pickSelectedRealAgent(state.realAgents, state.selectedRealAgent);
 
   return (
     <div style={rootStyle}>
-      <AgentRosterCard selectedName={selectedAgent?.name ?? null} />
+      <AgentRosterCard selectedToolUseId={selectedAgent?.toolUseId ?? null} />
       <AgentDetailCard agent={selectedAgent} />
     </div>
   );
