@@ -3,6 +3,8 @@ export interface RealAgentDispatch {
   subagentType: string;
   description: string;
   startedAt: string;
+  prompt: string;
+  model: string | null;
 }
 
 export function applyLinesToOpenDispatches(currentOpen: RealAgentDispatch[], rawLines: string[]): RealAgentDispatch[] {
@@ -27,6 +29,8 @@ export function applyLinesToOpenDispatches(currentOpen: RealAgentDispatch[], raw
             subagentType: (item.input && item.input.subagent_type) || 'agent',
             description: (item.input && item.input.description) || '',
             startedAt: json.timestamp || new Date(0).toISOString(),
+            prompt: (item.input && item.input.prompt) || '',
+            model: (item.input && item.input.model) || null,
           });
         }
       }

@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { applyLinesToOpenDispatches, type RealAgentDispatch } from './liveAgentsMath';
 
-function dispatchLine(id: string, subagentType: string, description: string, timestamp: string): string {
+function dispatchLine(
+  id: string,
+  subagentType: string,
+  description: string,
+  timestamp: string,
+  prompt = '',
+  model: string | null = null,
+): string {
   return JSON.stringify({
     type: 'assistant',
     timestamp,
     message: {
-      content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: subagentType, description } }],
+      content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: subagentType, description, prompt, model } }],
     },
   });
 }
@@ -26,7 +33,24 @@ describe('applyLinesToOpenDispatches', () => {
     const lines = [dispatchLine('tu_1', 'general-purpose', 'Explore the repo', '2026-07-20T10:00:00.000Z')];
     const result = applyLinesToOpenDispatches([], lines);
     expect(result).toEqual<RealAgentDispatch[]>([
-      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'Explore the repo', startedAt: '2026-07-20T10:00:00.000Z' },
+      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'Explore the repo', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
+    ]);
+  });
+
+  it('captures prompt and model when present in tool_use.input', () => {
+    const lines = [
+      dispatchLine('tu_1', 'general-purpose', 'Explore the repo', '2026-07-20T10:00:00.000Z', 'Explore the repo and report findings.', 'claude-haiku-4-5'),
+    ];
+    const result = applyLinesToOpenDispatches([], lines);
+    expect(result).toEqual<RealAgentDispatch[]>([
+      {
+        toolUseId: 'tu_1',
+        subagentType: 'general-purpose',
+        description: 'Explore the repo',
+        startedAt: '2026-07-20T10:00:00.000Z',
+        prompt: 'Explore the repo and report findings.',
+        model: 'claude-haiku-4-5',
+      },
     ]);
   });
 
@@ -48,7 +72,7 @@ describe('applyLinesToOpenDispatches', () => {
     });
     const lines = [dispatchLine('tu_1', 'general-purpose', 'desc', '2026-07-20T10:00:00.000Z'), queueLine];
     expect(applyLinesToOpenDispatches([], lines)).toEqual([
-      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z' },
+      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
     ]);
   });
 
@@ -56,7 +80,7 @@ describe('applyLinesToOpenDispatches', () => {
     const plainUserLine = JSON.stringify({ type: 'user', message: { content: 'just a normal reply' } });
     const lines = [dispatchLine('tu_1', 'general-purpose', 'desc', '2026-07-20T10:00:00.000Z'), plainUserLine];
     expect(applyLinesToOpenDispatches([], lines)).toEqual([
-      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z' },
+      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
     ]);
   });
 
@@ -76,7 +100,7 @@ describe('applyLinesToOpenDispatches', () => {
       completionLine('tu_1'),
     ];
     expect(applyLinesToOpenDispatches([], lines)).toEqual([
-      { toolUseId: 'tu_2', subagentType: 'Explore', description: 'second', startedAt: '2026-07-20T10:00:05.000Z' },
+      { toolUseId: 'tu_2', subagentType: 'Explore', description: 'second', startedAt: '2026-07-20T10:00:05.000Z', prompt: '', model: null },
     ]);
   });
 
@@ -90,19 +114,21 @@ describe('applyLinesToOpenDispatches', () => {
   });
 
   it('continues from a non-empty currentOpen list (incremental tailing)', () => {
-    const priorOpen: RealAgentDispatch[] = [{ toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'first', startedAt: '2026-07-20T10:00:00.000Z' }];
+    const priorOpen: RealAgentDispatch[] = [
+      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'first', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
+    ];
     const result = applyLinesToOpenDispatches(priorOpen, [completionLine('tu_1')]);
     expect(result).toEqual([]);
   });
 
-  it('defaults subagentType and description when input fields are missing', () => {
+  it('defaults subagentType, description, prompt, and model when input fields are missing', () => {
     const line = JSON.stringify({
       type: 'assistant',
       timestamp: '2026-07-20T10:00:00.000Z',
       message: { content: [{ type: 'tool_use', id: 'tu_1', name: 'Agent', input: {} }] },
     });
     expect(applyLinesToOpenDispatches([], [line])).toEqual([
-      { toolUseId: 'tu_1', subagentType: 'agent', description: '', startedAt: '2026-07-20T10:00:00.000Z' },
+      { toolUseId: 'tu_1', subagentType: 'agent', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
     ]);
   });
 });
