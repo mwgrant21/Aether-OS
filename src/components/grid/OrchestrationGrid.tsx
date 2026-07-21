@@ -1,27 +1,30 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
-import type { Agent, ProjectStub } from '../../state/types';
+import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 import {
   AGENT_NODE_RADIUS,
-  computeGridLayout,
+  computeRealGridLayout,
   computeViewportTransform,
   formatHubRate,
   toScreenPoint,
-  type AgentNode,
-  type ProjectNode,
+  type RealAgentNode,
   type ViewportTransform,
 } from './gridMath';
 
 interface OrchestrationGridProps {
-  agents: Agent[];
-  projects: ProjectStub[];
+  agents: RealAgentDispatch[];
   rate: number;
-  onSelectAgent: (name: string) => void;
-  onOpenProjects: () => void;
+  onSelectRealAgent: (toolUseId: string) => void;
 }
 
-export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpenProjects }: OrchestrationGridProps) {
-  const layout = useMemo(() => computeGridLayout(agents, projects), [agents, projects]);
+export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: OrchestrationGridProps) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const layout = useMemo(() => computeRealGridLayout(agents, now), [agents, now]);
 
   // The SVG scales via preserveAspectRatio="xMidYMid meet", which letterboxes
   // whenever this panel's aspect ratio doesn't exactly match the 1000x630
@@ -70,29 +73,14 @@ export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpe
             </radialGradient>
           </defs>
 
-          {layout.assignmentLinks.map((link) => (
-            <line
-              key={`${link.agentName}->${link.projectName}`}
-              x1={link.x1}
-              y1={link.y1}
-              x2={link.x2}
-              y2={link.y2}
-              stroke={link.hue}
-              strokeWidth={1.4}
-              strokeDasharray="3 10"
-              strokeOpacity={0.55}
-              style={{ animation: 'dashFlowRev 2.6s linear infinite' }}
-            />
-          ))}
-
           {layout.feedLinks.map((link) => (
             <line
-              key={link.agentName}
+              key={link.toolUseId}
               x1={link.x1}
               y1={link.y1}
               x2={link.x2}
               y2={link.y2}
-              stroke={link.hue}
+              stroke={colors.accentCyanSoft}
               strokeWidth={link.strokeWidth}
               strokeDasharray="5 9"
               strokeOpacity={0.85}
@@ -110,28 +98,18 @@ export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpe
             style={{ filter: 'drop-shadow(0 0 16px rgba(95,240,255,.85))' }}
           />
 
-          {layout.projectNodes.map((node) => (
-            <rect
-              key={node.project.name}
-              x={node.x - 75}
-              y={node.y - 22}
-              width={150}
-              height={44}
-              rx={10}
-              fill="rgba(6,20,28,.6)"
-              stroke={node.project.hue}
-              strokeWidth={1.5}
-              onClick={onOpenProjects}
-              style={{ cursor: 'pointer' }}
-            />
-          ))}
-
           {layout.agentNodes.map((node) => (
-            <g key={node.agent.name} onClick={() => onSelectAgent(node.agent.name)} style={{ cursor: 'pointer' }}>
-              <circle cx={node.x} cy={node.y} r={AGENT_NODE_RADIUS} fill="rgba(6,20,28,.65)" stroke={node.agent.hue} strokeWidth={2} />
-              <circle cx={node.x} cy={node.y} r={6} fill={node.agent.hue} style={{ filter: `drop-shadow(0 0 6px ${node.agent.hue})` }} />
-              <text x={node.x} y={node.y} textAnchor="middle" dominantBaseline="central" style={{ font: `700 13px ${fonts.mono}`, fill: node.agent.hue }}>
-                {node.agent.i}
+            <g key={node.agent.toolUseId} onClick={() => onSelectRealAgent(node.agent.toolUseId)} style={{ cursor: 'pointer' }}>
+              <circle cx={node.x} cy={node.y} r={AGENT_NODE_RADIUS} fill="rgba(6,20,28,.65)" stroke={colors.accentCyanSoft} strokeWidth={2} />
+              <circle cx={node.x} cy={node.y} r={6} fill={colors.accentCyanSoft} style={{ filter: `drop-shadow(0 0 6px ${colors.accentCyanSoft})` }} />
+              <text
+                x={node.x}
+                y={node.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{ font: `700 13px ${fonts.mono}`, fill: colors.accentCyanSoft }}
+              >
+                {node.agent.subagentType.slice(0, 2).toUpperCase()}
               </text>
             </g>
           ))}
@@ -145,23 +123,15 @@ export function OrchestrationGrid({ agents, projects, rate, onSelectAgent, onOpe
                 <div style={hubRateStyle}>{formatHubRate(rate)}</div>
               </div>
 
-              {layout.agentNodes.map((node: AgentNode) => (
-                <div key={node.agent.name} style={agentLabelWrapStyle(node, viewport)}>
-                  <div style={agentNameStyle}>{node.agent.name}</div>
-                  <div style={agentRoleStyle}>{node.agent.task}</div>
-                </div>
-              ))}
-
-              {layout.projectNodes.map((node: ProjectNode) => (
-                <div key={node.project.name} style={projectLabelWrapStyle(node, viewport)}>
-                  <div style={projectNameStyle}>{node.project.name}</div>
-                  <div style={{ ...projectMetaStyle, color: node.project.hue }}>
-                    {node.project.status} · {node.project.pct}%
-                  </div>
+              {layout.agentNodes.map((node: RealAgentNode) => (
+                <div key={node.agent.toolUseId} style={agentLabelWrapStyle(node, viewport)}>
+                  <div style={agentNameStyle}>{node.agent.subagentType}</div>
+                  <div style={agentRoleStyle}>{node.agent.description}</div>
                 </div>
               ))}
             </>
           )}
+          {!layout.agentNodes.length && <div style={emptyStyle}>no agents currently running</div>}
         </div>
       </div>
     </div>
@@ -184,6 +154,15 @@ const statsStyle: CSSProperties = { font: `400 11px/1 ${fonts.mono}`, color: col
 const sceneStyle: CSSProperties = { position: 'relative', flex: 1, minHeight: 0, marginTop: 10 };
 const svgStyle: CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%' };
 const overlayStyle: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none' };
+const emptyStyle: CSSProperties = {
+  position: 'absolute',
+  top: '50%',
+  left: '50%',
+  transform: 'translate(-50%, 90px)',
+  font: `400 12px/1.4 ${fonts.ui}`,
+  color: colors.textDim,
+  textAlign: 'center',
+};
 
 function hubLabelWrapStyle(x: number, y: number, viewport: ViewportTransform): CSSProperties {
   const { screenX, screenY } = toScreenPoint(x, y, viewport);
@@ -198,7 +177,7 @@ function hubLabelWrapStyle(x: number, y: number, viewport: ViewportTransform): C
 const hubNameStyle: CSSProperties = { font: `700 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textPrimary };
 const hubRateStyle: CSSProperties = { marginTop: 4, font: `400 10px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
 
-function agentLabelWrapStyle(node: AgentNode, viewport: ViewportTransform): CSSProperties {
+function agentLabelWrapStyle(node: RealAgentNode, viewport: ViewportTransform): CSSProperties {
   const { screenX, screenY } = toScreenPoint(node.x, node.y, viewport);
   return {
     position: 'absolute',
@@ -224,23 +203,3 @@ const agentRoleStyle: CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
 };
-
-function projectLabelWrapStyle(node: ProjectNode, viewport: ViewportTransform): CSSProperties {
-  const { screenX, screenY } = toScreenPoint(node.x, node.y, viewport);
-  return {
-    position: 'absolute',
-    left: `${screenX}px`,
-    top: `${screenY}px`,
-    transform: 'translate(-50%, -50%)',
-    width: 140,
-    textAlign: 'center',
-  };
-}
-const projectNameStyle: CSSProperties = {
-  font: `600 11px/1 ${fonts.ui}`,
-  color: colors.textPrimary,
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-};
-const projectMetaStyle: CSSProperties = { marginTop: 3, font: `700 10px/1 ${fonts.mono}` };
