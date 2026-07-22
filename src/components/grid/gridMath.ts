@@ -84,11 +84,11 @@ export function computeRealAgentNodes(agents: RealAgentDispatch[]): RealAgentNod
 }
 
 // Matches realUsageMath.ts's BURN_WINDOW_MIN (10 minutes) in spirit -- a
-// dispatch's feed link thickens toward the same max width
-// computeFeedStrokeWidth(share) already produces, reaching it once the
-// dispatch has been running about as long as that already-established
-// "significant" window, rather than an arbitrary new cutoff. Not an actual
-// import, since BURN_WINDOW_MIN is a private const in a different file.
+// dispatch's feed link thickens toward the same 1.5-8.5 range the old
+// share-based stroke width used, reaching the max once the dispatch has
+// been running about as long as that already-established "significant"
+// window, rather than an arbitrary new cutoff. Not an actual import, since
+// BURN_WINDOW_MIN is a private const in a different file.
 const ELAPSED_STROKE_WINDOW_MS = 10 * 60 * 1000;
 
 export function computeFeedStrokeWidthByElapsed(elapsedMs: number): number {
