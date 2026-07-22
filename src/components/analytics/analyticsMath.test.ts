@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { computeAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency } from './analyticsMath';
+import { computeAgentBreakdown, computeRealAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency } from './analyticsMath';
 import { initialState } from '../../state/initialState';
+import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 describe('computeAgentBreakdown', () => {
   it('sorts agents by share descending and rounds pct to a whole percent', () => {
@@ -78,5 +79,34 @@ describe('computeLogFrequency', () => {
       { color: '#ff9d9d', label: 'Denied', count: 0 },
       { color: '#5f8a97', label: 'Other', count: 0 },
     ]);
+  });
+});
+
+function mockRealAgent(toolUseId: string, startedAt: string, subagentType = 'general-purpose', description = 'Working'): RealAgentDispatch {
+  return { toolUseId, subagentType, description, startedAt, prompt: 'do work', model: null };
+}
+
+describe('computeRealAgentBreakdown', () => {
+  it('sorts real dispatches by elapsed time descending (longest-running first)', () => {
+    const now = new Date('2026-07-22T10:10:00.000Z').getTime();
+    const rows = computeRealAgentBreakdown(
+      [
+        mockRealAgent('tu_1', '2026-07-22T10:08:00.000Z', 'general-purpose', 'short one'),
+        mockRealAgent('tu_2', '2026-07-22T10:00:00.000Z', 'Explore', 'long one'),
+        mockRealAgent('tu_3', '2026-07-22T10:05:00.000Z', 'fork', 'mid one'),
+      ],
+      now,
+    );
+    expect(rows.map((r) => r.toolUseId)).toEqual(['tu_2', 'tu_3', 'tu_1']);
+  });
+
+  it('computes elapsedMs against the provided now, not the real wall clock', () => {
+    const now = new Date('2026-07-22T10:05:00.000Z').getTime();
+    const [row] = computeRealAgentBreakdown([mockRealAgent('tu_1', '2026-07-22T10:00:00.000Z')], now);
+    expect(row.elapsedMs).toBe(5 * 60 * 1000);
+  });
+
+  it('returns an empty array for no real dispatches', () => {
+    expect(computeRealAgentBreakdown([], Date.now())).toEqual([]);
   });
 });

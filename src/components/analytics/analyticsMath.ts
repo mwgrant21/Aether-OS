@@ -1,4 +1,5 @@
 import type { Agent, LogEntry, SysMetric } from '../../state/types';
+import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 export interface AgentBreakdownRow {
   name: string;
@@ -72,4 +73,22 @@ export function computeLogFrequency(logs: LogEntry[]): LogFrequencyRow[] {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return LOG_BUCKETS.map((b) => ({ ...b, count: counts.get(b.color) ?? 0 }));
+}
+
+export interface RealAgentBreakdownRow {
+  toolUseId: string;
+  subagentType: string;
+  description: string;
+  elapsedMs: number;
+}
+
+export function computeRealAgentBreakdown(agents: RealAgentDispatch[], now: number): RealAgentBreakdownRow[] {
+  return agents
+    .map((a) => ({
+      toolUseId: a.toolUseId,
+      subagentType: a.subagentType,
+      description: a.description,
+      elapsedMs: now - new Date(a.startedAt).getTime(),
+    }))
+    .sort((a, b) => b.elapsedMs - a.elapsedMs);
 }
