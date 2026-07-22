@@ -1,22 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeAgentBreakdown, computeRealAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency } from './analyticsMath';
-import { initialState } from '../../state/initialState';
+import { computeRealAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency } from './analyticsMath';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
-
-describe('computeAgentBreakdown', () => {
-  it('sorts agents by share descending and rounds pct to a whole percent', () => {
-    const rows = computeAgentBreakdown(initialState.agents);
-    expect(rows[0]).toMatchObject({ name: 'Code Builder', pct: 22 });
-    expect(rows[1]).toMatchObject({ name: 'Database Agent', pct: 20 });
-    expect(rows[2]).toMatchObject({ name: 'UI Designer', pct: 18 });
-    expect(rows[3]).toMatchObject({ name: 'Test Runner', pct: 15 });
-    expect(rows[4]).toMatchObject({ name: 'Doc Writer', pct: 13 });
-  });
-
-  it('returns an empty array for no agents', () => {
-    expect(computeAgentBreakdown([])).toEqual([]);
-  });
-});
 
 describe('computeTopCommands', () => {
   it('counts and ranks the first word of each entry, case-insensitively, ignoring args', () => {

@@ -1,18 +1,5 @@
-import type { Agent, LogEntry, SysMetric } from '../../state/types';
+import type { LogEntry, SysMetric } from '../../state/types';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
-
-export interface AgentBreakdownRow {
-  name: string;
-  hue: string;
-  pct: number;
-  hist: number[];
-}
-
-export function computeAgentBreakdown(agents: Agent[]): AgentBreakdownRow[] {
-  return [...agents]
-    .sort((a, b) => b.share - a.share)
-    .map((a) => ({ name: a.name, hue: a.hue, pct: Math.round(a.share * 100), hist: a.hist }));
-}
 
 export interface CommandFrequency {
   name: string;
