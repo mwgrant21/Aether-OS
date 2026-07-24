@@ -1,6 +1,6 @@
 import type { Agent, AetherState } from '../../state/types';
 import type { ChatChannel } from './chatChannels';
-import { resolvePersona } from './personas';
+import { resolvePersona, FALLBACK_PERSONA } from './personas';
 import { resolveOperatorName } from '../../utils/format';
 
 function referAsInstruction(operatorName: string): string {
@@ -71,6 +71,30 @@ export function buildAgentSnapshot(state: AetherState, agent: Agent): AgentSnaps
   };
 }
 
+// Post-mortem channels (Phase 3, slice 6) never learn a persona -- there is
+// no personality data for an arbitrary real subagentType, and inventing one
+// per type would be unbounded scope. Reuses FALLBACK_PERSONA's existing
+// generic voice verbatim. Past-tense framing throughout: this channel is a
+// retrospective conversation about a completed task, not an ongoing one, and
+// deliberately never mentions the action-JSON convention -- none of
+// spawn/kill/theme/renderer/throttle apply to a dispatch that already
+// finished.
+function buildDispatchPrompt(channel: ChatChannel, state: AetherState): string {
+  const stub = state.dispatchChannels.find((d) => d.toolUseId === channel.toolUseId);
+  if (!stub) {
+    return `${FALLBACK_PERSONA.voice} ${referAsInstruction(state.operatorName)}\n\nNo record of this task is available.`;
+  }
+
+  return (
+    `${FALLBACK_PERSONA.voice} ${referAsInstruction(state.operatorName)}\n\n` +
+    `You completed a real task earlier as a Claude Code subagent (type: ${stub.subagentType}). ` +
+    `You were asked to: ${stub.prompt || stub.description || 'no task detail was recorded.'}\n\n` +
+    `Reply in at most 3 sentences, plain prose only -- no bold, italics, headers, bullet lists, or code fences. ` +
+    `Discuss this completed task retrospectively -- you cannot take any further action, spawn/kill/throttle any agent, ` +
+    `or change any application setting from this channel.`
+  );
+}
+
 // The action-JSON-on-last-line convention (verb in spawn|kill|theme|renderer|
 // throttle) is mentioned here now, even though nothing parses it yet --
 // Phase 2b (a separate future plan) adds the parser/executor as a pure
@@ -113,6 +137,10 @@ export function buildSystemPrompt(channel: ChatChannel, state: AetherState): str
   if (channel.kind === 'aether') {
     const snapshot = buildAetherSnapshot(state);
     return `${aetherVoice(state.operatorName)}\n\nCurrent state:\n${JSON.stringify(snapshot)}\n\n${RULES}`;
+  }
+
+  if (channel.kind === 'dispatch') {
+    return buildDispatchPrompt(channel, state);
   }
 
   const persona = resolvePersona(channel.name);

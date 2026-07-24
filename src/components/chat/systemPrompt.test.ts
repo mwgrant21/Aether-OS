@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildAetherSnapshot, buildAgentSnapshot, buildSystemPrompt } from './systemPrompt';
-import { deriveChannels, AETHER_CHANNEL_ID } from './chatChannels';
+import { deriveChannels, AETHER_CHANNEL_ID, type ChatChannel } from './chatChannels';
 import { initialState } from '../../state/initialState';
 import type { AetherState } from '../../state/types';
 
@@ -110,5 +110,71 @@ describe('buildSystemPrompt', () => {
   it('archived-channel prompt also addresses the user by name', () => {
     const prompt = buildSystemPrompt(webScraper, initialState);
     expect(prompt).toContain('"Operator."');
+  });
+});
+
+describe('buildSystemPrompt (dispatch channels)', () => {
+  const dispatchChannelState: AetherState = {
+    ...initialState,
+    dispatchChannels: [
+      {
+        toolUseId: 'tu_1',
+        subagentType: 'general-purpose',
+        description: 'Explore the repo',
+        prompt: 'Explore the repo and report findings.',
+        model: null,
+        startedAt: '2026-07-20T10:00:00.000Z',
+        createdAt: '10:00:00',
+      },
+    ],
+  };
+  const dispatchChannel = deriveChannels(dispatchChannelState).find((c) => c.kind === 'dispatch')!;
+
+  it("uses the dispatch's real prompt and subagentType, and the fallback persona voice", () => {
+    const prompt = buildSystemPrompt(dispatchChannel, dispatchChannelState);
+    expect(prompt).toContain('Explore the repo and report findings.');
+    expect(prompt).toContain('general-purpose');
+    expect(prompt.toLowerCase()).toContain('no-nonsense');
+  });
+
+  it('does not mention the action-JSON verb pipeline', () => {
+    const prompt = buildSystemPrompt(dispatchChannel, dispatchChannelState);
+    expect(prompt).not.toContain('spawn|kill|throttle');
+    expect(prompt).not.toContain('"verb"');
+  });
+
+  it('addresses the user by name like every other channel kind', () => {
+    const prompt = buildSystemPrompt(dispatchChannel, dispatchChannelState);
+    expect(prompt).toContain('"Operator."');
+  });
+
+  it('falls back to description when prompt is empty, and to a literal no-detail string when both are empty', () => {
+    const noPrompt: AetherState = {
+      ...dispatchChannelState,
+      dispatchChannels: [{ ...dispatchChannelState.dispatchChannels[0], prompt: '' }],
+    };
+    const channel = deriveChannels(noPrompt).find((c) => c.kind === 'dispatch')!;
+    expect(buildSystemPrompt(channel, noPrompt)).toContain('Explore the repo');
+
+    const noDetail: AetherState = {
+      ...dispatchChannelState,
+      dispatchChannels: [{ ...dispatchChannelState.dispatchChannels[0], prompt: '', description: '' }],
+    };
+    const channel2 = deriveChannels(noDetail).find((c) => c.kind === 'dispatch')!;
+    expect(buildSystemPrompt(channel2, noDetail)).toContain('no task detail was recorded');
+  });
+
+  it('returns a safe fallback prompt when the channel has no matching stub (defensive)', () => {
+    const orphanChannel: ChatChannel = {
+      id: 'dispatch:ghost',
+      kind: 'dispatch',
+      name: 'ghost',
+      initials: 'GH',
+      hue: '#000',
+      archived: false,
+      toolUseId: 'ghost',
+    };
+    const prompt = buildSystemPrompt(orphanChannel, initialState);
+    expect(prompt).toContain('No record of this task is available.');
   });
 });
