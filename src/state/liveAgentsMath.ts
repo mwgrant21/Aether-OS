@@ -7,7 +7,17 @@ export interface RealAgentDispatch {
   model: string | null;
 }
 
-export function applyLinesToOpenDispatches(currentOpen: RealAgentDispatch[], rawLines: string[]): RealAgentDispatch[] {
+export interface CompletedDispatchUsage extends RealAgentDispatch {
+  tokens: number;
+  toolUses: number;
+  durationMs: number;
+}
+
+export function applyLinesToOpenDispatches(
+  currentOpen: RealAgentDispatch[],
+  rawLines: string[],
+  completedOut?: CompletedDispatchUsage[],
+): RealAgentDispatch[] {
   const open = new Map(currentOpen.map((d) => [d.toolUseId, d]));
 
   for (const rawLine of rawLines) {
@@ -40,7 +50,21 @@ export function applyLinesToOpenDispatches(currentOpen: RealAgentDispatch[], raw
     if (json.type === 'user' && json.origin && json.origin.kind === 'task-notification') {
       const content = typeof json.message?.content === 'string' ? json.message.content : '';
       const match = content.match(/<tool-use-id>(.*?)<\/tool-use-id>/);
-      if (match) open.delete(match[1]);
+      if (match) {
+        const dispatch = open.get(match[1]);
+        if (dispatch && completedOut) {
+          const tokensMatch = content.match(/<subagent_tokens>(\d+)<\/subagent_tokens>/);
+          const toolUsesMatch = content.match(/<tool_uses>(\d+)<\/tool_uses>/);
+          const durationMatch = content.match(/<duration_ms>(\d+)<\/duration_ms>/);
+          completedOut.push({
+            ...dispatch,
+            tokens: tokensMatch ? Number(tokensMatch[1]) : 0,
+            toolUses: toolUsesMatch ? Number(toolUsesMatch[1]) : 0,
+            durationMs: durationMatch ? Number(durationMatch[1]) : 0,
+          });
+        }
+        open.delete(match[1]);
+      }
     }
   }
 

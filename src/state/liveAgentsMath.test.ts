@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLinesToOpenDispatches, detectCompletedDispatches, type RealAgentDispatch } from './liveAgentsMath';
+import { applyLinesToOpenDispatches, detectCompletedDispatches, type RealAgentDispatch, type CompletedDispatchUsage } from './liveAgentsMath';
 
 function dispatchLine(
   id: string,
@@ -24,6 +24,16 @@ function completionLine(toolUseId: string, status = 'completed'): string {
     origin: { kind: 'task-notification' },
     message: {
       content: `<task-notification><task-id>t1</task-id><tool-use-id>${toolUseId}</tool-use-id><status>${status}</status><summary>done</summary></task-notification>`,
+    },
+  });
+}
+
+function completionLineWithUsage(toolUseId: string, tokens: number, toolUses: number, durationMs: number, status = 'completed'): string {
+  return JSON.stringify({
+    type: 'user',
+    origin: { kind: 'task-notification' },
+    message: {
+      content: `<task-notification><task-id>t1</task-id><tool-use-id>${toolUseId}</tool-use-id><status>${status}</status><summary>done</summary><usage><subagent_tokens>${tokens}</subagent_tokens><tool_uses>${toolUses}</tool_uses><duration_ms>${durationMs}</duration_ms></usage></task-notification>`,
     },
   });
 }
@@ -169,5 +179,59 @@ describe('detectCompletedDispatches', () => {
 
   it('separates a simultaneous add and remove correctly', () => {
     expect(detectCompletedDispatches([tu1], [tu2])).toEqual([tu1]);
+  });
+});
+
+describe('applyLinesToOpenDispatches — completedOut parameter', () => {
+  it('is fully backward compatible: omitting completedOut behaves identically to before', () => {
+    const lines = [dispatchLine('tu_1', 'general-purpose', 'Explore the repo', '2026-07-20T10:00:00.000Z'), completionLine('tu_1')];
+    expect(applyLinesToOpenDispatches([], lines)).toEqual([]);
+  });
+
+  it('captures usage stats for a dispatch that opens and completes across two calls', () => {
+    const openResult = applyLinesToOpenDispatches([], [dispatchLine('tu_1', 'general-purpose', 'Explore the repo', '2026-07-20T10:00:00.000Z')]);
+    const completedOut: CompletedDispatchUsage[] = [];
+    applyLinesToOpenDispatches(openResult, [completionLineWithUsage('tu_1', 12345, 8, 194546)], completedOut);
+    expect(completedOut).toHaveLength(1);
+    expect(completedOut[0]).toMatchObject({
+      toolUseId: 'tu_1',
+      subagentType: 'general-purpose',
+      description: 'Explore the repo',
+      tokens: 12345,
+      toolUses: 8,
+      durationMs: 194546,
+    });
+  });
+
+  it('captures usage stats for a dispatch that opens and completes within the same batch of lines', () => {
+    const lines = [
+      dispatchLine('tu_1', 'general-purpose', 'Explore the repo', '2026-07-20T10:00:00.000Z'),
+      completionLineWithUsage('tu_1', 500, 2, 1000),
+    ];
+    const completedOut: CompletedDispatchUsage[] = [];
+    applyLinesToOpenDispatches([], lines, completedOut);
+    expect(completedOut).toHaveLength(1);
+    expect(completedOut[0]).toMatchObject({ toolUseId: 'tu_1', tokens: 500, toolUses: 2, durationMs: 1000 });
+  });
+
+  it('defaults missing or malformed usage sub-fields to 0', () => {
+    const malformedLine = JSON.stringify({
+      type: 'user',
+      origin: { kind: 'task-notification' },
+      message: {
+        content: '<task-notification><task-id>t1</task-id><tool-use-id>tu_1</tool-use-id><status>completed</status><summary>done</summary></task-notification>',
+      },
+    });
+    const openResult = applyLinesToOpenDispatches([], [dispatchLine('tu_1', 'general-purpose', 'desc', '2026-07-20T10:00:00.000Z')]);
+    const completedOut: CompletedDispatchUsage[] = [];
+    applyLinesToOpenDispatches(openResult, [malformedLine], completedOut);
+    expect(completedOut).toHaveLength(1);
+    expect(completedOut[0]).toMatchObject({ tokens: 0, toolUses: 0, durationMs: 0 });
+  });
+
+  it('does not push a completedOut entry for a completion event whose tool-use-id is not currently open', () => {
+    const completedOut: CompletedDispatchUsage[] = [];
+    applyLinesToOpenDispatches([], [completionLineWithUsage('unknown_id', 100, 1, 500)], completedOut);
+    expect(completedOut).toEqual([]);
   });
 });
