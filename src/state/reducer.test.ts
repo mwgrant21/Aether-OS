@@ -265,6 +265,27 @@ describe('reducer', () => {
         model: null,
       });
     });
+
+    it('does not create a duplicate dispatch channel when auto-creating for a toolUseId that already has one', () => {
+      const existingStub = {
+        toolUseId: 'tu_1',
+        subagentType: 'general-purpose',
+        description: 'Explore the repo',
+        prompt: '',
+        model: null,
+        startedAt: '2026-07-20T10:00:00.000Z',
+        createdAt: '10:00:00',
+      };
+      const withAutoCreateAndExisting = {
+        ...initialState,
+        cfg: { ...initialState.cfg, autoCreateDispatchChannels: true },
+        realAgents: [completedDispatch],
+        dispatchChannels: [existingStub],
+      };
+      const next = reducer(withAutoCreateAndExisting, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.dispatchChannels).toHaveLength(1);
+      expect(next.dispatchChannels[0]).toEqual(existingStub);
+    });
   });
 
   describe('CREATE_DISPATCH_CHANNEL', () => {
