@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLinesToOpenDispatches, type RealAgentDispatch } from './liveAgentsMath';
+import { applyLinesToOpenDispatches, detectCompletedDispatches, type RealAgentDispatch } from './liveAgentsMath';
 
 function dispatchLine(
   id: string,
@@ -130,5 +130,44 @@ describe('applyLinesToOpenDispatches', () => {
     expect(applyLinesToOpenDispatches([], [line])).toEqual([
       { toolUseId: 'tu_1', subagentType: 'agent', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
     ]);
+  });
+});
+
+describe('detectCompletedDispatches', () => {
+  const tu1: RealAgentDispatch = {
+    toolUseId: 'tu_1',
+    subagentType: 'general-purpose',
+    description: 'first',
+    startedAt: '2026-07-20T10:00:00.000Z',
+    prompt: '',
+    model: null,
+  };
+  const tu2: RealAgentDispatch = {
+    toolUseId: 'tu_2',
+    subagentType: 'Explore',
+    description: 'second',
+    startedAt: '2026-07-20T10:00:05.000Z',
+    prompt: '',
+    model: null,
+  };
+
+  it('returns an empty array when the two lists are identical', () => {
+    expect(detectCompletedDispatches([tu1, tu2], [tu1, tu2])).toEqual([]);
+  });
+
+  it('returns the one dispatch that disappeared', () => {
+    expect(detectCompletedDispatches([tu1, tu2], [tu2])).toEqual([tu1]);
+  });
+
+  it('returns multiple dispatches when several disappear at once', () => {
+    expect(detectCompletedDispatches([tu1, tu2], [])).toEqual([tu1, tu2]);
+  });
+
+  it('returns an empty array when a dispatch is only added, not removed', () => {
+    expect(detectCompletedDispatches([tu1], [tu1, tu2])).toEqual([]);
+  });
+
+  it('separates a simultaneous add and remove correctly', () => {
+    expect(detectCompletedDispatches([tu1], [tu2])).toEqual([tu1]);
   });
 });

@@ -1,5 +1,5 @@
 import type { Approval, AetherState, Cfg, MemoryStub, OpMode, RealUsageSnapshot } from './types';
-import type { RealAgentDispatch } from './liveAgentsMath';
+import { detectCompletedDispatches, type RealAgentDispatch } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
@@ -173,8 +173,28 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_REAL_USAGE':
       return { ...state, realUsage: action.snapshot };
 
-    case 'SET_REAL_AGENTS':
-      return { ...state, realAgents: action.agents };
+    case 'SET_REAL_AGENTS': {
+      const completed = detectCompletedDispatches(state.realAgents, action.agents);
+      let memories = state.memories;
+      let memSeq = state.memSeq;
+      for (const dispatch of completed) {
+        const label = dispatch.description || dispatch.subagentType;
+        memories = [
+          ...memories,
+          {
+            id: memSeq,
+            name: label,
+            content: `${dispatch.subagentType} dispatch completed: ${dispatch.description || 'no description'}`,
+            source: dispatch.subagentType,
+            ts: nowShort(),
+            pinned: false,
+            strength: 100,
+          },
+        ];
+        memSeq += 1;
+      }
+      return { ...state, realAgents: action.agents, memories, memSeq };
+    }
 
     case 'SELECT_REAL_AGENT':
       return { ...state, selectedRealAgent: action.toolUseId };

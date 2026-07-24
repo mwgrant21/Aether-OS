@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { reducer } from './reducer';
 import { initialState } from './initialState';
 import type { Approval } from './types';
+import type { RealAgentDispatch } from './liveAgentsMath';
 
 describe('reducer', () => {
   it('SET_ACTIVE_TAB switches the active tab', () => {
@@ -162,6 +163,64 @@ describe('reducer', () => {
     expect(next.operatorName).toBe('');
   });
 
+  describe('SET_REAL_AGENTS memory creation', () => {
+    const completedDispatch: RealAgentDispatch = {
+      toolUseId: 'tu_1',
+      subagentType: 'general-purpose',
+      description: 'Explore the repo',
+      startedAt: '2026-07-20T10:00:00.000Z',
+      prompt: '',
+      model: null,
+    };
+
+    it('creates a memory sourced from the real dispatch when it disappears from realAgents', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.memories).toHaveLength(withOpenDispatch.memories.length + 1);
+      const created = next.memories.at(-1);
+      expect(created?.source).toBe('general-purpose');
+      expect(created?.name).toBe('Explore the repo');
+      expect(created?.content).toBe('general-purpose dispatch completed: Explore the repo');
+      expect(created?.pinned).toBe(false);
+      expect(created?.strength).toBe(100);
+    });
+
+    it('increments memSeq by exactly the number of dispatches that complete in one action', () => {
+      const secondDispatch: RealAgentDispatch = { ...completedDispatch, toolUseId: 'tu_2', subagentType: 'Explore' };
+      const withTwoOpen = { ...initialState, realAgents: [completedDispatch, secondDispatch] };
+      const next = reducer(withTwoOpen, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.memSeq).toBe(withTwoOpen.memSeq + 2);
+      expect(next.memories).toHaveLength(withTwoOpen.memories.length + 2);
+    });
+
+    it('creates no new memory when nothing completed', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [completedDispatch] });
+      expect(next.memories).toEqual(withOpenDispatch.memories);
+      expect(next.memSeq).toBe(withOpenDispatch.memSeq);
+    });
+
+    it('falls back to subagentType and a placeholder when description is empty', () => {
+      const noDescription: RealAgentDispatch = { ...completedDispatch, description: '' };
+      const withOpenDispatch = { ...initialState, realAgents: [noDescription] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
+      const created = next.memories.at(-1);
+      expect(created?.name).toBe('general-purpose');
+      expect(created?.content).toBe('general-purpose dispatch completed: no description');
+    });
+
+    it('preserves existing memories, appending rather than replacing', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.memories.slice(0, -1)).toEqual(withOpenDispatch.memories);
+    });
+
+    it('still updates realAgents to the new list', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.realAgents).toEqual([]);
+    });
+  });
 });
 
 function chatApproval(overrides: Partial<Approval>): Approval {

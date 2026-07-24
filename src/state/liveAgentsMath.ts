@@ -46,3 +46,8 @@ export function applyLinesToOpenDispatches(currentOpen: RealAgentDispatch[], raw
 
   return Array.from(open.values());
 }
+
+export function detectCompletedDispatches(oldAgents: RealAgentDispatch[], newAgents: RealAgentDispatch[]): RealAgentDispatch[] {
+  const stillOpen = new Set(newAgents.map((a) => a.toolUseId));
+  return oldAgents.filter((a) => !stillOpen.has(a.toolUseId));
+}
