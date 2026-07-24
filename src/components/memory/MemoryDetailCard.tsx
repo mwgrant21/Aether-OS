@@ -3,9 +3,10 @@ import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { MemoryStub } from '../../state/types';
 import { STRENGTH_TIER_COLOR } from './memoryMath';
+import { short, fmtElapsed } from '../../utils/format';
 
 export function MemoryDetailCard({ memory }: { memory: MemoryStub | null }) {
-  const { dispatch } = useAetherStore();
+  const { state, dispatch } = useAetherStore();
 
   if (!memory) {
     return (
@@ -21,6 +22,7 @@ export function MemoryDetailCard({ memory }: { memory: MemoryStub | null }) {
   }
 
   const tierColor = STRENGTH_TIER_COLOR(memory.strength);
+  const usage = memory.toolUseId ? state.dispatchUsage[memory.toolUseId] : undefined;
 
   return (
     <div style={cardStyle}>
@@ -43,6 +45,11 @@ export function MemoryDetailCard({ memory }: { memory: MemoryStub | null }) {
       <div style={{ marginTop: 20, flex: 1, minHeight: 0, overflow: 'auto' }}>
         <div style={sectionLabelStyle}>CONTENT</div>
         <div style={{ marginTop: 8, font: `400 13px/1.6 ${fonts.ui}`, color: colors.textBody }}>{memory.content}</div>
+        {usage && (
+          <div style={{ marginTop: 12, font: `400 11px/1.4 ${fonts.mono}`, color: colors.textDim }}>
+            Used {short(usage.tokens)} tokens · {usage.toolUses} tool call{usage.toolUses === 1 ? '' : 's'} · {fmtElapsed(usage.durationMs)}
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: 'auto', paddingTop: 16 }}>
