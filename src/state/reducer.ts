@@ -199,7 +199,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
         recentCompletedDispatches = [dispatch, ...recentCompletedDispatches].slice(0, 20);
 
-        if (state.cfg.autoCreateDispatchChannels) {
+        if (state.cfg.autoCreateDispatchChannels && !dispatchChannels.some((d) => d.toolUseId === dispatch.toolUseId)) {
           dispatchChannels = [
             ...dispatchChannels,
             {

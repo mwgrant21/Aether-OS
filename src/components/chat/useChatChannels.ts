@@ -33,7 +33,7 @@ export interface UseChatChannelsResult {
 // axis entirely and would be wrong to conflate just because both happen to
 // name an agent. See Global Constraints.
 export function useChatChannels(state: AetherState, dispatch: Dispatch<Action>): UseChatChannelsResult {
-  const channels = useMemo(() => deriveChannels(state), [state.agents, state.idleList]);
+  const channels = useMemo(() => deriveChannels(state), [state.agents, state.idleList, state.dispatchChannels]);
   const [activeChannelId, setActiveChannelId] = useState<string>(AETHER_CHANNEL_ID);
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, ChatMessage[]>>({});
   const [typingChannelIds, setTypingChannelIds] = useState<Set<string>>(new Set());
