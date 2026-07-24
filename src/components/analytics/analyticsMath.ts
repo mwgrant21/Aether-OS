@@ -79,3 +79,31 @@ export function computeRealAgentBreakdown(agents: RealAgentDispatch[], now: numb
     }))
     .sort((a, b) => b.elapsedMs - a.elapsedMs);
 }
+
+export interface CompletedDispatchBurnRow {
+  toolUseId: string;
+  subagentType: string;
+  description: string;
+  tokens: number;
+  toolUses: number;
+  durationMs: number;
+}
+
+export function computeCompletedDispatchBurn(
+  pool: RealAgentDispatch[],
+  usage: Record<string, { tokens: number; toolUses: number; durationMs: number }>,
+  limit = 5,
+): CompletedDispatchBurnRow[] {
+  return pool
+    .filter((d) => usage[d.toolUseId])
+    .map((d) => ({
+      toolUseId: d.toolUseId,
+      subagentType: d.subagentType,
+      description: d.description,
+      tokens: usage[d.toolUseId].tokens,
+      toolUses: usage[d.toolUseId].toolUses,
+      durationMs: usage[d.toolUseId].durationMs,
+    }))
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, limit);
+}

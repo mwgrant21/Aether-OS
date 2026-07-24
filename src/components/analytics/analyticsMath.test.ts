@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeRealAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency } from './analyticsMath';
+import { computeRealAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency, computeCompletedDispatchBurn } from './analyticsMath';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 describe('computeTopCommands', () => {
@@ -92,5 +92,31 @@ describe('computeRealAgentBreakdown', () => {
 
   it('returns an empty array for no real dispatches', () => {
     expect(computeRealAgentBreakdown([], Date.now())).toEqual([]);
+  });
+});
+
+describe('computeCompletedDispatchBurn', () => {
+  it('sorts by tokens descending and filters out pool entries with no matching usage data', () => {
+    const pool = [
+      mockRealAgent('tu_1', '2026-07-22T10:00:00.000Z', 'general-purpose', 'low'),
+      mockRealAgent('tu_2', '2026-07-22T10:00:00.000Z', 'Explore', 'high'),
+      mockRealAgent('tu_3', '2026-07-22T10:00:00.000Z', 'fork', 'no-usage-yet'),
+    ];
+    const usage = {
+      tu_1: { tokens: 1000, toolUses: 2, durationMs: 5000 },
+      tu_2: { tokens: 5000, toolUses: 4, durationMs: 10000 },
+    };
+    const rows = computeCompletedDispatchBurn(pool, usage);
+    expect(rows.map((r) => r.toolUseId)).toEqual(['tu_2', 'tu_1']);
+  });
+
+  it('respects the display limit', () => {
+    const pool = Array.from({ length: 10 }, (_, i) => mockRealAgent(`tu_${i}`, '2026-07-22T10:00:00.000Z'));
+    const usage = Object.fromEntries(pool.map((d, i) => [d.toolUseId, { tokens: i, toolUses: 1, durationMs: 1000 }]));
+    expect(computeCompletedDispatchBurn(pool, usage, 5)).toHaveLength(5);
+  });
+
+  it('returns an empty array for an empty pool', () => {
+    expect(computeCompletedDispatchBurn([], {})).toEqual([]);
   });
 });
