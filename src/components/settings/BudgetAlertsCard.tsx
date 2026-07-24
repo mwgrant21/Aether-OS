@@ -55,6 +55,16 @@ export function BudgetAlertsCard() {
           {cfg.sound ? 'ON' : 'OFF'}
         </span>
       </div>
+
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={labelStyle}>AUTO-CREATE DISPATCH CHANNELS</div>
+        <span
+          onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { autoCreateDispatchChannels: !cfg.autoCreateDispatchChannels } })}
+          style={toggleStyle(cfg.autoCreateDispatchChannels)}
+        >
+          {cfg.autoCreateDispatchChannels ? 'ON' : 'OFF'}
+        </span>
+      </div>
     </div>
   );
 }

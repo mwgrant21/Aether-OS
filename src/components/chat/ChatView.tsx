@@ -19,7 +19,16 @@ export function ChatView() {
 
   return (
     <div style={rootStyle}>
-      <ChannelRail channels={chat.channels} activeChannelId={chat.activeChannelId} unreadCounts={chat.unreadCounts} onSelect={chat.setActiveChannelId} />
+      <ChannelRail
+        channels={chat.channels}
+        activeChannelId={chat.activeChannelId}
+        unreadCounts={chat.unreadCounts}
+        onSelect={chat.setActiveChannelId}
+        recentCompletedDispatches={state.recentCompletedDispatches}
+        dispatchChannels={state.dispatchChannels}
+        onCreateDispatchChannel={(toolUseId) => dispatch({ type: 'CREATE_DISPATCH_CHANNEL', toolUseId })}
+        onRemoveDispatchChannel={(toolUseId) => dispatch({ type: 'REMOVE_DISPATCH_CHANNEL', toolUseId })}
+      />
       <div style={mainStyle}>
         <div style={headerStyle}>
           <span style={headerDotStyle(chat.activeChannel.hue)} />

@@ -100,7 +100,13 @@ export function useChatChannels(state: AetherState, dispatch: Dispatch<Action>):
         // user's own message committed synchronously above).
         let sysConfirmMsg: ChatMessage | null = null;
 
-        if (action) {
+        // Dispatch channels never invite the action-JSON convention (their system
+        // prompt omits it entirely -- see systemPrompt.ts's buildDispatchPrompt) and
+        // never execute one even if a reply contained action-shaped JSON anyway --
+        // none of spawn/kill/theme/renderer/throttle have a real-world meaning for a
+        // completed real dispatch, and channel.name for a dispatch channel is a task
+        // description, not a valid fictional agent name.
+        if (action && channel.kind !== 'dispatch') {
           if ((SAFE_VERBS as readonly string[]).includes(action.verb)) {
             const raw = buildSafeCommandRaw(action);
             if (raw) {
