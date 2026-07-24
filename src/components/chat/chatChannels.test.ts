@@ -30,6 +30,37 @@ describe('deriveChannels', () => {
       { id: AETHER_CHANNEL_ID, kind: 'aether', name: 'AETHER', initials: 'AE', hue: colors.accentCyanSoft, archived: false },
     ]);
   });
+
+  it('includes one dispatch-kind channel per state.dispatchChannels entry', () => {
+    const withDispatch: AetherState = {
+      ...initialState,
+      dispatchChannels: [
+        {
+          toolUseId: 'tu_1',
+          subagentType: 'general-purpose',
+          description: 'Explore the repo',
+          prompt: '',
+          model: null,
+          startedAt: '2026-07-20T10:00:00.000Z',
+          createdAt: '10:00:00',
+        },
+      ],
+    };
+    const channels = deriveChannels(withDispatch);
+    const dispatchChannel = channels.find((c) => c.kind === 'dispatch');
+    expect(dispatchChannel).toMatchObject({ id: 'dispatch:tu_1', name: 'Explore the repo', archived: false, toolUseId: 'tu_1' });
+  });
+
+  it('falls back to subagentType for a dispatch channel name when description is empty', () => {
+    const withDispatch: AetherState = {
+      ...initialState,
+      dispatchChannels: [
+        { toolUseId: 'tu_2', subagentType: 'Explore', description: '', prompt: '', model: null, startedAt: '2026-07-20T10:00:00.000Z', createdAt: '10:00:00' },
+      ],
+    };
+    const channels = deriveChannels(withDispatch);
+    expect(channels.find((c) => c.kind === 'dispatch')?.name).toBe('Explore');
+  });
 });
 
 describe('findChannel', () => {

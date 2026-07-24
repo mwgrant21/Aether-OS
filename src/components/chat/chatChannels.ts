@@ -5,11 +5,12 @@ export const AETHER_CHANNEL_ID = 'AETHER';
 
 export interface ChatChannel {
   id: string;
-  kind: 'aether' | 'agent';
+  kind: 'aether' | 'agent' | 'dispatch';
   name: string;
   initials: string;
   hue: string;
   archived: boolean;
+  toolUseId?: string;
 }
 
 function agentInitials(name: string): string {
@@ -59,7 +60,17 @@ export function deriveChannels(state: AetherState): ChatChannel[] {
     archived: true,
   }));
 
-  return [aether, ...activeChannels, ...archivedChannels];
+  const dispatchChannelEntries: ChatChannel[] = state.dispatchChannels.map((d) => ({
+    id: `dispatch:${d.toolUseId}`,
+    kind: 'dispatch',
+    name: d.description || d.subagentType,
+    initials: d.subagentType.slice(0, 2).toUpperCase(),
+    hue: colors.accentCyanSoft,
+    archived: false,
+    toolUseId: d.toolUseId,
+  }));
+
+  return [aether, ...activeChannels, ...archivedChannels, ...dispatchChannelEntries];
 }
 
 export function findChannel(channels: ChatChannel[], id: string): ChatChannel | null {
