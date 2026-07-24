@@ -1,14 +1,17 @@
 import { dialog, shell } from 'electron';
 import { promises as fs } from 'fs';
-import { join, basename, extname } from 'path';
+import { join, basename, extname, resolve, sep } from 'path';
 import { resolveCollisionName, isImageExtension, type AttachmentInfo } from '../src/components/files/attachmentsMath';
 
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
-function assertSafeName(name: string): void {
-  if (name !== basename(name)) {
+function assertSafeName(dir: string, name: string): void {
+  const resolved = resolve(dir, name);
+  const isFlatName = name === basename(name);
+  const isContained = resolved.startsWith(dir + sep);
+  if (!isFlatName || !isContained) {
     throw new Error('invalid attachment name');
   }
 }
@@ -43,12 +46,12 @@ export function createAttachmentsStore(dir: string) {
     },
 
     async remove(name: string): Promise<void> {
-      assertSafeName(name);
+      assertSafeName(dir, name);
       await fs.unlink(join(dir, name));
     },
 
     async thumbnail(name: string): Promise<string | null> {
-      assertSafeName(name);
+      assertSafeName(dir, name);
       if (!isImageExtension(name)) return null;
       try {
         const buf = await fs.readFile(join(dir, name));
@@ -61,7 +64,7 @@ export function createAttachmentsStore(dir: string) {
     },
 
     async open(name: string): Promise<void> {
-      assertSafeName(name);
+      assertSafeName(dir, name);
       await shell.openPath(join(dir, name));
     },
   };
