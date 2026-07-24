@@ -7,6 +7,12 @@ async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
+function assertSafeName(name: string): void {
+  if (name !== basename(name)) {
+    throw new Error('invalid attachment name');
+  }
+}
+
 export function createAttachmentsStore(dir: string) {
   return {
     async list(): Promise<AttachmentInfo[]> {
@@ -37,10 +43,12 @@ export function createAttachmentsStore(dir: string) {
     },
 
     async remove(name: string): Promise<void> {
+      assertSafeName(name);
       await fs.unlink(join(dir, name));
     },
 
     async thumbnail(name: string): Promise<string | null> {
+      assertSafeName(name);
       if (!isImageExtension(name)) return null;
       try {
         const buf = await fs.readFile(join(dir, name));
@@ -53,6 +61,7 @@ export function createAttachmentsStore(dir: string) {
     },
 
     async open(name: string): Promise<void> {
+      assertSafeName(name);
       await shell.openPath(join(dir, name));
     },
   };
