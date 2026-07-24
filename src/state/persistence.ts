@@ -37,6 +37,7 @@ export function savePersisted(state: AetherState): void {
       chatActionResults: state.chatActionResults,
       recentCompletedDispatches: state.recentCompletedDispatches,
       dispatchChannels: state.dispatchChannels,
+      dispatchUsage: state.dispatchUsage,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slice));
   } catch {

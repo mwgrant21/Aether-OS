@@ -183,6 +183,7 @@ describe('reducer', () => {
       expect(created?.content).toBe('general-purpose dispatch completed: Explore the repo');
       expect(created?.pinned).toBe(false);
       expect(created?.strength).toBe(100);
+      expect(created?.toolUseId).toBe('tu_1');
     });
 
     it('increments memSeq by exactly the number of dispatches that complete in one action', () => {
@@ -353,6 +354,55 @@ describe('reducer', () => {
       const withStub = { ...initialState, dispatchChannels: [stub] };
       const next = reducer(withStub, { type: 'REMOVE_DISPATCH_CHANNEL', toolUseId: 'nonexistent' });
       expect(next.dispatchChannels).toEqual([stub]);
+    });
+  });
+
+  describe('RECORD_DISPATCH_USAGE', () => {
+    it('merges one completion into dispatchUsage, keyed by toolUseId', () => {
+      const next = reducer(initialState, {
+        type: 'RECORD_DISPATCH_USAGE',
+        completed: [
+          {
+            toolUseId: 'tu_1',
+            subagentType: 'general-purpose',
+            description: 'desc',
+            startedAt: '2026-07-20T10:00:00.000Z',
+            prompt: '',
+            model: null,
+            tokens: 1234,
+            toolUses: 5,
+            durationMs: 6789,
+          },
+        ],
+      });
+      expect(next.dispatchUsage['tu_1']).toEqual({ tokens: 1234, toolUses: 5, durationMs: 6789 });
+    });
+
+    it('merges multiple completions in one action, preserving existing entries', () => {
+      const withOne = { ...initialState, dispatchUsage: { tu_0: { tokens: 1, toolUses: 1, durationMs: 1 } } };
+      const next = reducer(withOne, {
+        type: 'RECORD_DISPATCH_USAGE',
+        completed: [
+          { toolUseId: 'tu_1', subagentType: 'a', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null, tokens: 100, toolUses: 2, durationMs: 300 },
+          { toolUseId: 'tu_2', subagentType: 'b', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null, tokens: 400, toolUses: 5, durationMs: 600 },
+        ],
+      });
+      expect(Object.keys(next.dispatchUsage)).toEqual(['tu_0', 'tu_1', 'tu_2']);
+      expect(next.dispatchUsage['tu_1']).toEqual({ tokens: 100, toolUses: 2, durationMs: 300 });
+      expect(next.dispatchUsage['tu_2']).toEqual({ tokens: 400, toolUses: 5, durationMs: 600 });
+    });
+
+    it('caps dispatchUsage at 100 entries, evicting the oldest first', () => {
+      const existing = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`old_${i}`, { tokens: i, toolUses: 1, durationMs: 1 }]));
+      const withFull = { ...initialState, dispatchUsage: existing };
+      const next = reducer(withFull, {
+        type: 'RECORD_DISPATCH_USAGE',
+        completed: [{ toolUseId: 'new_1', subagentType: 'a', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null, tokens: 1, toolUses: 1, durationMs: 1 }],
+      });
+      expect(Object.keys(next.dispatchUsage)).toHaveLength(100);
+      expect(next.dispatchUsage['old_0']).toBeUndefined();
+      expect(next.dispatchUsage['old_1']).toBeDefined();
+      expect(next.dispatchUsage['new_1']).toBeDefined();
     });
   });
 });

@@ -1,5 +1,5 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, MemoryStub, OpMode, RealUsageSnapshot } from './types';
-import { detectCompletedDispatches, type RealAgentDispatch } from './liveAgentsMath';
+import { detectCompletedDispatches, type CompletedDispatchUsage, type RealAgentDispatch } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
@@ -30,7 +30,8 @@ export type Action =
   | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
   | { type: 'SELECT_REAL_AGENT'; toolUseId: string }
   | { type: 'CREATE_DISPATCH_CHANNEL'; toolUseId: string }
-  | { type: 'REMOVE_DISPATCH_CHANNEL'; toolUseId: string };
+  | { type: 'REMOVE_DISPATCH_CHANNEL'; toolUseId: string }
+  | { type: 'RECORD_DISPATCH_USAGE'; completed: CompletedDispatchUsage[] };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -193,6 +194,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
             ts: nowShort(),
             pinned: false,
             strength: 100,
+            toolUseId: dispatch.toolUseId,
           },
         ];
         memSeq += 1;
@@ -235,6 +237,22 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'REMOVE_DISPATCH_CHANNEL':
       return { ...state, dispatchChannels: state.dispatchChannels.filter((d) => d.toolUseId !== action.toolUseId) };
+
+    case 'RECORD_DISPATCH_USAGE': {
+      let dispatchUsage = state.dispatchUsage;
+      for (const c of action.completed) {
+        dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
+      }
+      const keys = Object.keys(dispatchUsage);
+      if (keys.length > 100) {
+        // Object.keys() preserves insertion order for non-integer-like string
+        // keys (toolUseId values are never plain-integer strings) -- relied on
+        // here to evict the oldest entries first, not a random subset.
+        const toEvict = new Set(keys.slice(0, keys.length - 100));
+        dispatchUsage = Object.fromEntries(Object.entries(dispatchUsage).filter(([k]) => !toEvict.has(k)));
+      }
+      return { ...state, dispatchUsage };
+    }
 
     case 'SELECT_REAL_AGENT':
       return { ...state, selectedRealAgent: action.toolUseId };

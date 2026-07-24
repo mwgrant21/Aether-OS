@@ -182,4 +182,5 @@ export const initialState: AetherState = {
   realAgents: [],
   recentCompletedDispatches: [],
   dispatchChannels: [],
+  dispatchUsage: {},
 };

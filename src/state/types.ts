@@ -99,6 +99,13 @@ export interface MemoryStub {
   ts: string;
   pinned: boolean;
   strength: number;
+  toolUseId?: string;
+}
+
+export interface DispatchUsage {
+  tokens: number;
+  toolUses: number;
+  durationMs: number;
 }
 
 export interface DispatchChannelStub {
@@ -165,6 +172,7 @@ export interface AetherState {
   realAgents: RealAgentDispatch[];
   recentCompletedDispatches: RealAgentDispatch[];
   dispatchChannels: DispatchChannelStub[];
+  dispatchUsage: Record<string, DispatchUsage>;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };
