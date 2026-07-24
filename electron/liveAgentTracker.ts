@@ -1,6 +1,11 @@
 import { findMostRecentSessionFile } from './activeSessionFinder';
 import { readNewLines } from './transcriptTailer';
-import { applyLinesToOpenDispatches, type RealAgentDispatch } from '../src/state/liveAgentsMath';
+import { applyLinesToOpenDispatches, type RealAgentDispatch, type CompletedDispatchUsage } from '../src/state/liveAgentsMath';
+
+export interface LiveAgentTick {
+  open: RealAgentDispatch[];
+  completed: CompletedDispatchUsage[];
+}
 
 export function createLiveAgentTracker(projectsRoot: string) {
   let currentFile: string | null = null;
@@ -8,26 +13,28 @@ export function createLiveAgentTracker(projectsRoot: string) {
   let currentOpen: RealAgentDispatch[] = [];
 
   return {
-    async tick(): Promise<RealAgentDispatch[]> {
+    async tick(): Promise<LiveAgentTick> {
       const activeFile = await findMostRecentSessionFile(projectsRoot);
 
       if (activeFile !== currentFile) {
         currentFile = activeFile;
         currentOffset = 0;
         currentOpen = [];
-        if (!activeFile) return currentOpen;
+        if (!activeFile) return { open: currentOpen, completed: [] };
         const { lines, newOffset } = await readNewLines(activeFile, 0);
         currentOffset = newOffset;
-        currentOpen = applyLinesToOpenDispatches(currentOpen, lines);
-        return currentOpen;
+        const completed: CompletedDispatchUsage[] = [];
+        currentOpen = applyLinesToOpenDispatches(currentOpen, lines, completed);
+        return { open: currentOpen, completed };
       }
 
-      if (!currentFile) return currentOpen;
+      if (!currentFile) return { open: currentOpen, completed: [] };
       const { lines, newOffset } = await readNewLines(currentFile, currentOffset);
-      if (lines.length === 0) return currentOpen;
+      if (lines.length === 0) return { open: currentOpen, completed: [] };
       currentOffset = newOffset;
-      currentOpen = applyLinesToOpenDispatches(currentOpen, lines);
-      return currentOpen;
+      const completed: CompletedDispatchUsage[] = [];
+      currentOpen = applyLinesToOpenDispatches(currentOpen, lines, completed);
+      return { open: currentOpen, completed };
     },
   };
 }

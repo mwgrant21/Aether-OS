@@ -51,8 +51,9 @@ async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
   try {
-    const dispatches = await liveAgentTracker.tick();
-    mainWindow.webContents.send('agents:snapshot', dispatches);
+    const { open, completed } = await liveAgentTracker.tick();
+    mainWindow.webContents.send('agents:snapshot', open);
+    if (completed.length) mainWindow.webContents.send('agents:completed', completed);
   } finally {
     agentTickInFlight = false;
   }

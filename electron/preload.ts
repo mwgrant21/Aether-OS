@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RealUsageSnapshot } from '../src/state/types';
-import type { RealAgentDispatch } from '../src/state/liveAgentsMath';
+import type { RealAgentDispatch, CompletedDispatchUsage } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, dispatches: RealAgentDispatch[]) => callback(dispatches);
       ipcRenderer.on('agents:snapshot', listener);
       return () => ipcRenderer.removeListener('agents:snapshot', listener);
+    },
+    onCompleted: (callback: (completed: CompletedDispatchUsage[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, completed: CompletedDispatchUsage[]) => callback(completed);
+      ipcRenderer.on('agents:completed', listener);
+      return () => ipcRenderer.removeListener('agents:completed', listener);
     },
   },
   attachments: {

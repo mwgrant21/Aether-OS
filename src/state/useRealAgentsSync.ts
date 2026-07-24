@@ -11,4 +11,12 @@ export function useRealAgentsSync() {
       dispatch({ type: 'SET_REAL_AGENTS', agents: dispatches });
     });
   }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onCompleted((completed) => {
+      dispatch({ type: 'RECORD_DISPATCH_USAGE', completed });
+    });
+  }, [dispatch]);
 }
