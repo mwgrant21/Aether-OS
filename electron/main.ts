@@ -5,6 +5,7 @@ import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
 import { computeWeeklyTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
+import { createAttachmentsStore } from './attachmentsStore';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -43,6 +44,7 @@ async function scanAndPushUsage(): Promise<void> {
 }
 
 const liveAgentTracker = createLiveAgentTracker(join(os.homedir(), '.claude', 'projects'));
+const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 
 async function tickAndPushAgents(): Promise<void> {
@@ -94,3 +96,9 @@ ipcMain.on('pty:write', (_event, input: string) => {
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   activePty?.resize(cols, rows);
 });
+
+ipcMain.handle('attachments:list', () => attachmentsStore.list());
+ipcMain.handle('attachments:add', () => attachmentsStore.add());
+ipcMain.handle('attachments:remove', (_event, name: string) => attachmentsStore.remove(name));
+ipcMain.handle('attachments:thumbnail', (_event, name: string) => attachmentsStore.thumbnail(name));
+ipcMain.handle('attachments:open', (_event, name: string) => attachmentsStore.open(name));

@@ -1,5 +1,6 @@
 import type { RealUsageSnapshot } from './state/types';
 import type { RealAgentDispatch } from './state/liveAgentsMath';
+import type { AttachmentInfo } from './components/files/attachmentsMath';
 
 export {};
 
@@ -17,6 +18,13 @@ declare global {
       };
       agents: {
         onSnapshot: (callback: (dispatches: RealAgentDispatch[]) => void) => () => void;
+      };
+      attachments: {
+        list: () => Promise<AttachmentInfo[]>;
+        add: () => Promise<string[]>;
+        remove: (name: string) => Promise<void>;
+        thumbnail: (name: string) => Promise<string | null>;
+        open: (name: string) => Promise<void>;
       };
     };
   }
