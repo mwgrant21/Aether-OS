@@ -10,7 +10,7 @@ describe('viewRegistry', () => {
   it('matches the current app\'s top-bar tabs and sidebar nav exactly', () => {
     const topBarIds = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
     const sidebarIds = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
-    expect(topBarIds).toEqual(['Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Files']);
+    expect(topBarIds).toEqual(['Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Attachments']);
     expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Uplinks', 'Settings']);
   });
 
@@ -54,7 +54,7 @@ describe('viewRegistry', () => {
     expect(getViewComponent('Uplinks')).not.toBeNull();
   });
 
-  it('getViewComponent resolves Files now that it is built', () => {
-    expect(getViewComponent('Files')).not.toBeNull();
+  it('getViewComponent resolves Attachments now that it is built', () => {
+    expect(getViewComponent('Attachments')).not.toBeNull();
   });
 });

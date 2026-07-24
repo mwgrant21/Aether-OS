@@ -27,7 +27,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Projects', inTopBar: true, inSidebar: true, component: ProjectsView },
   { id: 'Memory', inTopBar: true, inSidebar: true, component: MemoryView },
   { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
-  { id: 'Files', inTopBar: true, inSidebar: false, component: FilesView },
+  { id: 'Attachments', inTopBar: true, inSidebar: false, component: FilesView },
   { id: 'Uplinks', inTopBar: false, inSidebar: true, component: UplinksView },
   { id: 'Settings', inTopBar: false, inSidebar: true, component: SettingsView },
 ];
