@@ -221,6 +221,119 @@ describe('reducer', () => {
       expect(next.realAgents).toEqual([]);
     });
   });
+
+  describe('SET_REAL_AGENTS pool and auto-create', () => {
+    const completedDispatch: RealAgentDispatch = {
+      toolUseId: 'tu_1',
+      subagentType: 'general-purpose',
+      description: 'Explore the repo',
+      startedAt: '2026-07-20T10:00:00.000Z',
+      prompt: 'Explore the repo and report findings.',
+      model: null,
+    };
+
+    it('pushes a completed dispatch into recentCompletedDispatches, most-recent-first', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.recentCompletedDispatches[0]).toEqual(completedDispatch);
+    });
+
+    it('caps recentCompletedDispatches at 20 entries', () => {
+      const existing: RealAgentDispatch[] = Array.from({ length: 20 }, (_, i) => ({ ...completedDispatch, toolUseId: `old_${i}` }));
+      const withFullPoolAndOneOpen = { ...initialState, recentCompletedDispatches: existing, realAgents: [completedDispatch] };
+      const next = reducer(withFullPoolAndOneOpen, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.recentCompletedDispatches).toHaveLength(20);
+      expect(next.recentCompletedDispatches[0]).toEqual(completedDispatch);
+      expect(next.recentCompletedDispatches.map((d) => d.toolUseId)).not.toContain('old_19');
+    });
+
+    it('does not create a dispatch channel when autoCreateDispatchChannels is false (the default)', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.dispatchChannels).toEqual([]);
+    });
+
+    it('auto-creates a dispatch channel when autoCreateDispatchChannels is true', () => {
+      const withAutoCreate = { ...initialState, cfg: { ...initialState.cfg, autoCreateDispatchChannels: true }, realAgents: [completedDispatch] };
+      const next = reducer(withAutoCreate, { type: 'SET_REAL_AGENTS', agents: [] });
+      expect(next.dispatchChannels).toHaveLength(1);
+      expect(next.dispatchChannels[0]).toMatchObject({
+        toolUseId: 'tu_1',
+        subagentType: 'general-purpose',
+        description: 'Explore the repo',
+        prompt: 'Explore the repo and report findings.',
+        model: null,
+      });
+    });
+  });
+
+  describe('CREATE_DISPATCH_CHANNEL', () => {
+    const pooled: RealAgentDispatch = {
+      toolUseId: 'tu_2',
+      subagentType: 'Explore',
+      description: 'Map the docs',
+      startedAt: '2026-07-20T10:05:00.000Z',
+      prompt: 'Map the docs directory.',
+      model: 'claude-haiku-4-5',
+    };
+
+    it('creates a channel stub from a pool entry, copying all fields', () => {
+      const withPool = { ...initialState, recentCompletedDispatches: [pooled] };
+      const next = reducer(withPool, { type: 'CREATE_DISPATCH_CHANNEL', toolUseId: 'tu_2' });
+      expect(next.dispatchChannels).toHaveLength(1);
+      expect(next.dispatchChannels[0]).toMatchObject({
+        toolUseId: 'tu_2',
+        subagentType: 'Explore',
+        description: 'Map the docs',
+        prompt: 'Map the docs directory.',
+        model: 'claude-haiku-4-5',
+      });
+    });
+
+    it('is a no-op for an unknown toolUseId', () => {
+      const next = reducer(initialState, { type: 'CREATE_DISPATCH_CHANNEL', toolUseId: 'nonexistent' });
+      expect(next).toBe(initialState);
+    });
+
+    it('is a no-op if a channel for that toolUseId already exists', () => {
+      const existingStub = {
+        toolUseId: 'tu_2',
+        subagentType: 'Explore',
+        description: 'Map the docs',
+        prompt: '',
+        model: null,
+        startedAt: '2026-07-20T10:05:00.000Z',
+        createdAt: '10:05:00',
+      };
+      const withBoth = { ...initialState, recentCompletedDispatches: [pooled], dispatchChannels: [existingStub] };
+      const next = reducer(withBoth, { type: 'CREATE_DISPATCH_CHANNEL', toolUseId: 'tu_2' });
+      expect(next.dispatchChannels).toHaveLength(1);
+    });
+  });
+
+  describe('REMOVE_DISPATCH_CHANNEL', () => {
+    const stub = {
+      toolUseId: 'tu_3',
+      subagentType: 'general-purpose',
+      description: 'desc',
+      prompt: '',
+      model: null,
+      startedAt: '2026-07-20T10:00:00.000Z',
+      createdAt: '10:00:00',
+    };
+
+    it('removes the matching channel stub', () => {
+      const withStub = { ...initialState, dispatchChannels: [stub] };
+      const next = reducer(withStub, { type: 'REMOVE_DISPATCH_CHANNEL', toolUseId: 'tu_3' });
+      expect(next.dispatchChannels).toEqual([]);
+    });
+
+    it('is a no-op for an unknown toolUseId', () => {
+      const withStub = { ...initialState, dispatchChannels: [stub] };
+      const next = reducer(withStub, { type: 'REMOVE_DISPATCH_CHANNEL', toolUseId: 'nonexistent' });
+      expect(next.dispatchChannels).toEqual([stub]);
+    });
+  });
 });
 
 function chatApproval(overrides: Partial<Approval>): Approval {

@@ -1,4 +1,4 @@
-import type { Approval, AetherState, Cfg, MemoryStub, OpMode, RealUsageSnapshot } from './types';
+import type { Approval, AetherState, Cfg, DispatchChannelStub, MemoryStub, OpMode, RealUsageSnapshot } from './types';
 import { detectCompletedDispatches, type RealAgentDispatch } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
@@ -28,7 +28,9 @@ export type Action =
   | { type: 'SET_OPERATOR_NAME'; name: string }
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
   | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
-  | { type: 'SELECT_REAL_AGENT'; toolUseId: string };
+  | { type: 'SELECT_REAL_AGENT'; toolUseId: string }
+  | { type: 'CREATE_DISPATCH_CHANNEL'; toolUseId: string }
+  | { type: 'REMOVE_DISPATCH_CHANNEL'; toolUseId: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -177,6 +179,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
       const completed = detectCompletedDispatches(state.realAgents, action.agents);
       let memories = state.memories;
       let memSeq = state.memSeq;
+      let recentCompletedDispatches = state.recentCompletedDispatches;
+      let dispatchChannels = state.dispatchChannels;
       for (const dispatch of completed) {
         const label = dispatch.description || dispatch.subagentType;
         memories = [
@@ -192,9 +196,45 @@ export function reducer(state: AetherState, action: Action): AetherState {
           },
         ];
         memSeq += 1;
+
+        recentCompletedDispatches = [dispatch, ...recentCompletedDispatches].slice(0, 20);
+
+        if (state.cfg.autoCreateDispatchChannels) {
+          dispatchChannels = [
+            ...dispatchChannels,
+            {
+              toolUseId: dispatch.toolUseId,
+              subagentType: dispatch.subagentType,
+              description: dispatch.description,
+              prompt: dispatch.prompt,
+              model: dispatch.model,
+              startedAt: dispatch.startedAt,
+              createdAt: nowShort(),
+            },
+          ];
+        }
       }
-      return { ...state, realAgents: action.agents, memories, memSeq };
+      return { ...state, realAgents: action.agents, memories, memSeq, recentCompletedDispatches, dispatchChannels };
     }
+
+    case 'CREATE_DISPATCH_CHANNEL': {
+      const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);
+      const dispatch = state.recentCompletedDispatches.find((d) => d.toolUseId === action.toolUseId);
+      if (alreadyExists || !dispatch) return state;
+      const stub: DispatchChannelStub = {
+        toolUseId: dispatch.toolUseId,
+        subagentType: dispatch.subagentType,
+        description: dispatch.description,
+        prompt: dispatch.prompt,
+        model: dispatch.model,
+        startedAt: dispatch.startedAt,
+        createdAt: nowShort(),
+      };
+      return { ...state, dispatchChannels: [...state.dispatchChannels, stub] };
+    }
+
+    case 'REMOVE_DISPATCH_CHANNEL':
+      return { ...state, dispatchChannels: state.dispatchChannels.filter((d) => d.toolUseId !== action.toolUseId) };
 
     case 'SELECT_REAL_AGENT':
       return { ...state, selectedRealAgent: action.toolUseId };

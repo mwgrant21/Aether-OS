@@ -49,6 +49,7 @@ export const initialState: AetherState = {
     alarm: 120,
     autoThrottle: true,
     sound: false,
+    autoCreateDispatchChannels: false,
   },
   agents: [
     {
@@ -179,4 +180,6 @@ export const initialState: AetherState = {
   chatActionResults: [],
   realUsage: { weeklyTokens: [0, 0, 0, 0, 0, 0, 0], usedThisMonth: 0, burnRatePerMin: 0, weekOverWeekPct: null, lastScanAt: null },
   realAgents: [],
+  recentCompletedDispatches: [],
+  dispatchChannels: [],
 };

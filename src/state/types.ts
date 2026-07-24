@@ -101,6 +101,16 @@ export interface MemoryStub {
   strength: number;
 }
 
+export interface DispatchChannelStub {
+  toolUseId: string;
+  subagentType: string;
+  description: string;
+  prompt: string;
+  model: string | null;
+  startedAt: string;
+  createdAt: string;
+}
+
 export type OpMode = 'PLAN' | 'EDITS' | 'AUTO';
 export type RendererMode = 'classic' | 'volumetric' | 'warp';
 export type ThemeName = 'cyan' | 'blue' | 'teal' | 'violet' | 'amber' | 'red';
@@ -117,6 +127,7 @@ export interface Cfg {
   alarm: number;
   autoThrottle: boolean;
   sound: boolean;
+  autoCreateDispatchChannels: boolean;
 }
 
 export interface AetherState {
@@ -152,6 +163,8 @@ export interface AetherState {
   chatActionResults: ChatActionResult[];
   realUsage: RealUsageSnapshot;
   realAgents: RealAgentDispatch[];
+  recentCompletedDispatches: RealAgentDispatch[];
+  dispatchChannels: DispatchChannelStub[];
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };
