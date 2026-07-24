@@ -85,10 +85,15 @@ function buildDispatchPrompt(channel: ChatChannel, state: AetherState): string {
     return `${FALLBACK_PERSONA.voice} ${referAsInstruction(state.operatorName)}\n\nNo record of this task is available.`;
   }
 
+  const usage = state.dispatchUsage[stub.toolUseId];
+  const usageSentence = usage
+    ? ` You used approximately ${usage.tokens.toLocaleString()} tokens across ${usage.toolUses} tool call${usage.toolUses === 1 ? '' : 's'}, taking about ${Math.round(usage.durationMs / 1000)}s.`
+    : '';
+
   return (
     `${FALLBACK_PERSONA.voice} ${referAsInstruction(state.operatorName)}\n\n` +
     `You completed a real task earlier as a Claude Code subagent (type: ${stub.subagentType}). ` +
-    `You were asked to: ${stub.prompt || stub.description || 'no task detail was recorded.'}\n\n` +
+    `You were asked to: ${stub.prompt || stub.description || 'no task detail was recorded.'}${usageSentence}\n\n` +
     `Reply in at most 3 sentences, plain prose only -- no bold, italics, headers, bullet lists, or code fences. ` +
     `Discuss this completed task retrospectively -- you cannot take any further action, spawn/kill/throttle any agent, ` +
     `or change any application setting from this channel.`

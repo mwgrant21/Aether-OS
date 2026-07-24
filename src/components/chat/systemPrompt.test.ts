@@ -177,4 +177,17 @@ describe('buildSystemPrompt (dispatch channels)', () => {
     const prompt = buildSystemPrompt(orphanChannel, initialState);
     expect(prompt).toContain('No record of this task is available.');
   });
+
+  it('includes a usage sentence with real tokens/tool-uses/duration when state.dispatchUsage has a matching entry', () => {
+    const withUsage: AetherState = { ...dispatchChannelState, dispatchUsage: { tu_1: { tokens: 12345, toolUses: 8, durationMs: 194546 } } };
+    const prompt = buildSystemPrompt(dispatchChannel, withUsage);
+    expect(prompt).toContain('12,345 tokens');
+    expect(prompt).toContain('8 tool calls');
+    expect(prompt).toContain('195s');
+  });
+
+  it('omits the usage sentence when no matching dispatchUsage entry exists', () => {
+    const prompt = buildSystemPrompt(dispatchChannel, dispatchChannelState);
+    expect(prompt).not.toContain('tokens across');
+  });
 });
