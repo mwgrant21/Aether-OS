@@ -23,6 +23,11 @@ export function createLiveAgentTracker(projectsRoot: string) {
         if (!activeFile) return { open: currentOpen, completed: [] };
         const { lines, newOffset } = await readNewLines(activeFile, 0);
         currentOffset = newOffset;
+        // This replays the whole file from byte 0 (a session switch, or first
+        // tick after app start), so `completed` can include dispatches that
+        // finished long before this moment -- not just ones that completed on
+        // this tick. Harmless today (nothing treats `completed` as "just now"),
+        // but a future caller shouldn't assume it means "newly completed".
         const completed: CompletedDispatchUsage[] = [];
         currentOpen = applyLinesToOpenDispatches(currentOpen, lines, completed);
         return { open: currentOpen, completed };
