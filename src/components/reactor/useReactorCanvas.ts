@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAetherStore } from '../../state/store';
-import { advancePhase, computePulseDuration, computeSurge, computeThemeFilter } from './reactorMath';
+import { advancePhase, computeDispatchIntensity, computePulseDuration, computeSurge, computeThemeFilter } from './reactorMath';
 
 export interface ReactorFrame {
   now: number;
@@ -59,9 +59,9 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
         phaseRef.current = advancePhase(phaseRef.current, dt, dur);
         const phase = phaseRef.current;
         const surge = computeSurge(phase);
-        const overdrive = s.agents.length >= 7;
-        const glowFactor = (s.cfg.glow == null ? 70 : s.cfg.glow) / 70;
-        const themeFilter = computeThemeFilter(s.cfg.theme, s.alarmLevel, s.cfg.glowFx);
+        const { overdrive, overload, glowMultiplier } = computeDispatchIntensity(s.realAgents.length);
+        const glowFactor = ((s.cfg.glow == null ? 70 : s.cfg.glow) / 70) * glowMultiplier;
+        const themeFilter = computeThemeFilter(s.cfg.theme, s.alarmLevel, s.cfg.glowFx, overload);
         [coreEl, glEl, conduitEl].forEach((el) => {
           if (el.style.filter !== themeFilter) el.style.filter = themeFilter;
         });

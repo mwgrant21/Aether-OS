@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advancePhase, computePulseDuration, computeRateFromUsage, computeSurge, computeThemeFilter, computeThemeHueDeg } from './reactorMath';
+import { advancePhase, computeDispatchIntensity, computePulseDuration, computeRateFromUsage, computeSurge, computeThemeFilter, computeThemeHueDeg } from './reactorMath';
 
 describe('computePulseDuration', () => {
   it('shortens as burn rate rises in live mode', () => {
@@ -100,5 +100,21 @@ describe('computeRateFromUsage', () => {
 
   it('clamps a burn rate above the visual ceiling', () => {
     expect(computeRateFromUsage(400000)).toBe(168000);
+  });
+});
+
+describe('computeDispatchIntensity', () => {
+  it('is neither overdrive nor overload with 0 or 1 concurrent dispatches', () => {
+    expect(computeDispatchIntensity(0)).toEqual({ overdrive: false, overload: false, glowMultiplier: 1 });
+    expect(computeDispatchIntensity(1)).toEqual({ overdrive: false, overload: false, glowMultiplier: 1 });
+  });
+
+  it('is overdrive but not overload at exactly 2 concurrent dispatches', () => {
+    expect(computeDispatchIntensity(2)).toEqual({ overdrive: true, overload: false, glowMultiplier: 1 });
+  });
+
+  it('is both overdrive and overload at 3 or more concurrent dispatches', () => {
+    expect(computeDispatchIntensity(3)).toEqual({ overdrive: true, overload: true, glowMultiplier: 1.25 });
+    expect(computeDispatchIntensity(9)).toEqual({ overdrive: true, overload: true, glowMultiplier: 1.25 });
   });
 });

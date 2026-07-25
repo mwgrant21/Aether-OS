@@ -41,3 +41,15 @@ export function advancePhase(prevPhase: number, dtSeconds: number, durSeconds: n
 export function computeSurge(phase: number): number {
   return Math.exp(-3.5 * phase);
 }
+
+export interface DispatchIntensity {
+  overdrive: boolean;
+  overload: boolean;
+  glowMultiplier: number;
+}
+
+export function computeDispatchIntensity(realAgentCount: number): DispatchIntensity {
+  const overdrive = realAgentCount >= 2;
+  const overload = realAgentCount >= 3;
+  return { overdrive, overload, glowMultiplier: overload ? 1.25 : 1 };
+}
