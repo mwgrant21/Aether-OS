@@ -9,3 +9,4 @@ vite.config.js
 vite-plugins/*.d.ts
 vite-plugins/*.js
 .env
+.worktrees/
