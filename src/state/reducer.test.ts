@@ -267,6 +267,11 @@ describe('reducer', () => {
       });
     });
 
+    it('emits no log line for a plain completion when auto-create is off', () => {
+      const withOpen = { ...initialState, realAgents: [completedDispatch] };
+      expect(reducer(withOpen, { type: 'SET_REAL_AGENTS', agents: [] }).logs).toEqual(withOpen.logs);
+    });
+
     it('does not create a duplicate dispatch channel when auto-creating for a toolUseId that already has one', () => {
       const existingStub = {
         toolUseId: 'tu_1',

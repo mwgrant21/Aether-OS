@@ -114,14 +114,6 @@ function applyApprovalResolution(state: AetherState, req: Approval, approve: boo
       { t: nowShort(), m: `${ok ? 'Approved: ' : 'Denied: '}${req.action} (${req.agent})`, c: ok ? '#3be0a0' : '#ff9d9d' },
       ...state.notifs,
     ].slice(0, 12),
-    logs: [
-      ...state.logs,
-      {
-        t: nowShort(),
-        m: `${req.agent}: ${ok ? 'authorization granted — ' : 'request denied — '}${req.action.toLowerCase()}`,
-        c: ok ? '#3be0a0' : '#ff9d9d',
-      },
-    ].slice(-14),
   };
 }
 

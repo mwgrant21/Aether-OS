@@ -60,6 +60,12 @@ describe('persistence', () => {
     expect(loaded?.operatorName).toBe('Matt');
   });
 
+  it('does not persist logs', () => {
+    savePersisted({ ...initialState, logs: [{ t: '10:00:00', m: 'test', c: '#7fd8ef' }] });
+    const loaded = loadPersisted();
+    expect(loaded?.logs).toBeUndefined();
+  });
+
   it('returns null when nothing is stored', () => {
     expect(loadPersisted()).toBeNull();
   });
