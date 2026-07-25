@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advancePhase, computePulseDuration, computeSurge, computeThemeFilter, computeThemeHueDeg } from './reactorMath';
+import { advancePhase, computePulseDuration, computeRateFromUsage, computeSurge, computeThemeFilter, computeThemeHueDeg } from './reactorMath';
 
 describe('computePulseDuration', () => {
   it('shortens as burn rate rises in live mode', () => {
@@ -55,5 +55,28 @@ describe('computeSurge', () => {
     expect(computeSurge(0)).toBe(1);
     expect(computeSurge(0.5)).toBeLessThan(computeSurge(0.1));
     expect(computeSurge(1)).toBeLessThan(computeSurge(0.5));
+  });
+});
+
+describe('computeRateFromUsage', () => {
+  it('falls back to the idle baseline when burn rate is zero', () => {
+    expect(computeRateFromUsage(0)).toBe(92000);
+  });
+
+  it('falls back to the idle baseline for a negative burn rate', () => {
+    expect(computeRateFromUsage(-500)).toBe(92000);
+  });
+
+  it('passes through a burn rate already inside the visual range', () => {
+    expect(computeRateFromUsage(92000)).toBe(92000);
+    expect(computeRateFromUsage(50000)).toBe(50000);
+  });
+
+  it('clamps a burn rate below the visual floor', () => {
+    expect(computeRateFromUsage(5000)).toBe(20000);
+  });
+
+  it('clamps a burn rate above the visual ceiling', () => {
+    expect(computeRateFromUsage(400000)).toBe(168000);
   });
 });

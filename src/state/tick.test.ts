@@ -7,26 +7,30 @@ afterEach(() => {
 });
 
 describe('computeTick', () => {
-  it('clamps rate to [20000, 168000] regardless of inputs', () => {
-    const result = computeTick({ ...initialState, rate: 200000, cfg: { ...initialState.cfg, autoThrottle: false } });
-    expect(result.rate).toBeLessThanOrEqual(168000);
-    expect(result.rate).toBeGreaterThanOrEqual(20000);
+  it('does not return a rate field — rate is owned by SET_REAL_USAGE, not TICK', () => {
+    const result = computeTick({ ...initialState, rate: 92000, cfg: { ...initialState.cfg, autoThrottle: false } });
+    expect(result.rate).toBeUndefined();
   });
 
-  it('auto-throttle caps rate at 80% of the alarm threshold', () => {
-    const result = computeTick({
+  it('auto-throttle caps the effective rate used for budget math at 80% of the alarm threshold', () => {
+    const uncapped = computeTick({
+      ...initialState,
+      rate: 168000,
+      cfg: { ...initialState.cfg, autoThrottle: false, alarm: 120 },
+    });
+    const capped = computeTick({
       ...initialState,
       rate: 168000,
       cfg: { ...initialState.cfg, autoThrottle: true, alarm: 120 },
     });
-    expect(result.rate).toBeLessThanOrEqual(96000);
+    expect(capped.used!).toBeLessThan(uncapped.used!);
   });
 
   it('is fully deterministic with Math.random pinned to 0.5', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const state = { ...initialState, agents: [], cfg: { ...initialState.cfg, opMode: 'EDITS' as const, autoThrottle: true, alarm: 120 } };
+    const state = { ...initialState, rate: 84000, agents: [], cfg: { ...initialState.cfg, opMode: 'EDITS' as const, autoThrottle: true, alarm: 120 } };
     const result = computeTick(state);
-    expect(result.rate).toBeCloseTo(84080, 5);
+    expect(result.used).toBeCloseTo(state.used + (84000 / 60) * 0.9 * 0.05, 5);
     expect(result.alarmLevel).toBe('ok');
     expect(result.approvals).toEqual(state.approvals);
   });

@@ -12,12 +12,10 @@ const APPROVAL_POOL = [
 
 export function computeTick(state: AetherState): Partial<AetherState> {
   const mode = state.cfg.opMode;
-  const target = Math.min(160000, 26000 + state.agents.length * 21000) * (mode === 'PLAN' ? 0.55 : mode === 'AUTO' ? 1.1 : 1);
-  let rate = state.rate + (target - state.rate) * 0.12 + (Math.random() - 0.5) * 20000;
-  rate = Math.max(20000, Math.min(168000, rate));
-  if (state.cfg.autoThrottle) rate = Math.min(rate, state.cfg.alarm * 1000 * 0.8);
+  let effectiveRate = state.rate;
+  if (state.cfg.autoThrottle) effectiveRate = Math.min(effectiveRate, state.cfg.alarm * 1000 * 0.8);
 
-  const used = state.used + (rate / 60) * 0.9 * 0.05;
+  const used = state.used + (effectiveRate / 60) * 0.9 * 0.05;
   const ctxUsed = Math.min(123000, state.ctxUsed + Math.random() * 40);
 
   const weekRaw = state.weekRaw.slice();
@@ -26,7 +24,7 @@ export function computeTick(state: AetherState): Partial<AetherState> {
   const agents = state.agents.map((a) => ({
     ...a,
     pct: a.paused ? a.pct : Math.min(99, a.pct + (Math.random() - 0.3) * 1.5),
-    hist: a.paused ? a.hist : a.hist.slice(-15).concat(rate * a.share * (0.85 + Math.random() * 0.3)),
+    hist: a.paused ? a.hist : a.hist.slice(-15).concat(effectiveRate * a.share * (0.85 + Math.random() * 0.3)),
   }));
 
   const sys = state.sys.map((m) => {
@@ -37,7 +35,7 @@ export function computeTick(state: AetherState): Partial<AetherState> {
   const memories = state.memories.map((m) => (m.pinned ? m : { ...m, strength: Math.max(0, m.strength - 0.4) }));
 
   const alarm = state.cfg.alarm;
-  const rateK = rate / 1000;
+  const rateK = effectiveRate / 1000;
   const level: AlarmLevel = rateK >= alarm ? 'crit' : rateK >= alarm * 0.85 ? 'warn' : 'ok';
 
   let notifs = state.notifs;
@@ -70,5 +68,5 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     }
   }
 
-  return { rate, used, ctxUsed, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
+  return { used, ctxUsed, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
 }
