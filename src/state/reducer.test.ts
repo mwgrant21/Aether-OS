@@ -315,6 +315,28 @@ describe('reducer', () => {
     });
   });
 
+  describe('SET_REAL_USAGE', () => {
+    it('derives state.rate from the snapshot burn rate', () => {
+      const snapshot = { ...initialState.realUsage, burnRatePerMin: 50000 };
+      const next = reducer(initialState, { type: 'SET_REAL_USAGE', snapshot });
+      expect(next.rate).toBe(50000);
+      expect(next.realUsage).toBe(snapshot);
+    });
+
+    it('falls back to the idle baseline rate when the snapshot burn rate is zero', () => {
+      const snapshot = { ...initialState.realUsage, burnRatePerMin: 0 };
+      const withElevatedRate = { ...initialState, rate: 150000 };
+      const next = reducer(withElevatedRate, { type: 'SET_REAL_USAGE', snapshot });
+      expect(next.rate).toBe(92000);
+    });
+
+    it('clamps an extreme snapshot burn rate into the visual range', () => {
+      const snapshot = { ...initialState.realUsage, burnRatePerMin: 900000 };
+      const next = reducer(initialState, { type: 'SET_REAL_USAGE', snapshot });
+      expect(next.rate).toBe(168000);
+    });
+  });
+
   describe('CREATE_DISPATCH_CHANNEL', () => {
     const pooled: RealAgentDispatch = {
       toolUseId: 'tu_2',

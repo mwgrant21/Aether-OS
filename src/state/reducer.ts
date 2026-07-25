@@ -4,6 +4,7 @@ import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { buildChatActionResultText } from './chatActionResult';
+import { computeRateFromUsage } from '../components/reactor/reactorMath';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
@@ -167,7 +168,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, operatorName: action.name };
 
     case 'SET_REAL_USAGE':
-      return { ...state, realUsage: action.snapshot };
+      return { ...state, realUsage: action.snapshot, rate: computeRateFromUsage(action.snapshot.burnRatePerMin) };
 
     case 'SET_REAL_AGENTS': {
       const completed = detectCompletedDispatches(state.realAgents, action.agents);
