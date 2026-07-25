@@ -1,16 +1,5 @@
 import type { AetherState, AlarmLevel } from './types';
-import { nowLong, nowShort } from '../utils/format';
-
-const LOG_MESSAGES = [
-  'Code Builder: merging changes…',
-  'UI Designer: refining spacing…',
-  'API Builder: validating schema…',
-  'Test Runner: 156 tests passing',
-  'Database Agent: 8 tables optimized',
-  'Reactor surge nominal',
-  'Cache warmed · 12ms',
-  '✓ Assets optimized',
-];
+import { nowShort } from '../utils/format';
 
 const APPROVAL_POOL = [
   { action: 'Install dependency: chart.js@5', detail: 'adds 42KB to bundle · 3 transitive deps', risk: 'LOW' as const },
@@ -47,12 +36,6 @@ export function computeTick(state: AetherState): Partial<AetherState> {
 
   const memories = state.memories.map((m) => (m.pinned ? m : { ...m, strength: Math.max(0, m.strength - 0.4) }));
 
-  let logs = state.logs;
-  if (Math.random() < 0.3) {
-    const msg = LOG_MESSAGES[Math.floor(Math.random() * LOG_MESSAGES.length)];
-    logs = logs.concat({ t: nowLong(), m: msg, c: Math.random() < 0.2 ? '#3be0a0' : '#7fd8ef' }).slice(-14);
-  }
-
   const alarm = state.cfg.alarm;
   const rateK = rate / 1000;
   const level: AlarmLevel = rateK >= alarm ? 'crit' : rateK >= alarm * 0.85 ? 'warn' : 'ok';
@@ -77,7 +60,6 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     const req = APPROVAL_POOL[Math.floor(Math.random() * APPROVAL_POOL.length)];
     const ag = agents[Math.floor(Math.random() * agents.length)];
     if (mode === 'AUTO' && req.risk !== 'HIGH') {
-      logs = logs.concat({ t: nowLong(), m: `${ag.name}: auto-approved — ${req.action.toLowerCase()}`, c: '#3be0a0' }).slice(-14);
       notifs = [{ t: nowShort(), m: `Auto-approved: ${req.action} (${ag.name})`, c: '#3be0a0' }, ...notifs].slice(0, 12);
       unread += 1;
     } else {
@@ -88,5 +70,5 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     }
   }
 
-  return { rate, used, ctxUsed, weekRaw, agents, sys, logs, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
+  return { rate, used, ctxUsed, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
 }
