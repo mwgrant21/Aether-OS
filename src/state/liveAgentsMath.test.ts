@@ -3,6 +3,7 @@ import {
   applyLinesToOpenDispatches,
   applyLinesToOpenWork,
   detectCompletedDispatches,
+  detectStartedDispatches,
   labelForToolUse,
   type RealAgentDispatch,
   type CompletedDispatchUsage,
@@ -187,6 +188,45 @@ describe('detectCompletedDispatches', () => {
 
   it('separates a simultaneous add and remove correctly', () => {
     expect(detectCompletedDispatches([tu1], [tu2])).toEqual([tu1]);
+  });
+});
+
+describe('detectStartedDispatches', () => {
+  const tu1: RealAgentDispatch = {
+    toolUseId: 'tu_1',
+    subagentType: 'general-purpose',
+    description: 'first',
+    startedAt: '2026-07-20T10:00:00.000Z',
+    prompt: '',
+    model: null,
+  };
+  const tu2: RealAgentDispatch = {
+    toolUseId: 'tu_2',
+    subagentType: 'Explore',
+    description: 'second',
+    startedAt: '2026-07-20T10:00:05.000Z',
+    prompt: '',
+    model: null,
+  };
+
+  it('returns an empty array when the two lists are identical', () => {
+    expect(detectStartedDispatches([tu1, tu2], [tu1, tu2])).toEqual([]);
+  });
+
+  it('returns the one dispatch that newly appeared', () => {
+    expect(detectStartedDispatches([tu1], [tu1, tu2])).toEqual([tu2]);
+  });
+
+  it('returns multiple dispatches when several appear at once', () => {
+    expect(detectStartedDispatches([], [tu1, tu2])).toEqual([tu1, tu2]);
+  });
+
+  it('returns an empty array when a dispatch is only removed, not added', () => {
+    expect(detectStartedDispatches([tu1, tu2], [tu1])).toEqual([]);
+  });
+
+  it('separates a simultaneous add and remove correctly', () => {
+    expect(detectStartedDispatches([tu1], [tu2])).toEqual([tu2]);
   });
 });
 

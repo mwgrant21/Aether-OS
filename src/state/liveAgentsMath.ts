@@ -76,6 +76,11 @@ export function detectCompletedDispatches(oldAgents: RealAgentDispatch[], newAge
   return oldAgents.filter((a) => !stillOpen.has(a.toolUseId));
 }
 
+export function detectStartedDispatches(oldAgents: RealAgentDispatch[], newAgents: RealAgentDispatch[]): RealAgentDispatch[] {
+  const wasOpen = new Set(oldAgents.map((a) => a.toolUseId));
+  return newAgents.filter((a) => !wasOpen.has(a.toolUseId));
+}
+
 export interface RealActiveWork {
   toolUseId: string;
   kind: 'agent' | 'tool';
