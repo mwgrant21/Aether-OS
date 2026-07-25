@@ -1,8 +1,8 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, MemoryStub, OpMode, RealUsageSnapshot } from './types';
-import { detectCompletedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
+import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
-import { nowShort } from '../utils/format';
+import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { buildChatActionResultText } from './chatActionResult';
 
 export type Action =
@@ -179,10 +179,17 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_REAL_AGENTS': {
       const completed = detectCompletedDispatches(state.realAgents, action.agents);
+      const started = detectStartedDispatches(state.realAgents, action.agents);
       let memories = state.memories;
       let memSeq = state.memSeq;
       let recentCompletedDispatches = state.recentCompletedDispatches;
       let dispatchChannels = state.dispatchChannels;
+      let logs = state.logs;
+
+      for (const dispatch of started) {
+        logs = logs.concat({ t: nowLong(), m: `${dispatch.subagentType}: ${dispatch.description || 'dispatch started'}`, c: '#7fd8ef' }).slice(-14);
+      }
+
       for (const dispatch of completed) {
         const label = dispatch.description || dispatch.subagentType;
         memories = [
@@ -215,9 +222,10 @@ export function reducer(state: AetherState, action: Action): AetherState {
               createdAt: nowShort(),
             },
           ];
+          logs = logs.concat({ t: nowLong(), m: `${dispatch.subagentType}: dispatch channel opened`, c: '#7fd8ef' }).slice(-14);
         }
       }
-      return { ...state, realAgents: action.agents, memories, memSeq, recentCompletedDispatches, dispatchChannels };
+      return { ...state, realAgents: action.agents, memories, memSeq, recentCompletedDispatches, dispatchChannels, logs };
     }
 
     case 'SET_ACTIVE_WORK':
@@ -236,7 +244,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
         startedAt: dispatch.startedAt,
         createdAt: nowShort(),
       };
-      return { ...state, dispatchChannels: [...state.dispatchChannels, stub] };
+      const logs = state.logs.concat({ t: nowLong(), m: `${dispatch.subagentType}: dispatch channel opened`, c: '#7fd8ef' }).slice(-14);
+      return { ...state, dispatchChannels: [...state.dispatchChannels, stub], logs };
     }
 
     case 'REMOVE_DISPATCH_CHANNEL':
@@ -244,8 +253,10 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'RECORD_DISPATCH_USAGE': {
       let dispatchUsage = state.dispatchUsage;
+      let logs = state.logs;
       for (const c of action.completed) {
         dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
+        logs = logs.concat({ t: nowLong(), m: `${c.subagentType}: ${short(c.tokens)} tok · ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} · ${fmtElapsed(c.durationMs)}`, c: '#3be0a0' }).slice(-14);
       }
       const keys = Object.keys(dispatchUsage);
       if (keys.length > 100) {
@@ -255,7 +266,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
         const toEvict = new Set(keys.slice(0, keys.length - 100));
         dispatchUsage = Object.fromEntries(Object.entries(dispatchUsage).filter(([k]) => !toEvict.has(k)));
       }
-      return { ...state, dispatchUsage };
+      return { ...state, dispatchUsage, logs };
     }
 
     case 'SELECT_REAL_AGENT':

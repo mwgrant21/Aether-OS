@@ -287,6 +287,27 @@ describe('reducer', () => {
       expect(next.dispatchChannels).toHaveLength(1);
       expect(next.dispatchChannels[0]).toEqual(existingStub);
     });
+
+    it('appends a log line for a newly-started dispatch', () => {
+      const next = reducer(initialState, { type: 'SET_REAL_AGENTS', agents: [completedDispatch] });
+      const last = next.logs.at(-1);
+      expect(last?.m).toBe('general-purpose: Explore the repo');
+      expect(last?.c).toBe('#7fd8ef');
+    });
+
+    it('appends no log line when nothing started or completed', () => {
+      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
+      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [completedDispatch] });
+      expect(next.logs).toEqual(withOpenDispatch.logs);
+    });
+
+    it('appends a log line when auto-creating a dispatch channel', () => {
+      const withAutoCreate = { ...initialState, cfg: { ...initialState.cfg, autoCreateDispatchChannels: true }, realAgents: [completedDispatch] };
+      const next = reducer(withAutoCreate, { type: 'SET_REAL_AGENTS', agents: [] });
+      const last = next.logs.at(-1);
+      expect(last?.m).toBe('general-purpose: dispatch channel opened');
+      expect(last?.c).toBe('#7fd8ef');
+    });
   });
 
   describe('CREATE_DISPATCH_CHANNEL', () => {
@@ -330,6 +351,14 @@ describe('reducer', () => {
       const withBoth = { ...initialState, recentCompletedDispatches: [pooled], dispatchChannels: [existingStub] };
       const next = reducer(withBoth, { type: 'CREATE_DISPATCH_CHANNEL', toolUseId: 'tu_2' });
       expect(next.dispatchChannels).toHaveLength(1);
+    });
+
+    it('appends a log line when a channel is created', () => {
+      const withPool = { ...initialState, recentCompletedDispatches: [pooled] };
+      const next = reducer(withPool, { type: 'CREATE_DISPATCH_CHANNEL', toolUseId: 'tu_2' });
+      const last = next.logs.at(-1);
+      expect(last?.m).toBe('Explore: dispatch channel opened');
+      expect(last?.c).toBe('#7fd8ef');
     });
   });
 
@@ -403,6 +432,38 @@ describe('reducer', () => {
       expect(next.dispatchUsage['old_0']).toBeUndefined();
       expect(next.dispatchUsage['old_1']).toBeDefined();
       expect(next.dispatchUsage['new_1']).toBeDefined();
+    });
+
+    it('appends a log line with real usage figures', () => {
+      const next = reducer(initialState, {
+        type: 'RECORD_DISPATCH_USAGE',
+        completed: [
+          {
+            toolUseId: 'tu_1',
+            subagentType: 'general-purpose',
+            description: 'desc',
+            startedAt: '2026-07-20T10:00:00.000Z',
+            prompt: '',
+            model: null,
+            tokens: 12500,
+            toolUses: 5,
+            durationMs: 8000,
+          },
+        ],
+      });
+      const last = next.logs.at(-1);
+      expect(last?.m).toBe('general-purpose: 12.5K tok · 5 tool calls · 8s');
+      expect(last?.c).toBe('#3be0a0');
+    });
+
+    it('uses singular "tool call" for exactly one tool use', () => {
+      const next = reducer(initialState, {
+        type: 'RECORD_DISPATCH_USAGE',
+        completed: [
+          { toolUseId: 'tu_1', subagentType: 'a', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null, tokens: 1, toolUses: 1, durationMs: 1000 },
+        ],
+      });
+      expect(next.logs.at(-1)?.m).toBe('a: 1 tok · 1 tool call · 1s');
     });
   });
 });
