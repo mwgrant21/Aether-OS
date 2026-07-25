@@ -34,12 +34,34 @@ describe('computeThemeHueDeg', () => {
     expect(computeThemeHueDeg('cyan', 'warn')).toBe(-150);
     expect(computeThemeHueDeg('violet', 'crit')).toBe(165);
   });
+
+  it('overload adds a hue shift on top of the base theme', () => {
+    const base = computeThemeHueDeg('cyan', 'ok', false);
+    const overloaded = computeThemeHueDeg('cyan', 'ok', true);
+    expect(overloaded).not.toBe(base);
+  });
+
+  it('overload layers on top of an active alarm level rather than being overridden by it', () => {
+    const warnOnly = computeThemeHueDeg('cyan', 'warn', false);
+    const warnAndOverload = computeThemeHueDeg('cyan', 'warn', true);
+    expect(warnAndOverload).not.toBe(warnOnly);
+  });
+
+  it('defaults to no overload shift when the parameter is omitted', () => {
+    expect(computeThemeHueDeg('cyan', 'ok')).toBe(computeThemeHueDeg('cyan', 'ok', false));
+  });
 });
 
 describe('computeThemeFilter', () => {
   it('builds a hue-rotate string, appending desaturation when glowFx is off', () => {
     expect(computeThemeFilter('cyan', 'ok', true)).toBe('hue-rotate(0deg)');
     expect(computeThemeFilter('cyan', 'ok', false)).toBe('hue-rotate(0deg) saturate(.75) brightness(.92)');
+  });
+
+  it('overload changes the filter string even when alarmLevel and glowFx are unchanged', () => {
+    const base = computeThemeFilter('cyan', 'ok', true, false);
+    const overloaded = computeThemeFilter('cyan', 'ok', true, true);
+    expect(overloaded).not.toBe(base);
   });
 });
 

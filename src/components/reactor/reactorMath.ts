@@ -18,16 +18,20 @@ export function computePulseDuration(rate: number, pulseMode: 'live' | 'ambient'
   return dur;
 }
 
-export function computeThemeHueDeg(theme: ThemeName, alarmLevel: AlarmLevel): number {
+const OVERLOAD_HUE_SHIFT = 40;
+
+export function computeThemeHueDeg(theme: ThemeName, alarmLevel: AlarmLevel, overload: boolean = false): number {
   let hueDeg = HUE_MAP[theme] ?? 0;
   if (alarmLevel === 'warn') hueDeg = -150;
   else if (alarmLevel === 'crit') hueDeg = 165;
+  if (overload) hueDeg += OVERLOAD_HUE_SHIFT;
   return hueDeg;
 }
 
-export function computeThemeFilter(theme: ThemeName, alarmLevel: AlarmLevel, glowFx: boolean): string {
-  const hueDeg = computeThemeHueDeg(theme, alarmLevel);
-  return `hue-rotate(${hueDeg}deg)` + (glowFx === false ? ' saturate(.75) brightness(.92)' : '');
+export function computeThemeFilter(theme: ThemeName, alarmLevel: AlarmLevel, glowFx: boolean, overload: boolean = false): string {
+  const hueDeg = computeThemeHueDeg(theme, alarmLevel, overload);
+  const overloadBrightness = overload ? ' brightness(1.15)' : '';
+  return `hue-rotate(${hueDeg}deg)` + (glowFx === false ? ' saturate(.75) brightness(.92)' : '') + overloadBrightness;
 }
 
 export function advancePhase(prevPhase: number, dtSeconds: number, durSeconds: number): number {
