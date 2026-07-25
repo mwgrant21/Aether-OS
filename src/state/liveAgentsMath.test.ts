@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { applyLinesToOpenDispatches, detectCompletedDispatches, type RealAgentDispatch, type CompletedDispatchUsage } from './liveAgentsMath';
+import {
+  applyLinesToOpenDispatches,
+  applyLinesToOpenWork,
+  detectCompletedDispatches,
+  labelForToolUse,
+  type RealAgentDispatch,
+  type CompletedDispatchUsage,
+  type RealActiveWork,
+} from './liveAgentsMath';
 
 function dispatchLine(
   id: string,
@@ -233,5 +241,96 @@ describe('applyLinesToOpenDispatches — completedOut parameter', () => {
     const completedOut: CompletedDispatchUsage[] = [];
     applyLinesToOpenDispatches([], [completionLineWithUsage('unknown_id', 100, 1, 500)], completedOut);
     expect(completedOut).toEqual([]);
+  });
+});
+
+describe('labelForToolUse', () => {
+  it('labels an Agent by subagent_type, falling back to description then "agent"', () => {
+    expect(labelForToolUse('Agent', { subagent_type: 'general-purpose' })).toBe('general-purpose');
+    expect(labelForToolUse('Agent', { description: 'Explore the repo' })).toBe('Explore the repo');
+    expect(labelForToolUse('Agent', {})).toBe('agent');
+  });
+
+  it('labels a Bash call by its command', () => {
+    expect(labelForToolUse('Bash', { command: 'npm test' })).toBe('npm test');
+  });
+
+  it('labels a file tool by the file basename, not the full path', () => {
+    expect(labelForToolUse('Read', { file_path: 'C:\\proj\\src\\aggregator.js' })).toBe('aggregator.js');
+    expect(labelForToolUse('Read', { file_path: '/proj/src/aggregator.js' })).toBe('aggregator.js');
+  });
+
+  it('labels a pattern-based tool by its pattern', () => {
+    expect(labelForToolUse('Grep', { pattern: 'runningAgents' })).toBe('runningAgents');
+  });
+
+  it('falls back to the tool name for anything else', () => {
+    expect(labelForToolUse('SomethingElse', {})).toBe('SomethingElse');
+    expect(labelForToolUse('SomethingElse', null)).toBe('SomethingElse');
+  });
+});
+
+function toolUseLine(id: string, name: string, input: Record<string, unknown>, timestamp: string): string {
+  return JSON.stringify({
+    type: 'assistant',
+    timestamp,
+    message: { content: [{ type: 'tool_use', id, name, input }] },
+  });
+}
+
+function toolResultLine(toolUseId: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }] },
+  });
+}
+
+describe('applyLinesToOpenWork', () => {
+  it('tracks any in-flight tool call, not just Agent', () => {
+    const lines = [
+      toolUseLine('tu_bash', 'Bash', { command: 'npm test' }, '2026-07-24T10:00:00.000Z'),
+      toolUseLine('tu_agent', 'Agent', { subagent_type: 'code-reviewer', description: 'verify' }, '2026-07-24T10:00:01.000Z'),
+    ];
+    const work = applyLinesToOpenWork([], lines);
+    expect(work).toHaveLength(2);
+    const bash = work.find((w) => w.toolUseId === 'tu_bash');
+    const agent = work.find((w) => w.toolUseId === 'tu_agent');
+    expect(bash).toMatchObject({ kind: 'tool', label: 'npm test' });
+    expect(agent).toMatchObject({ kind: 'agent', label: 'code-reviewer', description: 'verify' });
+  });
+
+  it('closes a tool lane on a matching tool_result', () => {
+    const lines = [
+      toolUseLine('tu_bash', 'Bash', { command: 'npm test' }, '2026-07-24T10:00:00.000Z'),
+      toolResultLine('tu_bash'),
+    ];
+    expect(applyLinesToOpenWork([], lines)).toEqual([]);
+  });
+
+  it('does not close an agent lane on a normal tool_result, only on task-notification', () => {
+    const lines = [
+      toolUseLine('tu_agent', 'Agent', { subagent_type: 'general-purpose', description: 'explore' }, '2026-07-24T10:00:00.000Z'),
+      toolResultLine('tu_agent'),
+    ];
+    const work = applyLinesToOpenWork([], lines);
+    expect(work).toHaveLength(1);
+    expect(work[0]).toMatchObject({ toolUseId: 'tu_agent', kind: 'agent' });
+  });
+
+  it('closes an agent lane on a task-notification completion', () => {
+    const lines = [
+      toolUseLine('tu_agent', 'Agent', { subagent_type: 'general-purpose', description: 'explore' }, '2026-07-24T10:00:00.000Z'),
+      completionLine('tu_agent'),
+    ];
+    expect(applyLinesToOpenWork([], lines)).toEqual([]);
+  });
+
+  it('continues from a non-empty currentOpen list (incremental tailing)', () => {
+    const priorOpen: RealActiveWork[] = [{ toolUseId: 'tu_bash', kind: 'tool', label: 'npm test', description: '', startedAt: '2026-07-24T10:00:00.000Z' }];
+    expect(applyLinesToOpenWork(priorOpen, [toolResultLine('tu_bash')])).toEqual([]);
+  });
+
+  it('skips malformed JSON lines without throwing', () => {
+    expect(() => applyLinesToOpenWork([], ['not json', '', '   '])).not.toThrow();
   });
 });

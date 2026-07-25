@@ -1,5 +1,5 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, MemoryStub, OpMode, RealUsageSnapshot } from './types';
-import { detectCompletedDispatches, type CompletedDispatchUsage, type RealAgentDispatch } from './liveAgentsMath';
+import { detectCompletedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort } from '../utils/format';
@@ -31,7 +31,8 @@ export type Action =
   | { type: 'SELECT_REAL_AGENT'; toolUseId: string }
   | { type: 'CREATE_DISPATCH_CHANNEL'; toolUseId: string }
   | { type: 'REMOVE_DISPATCH_CHANNEL'; toolUseId: string }
-  | { type: 'RECORD_DISPATCH_USAGE'; completed: CompletedDispatchUsage[] };
+  | { type: 'RECORD_DISPATCH_USAGE'; completed: CompletedDispatchUsage[] }
+  | { type: 'SET_ACTIVE_WORK'; work: RealActiveWork[] };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -218,6 +219,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
       }
       return { ...state, realAgents: action.agents, memories, memSeq, recentCompletedDispatches, dispatchChannels };
     }
+
+    case 'SET_ACTIVE_WORK':
+      return { ...state, activeWork: action.work };
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);

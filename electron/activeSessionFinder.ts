@@ -32,3 +32,13 @@ export async function findMostRecentSessionFile(projectsRoot: string): Promise<s
   }
   return best ? best.file : null;
 }
+
+// Scoped to one project directory (rather than every project on the machine)
+// and gated on `sinceMs` so a stale file left over from a previous run can
+// never match -- only the freshly created session file from a just-spawned
+// `claude` process will have a newer mtime than its own spawn time.
+export async function findSessionFileCreatedAfter(dirPath: string, sinceMs: number): Promise<string | null> {
+  const candidate = await findActiveSessionFileInDir(dirPath);
+  if (candidate && candidate.mtimeMs >= sinceMs) return candidate.file;
+  return null;
+}

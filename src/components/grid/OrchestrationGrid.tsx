@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
-import type { RealAgentDispatch } from '../../state/liveAgentsMath';
+import type { RealActiveWork } from '../../state/liveAgentsMath';
 import {
   AGENT_NODE_RADIUS,
   computeRealGridLayout,
@@ -12,7 +12,7 @@ import {
 } from './gridMath';
 
 interface OrchestrationGridProps {
-  agents: RealAgentDispatch[];
+  agents: RealActiveWork[];
   rate: number;
   onSelectRealAgent: (toolUseId: string) => void;
 }
@@ -54,7 +54,7 @@ export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: Orchestra
       <div style={headerStyle}>
         <div style={titleStyle}>ORCHESTRATION GRID</div>
         <div style={statsStyle}>
-          {layout.agentCount} AGENTS · {layout.linkCount} LINKS
+          {layout.agentCount} ACTIVE · {layout.linkCount} LINKS
         </div>
       </div>
 
@@ -109,7 +109,7 @@ export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: Orchestra
                 dominantBaseline="central"
                 style={{ font: `700 13px ${fonts.mono}`, fill: colors.accentCyanSoft }}
               >
-                {node.agent.subagentType.slice(0, 2).toUpperCase()}
+                {node.agent.label.slice(0, 2).toUpperCase()}
               </text>
             </g>
           ))}
@@ -125,13 +125,13 @@ export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: Orchestra
 
               {layout.agentNodes.map((node: RealAgentNode) => (
                 <div key={node.agent.toolUseId} style={agentLabelWrapStyle(node, viewport)}>
-                  <div style={agentNameStyle}>{node.agent.subagentType}</div>
+                  <div style={agentNameStyle}>{node.agent.label}</div>
                   <div style={agentRoleStyle}>{node.agent.description}</div>
                 </div>
               ))}
             </>
           )}
-          {!layout.agentNodes.length && <div style={emptyStyle}>no agents currently running</div>}
+          {!layout.agentNodes.length && <div style={emptyStyle}>nothing running</div>}
         </div>
       </div>
     </div>

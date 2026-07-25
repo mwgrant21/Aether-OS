@@ -66,7 +66,7 @@ export interface TermLine {
   c: string;
 }
 
-import type { RealAgentDispatch } from './liveAgentsMath';
+import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
@@ -173,6 +173,7 @@ export interface AetherState {
   recentCompletedDispatches: RealAgentDispatch[];
   dispatchChannels: DispatchChannelStub[];
   dispatchUsage: Record<string, DispatchUsage>;
+  activeWork: RealActiveWork[];
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

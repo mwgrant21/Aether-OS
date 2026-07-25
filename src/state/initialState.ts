@@ -180,6 +180,7 @@ export const initialState: AetherState = {
   chatActionResults: [],
   realUsage: { weeklyTokens: [0, 0, 0, 0, 0, 0, 0], usedThisMonth: 0, burnRatePerMin: 0, weekOverWeekPct: null, lastScanAt: null },
   realAgents: [],
+  activeWork: [],
   recentCompletedDispatches: [],
   dispatchChannels: [],
   dispatchUsage: {},

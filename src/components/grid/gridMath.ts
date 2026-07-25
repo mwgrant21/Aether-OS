@@ -1,4 +1,4 @@
-import type { RealAgentDispatch } from '../../state/liveAgentsMath';
+import type { RealActiveWork } from '../../state/liveAgentsMath';
 
 export const VIEWBOX_W = 1000;
 export const VIEWBOX_H = 630;
@@ -50,7 +50,7 @@ export function formatHubRate(rate: number): string {
 }
 
 export interface RealAgentNode {
-  agent: RealAgentDispatch;
+  agent: RealActiveWork;
   angle: number;
   x: number;
   y: number;
@@ -73,7 +73,7 @@ export interface RealGridLayout {
   linkCount: number;
 }
 
-export function computeRealAgentNodes(agents: RealAgentDispatch[]): RealAgentNode[] {
+export function computeRealAgentNodes(agents: RealActiveWork[]): RealAgentNode[] {
   const total = agents.length;
   return agents.map((agent, index) => {
     const angle = agentAngle(index, total);
@@ -107,7 +107,7 @@ export function computeRealFeedLinks(agentNodes: RealAgentNode[], now: number): 
   }));
 }
 
-export function computeRealGridLayout(agents: RealAgentDispatch[], now: number): RealGridLayout {
+export function computeRealGridLayout(agents: RealActiveWork[], now: number): RealGridLayout {
   const agentNodes = computeRealAgentNodes(agents);
   const feedLinks = computeRealFeedLinks(agentNodes, now);
   return {

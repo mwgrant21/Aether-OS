@@ -9,10 +9,10 @@ import {
   computeRealFeedLinks,
   computeRealGridLayout,
 } from './gridMath';
-import type { RealAgentDispatch } from '../../state/liveAgentsMath';
+import type { RealActiveWork } from '../../state/liveAgentsMath';
 
-function mockRealAgent(toolUseId: string, startedAt: string, subagentType = 'general-purpose'): RealAgentDispatch {
-  return { toolUseId, subagentType, description: 'Working', startedAt, prompt: 'do work', model: null };
+function mockRealAgent(toolUseId: string, startedAt: string, label = 'general-purpose'): RealActiveWork {
+  return { toolUseId, kind: 'agent', label, description: 'Working', startedAt };
 }
 
 describe('agentAngle', () => {

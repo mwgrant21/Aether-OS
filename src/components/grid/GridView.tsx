@@ -6,7 +6,7 @@ export function GridView() {
 
   return (
     <OrchestrationGrid
-      agents={state.realAgents}
+      agents={state.activeWork}
       rate={state.rate}
       onSelectRealAgent={(toolUseId) => {
         dispatch({ type: 'SELECT_REAL_AGENT', toolUseId });

@@ -1,45 +1,64 @@
-import { findMostRecentSessionFile } from './activeSessionFinder';
+import path from 'path';
+import { findSessionFileCreatedAfter } from './activeSessionFinder';
 import { readNewLines } from './transcriptTailer';
-import { applyLinesToOpenDispatches, type RealAgentDispatch, type CompletedDispatchUsage } from '../src/state/liveAgentsMath';
+import {
+  applyLinesToOpenDispatches,
+  applyLinesToOpenWork,
+  type RealAgentDispatch,
+  type CompletedDispatchUsage,
+  type RealActiveWork,
+} from '../src/state/liveAgentsMath';
+import { cwdToProjectDirName } from '../src/state/projectDirName';
 
 export interface LiveAgentTick {
   open: RealAgentDispatch[];
   completed: CompletedDispatchUsage[];
+  work: RealActiveWork[];
 }
 
-export function createLiveAgentTracker(projectsRoot: string) {
-  let currentFile: string | null = null;
+// The embedded terminal always spawns `claude` with cwd = homeDir (see
+// ptyManager.ts), so its transcript always lands in this one project
+// directory. Rather than scanning every project directory on the machine for
+// whichever file was touched most recently -- which any other concurrently
+// active Claude Code session (even an unrelated background one) can win --
+// this tracker is pinned to the specific file created by this app's own pty
+// spawn, and only that file is ever tailed until the pty respawns.
+export function createLiveAgentTracker(homeDir: string) {
+  const sessionDir = path.join(homeDir, '.claude', 'projects', cwdToProjectDirName(homeDir));
+
+  let spawnedAtMs: number | null = null;
+  let pinnedFile: string | null = null;
   let currentOffset = 0;
   let currentOpen: RealAgentDispatch[] = [];
+  let currentWork: RealActiveWork[] = [];
 
   return {
-    async tick(): Promise<LiveAgentTick> {
-      const activeFile = await findMostRecentSessionFile(projectsRoot);
+    notifyPtySpawned(atMs: number): void {
+      spawnedAtMs = atMs;
+      pinnedFile = null;
+      currentOffset = 0;
+      currentOpen = [];
+      currentWork = [];
+    },
 
-      if (activeFile !== currentFile) {
-        currentFile = activeFile;
+    async tick(): Promise<LiveAgentTick> {
+      if (!pinnedFile) {
+        if (spawnedAtMs === null) return { open: currentOpen, completed: [], work: currentWork };
+        const found = await findSessionFileCreatedAfter(sessionDir, spawnedAtMs);
+        if (!found) return { open: currentOpen, completed: [], work: currentWork };
+        pinnedFile = found;
         currentOffset = 0;
         currentOpen = [];
-        if (!activeFile) return { open: currentOpen, completed: [] };
-        const { lines, newOffset } = await readNewLines(activeFile, 0);
-        currentOffset = newOffset;
-        // This replays the whole file from byte 0 (a session switch, or first
-        // tick after app start), so `completed` can include dispatches that
-        // finished long before this moment -- not just ones that completed on
-        // this tick. Harmless today (nothing treats `completed` as "just now"),
-        // but a future caller shouldn't assume it means "newly completed".
-        const completed: CompletedDispatchUsage[] = [];
-        currentOpen = applyLinesToOpenDispatches(currentOpen, lines, completed);
-        return { open: currentOpen, completed };
+        currentWork = [];
       }
 
-      if (!currentFile) return { open: currentOpen, completed: [] };
-      const { lines, newOffset } = await readNewLines(currentFile, currentOffset);
-      if (lines.length === 0) return { open: currentOpen, completed: [] };
+      const { lines, newOffset } = await readNewLines(pinnedFile, currentOffset);
+      if (lines.length === 0) return { open: currentOpen, completed: [], work: currentWork };
       currentOffset = newOffset;
       const completed: CompletedDispatchUsage[] = [];
       currentOpen = applyLinesToOpenDispatches(currentOpen, lines, completed);
-      return { open: currentOpen, completed };
+      currentWork = applyLinesToOpenWork(currentWork, lines);
+      return { open: currentOpen, completed, work: currentWork };
     },
   };
 }

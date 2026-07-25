@@ -43,7 +43,7 @@ async function scanAndPushUsage(): Promise<void> {
   });
 }
 
-const liveAgentTracker = createLiveAgentTracker(join(os.homedir(), '.claude', 'projects'));
+const liveAgentTracker = createLiveAgentTracker(os.homedir());
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 
@@ -51,9 +51,10 @@ async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
   try {
-    const { open, completed } = await liveAgentTracker.tick();
+    const { open, completed, work } = await liveAgentTracker.tick();
     mainWindow.webContents.send('agents:snapshot', open);
     if (completed.length) mainWindow.webContents.send('agents:completed', completed);
+    mainWindow.webContents.send('agents:activeWork', work);
   } finally {
     agentTickInFlight = false;
   }
@@ -85,6 +86,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
     activePty = null;
   }
   activePty = spawnPty(cols, rows);
+  liveAgentTracker.notifyPtySpawned(Date.now());
   activePty.onData((data) => {
     event.sender.send('pty:data', data);
   });

@@ -19,4 +19,12 @@ export function useRealAgentsSync() {
       dispatch({ type: 'RECORD_DISPATCH_USAGE', completed });
     });
   }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onActiveWork((work) => {
+      dispatch({ type: 'SET_ACTIVE_WORK', work });
+    });
+  }, [dispatch]);
 }
