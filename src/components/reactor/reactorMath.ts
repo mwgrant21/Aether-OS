@@ -7,7 +7,7 @@ const RATE_MAX = 168000;
 const RATE_IDLE = 92000;
 
 export function computeRateFromUsage(burnRatePerMin: number): number {
-  if (burnRatePerMin <= 0) return RATE_IDLE;
+  if (burnRatePerMin < RATE_MIN) return RATE_IDLE;
   return Math.max(RATE_MIN, Math.min(RATE_MAX, burnRatePerMin));
 }
 

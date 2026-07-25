@@ -94,8 +94,8 @@ describe('computeRateFromUsage', () => {
     expect(computeRateFromUsage(50000)).toBe(50000);
   });
 
-  it('clamps a burn rate below the visual floor', () => {
-    expect(computeRateFromUsage(5000)).toBe(20000);
+  it('falls back to the idle baseline for a burn rate below the visual floor', () => {
+    expect(computeRateFromUsage(5000)).toBe(92000);
   });
 
   it('clamps a burn rate above the visual ceiling', () => {
