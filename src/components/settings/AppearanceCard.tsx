@@ -1,6 +1,8 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 import { THEME_NAMES, RENDERER_WORDS } from '../terminal/commands';
 import { rendererKeyToWord } from './settingsMath';
 
@@ -14,69 +16,80 @@ const THEME_HEX: Record<string, string> = {
 };
 
 export function AppearanceCard() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const { cfg } = state;
   const activeRendererWord = rendererKeyToWord(cfg.renderer);
 
   return (
-    <div style={cardStyle}>
-      <div style={titleStyle}>APPEARANCE</div>
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)}>APPEARANCE</div>
 
       <div style={{ marginTop: 16 }}>
-        <div style={labelStyle}>THEME</div>
+        <div style={labelStyle(colors)}>THEME</div>
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           {THEME_NAMES.map((name) => (
-            <span
+            <Button
               key={name}
               title={name}
               onClick={() => dispatch({ type: 'RUN_COMMAND', raw: `theme ${name}` })}
-              style={swatchStyle(THEME_HEX[name], cfg.theme === name)}
-            />
+              style={swatchStyle(colors, THEME_HEX[name], cfg.theme === name)}
+            >
+              {null}
+            </Button>
           ))}
         </div>
       </div>
 
       <div style={{ marginTop: 16 }}>
-        <div style={labelStyle}>RENDERER</div>
+        <div style={labelStyle(colors)}>RENDERER</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
           {RENDERER_WORDS.map((word) => (
-            <span key={word} onClick={() => dispatch({ type: 'RUN_COMMAND', raw: `renderer ${word}` })} style={toggleStyle(activeRendererWord === word)}>
+            <Button
+              key={word}
+              onClick={() => dispatch({ type: 'RUN_COMMAND', raw: `renderer ${word}` })}
+              style={toggleStyle(colors, activeRendererWord === word)}
+            >
               {word}
-            </span>
+            </Button>
           ))}
         </div>
       </div>
 
       <div style={{ marginTop: 16 }}>
-        <div style={labelStyle}>MODE</div>
+        <div style={labelStyle(colors)}>MODE</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
           {(['dark', 'light'] as const).map((mode) => (
-            <span
+            <Button
               key={mode}
               onClick={() => dispatch({ type: 'RUN_COMMAND', raw: `thememode ${mode}` })}
-              style={toggleStyle(cfg.themeMode === mode)}
+              style={toggleStyle(colors, cfg.themeMode === mode)}
             >
               {mode}
-            </span>
+            </Button>
           ))}
         </div>
       </div>
 
       <div style={{ marginTop: 16 }}>
-        <div style={labelStyle}>REACTOR PULSE</div>
+        <div style={labelStyle(colors)}>REACTOR PULSE</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
           {(['live', 'ambient'] as const).map((mode) => (
-            <span key={mode} onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { pulseMode: mode } })} style={toggleStyle(cfg.pulseMode === mode)}>
+            <Button
+              key={mode}
+              onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { pulseMode: mode } })}
+              style={toggleStyle(colors, cfg.pulseMode === mode)}
+            >
               {mode}
-            </span>
+            </Button>
           ))}
         </div>
       </div>
 
       <div style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <div style={labelStyle}>CORE GLOW INTENSITY</div>
-          <span style={valueStyle}>{cfg.glow}</span>
+          <div style={labelStyle(colors)}>CORE GLOW INTENSITY</div>
+          <span style={valueStyle(colors)}>{cfg.glow}</span>
         </div>
         <input
           type="range"
@@ -85,45 +98,58 @@ export function AppearanceCard() {
           step={10}
           value={cfg.glow}
           onChange={(e) => dispatch({ type: 'UPDATE_CFG', patch: { glow: Number(e.target.value) } })}
-          style={sliderStyle}
+          style={sliderStyle(colors)}
         />
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={labelStyle}>GLOW EFFECTS</div>
-        <span onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { glowFx: !cfg.glowFx } })} style={pillToggleStyle(cfg.glowFx)}>
+        <div style={labelStyle(colors)}>GLOW EFFECTS</div>
+        <Button
+          onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { glowFx: !cfg.glowFx } })}
+          style={pillToggleStyle(colors, cfg.glowFx)}
+          title={cfg.glowFx ? 'Disable glow effects' : 'Enable glow effects'}
+        >
           {cfg.glowFx ? 'ON' : 'OFF'}
-        </span>
+        </Button>
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={labelStyle}>REACTOR LEGEND</div>
-        <span
+        <div style={labelStyle(colors)}>REACTOR LEGEND</div>
+        <Button
           onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { showReactorLegend: !cfg.showReactorLegend } })}
-          style={pillToggleStyle(cfg.showReactorLegend)}
+          style={pillToggleStyle(colors, cfg.showReactorLegend)}
+          title={cfg.showReactorLegend ? 'Hide reactor legend' : 'Show reactor legend'}
         >
           {cfg.showReactorLegend ? 'ON' : 'OFF'}
-        </span>
+        </Button>
       </div>
     </div>
   );
 }
 
-const cardStyle: CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  minHeight: 0,
-  padding: 18,
-  borderRadius: 14,
-  border: `1px solid ${colors.panelBorder}`,
-  background: colors.panelGradient,
-  display: 'flex',
-  flexDirection: 'column',
-};
-const titleStyle: CSSProperties = { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-const labelStyle: CSSProperties = { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
-const valueStyle: CSSProperties = { font: `700 11px/1 ${fonts.mono}`, color: colors.textBody };
-function swatchStyle(hex: string, on: boolean): CSSProperties {
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    padding: 18,
+    borderRadius: 14,
+    border: `1px solid ${colors.panelBorder}`,
+    background: colors.panelGradient,
+    display: 'flex',
+    flexDirection: 'column',
+  };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function labelStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+}
+function valueStyle(colors: ColorPalette): CSSProperties {
+  return { font: `700 11px/1 ${fonts.mono}`, color: colors.textBody };
+}
+function swatchStyle(colors: ColorPalette, hex: string, on: boolean): CSSProperties {
   return {
     width: 26,
     height: 26,
@@ -133,7 +159,7 @@ function swatchStyle(hex: string, on: boolean): CSSProperties {
     boxShadow: on ? `0 0 0 2px ${colors.bgBase}, 0 0 0 4px ${hex}` : `0 0 8px ${hex}`,
   };
 }
-function toggleStyle(on: boolean): CSSProperties {
+function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
     flex: 1,
     textAlign: 'center',
@@ -149,7 +175,7 @@ function toggleStyle(on: boolean): CSSProperties {
     border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
   };
 }
-function pillToggleStyle(on: boolean): CSSProperties {
+function pillToggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
     minWidth: 52,
     textAlign: 'center',
@@ -164,4 +190,6 @@ function pillToggleStyle(on: boolean): CSSProperties {
     border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
   };
 }
-const sliderStyle: CSSProperties = { width: '100%', marginTop: 8, accentColor: colors.accentCyanDeep };
+function sliderStyle(colors: ColorPalette): CSSProperties {
+  return { width: '100%', marginTop: 8, accentColor: colors.accentCyanDeep };
+}
