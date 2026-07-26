@@ -1,32 +1,44 @@
 # Aether OS
 
-A mission-control dashboard for an AI agent fleet — reactor core, agent roster, orchestration
-grid, and a chat deck where the mission-control intelligence (AETHER) and every agent are real
-Claude-backed personas.
+A mission-control desktop dashboard for working with Claude Code — reactor core, live agent
+tracking, orchestration grid, and a chat deck where the mission-control intelligence (AETHER)
+and every agent are real Claude-backed personas.
 
-One honest line up front: **the fleet is simulated; the AI is real.** Agent progress, token
-burn, and the approval queue are driven by a deterministic simulation tick. The chat, however,
-talks to the live Anthropic API — each agent answers in character, scoped to what that agent
-would actually know.
+One honest line up front: **this started as a simulation and has been migrated to live data.**
+The original build ran on fictitious information by design — a deterministic tick fed synthetic
+agents, token burn, and log noise so every view could be built and tested against predictable
+state. That scaffolding has since been replaced, phase by phase, with the real thing: the app
+now runs as an Electron desktop tool that tracks actual Claude Code sessions. The reactor's
+pulse is your real token burn rate and dispatch concurrency; the terminal is a real `claude`
+CLI session; the agent roster shows genuinely-running subagent dispatches. The remaining sim
+pieces exist only where noted, and `PROGRESS.md` tracks exactly which is which.
 
 ## What's built
 
-- **Terminal** — command console plus the reactor core: three switchable renderers
-  (NEBULA / VOLUMETRIC / WARP) on layered 2D/WebGL canvases, with a stall watchdog.
-- **Dashboard** — reactor hero, active agents, projects, recent alerts, and systems cells on a
-  single view registry.
-- **Agents** — roster + detail: pause/resume, terminate (archives, never deletes), reactivate,
-  and agent-tied approvals.
-- **Grid** — radial hub-and-spoke SVG map of agents, projects, and animated assignment links.
-- **Chat** — a channel per agent plus AETHER. Real Claude replies via a dev-server proxy
-  (API key stays server-side), per-persona voices, and a state-aware local responder that takes
-  over seamlessly when no key is configured. Replies can carry a trailing action-JSON
-  convention: safe verbs (theme/renderer) execute immediately, risky verbs (spawn/kill/throttle)
-  route through the approval queue with a real risk policy, and the eventual approve/deny posts
-  back into the requesting channel.
+- **Terminal** — a real Claude Code CLI session on node-pty + xterm, replacing the original
+  scripted simulation. The reactor core (three renderers: NEBULA / VOLUMETRIC / WARP on
+  layered 2D/WebGL canvases) lives in the sidebar with a live TOK/MIN readout, its pulse and
+  overload glow driven by real burn rate and real dispatch concurrency.
+- **Dashboard** — session tokens, budget remaining, and depletion ETA computed from your
+  actual Claude Code usage, rescanned periodically; alerts and systems cells on a single view
+  registry.
+- **Agents / Grid / Analytics** — real currently-open `Agent`-tool subagent dispatches,
+  tracked live and rendered as the roster, the radial hub-and-spoke map, and the analytics
+  views.
+- **Memory** — dispatch completions auto-captured as memories with per-tick strength decay
+  and pinning; the live event feed replaced the original random log pool with real event
+  kinds.
+- **Chat** — a channel per agent plus AETHER, with real Claude replies via a server-side
+  proxy (API key never touches the renderer), per-persona voices, and post-mortem channels
+  for completed dispatches. Replies can carry a trailing action-JSON convention: safe verbs
+  execute immediately, risky verbs route through the approval queue under a risk policy, and
+  the resolution posts back into the requesting channel.
+- Every remaining nav tab (Projects, Files/attachments, Uplinks, Settings, and friends) is a
+  built view — no "coming soon" panels left.
 
-Projects, Memory, Analytics, Uplinks, Files, and Settings currently show an honest
-"not built yet" panel — next planned work is one of those.
+Packaging, installers, and a team fleet view are deliberately out of scope: this is a
+personal cockpit, not a distributed product. Its team-facing sibling is
+[TokenMonitor](https://github.com/mwgrant21/TokenMonitor), which this project evolves.
 
 ## The design decision worth reading about
 
@@ -41,32 +53,37 @@ agent-platform architecture pattern.
 
 ```bash
 npm install
-npm run dev          # http://localhost:5173
+npm run electron:dev   # the real thing: desktop app, live terminal, real session tracking
+npm run dev            # browser-only mode at http://localhost:5173 (no PTY / live tracking)
 ```
 
-Optional — real Claude replies in Chat: copy `.env.example` to `.env` and set
-`ANTHROPIC_API_KEY`. Without a key, the offline responder answers in-world instead; nothing
-breaks. The key is read server-side by the Vite middleware only and `.env` is gitignored.
+Real Claude replies in Chat: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`.
+Without a key, the offline responder answers in-world instead; nothing breaks. The key is read
+server-side only and `.env` is gitignored.
 
 ```bash
-npm test             # vitest — pure logic: reducer, tick, math, personas, prompt scoping, proxy validation
-npm run build        # tsc -b && vite build
+npm test               # vitest — reducer, tick, view math, personas, prompt scoping,
+                       # action parsing/execution, proxy validation (393 tests at last count)
+npm run build          # tsc -b && vite build
 ```
 
-The frame is fixed at 1536×1024 by design — this is a faithful port of the original design
-handoff, not a responsive app (yet).
+The frame is fixed at 1536×1024 by design — a faithful port of the original design handoff,
+not a responsive app (yet).
 
 ## How this is being built
 
 The UI was designed in Claude Designer; implementation is Claude Code working through phased
 plan documents in `docs/superpowers/plans/`, one fresh implementer and one fresh reviewer
 subagent per task, a whole-branch review after each plan, and `PROGRESS.md` as the honest
-running state — including known issues and genuinely-blocked items, not just wins. Product
-decisions, architecture direction, and acceptance criteria are mine; the keystrokes mostly are
-not. I can explain why each piece exists, how it's meant to behave, and how it was validated;
-for line-level detail, the plans and commit history are the record.
+running state — including known issues and genuinely-blocked items, not just wins. The
+sim-to-live migration itself was phased the same way: Electron scaffold, real terminal, real
+usage data, real agent tracking, real live output, live reactor load. Product decisions,
+architecture direction, and acceptance criteria are mine; the keystrokes mostly are not. I can
+explain why each piece exists, how it's meant to behave, and how it was validated; for
+line-level detail, the plans and commit history are the record.
 
 ## Tech
 
-React 18 · Vite 5 · TypeScript (strict) · Vitest — no CSS framework, no state library, no
-canvas library. The single `useReducer` store and hand-rolled canvas renderers are the point.
+React 18 · Vite 5 · TypeScript (strict) · Electron (electron-vite) · node-pty · xterm ·
+Vitest — no CSS framework, no state library, no canvas library. The single `useReducer` store
+and hand-rolled canvas renderers are the point.

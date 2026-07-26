@@ -2,13 +2,11 @@ import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { VIEWS } from '../../viewRegistry';
-import { ReactorCore } from '../reactor/ReactorCore';
+import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { short } from '../../utils/format';
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
-const REACTOR_NATIVE_SIZE = 334;
 const REACTOR_MINI_SIZE = 150;
-const REACTOR_MINI_SCALE = REACTOR_MINI_SIZE / REACTOR_NATIVE_SIZE;
 
 export function Sidebar() {
   const { state, dispatch } = useAetherStore();
@@ -45,8 +43,8 @@ export function Sidebar() {
 
       <div style={reactorMiniWrapStyle}>
         <div style={reactorMiniScaleStyle}>
-          <div style={reactorMiniInnerStyle}>
-            <ReactorCore />
+          <div style={reactorMiniInnerStyle(reactorNativeSize(state.cfg.renderer))}>
+            <Reactor />
           </div>
         </div>
         <div style={{ font: `700 11px/1 ${fonts.mono}`, letterSpacing: 1, color: colors.accentCyanSoft, textAlign: 'center', marginTop: 6 }}>
@@ -135,21 +133,25 @@ const reactorMiniScaleStyle: CSSProperties = {
   margin: '0 auto',
   overflow: 'hidden',
 };
-const reactorMiniInnerStyle: CSSProperties = {
-  position: 'absolute',
-  top: '50%',
-  left: '50%',
-  width: REACTOR_NATIVE_SIZE,
-  height: REACTOR_NATIVE_SIZE,
-  // ReactorCore's own canvases don't all self-center: the conduit layer has
-  // explicit inset:0, but the glow/core layers have no offsets at all and
-  // rely on their parent being a `display:grid; placeItems:center` container
-  // (exactly what TerminalView's original wrapper was) to center them. Drop
-  // this and two of the three layers drift from the conduit layer.
-  display: 'grid',
-  placeItems: 'center',
-  transform: `translate(-50%, -50%) scale(${REACTOR_MINI_SCALE})`,
-};
+function reactorMiniInnerStyle([nativeWidth, nativeHeight]: [number, number]): CSSProperties {
+  const scale = REACTOR_MINI_SIZE / Math.max(nativeWidth, nativeHeight);
+  return {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: nativeWidth,
+    height: nativeHeight,
+    // ReactorCore's own canvases don't all self-center: the conduit layer has
+    // explicit inset:0, but the glow/core layers have no offsets at all and
+    // rely on their parent being a `display:grid; placeItems:center` container
+    // (exactly what TerminalView's original wrapper was) to center them. Drop
+    // this and two of the three layers drift from the conduit layer.
+    // StormCore centers itself the same way, so this wrapper works for both.
+    display: 'grid',
+    placeItems: 'center',
+    transform: `translate(-50%, -50%) scale(${scale})`,
+  };
+}
 const tipCardStyle: CSSProperties = {
   marginTop: 'auto',
   padding: 13,

@@ -89,16 +89,23 @@ describe('computeRateFromUsage', () => {
     expect(computeRateFromUsage(-500)).toBe(92000);
   });
 
-  it('passes through a burn rate already inside the visual range', () => {
-    expect(computeRateFromUsage(92000)).toBe(92000);
-    expect(computeRateFromUsage(50000)).toBe(50000);
+  it('falls back to the idle baseline for real burn rates below the activity floor (300 tokens/min)', () => {
+    expect(computeRateFromUsage(299)).toBe(92000);
   });
 
-  it('falls back to the idle baseline for a burn rate below the visual floor', () => {
-    expect(computeRateFromUsage(5000)).toBe(92000);
+  it('maps the activity floor to the visual floor', () => {
+    expect(computeRateFromUsage(300)).toBe(20000);
   });
 
-  it('clamps a burn rate above the visual ceiling', () => {
+  it('maps the midpoint of the real range to the midpoint of the visual range', () => {
+    expect(computeRateFromUsage(6150)).toBe(94000);
+  });
+
+  it('maps the activity ceiling (12000 tokens/min) to the visual ceiling', () => {
+    expect(computeRateFromUsage(12000)).toBe(168000);
+  });
+
+  it('clamps a real burn rate above the activity ceiling', () => {
     expect(computeRateFromUsage(400000)).toBe(168000);
   });
 });

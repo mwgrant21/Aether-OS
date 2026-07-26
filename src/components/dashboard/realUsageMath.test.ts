@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeWeeklyTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, type UsageEvent } from './realUsageMath';
+import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow, type UsageEvent } from './realUsageMath';
 
 const NOW = new Date(2026, 0, 7, 12, 0, 0); // Wednesday, Jan 7 2026, noon
 
@@ -32,6 +32,45 @@ describe('computeWeeklyTokens', () => {
   it('ignores events from outside the current week', () => {
     const events = [assistantEvent(new Date(2025, 11, 29, 9, 0), 100)]; // prior Monday
     expect(computeWeeklyTokens(events, NOW)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+  });
+});
+
+describe('computeDailyTokens', () => {
+  it('buckets tokens into the correct hour of the current day', () => {
+    const events = [
+      assistantEvent(new Date(2026, 0, 7, 9, 15), 100), // 9am
+      assistantEvent(new Date(2026, 0, 7, 11, 30), 50), // 11am hour
+      assistantEvent(new Date(2026, 0, 7, 11, 45), 25), // 11am hour, same bucket
+    ];
+    const buckets = computeDailyTokens(events, NOW);
+    expect(buckets).toHaveLength(24);
+    expect(buckets[9]).toBe(100);
+    expect(buckets[11]).toBe(75);
+  });
+
+  it('ignores events from a previous day', () => {
+    const events = [assistantEvent(new Date(2026, 0, 6, 9, 0), 100)];
+    expect(computeDailyTokens(events, NOW)).toEqual(new Array(24).fill(0));
+  });
+});
+
+describe('computeLiveTokens', () => {
+  it('buckets tokens into the correct trailing minute, oldest first', () => {
+    const events = [
+      assistantEvent(new Date(NOW.getTime() - 0), 10), // this minute -> last bucket
+      assistantEvent(new Date(NOW.getTime() - 5 * 60000), 20), // 5 min ago
+      assistantEvent(new Date(NOW.getTime() - 11 * 60000), 30), // 11 min ago -> first bucket
+    ];
+    const buckets = computeLiveTokens(events, NOW);
+    expect(buckets).toHaveLength(12);
+    expect(buckets[11]).toBe(10);
+    expect(buckets[6]).toBe(20);
+    expect(buckets[0]).toBe(30);
+  });
+
+  it('ignores events older than the 12-minute window', () => {
+    const events = [assistantEvent(new Date(NOW.getTime() - 13 * 60000), 100)];
+    expect(computeLiveTokens(events, NOW)).toEqual(new Array(12).fill(0));
   });
 });
 
@@ -95,5 +134,39 @@ describe('computeWeekOverWeekPct', () => {
   it('computes a negative percent change when this week is lower', () => {
     const events = [assistantEvent(new Date(2025, 11, 31, 9, 0), 200), assistantEvent(new Date(2026, 0, 7, 9, 0), 100)];
     expect(computeWeekOverWeekPct(events, NOW)).toBe(-50);
+  });
+});
+
+describe('computeContextWindow', () => {
+  it('returns 0 when there are no assistant events', () => {
+    expect(computeContextWindow([], NOW)).toBe(0);
+  });
+
+  it('returns the full usage total of the most recent assistant turn, not a sum across turns', () => {
+    const events = [
+      assistantEvent(new Date(2026, 0, 7, 10, 0), 5000),
+      assistantEvent(new Date(2026, 0, 7, 11, 0), 8000),
+    ];
+    expect(computeContextWindow(events, NOW)).toBe(8000);
+  });
+
+  it('sums input, output, and cache tokens on the latest turn', () => {
+    const events: UsageEvent[] = [
+      {
+        kind: 'assistant',
+        timestamp: new Date(2026, 0, 7, 11, 30),
+        usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 20, cacheReadInputTokens: 30 },
+      },
+    ];
+    expect(computeContextWindow(events, NOW)).toBe(200);
+  });
+
+  it('ignores events after "now" and non-assistant events', () => {
+    const events: UsageEvent[] = [
+      assistantEvent(new Date(2026, 0, 7, 9, 0), 4000),
+      { kind: 'assistant', timestamp: new Date(2026, 0, 7, 13, 0), usage: { inputTokens: 9999, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 } },
+      { kind: 'user', timestamp: new Date(2026, 0, 7, 11, 0), usage: null },
+    ];
+    expect(computeContextWindow(events, NOW)).toBe(4000);
   });
 });

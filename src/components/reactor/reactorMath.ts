@@ -6,9 +6,19 @@ const RATE_MIN = 20000;
 const RATE_MAX = 168000;
 const RATE_IDLE = 92000;
 
+// Real burnRatePerMin (input+output tokens/min from actual transcripts) runs
+// 10-100x smaller than this visual band — measured on a real active session,
+// typical bursts land in the low thousands/min. Passing it through unscaled
+// (as this used to) meant real usage almost never cleared RATE_MIN, so the
+// reactor read as permanently idle regardless of actual work. Map the real
+// range onto the visual range instead of clamping it into it.
+const REAL_BURN_FLOOR = 300; // tokens/min below this reads as no measurable activity
+const REAL_BURN_CEILING = 12000; // tokens/min at/above this reads as fully active
+
 export function computeRateFromUsage(burnRatePerMin: number): number {
-  if (burnRatePerMin < RATE_MIN) return RATE_IDLE;
-  return Math.max(RATE_MIN, Math.min(RATE_MAX, burnRatePerMin));
+  if (burnRatePerMin < REAL_BURN_FLOOR) return RATE_IDLE;
+  const t = Math.min(1, (burnRatePerMin - REAL_BURN_FLOOR) / (REAL_BURN_CEILING - REAL_BURN_FLOOR));
+  return Math.round(RATE_MIN + t * (RATE_MAX - RATE_MIN));
 }
 
 export function computePulseDuration(rate: number, pulseMode: 'live' | 'ambient', alarmLevel: AlarmLevel): number {

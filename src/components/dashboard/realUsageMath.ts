@@ -49,6 +49,32 @@ export function computeWeeklyTokens(events: UsageEvent[], now: Date): number[] {
   return buckets;
 }
 
+// 24 hourly buckets covering the current local calendar day.
+export function computeDailyTokens(events: UsageEvent[], now: Date): number[] {
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const buckets = new Array(24).fill(0);
+  for (const e of events) {
+    if (e.kind !== 'assistant' || !e.usage || !e.timestamp) continue;
+    if (e.timestamp < dayStart || e.timestamp > now) continue;
+    buckets[e.timestamp.getHours()] += usageTokens(e.usage);
+  }
+  return buckets;
+}
+
+// 12 one-minute buckets covering the trailing 12 minutes, oldest first.
+export function computeLiveTokens(events: UsageEvent[], now: Date): number[] {
+  const buckets = new Array(12).fill(0);
+  const windowStart = new Date(now.getTime() - 12 * 60 * 1000);
+  for (const e of events) {
+    if (e.kind !== 'assistant' || !e.usage || !e.timestamp) continue;
+    if (e.timestamp < windowStart || e.timestamp > now) continue;
+    const minutesAgo = Math.floor((now.getTime() - e.timestamp.getTime()) / 60000);
+    const idx = 11 - minutesAgo;
+    if (idx >= 0 && idx < 12) buckets[idx] += usageTokens(e.usage);
+  }
+  return buckets;
+}
+
 export function computeUsedThisMonth(events: UsageEvent[], now: Date): number {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   let total = 0;
@@ -72,6 +98,21 @@ export function computeBurnRatePerMin(events: UsageEvent[], now: Date): number {
 // Compares this week-so-far against the SAME partial period last week (not
 // last week's full total), so a mid-week check doesn't read as a misleading
 // "down 80%" just because the current week isn't over yet.
+// Context window fill = the input+cache+output tokens on the most recent
+// assistant turn (whichever project/session it belongs to). That single turn's
+// usage already reflects the full accumulated context sent to the model, so
+// unlike the other compute* functions here this does NOT sum across events.
+export function computeContextWindow(events: UsageEvent[], now: Date): number {
+  let latest: UsageEvent | null = null;
+  for (const e of events) {
+    if (e.kind !== 'assistant' || !e.usage || !e.timestamp || e.timestamp > now) continue;
+    if (!latest || !latest.timestamp || e.timestamp > latest.timestamp) latest = e;
+  }
+  if (!latest || !latest.usage) return 0;
+  const u = latest.usage;
+  return u.inputTokens + u.outputTokens + u.cacheCreationInputTokens + u.cacheReadInputTokens;
+}
+
 export function computeWeekOverWeekPct(events: UsageEvent[], now: Date): number | null {
   const thisMonday = mondayOf(now);
   const lastMonday = new Date(thisMonday.getTime() - WEEK_MS);

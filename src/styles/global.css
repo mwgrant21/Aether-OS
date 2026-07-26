@@ -54,6 +54,26 @@ a:hover {
     filter: brightness(1.3);
   }
 }
+@keyframes coreBreath {
+  0%,
+  100% {
+    transform: scale(0.955);
+    filter: brightness(0.9) saturate(1);
+  }
+  50% {
+    transform: scale(1.05);
+    filter: brightness(1.24) saturate(1.2);
+  }
+}
+@keyframes hueDrift {
+  0%,
+  100% {
+    filter: blur(2.5px) hue-rotate(0deg) saturate(1.25);
+  }
+  50% {
+    filter: blur(4px) hue-rotate(-16deg) saturate(1.45);
+  }
+}
 @keyframes scan {
   0% {
     transform: translateY(-30%);
@@ -141,7 +161,6 @@ a:hover {
     opacity: 1;
   }
 }
-
 :root {
   --pulse-dur: 2.4s;
 }

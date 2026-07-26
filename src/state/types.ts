@@ -70,10 +70,13 @@ import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
+  dailyTokens: number[];
+  liveTokens: number[];
   usedThisMonth: number;
   burnRatePerMin: number;
   weekOverWeekPct: number | null;
   lastScanAt: string | null;
+  ctxUsed: number;
 }
 
 export type ProjectStatus = 'BUILDING' | 'REVIEW' | 'QUEUED' | 'SHIPPED';
@@ -119,7 +122,7 @@ export interface DispatchChannelStub {
 }
 
 export type OpMode = 'PLAN' | 'EDITS' | 'AUTO';
-export type RendererMode = 'classic' | 'volumetric' | 'warp';
+export type RendererMode = 'classic' | 'volumetric' | 'warp' | 'storm';
 export type ThemeName = 'cyan' | 'blue' | 'teal' | 'violet' | 'amber' | 'red';
 export type AlarmLevel = 'ok' | 'warn' | 'crit';
 
@@ -143,6 +146,7 @@ export interface AetherState {
   ctxUsed: number;
   weekRaw: number[];
   commandsRun: number;
+  sessionStartedAt: string;
   activeTab: string;
   selected: string | null;
   selectedProject: string | null;

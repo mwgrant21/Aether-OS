@@ -1,18 +1,37 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { fmt } from '../../utils/format';
 import { computeTopCommands } from '../analytics/analyticsMath';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+type UsageRange = 'live' | 'daily' | 'weekly';
+const RANGES: UsageRange[] = ['live', 'daily', 'weekly'];
+
+function formatUptime(startedAt: string, now: Date): string {
+  const ms = Math.max(0, now.getTime() - new Date(startedAt).getTime());
+  const totalMin = Math.floor(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}h ${m}m`;
+}
 
 export function BottomMetricsRow() {
   const { state } = useAetherStore();
   const topCommands = computeTopCommands(state.cmdHist);
+  const [range, setRange] = useState<UsageRange>('weekly');
+  const now = new Date();
 
-  const maxBar = Math.max(...state.realUsage.weeklyTokens, 1); // avoid /0 before the first real scan completes
-  const weekly = state.realUsage.weeklyTokens.map((v, i) => ({ d: DAY_LABELS[i], h: Math.round(20 + (v / maxBar) * 52) }));
-  const weekTotal = fmt(state.realUsage.weeklyTokens.reduce((sum, v) => sum + v, 0));
+  const RANGE_CONFIG = {
+    live: { values: state.realUsage.liveTokens, label: 'LAST 12 MIN', bucket: (i: number) => (i === 11 ? 'now' : `-${11 - i}m`) },
+    daily: { values: state.realUsage.dailyTokens, label: 'TODAY', bucket: (i: number) => (i % 4 === 0 ? `${i}` : '') },
+    weekly: { values: state.realUsage.weeklyTokens, label: 'THIS WEEK', bucket: (i: number) => DAY_LABELS[i] },
+  } as const;
+
+  const active = RANGE_CONFIG[range];
+  const maxBar = Math.max(...active.values, 1); // avoid /0 before the first real scan completes
+  const bars = active.values.map((v, i) => ({ d: active.bucket(i), h: Math.round(20 + (v / maxBar) * 52) }));
+  const rangeTotal = fmt(active.values.reduce((sum, v) => sum + v, 0));
 
   const ctxTotal = 125000;
   const ctxPct = Math.round((state.ctxUsed / ctxTotal) * 100);
@@ -22,8 +41,8 @@ export function BottomMetricsRow() {
   const outTok = Math.round(state.ctxUsed * 0.42);
 
   const session = [
-    { k: 'Session start', v: '2:15 PM' },
-    { k: 'Uptime', v: '3h 42m' },
+    { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
+    { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
     { k: 'Commands run', v: fmt(state.commandsRun) },
     { k: 'Agents active', v: String(state.agents.length) },
     { k: 'Tokens used', v: fmt(state.realUsage.usedThisMonth) },
@@ -35,25 +54,27 @@ export function BottomMetricsRow() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={cardTitleStyle}>TOKEN USAGE</div>
           <div style={{ display: 'flex', gap: 4 }}>
-            <span style={rangeChipStyle(false)}>LIVE</span>
-            <span style={rangeChipStyle(false)}>DAILY</span>
-            <span style={rangeChipStyle(true)}>WEEKLY</span>
+            {RANGES.map((r) => (
+              <span key={r} style={rangeChipStyle(range === r)} onClick={() => setRange(r)}>
+                {r.toUpperCase()}
+              </span>
+            ))}
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginTop: 14 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 9, height: 74, flex: 1 }}>
-            {weekly.map((w) => (
-              <div key={w.d} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            {bars.map((w, i) => (
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                 <div style={barStyle(w.h)} />
                 <span style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim }}>{w.d}</span>
               </div>
             ))}
           </div>
           <div style={{ flex: 'none', textAlign: 'right' }}>
-            <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>THIS WEEK</div>
-            <div style={{ font: `700 24px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 6 }}>{weekTotal}</div>
+            <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{active.label}</div>
+            <div style={{ font: `700 24px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 6 }}>{rangeTotal}</div>
             <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 4 }}>tokens</div>
-            {state.realUsage.weekOverWeekPct !== null && (
+            {range === 'weekly' && state.realUsage.weekOverWeekPct !== null && (
               <div
                 style={{
                   font: `400 11px/1 ${fonts.ui}`,
@@ -164,6 +185,8 @@ function rangeChipStyle(active: boolean): CSSProperties {
     borderRadius: 5,
     color: active ? colors.accentCyanSoft : colors.textDim,
     border: active ? '1px solid rgba(95,220,255,.35)' : undefined,
+    cursor: 'pointer',
+    userSelect: 'none',
   };
 }
 function barStyle(h: number): CSSProperties {

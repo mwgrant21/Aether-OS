@@ -131,7 +131,7 @@ const RULES =
   'you may end your reply with one extra line containing a compact JSON object using EXACTLY one of ' +
   'these shapes -- the args key names matter and must be used verbatim, not a synonym: ' +
   '{"verb":"theme","args":{"name":"cyan|blue|teal|violet|amber|red"}}, ' +
-  '{"verb":"renderer","args":{"mode":"nebula|volumetric|warp"}}, or ' +
+  '{"verb":"renderer","args":{"mode":"nebula|volumetric|warp|storm"}}, or ' +
   '{"verb":"spawn|kill|throttle","args":{"name":"<agent name>"}}. This is optional and only ' +
   'meaningful for actions in your own domain -- omit it for ordinary conversational replies.';
 

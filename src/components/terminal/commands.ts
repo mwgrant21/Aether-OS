@@ -42,7 +42,7 @@ export function nextAutoName(state: AetherState): string {
 }
 
 export const THEME_NAMES: ThemeName[] = ['cyan', 'blue', 'teal', 'violet', 'amber', 'red'];
-export const RENDERER_WORDS = ['nebula', 'volumetric', 'warp'] as const;
+export const RENDERER_WORDS = ['nebula', 'volumetric', 'warp', 'storm'] as const;
 
 export function runCommand(state: AetherState, raw: string): CommandResult {
   const trimmed = raw.trim();
@@ -65,7 +65,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         line('  approve <n>         grant request n'),
         line('  deny <n>            reject request n'),
         line('  theme <name>        cyan|blue|teal|violet|amber|red'),
-        line('  renderer <mode>     nebula|volumetric|warp core renderer'),
+        line('  renderer <mode>     nebula|volumetric|warp|storm core renderer'),
       );
       return { kind: 'append', lines: out };
     }
@@ -182,11 +182,18 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
     case 'renderer': {
       const rd = (args[0] || '').toLowerCase();
       if (!(RENDERER_WORDS as readonly string[]).includes(rd)) {
-        out.push(line('✗ usage: renderer nebula|volumetric|warp', BAD));
+        out.push(line('✗ usage: renderer nebula|volumetric|warp|storm', BAD));
         return { kind: 'append', lines: out };
       }
       const key: RendererMode = rd === 'nebula' ? 'classic' : (rd as RendererMode);
-      const suffix = rd === 'volumetric' ? ' — plasma shader online' : rd === 'warp' ? ' — intermix chamber aligned' : ' — containment field released';
+      const suffix =
+        rd === 'volumetric'
+          ? ' — plasma shader online'
+          : rd === 'warp'
+            ? ' — intermix chamber aligned'
+            : rd === 'storm'
+              ? ' — discharge grid live'
+              : ' — containment field released';
       out.push(line(`✓ core renderer set to ${rd}${suffix}`, GOOD));
       return { kind: 'append', lines: out, patch: { cfg: { ...state.cfg, renderer: key } } };
     }

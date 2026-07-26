@@ -24,7 +24,7 @@ const FRAGMENT_SHADER =
   'col+=vec3(.8,.98,1.)*exp(-pow((r-wr)*24.,2.))*(1.-u_phase)*.85;' +
   'col+=vec3(.5,.9,1.)*smoothstep(.035,.0,abs(r-.65))*(.3+.7*u_surge)*(1.-u_soft);' +
   'col*=u_glow;' +
-  'float a=u_soft>.5?exp(-pow(r/(.34+.30*u_grow),2.)*2.2):smoothstep(.68,.63,r);' +
+  'float a=u_soft>.5?exp(-pow(r/((.34+.30*u_grow)*1.35),2.)*2.2):smoothstep(.68,.63,r);' +
   'gl_FragColor=vec4(col*a,a);}';
 
 export function initGL(el: HTMLCanvasElement): GLProgram | null {

@@ -316,10 +316,10 @@ describe('reducer', () => {
   });
 
   describe('SET_REAL_USAGE', () => {
-    it('derives state.rate from the snapshot burn rate', () => {
-      const snapshot = { ...initialState.realUsage, burnRatePerMin: 50000 };
+    it('derives state.rate from the snapshot burn rate, scaled into the visual range', () => {
+      const snapshot = { ...initialState.realUsage, burnRatePerMin: 6150 };
       const next = reducer(initialState, { type: 'SET_REAL_USAGE', snapshot });
-      expect(next.rate).toBe(50000);
+      expect(next.rate).toBe(94000);
       expect(next.realUsage).toBe(snapshot);
     });
 

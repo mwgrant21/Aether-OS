@@ -16,7 +16,6 @@ export function computeTick(state: AetherState): Partial<AetherState> {
   if (state.cfg.autoThrottle) effectiveRate = Math.min(effectiveRate, state.cfg.alarm * 1000 * 0.8);
 
   const used = state.used + (effectiveRate / 60) * 0.9 * 0.05;
-  const ctxUsed = Math.min(123000, state.ctxUsed + Math.random() * 40);
 
   const weekRaw = state.weekRaw.slice();
   weekRaw[6] = Math.min(72, weekRaw[6] + Math.random() * 0.35);
@@ -68,5 +67,5 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     }
   }
 
-  return { used, ctxUsed, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
+  return { used, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
 }

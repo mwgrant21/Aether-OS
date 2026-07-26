@@ -11,7 +11,7 @@ export function drawWarp(ctx: CanvasRenderingContext2D, params: DrawWarpParams):
   const p = params.phase;
   const TAU = Math.PI * 2;
   const c = 112;
-  const th = 20;
+  const th = 16; // narrower stacks/casing — frees horizontal room for the larger overall silhouette
   let g: CanvasGradient;
 
   // ambient column glow
@@ -136,8 +136,8 @@ export function drawWarp(ctx: CanvasRenderingContext2D, params: DrawWarpParams):
   });
 
   // ---- central vacuum chamber: rounded sphere ----
-  const lensH = 40;
-  const lensW = 30;
+  const lensH = 46;
+  const lensW = 26;
   const lensPath = () => {
     ctx.beginPath();
     ctx.ellipse(c, c, lensW, lensH, 0, 0, TAU);

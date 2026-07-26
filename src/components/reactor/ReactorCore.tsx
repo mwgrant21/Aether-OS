@@ -50,8 +50,10 @@ export function ReactorCore() {
     if (warp) {
       frame.coreCtx.setTransform(1, 0, 0, 1, 0, 0);
       frame.coreCtx.clearRect(0, 0, 448, 448);
-      frame.coreCtx.setTransform(2, 0, 0, 2, 0, 0);
-      drawConduits(frame.conduitCtx, { t: frame.t, surge: frame.surge, phase: frame.phase, glowFactor: frame.glowFactor, hubRadius: 48 });
+      // scaled up beyond the standard 2x so the warp core reads as larger/more imposing;
+      // paired with drawWarp's narrower `th` this grows the silhouette without widening it
+      frame.coreCtx.setTransform(2.15, 0, 0, 2.15, -16.8, -16.8);
+      drawConduits(frame.conduitCtx, { t: frame.t, surge: frame.surge, phase: frame.phase, glowFactor: frame.glowFactor, hubRadius: 48, layout: 'x' });
       drawWarp(frame.coreCtx, { t: frame.t, surge: frame.surge, phase: frame.phase, overdrive: frame.overdrive, glowFactor: frame.glowFactor });
       return;
     }

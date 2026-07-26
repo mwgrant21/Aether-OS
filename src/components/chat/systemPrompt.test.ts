@@ -91,7 +91,7 @@ describe('buildSystemPrompt', () => {
   it('spells out the exact args key for every verb, not a generic {...} placeholder (regression: live-model QA found the model substituting "color" for theme\'s required "name" when the shape was unspecified)', () => {
     const prompt = buildSystemPrompt(aether, initialState);
     expect(prompt).toContain('{"verb":"theme","args":{"name":"cyan|blue|teal|violet|amber|red"}}');
-    expect(prompt).toContain('{"verb":"renderer","args":{"mode":"nebula|volumetric|warp"}}');
+    expect(prompt).toContain('{"verb":"renderer","args":{"mode":"nebula|volumetric|warp|storm"}}');
     expect(prompt).toContain('{"verb":"spawn|kill|throttle","args":{"name":"<agent name>"}}');
   });
 

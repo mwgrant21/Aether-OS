@@ -168,7 +168,12 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, operatorName: action.name };
 
     case 'SET_REAL_USAGE':
-      return { ...state, realUsage: action.snapshot, rate: computeRateFromUsage(action.snapshot.burnRatePerMin) };
+      return {
+        ...state,
+        realUsage: action.snapshot,
+        ctxUsed: action.snapshot.ctxUsed,
+        rate: computeRateFromUsage(action.snapshot.burnRatePerMin),
+      };
 
     case 'SET_REAL_AGENTS': {
       const completed = detectCompletedDispatches(state.realAgents, action.agents);
