@@ -1,3 +1,5 @@
+import type { TranscriptEvent } from '../../electron/transcriptParser';
+
 export interface RealAgentDispatch {
   toolUseId: string;
   subagentType: string;
@@ -13,42 +15,37 @@ export interface CompletedDispatchUsage extends RealAgentDispatch {
   durationMs: number;
 }
 
+function isoOrEpoch(timestamp: Date | null): string {
+  return timestamp ? timestamp.toISOString() : new Date(0).toISOString();
+}
+
 export function applyLinesToOpenDispatches(
   currentOpen: RealAgentDispatch[],
-  rawLines: string[],
+  events: TranscriptEvent[],
   completedOut?: CompletedDispatchUsage[],
 ): RealAgentDispatch[] {
   const open = new Map(currentOpen.map((d) => [d.toolUseId, d]));
 
-  for (const rawLine of rawLines) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) continue;
-    let json: any;
-    try {
-      json = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-
-    if (json.type === 'assistant' && json.message) {
-      const content = Array.isArray(json.message.content) ? json.message.content : [];
-      for (const item of content) {
-        if (item && item.type === 'tool_use' && item.name === 'Agent') {
-          open.set(item.id, {
-            toolUseId: item.id,
-            subagentType: (item.input && item.input.subagent_type) || 'agent',
-            description: (item.input && item.input.description) || '',
-            startedAt: json.timestamp || new Date(0).toISOString(),
-            prompt: (item.input && item.input.prompt) || '',
-            model: (item.input && item.input.model) || null,
+  for (const event of events) {
+    if (event.kind === 'assistant') {
+      for (const toolUse of event.toolUses) {
+        if (toolUse.name === 'Agent') {
+          const input = (toolUse.input as any) || {};
+          open.set(toolUse.id, {
+            toolUseId: toolUse.id,
+            subagentType: input.subagent_type || 'agent',
+            description: input.description || '',
+            startedAt: isoOrEpoch(event.timestamp),
+            prompt: input.prompt || '',
+            model: input.model || null,
           });
         }
       }
       continue;
     }
 
-    if (json.type === 'user' && json.origin && json.origin.kind === 'task-notification') {
-      const content = typeof json.message?.content === 'string' ? json.message.content : '';
+    if (event.kind === 'user' && event.originKind === 'task-notification') {
+      const content = event.humanText || '';
       const match = content.match(/<tool-use-id>(.*?)<\/tool-use-id>/);
       if (match) {
         const dispatch = open.get(match[1]);
@@ -112,50 +109,36 @@ export function labelForToolUse(name: string, input: any): string {
 // tool_result for an Agent call isn't a reliable completion signal here).
 // Tool lanes close on a normal tool_result, which agent dispatches don't
 // reliably produce promptly, so it's ignored for kind 'agent'.
-export function applyLinesToOpenWork(currentOpen: RealActiveWork[], rawLines: string[]): RealActiveWork[] {
+export function applyLinesToOpenWork(currentOpen: RealActiveWork[], events: TranscriptEvent[]): RealActiveWork[] {
   const open = new Map(currentOpen.map((w) => [w.toolUseId, w]));
 
-  for (const rawLine of rawLines) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) continue;
-    let json: any;
-    try {
-      json = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-
-    if (json.type === 'assistant' && json.message) {
-      const content = Array.isArray(json.message.content) ? json.message.content : [];
-      for (const item of content) {
-        if (item && item.type === 'tool_use') {
-          const kind: 'agent' | 'tool' = item.name === 'Agent' ? 'agent' : 'tool';
-          open.set(item.id, {
-            toolUseId: item.id,
-            kind,
-            label: labelForToolUse(item.name, item.input),
-            description: kind === 'agent' ? (item.input && item.input.description) || '' : '',
-            startedAt: json.timestamp || new Date(0).toISOString(),
-          });
-        }
+  for (const event of events) {
+    if (event.kind === 'assistant') {
+      for (const toolUse of event.toolUses) {
+        const kind: 'agent' | 'tool' = toolUse.name === 'Agent' ? 'agent' : 'tool';
+        const input = (toolUse.input as any) || {};
+        open.set(toolUse.id, {
+          toolUseId: toolUse.id,
+          kind,
+          label: labelForToolUse(toolUse.name, toolUse.input),
+          description: kind === 'agent' ? input.description || '' : '',
+          startedAt: isoOrEpoch(event.timestamp),
+        });
       }
       continue;
     }
 
-    if (json.type === 'user' && json.origin && json.origin.kind === 'task-notification') {
-      const content = typeof json.message?.content === 'string' ? json.message.content : '';
+    if (event.kind === 'user' && event.originKind === 'task-notification') {
+      const content = event.humanText || '';
       const match = content.match(/<tool-use-id>(.*?)<\/tool-use-id>/);
       if (match) open.delete(match[1]);
       continue;
     }
 
-    if (json.type === 'user' && json.message) {
-      const content = Array.isArray(json.message.content) ? json.message.content : [];
-      for (const item of content) {
-        if (item && item.type === 'tool_result' && typeof item.tool_use_id === 'string') {
-          const existing = open.get(item.tool_use_id);
-          if (existing && existing.kind === 'tool') open.delete(item.tool_use_id);
-        }
+    if (event.kind === 'user') {
+      for (const toolResult of event.toolResults) {
+        const existing = open.get(toolResult.toolUseId);
+        if (existing && existing.kind === 'tool') open.delete(toolResult.toolUseId);
       }
     }
   }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseTranscriptLine, type TranscriptEvent } from '../../electron/transcriptParser';
 import {
   applyLinesToOpenDispatches,
   applyLinesToOpenWork,
@@ -10,6 +11,15 @@ import {
   type RealActiveWork,
 } from './liveAgentsMath';
 
+// Fixtures are built as raw JSONL strings (matching real transcript shape)
+// and run through the real parseTranscriptLine, so these tests exercise the
+// actual parser contract rather than hand-rolled TranscriptEvent literals.
+function parseLine(rawLine: string): TranscriptEvent {
+  const event = parseTranscriptLine(rawLine);
+  if (!event) throw new Error('expected a parseable line');
+  return event;
+}
+
 function dispatchLine(
   id: string,
   subagentType: string,
@@ -17,34 +27,40 @@ function dispatchLine(
   timestamp: string,
   prompt = '',
   model: string | null = null,
-): string {
-  return JSON.stringify({
-    type: 'assistant',
-    timestamp,
-    message: {
-      content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: subagentType, description, prompt, model } }],
-    },
-  });
+): TranscriptEvent {
+  return parseLine(
+    JSON.stringify({
+      type: 'assistant',
+      timestamp,
+      message: {
+        content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: subagentType, description, prompt, model } }],
+      },
+    }),
+  );
 }
 
-function completionLine(toolUseId: string, status = 'completed'): string {
-  return JSON.stringify({
-    type: 'user',
-    origin: { kind: 'task-notification' },
-    message: {
-      content: `<task-notification><task-id>t1</task-id><tool-use-id>${toolUseId}</tool-use-id><status>${status}</status><summary>done</summary></task-notification>`,
-    },
-  });
+function completionLine(toolUseId: string, status = 'completed'): TranscriptEvent {
+  return parseLine(
+    JSON.stringify({
+      type: 'user',
+      origin: { kind: 'task-notification' },
+      message: {
+        content: `<task-notification><task-id>t1</task-id><tool-use-id>${toolUseId}</tool-use-id><status>${status}</status><summary>done</summary></task-notification>`,
+      },
+    }),
+  );
 }
 
-function completionLineWithUsage(toolUseId: string, tokens: number, toolUses: number, durationMs: number, status = 'completed'): string {
-  return JSON.stringify({
-    type: 'user',
-    origin: { kind: 'task-notification' },
-    message: {
-      content: `<task-notification><task-id>t1</task-id><tool-use-id>${toolUseId}</tool-use-id><status>${status}</status><summary>done</summary><usage><subagent_tokens>${tokens}</subagent_tokens><tool_uses>${toolUses}</tool_uses><duration_ms>${durationMs}</duration_ms></usage></task-notification>`,
-    },
-  });
+function completionLineWithUsage(toolUseId: string, tokens: number, toolUses: number, durationMs: number, status = 'completed'): TranscriptEvent {
+  return parseLine(
+    JSON.stringify({
+      type: 'user',
+      origin: { kind: 'task-notification' },
+      message: {
+        content: `<task-notification><task-id>t1</task-id><tool-use-id>${toolUseId}</tool-use-id><status>${status}</status><summary>done</summary><usage><subagent_tokens>${tokens}</subagent_tokens><tool_uses>${toolUses}</tool_uses><duration_ms>${durationMs}</duration_ms></usage></task-notification>`,
+      },
+    }),
+  );
 }
 
 describe('applyLinesToOpenDispatches', () => {
@@ -84,11 +100,13 @@ describe('applyLinesToOpenDispatches', () => {
   });
 
   it('ignores queue-operation lines even when their content contains task-notification-shaped XML', () => {
-    const queueLine = JSON.stringify({
-      type: 'queue-operation',
-      operation: 'enqueue',
-      content: '<task-notification><task-id>t1</task-id><tool-use-id>tu_1</tool-use-id><status>completed</status></task-notification>',
-    });
+    const queueLine = parseLine(
+      JSON.stringify({
+        type: 'queue-operation',
+        operation: 'enqueue',
+        content: '<task-notification><task-id>t1</task-id><tool-use-id>tu_1</tool-use-id><status>completed</status></task-notification>',
+      }),
+    );
     const lines = [dispatchLine('tu_1', 'general-purpose', 'desc', '2026-07-20T10:00:00.000Z'), queueLine];
     expect(applyLinesToOpenDispatches([], lines)).toEqual([
       { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
@@ -96,7 +114,7 @@ describe('applyLinesToOpenDispatches', () => {
   });
 
   it('does not treat an ordinary user message without origin.kind as a completion signal', () => {
-    const plainUserLine = JSON.stringify({ type: 'user', message: { content: 'just a normal reply' } });
+    const plainUserLine = parseLine(JSON.stringify({ type: 'user', message: { content: 'just a normal reply' } }));
     const lines = [dispatchLine('tu_1', 'general-purpose', 'desc', '2026-07-20T10:00:00.000Z'), plainUserLine];
     expect(applyLinesToOpenDispatches([], lines)).toEqual([
       { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
@@ -104,11 +122,13 @@ describe('applyLinesToOpenDispatches', () => {
   });
 
   it('ignores tool_use blocks with a name other than Agent', () => {
-    const line = JSON.stringify({
-      type: 'assistant',
-      timestamp: '2026-07-20T10:00:00.000Z',
-      message: { content: [{ type: 'tool_use', id: 'tu_2', name: 'Read', input: { file_path: '/x' } }] },
-    });
+    const line = parseLine(
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-07-20T10:00:00.000Z',
+        message: { content: [{ type: 'tool_use', id: 'tu_2', name: 'Read', input: { file_path: '/x' } }] },
+      }),
+    );
     expect(applyLinesToOpenDispatches([], [line])).toEqual([]);
   });
 
@@ -128,8 +148,9 @@ describe('applyLinesToOpenDispatches', () => {
   });
 
   it('skips malformed JSON lines without throwing', () => {
-    expect(() => applyLinesToOpenDispatches([], ['not json', '', '   '])).not.toThrow();
-    expect(applyLinesToOpenDispatches([], ['not json', '', '   '])).toEqual([]);
+    const events = ['not json', '', '   '].map(parseTranscriptLine).filter((e): e is TranscriptEvent => e !== null);
+    expect(() => applyLinesToOpenDispatches([], events)).not.toThrow();
+    expect(applyLinesToOpenDispatches([], events)).toEqual([]);
   });
 
   it('continues from a non-empty currentOpen list (incremental tailing)', () => {
@@ -141,11 +162,13 @@ describe('applyLinesToOpenDispatches', () => {
   });
 
   it('defaults subagentType, description, prompt, and model when input fields are missing', () => {
-    const line = JSON.stringify({
-      type: 'assistant',
-      timestamp: '2026-07-20T10:00:00.000Z',
-      message: { content: [{ type: 'tool_use', id: 'tu_1', name: 'Agent', input: {} }] },
-    });
+    const line = parseLine(
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-07-20T10:00:00.000Z',
+        message: { content: [{ type: 'tool_use', id: 'tu_1', name: 'Agent', input: {} }] },
+      }),
+    );
     expect(applyLinesToOpenDispatches([], [line])).toEqual([
       { toolUseId: 'tu_1', subagentType: 'agent', description: '', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
     ]);
@@ -263,13 +286,15 @@ describe('applyLinesToOpenDispatches — completedOut parameter', () => {
   });
 
   it('defaults missing or malformed usage sub-fields to 0', () => {
-    const malformedLine = JSON.stringify({
-      type: 'user',
-      origin: { kind: 'task-notification' },
-      message: {
-        content: '<task-notification><task-id>t1</task-id><tool-use-id>tu_1</tool-use-id><status>completed</status><summary>done</summary></task-notification>',
-      },
-    });
+    const malformedLine = parseLine(
+      JSON.stringify({
+        type: 'user',
+        origin: { kind: 'task-notification' },
+        message: {
+          content: '<task-notification><task-id>t1</task-id><tool-use-id>tu_1</tool-use-id><status>completed</status><summary>done</summary></task-notification>',
+        },
+      }),
+    );
     const openResult = applyLinesToOpenDispatches([], [dispatchLine('tu_1', 'general-purpose', 'desc', '2026-07-20T10:00:00.000Z')]);
     const completedOut: CompletedDispatchUsage[] = [];
     applyLinesToOpenDispatches(openResult, [malformedLine], completedOut);
@@ -310,19 +335,23 @@ describe('labelForToolUse', () => {
   });
 });
 
-function toolUseLine(id: string, name: string, input: Record<string, unknown>, timestamp: string): string {
-  return JSON.stringify({
-    type: 'assistant',
-    timestamp,
-    message: { content: [{ type: 'tool_use', id, name, input }] },
-  });
+function toolUseLine(id: string, name: string, input: Record<string, unknown>, timestamp: string): TranscriptEvent {
+  return parseLine(
+    JSON.stringify({
+      type: 'assistant',
+      timestamp,
+      message: { content: [{ type: 'tool_use', id, name, input }] },
+    }),
+  );
 }
 
-function toolResultLine(toolUseId: string): string {
-  return JSON.stringify({
-    type: 'user',
-    message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }] },
-  });
+function toolResultLine(toolUseId: string): TranscriptEvent {
+  return parseLine(
+    JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }] },
+    }),
+  );
 }
 
 describe('applyLinesToOpenWork', () => {
@@ -371,6 +400,7 @@ describe('applyLinesToOpenWork', () => {
   });
 
   it('skips malformed JSON lines without throwing', () => {
-    expect(() => applyLinesToOpenWork([], ['not json', '', '   '])).not.toThrow();
+    const events = ['not json', '', '   '].map(parseTranscriptLine).filter((e): e is TranscriptEvent => e !== null);
+    expect(() => applyLinesToOpenWork([], events)).not.toThrow();
   });
 });

@@ -1,6 +1,9 @@
 import path from 'path';
 import { findSessionFileCreatedAfter } from './activeSessionFinder';
 import { readNewLines } from './transcriptTailer';
+import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser';
+import { createEmptyHistory, updateHistory, type ToolCallHistory } from './toolCallHistory';
+import { detectAnomalies, type Anomaly } from '../src/shared/anomalyDetectors';
 import {
   applyLinesToOpenDispatches,
   applyLinesToOpenWork,
@@ -14,6 +17,8 @@ export interface LiveAgentTick {
   open: RealAgentDispatch[];
   completed: CompletedDispatchUsage[];
   work: RealActiveWork[];
+  anomalies: Anomaly[];
+  cacheHitRatio: number;
 }
 
 // The embedded terminal always spawns `claude` with cwd = homeDir (see
@@ -31,6 +36,15 @@ export function createLiveAgentTracker(homeDir: string) {
   let currentOffset = 0;
   let currentOpen: RealAgentDispatch[] = [];
   let currentWork: RealActiveWork[] = [];
+  let history: ToolCallHistory = createEmptyHistory();
+  let cumulativeCacheRead = 0;
+  let cumulativeInput = 0;
+
+  function emptyTick(): LiveAgentTick {
+    const cacheHitRatio =
+      cumulativeInput + cumulativeCacheRead > 0 ? cumulativeCacheRead / (cumulativeInput + cumulativeCacheRead) : 0;
+    return { open: currentOpen, completed: [], work: currentWork, anomalies: [], cacheHitRatio };
+  }
 
   return {
     notifyPtySpawned(atMs: number): void {
@@ -39,13 +53,16 @@ export function createLiveAgentTracker(homeDir: string) {
       currentOffset = 0;
       currentOpen = [];
       currentWork = [];
+      history = createEmptyHistory();
+      cumulativeCacheRead = 0;
+      cumulativeInput = 0;
     },
 
     async tick(): Promise<LiveAgentTick> {
       if (!pinnedFile) {
-        if (spawnedAtMs === null) return { open: currentOpen, completed: [], work: currentWork };
+        if (spawnedAtMs === null) return emptyTick();
         const found = await findSessionFileCreatedAfter(sessionDir, spawnedAtMs);
-        if (!found) return { open: currentOpen, completed: [], work: currentWork };
+        if (!found) return emptyTick();
         pinnedFile = found;
         currentOffset = 0;
         currentOpen = [];
@@ -53,12 +70,38 @@ export function createLiveAgentTracker(homeDir: string) {
       }
 
       const { lines, newOffset } = await readNewLines(pinnedFile, currentOffset);
-      if (lines.length === 0) return { open: currentOpen, completed: [], work: currentWork };
+      if (lines.length === 0) return emptyTick();
       currentOffset = newOffset;
+
+      const events: TranscriptEvent[] = lines
+        .map(parseTranscriptLine)
+        .filter((e): e is TranscriptEvent => e !== null);
+
       const completed: CompletedDispatchUsage[] = [];
-      currentOpen = applyLinesToOpenDispatches(currentOpen, lines, completed);
-      currentWork = applyLinesToOpenWork(currentWork, lines);
-      return { open: currentOpen, completed, work: currentWork };
+      currentOpen = applyLinesToOpenDispatches(currentOpen, events, completed);
+      currentWork = applyLinesToOpenWork(currentWork, events);
+      history = updateHistory(history, events, Date.now());
+
+      for (const event of events) {
+        if (event.usage) {
+          cumulativeCacheRead += event.usage.cacheReadInputTokens;
+          cumulativeInput += event.usage.inputTokens;
+        }
+      }
+
+      const cacheHitRatio =
+        cumulativeInput + cumulativeCacheRead > 0 ? cumulativeCacheRead / (cumulativeInput + cumulativeCacheRead) : 0;
+
+      // No existing running-total token source is passed into tick() from
+      // main.ts's tickAndPushAgents -- scanAndPushUsage's burn-rate pipeline
+      // scans ALL projects on a separate 60s interval and isn't scoped to
+      // this tracker's pinned session file. cumulativeInput is used as the
+      // best available proxy for "tokens burned in this tracked session" per
+      // the plan's documented fallback.
+      const tokensUsedForBurn = cumulativeInput;
+      const anomalies = detectAnomalies(history, currentWork, tokensUsedForBurn, Date.now());
+
+      return { open: currentOpen, completed, work: currentWork, anomalies, cacheHitRatio };
     },
   };
 }
