@@ -101,7 +101,7 @@ export function OrchestrationGrid({ agents, rate, anomalies, onSelectRealAgent }
           />
 
           {layout.agentNodes.map((node) => {
-            const flagged = anomalies.some((a) => a.toolUseId === node.agent.toolUseId);
+            const flagged = !!node.agent.toolUseId && anomalies.some((a) => a.toolUseId === node.agent.toolUseId);
             return (
             <g key={node.agent.toolUseId} onClick={() => onSelectRealAgent(node.agent.toolUseId)} style={{ cursor: 'pointer' }}>
               {flagged && (
