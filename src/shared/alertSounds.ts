@@ -34,3 +34,72 @@ export function decideAlertActions(prev: AlertSnapshot, next: AlertSnapshot): Al
 
   return actions;
 }
+
+let sharedCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext {
+  if (!sharedCtx) {
+    sharedCtx = new AudioContext();
+  }
+  if (sharedCtx.state === 'suspended') {
+    void sharedCtx.resume();
+  }
+  return sharedCtx;
+}
+
+function playTone(ctx: AudioContext, frequencyHz: number, startTime: number, durationSec: number, peakGain: number): void {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(frequencyHz, startTime);
+
+  // Short linear attack/release so the tone doesn't click at start/end.
+  const attack = Math.min(0.02, durationSec / 4);
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(peakGain, startTime + attack);
+  gain.gain.linearRampToValueAtTime(0, startTime + durationSec);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + durationSec);
+}
+
+export function playYellowAlert(): void {
+  const ctx = getAudioContext();
+  const now = ctx.currentTime;
+  const toneDur = 0.15;
+  const gap = 0.02;
+  const frequencies = [880, 1046.5, 880, 1046.5]; // A5, C6, A5, C6 — bright, brief, unmistakably an alert
+  frequencies.forEach((freq, i) => {
+    playTone(ctx, freq, now + i * (toneDur + gap), toneDur, 0.18);
+  });
+}
+
+export function playAnomalyChime(): void {
+  const ctx = getAudioContext();
+  playTone(ctx, 1318.5, ctx.currentTime, 0.25, 0.09); // E6, quieter and longer-tailed than the klaxon tones — reads as a notification, not an alarm
+}
+
+export function startRedAlert(): () => void {
+  const ctx = getAudioContext();
+  const toneDur = 0.22;
+  const lowFreq = 587.33; // D5
+  const highFreq = 739.99; // F#5 — lower and more urgent than the yellow chirp's A5/C6 pair
+  let stopped = false;
+  let nextToneIsHigh = false;
+
+  function scheduleNext() {
+    if (stopped) return;
+    const now = ctx.currentTime;
+    playTone(ctx, nextToneIsHigh ? highFreq : lowFreq, now, toneDur, 0.22);
+    nextToneIsHigh = !nextToneIsHigh;
+    setTimeout(scheduleNext, toneDur * 1000);
+  }
+
+  scheduleNext();
+
+  return () => {
+    stopped = true;
+  };
+}
