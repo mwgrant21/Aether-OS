@@ -66,6 +66,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         line('  deny <n>            reject request n'),
         line('  theme <name>        cyan|blue|teal|violet|amber|red'),
         line('  renderer <mode>     nebula|volumetric|warp|storm core renderer'),
+        line('  thememode <dark|light>  switch light/dark palette'),
       );
       return { kind: 'append', lines: out };
     }
@@ -196,6 +197,16 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
               : ' — containment field released';
       out.push(line(`✓ core renderer set to ${rd}${suffix}`, GOOD));
       return { kind: 'append', lines: out, patch: { cfg: { ...state.cfg, renderer: key } } };
+    }
+
+    case 'thememode': {
+      const mode = (args[0] || '').toLowerCase();
+      if (mode !== 'dark' && mode !== 'light') {
+        out.push(line('✗ usage: thememode dark|light', BAD));
+        return { kind: 'append', lines: out };
+      }
+      out.push(line(`✓ theme mode set to ${mode}`, GOOD));
+      return { kind: 'append', lines: out, patch: { cfg: { ...state.cfg, themeMode: mode } } };
     }
 
     case 'approvals': {

@@ -21,6 +21,29 @@ export const colors = {
   agentHues: ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'] as const,
 } as const;
 
+export const colorsLight = {
+  bgBase: '#eaf6fb',
+  pageRadial: 'radial-gradient(1400px 900px at 60% -10%, #d8ecf4 0%, #eef8fc 55%, #f5fbfd 100%)',
+  panelGradient: 'linear-gradient(180deg, rgba(255,255,255,.85), rgba(235,248,252,.85))',
+  panelBorder: 'rgba(23,140,180,.24)',
+  chromeBorder: 'rgba(23,140,180,.16)',
+  chipBorder: 'rgba(23,140,180,.25)',
+  activeBorder: 'rgba(10,120,160,.45)',
+  textPrimary: '#04222c',
+  textBody: '#0c3540',
+  textSecondary: '#3c6a76',
+  textMuted: '#6f97a1',
+  textDim: '#84a6ae',
+  accentCyan: '#0aa9c4',
+  accentCyanDeep: '#0c7f95',
+  accentCyanSoft: '#3fb6cc',
+  success: '#1f9d6c',
+  warn: '#b8801f',
+  danger: '#c73f4e',
+  dangerSoft: '#e08a92',
+  agentHues: ['#0aa9c4', '#4a7fd8', '#1fb894', '#3fb6cc', '#5a97d8'] as const,
+} as const;
+
 export const fonts = {
   ui: 'Rajdhani, sans-serif',
   mono: "'Space Mono', monospace",

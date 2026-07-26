@@ -48,6 +48,21 @@ export function AppearanceCard() {
       </div>
 
       <div style={{ marginTop: 16 }}>
+        <div style={labelStyle}>MODE</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          {(['dark', 'light'] as const).map((mode) => (
+            <span
+              key={mode}
+              onClick={() => dispatch({ type: 'RUN_COMMAND', raw: `thememode ${mode}` })}
+              style={toggleStyle(cfg.themeMode === mode)}
+            >
+              {mode}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
         <div style={labelStyle}>REACTOR PULSE</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
           {(['live', 'ambient'] as const).map((mode) => (

@@ -44,6 +44,7 @@ export const initialState: AetherState = {
     renderer: 'classic',
     pulseMode: 'live',
     theme: 'cyan',
+    themeMode: 'dark',
     glow: 70,
     glowFx: true,
     capM: 2.0,
