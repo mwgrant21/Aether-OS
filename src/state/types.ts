@@ -67,6 +67,7 @@ export interface TermLine {
 }
 
 import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
+import type { Anomaly } from '../shared/anomalyDetectors';
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
@@ -179,6 +180,8 @@ export interface AetherState {
   dispatchChannels: DispatchChannelStub[];
   dispatchUsage: Record<string, DispatchUsage>;
   activeWork: RealActiveWork[];
+  anomalies: Anomaly[];
+  cacheHitRatio: number;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

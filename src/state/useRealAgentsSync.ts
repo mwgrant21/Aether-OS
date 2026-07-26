@@ -27,4 +27,20 @@ export function useRealAgentsSync() {
       dispatch({ type: 'SET_ACTIVE_WORK', work });
     });
   }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onAnomalies((anomalies) => {
+      dispatch({ type: 'SET_ANOMALIES', anomalies });
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onCacheHitRatio((ratio) => {
+      dispatch({ type: 'SET_CACHE_HIT_RATIO', ratio });
+    });
+  }, [dispatch]);
 }

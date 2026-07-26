@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { RealUsageSnapshot } from '../src/state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
+import type { Anomaly } from '../src/shared/anomalyDetectors';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -36,6 +37,16 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, work: RealActiveWork[]) => callback(work);
       ipcRenderer.on('agents:activeWork', listener);
       return () => ipcRenderer.removeListener('agents:activeWork', listener);
+    },
+    onAnomalies: (callback: (anomalies: Anomaly[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, anomalies: Anomaly[]) => callback(anomalies);
+      ipcRenderer.on('agents:anomalies', listener);
+      return () => ipcRenderer.removeListener('agents:anomalies', listener);
+    },
+    onCacheHitRatio: (callback: (ratio: number) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, ratio: number) => callback(ratio);
+      ipcRenderer.on('agents:cacheHitRatio', listener);
+      return () => ipcRenderer.removeListener('agents:cacheHitRatio', listener);
     },
   },
   attachments: {

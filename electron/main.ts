@@ -136,10 +136,12 @@ async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
   try {
-    const { open, completed, work } = await liveAgentTracker.tick();
+    const { open, completed, work, anomalies, cacheHitRatio } = await liveAgentTracker.tick();
     sendToWindow('agents:snapshot', open);
     if (completed.length) sendToWindow('agents:completed', completed);
     sendToWindow('agents:activeWork', work);
+    sendToWindow('agents:anomalies', anomalies);
+    sendToWindow('agents:cacheHitRatio', cacheHitRatio);
   } finally {
     agentTickInFlight = false;
   }
