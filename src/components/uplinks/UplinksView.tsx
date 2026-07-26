@@ -12,7 +12,7 @@ export function UplinksView() {
   return (
     <div style={cardStyle(colors)}>
       <div style={titleStyle(colors)}>PROVIDERS</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm, marginTop: space.md }}>
         {state.providers.map((p) => (
           <div key={p.name} style={rowStyle(p.connected)}>
             <span style={dotStyle(colors, p.connected)} />
@@ -30,7 +30,7 @@ export function UplinksView() {
 
       <div style={{ marginTop: space.xl }}>
         <div style={titleStyle(colors)}>DEFAULT RUNTIME</div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: space.sm, marginTop: space.md, flexWrap: 'wrap' }}>
           {runtimeOptions.map((option) => (
             <Button
               key={option}

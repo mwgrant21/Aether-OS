@@ -20,7 +20,7 @@ export function ProjectsDigest() {
           style={viewAllStyle}
           hoverStyle={{ textDecoration: 'underline' }}
         >
-          VIEW ALL →›
+          VIEW ALL ›
         </Button>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 11, display: 'flex', flexDirection: 'column', gap: 10 }}>
