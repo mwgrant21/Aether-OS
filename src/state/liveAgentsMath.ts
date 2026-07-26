@@ -16,7 +16,9 @@ export interface CompletedDispatchUsage extends RealAgentDispatch {
 }
 
 function isoOrEpoch(timestamp: Date | null): string {
-  return timestamp ? timestamp.toISOString() : new Date(0).toISOString();
+  return timestamp && !Number.isNaN(timestamp.getTime())
+    ? timestamp.toISOString()
+    : new Date(0).toISOString();
 }
 
 export function applyLinesToOpenDispatches(

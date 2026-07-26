@@ -67,6 +67,11 @@ export function createLiveAgentTracker(homeDir: string) {
         currentOffset = 0;
         currentOpen = [];
         currentWork = [];
+        // history/cumulativeCacheRead/cumulativeInput are intentionally NOT reset
+        // here: this branch only runs once per notifyPtySpawned (while pinnedFile
+        // is still null), before any lines have been tailed, so those three are
+        // already at their notifyPtySpawned-reset zero values and nothing has
+        // touched them yet.
       }
 
       const { lines, newOffset } = await readNewLines(pinnedFile, currentOffset);

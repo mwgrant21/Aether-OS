@@ -147,10 +147,18 @@ describe('applyLinesToOpenDispatches', () => {
     expect(applyLinesToOpenDispatches([], [completionLine('unknown_id')])).toEqual([]);
   });
 
-  it('skips malformed JSON lines without throwing', () => {
-    const events = ['not json', '', '   '].map(parseTranscriptLine).filter((e): e is TranscriptEvent => e !== null);
-    expect(() => applyLinesToOpenDispatches([], events)).not.toThrow();
-    expect(applyLinesToOpenDispatches([], events)).toEqual([]);
+  it('skips malformed JSON lines without throwing, and falls back to epoch for an unparsable timestamp', () => {
+    const malformed = ['not json', '', '   '].map(parseTranscriptLine).filter((e): e is TranscriptEvent => e !== null);
+    expect(() => applyLinesToOpenDispatches([], malformed)).not.toThrow();
+    expect(applyLinesToOpenDispatches([], malformed)).toEqual([]);
+
+    // A line that parses but carries an unparsable timestamp string upstream
+    // (Invalid Date) must not throw out of isoOrEpoch's toISOString() call.
+    const invalidTimestampLine = dispatchLine('tu_1', 'general-purpose', 'desc', 'not-a-real-timestamp');
+    expect(() => applyLinesToOpenDispatches([], [invalidTimestampLine])).not.toThrow();
+    expect(applyLinesToOpenDispatches([], [invalidTimestampLine])).toEqual([
+      { toolUseId: 'tu_1', subagentType: 'general-purpose', description: 'desc', startedAt: new Date(0).toISOString(), prompt: '', model: null },
+    ]);
   });
 
   it('continues from a non-empty currentOpen list (incremental tailing)', () => {
