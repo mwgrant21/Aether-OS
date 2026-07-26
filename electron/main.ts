@@ -1,14 +1,22 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import { join } from 'path';
+import { existsSync } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
 import { createAttachmentsStore } from './attachmentsStore';
+import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+
+const DEFAULT_WIDTH = 1400;
+const DEFAULT_HEIGHT = 900;
+const BOUNDS_SAVE_DEBOUNCE_MS = 500;
+const boundsFilePath = join(app.getPath('userData'), 'window-bounds.json');
+const iconPath = join(__dirname, '../../build/icon.png');
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -22,14 +30,47 @@ app.on('second-instance', () => {
 });
 
 function createWindow(): void {
+  const saved = loadWindowBounds(boundsFilePath);
+  const displays = screen.getAllDisplays().map((d) => d.workArea);
+  const clamped = saved ? clampBoundsToDisplays(saved, displays) : null;
+  const initialBounds: Bounds = clamped ?? { x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  const shouldPositionWindow = clamped !== null;
+  const shouldMaximize = saved?.isMaximized === true;
+
   const win = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: initialBounds.width,
+    height: initialBounds.height,
+    ...(shouldPositionWindow ? { x: initialBounds.x, y: initialBounds.y } : {}),
+    minWidth: 1024,
+    minHeight: 700,
+    autoHideMenuBar: true,
+    ...(existsSync(iconPath) ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
     },
   });
   mainWindow = win;
+
+  if (shouldMaximize) win.maximize();
+
+  let saveBoundsTimer: ReturnType<typeof setTimeout> | null = null;
+  const persistBounds = (): void => {
+    if (win.isMaximized()) return;
+    const bounds = win.getBounds();
+    saveWindowBounds(boundsFilePath, { ...bounds, isMaximized: false });
+  };
+  const scheduleSaveBounds = (): void => {
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+    saveBoundsTimer = setTimeout(persistBounds, BOUNDS_SAVE_DEBOUNCE_MS);
+  };
+
+  win.on('resize', scheduleSaveBounds);
+  win.on('move', scheduleSaveBounds);
+  win.on('close', () => {
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+    const bounds = win.getBounds();
+    saveWindowBounds(boundsFilePath, { ...bounds, isMaximized: win.isMaximized() });
+  });
 
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('Renderer process gone:', details.reason);
@@ -92,6 +133,7 @@ async function tickAndPushAgents(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   createWindow();
 
   app.on('activate', () => {
