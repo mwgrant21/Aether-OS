@@ -43,7 +43,13 @@ export function createLiveAgentTracker(homeDir: string) {
   function emptyTick(): LiveAgentTick {
     const cacheHitRatio =
       cumulativeInput + cumulativeCacheRead > 0 ? cumulativeCacheRead / (cumulativeInput + cumulativeCacheRead) : 0;
-    return { open: currentOpen, completed: [], work: currentWork, anomalies: [], cacheHitRatio };
+    // Re-run anomaly detection even on idle ticks (no new transcript lines).
+    // Without this, every zero-new-lines tick wiped anomalies to [], which made
+    // detectStalledPermission (age-based, fires precisely when there ARE no new
+    // lines) unreachable, and caused Grid rings/reactor anomaly state to flicker
+    // with transcript activity instead of tracking real anomaly state.
+    const anomalies = detectAnomalies(history, currentWork, cumulativeInput, Date.now());
+    return { open: currentOpen, completed: [], work: currentWork, anomalies, cacheHitRatio };
   }
 
   return {

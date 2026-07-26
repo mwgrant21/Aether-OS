@@ -12,7 +12,7 @@ import { useAetherStore } from '../../state/store';
 import type { RendererMode } from '../../state/types';
 import { ReactorCore } from './ReactorCore';
 import { StormCore, STORM_CORE_NATIVE_SIZE } from './StormCore';
-import { computeThemeFilter, computeDispatchIntensity } from './reactorMath';
+import { computeThemeFilter, computeDispatchIntensity, computeModelHueShift, dominantModel } from './reactorMath';
 
 export const REACTOR_CORE_NATIVE_SIZE = 334;
 
@@ -31,7 +31,8 @@ export function Reactor() {
     // the same element; splitting them across two elements let blend-mode layers (plasma
     // sweep, filaments, blobs) bleed past the component's box on some compositors.
     const { overload } = computeDispatchIntensity(state.realAgents.length);
-    const filter = computeThemeFilter(state.cfg.theme, state.alarmLevel, state.cfg.glowFx, overload);
+    const modelHueShift = computeModelHueShift(dominantModel(state.realAgents));
+    const filter = computeThemeFilter(state.cfg.theme, state.alarmLevel, state.cfg.glowFx, overload, modelHueShift);
     return <StormCore filter={filter} />;
   }
   return <ReactorCore />;
