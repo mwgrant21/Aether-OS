@@ -3,11 +3,23 @@ import { join } from 'path';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
-import { computeWeeklyTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct } from '../src/components/dashboard/realUsageMath';
+import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
 import { createAttachmentsStore } from './attachmentsStore';
 
 let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -19,10 +31,26 @@ function createWindow(): void {
   });
   mainWindow = win;
 
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('Renderer process gone:', details.reason);
+    if (mainWindow === win) mainWindow = null;
+    if (!isQuitting) createWindow();
+  });
+
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
+  }
+}
+
+function sendToWindow(channel: string, ...args: unknown[]): void {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(channel, ...args);
   }
 }
 
@@ -34,12 +62,15 @@ async function scanAndPushUsage(): Promise<void> {
   const projectsRoot = join(os.homedir(), '.claude', 'projects');
   const events = await scanAllProjects(projectsRoot);
   const now = new Date();
-  mainWindow.webContents.send('usage:snapshot', {
+  sendToWindow('usage:snapshot', {
     weeklyTokens: computeWeeklyTokens(events, now),
+    dailyTokens: computeDailyTokens(events, now),
+    liveTokens: computeLiveTokens(events, now),
     usedThisMonth: computeUsedThisMonth(events, now),
     burnRatePerMin: computeBurnRatePerMin(events, now),
     weekOverWeekPct: computeWeekOverWeekPct(events, now),
     lastScanAt: now.toISOString(),
+    ctxUsed: computeContextWindow(events, now),
   });
 }
 
@@ -52,9 +83,9 @@ async function tickAndPushAgents(): Promise<void> {
   agentTickInFlight = true;
   try {
     const { open, completed, work } = await liveAgentTracker.tick();
-    mainWindow.webContents.send('agents:snapshot', open);
-    if (completed.length) mainWindow.webContents.send('agents:completed', completed);
-    mainWindow.webContents.send('agents:activeWork', work);
+    sendToWindow('agents:snapshot', open);
+    if (completed.length) sendToWindow('agents:completed', completed);
+    sendToWindow('agents:activeWork', work);
   } finally {
     agentTickInFlight = false;
   }
@@ -78,6 +109,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 let activePty: ReturnType<typeof spawnPty> | null = null;
 
 ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
@@ -87,8 +122,9 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   }
   activePty = spawnPty(cols, rows);
   liveAgentTracker.notifyPtySpawned(Date.now());
+  const sender = event.sender;
   activePty.onData((data) => {
-    event.sender.send('pty:data', data);
+    if (!sender.isDestroyed()) sender.send('pty:data', data);
   });
 });
 
