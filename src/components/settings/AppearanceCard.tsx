@@ -159,35 +159,32 @@ function swatchStyle(colors: ColorPalette, hex: string, on: boolean): CSSPropert
     boxShadow: on ? `0 0 0 2px ${colors.bgBase}, 0 0 0 4px ${hex}` : `0 0 8px ${hex}`,
   };
 }
-function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
+function toggleBaseStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
-    flex: 1,
     textAlign: 'center',
     cursor: 'pointer',
-    padding: '7px 0',
     borderRadius: 7,
     font: `600 10px/1 ${fonts.ui}`,
     letterSpacing: 1,
-    textTransform: 'uppercase',
     color: on ? '#04202b' : colors.textMuted,
     background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',
     boxShadow: on ? '0 0 10px rgba(95,220,255,.4)' : undefined,
     border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
   };
 }
+function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
+  return {
+    ...toggleBaseStyle(colors, on),
+    flex: 1,
+    padding: '7px 0',
+    textTransform: 'uppercase',
+  };
+}
 function pillToggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
+    ...toggleBaseStyle(colors, on),
     minWidth: 52,
-    textAlign: 'center',
-    cursor: 'pointer',
     padding: '6px 12px',
-    borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
-    letterSpacing: 1,
-    color: on ? '#04202b' : colors.textMuted,
-    background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',
-    boxShadow: on ? '0 0 10px rgba(95,220,255,.4)' : undefined,
-    border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
   };
 }
 function sliderStyle(colors: ColorPalette): CSSProperties {
