@@ -101,9 +101,9 @@ function navItemStyle(colors: ColorPalette, on: boolean): CSSProperties {
     padding: '9px 10px',
     borderRadius: 9,
     cursor: 'pointer',
-    background: on ? 'linear-gradient(90deg, rgba(23,184,216,.18), rgba(23,184,216,.02))' : undefined,
-    border: on ? '1px solid rgba(95,220,255,.4)' : '1px solid transparent',
-    color: on ? colors.textPrimary : '#7f9fac',
+    background: on ? 'linear-gradient(90deg, rgba(23,184,216,.18), rgba(23,184,216,.02))' : colors.panelInset,
+    border: on ? '1px solid rgba(95,220,255,.4)' : `1px solid ${colors.chipBorder}`,
+    color: on ? colors.textPrimary : colors.textMuted,
     boxShadow: on ? 'inset 0 0 14px rgba(95,240,255,.12)' : undefined,
   };
 }

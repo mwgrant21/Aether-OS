@@ -193,8 +193,8 @@ function tabStyle(colors: ColorPalette, on: boolean): AppRegionStyle {
     textTransform: 'uppercase',
     cursor: 'pointer',
     color: on ? colors.textPrimary : colors.textMuted,
-    background: on ? 'rgba(23,184,216,.14)' : undefined,
-    border: on ? '1px solid rgba(95,220,255,.35)' : '1px solid transparent',
+    background: on ? 'rgba(23,184,216,.14)' : colors.panelInset,
+    border: on ? '1px solid rgba(95,220,255,.35)' : `1px solid ${colors.chipBorder}`,
     WebkitAppRegion: 'no-drag',
   };
 }
@@ -219,9 +219,9 @@ function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): AppRegionS
     whiteSpace: 'nowrap',
     transition: 'all .15s',
     color: on ? (key === 'AUTO' ? '#1a1204' : '#04202b') : colors.textMuted,
-    background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : undefined,
+    background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : colors.panelInset,
     boxShadow: on ? (key === 'AUTO' ? '0 0 12px rgba(245,198,107,.45)' : '0 0 12px rgba(95,220,255,.4)') : undefined,
-    border: on ? undefined : '1px solid transparent',
+    border: on ? undefined : `1px solid ${colors.chipBorder}`,
     WebkitAppRegion: 'no-drag',
   };
 }
