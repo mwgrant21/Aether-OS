@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { STATUS_COLOR, computeLiveProjectPct } from '../projects/projectsMath';
+import { Button } from '../shared/Button';
 
 export function ProjectsDigest() {
   const { state, dispatch } = useAetherStore();
@@ -14,9 +15,13 @@ export function ProjectsDigest() {
     <div style={cardStyle}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={titleStyle}>PROJECTS</div>
-        <span onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Projects' })} style={viewAllStyle}>
-          VIEW ALL →
-        </span>
+        <Button
+          onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Projects' })}
+          style={viewAllStyle}
+          hoverStyle={{ textDecoration: 'underline' }}
+        >
+          VIEW ALL →›
+        </Button>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 11, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {projects.map((p) => (

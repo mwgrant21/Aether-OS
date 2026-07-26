@@ -1,7 +1,9 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 
 const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
   { key: 'PLAN', label: '◇ PLAN', tip: 'Brainstorm & plan — throttled burn, everything queued for approval' },
@@ -10,18 +12,19 @@ const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
 ];
 
 export function OperatingModeCard() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
 
   return (
-    <div style={cardStyle}>
-      <div style={titleStyle}>OPERATING MODE</div>
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)}>OPERATING MODE</div>
       <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
         {OP_MODES.map((om) => {
           const on = state.cfg.opMode === om.key;
           return (
-            <span key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(on, om.key)}>
+            <Button key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(colors, on, om.key)}>
               {om.label}
-            </span>
+            </Button>
           );
         })}
       </div>
@@ -29,17 +32,21 @@ export function OperatingModeCard() {
   );
 }
 
-const cardStyle: CSSProperties = {
-  padding: 15,
-  borderRadius: 14,
-  border: `1px solid ${colors.panelBorder}`,
-  background: colors.panelGradient,
-  display: 'flex',
-  flexDirection: 'column',
-  minHeight: 0,
-};
-const titleStyle: CSSProperties = { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-function opModeStyle(on: boolean, key: OpMode): CSSProperties {
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return {
+    padding: 15,
+    borderRadius: 14,
+    border: `1px solid ${colors.panelBorder}`,
+    background: colors.panelGradient,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+  };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): CSSProperties {
   return {
     flex: 1,
     textAlign: 'center',

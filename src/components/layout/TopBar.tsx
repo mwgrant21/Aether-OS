@@ -1,10 +1,12 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
 import { VIEWS } from '../../viewRegistry';
 import { resolveOperatorName } from '../../utils/format';
 import { maximizeGlyph, maximizeLabel } from './windowControls';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
@@ -17,6 +19,7 @@ const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
 ];
 
 export function TopBar() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const pendingCount = state.approvals.length;
   const hasPending = pendingCount > 0;
@@ -24,10 +27,10 @@ export function TopBar() {
   const apprBtnBorder = hasPending ? 'rgba(245,198,107,.5)' : 'rgba(80,190,220,.25)';
 
   return (
-    <div style={rootStyle}>
+    <div style={rootStyle(colors)}>
       <div style={logoWrapStyle}>
         <div style={logoDotStyle} />
-        <div style={logoTextStyle}>
+        <div style={logoTextStyle(colors)}>
           AETHER<span style={{ color: colors.textMuted, fontWeight: 500 }}> OS</span>
         </div>
       </div>
@@ -36,7 +39,7 @@ export function TopBar() {
         {TOP_BAR_IDS.map((label) => {
           const on = label === state.activeTab;
           return (
-            <div key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={tabStyle(on)}>
+            <div key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={tabStyle(colors, on)}>
               {label}
             </div>
           );
@@ -47,7 +50,7 @@ export function TopBar() {
         {OP_MODES.map((om) => {
           const on = state.cfg.opMode === om.key;
           return (
-            <span key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(on, om.key)}>
+            <span key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(colors, on, om.key)}>
               {om.label}
             </span>
           );
@@ -58,31 +61,31 @@ export function TopBar() {
         <div onClick={() => dispatch({ type: 'TOGGLE_APPROVALS' })} style={{ ...iconButtonStyle, borderColor: apprBtnBorder, color: apprBtnC }}>
           ⛉
         </div>
-        {hasPending && <span style={apprBadgeStyle}>{pendingCount}</span>}
+        {hasPending && <span style={apprBadgeStyle(colors)}>{pendingCount}</span>}
         {state.apprOpen && (
           <div style={apprPanelStyle}>
-            <div style={panelTitleStyle}>⛉ APPROVAL QUEUE — agents awaiting authorization</div>
+            <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — agents awaiting authorization</div>
             {state.approvals.map((ap) => (
               <div key={ap.id} style={apprRowStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={apprAvatarStyle(ap.hue)}>{ap.i}</span>
-                  <span style={apprActionStyle}>{ap.action}</span>
-                  <span style={riskBadgeStyle(ap.risk)}>{ap.risk}</span>
+                  <span style={apprActionStyle(colors)}>{ap.action}</span>
+                  <span style={riskBadgeStyle(colors, ap.risk)}>{ap.risk}</span>
                 </div>
-                <div style={apprDetailStyle}>
+                <div style={apprDetailStyle(colors)}>
                   {ap.agent} · {ap.detail}
                 </div>
                 <div style={{ display: 'flex', gap: 7 }}>
-                  <span onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: true })} style={approveBtnStyle}>
+                  <span onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: true })} style={approveBtnStyle(colors)}>
                     APPROVE
                   </span>
-                  <span onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: false })} style={denyBtnStyle}>
+                  <span onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: false })} style={denyBtnStyle(colors)}>
                     DENY
                   </span>
                 </div>
               </div>
             ))}
-            {!state.approvals.length && <div style={emptyStateStyle}>queue clear — no agents awaiting authorization</div>}
+            {!state.approvals.length && <div style={emptyStateStyle(colors)}>queue clear — no agents awaiting authorization</div>}
           </div>
         )}
       </div>
@@ -91,7 +94,7 @@ export function TopBar() {
         <div onClick={() => dispatch({ type: 'TOGGLE_NOTIFS' })} style={{ ...iconButtonStyle, color: colors.accentCyanSoft }}>
           ◈
         </div>
-        {state.unread > 0 && <span style={notifBadgeStyle}>{state.unread}</span>}
+        {state.unread > 0 && <span style={notifBadgeStyle(colors)}>{state.unread}</span>}
         {state.notifOpen && (
           <div style={notifPanelStyle}>
             <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
@@ -101,7 +104,7 @@ export function TopBar() {
                 <span style={{ color: nf.c }}>{nf.m}</span>
               </div>
             ))}
-            {!state.notifs.length && <div style={emptyStateStyle}>no alerts — reactor calm</div>}
+            {!state.notifs.length && <div style={emptyStateStyle(colors)}>no alerts — reactor calm</div>}
           </div>
         )}
       </div>
@@ -120,6 +123,7 @@ export function TopBar() {
 }
 
 function WindowControls() {
+  const colors = useColors();
   const bridge = typeof window !== 'undefined' ? window.aetherElectron : undefined;
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -133,30 +137,37 @@ function WindowControls() {
 
   return (
     <div style={windowControlsGroupStyle}>
-      <div title="Minimize" onClick={() => bridge.window.minimize()} style={windowControlBtnStyle}>
+      <Button title="Minimize" onClick={() => bridge.window.minimize()} style={windowControlBtnStyle(colors)}>
         &#x2013;
-      </div>
-      <div title={maximizeLabel(isMaximized)} onClick={() => bridge.window.toggleMaximize()} style={windowControlBtnStyle}>
+      </Button>
+      <Button title={maximizeLabel(isMaximized)} onClick={() => bridge.window.toggleMaximize()} style={windowControlBtnStyle(colors)}>
         {maximizeGlyph(isMaximized)}
-      </div>
-      <div title="Close" onClick={() => bridge.window.close()} style={{ ...windowControlBtnStyle, ...windowCloseBtnStyle }}>
+      </Button>
+      <Button
+        title="Close"
+        onClick={() => bridge.window.close()}
+        style={{ ...windowControlBtnStyle(colors), ...windowCloseBtnStyle(colors) }}
+        hoverStyle={{ background: colors.danger, color: colors.textPrimary }}
+      >
         &#x2715;
-      </div>
+      </Button>
     </div>
   );
 }
 
-const rootStyle: AppRegionStyle = {
-  height: 60,
-  flex: 'none',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '0 22px',
-  borderBottom: `1px solid ${colors.chromeBorder}`,
-  background: 'rgba(4,16,24,.6)',
-  WebkitAppRegion: 'drag',
-};
+function rootStyle(colors: ColorPalette): AppRegionStyle {
+  return {
+    height: 60,
+    flex: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '0 22px',
+    borderBottom: `1px solid ${colors.chromeBorder}`,
+    background: 'rgba(4,16,24,.6)',
+    WebkitAppRegion: 'drag',
+  };
+}
 const logoWrapStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: 206 };
 const logoDotStyle: CSSProperties = {
   width: 26,
@@ -166,8 +177,10 @@ const logoDotStyle: CSSProperties = {
   boxShadow: '0 0 14px rgba(95,240,255,.85)',
   animation: 'breath var(--pulse-dur, 2.4s) ease-in-out infinite',
 };
-const logoTextStyle: CSSProperties = { font: `700 20px/1 ${fonts.ui}`, letterSpacing: 5, color: colors.textPrimary };
-function tabStyle(on: boolean): AppRegionStyle {
+function logoTextStyle(colors: ColorPalette): CSSProperties {
+  return { font: `700 20px/1 ${fonts.ui}`, letterSpacing: 5, color: colors.textPrimary };
+}
+function tabStyle(colors: ColorPalette, on: boolean): AppRegionStyle {
   return {
     padding: '8px 15px',
     borderRadius: 8,
@@ -192,7 +205,7 @@ const opModeGroupStyle: CSSProperties = {
   border: '1px solid rgba(80,190,220,.25)',
   background: 'rgba(10,32,43,.6)',
 };
-function opModeStyle(on: boolean, key: OpMode): AppRegionStyle {
+function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): AppRegionStyle {
   return {
     cursor: 'pointer',
     padding: '7px 11px',
@@ -220,36 +233,40 @@ const iconButtonStyle: AppRegionStyle = {
   font: `700 14px/1 ${fonts.mono}`,
   WebkitAppRegion: 'no-drag',
 };
-const apprBadgeStyle: CSSProperties = {
-  position: 'absolute',
-  top: -4,
-  right: -4,
-  minWidth: 16,
-  height: 16,
-  borderRadius: 8,
-  background: colors.warn,
-  boxShadow: '0 0 10px rgba(245,198,107,.7)',
-  display: 'grid',
-  placeItems: 'center',
-  font: `700 9px/1 ${fonts.mono}`,
-  color: '#1a1204',
-  padding: '0 4px',
-};
-const notifBadgeStyle: CSSProperties = {
-  position: 'absolute',
-  top: -7,
-  right: -7,
-  minWidth: 16,
-  height: 16,
-  borderRadius: 8,
-  background: colors.danger,
-  boxShadow: '0 0 10px rgba(255,107,122,.7)',
-  display: 'grid',
-  placeItems: 'center',
-  font: `700 9px/1 ${fonts.mono}`,
-  color: '#1a0508',
-  padding: '0 4px',
-};
+function apprBadgeStyle(colors: ColorPalette): CSSProperties {
+  return {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    background: colors.warn,
+    boxShadow: '0 0 10px rgba(245,198,107,.7)',
+    display: 'grid',
+    placeItems: 'center',
+    font: `700 9px/1 ${fonts.mono}`,
+    color: '#1a1204',
+    padding: '0 4px',
+  };
+}
+function notifBadgeStyle(colors: ColorPalette): CSSProperties {
+  return {
+    position: 'absolute',
+    top: -7,
+    right: -7,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    background: colors.danger,
+    boxShadow: '0 0 10px rgba(255,107,122,.7)',
+    display: 'grid',
+    placeItems: 'center',
+    font: `700 9px/1 ${fonts.mono}`,
+    color: '#1a0508',
+    padding: '0 4px',
+  };
+}
 const apprPanelStyle: AppRegionStyle = {
   position: 'absolute',
   top: 44,
@@ -282,7 +299,9 @@ const notifPanelStyle: AppRegionStyle = {
   gap: 8,
   WebkitAppRegion: 'no-drag',
 };
-const panelTitleStyle: CSSProperties = { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.warn };
+function panelTitleStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.warn };
+}
 const apprRowStyle: CSSProperties = {
   padding: '10px 11px',
   borderRadius: 9,
@@ -306,37 +325,47 @@ function apprAvatarStyle(hue: string): CSSProperties {
     color: hue,
   };
 }
-const apprActionStyle: CSSProperties = { flex: 1, font: `600 12px/1.3 ${fonts.ui}`, color: colors.textPrimary };
-function riskBadgeStyle(risk: 'HIGH' | 'MED' | 'LOW'): CSSProperties {
+function apprActionStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 1, font: `600 12px/1.3 ${fonts.ui}`, color: colors.textPrimary };
+}
+function riskBadgeStyle(colors: ColorPalette, risk: 'HIGH' | 'MED' | 'LOW'): CSSProperties {
   const c = risk === 'HIGH' ? colors.danger : risk === 'MED' ? colors.warn : colors.success;
   return { flex: 'none', font: `600 8px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '3px 6px', borderRadius: 4 };
 }
-const apprDetailStyle: CSSProperties = { font: `400 10px/1.5 ${fonts.mono}`, color: colors.textMuted };
-const approveBtnStyle: CSSProperties = {
-  flex: 1,
-  textAlign: 'center',
-  cursor: 'pointer',
-  font: `600 10px/1 ${fonts.ui}`,
-  letterSpacing: 1.5,
-  color: colors.success,
-  border: '1px solid rgba(59,224,160,.45)',
-  padding: '7px 0',
-  borderRadius: 6,
-  background: 'rgba(59,224,160,.08)',
-};
-const denyBtnStyle: CSSProperties = {
-  flex: 1,
-  textAlign: 'center',
-  cursor: 'pointer',
-  font: `600 10px/1 ${fonts.ui}`,
-  letterSpacing: 1.5,
-  color: colors.dangerSoft,
-  border: '1px solid rgba(255,120,120,.4)',
-  padding: '7px 0',
-  borderRadius: 6,
-  background: 'rgba(255,90,90,.06)',
-};
-const emptyStateStyle: CSSProperties = { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim };
+function apprDetailStyle(colors: ColorPalette): CSSProperties {
+  return { font: `400 10px/1.5 ${fonts.mono}`, color: colors.textMuted };
+}
+function approveBtnStyle(colors: ColorPalette): CSSProperties {
+  return {
+    flex: 1,
+    textAlign: 'center',
+    cursor: 'pointer',
+    font: `600 10px/1 ${fonts.ui}`,
+    letterSpacing: 1.5,
+    color: colors.success,
+    border: '1px solid rgba(59,224,160,.45)',
+    padding: '7px 0',
+    borderRadius: 6,
+    background: 'rgba(59,224,160,.08)',
+  };
+}
+function denyBtnStyle(colors: ColorPalette): CSSProperties {
+  return {
+    flex: 1,
+    textAlign: 'center',
+    cursor: 'pointer',
+    font: `600 10px/1 ${fonts.ui}`,
+    letterSpacing: 1.5,
+    color: colors.dangerSoft,
+    border: '1px solid rgba(255,120,120,.4)',
+    padding: '7px 0',
+    borderRadius: 6,
+    background: 'rgba(255,90,90,.06)',
+  };
+}
+function emptyStateStyle(colors: ColorPalette): CSSProperties {
+  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim };
+}
 const operatorChipStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -361,19 +390,23 @@ const windowControlsGroupStyle: AppRegionStyle = {
   marginLeft: 12,
   WebkitAppRegion: 'no-drag',
 };
-const windowControlBtnStyle: AppRegionStyle = {
-  cursor: 'pointer',
-  width: 28,
-  height: 28,
-  borderRadius: 7,
-  border: '1px solid rgba(80,190,220,.25)',
-  background: 'rgba(10,32,43,.6)',
-  display: 'grid',
-  placeItems: 'center',
-  font: `700 12px/1 ${fonts.mono}`,
-  color: colors.textMuted,
-  WebkitAppRegion: 'no-drag',
-};
-const windowCloseBtnStyle: CSSProperties = {
-  color: colors.dangerSoft,
-};
+function windowControlBtnStyle(colors: ColorPalette): AppRegionStyle {
+  return {
+    cursor: 'pointer',
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    border: '1px solid rgba(80,190,220,.25)',
+    background: 'rgba(10,32,43,.6)',
+    display: 'grid',
+    placeItems: 'center',
+    font: `700 12px/1 ${fonts.mono}`,
+    color: colors.textMuted,
+    WebkitAppRegion: 'no-drag',
+  };
+}
+function windowCloseBtnStyle(colors: ColorPalette): CSSProperties {
+  return {
+    color: colors.dangerSoft,
+  };
+}

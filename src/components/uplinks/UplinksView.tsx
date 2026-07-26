@@ -1,41 +1,44 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, space, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 
 export function UplinksView() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const runtimeOptions = ['Auto', ...state.providers.map((p) => p.name)];
 
   return (
-    <div style={cardStyle}>
-      <div style={titleStyle}>PROVIDERS</div>
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)}>PROVIDERS</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
         {state.providers.map((p) => (
-          <div key={p.name} style={rowStyle}>
-            <span style={dotStyle(p.connected)} />
-            <span style={nameStyle}>{p.name}</span>
-            <span style={badgeStyle(p.connected)}>{p.connected ? 'ONLINE' : 'OFFLINE'}</span>
-            <span
+          <div key={p.name} style={rowStyle(p.connected)}>
+            <span style={dotStyle(colors, p.connected)} />
+            <span style={nameStyle(colors)}>{p.name}</span>
+            <span style={badgeStyle(colors, p.connected)}>{p.connected ? 'ONLINE' : 'OFFLINE'}</span>
+            <Button
               onClick={() => dispatch({ type: 'TOGGLE_PROVIDER_CONNECTION', name: p.name })}
-              style={toggleButtonStyle(p.connected)}
+              style={toggleButtonStyle(colors, p.connected)}
             >
               {p.connected ? 'DISCONNECT' : 'CONNECT'}
-            </span>
+            </Button>
           </div>
         ))}
       </div>
 
-      <div style={{ marginTop: 24 }}>
-        <div style={titleStyle}>DEFAULT RUNTIME</div>
+      <div style={{ marginTop: space.xl }}>
+        <div style={titleStyle(colors)}>DEFAULT RUNTIME</div>
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           {runtimeOptions.map((option) => (
-            <span
+            <Button
               key={option}
               onClick={() => dispatch({ type: 'SET_ROUTE_DEFAULT', value: option })}
-              style={pillStyle(state.routeDefault === option)}
+              style={pillStyle(colors, state.routeDefault === option)}
             >
               {option}
-            </span>
+            </Button>
           ))}
         </div>
       </div>
@@ -43,26 +46,33 @@ export function UplinksView() {
   );
 }
 
-const cardStyle: CSSProperties = {
-  padding: 18,
-  borderRadius: 14,
-  border: `1px solid ${colors.panelBorder}`,
-  background: colors.panelGradient,
-  display: 'flex',
-  flexDirection: 'column',
-  minHeight: 0,
-};
-const titleStyle: CSSProperties = { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-const rowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  padding: '10px 12px',
-  borderRadius: 9,
-  border: '1px solid rgba(80,190,220,.16)',
-  background: 'rgba(6,20,28,.5)',
-};
-function dotStyle(connected: boolean): CSSProperties {
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return {
+    padding: 18,
+    borderRadius: 14,
+    border: `1px solid ${colors.panelBorder}`,
+    background: colors.panelGradient,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+  };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function rowStyle(connected: boolean): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '10px 12px',
+    borderRadius: 9,
+    border: '1px solid rgba(80,190,220,.16)',
+    background: 'rgba(6,20,28,.5)',
+    opacity: connected ? 1 : 0.55,
+  };
+}
+function dotStyle(colors: ColorPalette, connected: boolean): CSSProperties {
   return {
     width: 8,
     height: 8,
@@ -72,20 +82,22 @@ function dotStyle(connected: boolean): CSSProperties {
     boxShadow: connected ? '0 0 8px rgba(59,224,160,.8)' : undefined,
   };
 }
-const nameStyle: CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  font: `600 13px/1 ${fonts.ui}`,
-  color: colors.textPrimary,
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-};
-function badgeStyle(connected: boolean): CSSProperties {
+function nameStyle(colors: ColorPalette): CSSProperties {
+  return {
+    flex: 1,
+    minWidth: 0,
+    font: `600 13px/1 ${fonts.ui}`,
+    color: colors.textPrimary,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  };
+}
+function badgeStyle(colors: ColorPalette, connected: boolean): CSSProperties {
   const c = connected ? colors.success : colors.textDim;
   return { flex: 'none', font: `600 9px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '4px 8px', borderRadius: 4 };
 }
-function toggleButtonStyle(connected: boolean): CSSProperties {
+function toggleButtonStyle(colors: ColorPalette, connected: boolean): CSSProperties {
   return {
     flex: 'none',
     cursor: 'pointer',
@@ -100,7 +112,7 @@ function toggleButtonStyle(connected: boolean): CSSProperties {
     boxShadow: connected ? undefined : '0 0 10px rgba(95,220,255,.4)',
   };
 }
-function pillStyle(on: boolean): CSSProperties {
+function pillStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
     cursor: 'pointer',
     textAlign: 'center',
