@@ -28,6 +28,13 @@ declare global {
         thumbnail: (name: string) => Promise<string | null>;
         open: (name: string) => Promise<void>;
       };
+      window: {
+        minimize: () => void;
+        toggleMaximize: () => void;
+        close: () => void;
+        isMaximized: () => Promise<boolean>;
+        onMaximizedChange: (callback: (isMaximized: boolean) => void) => () => void;
+      };
     };
   }
 }

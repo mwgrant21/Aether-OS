@@ -1,9 +1,13 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
 import { VIEWS } from '../../viewRegistry';
 import { resolveOperatorName } from '../../utils/format';
+import { maximizeGlyph, maximizeLabel } from './windowControls';
+
+/** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
+type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
 
 const TOP_BAR_IDS = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
 const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
@@ -109,11 +113,40 @@ export function TopBar() {
           <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>COMMAND DECK</div>
         </div>
       </div>
+
+      <WindowControls />
     </div>
   );
 }
 
-const rootStyle: CSSProperties = {
+function WindowControls() {
+  const bridge = typeof window !== 'undefined' ? window.aetherElectron : undefined;
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    if (!bridge) return;
+    bridge.window.isMaximized().then(setIsMaximized);
+    return bridge.window.onMaximizedChange(setIsMaximized);
+  }, [bridge]);
+
+  if (!bridge) return null;
+
+  return (
+    <div style={windowControlsGroupStyle}>
+      <div title="Minimize" onClick={() => bridge.window.minimize()} style={windowControlBtnStyle}>
+        &#x2013;
+      </div>
+      <div title={maximizeLabel(isMaximized)} onClick={() => bridge.window.toggleMaximize()} style={windowControlBtnStyle}>
+        {maximizeGlyph(isMaximized)}
+      </div>
+      <div title="Close" onClick={() => bridge.window.close()} style={{ ...windowControlBtnStyle, ...windowCloseBtnStyle }}>
+        &#x2715;
+      </div>
+    </div>
+  );
+}
+
+const rootStyle: AppRegionStyle = {
   height: 60,
   flex: 'none',
   display: 'flex',
@@ -122,6 +155,7 @@ const rootStyle: CSSProperties = {
   padding: '0 22px',
   borderBottom: `1px solid ${colors.chromeBorder}`,
   background: 'rgba(4,16,24,.6)',
+  WebkitAppRegion: 'drag',
 };
 const logoWrapStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: 206 };
 const logoDotStyle: CSSProperties = {
@@ -133,7 +167,7 @@ const logoDotStyle: CSSProperties = {
   animation: 'breath var(--pulse-dur, 2.4s) ease-in-out infinite',
 };
 const logoTextStyle: CSSProperties = { font: `700 20px/1 ${fonts.ui}`, letterSpacing: 5, color: colors.textPrimary };
-function tabStyle(on: boolean): CSSProperties {
+function tabStyle(on: boolean): AppRegionStyle {
   return {
     padding: '8px 15px',
     borderRadius: 8,
@@ -144,6 +178,7 @@ function tabStyle(on: boolean): CSSProperties {
     color: on ? colors.textPrimary : colors.textMuted,
     background: on ? 'rgba(23,184,216,.14)' : undefined,
     border: on ? '1px solid rgba(95,220,255,.35)' : '1px solid transparent',
+    WebkitAppRegion: 'no-drag',
   };
 }
 const opModeGroupStyle: CSSProperties = {
@@ -157,7 +192,7 @@ const opModeGroupStyle: CSSProperties = {
   border: '1px solid rgba(80,190,220,.25)',
   background: 'rgba(10,32,43,.6)',
 };
-function opModeStyle(on: boolean, key: OpMode): CSSProperties {
+function opModeStyle(on: boolean, key: OpMode): AppRegionStyle {
   return {
     cursor: 'pointer',
     padding: '7px 11px',
@@ -170,9 +205,10 @@ function opModeStyle(on: boolean, key: OpMode): CSSProperties {
     background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : undefined,
     boxShadow: on ? (key === 'AUTO' ? '0 0 12px rgba(245,198,107,.45)' : '0 0 12px rgba(95,220,255,.4)') : undefined,
     border: on ? undefined : '1px solid transparent',
+    WebkitAppRegion: 'no-drag',
   };
 }
-const iconButtonStyle: CSSProperties = {
+const iconButtonStyle: AppRegionStyle = {
   cursor: 'pointer',
   width: 36,
   height: 36,
@@ -182,6 +218,7 @@ const iconButtonStyle: CSSProperties = {
   display: 'grid',
   placeItems: 'center',
   font: `700 14px/1 ${fonts.mono}`,
+  WebkitAppRegion: 'no-drag',
 };
 const apprBadgeStyle: CSSProperties = {
   position: 'absolute',
@@ -213,7 +250,7 @@ const notifBadgeStyle: CSSProperties = {
   color: '#1a0508',
   padding: '0 4px',
 };
-const apprPanelStyle: CSSProperties = {
+const apprPanelStyle: AppRegionStyle = {
   position: 'absolute',
   top: 44,
   right: 0,
@@ -227,8 +264,9 @@ const apprPanelStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 10,
+  WebkitAppRegion: 'no-drag',
 };
-const notifPanelStyle: CSSProperties = {
+const notifPanelStyle: AppRegionStyle = {
   position: 'absolute',
   top: 44,
   right: 0,
@@ -242,6 +280,7 @@ const notifPanelStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 8,
+  WebkitAppRegion: 'no-drag',
 };
 const panelTitleStyle: CSSProperties = { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.warn };
 const apprRowStyle: CSSProperties = {
@@ -313,4 +352,28 @@ const operatorAvatarStyle: CSSProperties = {
   borderRadius: '50%',
   background: 'repeating-linear-gradient(45deg,#0e3a48 0 5px,#12475a 5px 10px)',
   border: '1px solid rgba(95,220,255,.4)',
+};
+const windowControlsGroupStyle: AppRegionStyle = {
+  flex: 'none',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  marginLeft: 12,
+  WebkitAppRegion: 'no-drag',
+};
+const windowControlBtnStyle: AppRegionStyle = {
+  cursor: 'pointer',
+  width: 28,
+  height: 28,
+  borderRadius: 7,
+  border: '1px solid rgba(80,190,220,.25)',
+  background: 'rgba(10,32,43,.6)',
+  display: 'grid',
+  placeItems: 'center',
+  font: `700 12px/1 ${fonts.mono}`,
+  color: colors.textMuted,
+  WebkitAppRegion: 'no-drag',
+};
+const windowCloseBtnStyle: CSSProperties = {
+  color: colors.dangerSoft,
 };

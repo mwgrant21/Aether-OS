@@ -45,4 +45,15 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     thumbnail: (name: string): Promise<string | null> => ipcRenderer.invoke('attachments:thumbnail', name),
     open: (name: string): Promise<void> => ipcRenderer.invoke('attachments:open', name),
   },
+  window: {
+    minimize: () => ipcRenderer.send('window:minimize'),
+    toggleMaximize: () => ipcRenderer.send('window:toggleMaximize'),
+    close: () => ipcRenderer.send('window:close'),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+    onMaximizedChange: (callback: (isMaximized: boolean) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, isMaximized: boolean) => callback(isMaximized);
+      ipcRenderer.on('window:isMaximized', listener);
+      return () => ipcRenderer.removeListener('window:isMaximized', listener);
+    },
+  },
 });

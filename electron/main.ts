@@ -44,6 +44,7 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 700,
     autoHideMenuBar: true,
+    frame: false,
     ...(existsSync(iconPath) ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
@@ -52,6 +53,9 @@ function createWindow(): void {
   mainWindow = win;
 
   if (shouldMaximize) win.maximize();
+
+  win.on('maximize', () => sendToWindow('window:isMaximized', true));
+  win.on('unmaximize', () => sendToWindow('window:isMaximized', false));
 
   let saveBoundsTimer: ReturnType<typeof setTimeout> | null = null;
   const persistBounds = (): void => {
@@ -183,3 +187,22 @@ ipcMain.handle('attachments:add', () => attachmentsStore.add());
 ipcMain.handle('attachments:remove', (_event, name: string) => attachmentsStore.remove(name));
 ipcMain.handle('attachments:thumbnail', (_event, name: string) => attachmentsStore.thumbnail(name));
 ipcMain.handle('attachments:open', (_event, name: string) => attachmentsStore.open(name));
+
+ipcMain.on('window:minimize', () => {
+  mainWindow?.minimize();
+});
+
+ipcMain.on('window:toggleMaximize', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+});
+
+ipcMain.on('window:close', () => {
+  mainWindow?.close();
+});
+
+ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
