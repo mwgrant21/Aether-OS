@@ -47,6 +47,7 @@ export const initialState: AetherState = {
     themeMode: 'dark',
     glow: 70,
     glowFx: true,
+    showReactorLegend: false,
     capM: 2.0,
     alarm: 120,
     autoThrottle: true,

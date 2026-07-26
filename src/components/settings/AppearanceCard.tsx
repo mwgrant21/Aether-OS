@@ -95,6 +95,16 @@ export function AppearanceCard() {
           {cfg.glowFx ? 'ON' : 'OFF'}
         </span>
       </div>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={labelStyle}>REACTOR LEGEND</div>
+        <span
+          onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { showReactorLegend: !cfg.showReactorLegend } })}
+          style={pillToggleStyle(cfg.showReactorLegend)}
+        >
+          {cfg.showReactorLegend ? 'ON' : 'OFF'}
+        </span>
+      </div>
     </div>
   );
 }

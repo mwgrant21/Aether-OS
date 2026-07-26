@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { colors, fonts } from '../../styles/tokens';
 import type { RealActiveWork } from '../../state/liveAgentsMath';
+import type { Anomaly } from '../../shared/anomalyDetectors';
 import {
   AGENT_NODE_RADIUS,
   computeRealGridLayout,
@@ -14,10 +15,11 @@ import {
 interface OrchestrationGridProps {
   agents: RealActiveWork[];
   rate: number;
+  anomalies: Anomaly[];
   onSelectRealAgent: (toolUseId: string) => void;
 }
 
-export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: OrchestrationGridProps) {
+export function OrchestrationGrid({ agents, rate, anomalies, onSelectRealAgent }: OrchestrationGridProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -98,8 +100,22 @@ export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: Orchestra
             style={{ filter: 'drop-shadow(0 0 16px rgba(95,240,255,.85))' }}
           />
 
-          {layout.agentNodes.map((node) => (
+          {layout.agentNodes.map((node) => {
+            const flagged = anomalies.some((a) => a.toolUseId === node.agent.toolUseId);
+            return (
             <g key={node.agent.toolUseId} onClick={() => onSelectRealAgent(node.agent.toolUseId)} style={{ cursor: 'pointer' }}>
+              {flagged && (
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={AGENT_NODE_RADIUS + 6}
+                  fill="none"
+                  stroke={colors.warn}
+                  strokeWidth={2}
+                  strokeDasharray="4 5"
+                  style={{ animation: 'blink 1s step-end infinite' }}
+                />
+              )}
               <circle cx={node.x} cy={node.y} r={AGENT_NODE_RADIUS} fill="rgba(6,20,28,.65)" stroke={colors.accentCyanSoft} strokeWidth={2} />
               <circle cx={node.x} cy={node.y} r={6} fill={colors.accentCyanSoft} style={{ filter: `drop-shadow(0 0 6px ${colors.accentCyanSoft})` }} />
               <text
@@ -112,7 +128,8 @@ export function OrchestrationGrid({ agents, rate, onSelectRealAgent }: Orchestra
                 {node.agent.label.slice(0, 2).toUpperCase()}
               </text>
             </g>
-          ))}
+            );
+          })}
         </svg>
 
         <div style={overlayStyle}>

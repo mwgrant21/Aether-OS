@@ -46,6 +46,14 @@ export function Sidebar() {
           <div style={reactorMiniInnerStyle(reactorNativeSize(state.cfg.renderer))}>
             <Reactor />
           </div>
+          {state.cfg.showReactorLegend && (
+            <div style={reactorLegendStyle}>
+              <div>HUE = MODEL</div>
+              <div>PULSE = TOKENS/SEC</div>
+              <div>TURBULENCE = CONCURRENCY</div>
+              <div>CLARITY = CACHE HIT RATE</div>
+            </div>
+          )}
         </div>
         <div style={{ font: `700 11px/1 ${fonts.mono}`, letterSpacing: 1, color: colors.accentCyanSoft, textAlign: 'center', marginTop: 6 }}>
           REACTOR · {short(state.rate)} TOK/MIN
@@ -132,6 +140,19 @@ const reactorMiniScaleStyle: CSSProperties = {
   height: REACTOR_MINI_SIZE,
   margin: '0 auto',
   overflow: 'hidden',
+};
+const reactorLegendStyle: CSSProperties = {
+  position: 'absolute',
+  left: 4,
+  bottom: 2,
+  padding: '5px 7px',
+  borderRadius: 6,
+  background: 'rgba(4,15,22,.72)',
+  border: '1px solid rgba(95,220,255,.25)',
+  font: `600 8px/1.5 ${fonts.mono}`,
+  letterSpacing: 0.5,
+  color: colors.accentCyanSoft,
+  pointerEvents: 'none',
 };
 function reactorMiniInnerStyle([nativeWidth, nativeHeight]: [number, number]): CSSProperties {
   const scale = REACTOR_MINI_SIZE / Math.max(nativeWidth, nativeHeight);

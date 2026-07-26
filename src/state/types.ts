@@ -135,6 +135,7 @@ export interface Cfg {
   themeMode: 'dark' | 'light';
   glow: number;
   glowFx: boolean;
+  showReactorLegend: boolean;
   capM: number;
   alarm: number;
   autoThrottle: boolean;
