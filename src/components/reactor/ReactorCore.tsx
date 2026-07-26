@@ -33,6 +33,8 @@ export function ReactorCore() {
           glowFactor: frame.glowFactor,
           burnRate: state.rate,
           soft: neb,
+          clarity: frame.clarity,
+          turbulence: frame.turbulence,
         });
       }
     }
@@ -71,6 +73,7 @@ export function ReactorCore() {
       <canvas ref={conduitRef} width={668} height={668} style={conduitCanvasStyle} />
       <canvas ref={glRef} width={448} height={448} style={glCanvasStyle} />
       <canvas ref={coreRef} width={448} height={448} style={coreCanvasStyle} />
+      {state.anomalies.length > 0 && <div style={anomalyFlickerStyle} />}
     </>
   );
 }
@@ -78,3 +81,15 @@ export function ReactorCore() {
 const conduitCanvasStyle: CSSProperties = { position: 'absolute', inset: 0, width: 334, height: 334 };
 const glCanvasStyle: CSSProperties = { position: 'absolute', width: 224, height: 224 };
 const coreCanvasStyle: CSSProperties = { position: 'relative', width: 224, height: 224, display: 'block' };
+// brief amber flicker overlay whenever anomalies are present -- independent of
+// alarmLevel (budget-driven), per Global Constraints. Reuses the existing
+// `blink` keyframe (global.css) for the on/off flash cadence.
+const anomalyFlickerStyle: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  borderRadius: '50%',
+  background: 'radial-gradient(circle, rgba(245,198,107,.35), transparent 70%)',
+  mixBlendMode: 'screen',
+  pointerEvents: 'none',
+  animation: 'blink 1.6s step-end infinite',
+};

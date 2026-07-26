@@ -26,6 +26,11 @@ export interface TranscriptEvent {
   toolResults: TranscriptToolResult[];
   isHumanPrompt: boolean;
   humanText: string | null;
+  // json.origin?.kind, e.g. 'task-notification'. Needed to detect subagent
+  // completion notifications (liveAgentsMath.ts) without re-parsing the raw
+  // line -- parseTranscriptLine otherwise fully replaces JSON.parse for
+  // callers that only need tool_use/tool_result/usage/text data.
+  originKind: string | null;
 }
 
 export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
@@ -68,6 +73,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       toolResults: [],
       isHumanPrompt: false,
       humanText: null,
+      originKind: null,
     };
   }
 
@@ -94,6 +100,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       toolResults,
       isHumanPrompt,
       humanText: textItem ? textItem.text : null,
+      originKind: (json.origin && json.origin.kind) || null,
     };
   }
 
@@ -108,5 +115,6 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     toolResults: [],
     isHumanPrompt: false,
     humanText: null,
+    originKind: null,
   };
 }

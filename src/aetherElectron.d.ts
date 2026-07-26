@@ -1,6 +1,7 @@
 import type { RealUsageSnapshot } from './state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from './state/liveAgentsMath';
 import type { AttachmentInfo } from './components/files/attachmentsMath';
+import type { Anomaly } from './shared/anomalyDetectors';
 
 export {};
 
@@ -20,6 +21,8 @@ declare global {
         onSnapshot: (callback: (dispatches: RealAgentDispatch[]) => void) => () => void;
         onCompleted: (callback: (completed: CompletedDispatchUsage[]) => void) => () => void;
         onActiveWork: (callback: (work: RealActiveWork[]) => void) => () => void;
+        onAnomalies: (callback: (anomalies: Anomaly[]) => void) => () => void;
+        onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
       };
       attachments: {
         list: () => Promise<AttachmentInfo[]>;

@@ -6,7 +6,7 @@ export interface GLProgram {
 const VERTEX_SHADER = 'attribute vec2 a;varying vec2 v;void main(){v=a;gl_Position=vec4(a,0.,1.);}';
 
 const FRAGMENT_SHADER =
-  'precision mediump float;varying vec2 v;uniform float u_t,u_surge,u_phase,u_glow,u_storm,u_od,u_soft,u_grow;' +
+  'precision mediump float;varying vec2 v;uniform float u_t,u_surge,u_phase,u_glow,u_storm,u_od,u_soft,u_grow,u_clarity;' +
   'float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
   'float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1.,0.)),f.x),mix(h(i+vec2(0.,1.)),h(i+vec2(1.,1.)),f.x),f.y);}' +
   'float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*n(p);p=p*2.03+vec2(1.7,9.2);a*=.5;}return s;}' +
@@ -25,7 +25,7 @@ const FRAGMENT_SHADER =
   'col+=vec3(.5,.9,1.)*smoothstep(.035,.0,abs(r-.65))*(.3+.7*u_surge)*(1.-u_soft);' +
   'col*=u_glow;' +
   'float a=u_soft>.5?exp(-pow(r/((.34+.30*u_grow)*1.35),2.)*2.2):smoothstep(.68,.63,r);' +
-  'gl_FragColor=vec4(col*a,a);}';
+  'float ca=a*u_clarity;gl_FragColor=vec4(col*ca,ca);}';
 
 export function initGL(el: HTMLCanvasElement): GLProgram | null {
   const gl = el.getContext('webgl', { alpha: true, premultipliedAlpha: true });
@@ -54,7 +54,7 @@ export function initGL(el: HTMLCanvasElement): GLProgram | null {
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   gl.viewport(0, 0, 448, 448);
   const u: Record<string, WebGLUniformLocation | null> = {};
-  ['u_t', 'u_surge', 'u_phase', 'u_glow', 'u_storm', 'u_od', 'u_soft', 'u_grow'].forEach((k) => {
+  ['u_t', 'u_surge', 'u_phase', 'u_glow', 'u_storm', 'u_od', 'u_soft', 'u_grow', 'u_clarity'].forEach((k) => {
     u[k] = gl.getUniformLocation(prog, k);
   });
   return { gl, u };
@@ -68,6 +68,8 @@ export interface DrawCoreGLParams {
   glowFactor: number;
   burnRate: number;
   soft: boolean;
+  clarity: number;
+  turbulence: number;
 }
 
 export function drawCoreGL(program: GLProgram, params: DrawCoreGLParams): void {
@@ -77,10 +79,11 @@ export function drawCoreGL(program: GLProgram, params: DrawCoreGLParams): void {
   gl.uniform1f(u.u_surge, params.surge);
   gl.uniform1f(u.u_phase, params.phase);
   gl.uniform1f(u.u_glow, 0.75 + params.glowFactor * 0.5);
-  gl.uniform1f(u.u_storm, 0.25 + burnT * 0.65);
+  gl.uniform1f(u.u_storm, Math.min(1, 0.25 + burnT * 0.65 + params.turbulence * 0.3));
   gl.uniform1f(u.u_od, params.overdrive ? 1 : 0);
   gl.uniform1f(u.u_soft, params.soft ? 1 : 0);
   gl.uniform1f(u.u_grow, Math.min(1, params.surge * 0.7 + burnT * 0.5 + (params.overdrive ? 0.25 : 0)));
+  gl.uniform1f(u.u_clarity, params.clarity);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.drawArrays(gl.TRIANGLES, 0, 3);

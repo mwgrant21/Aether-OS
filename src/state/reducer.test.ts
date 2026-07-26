@@ -613,4 +613,15 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     expect(next.approvals.map((a) => a.id)).toContain(concurrentApprovalId);
     expect(next.approvals).toHaveLength(concurrent.approvals.length);
   });
+
+  it('SET_ANOMALIES replaces anomalies wholesale', () => {
+    const anomalies = [{ kind: 'reReadLoop' as const, toolUseId: 'tu1', detail: '/foo.ts read 3 times' }];
+    const next = reducer(initialState, { type: 'SET_ANOMALIES', anomalies });
+    expect(next.anomalies).toEqual(anomalies);
+  });
+
+  it('SET_CACHE_HIT_RATIO replaces cacheHitRatio wholesale', () => {
+    const next = reducer(initialState, { type: 'SET_CACHE_HIT_RATIO', ratio: 0.42 });
+    expect(next.cacheHitRatio).toBe(0.42);
+  });
 });

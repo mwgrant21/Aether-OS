@@ -5,6 +5,7 @@ import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { buildChatActionResultText } from './chatActionResult';
 import { computeRateFromUsage } from '../components/reactor/reactorMath';
+import type { Anomaly } from '../shared/anomalyDetectors';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
@@ -33,7 +34,9 @@ export type Action =
   | { type: 'CREATE_DISPATCH_CHANNEL'; toolUseId: string }
   | { type: 'REMOVE_DISPATCH_CHANNEL'; toolUseId: string }
   | { type: 'RECORD_DISPATCH_USAGE'; completed: CompletedDispatchUsage[] }
-  | { type: 'SET_ACTIVE_WORK'; work: RealActiveWork[] };
+  | { type: 'SET_ACTIVE_WORK'; work: RealActiveWork[] }
+  | { type: 'SET_ANOMALIES'; anomalies: Anomaly[] }
+  | { type: 'SET_CACHE_HIT_RATIO'; ratio: number };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -228,6 +231,12 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_ACTIVE_WORK':
       return { ...state, activeWork: action.work };
+
+    case 'SET_ANOMALIES':
+      return { ...state, anomalies: action.anomalies };
+
+    case 'SET_CACHE_HIT_RATIO':
+      return { ...state, cacheHitRatio: action.ratio };
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);
