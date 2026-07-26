@@ -72,7 +72,7 @@ function createWindow(): void {
   win.on('move', scheduleSaveBounds);
   win.on('close', () => {
     if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
-    const bounds = win.getBounds();
+    const bounds = win.getNormalBounds();
     saveWindowBounds(boundsFilePath, { ...bounds, isMaximized: win.isMaximized() });
   });
 
@@ -80,6 +80,15 @@ function createWindow(): void {
     console.error('Renderer process gone:', details.reason);
     if (mainWindow === win) mainWindow = null;
     if (!isQuitting) createWindow();
+  });
+
+  win.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return;
+    const key = input.key.toUpperCase();
+    const isDevToolsShortcut = (key === 'I' && input.control && input.shift) || key === 'F12';
+    if (isDevToolsShortcut) {
+      win.webContents.toggleDevTools();
+    }
   });
 
   win.on('closed', () => {
