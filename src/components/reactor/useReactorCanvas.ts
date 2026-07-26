@@ -1,6 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { useAetherStore } from '../../state/store';
-import { advancePhase, computeDispatchIntensity, computePulseDuration, computeSurge, computeThemeFilter } from './reactorMath';
+import {
+  advancePhase,
+  computeCacheClarity,
+  computeConcurrencyTurbulence,
+  computeDispatchIntensity,
+  computeModelHueShift,
+  computePulseDuration,
+  computeSurge,
+  computeThemeFilter,
+  dominantModel,
+} from './reactorMath';
 
 export interface ReactorFrame {
   now: number;
@@ -10,6 +20,8 @@ export interface ReactorFrame {
   surge: number;
   overdrive: boolean;
   glowFactor: number;
+  clarity: number;
+  turbulence: number;
   coreCtx: CanvasRenderingContext2D;
   glCanvas: HTMLCanvasElement;
   conduitCtx: CanvasRenderingContext2D;
@@ -61,14 +73,17 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
         const surge = computeSurge(phase);
         const { overdrive, overload, glowMultiplier } = computeDispatchIntensity(s.realAgents.length);
         const glowFactor = ((s.cfg.glow == null ? 70 : s.cfg.glow) / 70) * glowMultiplier;
-        const themeFilter = computeThemeFilter(s.cfg.theme, s.alarmLevel, s.cfg.glowFx, overload);
+        const clarity = computeCacheClarity(s.cacheHitRatio);
+        const turbulence = computeConcurrencyTurbulence(s.realAgents.length);
+        const modelHueShift = computeModelHueShift(dominantModel(s.realAgents));
+        const themeFilter = computeThemeFilter(s.cfg.theme, s.alarmLevel, s.cfg.glowFx, overload, modelHueShift);
         [coreEl, glEl, conduitEl].forEach((el) => {
           if (el.style.filter !== themeFilter) el.style.filter = themeFilter;
         });
         const coreCtx = coreEl.getContext('2d');
         const conduitCtx = conduitEl.getContext('2d');
         if (coreCtx && conduitCtx) {
-          drawRef.current({ now, t, dt, phase, surge, overdrive, glowFactor, coreCtx, glCanvas: glEl, conduitCtx });
+          drawRef.current({ now, t, dt, phase, surge, overdrive, glowFactor, clarity, turbulence, coreCtx, glCanvas: glEl, conduitCtx });
         }
       }
       lastDrawRef.current = Date.now();

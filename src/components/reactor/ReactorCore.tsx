@@ -33,6 +33,8 @@ export function ReactorCore() {
           glowFactor: frame.glowFactor,
           burnRate: state.rate,
           soft: neb,
+          clarity: frame.clarity,
+          turbulence: frame.turbulence,
         });
       }
     }
