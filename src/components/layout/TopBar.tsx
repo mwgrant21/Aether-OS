@@ -39,9 +39,9 @@ export function TopBar() {
         {TOP_BAR_IDS.map((label) => {
           const on = label === state.activeTab;
           return (
-            <div key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={tabStyle(colors, on)}>
+            <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={tabStyle(colors, on)}>
               {label}
-            </div>
+            </Button>
           );
         })}
       </div>
@@ -50,17 +50,21 @@ export function TopBar() {
         {OP_MODES.map((om) => {
           const on = state.cfg.opMode === om.key;
           return (
-            <span key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(colors, on, om.key)}>
+            <Button key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(colors, on, om.key)}>
               {om.label}
-            </span>
+            </Button>
           );
         })}
       </div>
 
       <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
-        <div onClick={() => dispatch({ type: 'TOGGLE_APPROVALS' })} style={{ ...iconButtonStyle, borderColor: apprBtnBorder, color: apprBtnC }}>
+        <Button
+          title="Pending approvals"
+          onClick={() => dispatch({ type: 'TOGGLE_APPROVALS' })}
+          style={{ ...iconButtonStyle, borderColor: apprBtnBorder, color: apprBtnC }}
+        >
           ⛉
-        </div>
+        </Button>
         {hasPending && <span style={apprBadgeStyle(colors)}>{pendingCount}</span>}
         {state.apprOpen && (
           <div style={apprPanelStyle(colors)}>
@@ -76,12 +80,12 @@ export function TopBar() {
                   {ap.agent} · {ap.detail}
                 </div>
                 <div style={{ display: 'flex', gap: 7 }}>
-                  <span onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: true })} style={approveBtnStyle(colors)}>
+                  <Button onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: true })} style={approveBtnStyle(colors)}>
                     APPROVE
-                  </span>
-                  <span onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: false })} style={denyBtnStyle(colors)}>
+                  </Button>
+                  <Button onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: false })} style={denyBtnStyle(colors)}>
                     DENY
-                  </span>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -91,9 +95,9 @@ export function TopBar() {
       </div>
 
       <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
-        <div onClick={() => dispatch({ type: 'TOGGLE_NOTIFS' })} style={{ ...iconButtonStyle, color: colors.accentCyanSoft }}>
+        <Button title="Notifications" onClick={() => dispatch({ type: 'TOGGLE_NOTIFS' })} style={{ ...iconButtonStyle, color: colors.accentCyanSoft }}>
           ◈
-        </div>
+        </Button>
         {state.unread > 0 && <span style={notifBadgeStyle(colors)}>{state.unread}</span>}
         {state.notifOpen && (
           <div style={notifPanelStyle(colors)}>
