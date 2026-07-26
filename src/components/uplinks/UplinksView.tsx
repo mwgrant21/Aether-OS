@@ -14,7 +14,7 @@ export function UplinksView() {
       <div style={titleStyle(colors)}>PROVIDERS</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm, marginTop: space.md }}>
         {state.providers.map((p) => (
-          <div key={p.name} style={rowStyle(p.connected)}>
+          <div key={p.name} style={rowStyle(colors, p.connected)}>
             <span style={dotStyle(colors, p.connected)} />
             <span style={nameStyle(colors)}>{p.name}</span>
             <span style={badgeStyle(colors, p.connected)}>{p.connected ? 'ONLINE' : 'OFFLINE'}</span>
@@ -60,7 +60,7 @@ function cardStyle(colors: ColorPalette): CSSProperties {
 function titleStyle(colors: ColorPalette): CSSProperties {
   return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
 }
-function rowStyle(connected: boolean): CSSProperties {
+function rowStyle(colors: ColorPalette, connected: boolean): CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
@@ -68,7 +68,7 @@ function rowStyle(connected: boolean): CSSProperties {
     padding: '10px 12px',
     borderRadius: 9,
     border: '1px solid rgba(80,190,220,.16)',
-    background: 'rgba(6,20,28,.5)',
+    background: colors.panelInset,
     opacity: connected ? 1 : 0.55,
   };
 }

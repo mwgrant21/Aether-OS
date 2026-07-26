@@ -141,7 +141,7 @@ function pickerStyle(colors: ColorPalette): CSSProperties {
     padding: 8,
     borderRadius: 9,
     border: `1px solid ${colors.chipBorder}`,
-    background: 'rgba(6,20,28,.6)',
+    background: colors.panelInset,
     display: 'flex',
     flexDirection: 'column',
     gap: 4,

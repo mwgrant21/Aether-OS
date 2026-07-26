@@ -3,6 +3,8 @@ export interface ColorPalette {
   pageRadial: string;
   panelGradient: string;
   panelBorder: string;
+  panelInset: string;
+  chromeBg: string;
   chromeBorder: string;
   chipBorder: string;
   activeBorder: string;
@@ -26,6 +28,8 @@ export const colors: ColorPalette = {
   pageRadial: 'radial-gradient(1400px 900px at 60% -10%, #0a2634 0%, #04121a 55%, #020a10 100%)',
   panelGradient: 'linear-gradient(180deg, rgba(9,28,38,.8), rgba(6,18,26,.8))',
   panelBorder: 'rgba(70,180,215,.24)',
+  panelInset: 'rgba(6,20,28,.7)',
+  chromeBg: 'rgba(4,16,24,.6)',
   chromeBorder: 'rgba(70,180,215,.16)',
   chipBorder: 'rgba(80,190,220,.25)',
   activeBorder: 'rgba(95,220,255,.4)',
@@ -49,6 +53,8 @@ export const colorsLight: ColorPalette = {
   pageRadial: 'radial-gradient(1400px 900px at 60% -10%, #d8ecf4 0%, #eef8fc 55%, #f5fbfd 100%)',
   panelGradient: 'linear-gradient(180deg, rgba(255,255,255,.85), rgba(235,248,252,.85))',
   panelBorder: 'rgba(23,140,180,.24)',
+  panelInset: 'rgba(255,255,255,.7)',
+  chromeBg: 'rgba(255,255,255,.6)',
   chromeBorder: 'rgba(23,140,180,.16)',
   chipBorder: 'rgba(23,140,180,.25)',
   activeBorder: 'rgba(10,120,160,.45)',

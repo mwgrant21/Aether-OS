@@ -63,7 +63,7 @@ export function TopBar() {
         </div>
         {hasPending && <span style={apprBadgeStyle(colors)}>{pendingCount}</span>}
         {state.apprOpen && (
-          <div style={apprPanelStyle}>
+          <div style={apprPanelStyle(colors)}>
             <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — agents awaiting authorization</div>
             {state.approvals.map((ap) => (
               <div key={ap.id} style={apprRowStyle}>
@@ -96,7 +96,7 @@ export function TopBar() {
         </div>
         {state.unread > 0 && <span style={notifBadgeStyle(colors)}>{state.unread}</span>}
         {state.notifOpen && (
-          <div style={notifPanelStyle}>
+          <div style={notifPanelStyle(colors)}>
             <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
             {state.notifs.map((nf, idx) => (
               <div key={idx} style={{ display: 'flex', gap: 8, font: `400 10.5px/1.5 ${fonts.mono}` }}>
@@ -164,7 +164,7 @@ function rootStyle(colors: ColorPalette): AppRegionStyle {
     gap: 8,
     padding: '0 22px',
     borderBottom: `1px solid ${colors.chromeBorder}`,
-    background: 'rgba(4,16,24,.6)',
+    background: colors.chromeBg,
     WebkitAppRegion: 'drag',
   };
 }
@@ -267,38 +267,42 @@ function notifBadgeStyle(colors: ColorPalette): CSSProperties {
     padding: '0 4px',
   };
 }
-const apprPanelStyle: AppRegionStyle = {
-  position: 'absolute',
-  top: 44,
-  right: 0,
-  width: 380,
-  zIndex: 70,
-  padding: 13,
-  borderRadius: 12,
-  border: '1px solid rgba(245,198,107,.4)',
-  background: 'rgba(6,20,28,.98)',
-  boxShadow: '0 20px 60px rgba(0,0,0,.6)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 10,
-  WebkitAppRegion: 'no-drag',
-};
-const notifPanelStyle: AppRegionStyle = {
-  position: 'absolute',
-  top: 44,
-  right: 0,
-  width: 320,
-  zIndex: 70,
-  padding: 12,
-  borderRadius: 12,
-  border: '1px solid rgba(95,220,255,.35)',
-  background: 'rgba(6,20,28,.98)',
-  boxShadow: '0 20px 60px rgba(0,0,0,.6)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  WebkitAppRegion: 'no-drag',
-};
+function apprPanelStyle(colors: ColorPalette): AppRegionStyle {
+  return {
+    position: 'absolute',
+    top: 44,
+    right: 0,
+    width: 380,
+    zIndex: 70,
+    padding: 13,
+    borderRadius: 12,
+    border: '1px solid rgba(245,198,107,.4)',
+    background: colors.panelInset,
+    boxShadow: '0 20px 60px rgba(0,0,0,.6)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    WebkitAppRegion: 'no-drag',
+  };
+}
+function notifPanelStyle(colors: ColorPalette): AppRegionStyle {
+  return {
+    position: 'absolute',
+    top: 44,
+    right: 0,
+    width: 320,
+    zIndex: 70,
+    padding: 12,
+    borderRadius: 12,
+    border: '1px solid rgba(95,220,255,.35)',
+    background: colors.panelInset,
+    boxShadow: '0 20px 60px rgba(0,0,0,.6)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    WebkitAppRegion: 'no-drag',
+  };
+}
 function panelTitleStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.warn };
 }

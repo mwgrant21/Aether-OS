@@ -135,7 +135,7 @@ function rememberInputStyle(colors: ColorPalette): CSSProperties {
     flex: 1,
     font: `400 12px/1 ${fonts.mono}`,
     color: colors.textBody,
-    background: 'rgba(6,20,28,.7)',
+    background: colors.panelInset,
     border: '1px solid rgba(80,190,220,.25)',
     borderRadius: 7,
     padding: '7px 9px',

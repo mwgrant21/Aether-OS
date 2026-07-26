@@ -63,7 +63,7 @@ export function FilesView() {
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {loading && <div style={emptyStyle(colors)}>loading…</div>}
         {files.map((f) => (
-          <div key={f.name} style={rowStyle}>
+          <div key={f.name} style={rowStyle(colors)}>
             <span onClick={() => openFile(f.name)} style={thumbStyle(colors)}>
               {thumbnails[f.name] ? <img src={thumbnails[f.name]} alt="" style={imgStyle} /> : extBadge(f.name)}
             </span>
@@ -118,15 +118,17 @@ const addButtonStyle: CSSProperties = {
   background: 'linear-gradient(180deg,#7ef0ff,#17b8d8)',
   boxShadow: '0 0 10px rgba(95,220,255,.4)',
 };
-const rowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  padding: '8px 9px',
-  borderRadius: 9,
-  border: '1px solid rgba(80,190,220,.16)',
-  background: 'rgba(6,20,28,.5)',
-};
+function rowStyle(colors: ColorPalette): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '8px 9px',
+    borderRadius: 9,
+    border: '1px solid rgba(80,190,220,.16)',
+    background: colors.panelInset,
+  };
+}
 function thumbStyle(colors: ColorPalette): CSSProperties {
   return {
     width: 32,
