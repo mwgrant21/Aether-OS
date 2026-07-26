@@ -4,6 +4,9 @@ import type { RealActiveWork } from '../../state/liveAgentsMath';
 import type { Anomaly } from '../../shared/anomalyDetectors';
 import {
   AGENT_NODE_RADIUS,
+  WARNING_RING_DASH_PATTERN,
+  WARNING_RING_RADIUS_OFFSET,
+  WARNING_RING_STROKE_WIDTH,
   computeRealGridLayout,
   computeViewportTransform,
   formatHubRate,
@@ -108,11 +111,11 @@ export function OrchestrationGrid({ agents, rate, anomalies, onSelectRealAgent }
                 <circle
                   cx={node.x}
                   cy={node.y}
-                  r={AGENT_NODE_RADIUS + 6}
+                  r={AGENT_NODE_RADIUS + WARNING_RING_RADIUS_OFFSET}
                   fill="none"
                   stroke={colors.warn}
-                  strokeWidth={2}
-                  strokeDasharray="4 5"
+                  strokeWidth={WARNING_RING_STROKE_WIDTH}
+                  strokeDasharray={WARNING_RING_DASH_PATTERN}
                   style={{ animation: 'blink 1s step-end infinite' }}
                 />
               )}
