@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useAetherStore } from '../../state/store';
 import { createStorm, burnToMode, burnToPulse, type StormHandle } from './aetherStorm';
+import { ANOMALY_FLICKER_STYLE } from './reactorVisualConstants';
 
 export const STORM_CORE_NATIVE_SIZE = 268;
 
@@ -242,21 +243,7 @@ export function StormCore({ filter }: StormCoreProps = {}) {
       {/* discharge + nebula cloud */}
       <canvas ref={canvasRef} style={{ position: 'absolute', left: 0, top: 0, width: 268, height: 268, pointerEvents: 'none' }} />
 
-      {state.anomalies.length > 0 && <div style={anomalyFlickerStyle} />}
+      {state.anomalies.length > 0 && <div style={ANOMALY_FLICKER_STYLE} />}
     </div>
   );
 }
-
-// brief amber flicker whenever anomalies are present -- independent of
-// alarmLevel (budget-driven), per Global Constraints. Reuses the existing
-// `blink` keyframe (global.css) for the on/off flash cadence, matching
-// ReactorCore's treatment so both renderers read the same anomaly signal.
-const anomalyFlickerStyle: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  borderRadius: '50%',
-  background: 'radial-gradient(circle, rgba(245,198,107,.35), transparent 70%)',
-  mixBlendMode: 'screen',
-  pointerEvents: 'none',
-  animation: 'blink 1.6s step-end infinite',
-};
