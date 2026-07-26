@@ -21,8 +21,19 @@ const RESET_STYLE: CSSProperties = {
   textAlign: 'inherit',
 };
 
+// Callers commonly build style objects like `{ background: on ? 'x' : undefined }` —
+// an explicit `undefined` value still overwrites RESET_STYLE's key when spread, which
+// makes React omit the inline property entirely and fall back to the browser's default
+// <button> chrome (a jarring light/white box). Stripping undefined keys before merging
+// keeps RESET_STYLE's value in that case.
+function withoutUndefined(style: CSSProperties): CSSProperties {
+  return Object.fromEntries(Object.entries(style).filter(([, value]) => value !== undefined)) as CSSProperties;
+}
+
 export function Button({ onClick, style, hoverStyle, title, disabled, children }: ButtonProps) {
-  const { style: hoveredStyle, onMouseEnter, onMouseLeave } = useHoverStyle({ ...RESET_STYLE, ...style }, hoverStyle && { ...RESET_STYLE, ...style, ...hoverStyle });
+  const mergedStyle = { ...RESET_STYLE, ...withoutUndefined(style) };
+  const mergedHoverStyle = hoverStyle && { ...mergedStyle, ...withoutUndefined(hoverStyle) };
+  const { style: hoveredStyle, onMouseEnter, onMouseLeave } = useHoverStyle(mergedStyle, mergedHoverStyle);
   return (
     <button
       type="button"

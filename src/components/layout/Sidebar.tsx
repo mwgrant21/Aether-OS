@@ -1,6 +1,8 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 import { VIEWS } from '../../viewRegistry';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { short } from '../../utils/format';
@@ -9,25 +11,26 @@ const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
 
 export function Sidebar() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
   return (
-    <div style={rootStyle}>
-      <div style={sectionLabelStyle}>NAVIGATION</div>
+    <div style={rootStyle(colors)}>
+      <div style={sectionLabelStyle(colors)}>NAVIGATION</div>
       {SIDEBAR_IDS.map((label) => {
         const on = label === state.activeTab;
         return (
-          <div key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(on)}>
+          <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
             <span style={navDotWrapStyle(on)}>
-              <span style={navDotStyle(on)} />
+              <span style={navDotStyle(colors, on)} />
             </span>
             <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
-          </div>
+          </Button>
         );
       })}
 
-      <div style={{ ...sectionLabelStyle, marginTop: 14 }}>RECENT AGENTS</div>
+      <div style={{ ...sectionLabelStyle(colors), marginTop: 14 }}>RECENT AGENTS</div>
       {state.agents.slice(0, 4).map((a) => (
-        <div
+        <Button
           key={a.name}
           onClick={() => {
             dispatch({ type: 'SELECT_AGENT', name: a.name });
@@ -37,7 +40,7 @@ export function Sidebar() {
         >
           <span style={recentAvatarStyle(a.hue)}>{a.i}</span>
           <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{a.name}</span>
-        </div>
+        </Button>
       ))}
       {!state.agents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
 
@@ -47,7 +50,7 @@ export function Sidebar() {
             <Reactor />
           </div>
           {state.cfg.showReactorLegend && (
-            <div style={reactorLegendStyle}>
+            <div style={reactorLegendStyle(colors)}>
               <div>HUE = MODEL</div>
               <div>PULSE = TOKENS/SEC</div>
               <div>TURBULENCE = CONCURRENCY</div>
@@ -74,19 +77,23 @@ export function Sidebar() {
   );
 }
 
-const rootStyle: CSSProperties = {
-  width: 206,
-  flex: 'none',
-  padding: '18px 12px',
-  borderRight: `1px solid ${colors.chromeBorder}`,
-  background: 'rgba(4,15,22,.55)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 5,
-  overflow: 'auto',
-};
-const sectionLabelStyle: CSSProperties = { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
-function navItemStyle(on: boolean): CSSProperties {
+function rootStyle(colors: ColorPalette): CSSProperties {
+  return {
+    width: 206,
+    flex: 'none',
+    padding: '18px 12px',
+    borderRight: `1px solid ${colors.chromeBorder}`,
+    background: 'rgba(4,15,22,.55)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 5,
+    overflow: 'auto',
+  };
+}
+function sectionLabelStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
+}
+function navItemStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
@@ -111,7 +118,7 @@ function navDotWrapStyle(on: boolean): CSSProperties {
     flex: 'none',
   };
 }
-function navDotStyle(on: boolean): CSSProperties {
+function navDotStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return { width: 7, height: 7, borderRadius: 2, background: on ? colors.accentCyan : '#3d6572' };
 }
 const recentRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 8, cursor: 'pointer' };
@@ -141,19 +148,21 @@ const reactorMiniScaleStyle: CSSProperties = {
   margin: '0 auto',
   overflow: 'hidden',
 };
-const reactorLegendStyle: CSSProperties = {
-  position: 'absolute',
-  left: 4,
-  bottom: 2,
-  padding: '5px 7px',
-  borderRadius: 6,
-  background: 'rgba(4,15,22,.72)',
-  border: '1px solid rgba(95,220,255,.25)',
-  font: `600 8px/1.5 ${fonts.mono}`,
-  letterSpacing: 0.5,
-  color: colors.accentCyanSoft,
-  pointerEvents: 'none',
-};
+function reactorLegendStyle(colors: ColorPalette): CSSProperties {
+  return {
+    position: 'absolute',
+    left: 4,
+    bottom: 2,
+    padding: '5px 7px',
+    borderRadius: 6,
+    background: colors.panelInset,
+    border: `1px solid ${colors.chipBorder}`,
+    font: `600 8px/1.5 ${fonts.mono}`,
+    letterSpacing: 0.5,
+    color: colors.accentCyanSoft,
+    pointerEvents: 'none',
+  };
+}
 function reactorMiniInnerStyle([nativeWidth, nativeHeight]: [number, number]): CSSProperties {
   const scale = REACTOR_MINI_SIZE / Math.max(nativeWidth, nativeHeight);
   return {

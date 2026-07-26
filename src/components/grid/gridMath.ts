@@ -6,6 +6,9 @@ export const HUB_X = 500;
 export const HUB_Y = 315;
 export const AGENT_RING_RADIUS = 165;
 export const AGENT_NODE_RADIUS = 31;
+export const WARNING_RING_RADIUS_OFFSET = 6;
+export const WARNING_RING_STROKE_WIDTH = 2;
+export const WARNING_RING_DASH_PATTERN = '4 5';
 
 export interface ViewportTransform {
   scale: number;
