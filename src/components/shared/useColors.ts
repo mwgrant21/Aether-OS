@@ -1,7 +1,7 @@
-import { colors, colorsLight } from '../../styles/tokens';
+import { colors, colorsLight, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 
-export function useColors(): typeof colors {
+export function useColors(): ColorPalette {
   const { state } = useAetherStore();
-  return (state.cfg.themeMode === 'light' ? colorsLight : colors) as typeof colors;
+  return state.cfg.themeMode === 'light' ? colorsLight : colors;
 }

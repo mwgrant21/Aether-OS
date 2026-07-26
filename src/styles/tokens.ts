@@ -1,4 +1,27 @@
-export const colors = {
+export interface ColorPalette {
+  bgBase: string;
+  pageRadial: string;
+  panelGradient: string;
+  panelBorder: string;
+  chromeBorder: string;
+  chipBorder: string;
+  activeBorder: string;
+  textPrimary: string;
+  textBody: string;
+  textSecondary: string;
+  textMuted: string;
+  textDim: string;
+  accentCyan: string;
+  accentCyanDeep: string;
+  accentCyanSoft: string;
+  success: string;
+  warn: string;
+  danger: string;
+  dangerSoft: string;
+  agentHues: readonly string[];
+}
+
+export const colors: ColorPalette = {
   bgBase: '#020a10',
   pageRadial: 'radial-gradient(1400px 900px at 60% -10%, #0a2634 0%, #04121a 55%, #020a10 100%)',
   panelGradient: 'linear-gradient(180deg, rgba(9,28,38,.8), rgba(6,18,26,.8))',
@@ -18,10 +41,10 @@ export const colors = {
   warn: '#f5c66b',
   danger: '#ff6b7a',
   dangerSoft: '#ff9d9d',
-  agentHues: ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'] as const,
-} as const;
+  agentHues: ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'],
+};
 
-export const colorsLight = {
+export const colorsLight: ColorPalette = {
   bgBase: '#eaf6fb',
   pageRadial: 'radial-gradient(1400px 900px at 60% -10%, #d8ecf4 0%, #eef8fc 55%, #f5fbfd 100%)',
   panelGradient: 'linear-gradient(180deg, rgba(255,255,255,.85), rgba(235,248,252,.85))',
@@ -41,8 +64,8 @@ export const colorsLight = {
   warn: '#b8801f',
   danger: '#c73f4e',
   dangerSoft: '#e08a92',
-  agentHues: ['#0aa9c4', '#4a7fd8', '#1fb894', '#3fb6cc', '#5a97d8'] as const,
-} as const;
+  agentHues: ['#0aa9c4', '#4a7fd8', '#1fb894', '#3fb6cc', '#5a97d8'],
+};
 
 export const fonts = {
   ui: 'Rajdhani, sans-serif',
