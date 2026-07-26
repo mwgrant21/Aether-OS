@@ -64,13 +64,13 @@ export function FilesView() {
         {loading && <div style={emptyStyle(colors)}>loading…</div>}
         {files.map((f) => (
           <div key={f.name} style={rowStyle(colors)}>
-            <span onClick={() => openFile(f.name)} style={thumbStyle(colors)}>
+            <Button onClick={() => openFile(f.name)} style={thumbStyle(colors)} title={f.name}>
               {thumbnails[f.name] ? <img src={thumbnails[f.name]} alt="" style={imgStyle} /> : extBadge(f.name)}
-            </span>
-            <div onClick={() => openFile(f.name)} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
+            </Button>
+            <Button onClick={() => openFile(f.name)} style={nameButtonStyle}>
               <div style={nameStyle(colors)}>{f.name}</div>
               <div style={sizeStyle(colors)}>{formatFileSize(f.size)}</div>
-            </div>
+            </Button>
             <Button
               onClick={() => {
                 if (confirm(`Delete "${f.name}"? This cannot be undone.`)) removeFile(f.name);
@@ -146,6 +146,7 @@ function thumbStyle(colors: ColorPalette): CSSProperties {
   };
 }
 const imgStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover' };
+const nameButtonStyle: CSSProperties = { flex: 1, minWidth: 0, display: 'block', textAlign: 'left' };
 function nameStyle(colors: ColorPalette): CSSProperties {
   return {
     font: `600 12px/1.3 ${fonts.ui}`,
