@@ -19,6 +19,7 @@ import { runChatRequest } from '../src/shared/chatCore';
 import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
+import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -135,6 +136,13 @@ const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // known gap already called out for .env, not something this task solves.
 const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
 let stopStatuslineWatcher: (() => void) | null = null;
+// The last snapshot the watcher emitted, kept for `statusline:snapshot:current` --
+// on the very first `loadURL`/`loadFile`, the watcher's own startup read fires
+// before useStatuslineSync's IPC listener has registered, so that push is
+// otherwise dropped silently. Caching it here lets the renderer pull it once it
+// has mounted, instead of waiting for the next on-disk change (which may never
+// come during the current session).
+let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
 
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
@@ -216,6 +224,7 @@ app.whenReady().then(() => {
   setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
+    cachedStatuslineSnapshot = snapshot;
     sendToWindow('statusline:snapshot', snapshot);
   });
 });
@@ -327,6 +336,12 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { finding
 });
 
 ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath, statuslineScriptPath));
+
+// Lets the renderer pull whatever snapshot the watcher last captured -- including
+// one read during startup, before any listener existed to receive the pushed
+// 'statusline:snapshot' event. Returns null when nothing has been captured yet,
+// which is a legitimate "no snapshot" state the renderer already treats as such.
+ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
 
 // Explicit user actions only -- never invoked from any automatic path. The
 // renderer names the action; the main process is the only place the script

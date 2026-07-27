@@ -49,6 +49,7 @@ declare global {
           settingsPath: string;
           scriptPath: string;
         }>;
+        currentSnapshot: () => Promise<StatuslineSnapshot | null>;
         install: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
         uninstall: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
       };

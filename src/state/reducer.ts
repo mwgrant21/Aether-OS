@@ -43,7 +43,7 @@ export type Action =
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
   | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
   | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] }
-  | { type: 'SET_STATUSLINE'; snapshot: StatuslineSnapshot };
+  | { type: 'SET_STATUSLINE'; snapshot: StatuslineSnapshot | null };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 

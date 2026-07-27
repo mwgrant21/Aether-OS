@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('statusline:snapshot', listener);
     },
     state: (): Promise<StatuslineInstallState> => ipcRenderer.invoke('statusline:state'),
+    currentSnapshot: (): Promise<StatuslineSnapshot | null> => ipcRenderer.invoke('statusline:snapshot:current'),
     install: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:install'),
     uninstall: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:uninstall'),
   },
