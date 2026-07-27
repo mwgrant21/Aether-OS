@@ -147,7 +147,7 @@ only and `.env` is gitignored.
 ```bash
 npm test               # vitest — reducer, tick, view math, personas, prompt scoping,
                        # action parsing/execution, proxy validation, anomaly detection,
-                       # alert-sound decision logic (951 tests at last count)
+                       # alert-sound decision logic (572 tests at last count)
 npm run build          # tsc -b && vite build
 ```
 

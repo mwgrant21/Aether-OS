@@ -30,20 +30,22 @@ tool, not a distributed product.
 npm install
 npm run electron:dev   # the real thing: desktop app, live terminal, real session tracking
 npm run dev            # browser-only mode at http://localhost:5173 (no PTY / live tracking)
-npm test                # vitest run — 951 tests at last count
+npm test                # vitest run — 572 tests at last count
 npm run build           # tsc -b && vite build (renderer)
 npm run electron:build  # electron-vite build (main + preload + renderer, for the Electron app)
 ```
 
 Real Claude replies in Chat need `ANTHROPIC_API_KEY`: copy `.env.example` to `.env`.
 Without a key, an offline in-world responder answers instead — nothing breaks.
-The key is read server-side only — **today that is the Vite dev-server plugin
-(`vite-plugins/chatProxyPlugin.ts`), NOT the Electron main process.** That plugin is registered
-only in `vite.config.ts`, so `POST /api/chat` does not exist in `electron:dev` or any packaged
-build: the fetch 404s, `askClaude()` returns null per its contract, and Chat silently falls back to
-the offline responder. Real replies currently work in `npm run dev` browser mode only. Stage 0.5
-(`docs/superpowers/plans/2026-07-27-chat-ipc-correctness.md`) moves it to the main process and makes
-this sentence true. `.env` is gitignored.
+The key is read server-side only, and real replies work in both the Electron app and browser
+dev mode. In the Electron app, `askClaude()` (`src/components/chat/claudeClient.ts`) calls
+`chat:send` over IPC to the main process, which loads `.env` (`electron/loadDotEnv.ts`) and
+runs the request through `src/shared/chatCore.ts` (`electron/main.ts`'s `runChatRequest`). In
+browser mode (`npm run dev`, no `window.aetherElectron`), `askClaude()` falls back to POSTing
+the Vite dev-server plugin's `/api/chat` route (`vite-plugins/chatProxyPlugin.ts`). Stage 0.5
+(`docs/superpowers/plans/2026-07-27-chat-ipc-correctness.md`) shipped this IPC path — see
+`ChatBackendCard.tsx` (Settings) and the chat header chip for a live Live/Offline/Browser
+indicator of which backend is actually answering. `.env` is gitignored.
 
 ## Architecture map
 

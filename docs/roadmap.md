@@ -92,6 +92,12 @@ implementer + reviewer + whole-branch-review loop.
 
 ### 3.1 — Stage 0.5, and why it jumps the queue
 
+**Status: shipped.** The defect below is described in the present tense because that's how it
+was found; `docs/superpowers/plans/2026-07-27-chat-ipc-correctness.md` closed it — the
+Electron main process now handles `chat:send` over IPC and loads `.env` itself, so real Claude
+replies work in the desktop app, not only in `npm run dev` browser mode. Left here as the
+historical record of why this stage jumped the queue.
+
 **`POST /api/chat` does not exist in the Electron app.** `chatProxyPlugin` is registered only in
 `vite.config.ts`; `electron.vite.config.ts`'s renderer plugins array is `[react()]`. So in
 `npm run electron:dev` and in any packaged build, the fetch 404s, `askClaude()` honours its
