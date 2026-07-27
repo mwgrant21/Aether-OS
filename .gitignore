@@ -8,6 +8,8 @@ vite.config.d.ts
 vite.config.js
 vite-plugins/*.d.ts
 vite-plugins/*.js
+src/shared/chatCore.d.ts
+src/shared/chatCore.js
 .env
 .worktrees/
 electron-dev*.log
