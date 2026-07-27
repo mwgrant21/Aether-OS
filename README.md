@@ -175,3 +175,7 @@ For line-level detail, the plans and commit history are the record.
 React 18 · Vite 5 · TypeScript (strict) · Electron (electron-vite) · node-pty · xterm · Vitest —
 no CSS framework, no state library, no canvas library. The single `useReducer` store and
 hand-rolled canvas renderers are the point.
+
+## License
+
+MIT — see `LICENSE` for full text.
