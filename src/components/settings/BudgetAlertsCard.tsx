@@ -3,6 +3,7 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
+import { playYellowAlert } from '../../shared/alertSounds';
 
 export function BudgetAlertsCard() {
   const colors = useColors();
@@ -56,6 +57,12 @@ export function BudgetAlertsCard() {
         <div style={labelStyle(colors)}>SOUND</div>
         <Button onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { sound: !cfg.sound } })} style={toggleStyle(colors, cfg.sound)}>
           {cfg.sound ? 'ON' : 'OFF'}
+        </Button>
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+        <Button onClick={() => playYellowAlert()} style={toggleStyle(colors, false)} title="Play the yellow-alert chirp to preview it">
+          TEST SOUND
         </Button>
       </div>
 

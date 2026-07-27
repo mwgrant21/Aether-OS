@@ -6,6 +6,7 @@ import { getViewComponent } from './viewRegistry';
 import { usePulseDurationVar } from './components/reactor/useReactorCanvas';
 import { useRealUsageSync } from './components/dashboard/useRealUsageSync';
 import { useRealAgentsSync } from './state/useRealAgentsSync';
+import { useAlertSounds } from './state/useAlertSounds';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -21,6 +22,7 @@ export default function App() {
         <PulseDurationSync />
         <RealUsageSync />
         <RealAgentsSync />
+        <AlertSounds />
         <ActiveView />
         <BottomMetricsRow />
       </AppShell>
@@ -40,5 +42,10 @@ function RealUsageSync() {
 
 function RealAgentsSync() {
   useRealAgentsSync();
+  return null;
+}
+
+function AlertSounds() {
+  useAlertSounds();
   return null;
 }
