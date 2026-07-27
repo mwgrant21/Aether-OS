@@ -37,8 +37,8 @@ export interface StatuslineSnapshot {
  * a parser that hard-fails on one unexpected field takes the whole feature down.
  */
 export function parseStatuslinePayload(raw: unknown, capturedAtMs: number): StatuslineSnapshot | null {
-  // Guard: raw must be a non-null object
-  if (typeof raw !== 'object' || raw === null) {
+  // Guard: raw must be a non-null object (not an array)
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return null;
   }
 

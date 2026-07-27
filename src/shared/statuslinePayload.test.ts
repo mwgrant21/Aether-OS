@@ -154,6 +154,16 @@ describe('parseStatuslinePayload', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null when raw is an empty array', () => {
+    const result = parseStatuslinePayload([], 0);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when raw is a non-empty array', () => {
+    const result = parseStatuslinePayload(['item1', 'item2'], 0);
+    expect(result).toBeNull();
+  });
+
   it('ignores unknown extra top-level fields without error', () => {
     const payload = {
       session_id: 'sess-xyz',
