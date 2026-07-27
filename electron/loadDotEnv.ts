@@ -7,6 +7,8 @@ import { readFileSync } from 'fs';
  * - `KEY=value` pairs (splits on first `=` only)
  * - Removes surrounding single or double quotes from values
  * - Skips comment lines (starting with `#`) and blank lines
+ * - Strips a trailing ` # comment` from unquoted values (matches Vite's
+ *   bundled dotenv; a `#` inside quotes is kept literal)
  * - Strips leading `export ` prefix from keys
  * - Trims whitespace around keys and unquoted values
  *
@@ -44,9 +46,26 @@ export function parseDotEnv(contents: string): Record<string, string> {
     // Trim value
     value = value.trim();
 
+    // Determine whether the value is quoted BEFORE stripping a trailing
+    // comment -- a `#` inside matching quotes is literal, never a comment.
+    const isQuoted =
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"));
+
+    // Strip a trailing ` # comment` from unquoted values only. This
+    // deliberately matches Vite's bundled dotenv (see LINE regex in
+    // node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js: unquoted values
+    // are captured via `[^#\r\n]+`, so any `#` ends the value) so this
+    // loader and `npm run dev`'s never disagree on where a key's value ends.
+    if (!isQuoted) {
+      const hashIndex = value.indexOf('#');
+      if (hashIndex !== -1) {
+        value = value.slice(0, hashIndex).trim();
+      }
+    }
+
     // Strip surrounding quotes (single or double)
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
+    if (isQuoted) {
       value = value.substring(1, value.length - 1);
     }
 

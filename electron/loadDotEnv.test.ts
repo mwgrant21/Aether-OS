@@ -108,6 +108,16 @@ KEY2=value2
     const contents = 'KEY=""';
     expect(parseDotEnv(contents)).toEqual({ KEY: '' });
   });
+
+  it('strips a trailing inline comment from an unquoted value', () => {
+    const contents = 'ANTHROPIC_API_KEY=sk-ant-abc123 # work key';
+    expect(parseDotEnv(contents)).toEqual({ ANTHROPIC_API_KEY: 'sk-ant-abc123' });
+  });
+
+  it('preserves a quoted value containing a hash', () => {
+    const contents = 'KEY="value # not a comment"';
+    expect(parseDotEnv(contents)).toEqual({ KEY: 'value # not a comment' });
+  });
 });
 
 describe('loadDotEnvInto', () => {
