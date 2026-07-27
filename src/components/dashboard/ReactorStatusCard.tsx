@@ -48,10 +48,17 @@ function deriveTileOverride(
     if (pct === null) return null; // fall back to today's fictional value
     const usage = snap?.contextUsage ?? null;
     const windowSize = snap?.contextWindowSize ?? null;
+    // Matches contextUsedPercentage's own input-only definition
+    // (input + cache-creation + cache-read tokens) -- outputTokens is
+    // deliberately excluded here, since including it would sum against a
+    // different basis than the headline percentage and the two would
+    // visibly disagree.
     const detail =
-      usage && windowSize
-        ? `${short(usage.inputTokens + usage.outputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)} / ${short(windowSize)}`
-        : 'post-/compact snapshot';
+      usage === null
+        ? 'post-/compact snapshot'
+        : windowSize === null
+          ? short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)
+          : `${short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)} / ${short(windowSize)}`;
     const prefix = stale ? '~' : '';
     return { v: `${prefix}${Math.round(pct)}%`, s: detail, source: 'live', stale };
   }
