@@ -624,4 +624,24 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     const next = reducer(initialState, { type: 'SET_CACHE_HIT_RATIO', ratio: 0.42 });
     expect(next.cacheHitRatio).toBe(0.42);
   });
+
+  it('SET_OPTIMIZE_FINDINGS replaces optimizeFindings wholesale', () => {
+    const findings = [
+      { id: 'opus-on-trivial-turns' as const, title: 'x', detail: 'y', estSavingsPerWeek: 1, fixText: 'z' },
+    ];
+    const next = reducer(initialState, { type: 'SET_OPTIMIZE_FINDINGS', findings });
+    expect(next.optimizeFindings).toEqual(findings);
+  });
+
+  it('SET_OPTIMIZE_SUMMARY replaces optimizeSummary wholesale', () => {
+    const summary = { totalPerWeek: 12.5, grade: 'B' as const };
+    const next = reducer(initialState, { type: 'SET_OPTIMIZE_SUMMARY', summary });
+    expect(next.optimizeSummary).toEqual(summary);
+  });
+
+  it('SET_OPTIMIZE_BREAKDOWN replaces optimizeBreakdown wholesale', () => {
+    const rows = [{ key: 'model-routing', label: 'x', status: 'good' as const, note: 'y', scored: true }];
+    const next = reducer(initialState, { type: 'SET_OPTIMIZE_BREAKDOWN', rows });
+    expect(next.optimizeBreakdown).toEqual(rows);
+  });
 });

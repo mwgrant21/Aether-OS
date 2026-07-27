@@ -68,6 +68,8 @@ export interface TermLine {
 
 import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
+import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
+import type { GradeRow } from '../shared/optimizeGrade';
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
@@ -183,6 +185,9 @@ export interface AetherState {
   activeWork: RealActiveWork[];
   anomalies: Anomaly[];
   cacheHitRatio: number;
+  optimizeFindings: OptimizeFinding[];
+  optimizeSummary: OptimizeSummary;
+  optimizeBreakdown: GradeRow[];
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

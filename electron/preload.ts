@@ -3,6 +3,8 @@ import type { RealUsageSnapshot } from '../src/state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
+import type { OptimizeFinding, OptimizeSummary } from '../src/shared/optimizeRules';
+import type { GradeRow } from '../src/shared/optimizeGrade';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -48,6 +50,27 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:cacheHitRatio', listener);
       return () => ipcRenderer.removeListener('agents:cacheHitRatio', listener);
     },
+  },
+  optimize: {
+    onFindings: (callback: (findings: OptimizeFinding[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, findings: OptimizeFinding[]) => callback(findings);
+      ipcRenderer.on('optimize:findings', listener);
+      return () => ipcRenderer.removeListener('optimize:findings', listener);
+    },
+    onSummary: (callback: (summary: OptimizeSummary) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, summary: OptimizeSummary) => callback(summary);
+      ipcRenderer.on('optimize:summary', listener);
+      return () => ipcRenderer.removeListener('optimize:summary', listener);
+    },
+    onBreakdown: (callback: (rows: GradeRow[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, rows: GradeRow[]) => callback(rows);
+      ipcRenderer.on('optimize:breakdown', listener);
+      return () => ipcRenderer.removeListener('optimize:breakdown', listener);
+    },
+    targets: (): Promise<{ global: { path: string; exists: boolean }; project: { path: string; exists: boolean } | null }> =>
+      ipcRenderer.invoke('optimize:targets'),
+    apply: (args: { findingId: string; targetPath: string }): Promise<{ ok: boolean; added?: boolean; alreadyPresent?: boolean; targetPath?: string; backupPath?: string | null; error?: string }> =>
+      ipcRenderer.invoke('optimize:apply', args),
   },
   attachments: {
     list: (): Promise<AttachmentInfo[]> => ipcRenderer.invoke('attachments:list'),
