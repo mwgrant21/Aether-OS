@@ -79,6 +79,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     thumbnail: (name: string): Promise<string | null> => ipcRenderer.invoke('attachments:thumbnail', name),
     open: (name: string): Promise<void> => ipcRenderer.invoke('attachments:open', name),
   },
+  chat: {
+    send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),
+    hasKey: (): Promise<boolean> => ipcRenderer.invoke('chat:hasKey'),
+  },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     toggleMaximize: () => ipcRenderer.send('window:toggleMaximize'),

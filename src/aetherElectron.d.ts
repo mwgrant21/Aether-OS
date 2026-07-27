@@ -40,6 +40,10 @@ declare global {
         thumbnail: (name: string) => Promise<string | null>;
         open: (name: string) => Promise<void>;
       };
+      chat: {
+        send: (body: unknown) => Promise<{ reply: string } | { error: string }>;
+        hasKey: () => Promise<boolean>;
+      };
       window: {
         minimize: () => void;
         toggleMaximize: () => void;

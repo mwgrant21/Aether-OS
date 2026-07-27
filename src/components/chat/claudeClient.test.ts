@@ -51,6 +51,48 @@ describe('askClaude', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => { throw new SyntaxError('bad json'); } }));
     await expect(askClaude('system prompt', [{ role: 'user', text: 'hi' }])).resolves.toBeNull();
   });
+
+  describe('when window.aetherElectron.chat is present (Electron app)', () => {
+    afterEach(() => {
+      delete window.aetherElectron;
+    });
+
+    it('uses the IPC bridge instead of fetch, returning the reply', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const send = vi.fn().mockResolvedValue({ reply: 'Hello from IPC.' });
+      // @ts-expect-error -- minimal bridge stub for this test
+      window.aetherElectron = { chat: { send } };
+
+      await expect(askClaude('sys', [{ role: 'user', text: 'hi' }])).resolves.toBe('Hello from IPC.');
+      expect(send).toHaveBeenCalledWith({ system: 'sys', messages: [{ role: 'user', text: 'hi' }] });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('resolves to null when the IPC response is an { error } shape', async () => {
+      const send = vi.fn().mockResolvedValue({ error: 'no key configured' });
+      // @ts-expect-error -- minimal bridge stub for this test
+      window.aetherElectron = { chat: { send } };
+
+      await expect(askClaude('sys', [])).resolves.toBeNull();
+    });
+
+    it('resolves to null when the IPC reply is an empty string', async () => {
+      const send = vi.fn().mockResolvedValue({ reply: '' });
+      // @ts-expect-error -- minimal bridge stub for this test
+      window.aetherElectron = { chat: { send } };
+
+      await expect(askClaude('sys', [])).resolves.toBeNull();
+    });
+
+    it('resolves to null when the IPC call rejects, never throwing', async () => {
+      const send = vi.fn().mockRejectedValue(new Error('ipc channel closed'));
+      // @ts-expect-error -- minimal bridge stub for this test
+      window.aetherElectron = { chat: { send } };
+
+      await expect(askClaude('sys', [])).resolves.toBeNull();
+    });
+  });
 });
 
 describe('toRecentTurns', () => {

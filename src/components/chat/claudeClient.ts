@@ -16,15 +16,24 @@ export function toRecentTurns(messages: ChatMessage[], limit: number = RECENT_TU
     .map((m) => ({ role: m.role, text: m.text }));
 }
 
-// Calls the Vite dev-server middleware proxy (Task 5's POST /api/chat),
-// which forwards { system, messages } to the Anthropic Messages API
-// server-side -- the API key never reaches this client-side code. Returns
-// the reply string on success, or null on ANY failure (network error,
-// non-2xx status, missing/empty reply field, malformed response body) so
+// Forwards { system, messages } to the Anthropic Messages API server-side --
+// the API key never reaches this client-side code either way. In the
+// Electron app, calls chat:send over IPC to the main process (see
+// electron/main.ts's runChatRequest). In browser mode (npm run dev, no
+// window.aetherElectron), falls back to POSTing the Vite dev-server
+// middleware proxy at /api/chat. Returns the reply string on success, or
+// null on ANY failure (IPC rejection, network error, non-2xx status,
+// missing/empty reply field, malformed response body) so
 // useChatChannels.ts's existing "fall back to localResponder on null" branch
 // (unchanged from Phase 1) is always safe to await unconditionally.
 export async function askClaude(system: string, messages: ChatTurn[]): Promise<string | null> {
   try {
+    const bridge = typeof window !== 'undefined' ? window.aetherElectron : undefined;
+    if (bridge?.chat) {
+      const data = (await bridge.chat.send({ system, messages })) as { reply?: unknown };
+      return typeof data?.reply === 'string' && data.reply.length > 0 ? data.reply : null;
+    }
+    // browser mode (npm run dev) -- the Vite plugin serves this route
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
