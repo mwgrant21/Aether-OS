@@ -94,8 +94,8 @@ export function parseStatuslinePayload(raw: unknown, capturedAtMs: number): Stat
   const rateLimits = payload.rate_limits;
   if (typeof rateLimits === 'object' && rateLimits !== null) {
     const limits = rateLimits as Record<string, unknown>;
-    fiveHour = parseRateLimitWindow(limits['5-hour']);
-    sevenDay = parseRateLimitWindow(limits['7-day']);
+    fiveHour = parseRateLimitWindow(limits['five_hour']);
+    sevenDay = parseRateLimitWindow(limits['seven_day']);
   }
 
   // Extract context_window fields

@@ -10,11 +10,11 @@ describe('parseStatuslinePayload', () => {
         display_name: 'Claude 3.5 Sonnet',
       },
       rate_limits: {
-        '5-hour': {
+        'five_hour': {
           used_percentage: 45.5,
           resets_at: 1722100000,
         },
-        '7-day': {
+        'seven_day': {
           used_percentage: 12.3,
           resets_at: 1722700000,
         },
@@ -66,7 +66,7 @@ describe('parseStatuslinePayload', () => {
   it('converts resets_at from seconds to milliseconds', () => {
     const payload = {
       rate_limits: {
-        '5-hour': {
+        'five_hour': {
           used_percentage: 50,
           resets_at: 1000,
         },
@@ -112,7 +112,7 @@ describe('parseStatuslinePayload', () => {
   it('produces null for a rate limit window with used_percentage but no resets_at', () => {
     const payload = {
       rate_limits: {
-        '5-hour': {
+        'five_hour': {
           used_percentage: 45,
         },
       },
@@ -127,7 +127,7 @@ describe('parseStatuslinePayload', () => {
   it('produces null for a rate limit window with resets_at but no used_percentage', () => {
     const payload = {
       rate_limits: {
-        '7-day': {
+        'seven_day': {
           resets_at: 1722700000,
         },
       },
@@ -213,7 +213,7 @@ describe('parseStatuslinePayload', () => {
   it('handles non-finite numbers (Infinity, -Infinity, NaN) by treating them as missing', () => {
     const payload = {
       rate_limits: {
-        '5-hour': {
+        'five_hour': {
           used_percentage: Infinity,
           resets_at: 1000,
         },
@@ -274,7 +274,7 @@ describe('parseStatuslinePayload', () => {
   it('handles rate limit window with non-numeric used_percentage', () => {
     const payload = {
       rate_limits: {
-        '5-hour': {
+        'five_hour': {
           used_percentage: 'not a number',
           resets_at: 1000,
         },
