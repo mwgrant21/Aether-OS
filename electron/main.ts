@@ -17,6 +17,8 @@ import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import { runChatRequest } from '../src/shared/chatCore';
 import { loadDotEnvInto } from './loadDotEnv';
+import { startStatuslineWatcher } from './statuslineWatcher';
+import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -124,6 +126,16 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json');
 let lastScannedEvents: TranscriptEvent[] = [];
 
+const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
+const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
+// Mirrors the .env resolution above: app.getAppPath() resolves the project
+// root in dev, and inside resources/app.asar for a packaged build. Task 3's
+// script is not yet wired into packaging (no extraResources config exists in
+// this repo), so a packaged build will not find it at this path -- the same
+// known gap already called out for .env, not something this task solves.
+const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
+let stopStatuslineWatcher: (() => void) | null = null;
+
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const projectsRoot = join(os.homedir(), '.claude', 'projects');
@@ -202,6 +214,10 @@ app.whenReady().then(() => {
 
   tickAndPushAgents();
   setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
+
+  stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
+    sendToWindow('statusline:snapshot', snapshot);
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -210,6 +226,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (stopStatuslineWatcher) {
+    stopStatuslineWatcher();
+    stopStatuslineWatcher = null;
+  }
 });
 
 let activePty: ReturnType<typeof spawnPty> | null = null;
@@ -305,6 +325,15 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { finding
     return { ok: false, error: err?.message ?? String(err) };
   }
 });
+
+ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath, statuslineScriptPath));
+
+// Explicit user actions only -- never invoked from any automatic path. The
+// renderer names the action; the main process is the only place the script
+// and settings paths are ever decided.
+ipcMain.handle('statusline:install', () => installStatusline(statuslineSettingsPath, statuslineScriptPath));
+
+ipcMain.handle('statusline:uninstall', () => uninstallStatusline(statuslineSettingsPath));
 
 ipcMain.handle('chat:send', async (_event, body: unknown) => {
   const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);
