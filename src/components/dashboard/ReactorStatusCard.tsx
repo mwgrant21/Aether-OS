@@ -1,18 +1,21 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 import { fmt } from '../../utils/format';
 import { computeDashKpis, computeDashPulseMode, computeDashStatus } from './dashboardMath';
 
 export function ReactorStatusCard() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const statusC = state.alarmLevel === 'crit' ? colors.danger : state.alarmLevel === 'warn' ? colors.warn : colors.success;
   const kpis = computeDashKpis(state);
 
   return (
-    <div style={cardStyle}>
+    <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle}>REACTOR STATUS</div>
+        <div style={titleStyle(colors)}>REACTOR STATUS</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusC, boxShadow: `0 0 8px ${statusC}` }} />
           {computeDashStatus(state.alarmLevel)}
@@ -42,13 +45,13 @@ export function ReactorStatusCard() {
       </div>
 
       <div style={{ marginTop: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingTop: 14 }}>
-        <span onClick={() => dispatch({ type: 'RUN_COMMAND', raw: 'spawn' })} style={primaryActionStyle}>
+        <Button onClick={() => dispatch({ type: 'RUN_COMMAND', raw: 'spawn' })} style={primaryActionStyle}>
           ⊕ SPAWN AGENT
-        </span>
-        <span onClick={() => dispatch({ type: 'NEW_PROJECT' })} style={secondaryActionStyle}>
+        </Button>
+        <Button onClick={() => dispatch({ type: 'NEW_PROJECT' })} style={secondaryActionStyle}>
           ⊕ NEW PROJECT
-        </span>
-        <span
+        </Button>
+        <Button
           onClick={() => {
             dispatch({ type: 'RUN_COMMAND', raw: 'sweep' });
             dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Memory' });
@@ -56,29 +59,33 @@ export function ReactorStatusCard() {
           style={secondaryActionStyle}
         >
           MEMORY SWEEP
-        </span>
-        <span onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })} style={secondaryActionStyle}>
+        </Button>
+        <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })} style={secondaryActionStyle}>
           OPEN TERMINAL
-        </span>
+        </Button>
         {/* Mission Composer modal is out of scope for this plan — button renders for visual
             fidelity but is intentionally not wired (see Global Constraints #1). */}
-        <span style={{ ...composeActionStyle, cursor: 'default' }}>◇ COMPOSE MISSION</span>
+        <span style={{ ...composeActionStyle(colors), cursor: 'default' }}>◇ COMPOSE MISSION</span>
       </div>
     </div>
   );
 }
 
-const cardStyle: CSSProperties = {
-  gridRow: 'span 2',
-  padding: 16,
-  borderRadius: 14,
-  border: `1px solid ${colors.panelBorder}`,
-  background: colors.panelGradient,
-  display: 'flex',
-  flexDirection: 'column',
-  minHeight: 0,
-};
-const titleStyle: CSSProperties = { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return {
+    gridRow: 'span 2',
+    padding: 16,
+    borderRadius: 14,
+    border: `1px solid ${colors.panelBorder}`,
+    background: colors.panelGradient,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+  };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
 const ringOuterStyle: CSSProperties = {
   position: 'absolute',
   inset: 0,
@@ -133,15 +140,17 @@ const secondaryActionStyle: CSSProperties = {
   borderRadius: 8,
   background: 'rgba(23,184,216,.1)',
 };
-const composeActionStyle: CSSProperties = {
-  gridColumn: 'span 2',
-  textAlign: 'center',
-  font: `600 12px/1 ${fonts.ui}`,
-  letterSpacing: 2,
-  color: colors.textPrimary,
-  border: '1px solid rgba(95,220,255,.55)',
-  padding: '11px 0',
-  borderRadius: 8,
-  background: 'rgba(23,184,216,.18)',
-  boxShadow: 'inset 0 0 18px rgba(95,240,255,.12)',
-};
+function composeActionStyle(colors: ColorPalette): CSSProperties {
+  return {
+    gridColumn: 'span 2',
+    textAlign: 'center',
+    font: `600 12px/1 ${fonts.ui}`,
+    letterSpacing: 2,
+    color: colors.textPrimary,
+    border: '1px solid rgba(95,220,255,.55)',
+    padding: '11px 0',
+    borderRadius: 8,
+    background: 'rgba(23,184,216,.18)',
+    boxShadow: 'inset 0 0 18px rgba(95,240,255,.12)',
+  };
+}
