@@ -107,7 +107,7 @@ export function ReactorStatusCard() {
                 <div style={{ font: `600 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
                 {hasSourceChip && <span style={sourceChipStyle(colors, source)}>{source === 'live' ? 'LIVE' : 'EST'}</span>}
               </div>
-              <div style={{ font: `700 17px/1 ${fonts.mono}`, color: isWarn ? colors.warn : colors.textPrimary, marginTop: 7 }}>{v}</div>
+              <div style={kpiValueStyle(colors, isWarn)}>{v}</div>
               <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{s}</div>
             </div>
           );
@@ -188,7 +188,22 @@ const coreDiscStyle: CSSProperties = {
   animation: 'breath var(--pulse-dur, 2.4s) ease-in-out infinite',
 };
 function kpiTileStyle(colors: ColorPalette): CSSProperties {
-  return { padding: '11px 12px', borderRadius: 9, border: `1px solid ${colors.chromeBorder}`, background: colors.panelInset };
+  // No fixed height: the DEPLETION ETA value can be a much longer live string
+  // (e.g. "~2h 14m · resets 3h 01m") than the estimate it replaces ("3h 12m"),
+  // and this tile must be able to grow to an intrinsic, wrapped height rather
+  // than clip or force the grid to blow out. minWidth: 0 keeps a long
+  // unbroken value from forcing the 2-column grid's track wider than
+  // intended; the sibling action-button row below already uses
+  // marginTop: 'auto' so it gets pushed down gracefully if this row grows.
+  return { padding: '11px 12px', borderRadius: 9, border: `1px solid ${colors.chromeBorder}`, background: colors.panelInset, minWidth: 0 };
+}
+function kpiValueStyle(colors: ColorPalette, isWarn: boolean): CSSProperties {
+  return {
+    font: `700 17px/1.25 ${fonts.mono}`,
+    color: isWarn ? colors.warn : colors.textPrimary,
+    marginTop: 7,
+    overflowWrap: 'break-word',
+  };
 }
 function sourceChipStyle(colors: ColorPalette, source: TileSource): CSSProperties {
   return {
