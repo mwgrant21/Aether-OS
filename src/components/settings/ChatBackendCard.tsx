@@ -19,6 +19,12 @@ export function ChatBackendCard() {
       <div style={{ marginTop: 12 }}>
         <div style={labelStyle(colors)}>CLAUDE REPLIES</div>
         <div style={valueStyle(colors, backendState)}>{backendState ? COPY[backendState] : 'Checking…'}</div>
+        {backendState === 'offline' && (
+          <div style={hintStyle(colors)}>
+            A packaged build only reads this from the real environment — a .env beside the
+            app is not read (it resolves inside app.asar).
+          </div>
+        )}
       </div>
     </div>
   );
@@ -46,5 +52,12 @@ function valueStyle(colors: ColorPalette, backendState: ChatBackendState | null)
     marginTop: 8,
     font: `600 13px/1.4 ${fonts.ui}`,
     color: backendState === 'live' ? colors.success : backendState === 'offline' ? colors.warn : colors.textBody,
+  };
+}
+function hintStyle(colors: ColorPalette): CSSProperties {
+  return {
+    marginTop: 6,
+    font: `500 11px/1.4 ${fonts.ui}`,
+    color: colors.textMuted,
   };
 }

@@ -1,3 +1,7 @@
+// NOTE: unlike the rest of src/shared/ (pure logic imported by both main and renderer),
+// this module must NEVER be imported by renderer code. It wraps @anthropic-ai/sdk and
+// reads no key itself, but importing it into the renderer would bundle the SDK there and
+// put key handling one refactor away from running in the wrong process.
 import Anthropic from '@anthropic-ai/sdk';
 
 export const CHAT_MODEL = 'claude-opus-4-8';

@@ -7,7 +7,7 @@ const STORAGE_KEY = 'aetheros-v1';
  *
  *  See persistence.test.ts's header comment for why this list (and the coverage test that
  *  checks it) exists at all. */
-export const PERSISTENCE_EXCLUSIONS: Record<string, string> = {
+export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> = {
   used: 'a live per-session token counter recomputed every tick from the burn simulation; a persisted value would carry a stale total into a new session and misstate current usage',
   rate: 'a live burn rate overwritten by every real-usage snapshot (SET_REAL_USAGE) and every tick; a persisted number would show a stale/wrong rate until the first real snapshot lands',
   ctxUsed: "the current terminal session's context-window usage, replaced by the first real-usage snapshot; a new session starts with a fresh context window, so a persisted value would misrepresent it",
