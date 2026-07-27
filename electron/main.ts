@@ -346,9 +346,29 @@ ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
 // Explicit user actions only -- never invoked from any automatic path. The
 // renderer names the action; the main process is the only place the script
 // and settings paths are ever decided.
-ipcMain.handle('statusline:install', () => installStatusline(statuslineSettingsPath, statuslineScriptPath));
+ipcMain.handle('statusline:install', () => {
+  // This repo has no packaging pipeline (electron:build only, no
+  // electron-builder/extraResources config -- see roadmap.md's "what this
+  // deliberately does not do"), so statuslineScriptPath always resolves
+  // inside the dev project tree today. Still guard on existence rather than
+  // assume: if that ever stops being true (packaging added later, or the
+  // script is deleted/moved), writing `node "<missing path>"` into the
+  // user's REAL ~/.claude/settings.json would break every Claude Code turn,
+  // for every project, silently -- refuse instead.
+  if (!existsSync(statuslineScriptPath)) {
+    return { ok: false, error: `statusline script not found at ${statuslineScriptPath} -- not available in this build` };
+  }
+  return installStatusline(statuslineSettingsPath, statuslineScriptPath);
+});
 
-ipcMain.handle('statusline:uninstall', () => uninstallStatusline(statuslineSettingsPath));
+ipcMain.handle('statusline:uninstall', async () => {
+  const result = await uninstallStatusline(statuslineSettingsPath);
+  if (result.ok) {
+    cachedStatuslineSnapshot = null;
+    await fsp.rm(statuslinePayloadPath, { force: true });
+  }
+  return result;
+});
 
 ipcMain.handle('chat:send', async (_event, body: unknown) => {
   const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);

@@ -142,6 +142,18 @@ async function writeBackup(settingsPath: string, raw: string): Promise<string> {
   return backupPath;
 }
 
+// A crash, power loss, or ENOSPC mid-write directly to settings.json would
+// leave the user's REAL Claude Code config truncated -- the backup only
+// helps once the user notices and understands the problem. Write-tmp-then-
+// rename means the target is never observably partial. Mirrors the pattern
+// scripts/aether-statusline.mjs already uses for its own, lower-stakes cache
+// file.
+async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
+  const tmpPath = `${settingsPath}.aethertmp-${Date.now()}`;
+  await fsp.writeFile(tmpPath, content, 'utf8');
+  await fsp.rename(tmpPath, settingsPath);
+}
+
 export async function installStatusline(
   settingsPath: string,
   scriptPath: string
@@ -161,7 +173,7 @@ export async function installStatusline(
     const patch = statuslineSettingsPatch(scriptPath);
     const merged = { ...parsed, ...patch };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await fsp.writeFile(settingsPath, JSON.stringify(merged, null, 2), 'utf8');
+    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -185,7 +197,7 @@ export async function uninstallStatusline(
   try {
     const backupPath = await writeBackup(settingsPath, raw);
     delete parsed.statusLine;
-    await fsp.writeFile(settingsPath, JSON.stringify(parsed, null, 2), 'utf8');
+    await writeSettingsAtomically(settingsPath, JSON.stringify(parsed, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };

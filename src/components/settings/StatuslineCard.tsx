@@ -25,6 +25,7 @@ export function StatuslineCard() {
   const { dispatch } = useAetherStore();
   const [state, setState] = useState<StatuslineState | null>(null);
   const [replacePickerOpen, setReplacePickerOpen] = useState(false);
+  const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
 
@@ -68,6 +69,7 @@ export function StatuslineCard() {
     setResultMsg(null);
     const result: ActionResult = await statusline.uninstall();
     setBusy(false);
+    setUninstallConfirmOpen(false);
     setResultMsg(
       !result.ok
         ? result.error || 'Failed to uninstall'
@@ -116,7 +118,8 @@ export function StatuslineCard() {
                   <div style={confirmPanelStyle(colors)}>
                     <div style={confirmTextStyle(colors)}>
                       This overwrites the existing statusLine command shown above. A timestamped backup of settings.json
-                      is written first.
+                      is written first — uninstalling later will not automatically restore this command, only the
+                      backup file will have it.
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <Button onClick={runInstall} style={confirmYesStyle(colors)} disabled={busy}>
@@ -132,9 +135,28 @@ export function StatuslineCard() {
             )}
 
             {state.status === 'installed' && (
-              <Button onClick={runUninstall} style={dangerBtnStyle(colors)} disabled={busy}>
-                Uninstall
-              </Button>
+              <div style={{ position: 'relative' }}>
+                <Button onClick={() => setUninstallConfirmOpen((v) => !v)} style={dangerBtnStyle(colors)} disabled={busy}>
+                  Uninstall
+                </Button>
+                {uninstallConfirmOpen && (
+                  <div style={confirmPanelStyle(colors)}>
+                    <div style={confirmTextStyle(colors)}>
+                      This removes the statusLine command from settings.json (a timestamped backup is written first). If
+                      this was installed via Replace, whatever command was there before is <strong>not</strong> restored
+                      automatically — recover it from that earlier backup file if you need it back.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <Button onClick={runUninstall} style={confirmYesStyle(colors)} disabled={busy}>
+                        Confirm uninstall
+                      </Button>
+                      <Button onClick={() => setUninstallConfirmOpen(false)} style={confirmNoStyle(colors)} disabled={busy}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             {state.status === 'unreadable' && (

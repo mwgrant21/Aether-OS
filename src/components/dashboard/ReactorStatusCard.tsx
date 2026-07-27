@@ -8,7 +8,7 @@ import { computeDashKpis, computeDashPulseMode, computeDashStatus } from './dash
 import { deriveDepletion, formatResetCountdown } from '../../shared/depletion';
 import type { AetherState } from '../../state/types';
 
-type TileSource = 'live' | 'est';
+type TileSource = 'live' | 'stale' | 'est';
 
 /**
  * DEPLETION ETA and CONTEXT are the two dashboard tiles with a real,
@@ -38,7 +38,7 @@ function deriveTileOverride(
     return {
       v: `${prefix}${etaPart} · resets ${formatResetCountdown(depletion.msUntilReset)}`,
       s: 'server rate limit',
-      source: 'live',
+      source: stale ? 'stale' : 'live',
       stale,
     };
   }
@@ -60,7 +60,7 @@ function deriveTileOverride(
           ? short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)
           : `${short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)} / ${short(windowSize)}`;
     const prefix = stale ? '~' : '';
-    return { v: `${prefix}${Math.round(pct)}%`, s: detail, source: 'live', stale };
+    return { v: `${prefix}${Math.round(pct)}%`, s: detail, source: stale ? 'stale' : 'live', stale };
   }
   return null;
 }
@@ -105,7 +105,11 @@ export function ReactorStatusCard() {
             <div key={dk.k} style={kpiTileStyle(colors)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ font: `600 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
-                {hasSourceChip && <span style={sourceChipStyle(colors, source)}>{source === 'live' ? 'LIVE' : 'EST'}</span>}
+                {hasSourceChip && (
+                  <span style={sourceChipStyle(colors, source)}>
+                    {source === 'live' ? 'LIVE' : source === 'stale' ? 'STALE' : 'EST'}
+                  </span>
+                )}
               </div>
               <div style={kpiValueStyle(colors, isWarn)}>{v}</div>
               <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{s}</div>
@@ -209,7 +213,7 @@ function sourceChipStyle(colors: ColorPalette, source: TileSource): CSSPropertie
   return {
     font: `700 8px/1 ${fonts.ui}`,
     letterSpacing: 1,
-    color: source === 'live' ? colors.success : colors.textMuted,
+    color: source === 'live' ? colors.success : source === 'stale' ? colors.warn : colors.textMuted,
     border: `1px solid ${colors.chipBorder}`,
     background: colors.panelInset,
     padding: '2px 5px',
