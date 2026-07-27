@@ -1,6 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadPersisted, savePersisted } from './persistence';
+import { loadPersisted, savePersisted, PERSISTENCE_EXCLUSIONS } from './persistence';
 import { initialState } from './initialState';
+import type { AetherState } from './types';
+
+// Why this file has a coverage test and a corruption-guard round-trip test, not just
+// spot-check tests per field: persistence.ts's whitelist is hand-maintained (a literal
+// object of `key: state.key` assignments), and this exact class of miss has recurred
+// three separate times in this project's history --
+//   - `state.selected` (the selected-agent field) was missing from the whitelist
+//   - `projects`/`providers`/`routeDefault` (the Uplinks/Dashboard fields) were missing
+//   - `memSeq` was missing while `memories` was present, so a reload reset the id
+//     counter but not the memories array, and the next memory created collided on id
+//     (duplicate React keys, two memories toggling pinned together, wrong memory
+//     selected on click) -- fixed post-ship in 3db6f90
+// Every one of these was only caught by manual QA or a later bug report. The tests below
+// convert this into a compile-time-adjacent guarantee: a new AetherState field cannot be
+// added without a deliberate decision (persist it, or add it to PERSISTENCE_EXCLUSIONS
+// with a reason) surfacing as a failing test naming the exact offending key.
 
 beforeEach(() => {
   localStorage.clear();
@@ -81,5 +97,92 @@ describe('persistence', () => {
     });
     expect(() => savePersisted(initialState)).not.toThrow();
     vi.restoreAllMocks();
+  });
+
+  it('accounts for every AetherState key as either persisted or documented as excluded', () => {
+    // Build a fully-populated AetherState from initialState (per the file header comment
+    // above): every top-level field of AetherState is required, so initialState already
+    // has a concrete value for each one -- there is nothing to fill in.
+    savePersisted(initialState);
+    const loaded = loadPersisted() ?? {};
+
+    const missing = (Object.keys(initialState) as (keyof AetherState)[]).filter(
+      (key) => !Object.prototype.hasOwnProperty.call(loaded, key) && !Object.prototype.hasOwnProperty.call(PERSISTENCE_EXCLUSIONS, key)
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `AetherState key(s) not accounted for: ${missing.join(', ')}. ` +
+          `Either add them to the persisted slice in persistence.ts's savePersisted(), ` +
+          `or add an entry to PERSISTENCE_EXCLUSIONS explaining why they must not be persisted.`
+      );
+    }
+  });
+
+  it('round-trips every persisted key with its value intact (memSeq-style corruption guard)', () => {
+    // Distinctive, non-default values on every currently-persisted key, so a bug that
+    // persists the wrong value (or drops a key silently) shows up as a real assertion
+    // failure rather than an accidental pass against a default that happens to match.
+    const distinctiveState: AetherState = {
+      ...initialState,
+      cfg: { ...initialState.cfg, opMode: 'AUTO', glow: 55 },
+      activeTab: 'Grid',
+      agents: [{ ...initialState.agents[0], pct: 77 }],
+      idleList: [{ name: 'Ghost Agent', last: '3h ago' }],
+      notifs: [{ t: '10:00', m: 'test notif', c: '#ffffff' }],
+      unread: 7,
+      cmdHist: ['status', 'budget'],
+      approvals: [{ id: 99, agent: 'Ghost', i: 'GH', hue: '#ffffff', action: 'a', detail: 'd', risk: 'HIGH' }],
+      apprSeq: 100,
+      projects: [{ name: 'Ghost Project', status: 'QUEUED', pct: 0, hue: '#ffffff', crew: [] }],
+      providers: [{ name: 'Ghost Provider', connected: true }],
+      routeDefault: 'GhostRoute',
+      operatorName: 'Ghost Operator',
+      selected: 'Ghost Agent',
+      selectedProject: 'Ghost Project',
+      selectedMemory: '999',
+      memories: [
+        { id: 10, name: 'a', content: 'a', source: 'a', ts: 't', pinned: false, strength: 50 },
+        { id: 11, name: 'b', content: 'b', source: 'b', ts: 't', pinned: true, strength: 60 },
+      ],
+      memSeq: 12,
+      chatActionResults: [{ channelId: 'AETHER', text: 'done' }],
+      recentCompletedDispatches: [],
+      dispatchChannels: [],
+      dispatchUsage: { 'tool-1': { tokens: 500, toolUses: 3, durationMs: 1200 } },
+    };
+
+    savePersisted(distinctiveState);
+    const loaded = loadPersisted();
+
+    expect(loaded?.cfg).toEqual(distinctiveState.cfg);
+    expect(loaded?.activeTab).toBe('Grid');
+    expect(loaded?.agents).toEqual(distinctiveState.agents);
+    expect(loaded?.idleList).toEqual(distinctiveState.idleList);
+    expect(loaded?.notifs).toEqual(distinctiveState.notifs);
+    expect(loaded?.unread).toBe(7);
+    expect(loaded?.cmdHist).toEqual(['status', 'budget']);
+    expect(loaded?.approvals).toEqual(distinctiveState.approvals);
+    expect(loaded?.apprSeq).toBe(100);
+    expect(loaded?.projects).toEqual(distinctiveState.projects);
+    expect(loaded?.providers).toEqual(distinctiveState.providers);
+    expect(loaded?.routeDefault).toBe('GhostRoute');
+    expect(loaded?.operatorName).toBe('Ghost Operator');
+    expect(loaded?.selected).toBe('Ghost Agent');
+    expect(loaded?.selectedProject).toBe('Ghost Project');
+    expect(loaded?.selectedMemory).toBe('999');
+    expect(loaded?.memories).toEqual(distinctiveState.memories);
+    expect(loaded?.memSeq).toBe(12);
+    expect(loaded?.chatActionResults).toEqual(distinctiveState.chatActionResults);
+    expect(loaded?.recentCompletedDispatches).toEqual([]);
+    expect(loaded?.dispatchChannels).toEqual([]);
+    expect(loaded?.dispatchUsage).toEqual(distinctiveState.dispatchUsage);
+
+    // The memSeq-style bug class specifically: memSeq must survive strictly ahead of
+    // every persisted memory's id, or the next memory created after rehydration would
+    // collide with an existing one (duplicate React keys, two memories toggling pinned
+    // together, wrong memory selected on click).
+    const maxMemoryId = Math.max(...(loaded?.memories ?? []).map((m) => m.id));
+    expect(loaded?.memSeq).toBeGreaterThan(maxMemoryId);
   });
 });
