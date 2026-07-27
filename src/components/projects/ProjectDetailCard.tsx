@@ -116,7 +116,7 @@ function crewRowStyle(colors: ColorPalette): CSSProperties {
     padding: '8px 10px',
     borderRadius: 8,
     border: '1px solid rgba(95,220,255,.2)',
-    background: 'rgba(6,20,28,.5)',
+    background: colors.panelInset,
     width: 'fit-content',
   };
 }

@@ -63,6 +63,6 @@ function textStyle(colors: ColorPalette): CSSProperties {
     padding: '9px 12px',
     borderRadius: 10,
     border: `1px solid ${colors.chromeBorder}`,
-    background: 'rgba(6,20,28,.55)',
+    background: colors.panelInset,
   };
 }

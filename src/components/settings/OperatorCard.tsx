@@ -51,7 +51,7 @@ function inputStyle(colors: ColorPalette): CSSProperties {
     marginTop: 8,
     padding: '9px 12px',
     borderRadius: 8,
-    border: '1px solid rgba(80,190,220,.25)',
+    border: `1px solid ${colors.chipBorder}`,
     background: 'rgba(10,32,43,.6)',
     color: colors.textPrimary,
     font: `600 13px/1 ${fonts.ui}`,

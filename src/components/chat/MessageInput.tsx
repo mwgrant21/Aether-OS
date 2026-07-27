@@ -20,7 +20,7 @@ export function MessageInput({ value, onChange, onSend, disabled, placeholder }:
 
   return (
     <div style={barStyle}>
-      <div style={rowStyle}>
+      <div style={rowStyle(colors)}>
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -43,15 +43,17 @@ export function MessageInput({ value, onChange, onSend, disabled, placeholder }:
 }
 
 const barStyle: CSSProperties = { flex: 'none', paddingTop: 12 };
-const rowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  padding: '10px 14px',
-  borderRadius: 10,
-  border: '1px solid rgba(80,190,220,.3)',
-  background: 'rgba(6,20,28,.7)',
-};
+function rowStyle(colors: ColorPalette): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: `1px solid ${colors.chipBorder}`,
+    background: colors.panelInset,
+  };
+}
 function inputStyle(colors: ColorPalette): CSSProperties {
   return {
     flex: 1,

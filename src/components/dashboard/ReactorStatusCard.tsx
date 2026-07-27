@@ -36,7 +36,7 @@ export function ReactorStatusCard() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginTop: 16 }}>
         {kpis.map((dk) => (
-          <div key={dk.k} style={kpiTileStyle}>
+          <div key={dk.k} style={kpiTileStyle(colors)}>
             <div style={{ font: `600 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
             <div style={{ font: `700 17px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 7 }}>{dk.v}</div>
             <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{dk.s}</div>
@@ -117,7 +117,9 @@ const coreDiscStyle: CSSProperties = {
   boxShadow: '0 0 22px rgba(95,240,255,.9), 0 0 52px rgba(80,220,255,.45)',
   animation: 'breath var(--pulse-dur, 2.4s) ease-in-out infinite',
 };
-const kpiTileStyle: CSSProperties = { padding: '11px 12px', borderRadius: 9, border: '1px solid rgba(80,190,220,.18)', background: 'rgba(6,20,28,.5)' };
+function kpiTileStyle(colors: ColorPalette): CSSProperties {
+  return { padding: '11px 12px', borderRadius: 9, border: `1px solid ${colors.chromeBorder}`, background: colors.panelInset };
+}
 const primaryActionStyle: CSSProperties = {
   textAlign: 'center',
   cursor: 'pointer',
