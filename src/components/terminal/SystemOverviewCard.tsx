@@ -1,14 +1,16 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
 import { spark } from '../../utils/format';
 
 export function SystemOverviewCard() {
+  const colors = useColors();
   const { state } = useAetherStore();
   return (
-    <div style={cardStyle}>
+    <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle}>SYSTEM OVERVIEW</div>
+        <div style={titleStyle(colors)}>SYSTEM OVERVIEW</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: colors.success }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: colors.success, boxShadow: '0 0 8px rgba(59,224,160,.8)' }} />
           NOMINAL
@@ -16,7 +18,7 @@ export function SystemOverviewCard() {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 13 }}>
         {state.sys.map((m) => (
-          <div key={m.label} style={metricTileStyle}>
+          <div key={m.label} style={metricTileStyle(colors)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <span style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{m.label}</span>
               <span style={{ font: `700 15px/1 ${fonts.mono}`, color: colors.textBody }}>{Math.round(m.val)}%</span>
@@ -38,6 +40,12 @@ export function SystemOverviewCard() {
   );
 }
 
-const cardStyle: CSSProperties = { flex: 'none', padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient };
-const titleStyle: CSSProperties = { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-const metricTileStyle: CSSProperties = { padding: '10px 12px', borderRadius: 9, border: '1px solid rgba(80,190,220,.16)', background: 'rgba(6,20,28,.5)' };
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function metricTileStyle(colors: ColorPalette): CSSProperties {
+  return { padding: '10px 12px', borderRadius: 9, border: `1px solid ${colors.chromeBorder}`, background: colors.panelInset };
+}

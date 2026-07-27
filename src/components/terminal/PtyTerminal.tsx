@@ -2,6 +2,8 @@ import { useEffect, useRef, type CSSProperties } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { colors, fonts } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
+import { useAetherStore } from '../../state/store';
 import '@xterm/xterm/css/xterm.css';
 
 // Module-level (not component state) so the real claude session survives
@@ -44,6 +46,8 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
 }
 
 export function PtyTerminal() {
+  const colors = useColors();
+  const { state } = useAetherStore();
   const anchorRef = useRef<HTMLDivElement>(null);
   const hasElectronPty = typeof window !== 'undefined' && !!window.aetherElectron?.pty;
 
@@ -66,6 +70,14 @@ export function PtyTerminal() {
       hostEl.remove();
     };
   }, [hasElectronPty]);
+
+  useEffect(() => {
+    if (!sharedTerm) return;
+    sharedTerm.options.theme = {
+      background: state.cfg.themeMode === 'light' ? colors.bgBase : '#06141c',
+      foreground: colors.textBody,
+    };
+  }, [state.cfg.themeMode, colors]);
 
   if (!hasElectronPty) {
     return <div style={fallbackStyle}>Real terminal requires the Electron app — run `npm run electron:dev`</div>;
