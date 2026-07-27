@@ -1,8 +1,11 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 
 export function SystemsCard() {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const rows = [
     { k: 'Uplinks online', v: `${state.providers.filter((pv) => pv.connected).length} / ${state.providers.length}`, c: colors.success },
@@ -15,12 +18,12 @@ export function SystemsCard() {
   ];
 
   return (
-    <div style={cardStyle}>
+    <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle}>SYSTEMS</div>
-        <span onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Uplinks' })} style={viewAllStyle}>
+        <div style={titleStyle(colors)}>SYSTEMS</div>
+        <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Uplinks' })} style={viewAllStyle(colors)}>
           UPLINKS →
-        </span>
+        </Button>
       </div>
       <div style={{ flex: 1, overflow: 'auto', marginTop: 11, display: 'flex', flexDirection: 'column', gap: 9 }}>
         {rows.map((r) => (
@@ -37,6 +40,12 @@ export function SystemsCard() {
   );
 }
 
-const cardStyle: CSSProperties = { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
-const titleStyle: CSSProperties = { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-const viewAllStyle: CSSProperties = { cursor: 'pointer', font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function viewAllStyle(colors: ColorPalette): CSSProperties {
+  return { cursor: 'pointer', font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
+}

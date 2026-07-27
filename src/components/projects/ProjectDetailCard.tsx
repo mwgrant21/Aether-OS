@@ -1,15 +1,18 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 import { useAetherStore } from '../../state/store';
 import type { ProjectStub } from '../../state/types';
 import { STATUS_COLOR, computeLiveProjectPct } from './projectsMath';
 
 export function ProjectDetailCard({ project }: { project: ProjectStub | null }) {
+  const colors = useColors();
   const { state, dispatch } = useAetherStore();
 
   if (!project) {
     return (
-      <div style={cardStyle}>
+      <div style={cardStyle(colors)}>
         <div style={emptyWrapStyle}>
           <div style={{ font: `600 13px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textSecondary }}>NO PROJECTS YET</div>
           <div style={{ marginTop: 8, font: `400 12px/1.5 ${fonts.ui}`, color: colors.textMuted }}>
@@ -23,7 +26,7 @@ export function ProjectDetailCard({ project }: { project: ProjectStub | null }) 
   const pct = computeLiveProjectPct(project, state.used);
 
   return (
-    <div style={cardStyle}>
+    <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <span style={swatchStyle(project.hue)} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -40,19 +43,19 @@ export function ProjectDetailCard({ project }: { project: ProjectStub | null }) 
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <div style={sectionLabelStyle}>CREW</div>
+        <div style={sectionLabelStyle(colors)}>CREW</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
           {project.crew.map((name) => (
-            <span
+            <Button
               key={name}
               onClick={() => {
                 dispatch({ type: 'SELECT_AGENT', name });
                 dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
               }}
-              style={crewRowStyle}
+              style={crewRowStyle(colors)}
             >
               {name}
-            </span>
+            </Button>
           ))}
           {!project.crew.length && <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>no crew assigned</div>}
         </div>
@@ -61,17 +64,20 @@ export function ProjectDetailCard({ project }: { project: ProjectStub | null }) 
   );
 }
 
-const cardStyle: CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  minHeight: 0,
-  padding: 18,
-  borderRadius: 14,
-  border: `1px solid ${colors.panelBorder}`,
-  background: colors.panelGradient,
-  display: 'flex',
-  flexDirection: 'column',
-};
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    padding: 18,
+    borderRadius: 14,
+    border: `1px solid ${colors.panelBorder}`,
+    background: colors.panelGradient,
+    display: 'flex',
+    flexDirection: 'column',
+  };
+}
+
 const emptyWrapStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
@@ -80,6 +86,7 @@ const emptyWrapStyle: CSSProperties = {
   justifyContent: 'center',
   textAlign: 'center',
 };
+
 function swatchStyle(hue: string): CSSProperties {
   return {
     width: 46,
@@ -90,18 +97,26 @@ function swatchStyle(hue: string): CSSProperties {
     border: `1px solid ${hue}`,
   };
 }
+
 function statusBadgeStyle(c: string): CSSProperties {
   return { flex: 'none', font: `600 8px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '4px 7px', borderRadius: 4, width: 56, textAlign: 'center' };
 }
+
 const trackStyle: CSSProperties = { height: 6, borderRadius: 3, background: 'rgba(20,50,64,.7)', overflow: 'hidden', marginTop: 18 };
-const sectionLabelStyle: CSSProperties = { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
-const crewRowStyle: CSSProperties = {
-  cursor: 'pointer',
-  font: `600 13px/1 ${fonts.ui}`,
-  color: colors.accentCyanSoft,
-  padding: '8px 10px',
-  borderRadius: 8,
-  border: '1px solid rgba(95,220,255,.2)',
-  background: 'rgba(6,20,28,.5)',
-  width: 'fit-content',
-};
+
+function sectionLabelStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+}
+
+function crewRowStyle(colors: ColorPalette): CSSProperties {
+  return {
+    cursor: 'pointer',
+    font: `600 13px/1 ${fonts.ui}`,
+    color: colors.accentCyanSoft,
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: '1px solid rgba(95,220,255,.2)',
+    background: colors.panelInset,
+    width: 'fit-content',
+  };
+}

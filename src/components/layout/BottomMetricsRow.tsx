@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 import { fmt } from '../../utils/format';
 import { computeTopCommands } from '../analytics/analyticsMath';
 
@@ -17,6 +19,7 @@ function formatUptime(startedAt: string, now: Date): string {
 }
 
 export function BottomMetricsRow() {
+  const colors = useColors();
   const { state } = useAetherStore();
   const topCommands = computeTopCommands(state.cmdHist);
   const [range, setRange] = useState<UsageRange>('weekly');
@@ -50,14 +53,14 @@ export function BottomMetricsRow() {
 
   return (
     <div style={rootStyle}>
-      <div style={cardStyle}>
+      <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={cardTitleStyle}>TOKEN USAGE</div>
+          <div style={cardTitleStyle(colors)}>TOKEN USAGE</div>
           <div style={{ display: 'flex', gap: 4 }}>
             {RANGES.map((r) => (
-              <span key={r} style={rangeChipStyle(range === r)} onClick={() => setRange(r)}>
+              <Button key={r} style={rangeChipStyle(colors, range === r)} onClick={() => setRange(r)}>
                 {r.toUpperCase()}
-              </span>
+              </Button>
             ))}
           </div>
         </div>
@@ -89,8 +92,8 @@ export function BottomMetricsRow() {
         </div>
       </div>
 
-      <div style={cardStyle}>
-        <div style={cardTitleStyle}>CONTEXT WINDOW</div>
+      <div style={cardStyle(colors)}>
+        <div style={cardTitleStyle(colors)}>CONTEXT WINDOW</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12 }}>
           <div style={{ position: 'relative', width: 96, height: 96, flex: 'none' }}>
             <svg viewBox="0 0 100 100" style={{ width: 96, height: 96, transform: 'rotate(-90deg)' }}>
@@ -118,11 +121,11 @@ export function BottomMetricsRow() {
             <div style={{ font: `700 14px/1 ${fonts.mono}`, color: colors.textBody }}>{fmt(state.ctxUsed)}</div>
             <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>/ 125,000 tokens</div>
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
-              <div style={legendRowStyle}>
+              <div style={legendRowStyle(colors)}>
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.accentCyanDeep }} />
                 Input <span style={{ marginLeft: 'auto', color: colors.textMuted }}>{fmt(inTok)}</span>
               </div>
-              <div style={legendRowStyle}>
+              <div style={legendRowStyle(colors)}>
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.success }} />
                 Output <span style={{ marginLeft: 'auto', color: colors.textMuted }}>{fmt(outTok)}</span>
               </div>
@@ -131,9 +134,9 @@ export function BottomMetricsRow() {
         </div>
       </div>
 
-      <div style={cardStyle}>
+      <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={cardTitleStyle}>TOP COMMANDS</div>
+          <div style={cardTitleStyle(colors)}>TOP COMMANDS</div>
           <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>RECENT</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 13 }}>
@@ -159,8 +162,8 @@ export function BottomMetricsRow() {
         </div>
       </div>
 
-      <div style={cardStyle}>
-        <div style={cardTitleStyle}>SESSION INFO</div>
+      <div style={cardStyle(colors)}>
+        <div style={cardTitleStyle(colors)}>SESSION INFO</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 13 }}>
           {session.map((s) => (
             <div key={s.k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -175,9 +178,13 @@ export function BottomMetricsRow() {
 }
 
 const rootStyle: CSSProperties = { flex: 'none', display: 'grid', gridTemplateColumns: '1.15fr 1fr 1.1fr .95fr', gap: 14 };
-const cardStyle: CSSProperties = { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient };
-const cardTitleStyle: CSSProperties = { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-function rangeChipStyle(active: boolean): CSSProperties {
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient };
+}
+function cardTitleStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function rangeChipStyle(colors: ColorPalette, active: boolean): CSSProperties {
   return {
     font: `600 10px/1 ${fonts.ui}`,
     letterSpacing: 1,
@@ -199,4 +206,6 @@ function barStyle(h: number): CSSProperties {
     transition: 'height .5s ease',
   };
 }
-const legendRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, font: `400 11px/1 ${fonts.mono}`, color: colors.textSecondary };
+function legendRowStyle(colors: ColorPalette): CSSProperties {
+  return { display: 'flex', alignItems: 'center', gap: 7, font: `400 11px/1 ${fonts.mono}`, color: colors.textSecondary };
+}

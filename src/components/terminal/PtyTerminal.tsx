@@ -1,7 +1,10 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { colors, fonts } from '../../styles/tokens';
+// Used only by module-level code (getOrCreateHost/fallbackStyle) that runs
+// outside React and can't call useColors() -- always the dark palette.
+import { colors as darkColors, fonts } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
 import '@xterm/xterm/css/xterm.css';
 
 // Module-level (not component state) so the real claude session survives
@@ -25,7 +28,7 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     sharedTerm = new Terminal({
       fontFamily: fonts.mono,
       fontSize: 13,
-      theme: { background: '#06141c', foreground: colors.textBody },
+      theme: { background: darkColors.bgTerminal, foreground: darkColors.textBody },
     });
     sharedFit = new FitAddon();
     sharedTerm.loadAddon(sharedFit);
@@ -44,6 +47,7 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
 }
 
 export function PtyTerminal() {
+  const colors = useColors();
   const anchorRef = useRef<HTMLDivElement>(null);
   const hasElectronPty = typeof window !== 'undefined' && !!window.aetherElectron?.pty;
 
@@ -67,6 +71,11 @@ export function PtyTerminal() {
     };
   }, [hasElectronPty]);
 
+  useEffect(() => {
+    if (!sharedTerm) return;
+    sharedTerm.options.theme = { background: colors.bgTerminal, foreground: colors.textBody };
+  }, [colors]);
+
   if (!hasElectronPty) {
     return <div style={fallbackStyle}>Real terminal requires the Electron app — run `npm run electron:dev`</div>;
   }
@@ -81,7 +90,7 @@ const fallbackStyle: CSSProperties = {
   justifyContent: 'center',
   height: '100%',
   font: `400 13px/1.5 ${fonts.mono}`,
-  color: colors.textDim,
+  color: darkColors.textDim,
   textAlign: 'center',
   padding: 20,
 };

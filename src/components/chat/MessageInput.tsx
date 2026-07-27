@@ -1,5 +1,7 @@
 import type { CSSProperties, KeyboardEvent } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 
 interface MessageInputProps {
   value: string;
@@ -10,13 +12,15 @@ interface MessageInputProps {
 }
 
 export function MessageInput({ value, onChange, onSend, disabled, placeholder }: MessageInputProps) {
+  const colors = useColors();
+
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') onSend();
   }
 
   return (
     <div style={barStyle}>
-      <div style={rowStyle}>
+      <div style={rowStyle(colors)}>
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -24,35 +28,43 @@ export function MessageInput({ value, onChange, onSend, disabled, placeholder }:
           disabled={disabled}
           placeholder={placeholder}
           spellCheck={false}
-          style={inputStyle}
+          style={inputStyle(colors)}
         />
-        <span onClick={disabled ? undefined : onSend} style={sendButtonStyle(disabled)}>
+        <Button
+          onClick={onSend}
+          style={sendButtonStyle(disabled)}
+          disabled={disabled}
+        >
           ➤
-        </span>
+        </Button>
       </div>
     </div>
   );
 }
 
 const barStyle: CSSProperties = { flex: 'none', paddingTop: 12 };
-const rowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  padding: '10px 14px',
-  borderRadius: 10,
-  border: '1px solid rgba(80,190,220,.3)',
-  background: 'rgba(6,20,28,.7)',
-};
-const inputStyle: CSSProperties = {
-  flex: 1,
-  font: `400 13px/1 ${fonts.ui}`,
-  color: colors.textBody,
-  background: 'transparent',
-  border: 'none',
-  outline: 'none',
-  caretColor: colors.accentCyan,
-};
+function rowStyle(colors: ColorPalette): CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: `1px solid ${colors.chipBorder}`,
+    background: colors.panelInset,
+  };
+}
+function inputStyle(colors: ColorPalette): CSSProperties {
+  return {
+    flex: 1,
+    font: `400 13px/1 ${fonts.ui}`,
+    color: colors.textBody,
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    caretColor: colors.accentCyan,
+  };
+}
 function sendButtonStyle(disabled: boolean): CSSProperties {
   return {
     cursor: disabled ? 'default' : 'pointer',
@@ -63,7 +75,7 @@ function sendButtonStyle(disabled: boolean): CSSProperties {
     background: 'linear-gradient(180deg,#17b8d8,#0f7f97)',
     display: 'grid',
     placeItems: 'center',
-    color: colors.textPrimary,
+    color: 'inherit',
     boxShadow: disabled ? 'none' : '0 0 14px rgba(95,240,255,.5)',
   };
 }

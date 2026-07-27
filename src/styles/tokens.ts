@@ -8,6 +8,7 @@ export interface ColorPalette {
   chromeBorder: string;
   chipBorder: string;
   activeBorder: string;
+  bgTerminal: string;
   textPrimary: string;
   textBody: string;
   textSecondary: string;
@@ -33,6 +34,7 @@ export const colors: ColorPalette = {
   chromeBorder: 'rgba(70,180,215,.16)',
   chipBorder: 'rgba(80,190,220,.25)',
   activeBorder: 'rgba(95,220,255,.4)',
+  bgTerminal: '#06141c',
   textPrimary: '#eafcff',
   textBody: '#d8f6ff',
   textSecondary: '#9fc4d1',
@@ -58,6 +60,7 @@ export const colorsLight: ColorPalette = {
   chromeBorder: 'rgba(23,140,180,.16)',
   chipBorder: 'rgba(23,140,180,.25)',
   activeBorder: 'rgba(10,120,160,.45)',
+  bgTerminal: '#f5fbfd',
   textPrimary: '#04222c',
   textBody: '#0c3540',
   textSecondary: '#3c6a76',
