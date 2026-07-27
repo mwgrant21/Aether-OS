@@ -7,8 +7,11 @@ export interface DepletionReadout {
   usedPercentage: number | null; // 0-100
   resetsAtMs: number | null;
   msUntilReset: number | null;
-  /** Projected ms until the window is exhausted at the current consumption pace, or null
-   *  when it will not deplete before the window resets. */
+  /** Projected ms until the window is exhausted at the current consumption pace.
+   *  This is a real projected value even when it exceeds msUntilReset (i.e. when
+   *  the window will reset before depletion) -- it is only null when
+   *  usedPercentage <= 0 or when clock skew makes the elapsed-time basis for the
+   *  projection invalid (elapsedMs <= 0). */
   msUntilDepleted: number | null;
   /** True when the projection says the limit runs out before the window resets. */
   depletesBeforeReset: boolean;

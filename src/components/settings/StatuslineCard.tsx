@@ -29,8 +29,14 @@ export function StatuslineCard() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
 
   async function refresh() {
-    const s = await window.aetherElectron?.statusline.state();
-    if (s) setState(s);
+    // Only the first hop (aetherElectron) is optional in a mismatched-preload
+    // scenario -- guard statusline itself too, matching
+    // useStatuslineSync.ts's pattern, rather than chaining straight through
+    // it and throwing if an older/mismatched preload lacks the namespace.
+    const statusline = window.aetherElectron?.statusline;
+    if (!statusline) return;
+    const s = await statusline.state();
+    setState(s);
   }
 
   useEffect(() => {
@@ -38,12 +44,13 @@ export function StatuslineCard() {
   }, []);
 
   async function runInstall() {
+    const statusline = window.aetherElectron?.statusline;
+    if (!statusline) return;
     setBusy(true);
     setResultMsg(null);
-    const result: ActionResult | undefined = await window.aetherElectron?.statusline.install();
+    const result: ActionResult = await statusline.install();
     setBusy(false);
     setReplacePickerOpen(false);
-    if (!result) return;
     setResultMsg(
       !result.ok
         ? result.error || 'Failed to install'
@@ -55,11 +62,12 @@ export function StatuslineCard() {
   }
 
   async function runUninstall() {
+    const statusline = window.aetherElectron?.statusline;
+    if (!statusline) return;
     setBusy(true);
     setResultMsg(null);
-    const result: ActionResult | undefined = await window.aetherElectron?.statusline.uninstall();
+    const result: ActionResult = await statusline.uninstall();
     setBusy(false);
-    if (!result) return;
     setResultMsg(
       !result.ok
         ? result.error || 'Failed to uninstall'

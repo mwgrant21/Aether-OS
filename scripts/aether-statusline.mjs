@@ -152,4 +152,7 @@ try {
   }
 }
 
-process.exit(0);
+// No explicit process.exit(0) here: on POSIX, process.exit() does not flush
+// pending async writes to a piped stdout, and there is nothing else left on
+// the event loop after main() returns, so the process exits 0 on its own --
+// an explicit exit call here buys nothing and is a truncation hazard.
