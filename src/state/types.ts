@@ -70,6 +70,7 @@ import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
+import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
@@ -188,6 +189,7 @@ export interface AetherState {
   optimizeFindings: OptimizeFinding[];
   optimizeSummary: OptimizeSummary;
   optimizeBreakdown: GradeRow[];
+  statusline: StatuslineSnapshot | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

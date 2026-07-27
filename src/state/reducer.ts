@@ -1,4 +1,5 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, MemoryStub, OpMode, RealUsageSnapshot } from './types';
+import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
@@ -41,7 +42,8 @@ export type Action =
   | { type: 'SET_CACHE_HIT_RATIO'; ratio: number }
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
   | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
-  | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] };
+  | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] }
+  | { type: 'SET_STATUSLINE'; snapshot: StatuslineSnapshot | null };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -251,6 +253,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_OPTIMIZE_BREAKDOWN':
       return { ...state, optimizeBreakdown: action.rows };
+
+    case 'SET_STATUSLINE':
+      return { ...state, statusline: action.snapshot };
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);

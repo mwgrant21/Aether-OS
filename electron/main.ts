@@ -17,6 +17,9 @@ import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import { runChatRequest } from '../src/shared/chatCore';
 import { loadDotEnvInto } from './loadDotEnv';
+import { startStatuslineWatcher } from './statuslineWatcher';
+import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
+import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -124,6 +127,23 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json');
 let lastScannedEvents: TranscriptEvent[] = [];
 
+const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
+const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
+// Mirrors the .env resolution above: app.getAppPath() resolves the project
+// root in dev, and inside resources/app.asar for a packaged build. Task 3's
+// script is not yet wired into packaging (no extraResources config exists in
+// this repo), so a packaged build will not find it at this path -- the same
+// known gap already called out for .env, not something this task solves.
+const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
+let stopStatuslineWatcher: (() => void) | null = null;
+// The last snapshot the watcher emitted, kept for `statusline:snapshot:current` --
+// on the very first `loadURL`/`loadFile`, the watcher's own startup read fires
+// before useStatuslineSync's IPC listener has registered, so that push is
+// otherwise dropped silently. Caching it here lets the renderer pull it once it
+// has mounted, instead of waiting for the next on-disk change (which may never
+// come during the current session).
+let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
+
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const projectsRoot = join(os.homedir(), '.claude', 'projects');
@@ -202,6 +222,11 @@ app.whenReady().then(() => {
 
   tickAndPushAgents();
   setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
+
+  stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
+    cachedStatuslineSnapshot = snapshot;
+    sendToWindow('statusline:snapshot', snapshot);
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -210,6 +235,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (stopStatuslineWatcher) {
+    stopStatuslineWatcher();
+    stopStatuslineWatcher = null;
+  }
 });
 
 let activePty: ReturnType<typeof spawnPty> | null = null;
@@ -304,6 +333,41 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { finding
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
   }
+});
+
+ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath, statuslineScriptPath));
+
+// Lets the renderer pull whatever snapshot the watcher last captured -- including
+// one read during startup, before any listener existed to receive the pushed
+// 'statusline:snapshot' event. Returns null when nothing has been captured yet,
+// which is a legitimate "no snapshot" state the renderer already treats as such.
+ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
+
+// Explicit user actions only -- never invoked from any automatic path. The
+// renderer names the action; the main process is the only place the script
+// and settings paths are ever decided.
+ipcMain.handle('statusline:install', () => {
+  // This repo has no packaging pipeline (electron:build only, no
+  // electron-builder/extraResources config -- see roadmap.md's "what this
+  // deliberately does not do"), so statuslineScriptPath always resolves
+  // inside the dev project tree today. Still guard on existence rather than
+  // assume: if that ever stops being true (packaging added later, or the
+  // script is deleted/moved), writing `node "<missing path>"` into the
+  // user's REAL ~/.claude/settings.json would break every Claude Code turn,
+  // for every project, silently -- refuse instead.
+  if (!existsSync(statuslineScriptPath)) {
+    return { ok: false, error: `statusline script not found at ${statuslineScriptPath} -- not available in this build` };
+  }
+  return installStatusline(statuslineSettingsPath, statuslineScriptPath);
+});
+
+ipcMain.handle('statusline:uninstall', async () => {
+  const result = await uninstallStatusline(statuslineSettingsPath);
+  if (result.ok) {
+    cachedStatuslineSnapshot = null;
+    await fsp.rm(statuslinePayloadPath, { force: true });
+  }
+  return result;
 });
 
 ipcMain.handle('chat:send', async (_event, body: unknown) => {

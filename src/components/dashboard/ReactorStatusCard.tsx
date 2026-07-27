@@ -3,8 +3,67 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
-import { fmt } from '../../utils/format';
+import { fmt, fmtEta, short } from '../../utils/format';
 import { computeDashKpis, computeDashPulseMode, computeDashStatus } from './dashboardMath';
+import { deriveDepletion, formatResetCountdown } from '../../shared/depletion';
+import type { AetherState } from '../../state/types';
+
+type TileSource = 'live' | 'stale' | 'est';
+
+/**
+ * DEPLETION ETA and CONTEXT are the two dashboard tiles with a real,
+ * statusline-backed alternative to today's estimate/fictional value. This
+ * derives the override (value/detail/source/stale) for those two tile keys
+ * only; every other tile from computeDashKpis renders unchanged. Kept local
+ * to the component (rather than folded into computeDashKpis) so the existing,
+ * already-tested `DashKpi[]` shape in dashboardMath.ts/.test.ts is untouched.
+ */
+function deriveTileOverride(
+  key: string,
+  state: AetherState,
+): { v: string; s: string; source: TileSource; stale: boolean } | null {
+  // Both tiles judge freshness off the same statusline capture, via
+  // deriveDepletion's stale computation (which is correct even when
+  // state.statusline.fiveHour is null) -- so a percentage captured hours ago
+  // can never render LIVE on one tile while the sibling tile (correctly)
+  // shows it as stale.
+  const stale = deriveDepletion(state.statusline, null, Date.now()).stale;
+
+  if (key === 'DEPLETION ETA') {
+    const depletion = deriveDepletion(state.statusline, null, Date.now());
+    if (depletion.source !== 'statusline') return null; // fall back to today's estimate
+    const etaPart =
+      depletion.msUntilDepleted === null ? '—' : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
+    const prefix = stale ? '~' : '';
+    return {
+      v: `${prefix}${etaPart} · resets ${formatResetCountdown(depletion.msUntilReset)}`,
+      s: 'server rate limit',
+      source: stale ? 'stale' : 'live',
+      stale,
+    };
+  }
+  if (key === 'CONTEXT') {
+    const snap = state.statusline;
+    const pct = snap?.contextUsedPercentage ?? null;
+    if (pct === null) return null; // fall back to today's fictional value
+    const usage = snap?.contextUsage ?? null;
+    const windowSize = snap?.contextWindowSize ?? null;
+    // Matches contextUsedPercentage's own input-only definition
+    // (input + cache-creation + cache-read tokens) -- outputTokens is
+    // deliberately excluded here, since including it would sum against a
+    // different basis than the headline percentage and the two would
+    // visibly disagree.
+    const detail =
+      usage === null
+        ? 'post-/compact snapshot'
+        : windowSize === null
+          ? short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)
+          : `${short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)} / ${short(windowSize)}`;
+    const prefix = stale ? '~' : '';
+    return { v: `${prefix}${Math.round(pct)}%`, s: detail, source: stale ? 'stale' : 'live', stale };
+  }
+  return null;
+}
 
 export function ReactorStatusCard() {
   const colors = useColors();
@@ -35,13 +94,28 @@ export function ReactorStatusCard() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginTop: 16 }}>
-        {kpis.map((dk) => (
-          <div key={dk.k} style={kpiTileStyle(colors)}>
-            <div style={{ font: `600 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
-            <div style={{ font: `700 17px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 7 }}>{dk.v}</div>
-            <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{dk.s}</div>
-          </div>
-        ))}
+        {kpis.map((dk) => {
+          const hasSourceChip = dk.k === 'DEPLETION ETA' || dk.k === 'CONTEXT';
+          const override = hasSourceChip ? deriveTileOverride(dk.k, state) : null;
+          const source: TileSource = override ? override.source : 'est';
+          const v = override ? override.v : dk.v;
+          const s = override ? override.s : dk.s;
+          const isWarn = override?.stale ?? false;
+          return (
+            <div key={dk.k} style={kpiTileStyle(colors)}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ font: `600 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
+                {hasSourceChip && (
+                  <span style={sourceChipStyle(colors, source)}>
+                    {source === 'live' ? 'LIVE' : source === 'stale' ? 'STALE' : 'EST'}
+                  </span>
+                )}
+              </div>
+              <div style={kpiValueStyle(colors, isWarn)}>{v}</div>
+              <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{s}</div>
+            </div>
+          );
+        })}
       </div>
 
       <div style={{ marginTop: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingTop: 14 }}>
@@ -118,7 +192,33 @@ const coreDiscStyle: CSSProperties = {
   animation: 'breath var(--pulse-dur, 2.4s) ease-in-out infinite',
 };
 function kpiTileStyle(colors: ColorPalette): CSSProperties {
-  return { padding: '11px 12px', borderRadius: 9, border: `1px solid ${colors.chromeBorder}`, background: colors.panelInset };
+  // No fixed height: the DEPLETION ETA value can be a much longer live string
+  // (e.g. "~2h 14m · resets 3h 01m") than the estimate it replaces ("3h 12m"),
+  // and this tile must be able to grow to an intrinsic, wrapped height rather
+  // than clip or force the grid to blow out. minWidth: 0 keeps a long
+  // unbroken value from forcing the 2-column grid's track wider than
+  // intended; the sibling action-button row below already uses
+  // marginTop: 'auto' so it gets pushed down gracefully if this row grows.
+  return { padding: '11px 12px', borderRadius: 9, border: `1px solid ${colors.chromeBorder}`, background: colors.panelInset, minWidth: 0 };
+}
+function kpiValueStyle(colors: ColorPalette, isWarn: boolean): CSSProperties {
+  return {
+    font: `700 17px/1.25 ${fonts.mono}`,
+    color: isWarn ? colors.warn : colors.textPrimary,
+    marginTop: 7,
+    overflowWrap: 'break-word',
+  };
+}
+function sourceChipStyle(colors: ColorPalette, source: TileSource): CSSProperties {
+  return {
+    font: `700 8px/1 ${fonts.ui}`,
+    letterSpacing: 1,
+    color: source === 'live' ? colors.success : source === 'stale' ? colors.warn : colors.textMuted,
+    border: `1px solid ${colors.chipBorder}`,
+    background: colors.panelInset,
+    padding: '2px 5px',
+    borderRadius: 4,
+  };
 }
 const primaryActionStyle: CSSProperties = {
   textAlign: 'center',

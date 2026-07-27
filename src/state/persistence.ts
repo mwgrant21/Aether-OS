@@ -28,6 +28,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   optimizeFindings: 'recomputed live by useOptimizeSync from current real usage/agents data; a stale finding could recommend a fix for a condition that no longer exists',
   optimizeSummary: 'derived alongside optimizeFindings from live data on every sync -- not a fact to store',
   optimizeBreakdown: 'derived alongside optimizeFindings from live data on every sync -- not a fact to store',
+  statusline: 'a rehydrated stale snapshot would show a fresh-looking rate-limit percentage from a previous session -- the same class of dishonesty the logs exclusion prevents',
 };
 
 export function loadPersisted(): Partial<AetherState> | null {

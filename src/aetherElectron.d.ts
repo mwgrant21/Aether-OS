@@ -4,6 +4,7 @@ import type { AttachmentInfo } from './components/files/attachmentsMath';
 import type { Anomaly } from './shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from './shared/optimizeRules';
 import type { GradeRow } from './shared/optimizeGrade';
+import type { StatuslineSnapshot } from './shared/statuslinePayload';
 
 export {};
 
@@ -39,6 +40,18 @@ declare global {
         remove: (name: string) => Promise<void>;
         thumbnail: (name: string) => Promise<string | null>;
         open: (name: string) => Promise<void>;
+      };
+      statusline: {
+        onSnapshot: (callback: (snapshot: StatuslineSnapshot) => void) => () => void;
+        state: () => Promise<{
+          status: 'installed' | 'installed-other' | 'not-installed' | 'unreadable';
+          existingCommand: string | null;
+          settingsPath: string;
+          scriptPath: string;
+        }>;
+        currentSnapshot: () => Promise<StatuslineSnapshot | null>;
+        install: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
+        uninstall: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
       };
       chat: {
         send: (body: unknown) => Promise<{ reply: string } | { error: string }>;

@@ -201,4 +201,5 @@ export const initialState: AetherState = {
   recentCompletedDispatches: [],
   dispatchChannels: [],
   dispatchUsage: {},
+  statusline: null,
 };
