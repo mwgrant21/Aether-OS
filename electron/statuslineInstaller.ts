@@ -28,7 +28,7 @@ export function detectInstallStatus(
   settingsJson: unknown,
   scriptPath: string
 ): { status: InstallStatus; existingCommand: string | null } {
-  if (typeof settingsJson !== 'object' || settingsJson === null) {
+  if (typeof settingsJson !== 'object' || settingsJson === null || Array.isArray(settingsJson)) {
     return { status: 'unreadable', existingCommand: null };
   }
 

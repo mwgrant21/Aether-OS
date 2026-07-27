@@ -54,6 +54,14 @@ describe('detectInstallStatus', () => {
     expect(detectInstallStatus('nope', SCRIPT_PATH).status).toBe('unreadable');
     expect(detectInstallStatus(42, SCRIPT_PATH).status).toBe('unreadable');
   });
+
+  it('is unreadable for a top-level array, matching the write-side guard', () => {
+    // typeof [] === 'object' in JS, so this must be excluded explicitly --
+    // otherwise it would misclassify as 'not-installed' here while
+    // installStatusline/uninstallStatusline (which do exclude arrays) abort,
+    // leaving a caller that trusted readInstallState surprised.
+    expect(detectInstallStatus([1, 2, 3], SCRIPT_PATH)).toEqual({ status: 'unreadable', existingCommand: null });
+  });
 });
 
 describe('readInstallState / installStatusline / uninstallStatusline', () => {
@@ -132,6 +140,59 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
     // no partial write, nothing.
     const afterBytes = readFileSync(settingsPath, 'utf8');
     expect(afterBytes).toBe(original);
+  });
+
+  it.each([
+    ['a top-level array', '[1,2,3]'],
+    ['a top-level string', '"hello"'],
+    ['a top-level number', '42'],
+  ])('aborts installStatusline on valid but non-object JSON (%s), leaving the file untouched', async (_label, original) => {
+    writeFileSync(settingsPath, original, 'utf8');
+
+    const result = await installStatusline(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+
+    const afterBytes = readFileSync(settingsPath, 'utf8');
+    expect(afterBytes).toBe(original);
+  });
+
+  it.each([
+    ['a top-level array', '[1,2,3]'],
+    ['a top-level string', '"hello"'],
+    ['a top-level number', '42'],
+  ])('aborts uninstallStatusline on valid but non-object JSON (%s), leaving the file untouched', async (_label, original) => {
+    writeFileSync(settingsPath, original, 'utf8');
+
+    const result = await uninstallStatusline(settingsPath);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+
+    const afterBytes = readFileSync(settingsPath, 'utf8');
+    expect(afterBytes).toBe(original);
+  });
+
+  it('installStatusline overwrites an installed-other statusLine, backing up the original other-tool config', async () => {
+    const original = {
+      sentinel: 'keep-me',
+      statusLine: { type: 'command', command: 'npx claude-powerline' },
+    };
+    const originalRaw = JSON.stringify(original, null, 2);
+    writeFileSync(settingsPath, originalRaw, 'utf8');
+
+    const result = await installStatusline(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    expect(result.backupPath).toBeTruthy();
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.statusLine.command).toContain(SCRIPT_PATH);
+    expect(written.sentinel).toBe('keep-me');
+
+    const backupRaw = readFileSync(result.backupPath!, 'utf8');
+    expect(backupRaw).toBe(originalRaw);
+    expect(JSON.parse(backupRaw).statusLine.command).toBe('npx claude-powerline');
+
+    rmSync(result.backupPath!, { force: true });
   });
 
   it('uninstall removes only the statusLine key', async () => {
