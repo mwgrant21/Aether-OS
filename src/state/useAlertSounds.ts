@@ -20,6 +20,16 @@ export function useAlertSounds(): void {
           stopRedRef.current = null;
         }
       }
+
+      // Backstop: if we're still (or again) in crit and sound is on, but no
+      // red-alert loop is running, start one. Covers sound being re-enabled
+      // while alarmLevel never left 'crit' (decideAlertActions sees no
+      // transition, so it emits no `startRed`). If `decideAlertActions`
+      // already started one above, `stopRedRef.current` is non-null here, so
+      // this never double-starts an overlapping loop.
+      if (next.alarmLevel === 'crit' && !stopRedRef.current) {
+        stopRedRef.current = startRedAlert();
+      }
     }
 
     prevRef.current = next;
