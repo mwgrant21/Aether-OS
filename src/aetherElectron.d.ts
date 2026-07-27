@@ -31,7 +31,7 @@ declare global {
         onSummary: (callback: (summary: OptimizeSummary) => void) => () => void;
         onBreakdown: (callback: (rows: GradeRow[]) => void) => () => void;
         targets: () => Promise<{ global: { path: string; exists: boolean }; project: { path: string; exists: boolean } | null }>;
-        apply: (args: { findingId: string; targetPath: string }) => Promise<{ ok: boolean; added?: boolean; alreadyPresent?: boolean; targetPath?: string; backupPath?: string | null; error?: string }>;
+        apply: (args: { findingId: string; target: 'global' | 'project' }) => Promise<{ ok: boolean; added?: boolean; alreadyPresent?: boolean; targetPath?: string; backupPath?: string | null; error?: string }>;
       };
       attachments: {
         list: () => Promise<AttachmentInfo[]>;

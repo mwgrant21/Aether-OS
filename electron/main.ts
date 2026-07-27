@@ -13,6 +13,7 @@ import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds 
 import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
 import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
+import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 
 let mainWindow: BrowserWindow | null = null;
@@ -141,14 +142,7 @@ async function scanAndPushUsage(): Promise<void> {
   const appliedState = await loadOptimizeState(optimizeStatePath);
   const findings = evaluateOptimizeRulesWithRecurrence(events, WEEK_MS, appliedState);
   const summary = summarizeOptimize(findings);
-  let totalCacheRead = 0;
-  let totalInput = 0;
-  for (const e of events) {
-    if (!e.usage) continue;
-    totalCacheRead += e.usage.cacheReadInputTokens;
-    totalInput += e.usage.inputTokens + e.usage.cacheCreationInputTokens + e.usage.cacheReadInputTokens;
-  }
-  const cacheHitRate = totalInput > 0 ? totalCacheRead / totalInput : 0;
+  const cacheHitRate = computeCacheHitRate(events);
   const breakdown = gradeBreakdown({ findings, cacheHitRate });
   sendToWindow('optimize:findings', findings);
   sendToWindow('optimize:summary', summary);
@@ -254,11 +248,14 @@ ipcMain.handle('optimize:targets', async () => {
   };
 });
 
-ipcMain.handle('optimize:apply', async (_event, { findingId, targetPath }: { findingId: string; targetPath: string }) => {
-  const globalPath = optimizeGlobalTargetPath();
-  const projectPath = optimizeProjectTargetPath(lastScannedEvents);
-  const allowed = targetPath === globalPath || (projectPath !== null && targetPath === projectPath);
-  if (!allowed) return { ok: false, error: 'invalid target' };
+ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { findingId: string; target: 'global' | 'project' }) => {
+  // The renderer picks a target by KIND ('global' | 'project'), never by raw
+  // path -- the path is always resolved fresh here from the CURRENT
+  // lastScannedEvents, so a picker that's been open for a while (across scan
+  // cycles) can't apply against a project path that's gone stale since it was
+  // first shown.
+  const targetPath = target === 'global' ? optimizeGlobalTargetPath() : optimizeProjectTargetPath(lastScannedEvents);
+  if (!targetPath) return { ok: false, error: 'invalid target' };
   if (guidanceFor(findingId) === null) return { ok: false, error: 'unknown finding' };
 
   try {

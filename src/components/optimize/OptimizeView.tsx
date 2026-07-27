@@ -97,9 +97,9 @@ function FindingCard({
     }
   }
 
-  async function apply(targetPath: string) {
+  async function apply(target: 'global' | 'project') {
     setStatus(null);
-    const result: ApplyResult | undefined = await window.aetherElectron?.optimize.apply({ findingId: finding.id, targetPath });
+    const result: ApplyResult | undefined = await window.aetherElectron?.optimize.apply({ findingId: finding.id, target });
     if (!result) return;
     if (!result.ok) {
       setStatus(result.error || 'Failed to apply');
@@ -126,11 +126,11 @@ function FindingCard({
               {!targets && <div style={emptyStyle(colors)}>loading targets…</div>}
               {targets && (
                 <>
-                  <Button onClick={() => apply(targets.global.path)} style={targetOptionStyle(colors)}>
+                  <Button onClick={() => apply('global')} style={targetOptionStyle(colors)}>
                     Global — {targets.global.path}
                   </Button>
                   {targets.project ? (
-                    <Button onClick={() => apply(targets.project!.path)} style={targetOptionStyle(colors)}>
+                    <Button onClick={() => apply('project')} style={targetOptionStyle(colors)}>
                       Project — {targets.project.path}
                     </Button>
                   ) : (
