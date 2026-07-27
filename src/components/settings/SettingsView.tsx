@@ -4,6 +4,7 @@ import { AppearanceCard } from './AppearanceCard';
 import { BudgetAlertsCard } from './BudgetAlertsCard';
 import { OperatorCard } from './OperatorCard';
 import { ChatBackendCard } from './ChatBackendCard';
+import { StatuslineCard } from './StatuslineCard';
 
 export function SettingsView() {
   return (
@@ -13,6 +14,7 @@ export function SettingsView() {
         <OperatingModeCard />
         <ChatBackendCard />
         <BudgetAlertsCard />
+        <StatuslineCard />
       </div>
       <AppearanceCard />
     </div>
