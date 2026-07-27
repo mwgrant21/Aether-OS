@@ -10,8 +10,8 @@ describe('viewRegistry', () => {
   it('matches the current app\'s top-bar tabs and sidebar nav exactly', () => {
     const topBarIds = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
     const sidebarIds = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
-    expect(topBarIds).toEqual(['Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Attachments']);
-    expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Uplinks', 'Settings']);
+    expect(topBarIds).toEqual(['Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Attachments', 'Optimize']);
+    expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Optimize', 'Uplinks', 'Settings']);
   });
 
   it('getViewComponent returns null for ids with no built component', () => {
@@ -56,5 +56,9 @@ describe('viewRegistry', () => {
 
   it('getViewComponent resolves Attachments now that it is built', () => {
     expect(getViewComponent('Attachments')).not.toBeNull();
+  });
+
+  it('getViewComponent resolves Optimize now that it is built', () => {
+    expect(getViewComponent('Optimize')).not.toBeNull();
   });
 });
