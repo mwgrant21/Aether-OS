@@ -3,6 +3,7 @@ import { reducer } from './reducer';
 import { initialState } from './initialState';
 import type { Approval } from './types';
 import type { RealAgentDispatch } from './liveAgentsMath';
+import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 
 describe('reducer', () => {
   it('SET_ACTIVE_TAB switches the active tab', () => {
@@ -631,6 +632,25 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     ];
     const next = reducer(initialState, { type: 'SET_OPTIMIZE_FINDINGS', findings });
     expect(next.optimizeFindings).toEqual(findings);
+  });
+
+  it('SET_STATUSLINE replaces statusline wholesale', () => {
+    const snapshot: StatuslineSnapshot = {
+      capturedAtMs: 1785200000000,
+      sessionId: 'sess_1',
+      modelId: 'claude-opus-4-6',
+      modelDisplayName: 'Opus 4.6',
+      fiveHour: { usedPercentage: 47, resetsAtMs: 1785200000000 },
+      sevenDay: null,
+      contextUsedPercentage: 62,
+      contextWindowSize: 200000,
+      contextUsage: null,
+      totalCostUsd: 1.23,
+      currentDir: '/home/user/project',
+      projectDir: '/home/user/project',
+    };
+    const next = reducer(initialState, { type: 'SET_STATUSLINE', snapshot });
+    expect(next.statusline).toBe(snapshot);
   });
 
   it('SET_OPTIMIZE_SUMMARY replaces optimizeSummary wholesale', () => {

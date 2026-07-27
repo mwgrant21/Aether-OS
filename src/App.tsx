@@ -8,6 +8,7 @@ import { useRealUsageSync } from './components/dashboard/useRealUsageSync';
 import { useRealAgentsSync } from './state/useRealAgentsSync';
 import { useAlertSounds } from './state/useAlertSounds';
 import { useOptimizeSync } from './state/useOptimizeSync';
+import { useStatuslineSync } from './state/useStatuslineSync';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -25,6 +26,7 @@ export default function App() {
         <RealAgentsSync />
         <AlertSounds />
         <OptimizeSync />
+        <StatuslineSync />
         <ActiveView />
         <BottomMetricsRow />
       </AppShell>
@@ -54,5 +56,10 @@ function AlertSounds() {
 
 function OptimizeSync() {
   useOptimizeSync();
+  return null;
+}
+
+function StatuslineSync() {
+  useStatuslineSync();
   return null;
 }

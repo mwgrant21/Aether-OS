@@ -5,6 +5,8 @@ import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../src/shared/optimizeRules';
 import type { GradeRow } from '../src/shared/optimizeGrade';
+import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
+import type { StatuslineInstallState } from './statuslineInstaller';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -78,6 +80,16 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     remove: (name: string): Promise<void> => ipcRenderer.invoke('attachments:remove', name),
     thumbnail: (name: string): Promise<string | null> => ipcRenderer.invoke('attachments:thumbnail', name),
     open: (name: string): Promise<void> => ipcRenderer.invoke('attachments:open', name),
+  },
+  statusline: {
+    onSnapshot: (callback: (snapshot: StatuslineSnapshot) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: StatuslineSnapshot) => callback(snapshot);
+      ipcRenderer.on('statusline:snapshot', listener);
+      return () => ipcRenderer.removeListener('statusline:snapshot', listener);
+    },
+    state: (): Promise<StatuslineInstallState> => ipcRenderer.invoke('statusline:state'),
+    install: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:install'),
+    uninstall: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:uninstall'),
   },
   chat: {
     send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),
