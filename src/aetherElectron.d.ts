@@ -2,6 +2,8 @@ import type { RealUsageSnapshot } from './state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from './state/liveAgentsMath';
 import type { AttachmentInfo } from './components/files/attachmentsMath';
 import type { Anomaly } from './shared/anomalyDetectors';
+import type { OptimizeFinding, OptimizeSummary } from './shared/optimizeRules';
+import type { GradeRow } from './shared/optimizeGrade';
 
 export {};
 
@@ -23,6 +25,13 @@ declare global {
         onActiveWork: (callback: (work: RealActiveWork[]) => void) => () => void;
         onAnomalies: (callback: (anomalies: Anomaly[]) => void) => () => void;
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
+      };
+      optimize: {
+        onFindings: (callback: (findings: OptimizeFinding[]) => void) => () => void;
+        onSummary: (callback: (summary: OptimizeSummary) => void) => () => void;
+        onBreakdown: (callback: (rows: GradeRow[]) => void) => () => void;
+        targets: () => Promise<{ global: { path: string; exists: boolean }; project: { path: string; exists: boolean } | null }>;
+        apply: (args: { findingId: string; targetPath: string }) => Promise<{ ok: boolean; added?: boolean; alreadyPresent?: boolean; targetPath?: string; backupPath?: string | null; error?: string }>;
       };
       attachments: {
         list: () => Promise<AttachmentInfo[]>;

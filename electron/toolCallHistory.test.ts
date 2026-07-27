@@ -68,7 +68,7 @@ describe('toolCallHistory', () => {
       model: null,
       usage: null,
       toolUses: [],
-      toolResults: [{ toolUseId: 'tool-1' }],
+      toolResults: [{ toolUseId: 'tool-1', resultLength: 0 }],
       isHumanPrompt: false,
       humanText: null,
     };
@@ -166,7 +166,7 @@ describe('toolCallHistory', () => {
         model: null,
         usage: null,
         toolUses: [],
-        toolResults: [{ toolUseId: `tool-${i}` }],
+        toolResults: [{ toolUseId: `tool-${i}`, resultLength: 0 }],
         isHumanPrompt: false,
         humanText: null,
       };
@@ -222,7 +222,7 @@ describe('toolCallHistory', () => {
       model: null,
       usage: null,
       toolUses: [],
-      toolResults: [{ toolUseId: 'read-1' }],
+      toolResults: [{ toolUseId: 'read-1', resultLength: 0 }],
       isHumanPrompt: false,
       humanText: null,
     };

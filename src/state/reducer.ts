@@ -6,6 +6,8 @@ import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { buildChatActionResultText } from './chatActionResult';
 import { computeRateFromUsage } from '../components/reactor/reactorMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
+import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
+import type { GradeRow } from '../shared/optimizeGrade';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
@@ -36,7 +38,10 @@ export type Action =
   | { type: 'RECORD_DISPATCH_USAGE'; completed: CompletedDispatchUsage[] }
   | { type: 'SET_ACTIVE_WORK'; work: RealActiveWork[] }
   | { type: 'SET_ANOMALIES'; anomalies: Anomaly[] }
-  | { type: 'SET_CACHE_HIT_RATIO'; ratio: number };
+  | { type: 'SET_CACHE_HIT_RATIO'; ratio: number }
+  | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
+  | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
+  | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -237,6 +242,15 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_CACHE_HIT_RATIO':
       return { ...state, cacheHitRatio: action.ratio };
+
+    case 'SET_OPTIMIZE_FINDINGS':
+      return { ...state, optimizeFindings: action.findings };
+
+    case 'SET_OPTIMIZE_SUMMARY':
+      return { ...state, optimizeSummary: action.summary };
+
+    case 'SET_OPTIMIZE_BREAKDOWN':
+      return { ...state, optimizeBreakdown: action.rows };
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);

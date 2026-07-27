@@ -353,14 +353,28 @@ function toolUseLine(id: string, name: string, input: Record<string, unknown>, t
   );
 }
 
-function toolResultLine(toolUseId: string): TranscriptEvent {
+function toolResultLine(toolUseId: string, content: string = 'ok'): TranscriptEvent {
   return parseLine(
     JSON.stringify({
       type: 'user',
-      message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }] },
+      message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
     }),
   );
 }
+
+describe('parseTranscriptLine toolResults resultLength', () => {
+  it('computes a small resultLength for a small tool_result content string', () => {
+    const event = toolResultLine('tu_small', 'ok');
+    expect(event.toolResults[0].resultLength).toBe(JSON.stringify('ok').length);
+  });
+
+  it('computes a large resultLength for a large tool_result content string', () => {
+    const bigContent = 'x'.repeat(10000);
+    const event = toolResultLine('tu_big', bigContent);
+    expect(event.toolResults[0].resultLength).toBe(JSON.stringify(bigContent).length);
+    expect(event.toolResults[0].resultLength).toBeGreaterThan(9000);
+  });
+});
 
 describe('applyLinesToOpenWork', () => {
   it('tracks any in-flight tool call, not just Agent', () => {

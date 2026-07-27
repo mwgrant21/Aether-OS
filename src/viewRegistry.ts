@@ -10,6 +10,7 @@ import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { SettingsView } from './components/settings/SettingsView';
 import { FilesView } from './components/files/FilesView';
 import { UplinksView } from './components/uplinks/UplinksView';
+import { OptimizeView } from './components/optimize/OptimizeView';
 
 export interface ViewDef {
   id: string;
@@ -28,6 +29,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Memory', inTopBar: true, inSidebar: true, component: MemoryView },
   { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
   { id: 'Attachments', inTopBar: true, inSidebar: false, component: FilesView },
+  { id: 'Optimize', inTopBar: true, inSidebar: true, component: OptimizeView },
   { id: 'Uplinks', inTopBar: false, inSidebar: true, component: UplinksView },
   { id: 'Settings', inTopBar: false, inSidebar: true, component: SettingsView },
 ];
