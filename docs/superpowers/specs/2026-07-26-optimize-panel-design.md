@@ -2,12 +2,21 @@
 
 ## Goal
 
-Port TokenMonitor's Optimize panel: rule-based detection of Claude Code usage waste
-(wrong-model-for-the-turn, re-read files that should be pinned, uncapped command
-output) surfaced with an estimated $/week cost and a plain-English fix, plus a
-letter-grade summary. **v1 is findings-only** — no automatic or one-click write to
-`CLAUDE.md`. That's a deliberate, explicit deferral (see Out of Scope), not an
-oversight.
+Port TokenMonitor's Optimize panel **in full**: rule-based detection of Claude Code
+usage waste (wrong-model-for-the-turn, re-read files that should be pinned,
+uncapped command output), priced by counterfactual cost, rolled into a
+letter-grade summary, with a one-click **Apply fix** that writes real guidance
+into `CLAUDE.md` (global or project-scoped), and **recurrence tracking** that
+re-flags a finding if it keeps happening after the fix was applied. This
+supersedes an earlier draft of this spec that deferred apply-fix/recurrence —
+superseded per an explicit decision to match TokenMonitor's complete closed loop
+now, not as a later fast-follow.
+
+**Note on scope boundary**: `docs/diagnostic-thesis-plan.md` treats this port as
+"Phase B4" input to a not-yet-designed anomaly-window cost-attribution record.
+This plan does NOT attempt that integration — it stays self-contained, keying
+rules off raw `TranscriptEvent` data exactly as TokenMonitor's do. Consuming
+anomaly windows instead of/alongside raw events is a separate, later decision.
 
 ## Why this ports cleanly
 
@@ -135,20 +144,45 @@ the 4-row factor breakdown from `gradeBreakdown`. One line added to
 `src/viewRegistry.ts`'s `VIEWS` array: `{ id: 'Optimize', inTopBar: true, inSidebar: true, component: OptimizeView }`.
 No Apply/fix buttons in v1.
 
-## Out of scope (v1, explicit)
+## Apply-fix + recurrence (now in scope)
 
-- **Apply-fix / `CLAUDE.md` writing.** Deliberately deferred — see the
-  brainstorm discussion: auto-*detecting* is safe to fully automate, but
-  auto-*applying* a file mutation without an explicit user action is a
-  meaningfully different risk profile TokenMonitor itself treats as a
-  one-click (not automatic) action. Revisit as a fast-follow once findings
-  alone are proven useful.
-- **Recurrence tracking** (`evaluateOptimizeRulesWithRecurrence`, TokenMonitor's
-  applied-state-aware re-evaluation) — only meaningful once Apply-fix exists
-  (it tracks whether a fix held after being applied). Skip for v1.
-- **Per-project attribution** — TokenMonitor's rules aggregate globally across
-  all scanned projects; v1 matches that. A "which project is this costing you
-  in" drill-down is a reasonable v2, not required now.
+Ported from `optimizeActions.js` (pure guidance/upsert logic), `optimizeState.js`
+(applied-timestamp persistence), and `optimizeActionHandlers.js` (the two IPC
+handlers) — see the Implementation Plan for the concrete task breakdown. Key
+behaviors carried over unchanged:
+
+- **Apply is one-click, not automatic** — a real user action (button + confirm),
+  never triggered by the background scan. This is the actual reason TokenMonitor
+  didn't make this fully automatic, and the same reasoning holds here: writing
+  to a project's `CLAUDE.md` should stay a conscious choice.
+- **Server-side path allowlist** — the main process only ever writes to the
+  global (`~/.claude/CLAUDE.md`) or a derived project path, both computed in the
+  main process; the renderer sends a `findingId` and picks between two
+  main-computed paths, never an arbitrary path string.
+- **Backup before write** — an existing target file is copied to
+  `<path>.ttbak-<timestamp>` before the new content is written.
+- **Recurrence** — re-applying always resets the check ("Apply" means "watch
+  from now"); a finding whose fix held (no matching evidence since applied) is
+  dropped entirely; one that still matches is kept and tagged `recurring: true`
+  with fresh (post-fix-only) numbers, never stale pre-fix evidence.
+
+**One real difference from TokenMonitor worth flagging**: TokenMonitor derives
+the "project" target from a live `getLatestCwd()` getter tied to its terminal's
+actual working directory. Aether OS's embedded terminal always spawns at
+`homeDir` (see `liveAgentTracker.ts`'s existing comment on this) — there's no
+single "current project" concept to key off the same way. This plan instead
+derives the project target from whichever project directory contributed the
+most recently-timestamped event in the historical scan already underway — a
+reasonable proxy, not a perfect match, and worth revisiting if it proves
+confusing in practice.
+
+## Out of scope (still deferred)
+
+- **Per-project attribution/drill-down** — TokenMonitor's rules aggregate
+  globally across all scanned projects; this port matches that. A "which
+  project is this costing you in" breakdown view is a reasonable v2.
+- **Anomaly-window integration** (`docs/diagnostic-thesis-plan.md`'s Phase B4) —
+  explicitly out of scope per the note above.
 
 ## Testing
 
