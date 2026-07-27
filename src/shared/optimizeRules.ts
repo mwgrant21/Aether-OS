@@ -138,13 +138,50 @@ function findUncappedBashOutput(events: TranscriptEvent[], windowMs: number): Op
   };
 }
 
+const RULES_BY_ID: Record<OptimizeFinding['id'], (events: TranscriptEvent[], windowMs: number) => OptimizeFinding | null> = {
+  'opus-on-trivial-turns': findOpusOnTrivialTurns,
+  'unpinned-config-re-reads': findUnpinnedConfigRereads,
+  'uncapped-bash-output': findUncappedBashOutput,
+};
+
 export function evaluateOptimizeRules(events: TranscriptEvent[], windowMs: number): OptimizeFinding[] {
-  const findings = [
-    findOpusOnTrivialTurns(events, windowMs),
-    findUnpinnedConfigRereads(events, windowMs),
-    findUncappedBashOutput(events, windowMs),
-  ];
+  const findings = Object.values(RULES_BY_ID).map((rule) => rule(events, windowMs));
   return findings.filter((f): f is OptimizeFinding => f !== null);
+}
+
+function eventTimestampMs(e: TranscriptEvent): number {
+  return e.timestamp ? e.timestamp.getTime() : NaN;
+}
+
+// Once a finding has been applied (an appliedAtMs is on record for its id), a
+// stale all-time finding would otherwise show forever: these rules scan every
+// event ever recorded, not just the current period, so evidence from before
+// the fix never ages out on its own. Re-run that finding's rule against only
+// the events AFTER appliedAtMs instead:
+//   - no match -> the fix held; drop the finding entirely (caller filters null)
+//   - still matches -> genuinely recurring; return the fresh post-fix finding
+//     (accurate detail/estimate from new evidence only) tagged recurring:true
+// Findings with no recorded appliedAtMs (never applied, or applied by someone
+// hand-editing CLAUDE.md outside the Apply-fix action) pass through unchanged.
+export function evaluateOptimizeRulesWithRecurrence(
+  events: TranscriptEvent[],
+  windowMs: number,
+  appliedState: Record<string, number>,
+): (OptimizeFinding & { recurring?: true; appliedAtMs?: number })[] {
+  const state = appliedState || {};
+  const findings = evaluateOptimizeRules(events, windowMs);
+  return findings
+    .map((f) => {
+      const appliedAtMs = state[f.id];
+      if (!Number.isFinite(appliedAtMs)) return f;
+
+      const rule = RULES_BY_ID[f.id];
+      const recentEvents = events.filter((e) => eventTimestampMs(e) > appliedAtMs);
+      const recurred = rule ? rule(recentEvents, windowMs) : null;
+      if (!recurred) return null;
+      return { ...recurred, appliedAtMs, recurring: true as const };
+    })
+    .filter((f): f is OptimizeFinding & { recurring: true; appliedAtMs: number } => f !== null);
 }
 
 export interface OptimizeSummary {

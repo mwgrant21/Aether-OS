@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateOptimizeRules, summarizeOptimize } from './optimizeRules';
+import { evaluateOptimizeRules, evaluateOptimizeRulesWithRecurrence, summarizeOptimize } from './optimizeRules';
 import { type TranscriptEvent } from '../../electron/transcriptParser';
 
 function opusTrivialEvent(i: number): TranscriptEvent {
@@ -155,5 +155,47 @@ describe('optimizeRules', () => {
 
   it('summarizeOptimize empty findings -> total 0 and grade A', () => {
     expect(summarizeOptimize([])).toEqual({ totalPerWeek: 0, grade: 'A' });
+  });
+
+  it('evaluateOptimizeRulesWithRecurrence: no applied state -> passthrough, no recurring flag', () => {
+    const events = [opusTrivialEvent(1), opusTrivialEvent(2), opusTrivialEvent(3)];
+    const plain = evaluateOptimizeRules(events, 60 * 60 * 1000);
+    const withState = evaluateOptimizeRulesWithRecurrence(events, 60 * 60 * 1000, {});
+    expect(withState).toEqual(plain);
+    expect(withState[0].recurring).toBeFalsy();
+  });
+
+  it('evaluateOptimizeRulesWithRecurrence: fix held (no events since appliedAt) -> finding dropped', () => {
+    const events = [opusTrivialEvent(1), opusTrivialEvent(2), opusTrivialEvent(3)];
+    const appliedAtMs = new Date('2026-07-08T09:04:00Z').getTime();
+    const findings = evaluateOptimizeRulesWithRecurrence(events, 60 * 60 * 1000, {
+      'opus-on-trivial-turns': appliedAtMs,
+    });
+    expect(findings.find((f) => f.id === 'opus-on-trivial-turns')).toBeUndefined();
+  });
+
+  it('evaluateOptimizeRulesWithRecurrence: recurs after appliedAt -> kept, tagged recurring, fresh numbers', () => {
+    const events = [opusTrivialEvent(1), opusTrivialEvent(2), opusTrivialEvent(3)];
+    const appliedAtMs = new Date('2026-07-08T09:01:30Z').getTime();
+    const findings = evaluateOptimizeRulesWithRecurrence(events, 60 * 60 * 1000, {
+      'opus-on-trivial-turns': appliedAtMs,
+    });
+    const finding = findings.find((f) => f.id === 'opus-on-trivial-turns');
+    expect(finding).toBeTruthy();
+    expect(finding!.recurring).toBe(true);
+    expect(finding!.appliedAtMs).toBe(appliedAtMs);
+    const freshOnly = evaluateOptimizeRules([opusTrivialEvent(2), opusTrivialEvent(3)], 60 * 60 * 1000);
+    expect(finding!.estSavingsPerWeek).toBe(freshOnly.find((f) => f.id === 'opus-on-trivial-turns')!.estSavingsPerWeek);
+  });
+
+  it('evaluateOptimizeRulesWithRecurrence: findings never applied are unaffected by unrelated applied state', () => {
+    const events = [repeatedReadEvent(1), repeatedReadEvent(2), repeatedReadEvent(3)];
+    const appliedAtMs = new Date('2026-07-08T09:04:00Z').getTime();
+    const findings = evaluateOptimizeRulesWithRecurrence(events, 60 * 60 * 1000, {
+      'opus-on-trivial-turns': appliedAtMs,
+    });
+    const finding = findings.find((f) => f.id === 'unpinned-config-re-reads');
+    expect(finding).toBeTruthy();
+    expect(finding!.recurring).toBeFalsy();
   });
 });
