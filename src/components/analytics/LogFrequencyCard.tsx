@@ -1,15 +1,17 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { computeLogFrequency } from './analyticsMath';
 
 export function LogFrequencyCard() {
+  const colors = useColors();
   const { state } = useAetherStore();
   const rows = computeLogFrequency(state.logs);
 
   return (
-    <div style={cardStyle}>
-      <div style={titleStyle}>ALERT / LOG FREQUENCY</div>
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)}>ALERT / LOG FREQUENCY</div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
         {rows.map((r) => (
           <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -23,5 +25,9 @@ export function LogFrequencyCard() {
   );
 }
 
-const cardStyle: CSSProperties = { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
-const titleStyle: CSSProperties = { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}

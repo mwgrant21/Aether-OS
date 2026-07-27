@@ -1,16 +1,18 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { spark } from '../../utils/format';
 import { computeSysMetricStats } from './analyticsMath';
 
 export function SystemMetricsCard() {
+  const colors = useColors();
   const { state } = useAetherStore();
   const rows = computeSysMetricStats(state.sys);
 
   return (
-    <div style={cardStyle}>
-      <div style={titleStyle}>SYSTEM METRICS</div>
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)}>SYSTEM METRICS</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
         {rows.map((m) => (
           <div key={m.label} style={metricTileStyle}>
@@ -38,6 +40,10 @@ export function SystemMetricsCard() {
   );
 }
 
-const cardStyle: CSSProperties = { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
-const titleStyle: CSSProperties = { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
 const metricTileStyle: CSSProperties = { padding: '10px 12px', borderRadius: 9, border: '1px solid rgba(80,190,220,.16)', background: 'rgba(6,20,28,.5)' };

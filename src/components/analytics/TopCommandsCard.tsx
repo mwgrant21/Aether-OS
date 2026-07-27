@@ -1,16 +1,18 @@
 import type { CSSProperties } from 'react';
-import { colors, fonts } from '../../styles/tokens';
+import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { computeTopCommands } from './analyticsMath';
 
 export function TopCommandsCard() {
+  const colors = useColors();
   const { state } = useAetherStore();
   const rows = computeTopCommands(state.cmdHist);
   const maxCount = rows[0]?.count ?? 1;
 
   return (
-    <div style={cardStyle}>
-      <div style={titleStyle}>TOP COMMANDS</div>
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)}>TOP COMMANDS</div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 9 }}>
         {rows.map((r, i) => (
           <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -30,12 +32,18 @@ export function TopCommandsCard() {
             <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft, width: 34, textAlign: 'right' }}>{r.count}×</span>
           </div>
         ))}
-        {!rows.length && <div style={emptyStyle}>no commands run yet</div>}
+        {!rows.length && <div style={emptyStyle(colors)}>no commands run yet</div>}
       </div>
     </div>
   );
 }
 
-const cardStyle: CSSProperties = { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
-const titleStyle: CSSProperties = { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-const emptyStyle: CSSProperties = { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return { padding: 15, borderRadius: 14, border: `1px solid ${colors.panelBorder}`, background: colors.panelGradient, display: 'flex', flexDirection: 'column', minHeight: 0 };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+function emptyStyle(colors: ColorPalette): CSSProperties {
+  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
+}
