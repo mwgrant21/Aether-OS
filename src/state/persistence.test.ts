@@ -147,8 +147,27 @@ describe('persistence', () => {
       ],
       memSeq: 12,
       chatActionResults: [{ channelId: 'AETHER', text: 'done' }],
-      recentCompletedDispatches: [],
-      dispatchChannels: [],
+      recentCompletedDispatches: [
+        {
+          toolUseId: 'ghost-tool-use-1',
+          subagentType: 'Ghost Subagent',
+          description: 'Ghost dispatch description',
+          startedAt: '2026-07-27T10:00:00.000Z',
+          prompt: 'ghost prompt text',
+          model: 'ghost-model-1',
+        },
+      ],
+      dispatchChannels: [
+        {
+          toolUseId: 'ghost-tool-use-2',
+          subagentType: 'Ghost Channel Subagent',
+          description: 'Ghost channel description',
+          prompt: 'ghost channel prompt text',
+          model: 'ghost-model-2',
+          startedAt: '2026-07-27T10:05:00.000Z',
+          createdAt: '10:05',
+        },
+      ],
       dispatchUsage: { 'tool-1': { tokens: 500, toolUses: 3, durationMs: 1200 } },
     };
 
@@ -174,9 +193,31 @@ describe('persistence', () => {
     expect(loaded?.memories).toEqual(distinctiveState.memories);
     expect(loaded?.memSeq).toBe(12);
     expect(loaded?.chatActionResults).toEqual(distinctiveState.chatActionResults);
-    expect(loaded?.recentCompletedDispatches).toEqual([]);
-    expect(loaded?.dispatchChannels).toEqual([]);
+    expect(loaded?.recentCompletedDispatches).toEqual(distinctiveState.recentCompletedDispatches);
+    expect(loaded?.dispatchChannels).toEqual(distinctiveState.dispatchChannels);
     expect(loaded?.dispatchUsage).toEqual(distinctiveState.dispatchUsage);
+
+    // Field-for-field checks on the populated dispatch entries, not just array-level
+    // toEqual -- catches a field silently dropped or mis-mapped during persistence for
+    // a real RealAgentDispatch/DispatchChannelStub, the same "populated array, not just
+    // an empty default" gap the memSeq check above closes for memories.
+    expect(loaded?.recentCompletedDispatches?.[0]).toEqual({
+      toolUseId: 'ghost-tool-use-1',
+      subagentType: 'Ghost Subagent',
+      description: 'Ghost dispatch description',
+      startedAt: '2026-07-27T10:00:00.000Z',
+      prompt: 'ghost prompt text',
+      model: 'ghost-model-1',
+    });
+    expect(loaded?.dispatchChannels?.[0]).toEqual({
+      toolUseId: 'ghost-tool-use-2',
+      subagentType: 'Ghost Channel Subagent',
+      description: 'Ghost channel description',
+      prompt: 'ghost channel prompt text',
+      model: 'ghost-model-2',
+      startedAt: '2026-07-27T10:05:00.000Z',
+      createdAt: '10:05',
+    });
 
     // The memSeq-style bug class specifically: memSeq must survive strictly ahead of
     // every persisted memory's id, or the next memory created after rehydration would
