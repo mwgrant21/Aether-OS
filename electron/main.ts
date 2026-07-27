@@ -1,13 +1,19 @@
 import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync } from 'fs';
+import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
+import { type TranscriptEvent } from './transcriptParser';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
 import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
+import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
+import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
+import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
+import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -110,11 +116,16 @@ function sendToWindow(channel: string, ...args: unknown[]): void {
 
 const USAGE_SCAN_INTERVAL_MS = 60000;
 const AGENT_TICK_INTERVAL_MS = 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json');
+let lastScannedEvents: TranscriptEvent[] = [];
 
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const projectsRoot = join(os.homedir(), '.claude', 'projects');
   const events = await scanAllProjects(projectsRoot);
+  lastScannedEvents = events;
   const now = new Date();
   sendToWindow('usage:snapshot', {
     weeklyTokens: computeWeeklyTokens(events, now),
@@ -126,6 +137,33 @@ async function scanAndPushUsage(): Promise<void> {
     lastScanAt: now.toISOString(),
     ctxUsed: computeContextWindow(events, now),
   });
+
+  const appliedState = await loadOptimizeState(optimizeStatePath);
+  const findings = evaluateOptimizeRulesWithRecurrence(events, WEEK_MS, appliedState);
+  const summary = summarizeOptimize(findings);
+  let totalCacheRead = 0;
+  let totalInput = 0;
+  for (const e of events) {
+    if (!e.usage) continue;
+    totalCacheRead += e.usage.cacheReadInputTokens;
+    totalInput += e.usage.inputTokens + e.usage.cacheCreationInputTokens + e.usage.cacheReadInputTokens;
+  }
+  const cacheHitRate = totalInput > 0 ? totalCacheRead / totalInput : 0;
+  const breakdown = gradeBreakdown({ findings, cacheHitRate });
+  sendToWindow('optimize:findings', findings);
+  sendToWindow('optimize:summary', summary);
+  sendToWindow('optimize:breakdown', breakdown);
+}
+
+function optimizeGlobalTargetPath(): string {
+  return join(os.homedir(), '.claude', 'CLAUDE.md');
+}
+
+function optimizeProjectTargetPath(events: TranscriptEvent[]): string | null {
+  const withCwd = events
+    .filter((e) => e.cwd && e.timestamp)
+    .sort((a, b) => b.timestamp!.getTime() - a.timestamp!.getTime());
+  return withCwd.length > 0 ? join(withCwd[0].cwd!, 'CLAUDE.md') : null;
 }
 
 const liveAgentTracker = createLiveAgentTracker(os.homedir());
@@ -198,6 +236,60 @@ ipcMain.handle('attachments:add', () => attachmentsStore.add());
 ipcMain.handle('attachments:remove', (_event, name: string) => attachmentsStore.remove(name));
 ipcMain.handle('attachments:thumbnail', (_event, name: string) => attachmentsStore.thumbnail(name));
 ipcMain.handle('attachments:open', (_event, name: string) => attachmentsStore.open(name));
+
+ipcMain.handle('optimize:targets', async () => {
+  const globalPath = optimizeGlobalTargetPath();
+  const projectPath = optimizeProjectTargetPath(lastScannedEvents);
+  async function pathExists(p: string): Promise<boolean> {
+    try {
+      await fsp.stat(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return {
+    global: { path: globalPath, exists: await pathExists(globalPath) },
+    project: projectPath ? { path: projectPath, exists: await pathExists(projectPath) } : null,
+  };
+});
+
+ipcMain.handle('optimize:apply', async (_event, { findingId, targetPath }: { findingId: string; targetPath: string }) => {
+  const globalPath = optimizeGlobalTargetPath();
+  const projectPath = optimizeProjectTargetPath(lastScannedEvents);
+  const allowed = targetPath === globalPath || (projectPath !== null && targetPath === projectPath);
+  if (!allowed) return { ok: false, error: 'invalid target' };
+  if (guidanceFor(findingId) === null) return { ok: false, error: 'unknown finding' };
+
+  try {
+    let existing = '';
+    let fileExisted = true;
+    try {
+      existing = await fsp.readFile(targetPath, 'utf8');
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        existing = '';
+        fileExisted = false;
+      } else {
+        throw err;
+      }
+    }
+    const { content, added } = upsertGuidance(existing, findingId);
+    await recordAppliedAt(optimizeStatePath, findingId, Date.now());
+    if (!added) return { ok: true, added: false, alreadyPresent: true, targetPath };
+
+    let backupPath: string | null = null;
+    if (fileExisted) {
+      backupPath = `${targetPath}.ttbak-${Date.now()}`;
+      await fsp.writeFile(backupPath, existing, 'utf8');
+    }
+    await fsp.mkdir(dirname(targetPath), { recursive: true });
+    await fsp.writeFile(targetPath, content, 'utf8');
+    return { ok: true, added: true, targetPath, backupPath };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? String(err) };
+  }
+});
 
 ipcMain.on('window:minimize', () => {
   mainWindow?.minimize();
