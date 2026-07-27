@@ -1,37 +1,13 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
-
-type ChatBackendState = 'live' | 'offline' | 'browser';
+import { useChatBackendState, type ChatBackendState } from '../chat/useChatBackendState';
 
 const COPY: Record<ChatBackendState, string> = {
   live: 'Live · Claude replies enabled',
   offline: 'Offline · in-world responder (no ANTHROPIC_API_KEY)',
   browser: 'Browser mode · replies via dev-server proxy',
 };
-
-/** Feature-detects the Electron IPC bridge the same way `TopBar.tsx`'s `WindowControls` does,
- *  then asks the main process (never the renderer's own env) whether a real API key is set. */
-function useChatBackendState(): ChatBackendState | null {
-  const [state, setState] = useState<ChatBackendState | null>(null);
-
-  useEffect(() => {
-    const bridge = typeof window !== 'undefined' ? window.aetherElectron : undefined;
-    if (!bridge) {
-      setState('browser');
-      return;
-    }
-    let cancelled = false;
-    bridge.chat.hasKey().then((hasKey) => {
-      if (!cancelled) setState(hasKey ? 'live' : 'offline');
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return state;
-}
 
 export function ChatBackendCard() {
   const colors = useColors();

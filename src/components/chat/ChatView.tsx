@@ -1,42 +1,31 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { useChatChannels } from './useChatChannels';
+import { useChatBackendState, type ChatBackendState } from './useChatBackendState';
 import { ChannelRail } from './ChannelRail';
 import { MessageThread } from './MessageThread';
 import { MessageInput } from './MessageInput';
 
-/** Feature-detects the Electron IPC bridge the same way `TopBar.tsx`'s `WindowControls` does.
- *  Returns null until resolved (browser mode resolves immediately to false — no bridge means no
- *  way to confirm a live key, and this indicator must never claim LIVE without proof). */
-function useChatIsLive(): boolean | null {
-  const [isLive, setIsLive] = useState<boolean | null>(null);
+const CHIP_LABEL: Record<ChatBackendState, string> = {
+  live: 'LIVE',
+  offline: 'OFFLINE',
+  browser: 'BROWSER',
+};
 
-  useEffect(() => {
-    const bridge = typeof window !== 'undefined' ? window.aetherElectron : undefined;
-    if (!bridge) {
-      setIsLive(false);
-      return;
-    }
-    let cancelled = false;
-    bridge.chat.hasKey().then((hasKey) => {
-      if (!cancelled) setIsLive(hasKey);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return isLive;
-}
+const CHIP_TITLE: Record<ChatBackendState, string> = {
+  live: 'Claude replies enabled',
+  offline: 'Not confirmed live — replies may fall back to the offline in-world responder',
+  browser: 'Browser mode — replies via the dev-server proxy',
+};
 
 export function ChatView() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const chat = useChatChannels(state, dispatch);
   const [draft, setDraft] = useState('');
-  const isLive = useChatIsLive();
+  const backendState = useChatBackendState();
 
   function send() {
     if (!draft.trim()) return;
@@ -61,9 +50,9 @@ export function ChatView() {
           <span style={headerDotStyle(chat.activeChannel.hue)} />
           <span style={headerNameStyle(colors)}>{chat.activeChannel.name}</span>
           {chat.activeChannel.archived && <span style={archivedPillStyle(colors)}>TERMINATED</span>}
-          {isLive !== null && (
-            <span style={backendChipStyle(colors, isLive)} title={isLive ? 'Claude replies enabled' : 'Not confirmed live — replies may fall back to the offline in-world responder'}>
-              {isLive ? 'LIVE' : 'OFFLINE'}
+          {backendState !== null && (
+            <span style={backendChipStyle(colors, backendState)} title={CHIP_TITLE[backendState]}>
+              {CHIP_LABEL[backendState]}
             </span>
           )}
         </div>
@@ -120,12 +109,12 @@ function archivedPillStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 5,
   };
 }
-function backendChipStyle(colors: ColorPalette, isLive: boolean): CSSProperties {
+function backendChipStyle(colors: ColorPalette, backendState: ChatBackendState): CSSProperties {
   return {
     marginLeft: 'auto',
     font: `600 9px/1 ${fonts.ui}`,
     letterSpacing: 1,
-    color: isLive ? colors.success : colors.textDim,
+    color: backendState === 'live' ? colors.success : backendState === 'offline' ? colors.warn : colors.textDim,
     border: `1px solid ${colors.chipBorder}`,
     background: colors.panelInset,
     padding: '3px 7px',
