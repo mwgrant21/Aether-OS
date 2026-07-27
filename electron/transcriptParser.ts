@@ -13,6 +13,7 @@ export interface TranscriptToolUse {
 
 export interface TranscriptToolResult {
   toolUseId: string;
+  resultLength: number;
 }
 
 export interface TranscriptEvent {
@@ -86,7 +87,10 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
         : [];
     const toolResults = content
       .filter((item: any) => item.type === 'tool_result')
-      .map((item: any) => ({ toolUseId: item.tool_use_id }));
+      .map((item: any) => ({
+        toolUseId: item.tool_use_id,
+        resultLength: JSON.stringify(item.content ?? '').length,
+      }));
     const textItem = content.find((item: any) => item.type === 'text');
     const isHumanPrompt = toolResults.length === 0 && !!textItem;
     return {
