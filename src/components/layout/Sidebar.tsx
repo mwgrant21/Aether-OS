@@ -65,14 +65,6 @@ export function Sidebar() {
           Reactor nominal — {state.agents.length} agents drawing power.
         </div>
       </div>
-
-      <div style={tipCardStyle}>
-        <div style={tipGlowStyle} />
-        <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.accentCyanSoft }}>◇ REACTOR TIP</div>
-        <div style={{ marginTop: 7, font: `400 12px/1.5 ${fonts.ui}`, color: colors.textSecondary }}>
-          Parallelize agents off one core to burn fewer tokens per task.
-        </div>
-      </div>
     </div>
   );
 }
@@ -182,22 +174,3 @@ function reactorMiniInnerStyle([nativeWidth, nativeHeight]: [number, number]): C
     transform: `translate(-50%, -50%) scale(${scale})`,
   };
 }
-const tipCardStyle: CSSProperties = {
-  marginTop: 'auto',
-  padding: 13,
-  borderRadius: 12,
-  border: '1px solid rgba(95,220,255,.25)',
-  background: 'linear-gradient(180deg, rgba(14,48,60,.7), rgba(8,26,34,.7))',
-  position: 'relative',
-  overflow: 'hidden',
-};
-const tipGlowStyle: CSSProperties = {
-  position: 'absolute',
-  top: -14,
-  right: -14,
-  width: 56,
-  height: 56,
-  borderRadius: '50%',
-  background: 'radial-gradient(circle, rgba(95,240,255,.25), transparent 70%)',
-  animation: 'breath var(--pulse-dur, 2.4s) ease-in-out infinite',
-};
