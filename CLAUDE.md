@@ -37,7 +37,13 @@ npm run electron:build  # electron-vite build (main + preload + renderer, for th
 
 Real Claude replies in Chat need `ANTHROPIC_API_KEY`: copy `.env.example` to `.env`.
 Without a key, an offline in-world responder answers instead — nothing breaks.
-The key is read server-side only (electron main process); `.env` is gitignored.
+The key is read server-side only — **today that is the Vite dev-server plugin
+(`vite-plugins/chatProxyPlugin.ts`), NOT the Electron main process.** That plugin is registered
+only in `vite.config.ts`, so `POST /api/chat` does not exist in `electron:dev` or any packaged
+build: the fetch 404s, `askClaude()` returns null per its contract, and Chat silently falls back to
+the offline responder. Real replies currently work in `npm run dev` browser mode only. Stage 0.5
+(`docs/superpowers/plans/2026-07-27-chat-ipc-correctness.md`) moves it to the main process and makes
+this sentence true. `.env` is gitignored.
 
 ## Architecture map
 
@@ -129,6 +135,33 @@ review before merge. `PROGRESS.md`'s "Shipped plans" section has a detailed
 paragraph per feature — read the most recent few entries there for the fullest,
 most current picture of what's real, what's still simulated, and what
 deliberate scope exclusions exist (Grid/Reactor theming, packaging, etc.).
+
+
+## Privacy & data model (binding)
+
+**Aether OS is single-user and local-only.** Full stance in `docs/privacy-and-data.md` — read it
+before designing anything that persists or transmits data. The short version:
+
+- **Nothing leaves this machine** except Chat's scoped context snapshot to the Anthropic Messages
+  API, which requires a key the user supplies. Without a key, nothing leaves at all.
+- **No telemetry, ever.** Not opt-out, not anonymous, not aggregate.
+- **No network listener.** Hook ingest is an append-only file spool
+  (`~/.aether-os/spool/`), never a loopback HTTP server — no port, no token, no auth surface, and
+  a file append cannot hang a real Claude Code session the way a POST to a dead listener can.
+- **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
+  raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
+  detector and optimize rule has been checked against this and none of them need content.
+- **Paths are the remaining sensitive surface** — store project-relative, display basenames only.
+- **Retention is a privacy control**, not a disk concern. Aggregates survive, event rows age out,
+  and Settings exposes store size plus a real Purge action.
+- `systemPrompt.ts`'s scoped snapshots are a privacy control, not just an architecture pattern:
+  any new field added to a chat snapshot is a decision about what gets transmitted. Keep the
+  leak tests current when the snapshot shape changes.
+
+Single-user also **deletes** a lot of scope permanently: no auth model, no multi-tenant schema, no
+shared folder or report writing, no roll-up, no sharing links, no cloud sync. TokenMonitor is the
+fleet product and writes per-seat reports to a shared folder by design; Aether OS has no equivalent
+and should never grow one.
 
 ## Gotchas
 
