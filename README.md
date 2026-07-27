@@ -35,6 +35,17 @@ pieces exist only where noted, and `PROGRESS.md` tracks exactly which is which.
   the resolution posts back into the requesting channel.
 - Every remaining nav tab (Projects, Files/attachments, Uplinks, Settings, and friends) is a
   built view — no "coming soon" panels left.
+- **Instrument + Alarm** — a real anomaly-detection pipeline (re-read loops, write-delete-rewrite
+  cycles, high burn with zero edits, stalled permission prompts) surfaces as warning rings on
+  Grid nodes and an amber reactor flicker; the reactor itself doubles as an instrument — model
+  hue, cache-hit clarity, and concurrency turbulence are real signals, not decoration.
+- **Alert Sounds** — the budget alarm and anomaly detector are audible: a synthesized (no
+  external audio asset) yellow-alert chirp on elevated burn, a looping red-alert klaxon at the
+  burn ceiling, and a soft chime on a new anomaly, all toggleable in Settings with a TEST SOUND
+  preview.
+- **Full light/dark theming** — every view, including the terminal's own xterm.js color theme,
+  now re-themes live via the Settings toggle. Grid and the reactor's WebGL/canvas rendering are
+  the one deliberate exception (visual signal, not theme surface).
 
 Packaging, installers, and a team fleet view are deliberately out of scope: this is a
 personal cockpit, not a distributed product. Its team-facing sibling is
@@ -63,12 +74,14 @@ server-side only and `.env` is gitignored.
 
 ```bash
 npm test               # vitest — reducer, tick, view math, personas, prompt scoping,
-                       # action parsing/execution, proxy validation (393 tests at last count)
+                       # action parsing/execution, proxy validation, anomaly detection,
+                       # alert-sound decision logic (951 tests at last count)
 npm run build          # tsc -b && vite build
 ```
 
-The frame is fixed at 1536×1024 by design — a faithful port of the original design handoff,
-not a responsive app (yet).
+The frame is a fixed 1536×1024 canvas by design — a faithful port of the original design
+handoff — but it scales to fit the actual viewport (`useViewportScale`/`computeFrameScale`),
+so it's no longer a fixed-size-only window.
 
 ## How this is being built
 

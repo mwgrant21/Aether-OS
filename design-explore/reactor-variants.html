@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Reactor Design Exploration</title>
+<style>
+  :root {
+    --bg: #06090f;
+    --panel: #0b111c;
+    --border: #1c2635;
+    --text: #cfe3ff;
+    --muted: #6f8bb0;
+    --nominal: #38bdf8;
+    --warn: #fbbf24;
+    --crit: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  header {
+    padding: 20px 28px 8px;
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    letter-spacing: 0.02em;
+  }
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ---- controls ---- */
+  .controls {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    align-items: center;
+    background: rgba(6,9,15,0.92);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    margin-top: 10px;
+  }
+  .control-group { display: flex; align-items: center; gap: 10px; }
+  .control-group label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  input[type="range"] { width: 180px; accent-color: var(--nominal); }
+  .alarm-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .alarm-btn.active[data-level="nominal"] { border-color: var(--nominal); color: var(--nominal); }
+  .alarm-btn.active[data-level="warn"] { border-color: var(--warn); color: var(--warn); }
+  .alarm-btn.active[data-level="crit"] { border-color: var(--crit); color: var(--crit); }
+  .stepper button {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    width: 26px; height: 26px; border-radius: 5px; cursor: pointer; font-size: 14px;
+  }
+  #rateLabel, #agentLabel { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text); min-width: 70px; }
+
+  /* ---- grid ---- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    padding: 24px 28px 60px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .card h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .card .meta { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
+  .stage {
+    width: 100%;
+    height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .map {
+    font-size: 11px;
+    color: #4d6483;
+    font-family: Consolas, monospace;
+    text-align: center;
+  }
+
+  /* =========================================================
+     1. Baseline orb
+  ========================================================= */
+  .orb {
+    width: 140px; height: 140px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #eaffff, var(--c1) 40%, var(--c2) 75%);
+    box-shadow: 0 0 var(--glow) var(--c1);
+    transition: box-shadow 0.3s ease;
+    animation: orbPulse var(--dur) ease-in-out infinite;
+  }
+  @keyframes orbPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+  }
+
+  /* =========================================================
+     2. Conduit ring core
+  ========================================================= */
+  .conduit-stage { position: relative; width: 180px; height: 180px; }
+  .conduit-ring {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0 10%, var(--c1) 14%, transparent 20%,
+      transparent 45%, var(--c1) 49%, transparent 55%,
+      transparent 70%, var(--c1) 74%, transparent 80%);
+    animation: spin var(--dur) linear infinite;
+    opacity: 0.85;
+  }
+  .conduit-ring.outer { animation-direction: reverse; opacity: 0.4; transform: scale(1.25); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .conduit-core {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 84px; height: 84px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff, var(--c1) 50%, var(--c2) 100%);
+    box-shadow: 0 0 var(--glow) var(--c1);
+  }
+
+  /* =========================================================
+     3. Plasma blob
+  ========================================================= */
+  .blob-wrap { width: 160px; height: 160px; filter: url(#goo); }
+  .blob {
+    position: absolute; border-radius: 50%;
+    background: radial-gradient(circle, var(--c1), var(--c2));
+    mix-blend-mode: screen;
+  }
+  .blob-stage { position: relative; width: 160px; height: 160px; }
+  .blob1 { width: 90px; height: 90px; left: 35px; top: 35px; animation: blob1move var(--dur) ease-in-out infinite; }
+  .blob2 { width: 60px; height: 60px; left: 10px; top: 50px; animation: blob2move var(--dur) ease-in-out infinite; }
+  .blob3 { width: 55px; height: 55px; left: 90px; top: 60px; animation: blob3move var(--dur) ease-in-out infinite; }
+  @keyframes blob1move { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(6px,-8px) scale(1.08);} }
+  @keyframes blob2move { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(-10px,6px) scale(0.9);} }
+  @keyframes blob3move { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(8px,10px) scale(1.1);} }
+
+  /* =========================================================
+     4. HUD gauge ring
+  ========================================================= */
+  .hud-stage { position: relative; width: 190px; height: 190px; display: flex; align-items: center; justify-content: center; }
+  .hud-ring { transform: rotate(-90deg); }
+  .hud-ring circle.track { fill: none; stroke: #17202e; stroke-width: 10; }
+  .hud-ring circle.fill {
+    fill: none; stroke: var(--c1); stroke-width: 10; stroke-linecap: round;
+    stroke-dasharray: 471; /* 2*pi*75 */
+    transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+  }
+  .hud-center { position: absolute; text-align: center; }
+  .hud-center .num { font-size: 22px; font-weight: 700; color: var(--c1); font-variant-numeric: tabular-nums; }
+  .hud-center .unit { font-size: 10px; color: var(--muted); letter-spacing: 0.08em; }
+  .hud-tick { position: absolute; inset: 0; animation: spin calc(var(--dur) * 6) linear infinite; }
+
+  /* =========================================================
+     5. Particle starfield core
+  ========================================================= */
+  .particle-stage { position: relative; width: 180px; height: 180px; }
+  .particle-core {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 60px; height: 60px; border-radius: 50%;
+    background: radial-gradient(circle, #fff, var(--c1) 60%, transparent 100%);
+    box-shadow: 0 0 var(--glow) var(--c1);
+    z-index: 2;
+  }
+  .particle {
+    position: absolute; left: 50%; top: 50%;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--c1);
+    animation-name: orbit;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+  @keyframes orbit {
+    from { transform: rotate(0deg) translateX(var(--r)) rotate(0deg) scale(var(--s)); opacity: var(--o); }
+    to   { transform: rotate(360deg) translateX(var(--r)) rotate(-360deg) scale(var(--s)); opacity: var(--o); }
+  }
+
+  /* =========================================================
+     6. Minimal calm pulse
+  ========================================================= */
+  .calm-stage { position: relative; width: 160px; height: 160px; display: flex; align-items: center; justify-content: center; }
+  .calm-ring {
+    position: absolute; width: 90px; height: 90px; border-radius: 50%;
+    border: 1.5px solid var(--c1);
+    animation: calmPulse var(--dur) ease-out infinite;
+  }
+  .calm-ring.d2 { animation-delay: calc(var(--dur) / 2); }
+  .calm-dot {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--c1);
+    box-shadow: 0 0 16px var(--c1);
+  }
+  @keyframes calmPulse {
+    0% { transform: scale(0.9); opacity: 0.9; }
+    100% { transform: scale(1.9); opacity: 0; }
+  }
+
+  footer { padding: 0 28px 40px; color: var(--muted); font-size: 12px; }
+  code { color: #9fd8ff; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <filter id="goo">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
+    <feColorMatrix in="blur" mode="matrix"
+      values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -10" result="goo" />
+  </filter>
+</svg>
+
+<header>
+  <h1>Reactor Design Exploration</h1>
+  <p>Six visual directions for the reactor core, all driven by the same simulated burn rate / alarm level / agent count. Scratch exploration only — nothing here is wired to real app code.</p>
+</header>
+
+<div class="controls">
+  <div class="control-group">
+    <label>Burn rate</label>
+    <input type="range" id="rateSlider" min="20000" max="168000" value="92000" step="1000">
+    <span id="rateLabel">92,000 tok/min</span>
+  </div>
+  <div class="control-group">
+    <label>Alarm</label>
+    <button class="alarm-btn active" data-level="nominal">Nominal</button>
+    <button class="alarm-btn" data-level="warn">Warn</button>
+    <button class="alarm-btn" data-level="crit">Crit</button>
+  </div>
+  <div class="control-group stepper">
+    <label>Agents</label>
+    <button id="agentDown">-</button>
+    <span id="agentLabel">5 agents</span>
+    <button id="agentUp">+</button>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>1. Baseline Orb</h2>
+    <div class="stage"><div class="orb" data-comp="orb"></div></div>
+    <div class="meta">Current design. Simple radial-gradient sphere; glow radius + pulse speed = burnRate, hue = alarmLevel.</div>
+    <div class="map">glow ← burnRate · hue ← alarmLevel · pulse-dur ← burnRate</div>
+  </div>
+
+  <div class="card">
+    <h2>2. Conduit Ring Core</h2>
+    <div class="stage">
+      <div class="conduit-stage" data-comp="conduit">
+        <div class="conduit-ring outer"></div>
+        <div class="conduit-ring"></div>
+        <div class="conduit-core"></div>
+      </div>
+    </div>
+    <div class="meta">CSS conic-gradient rings replace the canvas housing/conduit draw. Ring rotation speed = burnRate, ring count could scale with agentCount.</div>
+    <div class="map">ring-speed ← burnRate · hue ← alarmLevel · ring-count ← agentCount</div>
+  </div>
+
+  <div class="card">
+    <h2>3. Plasma Blob</h2>
+    <div class="stage">
+      <div class="blob-stage">
+        <div class="blob-wrap">
+          <div class="blob blob1" data-comp="blob"></div>
+          <div class="blob blob2" data-comp="blob"></div>
+          <div class="blob blob3" data-comp="blob"></div>
+        </div>
+      </div>
+    </div>
+    <div class="meta">Gooey SVG-filter merge of drifting blobs. Organic, less mechanical — motion speed = burnRate, turbulence/merge tightness = alarmLevel.</div>
+    <div class="map">drift-speed ← burnRate · hue ← alarmLevel</div>
+  </div>
+
+  <div class="card">
+    <h2>4. HUD Gauge Ring</h2>
+    <div class="stage">
+      <div class="hud-stage">
+        <svg class="hud-ring" width="190" height="190">
+          <circle class="track" cx="95" cy="95" r="75"></circle>
+          <circle class="fill" data-comp="hud" cx="95" cy="95" r="75"></circle>
+        </svg>
+        <div class="hud-center">
+          <div class="num" id="hudNum" data-comp="hud-num">92K</div>
+          <div class="unit">TOK/MIN</div>
+        </div>
+      </div>
+    </div>
+    <div class="meta">Instrument-panel framing: numeric burnRate front and center, arc fill = position in 20K-168K range, color = alarmLevel. Reads at a glance vs. mood-based orb.</div>
+    <div class="map">arc-fill ← burnRate (0-100%) · hue ← alarmLevel · label ← burnRate value</div>
+  </div>
+
+  <div class="card">
+    <h2>5. Particle Core</h2>
+    <div class="stage">
+      <div class="particle-stage" id="particleStage" data-comp="particles">
+        <div class="particle-core"></div>
+      </div>
+    </div>
+    <div class="meta">Streaming particles feeding the core, CSS analog of the canvas "warp" mode. Particle count = agentCount, orbit speed = burnRate.</div>
+    <div class="map">particle-count ← agentCount · orbit-speed ← burnRate · hue ← alarmLevel</div>
+  </div>
+
+  <div class="card">
+    <h2>6. Minimal Calm Pulse</h2>
+    <div class="stage">
+      <div class="calm-stage" data-comp="calm">
+        <div class="calm-ring"></div>
+        <div class="calm-ring d2"></div>
+        <div class="calm-dot"></div>
+      </div>
+    </div>
+    <div class="meta">Low-motion, low-glow alternative for reduced-motion / accessibility contexts. Same data mapping, deliberately understated — a "calm mode" toggle candidate.</div>
+    <div class="map">ping-interval ← burnRate · hue ← alarmLevel · no continuous animation at nominal-low rate</div>
+  </div>
+
+</div>
+
+<footer>
+  Params: <code>burnRate</code> (20,000-168,000 tok/min, matches <code>reactorMath.ts</code> clamp range), <code>alarmLevel</code> (nominal/warn/crit), <code>agentCount</code>. Adjust controls above to stress-test all six under the same simulated state.
+</footer>
+
+<script>
+  const COLORS = {
+    nominal: { c1: '#38bdf8', c2: '#0c4a6e' },
+    warn:    { c1: '#fbbf24', c2: '#78350f' },
+    crit:    { c1: '#f87171', c2: '#7f1d1d' },
+  };
+  const RATE_MIN = 20000, RATE_MAX = 168000;
+
+  let state = { rate: 92000, alarm: 'nominal', agents: 5 };
+
+  const rateSlider = document.getElementById('rateSlider');
+  const rateLabel = document.getElementById('rateLabel');
+  const agentLabel = document.getElementById('agentLabel');
+  const alarmBtns = document.querySelectorAll('.alarm-btn');
+
+  function normRate(rate) {
+    return Math.min(1, Math.max(0, (rate - RATE_MIN) / (RATE_MAX - RATE_MIN)));
+  }
+
+  function buildParticles(count) {
+    const stage = document.getElementById('particleStage');
+    stage.querySelectorAll('.particle').forEach(p => p.remove());
+    for (let i = 0; i < count; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      const radius = 45 + (i % 3) * 20;
+      const dur = 3 + Math.random() * 2;
+      const delay = -Math.random() * dur;
+      const scale = 0.6 + Math.random() * 0.8;
+      const opacity = 0.5 + Math.random() * 0.5;
+      p.style.setProperty('--r', radius + 'px');
+      p.style.setProperty('--s', scale);
+      p.style.setProperty('--o', opacity);
+      p.style.animationDuration = dur + 's';
+      p.style.animationDelay = delay + 's';
+      stage.appendChild(p);
+    }
+  }
+
+  function render() {
+    const t = normRate(state.rate);
+    const colors = COLORS[state.alarm];
+    const glow = 20 + t * 60; // px
+    const dur = Math.max(0.6, 2.6 - t * 1.9); // faster pulse at higher rate
+    const root = document.documentElement.style;
+
+    document.querySelectorAll('[data-comp]').forEach(el => {
+      el.style.setProperty('--c1', colors.c1);
+      el.style.setProperty('--c2', colors.c2);
+      el.style.setProperty('--glow', glow + 'px');
+      el.style.setProperty('--dur', dur + 's');
+    });
+
+    // HUD gauge fill
+    const hud = document.querySelector('[data-comp="hud"]');
+    const circumference = 471;
+    hud.style.stroke = colors.c1;
+    hud.style.strokeDashoffset = circumference * (1 - t);
+    document.getElementById('hudNum').style.color = colors.c1;
+    document.getElementById('hudNum').textContent = Math.round(state.rate / 1000) + 'K';
+
+    // particle hue
+    document.querySelectorAll('.particle').forEach(p => p.style.background = colors.c1);
+    document.querySelector('.particle-core').style.setProperty('--c1', colors.c1);
+
+    rateLabel.textContent = state.rate.toLocaleString() + ' tok/min';
+    agentLabel.textContent = state.agents + ' agent' + (state.agents === 1 ? '' : 's');
+  }
+
+  rateSlider.addEventListener('input', e => {
+    state.rate = parseInt(e.target.value, 10);
+    render();
+  });
+
+  alarmBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      alarmBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.alarm = btn.dataset.level;
+      render();
+    });
+  });
+
+  document.getElementById('agentUp').addEventListener('click', () => {
+    state.agents = Math.min(20, state.agents + 1);
+    buildParticles(state.agents);
+    render();
+  });
+  document.getElementById('agentDown').addEventListener('click', () => {
+    state.agents = Math.max(1, state.agents - 1);
+    buildParticles(state.agents);
+    render();
+  });
+
+  buildParticles(state.agents);
+  render();
+</script>
+
+</body>
+</html>
