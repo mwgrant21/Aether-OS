@@ -275,8 +275,12 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, targetPath }: { fin
       }
     }
     const { content, added } = upsertGuidance(existing, findingId);
-    await recordAppliedAt(optimizeStatePath, findingId, Date.now());
-    if (!added) return { ok: true, added: false, alreadyPresent: true, targetPath };
+    if (!added) {
+      // Already present -- still restart the recurrence clock, per the "Apply
+      // always means recurrence check starts now" contract in optimizeState.ts.
+      await recordAppliedAt(optimizeStatePath, findingId, Date.now());
+      return { ok: true, added: false, alreadyPresent: true, targetPath };
+    }
 
     let backupPath: string | null = null;
     if (fileExisted) {
@@ -285,6 +289,10 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, targetPath }: { fin
     }
     await fsp.mkdir(dirname(targetPath), { recursive: true });
     await fsp.writeFile(targetPath, content, 'utf8');
+    // Only record appliedAt once the write has actually succeeded -- otherwise
+    // a failed write would still start the recurrence clock and the finding
+    // could silently disappear despite CLAUDE.md never being touched.
+    await recordAppliedAt(optimizeStatePath, findingId, Date.now());
     return { ok: true, added: true, targetPath, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
