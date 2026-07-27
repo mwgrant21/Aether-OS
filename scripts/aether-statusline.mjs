@@ -60,22 +60,15 @@ function safePercentage(value) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-/** Claude Code's rate-limit window key has varied across versions (seen as both
- *  "5-hour" and "five_hour" in different payload shapes). Check every known
- *  spelling rather than hard-coding one, matching the "never hard-fail on an
- *  unexpected field" posture the rest of this feature takes. */
+/** Looks up the confirmed real payload key for the five-hour rate-limit window
+ *  (`rate_limits.five_hour`), guarded the same way every other optional field in
+ *  this script is: type-checked, never throwing. */
 function findFiveHourWindow(rateLimits) {
   if (rateLimits === null || typeof rateLimits !== 'object') {
     return null;
   }
-  const candidateKeys = ['five_hour', '5-hour', 'fiveHour', 'five-hour'];
-  for (const key of candidateKeys) {
-    const window = rateLimits[key];
-    if (window !== null && typeof window === 'object') {
-      return window;
-    }
-  }
-  return null;
+  const window = rateLimits.five_hour;
+  return window !== null && typeof window === 'object' ? window : null;
 }
 
 /** Builds the human-readable status line from a parsed payload. Best-effort: any
