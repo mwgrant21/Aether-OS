@@ -22,17 +22,24 @@ function deriveTileOverride(
   key: string,
   state: AetherState,
 ): { v: string; s: string; source: TileSource; stale: boolean } | null {
+  // Both tiles judge freshness off the same statusline capture, via
+  // deriveDepletion's stale computation (which is correct even when
+  // state.statusline.fiveHour is null) -- so a percentage captured hours ago
+  // can never render LIVE on one tile while the sibling tile (correctly)
+  // shows it as stale.
+  const stale = deriveDepletion(state.statusline, null, Date.now()).stale;
+
   if (key === 'DEPLETION ETA') {
     const depletion = deriveDepletion(state.statusline, null, Date.now());
     if (depletion.source !== 'statusline') return null; // fall back to today's estimate
     const etaPart =
       depletion.msUntilDepleted === null ? '—' : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
-    const prefix = depletion.stale ? '~' : '';
+    const prefix = stale ? '~' : '';
     return {
       v: `${prefix}${etaPart} · resets ${formatResetCountdown(depletion.msUntilReset)}`,
       s: 'server rate limit',
       source: 'live',
-      stale: depletion.stale,
+      stale,
     };
   }
   if (key === 'CONTEXT') {
@@ -45,7 +52,8 @@ function deriveTileOverride(
       usage && windowSize
         ? `${short(usage.inputTokens + usage.outputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)} / ${short(windowSize)}`
         : 'post-/compact snapshot';
-    return { v: `${Math.round(pct)}%`, s: detail, source: 'live', stale: false };
+    const prefix = stale ? '~' : '';
+    return { v: `${prefix}${Math.round(pct)}%`, s: detail, source: 'live', stale };
   }
   return null;
 }

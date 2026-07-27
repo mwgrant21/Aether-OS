@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { useAetherStore } from '../../state/store';
 import { Button } from '../shared/Button';
 
 type InstallStatus = 'installed' | 'installed-other' | 'not-installed' | 'unreadable';
@@ -21,6 +22,7 @@ const STATUS_COPY: Record<InstallStatus, string> = {
 
 export function StatuslineCard() {
   const colors = useColors();
+  const { dispatch } = useAetherStore();
   const [state, setState] = useState<StatuslineState | null>(null);
   const [replacePickerOpen, setReplacePickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,6 +67,12 @@ export function StatuslineCard() {
           ? `Uninstalled — settings.json backed up to ${result.backupPath}`
           : 'Uninstalled'
     );
+    if (result.ok) {
+      // The feed is no longer being written at all once uninstalled -- without
+      // this, state.statusline stays populated for the rest of the app
+      // session and both dashboard tiles keep claiming LIVE from a dead feed.
+      dispatch({ type: 'SET_STATUSLINE', snapshot: null });
+    }
     await refresh();
   }
 
