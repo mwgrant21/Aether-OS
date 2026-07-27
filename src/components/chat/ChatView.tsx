@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
@@ -7,11 +7,36 @@ import { ChannelRail } from './ChannelRail';
 import { MessageThread } from './MessageThread';
 import { MessageInput } from './MessageInput';
 
+/** Feature-detects the Electron IPC bridge the same way `TopBar.tsx`'s `WindowControls` does.
+ *  Returns null until resolved (browser mode resolves immediately to false — no bridge means no
+ *  way to confirm a live key, and this indicator must never claim LIVE without proof). */
+function useChatIsLive(): boolean | null {
+  const [isLive, setIsLive] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.aetherElectron : undefined;
+    if (!bridge) {
+      setIsLive(false);
+      return;
+    }
+    let cancelled = false;
+    bridge.chat.hasKey().then((hasKey) => {
+      if (!cancelled) setIsLive(hasKey);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return isLive;
+}
+
 export function ChatView() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const chat = useChatChannels(state, dispatch);
   const [draft, setDraft] = useState('');
+  const isLive = useChatIsLive();
 
   function send() {
     if (!draft.trim()) return;
@@ -36,6 +61,11 @@ export function ChatView() {
           <span style={headerDotStyle(chat.activeChannel.hue)} />
           <span style={headerNameStyle(colors)}>{chat.activeChannel.name}</span>
           {chat.activeChannel.archived && <span style={archivedPillStyle(colors)}>TERMINATED</span>}
+          {isLive !== null && (
+            <span style={backendChipStyle(colors, isLive)} title={isLive ? 'Claude replies enabled' : 'Not confirmed live — replies may fall back to the offline in-world responder'}>
+              {isLive ? 'LIVE' : 'OFFLINE'}
+            </span>
+          )}
         </div>
         <MessageThread channel={chat.activeChannel} messages={chat.messages} isTyping={chat.isTyping} />
         <MessageInput
@@ -86,6 +116,18 @@ function archivedPillStyle(colors: ColorPalette): CSSProperties {
     letterSpacing: 1,
     color: colors.textDim,
     border: `1px solid ${colors.chromeBorder}`,
+    padding: '3px 7px',
+    borderRadius: 5,
+  };
+}
+function backendChipStyle(colors: ColorPalette, isLive: boolean): CSSProperties {
+  return {
+    marginLeft: 'auto',
+    font: `600 9px/1 ${fonts.ui}`,
+    letterSpacing: 1,
+    color: isLive ? colors.success : colors.textDim,
+    border: `1px solid ${colors.chipBorder}`,
+    background: colors.panelInset,
     padding: '3px 7px',
     borderRadius: 5,
   };
