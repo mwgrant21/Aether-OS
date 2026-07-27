@@ -15,6 +15,8 @@ import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
+import { runChatRequest } from '../src/shared/chatCore';
+import { loadDotEnvInto } from './loadDotEnv';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -180,6 +182,14 @@ async function tickAndPushAgents(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  // Load .env into process.env before anything downstream (e.g. the chat:send
+  // handler below) reads ANTHROPIC_API_KEY. NOTE: in a packaged build,
+  // app.getAppPath() resolves inside resources/app.asar, so a .env shipped
+  // beside the executable will NOT be found there -- a real shell-exported
+  // ANTHROPIC_API_KEY is the supported path for packaged builds, and Task 5's
+  // Settings surface must make that legible rather than leaving the user guessing.
+  loadDotEnvInto(join(app.getAppPath(), '.env'), process.env);
+
   Menu.setApplicationMenu(null);
   createWindow();
 
@@ -295,6 +305,19 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { finding
     return { ok: false, error: err?.message ?? String(err) };
   }
 });
+
+ipcMain.handle('chat:send', async (_event, body: unknown) => {
+  const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);
+  // Deliberately do not surface result.status to the renderer -- askClaude()
+  // treats every failure identically, and returning a status would invite a
+  // future caller to branch on it and quietly break the null-on-any-failure
+  // contract.
+  return result.ok ? { reply: result.reply } : { error: result.error };
+});
+
+// Returns a boolean only -- never the key, never a prefix, never a length.
+// The API key must never reach the renderer.
+ipcMain.handle('chat:hasKey', async () => typeof process.env.ANTHROPIC_API_KEY === 'string' && process.env.ANTHROPIC_API_KEY.length > 0);
 
 ipcMain.on('window:minimize', () => {
   mainWindow?.minimize();
