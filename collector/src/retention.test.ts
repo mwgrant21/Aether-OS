@@ -110,4 +110,44 @@ describe('compact', () => {
     expect(rollups).toEqual([{ day: '2026-06-01', hook_event_name: 'Stop', tool_name: '', event_count: 2 }]);
     db.close();
   });
+
+  it('deletes drift_log rows older than the retention window, leaving recent ones untouched', () => {
+    // Regression test: fleet-poll failures (Task 5's pollFleet) can write a
+    // drift_log row every 15s indefinitely on a sustained failure, unlike
+    // the pre-existing rare hook-payload-drift writes this table was
+    // originally sized for. drift_log needs the same 30-day retention
+    // events already has, or it grows unbounded.
+    const db = freshDb();
+    const now = Date.parse('2026-08-01T00:00:00Z');
+    const oldDay = Date.parse('2026-06-01T10:00:00Z'); // well past 30 days
+    const recent = now - 60_000; // 1 minute ago
+
+    db.prepare('INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)').run(oldDay, 'old drift');
+    db.prepare('INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)').run(recent, 'recent drift');
+
+    compact(db, now);
+
+    const rows = db.prepare('SELECT detail FROM drift_log ORDER BY detected_at_ms').all() as any[];
+    expect(rows).toEqual([{ detail: 'recent drift' }]);
+    db.close();
+  });
+
+  it('deletes stale drift_log rows even when there are zero stale events rows this cycle', () => {
+    // Regression test for the early-return trap: compact() used to return
+    // immediately when `events` had no stale rows, which would have
+    // skipped the drift_log deletion entirely on a cycle where only
+    // drift_log (not events) had aged-out rows.
+    const db = freshDb();
+    const now = Date.parse('2026-08-01T00:00:00Z');
+    const oldDay = Date.parse('2026-06-01T10:00:00Z');
+
+    db.prepare('INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)').run(oldDay, 'old drift');
+
+    const result = compact(db, now);
+    expect(result).toEqual({ rolledUpDays: 0, deletedRows: 0 });
+
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM drift_log').get();
+    expect(count.c).toBe(0);
+    db.close();
+  });
 });

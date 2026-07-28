@@ -20,40 +20,50 @@ export function compact(db: DatabaseSync, nowMs: number): { rolledUpDays: number
     .prepare('SELECT id, hook_event_name, tool_name, occurred_at_ms FROM events WHERE occurred_at_ms < ?')
     .all(cutoffMs) as { id: number; hook_event_name: string; tool_name: string | null; occurred_at_ms: number }[];
 
-  if (staleRows.length === 0) {
-    return { rolledUpDays: 0, deletedRows: 0 };
-  }
+  let rolledUpDays = 0;
 
-  // tool_name is normalized to '' (never null) before it reaches daily_rollups:
-  // SQLite treats NULL as distinct from every other NULL in a PRIMARY KEY/unique
-  // index, so ON CONFLICT(day, hook_event_name, tool_name) never fires for rows
-  // with a null tool_name (Stop/Notification events), causing silent duplicate
-  // rollup rows. '' is used as the sentinel since it can never collide with a
-  // real tool name. The raw `events` table is unaffected -- only this aggregate.
-  const groups = new Map<string, { day: string; hookEventName: string; toolName: string; count: number }>();
-  for (const row of staleRows) {
-    const day = dayKeyUtc(row.occurred_at_ms);
-    const toolName = row.tool_name ?? '';
-    const key = `${day}|${row.hook_event_name}|${toolName}`;
-    const existing = groups.get(key);
-    if (existing) {
-      existing.count += 1;
-    } else {
-      groups.set(key, { day, hookEventName: row.hook_event_name, toolName, count: 1 });
+  if (staleRows.length > 0) {
+    // tool_name is normalized to '' (never null) before it reaches daily_rollups:
+    // SQLite treats NULL as distinct from every other NULL in a PRIMARY KEY/unique
+    // index, so ON CONFLICT(day, hook_event_name, tool_name) never fires for rows
+    // with a null tool_name (Stop/Notification events), causing silent duplicate
+    // rollup rows. '' is used as the sentinel since it can never collide with a
+    // real tool name. The raw `events` table is unaffected -- only this aggregate.
+    const groups = new Map<string, { day: string; hookEventName: string; toolName: string; count: number }>();
+    for (const row of staleRows) {
+      const day = dayKeyUtc(row.occurred_at_ms);
+      const toolName = row.tool_name ?? '';
+      const key = `${day}|${row.hook_event_name}|${toolName}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        groups.set(key, { day, hookEventName: row.hook_event_name, toolName, count: 1 });
+      }
     }
+
+    const upsert = db.prepare(
+      `INSERT INTO daily_rollups (day, hook_event_name, tool_name, event_count) VALUES (?, ?, ?, ?)
+       ON CONFLICT(day, hook_event_name, tool_name) DO UPDATE SET event_count = event_count + excluded.event_count`
+    );
+    for (const g of groups.values()) {
+      upsert.run(g.day, g.hookEventName, g.toolName, g.count);
+    }
+
+    const deleteStale = db.prepare('DELETE FROM events WHERE occurred_at_ms < ?');
+    deleteStale.run(cutoffMs);
+
+    const distinctDays = new Set(Array.from(groups.values()).map((g) => g.day));
+    rolledUpDays = distinctDays.size;
   }
 
-  const upsert = db.prepare(
-    `INSERT INTO daily_rollups (day, hook_event_name, tool_name, event_count) VALUES (?, ?, ?, ?)
-     ON CONFLICT(day, hook_event_name, tool_name) DO UPDATE SET event_count = event_count + excluded.event_count`
-  );
-  for (const g of groups.values()) {
-    upsert.run(g.day, g.hookEventName, g.toolName, g.count);
-  }
+  // drift_log has no rollup/aggregate step -- it's diagnostic noise, not a
+  // metric worth preserving in aggregate, unlike `events`. Deleted
+  // unconditionally (NOT nested inside the `staleRows.length > 0` branch
+  // above): a sustained fleet-poll failure (Task 5's pollFleet) writes one
+  // drift_log row per failed 15s poll cycle, so a cycle can have zero stale
+  // `events` rows and still have plenty of stale drift_log rows to clear.
+  db.prepare('DELETE FROM drift_log WHERE detected_at_ms < ?').run(cutoffMs);
 
-  const deleteStale = db.prepare('DELETE FROM events WHERE occurred_at_ms < ?');
-  deleteStale.run(cutoffMs);
-
-  const distinctDays = new Set(Array.from(groups.values()).map((g) => g.day));
-  return { rolledUpDays: distinctDays.size, deletedRows: staleRows.length };
+  return { rolledUpDays, deletedRows: staleRows.length };
 }
