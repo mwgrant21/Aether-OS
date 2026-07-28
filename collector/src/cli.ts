@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readHookInstallState, installHooks, uninstallHooks, MANAGED_HOOK_EVENTS } from './hookInstaller.js';
+import { installAutostart, uninstallAutostart } from './autostart.js';
 
 const settingsPath = join(homedir(), '.claude', 'settings.json');
 // This repo's own scripts/ directory, resolved relative to this compiled
@@ -50,7 +51,23 @@ async function main() {
     return;
   }
 
-  console.error('usage: node dist/cli.js <status|install-hooks|uninstall-hooks>');
+  if (command === 'install-autostart') {
+    const nodePath = process.execPath;
+    const entrypointPath = resolve(fileURLToPath(import.meta.url), '..', 'index.js');
+    const result = installAutostart(nodePath, entrypointPath);
+    console.log(result.ok ? 'autostart installed' : `autostart install failed: ${result.error}`);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (command === 'uninstall-autostart') {
+    const result = uninstallAutostart();
+    console.log(result.ok ? 'autostart uninstalled' : `autostart uninstall failed: ${result.error}`);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  console.error('usage: node dist/cli.js <status|install-hooks|uninstall-hooks|install-autostart|uninstall-autostart>');
   process.exitCode = 1;
 }
 
