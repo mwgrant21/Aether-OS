@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { parseFleetJson, filterOwnSession, type FleetSession } from './fleetPoll.js';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { parseFleetJson, filterOwnSession, upsertFleetSessions, type FleetSession } from './fleetPoll.js';
+import { openDatabase, migrate } from './schema.js';
 
 // Captured directly from `claude agents --json` on this machine — see
 // docs/superpowers/specs/2026-07-28-fleet-session-picker-design.md.
@@ -87,5 +91,65 @@ describe('filterOwnSession', () => {
 
   it('returns every session unchanged when ownSessionId matches nothing', () => {
     expect(filterOwnSession(sessions, 'no-such-session')).toEqual(sessions);
+  });
+});
+
+function freshDb() {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-collector-fleetupsert-'));
+  const db = openDatabase(join(dir, 'test.db'));
+  migrate(db);
+  return db;
+}
+
+function session(overrides: Partial<FleetSession> = {}): FleetSession {
+  return {
+    sessionId: 's1',
+    pid: 100,
+    projectName: 'proj',
+    kind: 'interactive',
+    status: 'busy',
+    name: 'it-1',
+    startedAtMs: 1000,
+    ...overrides,
+  };
+}
+
+describe('upsertFleetSessions', () => {
+  it('inserts a new session with last_seen_ms stamped to nowMs', () => {
+    const db = freshDb();
+    upsertFleetSessions(db, [session()], 5000);
+    const row: any = db.prepare('SELECT * FROM fleet_sessions').get();
+    expect(row.session_id).toBe('s1');
+    expect(row.last_seen_ms).toBe(5000);
+    db.close();
+  });
+
+  it('updates an existing session in place by session_id, not duplicating it', () => {
+    const db = freshDb();
+    upsertFleetSessions(db, [session({ status: 'busy' })], 1000);
+    upsertFleetSessions(db, [session({ status: 'idle' })], 2000);
+    const rows: any[] = db.prepare('SELECT * FROM fleet_sessions').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('idle');
+    expect(rows[0].last_seen_ms).toBe(2000);
+    db.close();
+  });
+
+  it('prunes a row whose last_seen_ms is older than 30 seconds before this call\'s nowMs', () => {
+    const db = freshDb();
+    upsertFleetSessions(db, [session({ sessionId: 'stale' })], 1000);
+    upsertFleetSessions(db, [session({ sessionId: 'fresh' })], 40000);
+    const rows: any[] = db.prepare('SELECT session_id FROM fleet_sessions').all();
+    expect(rows.map((r) => r.session_id)).toEqual(['fresh']);
+    db.close();
+  });
+
+  it('the prune runs even when called with an empty sessions array', () => {
+    const db = freshDb();
+    upsertFleetSessions(db, [session({ sessionId: 'stale' })], 1000);
+    upsertFleetSessions(db, [], 40000);
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM fleet_sessions').get();
+    expect(count.c).toBe(0);
+    db.close();
   });
 });

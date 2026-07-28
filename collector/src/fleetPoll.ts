@@ -1,4 +1,5 @@
 import { win32 } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 
 export interface FleetSession {
   sessionId: string;
@@ -67,4 +68,25 @@ export function parseFleetJson(raw: string): { sessions: FleetSession[]; driftDe
 export function filterOwnSession(sessions: FleetSession[], ownSessionId: string | null): FleetSession[] {
   if (ownSessionId === null) return sessions;
   return sessions.filter((s) => s.sessionId !== ownSessionId);
+}
+
+const STALE_MS = 30000; // twice the 15s poll interval, matching retention.ts's staleness convention
+
+export function upsertFleetSessions(db: DatabaseSync, sessions: FleetSession[], nowMs: number): void {
+  const upsert = db.prepare(
+    `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       pid = excluded.pid,
+       project_name = excluded.project_name,
+       kind = excluded.kind,
+       status = excluded.status,
+       name = excluded.name,
+       started_at_ms = excluded.started_at_ms,
+       last_seen_ms = excluded.last_seen_ms`
+  );
+  for (const s of sessions) {
+    upsert.run(s.sessionId, s.pid, s.projectName, s.kind, s.status, s.name, s.startedAtMs, nowMs);
+  }
+  db.prepare('DELETE FROM fleet_sessions WHERE last_seen_ms < ?').run(nowMs - STALE_MS);
 }
