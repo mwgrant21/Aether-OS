@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { parseFleetJson, filterOwnSession, upsertFleetSessions, type FleetSession } from './fleetPoll.js';
+import { parseFleetJson, filterOwnSession, upsertFleetSessions, pollFleet, type FleetSession } from './fleetPoll.js';
 import { openDatabase, migrate } from './schema.js';
 
 // Captured directly from `claude agents --json` on this machine — see
@@ -150,6 +150,54 @@ describe('upsertFleetSessions', () => {
     upsertFleetSessions(db, [], 40000);
     const count: any = db.prepare('SELECT COUNT(*) as c FROM fleet_sessions').get();
     expect(count.c).toBe(0);
+    db.close();
+  });
+});
+
+describe('pollFleet', () => {
+  it('returns parsed, self-filtered sessions on a successful poll', async () => {
+    const db = freshDb();
+    const stdout = JSON.stringify([
+      { ...REAL_ROW, sessionId: 'own-session' },
+      { ...REAL_ROW, sessionId: 'other-session', name: 'it-99' },
+    ]);
+    const result = await pollFleet(db, 'own-session', 1000, async () => ({ stdout }));
+    expect(result).toEqual([
+      { sessionId: 'other-session', pid: 6824, projectName: 'IT', kind: 'interactive', status: 'busy', name: 'it-99', startedAtMs: 1785255815376 },
+    ]);
+    db.close();
+  });
+
+  it('returns null and logs drift_log when the exec function throws (spawn failure / non-zero exit)', async () => {
+    const db = freshDb();
+    const result = await pollFleet(db, null, 1000, async () => {
+      throw new Error('spawn claude ENOENT');
+    });
+    expect(result).toBeNull();
+    const rows: any[] = db.prepare('SELECT detail FROM drift_log').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toContain('ENOENT');
+    db.close();
+  });
+
+  it('returns null and logs drift_log when stdout is not valid JSON', async () => {
+    const db = freshDb();
+    const result = await pollFleet(db, null, 1000, async () => ({ stdout: 'not json{{' }));
+    expect(result).toBeNull();
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM drift_log').get();
+    expect(count.c).toBe(1);
+    db.close();
+  });
+
+  it('logs one drift_log row per malformed row but still returns the valid ones (not null)', async () => {
+    const db = freshDb();
+    const { sessionId, ...missingSessionId } = REAL_ROW;
+    const stdout = JSON.stringify([missingSessionId, { ...REAL_ROW, sessionId: 'ok-session' }]);
+    const result = await pollFleet(db, null, 1000, async () => ({ stdout }));
+    expect(result).toHaveLength(1);
+    expect(result![0].sessionId).toBe('ok-session');
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM drift_log').get();
+    expect(count.c).toBe(1);
     db.close();
   });
 });

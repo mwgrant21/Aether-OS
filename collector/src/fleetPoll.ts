@@ -1,5 +1,10 @@
 import { win32 } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { logDrift } from './canary.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface FleetSession {
   sessionId: string;
@@ -89,4 +94,35 @@ export function upsertFleetSessions(db: DatabaseSync, sessions: FleetSession[], 
     upsert.run(s.sessionId, s.pid, s.projectName, s.kind, s.status, s.name, s.startedAtMs, nowMs);
   }
   db.prepare('DELETE FROM fleet_sessions WHERE last_seen_ms < ?').run(nowMs - STALE_MS);
+}
+
+export type FleetExecFn = () => Promise<{ stdout: string }>;
+
+async function defaultFleetExec(): Promise<{ stdout: string }> {
+  const { stdout } = await execFileAsync('claude', ['agents', '--json']);
+  return { stdout };
+}
+
+export async function pollFleet(
+  db: DatabaseSync,
+  ownSessionId: string | null,
+  nowMs: number,
+  execFn: FleetExecFn = defaultFleetExec
+): Promise<FleetSession[] | null> {
+  let stdout: string;
+  try {
+    stdout = (await execFn()).stdout;
+  } catch (err) {
+    logDrift(db, nowMs, `claude agents --json failed to run: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+
+  const parsed = parseFleetJson(stdout);
+  if (parsed === null) {
+    logDrift(db, nowMs, 'claude agents --json output was not a valid JSON array');
+    return null;
+  }
+  for (const detail of parsed.driftDetails) logDrift(db, nowMs, detail);
+
+  return filterOwnSession(parsed.sessions, ownSessionId);
 }
