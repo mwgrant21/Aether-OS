@@ -19,7 +19,7 @@ describe('schema', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'schema_meta']);
+    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'schema_meta', 'transcript_files', 'usage_events']);
     db.close();
   });
 
@@ -42,6 +42,50 @@ describe('schema', () => {
     const row: any = db.prepare('SELECT * FROM events').get();
     expect(row.hook_event_name).toBe('PreToolUse');
     expect(row.had_tool_input).toBe(1);
+    db.close();
+  });
+
+  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 2', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(2);
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .all()
+      .map((r: any) => r.name);
+    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'schema_meta', 'transcript_files', 'usage_events']);
+    db.close();
+  });
+
+  it('usage_events accepts a full row insert', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    db.prepare(
+      `INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(1000, 'claude-sonnet-4-6', 100, 50, 0, 200);
+    const row: any = db.prepare('SELECT * FROM usage_events').get();
+    expect(row.model).toBe('claude-sonnet-4-6');
+    expect(row.input_tokens).toBe(100);
+    db.close();
+  });
+
+  it('transcript_files tracks a per-file offset, upsertable by file_path', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    db.prepare(
+      `INSERT INTO transcript_files (file_path, last_offset, last_scanned_ms) VALUES (?, ?, ?)
+       ON CONFLICT(file_path) DO UPDATE SET last_offset = excluded.last_offset, last_scanned_ms = excluded.last_scanned_ms`
+    ).run('/proj/session.jsonl', 500, 1000);
+    db.prepare(
+      `INSERT INTO transcript_files (file_path, last_offset, last_scanned_ms) VALUES (?, ?, ?)
+       ON CONFLICT(file_path) DO UPDATE SET last_offset = excluded.last_offset, last_scanned_ms = excluded.last_scanned_ms`
+    ).run('/proj/session.jsonl', 900, 2000);
+    const row: any = db.prepare('SELECT * FROM transcript_files').get();
+    expect(row.last_offset).toBe(900);
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM transcript_files').get();
+    expect(count.c).toBe(1);
     db.close();
   });
 });

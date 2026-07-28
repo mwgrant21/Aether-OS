@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -43,6 +43,20 @@ export function migrate(db: DatabaseSync): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       detected_at_ms INTEGER NOT NULL,
       detail TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at_ms INTEGER NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      cache_creation_input_tokens INTEGER NOT NULL,
+      cache_read_input_tokens INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS transcript_files (
+      file_path TEXT PRIMARY KEY,
+      last_offset INTEGER NOT NULL,
+      last_scanned_ms INTEGER NOT NULL
     );
   `);
   db.prepare(
