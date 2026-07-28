@@ -200,6 +200,7 @@ export interface AetherState {
   optimizeSummary: OptimizeSummary;
   optimizeBreakdown: GradeRow[];
   statusline: StatuslineSnapshot | null;
+  fleet: FleetSessionRow[] | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

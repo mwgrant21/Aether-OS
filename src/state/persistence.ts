@@ -29,6 +29,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   optimizeSummary: 'derived alongside optimizeFindings from live data on every sync -- not a fact to store',
   optimizeBreakdown: 'derived alongside optimizeFindings from live data on every sync -- not a fact to store',
   statusline: 'a rehydrated stale snapshot would show a fresh-looking rate-limit percentage from a previous session -- the same class of dishonesty the logs exclusion prevents',
+  fleet: 'a live external-process snapshot of other claude sessions on the machine, stale the instant it is written to disk -- same reasoning as the logs exclusion',
 };
 
 export function loadPersisted(): Partial<AetherState> | null {
