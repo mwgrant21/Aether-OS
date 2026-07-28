@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { ingestLine } from './ingest';
+import { ingestLine } from './ingest.js';
 
 export function tailSpoolOnce(
   db: DatabaseSync,

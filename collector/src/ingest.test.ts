@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { openDatabase, migrate } from './schema';
-import { ingestLine } from './ingest';
+import { openDatabase, migrate } from './schema.js';
+import { ingestLine } from './ingest.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-ingest-'));

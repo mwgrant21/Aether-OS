@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { openDatabase, migrate } from './schema';
-import { compact, RETENTION_WINDOW_MS } from './retention';
+import { openDatabase, migrate } from './schema.js';
+import { compact, RETENTION_WINDOW_MS } from './retention.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-retention-'));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseHookPayload } from './hookPayload';
+import { parseHookPayload } from './hookPayload.js';
 
 describe('parseHookPayload', () => {
   it('parses a PreToolUse payload, deriving hadToolInput without keeping the input', () => {

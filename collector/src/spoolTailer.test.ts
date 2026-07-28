@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { openDatabase, migrate } from './schema';
-import { tailSpoolOnce } from './spoolTailer';
+import { openDatabase, migrate } from './schema.js';
+import { tailSpoolOnce } from './spoolTailer.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-tailer-db-'));

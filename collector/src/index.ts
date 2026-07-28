@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { openDatabase, migrate } from './schema';
-import { startSpoolTailer } from './spoolTailer';
-import { compact } from './retention';
+import { openDatabase, migrate } from './schema.js';
+import { startSpoolTailer } from './spoolTailer.js';
+import { compact } from './retention.js';
 
 export function startCollector(options: {
   dbPath: string;

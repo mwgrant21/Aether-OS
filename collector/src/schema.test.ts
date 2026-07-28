@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { openDatabase, migrate, getSchemaVersion, SCHEMA_VERSION } from './schema';
+import { openDatabase, migrate, getSchemaVersion, SCHEMA_VERSION } from './schema.js';
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-schema-'));

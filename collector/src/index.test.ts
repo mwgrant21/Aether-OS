@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { startCollector } from './index';
-import { openDatabase } from './schema';
+import { startCollector } from './index.js';
+import { openDatabase } from './schema.js';
 
 describe('startCollector', () => {
   it('picks up a pre-existing spool file, ingests it, and the DB file exists on disk', async () => {
