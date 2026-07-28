@@ -1,29 +1,21 @@
-let DatabaseSync: any;
-
-// Dynamically import at runtime to avoid Vite transformation issues
-async function initDatabaseSync() {
-  if (!DatabaseSync) {
-    const sqlite = await import('node:sqlite');
-    DatabaseSync = sqlite.DatabaseSync;
-  }
-}
-
+import type { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+const require = createRequire(import.meta.url);
+
 export const SCHEMA_VERSION = 1;
 
-export function openDatabase(dbPath: string): any {
-  if (!DatabaseSync) {
-    // Fallback synchronous require for runtime
-    const sqlite = require('node:sqlite');
-    DatabaseSync = sqlite.DatabaseSync;
-  }
+export function openDatabase(dbPath: string): DatabaseSync {
+  // Runtime-value require (not a static import) to avoid Vite transformation
+  // issues with node:sqlite; the type import above is compile-time only.
+  const sqlite = require('node:sqlite');
   mkdirSync(dirname(dbPath), { recursive: true });
-  return new DatabaseSync(dbPath);
+  return new sqlite.DatabaseSync(dbPath);
 }
 
-export function migrate(db: any): void {
+export function migrate(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta (
       key TEXT PRIMARY KEY,
@@ -59,7 +51,7 @@ export function migrate(db: any): void {
   ).run(String(SCHEMA_VERSION));
 }
 
-export function getSchemaVersion(db: any): number {
+export function getSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as
     | { value: string }
     | undefined;
