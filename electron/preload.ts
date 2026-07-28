@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RealUsageSnapshot } from '../src/state/types';
+import type { RealUsageSnapshot, FleetSessionRow } from '../src/state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
@@ -51,6 +51,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, ratio: number) => callback(ratio);
       ipcRenderer.on('agents:cacheHitRatio', listener);
       return () => ipcRenderer.removeListener('agents:cacheHitRatio', listener);
+    },
+  },
+  fleet: {
+    onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, rows: FleetSessionRow[] | null) => callback(rows);
+      ipcRenderer.on('fleet:snapshot', listener);
+      return () => ipcRenderer.removeListener('fleet:snapshot', listener);
     },
   },
   optimize: {

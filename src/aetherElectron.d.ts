@@ -1,4 +1,4 @@
-import type { RealUsageSnapshot } from './state/types';
+import type { RealUsageSnapshot, FleetSessionRow } from './state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from './state/liveAgentsMath';
 import type { AttachmentInfo } from './components/files/attachmentsMath';
 import type { Anomaly } from './shared/anomalyDetectors';
@@ -26,6 +26,9 @@ declare global {
         onActiveWork: (callback: (work: RealActiveWork[]) => void) => () => void;
         onAnomalies: (callback: (anomalies: Anomaly[]) => void) => () => void;
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
+      };
+      fleet: {
+        onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;
       };
       optimize: {
         onFindings: (callback: (findings: OptimizeFinding[]) => void) => () => void;

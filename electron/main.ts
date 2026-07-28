@@ -6,7 +6,7 @@ import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
-import { readUsageEventsSince, type CollectorUsageEvent } from './collectorStore';
+import { readUsageEventsSince, readFleetSessions, type CollectorUsageEvent } from './collectorStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
 import { writeOwnSessionFile } from './ownSessionFile';
@@ -124,6 +124,7 @@ function sendToWindow(channel: string, ...args: unknown[]): void {
 
 const USAGE_SCAN_INTERVAL_MS = 60000;
 const AGENT_TICK_INTERVAL_MS = 1000;
+const FLEET_SCAN_INTERVAL_MS = 15000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json');
@@ -202,6 +203,12 @@ async function scanAndPushUsage(): Promise<void> {
   sendToWindow('optimize:breakdown', breakdown);
 }
 
+function scanAndPushFleet(): void {
+  if (!mainWindow) return;
+  const rows = readFleetSessions(collectorDbPath);
+  sendToWindow('fleet:snapshot', rows);
+}
+
 function optimizeGlobalTargetPath(): string {
   return join(os.homedir(), '.claude', 'CLAUDE.md');
 }
@@ -263,6 +270,9 @@ app.whenReady().then(() => {
 
   tickAndPushAgents();
   setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
+
+  scanAndPushFleet();
+  setInterval(scanAndPushFleet, FLEET_SCAN_INTERVAL_MS);
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
     cachedStatuslineSnapshot = snapshot;
