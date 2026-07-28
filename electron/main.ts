@@ -6,6 +6,7 @@ import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
+import { readUsageEventsSince, type CollectorUsageEvent } from './collectorStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
 import { createAttachmentsStore } from './attachmentsStore';
@@ -125,7 +126,7 @@ const AGENT_TICK_INTERVAL_MS = 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json');
-let lastScannedEvents: TranscriptEvent[] = [];
+const collectorDbPath = join(os.homedir(), '.aether-os', 'collector.db');
 
 const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
@@ -146,10 +147,30 @@ let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
 
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
-  const projectsRoot = join(os.homedir(), '.claude', 'projects');
-  const events = await scanAllProjects(projectsRoot);
-  lastScannedEvents = events;
   const now = new Date();
+
+  // Prefer the collector's incrementally-tailed usage_events store; only fall
+  // back to a full re-scan of every project's transcripts when the collector
+  // hasn't run yet, isn't installed, or its schema predates this stage --
+  // Aether OS must stay fully usable either way (docs/roadmap.md SS4.6).
+  const sinceMs = now.getTime() - 31 * 24 * 60 * 60 * 1000; // covers computeUsedThisMonth's widest window with margin
+  const collectorEvents = readUsageEventsSince(collectorDbPath, sinceMs);
+
+  // CollectorUsageEvent is intentionally narrower than TranscriptEvent (no
+  // sessionId/cwd/toolUses -- Task 2's scope cut). realUsageMath.ts's 7
+  // functions only ever read .kind/.timestamp/.usage (confirmed by reading
+  // every one during this plan's research), so this cast is safe for THIS
+  // call site -- but a future realUsageMath function reading any other field
+  // would silently break against the collector path. Don't add one without
+  // widening CollectorUsageEvent and readUsageEventsSince's SELECT first.
+  let events: TranscriptEvent[];
+  if (collectorEvents !== null) {
+    events = collectorEvents as unknown as TranscriptEvent[];
+  } else {
+    const projectsRoot = join(os.homedir(), '.claude', 'projects');
+    events = await scanAllProjects(projectsRoot);
+  }
+
   sendToWindow('usage:snapshot', {
     weeklyTokens: computeWeeklyTokens(events, now),
     dailyTokens: computeDailyTokens(events, now),
@@ -272,7 +293,9 @@ ipcMain.handle('attachments:open', (_event, name: string) => attachmentsStore.op
 
 ipcMain.handle('optimize:targets', async () => {
   const globalPath = optimizeGlobalTargetPath();
-  const projectPath = optimizeProjectTargetPath(lastScannedEvents);
+  const projectsRoot = join(os.homedir(), '.claude', 'projects');
+  const events = await scanAllProjects(projectsRoot);
+  const projectPath = optimizeProjectTargetPath(events);
   async function pathExists(p: string): Promise<boolean> {
     try {
       await fsp.stat(p);
@@ -289,11 +312,12 @@ ipcMain.handle('optimize:targets', async () => {
 
 ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { findingId: string; target: 'global' | 'project' }) => {
   // The renderer picks a target by KIND ('global' | 'project'), never by raw
-  // path -- the path is always resolved fresh here from the CURRENT
-  // lastScannedEvents, so a picker that's been open for a while (across scan
-  // cycles) can't apply against a project path that's gone stale since it was
-  // first shown.
-  const targetPath = target === 'global' ? optimizeGlobalTargetPath() : optimizeProjectTargetPath(lastScannedEvents);
+  // path -- the path is always resolved fresh here via an on-demand scan, so
+  // a picker that's been open for a while can't apply against a project path
+  // that's gone stale since it was first shown.
+  const projectsRoot = join(os.homedir(), '.claude', 'projects');
+  const events = await scanAllProjects(projectsRoot);
+  const targetPath = target === 'global' ? optimizeGlobalTargetPath() : optimizeProjectTargetPath(events);
   if (!targetPath) return { ok: false, error: 'invalid target' };
   if (guidanceFor(findingId) === null) return { ok: false, error: 'unknown finding' };
 
