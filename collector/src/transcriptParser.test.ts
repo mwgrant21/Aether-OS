@@ -1,0 +1,76 @@
+import { describe, it, expect } from 'vitest';
+import { parseTranscriptLine } from './transcriptParser.js';
+
+describe('parseTranscriptLine', () => {
+  it('parses an assistant line with usage', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      sessionId: 'sess-1',
+      timestamp: '2026-07-08T09:00:00Z',
+      cwd: '/proj',
+      message: {
+        model: 'claude-sonnet-4-6',
+        usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 10, cache_read_input_tokens: 20 },
+        content: [],
+      },
+    });
+    const result = parseTranscriptLine(line);
+    expect(result).toEqual({
+      kind: 'assistant',
+      sessionId: 'sess-1',
+      timestamp: new Date('2026-07-08T09:00:00Z'),
+      cwd: '/proj',
+      model: 'claude-sonnet-4-6',
+      usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 20 },
+    });
+  });
+
+  it('parses an assistant line missing usage as usage: null', () => {
+    const line = JSON.stringify({ type: 'assistant', sessionId: 's1', message: { model: 'x', content: [] } });
+    const result = parseTranscriptLine(line);
+    expect(result?.usage).toBeNull();
+  });
+
+  it('parses a user line as kind: user, usage: null, model: null', () => {
+    const line = JSON.stringify({ type: 'user', sessionId: 's1', message: { content: 'hello' } });
+    const result = parseTranscriptLine(line);
+    expect(result).toEqual({
+      kind: 'user',
+      sessionId: 's1',
+      timestamp: null,
+      cwd: null,
+      model: null,
+      usage: null,
+    });
+  });
+
+  it('parses an unrecognized type as kind: other', () => {
+    const line = JSON.stringify({ type: 'summary', sessionId: 's1' });
+    const result = parseTranscriptLine(line);
+    expect(result?.kind).toBe('other');
+  });
+
+  it('returns null for empty or whitespace-only lines', () => {
+    expect(parseTranscriptLine('')).toBeNull();
+    expect(parseTranscriptLine('   \n')).toBeNull();
+  });
+
+  it('returns null for malformed JSON, never throws', () => {
+    expect(() => parseTranscriptLine('not json{{')).not.toThrow();
+    expect(parseTranscriptLine('not json{{')).toBeNull();
+  });
+
+  it('defaults missing sessionId/cwd/timestamp to null rather than throwing', () => {
+    const line = JSON.stringify({ type: 'assistant', message: { content: [] } });
+    const result = parseTranscriptLine(line);
+    expect(result?.sessionId).toBeNull();
+    expect(result?.cwd).toBeNull();
+    expect(result?.timestamp).toBeNull();
+  });
+
+  it('accepts session_id (snake_case) as a fallback for sessionId', () => {
+    const line = JSON.stringify({ type: 'user', session_id: 's2', message: { content: '' } });
+    const result = parseTranscriptLine(line);
+    expect(result?.sessionId).toBe('s2');
+  });
+});
