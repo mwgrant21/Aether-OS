@@ -3,6 +3,7 @@ import { useAetherStore } from '../../state/store';
 import { pickSelectedRealAgent } from './agentsMath';
 import { AgentRosterCard } from './AgentRosterCard';
 import { AgentDetailCard } from './AgentDetailCard';
+import { FleetCard } from './FleetCard';
 
 export function AgentsView() {
   const { state } = useAetherStore();
@@ -12,6 +13,7 @@ export function AgentsView() {
     <div style={rootStyle}>
       <AgentRosterCard selectedToolUseId={selectedAgent?.toolUseId ?? null} />
       <AgentDetailCard agent={selectedAgent} />
+      <FleetCard />
     </div>
   );
 }
