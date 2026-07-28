@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -57,6 +57,16 @@ export function migrate(db: DatabaseSync): void {
       file_path TEXT PRIMARY KEY,
       last_offset INTEGER NOT NULL,
       last_scanned_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS fleet_sessions (
+      session_id TEXT PRIMARY KEY,
+      pid INTEGER,
+      project_name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      name TEXT NOT NULL,
+      started_at_ms INTEGER NOT NULL,
+      last_seen_ms INTEGER NOT NULL
     );
   `);
   db.prepare(

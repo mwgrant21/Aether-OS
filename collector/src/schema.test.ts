@@ -19,7 +19,7 @@ describe('schema', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'schema_meta', 'transcript_files', 'usage_events']);
+    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'fleet_sessions', 'schema_meta', 'transcript_files', 'usage_events']);
     db.close();
   });
 
@@ -45,16 +45,16 @@ describe('schema', () => {
     db.close();
   });
 
-  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 2', () => {
+  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 3', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(2);
+    expect(getSchemaVersion(db)).toBe(3);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'schema_meta', 'transcript_files', 'usage_events']);
+    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'fleet_sessions', 'schema_meta', 'transcript_files', 'usage_events']);
     db.close();
   });
 
@@ -85,6 +85,65 @@ describe('schema', () => {
     const row: any = db.prepare('SELECT * FROM transcript_files').get();
     expect(row.last_offset).toBe(900);
     const count: any = db.prepare('SELECT COUNT(*) as c FROM transcript_files').get();
+    expect(count.c).toBe(1);
+    db.close();
+  });
+
+  it('migrate also creates fleet_sessions, and bumps schema_meta to version 3', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(3);
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .all()
+      .map((r: any) => r.name);
+    expect(tables).toEqual([
+      'daily_rollups',
+      'drift_log',
+      'events',
+      'fleet_sessions',
+      'schema_meta',
+      'transcript_files',
+      'usage_events',
+    ]);
+    db.close();
+  });
+
+  it('fleet_sessions accepts a full row insert, with pid nullable', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('sess-1', 6824, 'IT', 'interactive', 'busy', 'it-68', 1000, 2000);
+    const row: any = db.prepare('SELECT * FROM fleet_sessions').get();
+    expect(row.session_id).toBe('sess-1');
+    expect(row.pid).toBe(6824);
+
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`
+    ).run('sess-2', 'proj', 'background', 'idle', 'bg-1', 3000, 4000);
+    const row2: any = db.prepare('SELECT pid FROM fleet_sessions WHERE session_id = ?').get('sess-2');
+    expect(row2.pid).toBeNull();
+    db.close();
+  });
+
+  it('fleet_sessions is upsertable by session_id', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    const upsert = db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET status = excluded.status, last_seen_ms = excluded.last_seen_ms`
+    );
+    upsert.run('sess-1', 1, 'IT', 'interactive', 'busy', 'it-68', 1000, 2000);
+    upsert.run('sess-1', 1, 'IT', 'interactive', 'idle', 'it-68', 1000, 5000);
+    const row: any = db.prepare('SELECT * FROM fleet_sessions').get();
+    expect(row.status).toBe('idle');
+    expect(row.last_seen_ms).toBe(5000);
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM fleet_sessions').get();
     expect(count.c).toBe(1);
     db.close();
   });
