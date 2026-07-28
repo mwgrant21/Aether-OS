@@ -7,7 +7,7 @@ export const REQUIRED_FIELDS_BY_EVENT: Record<string, string[]> = {
   Stop: [],
 };
 
-function logDrift(db: DatabaseSync, nowMs: number, detail: string): void {
+export function logDrift(db: DatabaseSync, nowMs: number, detail: string): void {
   console.error(`[aether-collector] contract drift detected: ${detail}`);
   db.prepare('INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)').run(nowMs, detail);
 }
