@@ -25,6 +25,8 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     return null;
   }
 
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return null;
+
   const sessionId = json.sessionId || json.session_id || null;
   const timestamp = json.timestamp ? new Date(json.timestamp) : null;
   const cwd = json.cwd || null;

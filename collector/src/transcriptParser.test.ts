@@ -73,4 +73,12 @@ describe('parseTranscriptLine', () => {
     const result = parseTranscriptLine(line);
     expect(result?.sessionId).toBe('s2');
   });
+
+  it('returns null for valid JSON that parses to null, a bare array, or a primitive, never throwing', () => {
+    expect(() => parseTranscriptLine('null')).not.toThrow();
+    expect(parseTranscriptLine('null')).toBeNull();
+    expect(() => parseTranscriptLine('[]')).not.toThrow();
+    expect(parseTranscriptLine('[]')).toBeNull();
+    expect(() => parseTranscriptLine('123')).not.toThrow();
+  });
 });
