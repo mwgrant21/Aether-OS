@@ -19,6 +19,13 @@ function insertEvent(db: any, occurredAtMs: number, toolName: string) {
   ).run(toolName, occurredAtMs);
 }
 
+function insertEventNoTool(db: any, hookEventName: string, occurredAtMs: number) {
+  db.prepare(
+    `INSERT INTO events (hook_event_name, session_id, project_rel_path, tool_name, had_tool_input, had_tool_response, notification_type, occurred_at_ms)
+     VALUES (?, 's1', NULL, NULL, 0, 0, NULL, ?)`
+  ).run(hookEventName, occurredAtMs);
+}
+
 describe('compact', () => {
   it('rolls up and deletes rows older than the retention window, leaving recent rows untouched', () => {
     const db = freshDb();
@@ -72,5 +79,35 @@ describe('compact', () => {
 
   it('RETENTION_WINDOW_MS is exactly 30 days', () => {
     expect(RETENTION_WINDOW_MS).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it('dedupes daily_rollups for events with a NULL tool_name (Stop/Notification) across repeated compaction', () => {
+    // Regression test: SQLite treats NULL as distinct from every other NULL in a
+    // PRIMARY KEY, so ON CONFLICT(day, hook_event_name, tool_name) never fired
+    // when tool_name was left as raw null, producing duplicate rollup rows on a
+    // second compact() call. tool_name must be normalized to '' before it is
+    // ever written to daily_rollups.
+    const db = freshDb();
+    const now = Date.parse('2026-08-01T00:00:00Z');
+    const oldDay1 = Date.parse('2026-06-01T10:00:00Z');
+    const oldDay2 = Date.parse('2026-06-01T11:00:00Z');
+
+    insertEventNoTool(db, 'Stop', oldDay1);
+    const first = compact(db, now);
+    expect(first.rolledUpDays).toBe(1);
+    expect(first.deletedRows).toBe(1);
+
+    // A second, later compaction with more stale events on the SAME day/event
+    // must merge into the existing rollup row, not create a duplicate.
+    insertEventNoTool(db, 'Stop', oldDay2);
+    const second = compact(db, now);
+    expect(second.rolledUpDays).toBe(1);
+    expect(second.deletedRows).toBe(1);
+
+    const rollups = db
+      .prepare("SELECT * FROM daily_rollups WHERE day = '2026-06-01' AND hook_event_name = 'Stop'")
+      .all() as any[];
+    expect(rollups).toEqual([{ day: '2026-06-01', hook_event_name: 'Stop', tool_name: '', event_count: 2 }]);
+    db.close();
   });
 });

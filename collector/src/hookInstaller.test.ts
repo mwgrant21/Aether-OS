@@ -97,4 +97,60 @@ describe('hookInstaller', () => {
     const result = await installHooks(settingsPath, SCRIPT_PATH);
     expect(result.ok).toBe(false);
   });
+
+  it('installHooks leaves a non-array hooks[event] untouched and still installs the other managed events', async () => {
+    const existing = {
+      hooks: {
+        Stop: { someWeirdShape: true },
+      },
+    };
+    const settingsPath = tempSettingsPath(JSON.stringify(existing));
+    const result = await installHooks(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop).toEqual({ someWeirdShape: true });
+    for (const eventName of MANAGED_HOOK_EVENTS) {
+      if (eventName === 'Stop') continue;
+      expect(written.hooks[eventName]).toHaveLength(1);
+      expect(written.hooks[eventName][0].hooks[0].command).toContain(SCRIPT_PATH);
+    }
+  });
+
+  it('uninstallHooks leaves a non-array hooks[event] completely untouched', async () => {
+    const existing = {
+      hooks: {
+        Stop: { someWeirdShape: true },
+      },
+    };
+    const settingsPath = tempSettingsPath(JSON.stringify(existing));
+    const result = await uninstallHooks(settingsPath);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop).toEqual({ someWeirdShape: true });
+  });
+
+  it('uninstallHooks removes only our entry from a mixed group, leaving the unrelated entry and the group intact', async () => {
+    const existing = {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              { type: 'command', command: 'powershell -File some-other-script.ps1' },
+              { type: 'command', command: `node "${SCRIPT_PATH}" # aether-hook-emit.mjs marker` },
+            ],
+          },
+        ],
+      },
+    };
+    const settingsPath = tempSettingsPath(JSON.stringify(existing));
+    const result = await uninstallHooks(settingsPath);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop).toHaveLength(1);
+    expect(written.hooks.Stop[0].hooks).toHaveLength(1);
+    expect(written.hooks.Stop[0].hooks[0].command).toContain('some-other-script.ps1');
+  });
 });

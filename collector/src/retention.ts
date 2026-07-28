@@ -24,15 +24,22 @@ export function compact(db: DatabaseSync, nowMs: number): { rolledUpDays: number
     return { rolledUpDays: 0, deletedRows: 0 };
   }
 
-  const groups = new Map<string, { day: string; hookEventName: string; toolName: string | null; count: number }>();
+  // tool_name is normalized to '' (never null) before it reaches daily_rollups:
+  // SQLite treats NULL as distinct from every other NULL in a PRIMARY KEY/unique
+  // index, so ON CONFLICT(day, hook_event_name, tool_name) never fires for rows
+  // with a null tool_name (Stop/Notification events), causing silent duplicate
+  // rollup rows. '' is used as the sentinel since it can never collide with a
+  // real tool name. The raw `events` table is unaffected -- only this aggregate.
+  const groups = new Map<string, { day: string; hookEventName: string; toolName: string; count: number }>();
   for (const row of staleRows) {
     const day = dayKeyUtc(row.occurred_at_ms);
-    const key = `${day}|${row.hook_event_name}|${row.tool_name ?? ''}`;
+    const toolName = row.tool_name ?? '';
+    const key = `${day}|${row.hook_event_name}|${toolName}`;
     const existing = groups.get(key);
     if (existing) {
       existing.count += 1;
     } else {
-      groups.set(key, { day, hookEventName: row.hook_event_name, toolName: row.tool_name, count: 1 });
+      groups.set(key, { day, hookEventName: row.hook_event_name, toolName, count: 1 });
     }
   }
 

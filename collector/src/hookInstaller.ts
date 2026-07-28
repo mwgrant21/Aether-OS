@@ -93,10 +93,17 @@ export async function installHooks(
 
     const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
       string,
-      unknown[]
+      unknown
     >;
     for (const eventName of MANAGED_HOOK_EVENTS) {
-      const existingGroups = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+      const current = hooks[eventName];
+      if (current !== undefined && !Array.isArray(current)) {
+        // Unrecognized shape for this event (not an array) -- we don't know how
+        // to safely merge into it, so leave it exactly as-is rather than risk
+        // discarding the user's data. Skip only this event; keep processing others.
+        continue;
+      }
+      const existingGroups = Array.isArray(current) ? current : [];
       const alreadyInstalled = existingGroups.some((g) => isOurGroup(g, scriptPath));
       hooks[eventName] = alreadyInstalled ? existingGroups : [...existingGroups, ourGroup(scriptPath)];
     }
@@ -123,15 +130,39 @@ export async function uninstallHooks(
 
   try {
     const backupPath = await writeBackup(settingsPath, raw);
-    const hooks = { ...(parsed.hooks as Record<string, unknown[]>) };
+    const hooks = { ...(parsed.hooks as Record<string, unknown>) };
     // scriptPath is not known at uninstall time in general (the caller may not
     // have it handy) -- but every MANAGED_HOOK_EVENTS entry we would have added
     // has a command containing the literal substring "aether-hook-emit.mjs",
     // which is a stable, sufficiently specific marker for "ours" without
     // requiring the caller to pass scriptPath through this call.
+    const marker = 'aether-hook-emit.mjs';
     for (const eventName of MANAGED_HOOK_EVENTS) {
-      const groups = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
-      const filtered = groups.filter((g) => !isOurGroup(g, 'aether-hook-emit.mjs'));
+      const current = hooks[eventName];
+      if (current !== undefined && !Array.isArray(current)) {
+        // Unrecognized shape -- leave untouched rather than risk deleting the
+        // user's data outright.
+        continue;
+      }
+      const groups = Array.isArray(current) ? current : [];
+      // Filter at the level of each group's own .hooks entries, not the whole
+      // group: a group may (in principle) contain both our marker entry and an
+      // unrelated command packed into the same group object. Only drop the
+      // group entirely if removing our entries leaves it with none left.
+      const filtered = groups
+        .map((g) => {
+          if (!isOurGroup(g, marker)) return g;
+          const groupHooks = (g as HookGroup).hooks;
+          if (!Array.isArray(groupHooks)) return g;
+          const remainingHooks = groupHooks.filter(
+            (h) => !(typeof h?.command === 'string' && h.command.includes(marker))
+          );
+          return { ...(g as HookGroup), hooks: remainingHooks };
+        })
+        .filter((g) => {
+          const groupHooks = (g as HookGroup).hooks;
+          return !Array.isArray(groupHooks) || groupHooks.length > 0;
+        });
       if (filtered.length > 0) {
         hooks[eventName] = filtered;
       } else {
