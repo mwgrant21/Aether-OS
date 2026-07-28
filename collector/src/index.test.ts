@@ -17,7 +17,9 @@ describe('startCollector', () => {
       'utf8'
     );
 
-    const stop = startCollector({ dbPath, spoolDir, tailIntervalMs: 20, compactIntervalMs: 100000 });
+    const projectsRoot = join(dir, 'projects');
+    mkdirSync(projectsRoot, { recursive: true });
+    const stop = startCollector({ dbPath, spoolDir, tailIntervalMs: 20, compactIntervalMs: 100000, projectsRoot, transcriptScanIntervalMs: 100000 });
     await new Promise((resolve) => setTimeout(resolve, 100)); // let the first tick fire
 
     expect(existsSync(dbPath)).toBe(true);

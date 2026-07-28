@@ -3,22 +3,31 @@ import { homedir } from 'node:os';
 import { openDatabase, migrate } from './schema.js';
 import { startSpoolTailer } from './spoolTailer.js';
 import { compact } from './retention.js';
+import { scanTranscriptsOnce } from './transcriptScan.js';
 
 export function startCollector(options: {
   dbPath: string;
   spoolDir: string;
   tailIntervalMs: number;
   compactIntervalMs: number;
+  projectsRoot: string;
+  transcriptScanIntervalMs: number;
 }): () => void {
   const db = openDatabase(options.dbPath);
   migrate(db);
 
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
   const compactTimer = setInterval(() => compact(db, Date.now()), options.compactIntervalMs);
+  scanTranscriptsOnce(db, options.projectsRoot, Date.now());
+  const transcriptScanTimer = setInterval(
+    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now()),
+    options.transcriptScanIntervalMs
+  );
 
   return () => {
     stopTailer();
     clearInterval(compactTimer);
+    clearInterval(transcriptScanTimer);
     db.close();
   };
 }
@@ -34,6 +43,8 @@ if (isMainModule) {
     spoolDir: join(aetherDir, 'spool'),
     tailIntervalMs: 2000,
     compactIntervalMs: 60 * 60 * 1000, // hourly
+    projectsRoot: join(homedir(), '.claude', 'projects'),
+    transcriptScanIntervalMs: 15000,
   });
 
   console.log('[aether-collector] running');
