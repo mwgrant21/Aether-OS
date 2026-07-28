@@ -53,6 +53,10 @@ export function createLiveAgentTracker(homeDir: string) {
   }
 
   return {
+    getPinnedSessionId(): string | null {
+      return pinnedFile ? path.basename(pinnedFile, '.jsonl') : null;
+    },
+
     notifyPtySpawned(atMs: number): void {
       spawnedAtMs = atMs;
       pinnedFile = null;

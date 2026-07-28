@@ -9,6 +9,7 @@ import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, type CollectorUsageEvent } from './collectorStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
+import { writeOwnSessionFile } from './ownSessionFile';
 import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
 import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
@@ -129,6 +130,7 @@ const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json'
 const collectorDbPath = join(os.homedir(), '.aether-os', 'collector.db');
 
 const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
+const aetherOsDir = join(os.homedir(), '.aether-os');
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // Mirrors the .env resolution above: app.getAppPath() resolves the project
 // root in dev, and inside resources/app.asar for a packaged build. Task 3's
@@ -214,12 +216,20 @@ function optimizeProjectTargetPath(events: TranscriptEvent[]): string | null {
 const liveAgentTracker = createLiveAgentTracker(os.homedir());
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
+let lastWrittenOwnSessionId: string | null | undefined = undefined;
 
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
   try {
     const { open, completed, work, anomalies, cacheHitRatio } = await liveAgentTracker.tick();
+
+    const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
+    if (pinnedSessionId !== lastWrittenOwnSessionId) {
+      writeOwnSessionFile(aetherOsDir, pinnedSessionId, Date.now());
+      lastWrittenOwnSessionId = pinnedSessionId;
+    }
+
     sendToWindow('agents:snapshot', open);
     if (completed.length) sendToWindow('agents:completed', completed);
     sendToWindow('agents:activeWork', work);
