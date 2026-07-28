@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const REQUIRED_FIELDS_BY_EVENT: Record<string, string[]> = {
+export const REQUIRED_FIELDS_BY_EVENT: Record<string, string[]> = {
   PreToolUse: ['tool_name'],
   PostToolUse: ['tool_name'],
   Notification: ['notification_type'],

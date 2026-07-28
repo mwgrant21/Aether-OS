@@ -2,13 +2,6 @@ export type HookEventName = 'PreToolUse' | 'PostToolUse' | 'Notification' | 'Sto
 
 const KNOWN_EVENT_NAMES: readonly HookEventName[] = ['PreToolUse', 'PostToolUse', 'Notification', 'Stop'];
 
-const REQUIRED_FIELDS_BY_EVENT: Record<HookEventName, string[]> = {
-  PreToolUse: ['tool_name'],
-  PostToolUse: ['tool_name'],
-  Notification: ['notification_type'],
-  Stop: [],
-};
-
 export interface ParsedHookEvent {
   hookEventName: HookEventName;
   sessionId: string;
@@ -42,14 +35,6 @@ export function parseHookPayload(raw: unknown, receivedAtMs: number): ParsedHook
 
   const sessionId = stringField(obj, 'session_id');
   if (sessionId === null) return null;
-
-  // Validate that all required fields for this event type are present
-  const requiredFields = REQUIRED_FIELDS_BY_EVENT[hookEventName as HookEventName];
-  for (const field of requiredFields) {
-    if (obj[field] === undefined || obj[field] === null || (typeof obj[field] === 'string' && obj[field].length === 0)) {
-      return null;
-    }
-  }
 
   return {
     hookEventName: hookEventName as HookEventName,

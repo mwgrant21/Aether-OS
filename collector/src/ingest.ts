@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { parseHookPayload } from './hookPayload';
-import { checkForDrift } from './canary';
+import { checkForDrift, REQUIRED_FIELDS_BY_EVENT } from './canary';
 
 /**
  * Ingests one raw spool line: parses JSON, runs the drift canary against
@@ -22,6 +22,16 @@ export function ingestLine(db: DatabaseSync, rawLine: string, receivedAtMs: numb
     checkForDrift(parsed, db, receivedAtMs);
   } catch {
     // checkForDrift already guards itself; this is a final backstop.
+  }
+
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    const eventName = typeof obj.hook_event_name === 'string' ? obj.hook_event_name : null;
+    if (eventName !== null && eventName in REQUIRED_FIELDS_BY_EVENT) {
+      const required = REQUIRED_FIELDS_BY_EVENT[eventName];
+      const missing = required.some((field) => obj[field] === undefined || obj[field] === null);
+      if (missing) return false;
+    }
   }
 
   const event = parseHookPayload(parsed, receivedAtMs);
