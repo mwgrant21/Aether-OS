@@ -149,10 +149,11 @@ async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const now = new Date();
 
-  // Prefer the collector's incrementally-tailed usage_events store; only fall
-  // back to a full re-scan of every project's transcripts when the collector
-  // hasn't run yet, isn't installed, or its schema predates this stage --
-  // Aether OS must stay fully usable either way (docs/roadmap.md SS4.6).
+  // Dashboard tiles: prefer the collector's incrementally-tailed usage_events
+  // store; only fall back to a full re-scan of every project's transcripts
+  // when the collector hasn't run yet, isn't installed, or its schema
+  // predates this stage -- Aether OS must stay fully usable either way
+  // (docs/roadmap.md SS4.6).
   const sinceMs = now.getTime() - 31 * 24 * 60 * 60 * 1000; // covers computeUsedThisMonth's widest window with margin
   const collectorEvents = readUsageEventsSince(collectorDbPath, sinceMs);
 
@@ -160,32 +161,39 @@ async function scanAndPushUsage(): Promise<void> {
   // sessionId/cwd/toolUses -- Task 2's scope cut). realUsageMath.ts's 7
   // functions only ever read .kind/.timestamp/.usage (confirmed by reading
   // every one during this plan's research), so this cast is safe for THIS
-  // call site -- but a future realUsageMath function reading any other field
-  // would silently break against the collector path. Don't add one without
-  // widening CollectorUsageEvent and readUsageEventsSince's SELECT first.
-  let events: TranscriptEvent[];
-  if (collectorEvents !== null) {
-    events = collectorEvents as unknown as TranscriptEvent[];
-  } else {
-    const projectsRoot = join(os.homedir(), '.claude', 'projects');
-    events = await scanAllProjects(projectsRoot);
-  }
+  // call site (the dashboard-tile block below) ONLY -- but a future
+  // realUsageMath function reading any other field would silently break
+  // against the collector path. Don't add one without widening
+  // CollectorUsageEvent and readUsageEventsSince's SELECT first.
+  const projectsRoot = join(os.homedir(), '.claude', 'projects');
+  const usageEvents: TranscriptEvent[] =
+    collectorEvents !== null
+      ? (collectorEvents as unknown as TranscriptEvent[])
+      : await scanAllProjects(projectsRoot);
 
   sendToWindow('usage:snapshot', {
-    weeklyTokens: computeWeeklyTokens(events, now),
-    dailyTokens: computeDailyTokens(events, now),
-    liveTokens: computeLiveTokens(events, now),
-    usedThisMonth: computeUsedThisMonth(events, now),
-    burnRatePerMin: computeBurnRatePerMin(events, now),
-    weekOverWeekPct: computeWeekOverWeekPct(events, now),
+    weeklyTokens: computeWeeklyTokens(usageEvents, now),
+    dailyTokens: computeDailyTokens(usageEvents, now),
+    liveTokens: computeLiveTokens(usageEvents, now),
+    usedThisMonth: computeUsedThisMonth(usageEvents, now),
+    burnRatePerMin: computeBurnRatePerMin(usageEvents, now),
+    weekOverWeekPct: computeWeekOverWeekPct(usageEvents, now),
     lastScanAt: now.toISOString(),
-    ctxUsed: computeContextWindow(events, now),
+    ctxUsed: computeContextWindow(usageEvents, now),
   });
 
+  // Optimize's rules need toolUses/toolResults (opus-on-trivial-turns needs
+  // model; unpinned-config-re-reads and uncapped-bash-output need tool call/
+  // result detail) -- CollectorUsageEvent deliberately does not carry any of
+  // that (Task 2's privacy-minimal scope cut), so this MUST be a genuine,
+  // unconditional scanAllProjects() call, never the collector-sourced
+  // usageEvents above. This is unchanged from pre-Stage-3 behavior --
+  // Optimize was never part of what this stage moved to the collector.
+  const optimizeEvents = await scanAllProjects(projectsRoot);
   const appliedState = await loadOptimizeState(optimizeStatePath);
-  const findings = evaluateOptimizeRulesWithRecurrence(events, WEEK_MS, appliedState);
+  const findings = evaluateOptimizeRulesWithRecurrence(optimizeEvents, WEEK_MS, appliedState);
   const summary = summarizeOptimize(findings);
-  const cacheHitRate = computeCacheHitRate(events);
+  const cacheHitRate = computeCacheHitRate(optimizeEvents);
   const breakdown = gradeBreakdown({ findings, cacheHitRate });
   sendToWindow('optimize:findings', findings);
   sendToWindow('optimize:summary', summary);
@@ -238,8 +246,10 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  scanAndPushUsage();
-  setInterval(scanAndPushUsage, USAGE_SCAN_INTERVAL_MS);
+  scanAndPushUsage().catch((err) => console.error('scanAndPushUsage failed:', err));
+  setInterval(() => {
+    scanAndPushUsage().catch((err) => console.error('scanAndPushUsage failed:', err));
+  }, USAGE_SCAN_INTERVAL_MS);
 
   tickAndPushAgents();
   setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);

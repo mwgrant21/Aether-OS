@@ -198,4 +198,25 @@ describe('optimizeRules', () => {
     expect(finding).toBeTruthy();
     expect(finding!.recurring).toBeFalsy();
   });
+
+  // Regression for the final-whole-branch-review Critical finding: main.ts's
+  // scanAndPushUsage() used to feed the SAME `events` variable (collector-
+  // sourced when available) into both realUsageMath.ts and this function.
+  // CollectorUsageEvent (electron/collectorStore.ts) never carries toolUses/
+  // toolResults, so `for (const toolUse of e.toolUses)` threw
+  // "e.toolUses is not iterable" the moment a collector-sourced event reached
+  // this function. The fix keeps Optimize on a genuine, unconditional
+  // scanAllProjects() result (real TranscriptEvent objects, toolUses always
+  // an array) that is never collector-sourced. This test proves the crash is
+  // real for the shape this function was fed, so it never regresses.
+  it('throws on a CollectorUsageEvent-shaped object missing toolUses/toolResults (proves why Optimize must never see collector-sourced events)', () => {
+    const collectorShaped = {
+      kind: 'assistant' as const,
+      timestamp: new Date('2026-07-08T09:00:00Z'),
+      usage: { inputTokens: 50, outputTokens: 40, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+      // no toolUses, no toolResults, no cwd/sessionId/model -- matches
+      // electron/collectorStore.ts's CollectorUsageEvent shape exactly.
+    };
+    expect(() => evaluateOptimizeRules([collectorShaped as unknown as TranscriptEvent], 60 * 60 * 1000)).toThrow();
+  });
 });

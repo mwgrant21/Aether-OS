@@ -37,6 +37,10 @@ describe('scanTranscriptsOnce', () => {
     const fileRow: any = db.prepare('SELECT * FROM transcript_files').get();
     expect(fileRow.last_scanned_ms).toBe(1000);
     expect(fileRow.last_offset).toBeGreaterThan(0);
+    // docs/privacy-and-data.md SS5: stored path must be relative to
+    // projectsRoot, not an absolute path containing the home dir/username.
+    expect(fileRow.file_path).toBe(join('my-project', 'session.jsonl'));
+    expect(fileRow.file_path).not.toContain(projectsRoot);
     db.close();
   });
 

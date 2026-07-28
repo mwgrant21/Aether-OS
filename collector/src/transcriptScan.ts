@@ -72,8 +72,14 @@ export function scanTranscriptsOnce(
     }
 
     for (const file of files) {
+      // filePath is absolute and used for all actual filesystem operations
+      // (statSync/openSync/readSync below); relativePath is what's stored in
+      // (and looked up from) the transcript_files table, per
+      // docs/privacy-and-data.md SS5 -- that table must never persist a path
+      // containing the home directory/username.
       const filePath = join(dirPath, file);
-      const offset = getLastOffset(db, filePath);
+      const relativePath = join(dirName, file);
+      const offset = getLastOffset(db, relativePath);
       let lines: string[];
       let newOffset: number;
       try {
@@ -90,7 +96,7 @@ export function scanTranscriptsOnce(
       }
 
       filesScanned += 1;
-      recordOffset(db, filePath, newOffset, nowMs);
+      recordOffset(db, relativePath, newOffset, nowMs);
     }
   }
 
