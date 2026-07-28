@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { openDatabase, migrate, getSchemaVersion, SCHEMA_VERSION } from './schema.js';
+import { openDatabase, migrate, getSchemaVersion, SCHEMA_VERSION, stampFleetHeartbeat } from './schema.js';
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-schema-'));
@@ -144,6 +144,24 @@ describe('schema', () => {
     expect(row.status).toBe('idle');
     expect(row.last_seen_ms).toBe(5000);
     const count: any = db.prepare('SELECT COUNT(*) as c FROM fleet_sessions').get();
+    expect(count.c).toBe(1);
+    db.close();
+  });
+
+  it('stampFleetHeartbeat writes fleet_last_poll_ms to schema_meta and upserts on repeated calls', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    stampFleetHeartbeat(db, 1000);
+    let row: any = db.prepare("SELECT value FROM schema_meta WHERE key = 'fleet_last_poll_ms'").get();
+    expect(row.value).toBe('1000');
+
+    stampFleetHeartbeat(db, 2000);
+    row = db.prepare("SELECT value FROM schema_meta WHERE key = 'fleet_last_poll_ms'").get();
+    expect(row.value).toBe('2000');
+
+    const count: any = db
+      .prepare("SELECT COUNT(*) as c FROM schema_meta WHERE key = 'fleet_last_poll_ms'")
+      .get();
     expect(count.c).toBe(1);
     db.close();
   });

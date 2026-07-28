@@ -81,3 +81,19 @@ export function getSchemaVersion(db: DatabaseSync): number {
     | undefined;
   return row ? Number(row.value) : 0;
 }
+
+/**
+ * Stamps a heartbeat: "the collector's fleet-poll cycle is alive and
+ * cycling," independent of whether the poll itself succeeded. Callers must
+ * invoke this after EVERY fleet-poll cycle (success or failure) -- the
+ * reader side (electron/collectorStore.ts's readFleetSessions) treats a
+ * missing or stale heartbeat as "collector isn't running," which is what
+ * lets stale fleet_sessions rows correctly stop rendering as live sessions
+ * when the collector process itself has died or been stopped.
+ */
+export function stampFleetHeartbeat(db: DatabaseSync, nowMs: number): void {
+  db.prepare(
+    `INSERT INTO schema_meta (key, value) VALUES ('fleet_last_poll_ms', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(String(nowMs));
+}

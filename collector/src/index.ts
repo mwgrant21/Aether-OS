@@ -1,18 +1,33 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDatabase, migrate } from './schema.js';
+import { openDatabase, migrate, stampFleetHeartbeat } from './schema.js';
 import { startSpoolTailer } from './spoolTailer.js';
 import { compact } from './retention.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
-import { pollFleet, upsertFleetSessions } from './fleetPoll.js';
+import { pollFleet, upsertFleetSessions, type FleetExecFn } from './fleetPoll.js';
 import { readOwnSessionId } from './ownSessionFile.js';
 
-async function pollAndUpsertFleet(db: DatabaseSync, ownSessionFilePath: string): Promise<void> {
+// Exported (not just module-private) so tests can drive it directly with an
+// injected execFn, matching pollFleet's own injectable-exec-function
+// precedent, instead of going through startCollector's real setInterval
+// wiring and a real `claude` child-process spawn.
+export async function pollAndUpsertFleet(
+  db: DatabaseSync,
+  ownSessionFilePath: string,
+  execFn?: FleetExecFn
+): Promise<void> {
   const ownSessionId = readOwnSessionId(ownSessionFilePath);
   const nowMs = Date.now();
-  const sessions = await pollFleet(db, ownSessionId, nowMs);
-  upsertFleetSessions(db, sessions ?? [], nowMs);
+  try {
+    const sessions = await pollFleet(db, ownSessionId, nowMs, execFn);
+    upsertFleetSessions(db, sessions ?? [], nowMs);
+  } finally {
+    // Stamped regardless of success/failure above -- the heartbeat's job is
+    // to prove "the collector process is alive and cycling," not "the last
+    // poll succeeded." See schema.ts's stampFleetHeartbeat doc comment.
+    stampFleetHeartbeat(db, nowMs);
+  }
 }
 
 export function startCollector(options: {

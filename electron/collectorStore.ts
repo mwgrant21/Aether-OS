@@ -14,6 +14,11 @@ export interface CollectorUsageEvent {
 const MIN_SCHEMA_VERSION_FOR_USAGE_EVENTS = 2;
 const MIN_SCHEMA_VERSION_FOR_FLEET_SESSIONS = 3;
 
+// 3x the collector's 15s fleet-poll interval -- enough margin that one slow
+// poll cycle doesn't false-trigger, while still catching a genuinely dead
+// collector within roughly one extra cycle.
+const FLEET_HEARTBEAT_STALE_MS = 45000;
+
 function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
@@ -30,6 +35,17 @@ function schemaVersionOf(db: DatabaseSync): number {
     return row ? Number(row.value) : 0;
   } catch {
     return 0;
+  }
+}
+
+function fleetLastPollMs(db: DatabaseSync): number | null {
+  try {
+    const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'fleet_last_poll_ms'").get() as
+      | { value: string }
+      | undefined;
+    return row ? Number(row.value) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -75,6 +91,16 @@ export function readFleetSessions(dbPath: string): FleetSessionRow[] | null {
 
   try {
     if (schemaVersionOf(db) < MIN_SCHEMA_VERSION_FOR_FLEET_SESSIONS) return null;
+
+    // Collector-liveness gate: a missing or stale heartbeat means the
+    // collector process itself has stopped polling (crashed, was stopped,
+    // machine slept, or never started) -- treat that identically to
+    // "collector isn't installed" rather than serving whatever stale rows
+    // happen to still be sitting in fleet_sessions. See PROGRESS.md's Fleet
+    // Session Browser entry for the "looks alive, isn't" failure mode this
+    // closes.
+    const lastPollMs = fleetLastPollMs(db);
+    if (lastPollMs === null || Date.now() - lastPollMs > FLEET_HEARTBEAT_STALE_MS) return null;
 
     const rows = db
       .prepare('SELECT session_id, pid, project_name, kind, status, name, started_at_ms FROM fleet_sessions')

@@ -72,7 +72,15 @@ describe('readUsageEventsSince', () => {
   });
 });
 
-function tempDbWithFleetSessions(rows: { session_id: string; pid: number | null; project_name: string; kind: string; status: string; name: string; started_at_ms: number; last_seen_ms: number }[], schemaVersion = 3): string {
+// heartbeatMs defaults to "now" (fresh) so every pre-existing test that
+// doesn't care about the heartbeat still gets a live-collector reading.
+// Pass null to omit the heartbeat row entirely (simulating a collector that
+// predates this fix, or has never completed a fleet-poll cycle).
+function tempDbWithFleetSessions(
+  rows: { session_id: string; pid: number | null; project_name: string; kind: string; status: string; name: string; started_at_ms: number; last_seen_ms: number }[],
+  schemaVersion = 3,
+  heartbeatMs: number | null = Date.now()
+): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-fleet-'));
   const dbPath = join(dir, 'test.db');
   const db = new DatabaseSync(dbPath);
@@ -81,6 +89,9 @@ function tempDbWithFleetSessions(rows: { session_id: string; pid: number | null;
     CREATE TABLE fleet_sessions (session_id TEXT PRIMARY KEY, pid INTEGER, project_name TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, name TEXT NOT NULL, started_at_ms INTEGER NOT NULL, last_seen_ms INTEGER NOT NULL);
   `);
   db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', ?)").run(String(schemaVersion));
+  if (heartbeatMs !== null) {
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('fleet_last_poll_ms', ?)").run(String(heartbeatMs));
+  }
   const insert = db.prepare(
     'INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
@@ -128,6 +139,55 @@ describe('readFleetSessions', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-fleet-corrupt-'));
     const dbPath = join(dir, 'test.db');
     require('fs').writeFileSync(dbPath, 'not a real sqlite file');
+    expect(() => readFleetSessions(dbPath)).not.toThrow();
+    expect(readFleetSessions(dbPath)).toBeNull();
+  });
+
+  // Regression coverage for the whole-branch-review finding: stale
+  // fleet_sessions rows must stop rendering as live sessions once the
+  // collector process itself has stopped polling, even though the rows
+  // themselves are still sitting in the table.
+  it('returns null when the fleet heartbeat is missing (collector predates this fix, or has never completed a fleet-poll cycle)', () => {
+    const dbPath = tempDbWithFleetSessions(
+      [{ session_id: 's1', pid: 100, project_name: 'proj', kind: 'interactive', status: 'busy', name: 'it-1', started_at_ms: 1000, last_seen_ms: 2000 }],
+      3,
+      null
+    );
+    expect(readFleetSessions(dbPath)).toBeNull();
+  });
+
+  it('returns null when the fleet heartbeat is older than the staleness threshold (collector stopped or stalled)', () => {
+    const dbPath = tempDbWithFleetSessions(
+      [{ session_id: 's1', pid: 100, project_name: 'proj', kind: 'interactive', status: 'busy', name: 'it-1', started_at_ms: 1000, last_seen_ms: 2000 }],
+      3,
+      Date.now() - 50_000 // well past the 45s threshold (3x the 15s poll interval)
+    );
+    expect(readFleetSessions(dbPath)).toBeNull();
+  });
+
+  it('returns real data when the fleet heartbeat is fresh (well within the staleness threshold)', () => {
+    const dbPath = tempDbWithFleetSessions(
+      [{ session_id: 's1', pid: 100, project_name: 'proj', kind: 'interactive', status: 'busy', name: 'it-1', started_at_ms: 1000, last_seen_ms: 2000 }],
+      3,
+      Date.now() - 5_000
+    );
+    expect(readFleetSessions(dbPath)).toEqual([
+      { sessionId: 's1', pid: 100, projectName: 'proj', kind: 'interactive', status: 'busy', name: 'it-1', startedAtMs: 1000 },
+    ]);
+  });
+
+  // Deferred test flagged by the task reviewer as missing: this path is
+  // believed correct (the try/catch around the query should catch "no such
+  // table") but was never actually exercised.
+  it('returns null (via the catch path) when schema version is >= 3 but the fleet_sessions table is somehow still missing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-fleet-notable-'));
+    const dbPath = join(dir, 'test.db');
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', ?)").run('3');
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('fleet_last_poll_ms', ?)").run(String(Date.now()));
+    db.close();
+
     expect(() => readFleetSessions(dbPath)).not.toThrow();
     expect(readFleetSessions(dbPath)).toBeNull();
   });
