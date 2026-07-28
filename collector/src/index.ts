@@ -1,9 +1,19 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase, migrate } from './schema.js';
 import { startSpoolTailer } from './spoolTailer.js';
 import { compact } from './retention.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
+import { pollFleet, upsertFleetSessions } from './fleetPoll.js';
+import { readOwnSessionId } from './ownSessionFile.js';
+
+async function pollAndUpsertFleet(db: DatabaseSync, ownSessionFilePath: string): Promise<void> {
+  const ownSessionId = readOwnSessionId(ownSessionFilePath);
+  const nowMs = Date.now();
+  const sessions = await pollFleet(db, ownSessionId, nowMs);
+  upsertFleetSessions(db, sessions ?? [], nowMs);
+}
 
 export function startCollector(options: {
   dbPath: string;
@@ -12,6 +22,8 @@ export function startCollector(options: {
   compactIntervalMs: number;
   projectsRoot: string;
   transcriptScanIntervalMs: number;
+  ownSessionFilePath: string;
+  fleetPollIntervalMs: number;
 }): () => void {
   const db = openDatabase(options.dbPath);
   migrate(db);
@@ -24,10 +36,20 @@ export function startCollector(options: {
     options.transcriptScanIntervalMs
   );
 
+  pollAndUpsertFleet(db, options.ownSessionFilePath).catch((err) =>
+    console.error('[aether-collector] fleet poll failed:', err)
+  );
+  const fleetPollTimer = setInterval(() => {
+    pollAndUpsertFleet(db, options.ownSessionFilePath).catch((err) =>
+      console.error('[aether-collector] fleet poll failed:', err)
+    );
+  }, options.fleetPollIntervalMs);
+
   return () => {
     stopTailer();
     clearInterval(compactTimer);
     clearInterval(transcriptScanTimer);
+    clearInterval(fleetPollTimer);
     db.close();
   };
 }
@@ -45,6 +67,8 @@ if (isMainModule) {
     compactIntervalMs: 60 * 60 * 1000, // hourly
     projectsRoot: join(homedir(), '.claude', 'projects'),
     transcriptScanIntervalMs: 15000,
+    ownSessionFilePath: join(aetherDir, 'own-session.json'),
+    fleetPollIntervalMs: 15000,
   });
 
   console.log('[aether-collector] running');
