@@ -83,6 +83,16 @@ export interface RealUsageSnapshot {
   ctxUsed: number;
 }
 
+export interface FleetSessionRow {
+  sessionId: string;
+  pid: number | null;
+  projectName: string;
+  kind: string;
+  status: string;
+  name: string;
+  startedAtMs: number;
+}
+
 export type ProjectStatus = 'BUILDING' | 'REVIEW' | 'QUEUED' | 'SHIPPED';
 
 export interface ProjectStub {

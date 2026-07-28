@@ -3,7 +3,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
-import { readUsageEventsSince } from './collectorStore.js';
+import { readUsageEventsSince, readFleetSessions } from './collectorStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -69,5 +69,66 @@ describe('readUsageEventsSince', () => {
     require('fs').writeFileSync(dbPath, 'not a real sqlite file');
     expect(() => readUsageEventsSince(dbPath, 0)).not.toThrow();
     expect(readUsageEventsSince(dbPath, 0)).toBeNull();
+  });
+});
+
+function tempDbWithFleetSessions(rows: { session_id: string; pid: number | null; project_name: string; kind: string; status: string; name: string; started_at_ms: number; last_seen_ms: number }[], schemaVersion = 3): string {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-fleet-'));
+  const dbPath = join(dir, 'test.db');
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE fleet_sessions (session_id TEXT PRIMARY KEY, pid INTEGER, project_name TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, name TEXT NOT NULL, started_at_ms INTEGER NOT NULL, last_seen_ms INTEGER NOT NULL);
+  `);
+  db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', ?)").run(String(schemaVersion));
+  const insert = db.prepare(
+    'INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  for (const r of rows) {
+    insert.run(r.session_id, r.pid, r.project_name, r.kind, r.status, r.name, r.started_at_ms, r.last_seen_ms);
+  }
+  db.close();
+  return dbPath;
+}
+
+describe('readFleetSessions', () => {
+  it('returns mapped fleet session rows', () => {
+    const dbPath = tempDbWithFleetSessions([
+      { session_id: 's1', pid: 100, project_name: 'proj', kind: 'interactive', status: 'busy', name: 'it-1', started_at_ms: 1000, last_seen_ms: 2000 },
+    ]);
+    const rows = readFleetSessions(dbPath);
+    expect(rows).toEqual([
+      { sessionId: 's1', pid: 100, projectName: 'proj', kind: 'interactive', status: 'busy', name: 'it-1', startedAtMs: 1000 },
+    ]);
+  });
+
+  it('returns an empty array (not null) when the table exists but has zero rows', () => {
+    const dbPath = tempDbWithFleetSessions([]);
+    expect(readFleetSessions(dbPath)).toEqual([]);
+  });
+
+  it('maps a null pid through as null', () => {
+    const dbPath = tempDbWithFleetSessions([
+      { session_id: 's1', pid: null, project_name: 'proj', kind: 'background', status: 'idle', name: 'it-1', started_at_ms: 1000, last_seen_ms: 2000 },
+    ]);
+    expect(readFleetSessions(dbPath)![0].pid).toBeNull();
+  });
+
+  it('returns null when the database file does not exist', () => {
+    const missingPath = join(tmpdir(), 'aether-collectorstore-fleet-missing-' + Date.now(), 'test.db');
+    expect(readFleetSessions(missingPath)).toBeNull();
+  });
+
+  it('returns null when schema_meta version is below 3', () => {
+    const dbPath = tempDbWithFleetSessions([], 2);
+    expect(readFleetSessions(dbPath)).toBeNull();
+  });
+
+  it('never throws even against a malformed/corrupt database file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-fleet-corrupt-'));
+    const dbPath = join(dir, 'test.db');
+    require('fs').writeFileSync(dbPath, 'not a real sqlite file');
+    expect(() => readFleetSessions(dbPath)).not.toThrow();
+    expect(readFleetSessions(dbPath)).toBeNull();
   });
 });

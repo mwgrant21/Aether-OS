@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
+import type { FleetSessionRow } from '../src/state/types';
 
 const require = createRequire(import.meta.url);
 
@@ -10,7 +11,8 @@ export interface CollectorUsageEvent {
   usage: { inputTokens: number; outputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number };
 }
 
-const MIN_SUPPORTED_SCHEMA_VERSION = 2;
+const MIN_SCHEMA_VERSION_FOR_USAGE_EVENTS = 2;
+const MIN_SCHEMA_VERSION_FOR_FLEET_SESSIONS = 3;
 
 function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
@@ -36,7 +38,7 @@ export function readUsageEventsSince(dbPath: string, sinceMs: number): Collector
   if (!db) return null;
 
   try {
-    if (schemaVersionOf(db) < MIN_SUPPORTED_SCHEMA_VERSION) return null;
+    if (schemaVersionOf(db) < MIN_SCHEMA_VERSION_FOR_USAGE_EVENTS) return null;
 
     const rows = db
       .prepare(
@@ -59,6 +61,41 @@ export function readUsageEventsSince(dbPath: string, sinceMs: number): Collector
         cacheCreationInputTokens: r.cache_creation_input_tokens,
         cacheReadInputTokens: r.cache_read_input_tokens,
       },
+    }));
+  } catch {
+    return null;
+  } finally {
+    db.close();
+  }
+}
+
+export function readFleetSessions(dbPath: string): FleetSessionRow[] | null {
+  const db = openReadOnly(dbPath);
+  if (!db) return null;
+
+  try {
+    if (schemaVersionOf(db) < MIN_SCHEMA_VERSION_FOR_FLEET_SESSIONS) return null;
+
+    const rows = db
+      .prepare('SELECT session_id, pid, project_name, kind, status, name, started_at_ms FROM fleet_sessions')
+      .all() as {
+      session_id: string;
+      pid: number | null;
+      project_name: string;
+      kind: string;
+      status: string;
+      name: string;
+      started_at_ms: number;
+    }[];
+
+    return rows.map((r) => ({
+      sessionId: r.session_id,
+      pid: r.pid,
+      projectName: r.project_name,
+      kind: r.kind,
+      status: r.status,
+      name: r.name,
+      startedAtMs: r.started_at_ms,
     }));
   } catch {
     return null;
