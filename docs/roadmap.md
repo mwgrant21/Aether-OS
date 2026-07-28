@@ -21,12 +21,12 @@ answer: **split the app into an always-on collector and a viewer.**
 ```
   ┌─────────────────────────────────────────┐
   │  aether-collector  (headless, always-on) │
-  │   · HTTP receiver on loopback  ← hooks   │
+  │   · spool watcher  ← hook-emit script    │
   │   · statusline payload watcher           │
   │   · claude agents --json poller          │
   │   · writes → SQLite                      │
   └────────────────┬────────────────────────┘
-                   │  HTTP + SQLite (language-agnostic contract)
+                   │  file spool + SQLite (language-agnostic contract)
   ┌────────────────▼────────────────────────┐
   │  Aether OS  (Electron viewer)            │
   │   · queries the store, renders           │
@@ -80,7 +80,7 @@ implementer + reviewer + whole-branch-review loop.
 | **0** | Optimize panel port | *In flight.* Untouched by this roadmap. | 9 tasks |
 | **0.5** | **Correctness & hygiene** | **A confirmed live defect in a shipped feature, plus two hygiene items.** Jumps the queue — see §3.1. | ~5 tasks |
 | **1** | **Statusline feed** | Independent, no architecture change, retires the last fictional KPI. Best value-to-effort. Planned: `2026-07-27-statusline-feed.md`. | ~7 tasks |
-| **2** | **Collector foundation** | Headless Node process: HTTP receiver, SQLite schema, hook installer. **Aether OS unchanged.** Must carry the §4 constraints in scope. | ~10 tasks |
+| **2** | **Collector foundation** | Headless Node process: append-only file spool + spool watcher (not an HTTP receiver — see §3 of `docs/privacy-and-data.md`), SQLite schema, hook installer. **Aether OS unchanged.** Must carry the §4 constraints in scope. | ~10 tasks |
 | **3** | **Viewer reads the store** | Aether queries SQLite instead of scanning. Retires the 60s scan, 1s tick, byte-0 replay, re-entrancy guard. Net-negative lines. | ~7 tasks |
 | **4** | **Fleet + session picker** | `claude agents --json` in the collector, picker in the viewer. Retires the most-recently-active auto-pick and its false-completion bug. | ~5 tasks |
 | **5** | **Diagnostic core** | Persisted anomaly log, real per-dispatch file touches, dispatch timeline card, cost-of-thrash feeding Optimize. **The thesis.** | ~9 tasks |
