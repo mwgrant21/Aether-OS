@@ -34,6 +34,10 @@ extension of something partially built.
   collector's ~15s-poll `events` table. A badge/flash/sound reacting 15 seconds late defeats the
   point; the server already gives near-instant, session-scoped delivery for a different hook
   event, and `Notification` rides the same mechanism.
+- **Overlay badge is a rendered image, not a raw count.** `BrowserWindow.setOverlayIcon()` takes a
+  `NativeImage`, not a number — showing a count means rendering a small canvas (circle + digit)
+  into a `NativeImage` each time the count changes, then passing `null` on focus to clear it. Noted
+  explicitly so the implementation plan doesn't treat this as a one-line API call.
 - **Transcript density control is a single global Settings toggle** (Normal/Verbose/Summary),
   persisted the same way the existing light/dark theme preference is — not a per-view control.
 - **Summary density scope**: `AgentDetailCard`'s prompt/output display, roster rows, and Memory's
@@ -53,10 +57,11 @@ electron/permissionServer.ts (extended, new onNotification route)
   │ fire-and-forget ack -- no decision to return, unlike Permission/PostToolUse
   ▼
 electron/main.ts
-  │ isWindowFocused? ──yes──► update badge count silently, still feed recap; no sound/flash/badge shown
+  │ isWindowFocused? ──yes──► track internally (badge count stays consistent if focus is lost
+  │                            again soon), but suppressed: no sound/flash/visible badge shown
   │        │no
   │        ▼
-  │  flashFrame(true) + setOverlayIcon(count) + typed sound (playNotification: reason)
+  │  flashFrame(true) + setOverlayIcon(renderedBadge, description) + typed sound (playNotification: reason)
   │
   │ (independently, every 1s tick while !isWindowFocused)
   │  diff tick(t) vs tick(t-1) ──► RecapAccumulator.accumulate()
@@ -86,6 +91,7 @@ not introduce a second data path.
 | `src/components/agents/AgentRosterCard.tsx` (rework) | Groups rows under `NEEDS INPUT` / `WORKING` / `DONE` headers (`NEEDS INPUT` always first); two-axis glyph (colour = state, shape = process liveness, ring = active anomaly) replaces the current two-letter avatar; only `DONE` may collapse into a "+N more" summary — anomalous rows are never scrolled past silently. |
 | `src/components/agents/rosterGrouping.ts` (new, pure) | Dispatch + anomaly state → group assignment and collapse-eligibility; unit-tested like `agentsMath.test.ts`. |
 | `src/state/types.ts` / Settings (extend) | New `densityLevel: 'normal' \| 'verbose' \| 'summary'` persisted setting, same mechanism as the existing theme toggle; a `useDensity()` hook mirrors `useColors()`. |
+| `src/shared/transcriptDensity.ts` (new, pure) | `applyDensity(content, level)`-style transform: `verbose`/`normal` pass content through unchanged, `summary` collapses to the headline (Section 4's model-written headline, or its local-derived default) alone. Consumed by `AgentDetailCard`, roster rows, and Memory's dispatch entries — one shared transform, not three separate collapse implementations. |
 | `src/components/dashboard/RecapBanner.tsx` (new) | Renders the `presence:recap` payload as a dismissible, auto-expiring (~10s) banner — not a modal, matching the "leave it open while away" philosophy. |
 
 ## Error handling
@@ -109,6 +115,10 @@ not introduce a second data path.
   anything requiring a real `AudioContext`.
 - `rosterGrouping.ts` — pure, unit-tested (group assignment, `NEEDS INPUT`-first ordering,
   `DONE`-only collapse eligibility).
+- `transcriptDensity.ts`'s `applyDensity()` — pure, unit-tested (verbose/normal passthrough,
+  summary collapse-to-headline), matching `settingsMath.test.ts`'s existing coverage style for
+  other Settings-driven view logic. `RecapBanner.tsx` gets the same shallow render/dismiss test
+  treatment as other cards (e.g. `DispatchTimeline.test.tsx`).
 - `headlineGenerator.ts`'s throttle gate (`Map` lookup, 15s floor, blocked-bypasses-throttle) is
   pure and unit-tested; the real Haiku call is integration-level, mocked at the request boundary
   the same way `chatCore.test.ts` already mocks Chat's real API path.
