@@ -24,8 +24,39 @@ function assistantEvent(overrides: Partial<TranscriptEvent> = {}): TranscriptEve
     usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
     toolUses: [],
     toolResults: [],
+    humanText: null,
     originKind: null,
     ...overrides,
+  };
+}
+
+// Opens a dispatch the way a real transcript does: an assistant event whose
+// tool_use is named 'Agent' (NOT 'Task' -- see src/state/liveAgentsMath.ts).
+function openDispatch(toolUseId: string, startedAtMs: number, toolName = 'Agent') {
+  return updateHistory(createEmptyHistory(), [{
+    kind: 'assistant', sessionId: null, timestamp: new Date(startedAtMs), cwd: null, model: null, usage: null,
+    toolUses: [{ id: toolUseId, name: toolName, input: { subagent_type: 'general-purpose' } }],
+    toolResults: [], humanText: null, originKind: null,
+  }], startedAtMs);
+}
+
+// The real completion signal: a 'user'-kind event with origin.kind
+// 'task-notification' whose text carries tags Claude Code itself computes.
+function completionEvent(
+  toolUseId: string,
+  endedAtMs: number,
+  parts: { tokens?: number; toolUses?: number; durationMs?: number } = {},
+): TranscriptEvent {
+  const { tokens = 12345, toolUses = 7, durationMs = 4321 } = parts;
+  return {
+    kind: 'user', sessionId: null, timestamp: new Date(endedAtMs), cwd: null, model: null, usage: null,
+    toolUses: [], toolResults: [],
+    humanText:
+      `<tool-use-id>${toolUseId}</tool-use-id>` +
+      `<subagent_tokens>${tokens}</subagent_tokens>` +
+      `<tool_uses>${toolUses}</tool_uses>` +
+      `<duration_ms>${durationMs}</duration_ms>`,
+    originKind: 'task-notification',
   };
 }
 
@@ -74,31 +105,125 @@ describe('ingestUsageEvent', () => {
 });
 
 describe('ingestDispatchEvent', () => {
-  it('records a dispatches row when a Task tool call is still open', () => {
-    const db = openDatabase(':memory:');
-    migrate(db);
+  it('records exact tag-provided values when an Agent dispatch is closed by its task-notification', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
 
-    let history = createEmptyHistory();
-    history = updateHistory(history, [{
-      kind: 'assistant', sessionId: null, timestamp: new Date(1000), cwd: null, model: null, usage: null,
-      toolUses: [{ id: 'tu_task_1', name: 'Task', input: {} }], toolResults: [], originKind: null,
-    }], 1000);
-
-    const completionEvent = {
-      kind: 'assistant' as const, sessionId: null, timestamp: new Date(13000), cwd: null,
-      model: 'claude-sonnet-5',
-      usage: { inputTokens: 4000, outputTokens: 1000, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-      toolUses: [], toolResults: [], originKind: null,
-    };
-
-    const ingested = ingestDispatchEvent(db, history, completionEvent, 'tu_task_1', 3);
+    const ingested = ingestDispatchEvent(
+      db,
+      history,
+      completionEvent('tu_1', 13000, { tokens: 12345, toolUses: 7, durationMs: 4321 }),
+    );
     expect(ingested).toBe(true);
 
-    const row = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_task_1') as
-      { tokens: number; tool_uses: number; started_at_ms: number; ended_at_ms: number };
-    expect(row.tokens).toBe(5000);
-    expect(row.tool_uses).toBe(3);
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
+    // Exact values from the tags, NOT approximations derived from usage totals.
+    expect(row.tokens).toBe(12345);
+    expect(row.tool_uses).toBe(7);
+    expect(row.duration_ms).toBe(4321);
     expect(row.started_at_ms).toBe(1000);
     expect(row.ended_at_ms).toBe(13000);
+    db.close();
+  });
+
+  it('returns false and writes nothing when the tagged tool-use-id matches no open dispatch', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_other', 13000))).toBe(false);
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM dispatches').get();
+    expect(count.c).toBe(0);
+    db.close();
+  });
+
+  it('returns false when the notification carries no <tool-use-id> tag at all', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    const event = { ...completionEvent('tu_1', 13000), humanText: 'subagent finished' };
+    expect(ingestDispatchEvent(db, history, event)).toBe(false);
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM dispatches').get();
+    expect(count.c).toBe(0);
+    db.close();
+  });
+
+  it('returns false for a non-user event or a user event that is not a task-notification', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    const asAssistant = { ...completionEvent('tu_1', 13000), kind: 'assistant' as const };
+    expect(ingestDispatchEvent(db, history, asAssistant)).toBe(false);
+    const wrongOrigin = { ...completionEvent('tu_1', 13000), originKind: null };
+    expect(ingestDispatchEvent(db, history, wrongOrigin)).toBe(false);
+    const count: any = db.prepare('SELECT COUNT(*) as c FROM dispatches').get();
+    expect(count.c).toBe(0);
+    db.close();
+  });
+
+  it('returns false when the open tool call is not named Agent', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000, 'Bash');
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_1', 13000))).toBe(false);
+    db.close();
+  });
+
+  it('returns false when the completion event has no timestamp', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    const event = { ...completionEvent('tu_1', 13000), timestamp: null };
+    expect(ingestDispatchEvent(db, history, event)).toBe(false);
+    db.close();
+  });
+
+  it('defaults missing numeric tags to 0 rather than failing', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    const event = { ...completionEvent('tu_1', 13000), humanText: '<tool-use-id>tu_1</tool-use-id>' };
+    expect(ingestDispatchEvent(db, history, event)).toBe(true);
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
+    expect(row.tokens).toBe(0);
+    expect(row.tool_uses).toBe(0);
+    expect(row.duration_ms).toBe(0);
+    db.close();
+  });
+
+  // Regression: the pre-rework version fanned a single completion out to EVERY
+  // open dispatch, so a second concurrent dispatch got a bogus row. The
+  // <tool-use-id> tag is an exact correlation id -- exactly one row per event.
+  it('closes only the tagged dispatch when two dispatches are open concurrently', () => {
+    const db = freshDb();
+    let history = openDispatch('tu_a', 1000);
+    history = updateHistory(history, [{
+      kind: 'assistant', sessionId: null, timestamp: new Date(2000), cwd: null, model: null, usage: null,
+      toolUses: [{ id: 'tu_b', name: 'Agent', input: {} }], toolResults: [], humanText: null, originKind: null,
+    }], 2000);
+    expect(Object.keys(history.openByToolUseId).sort()).toEqual(['tu_a', 'tu_b']);
+
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_a', 13000, { tokens: 500 }))).toBe(true);
+
+    const rows: any[] = db.prepare('SELECT * FROM dispatches').all() as any[];
+    expect(rows.length).toBe(1);
+    expect(rows[0].tool_use_id).toBe('tu_a');
+    expect(rows[0].tokens).toBe(500);
+    db.close();
+  });
+
+  it('upserts on a repeated completion for the same dispatch rather than duplicating the row', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    ingestDispatchEvent(db, history, completionEvent('tu_1', 13000, { tokens: 100 }));
+    ingestDispatchEvent(db, history, completionEvent('tu_1', 14000, { tokens: 250 }));
+    const rows: any[] = db.prepare('SELECT * FROM dispatches').all() as any[];
+    expect(rows.length).toBe(1);
+    expect(rows[0].tokens).toBe(250);
+    expect(rows[0].ended_at_ms).toBe(14000);
+    db.close();
+  });
+
+  it('never persists the raw notification text anywhere in the dispatches row', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    const event = completionEvent('tu_1', 13000);
+    ingestDispatchEvent(db, history, event);
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
+    expect(JSON.stringify(row)).not.toContain('subagent_tokens');
+    db.close();
   });
 });
