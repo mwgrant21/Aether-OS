@@ -150,4 +150,24 @@ describe('compact', () => {
     expect(count.c).toBe(0);
     db.close();
   });
+
+  it('rolls up anomalies into daily_anomaly_rollups and deletes stale tool_calls/dispatches unconditionally', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+    const oldMs = Date.now() - RETENTION_WINDOW_MS - 1000;
+
+    db.exec(`INSERT INTO anomalies (kind, tool_use_id, detail, detected_at_ms) VALUES ('reReadLoop', 'tu_1', 'x', ${oldMs})`);
+    db.exec(`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms) VALUES ('tu_2', 'Read', 'a.ts', ${oldMs}, ${oldMs})`);
+    db.exec(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms) VALUES ('tu_3', 100, 1, 500, ${oldMs}, ${oldMs})`);
+
+    compact(db, Date.now());
+
+    expect((db.prepare('SELECT COUNT(*) as c FROM anomalies').get() as { c: number }).c).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) as c FROM tool_calls').get() as { c: number }).c).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) as c FROM dispatches').get() as { c: number }).c).toBe(0);
+    const rollup = db.prepare("SELECT anomaly_count FROM daily_anomaly_rollups WHERE kind = 'reReadLoop'").get() as { anomaly_count: number };
+    expect(rollup.anomaly_count).toBe(1);
+
+    db.close();
+  });
 });

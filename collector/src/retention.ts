@@ -65,5 +65,31 @@ export function compact(db: DatabaseSync, nowMs: number): { rolledUpDays: number
   // `events` rows and still have plenty of stale drift_log rows to clear.
   db.prepare('DELETE FROM drift_log WHERE detected_at_ms < ?').run(cutoffMs);
 
+  const staleAnomalies = db
+    .prepare('SELECT id, kind, detected_at_ms FROM anomalies WHERE detected_at_ms < ?')
+    .all(cutoffMs) as { id: number; kind: string; detected_at_ms: number }[];
+
+  if (staleAnomalies.length > 0) {
+    const anomalyGroups = new Map<string, number>();
+    for (const row of staleAnomalies) {
+      const key = `${dayKeyUtc(row.detected_at_ms)}|${row.kind}`;
+      anomalyGroups.set(key, (anomalyGroups.get(key) ?? 0) + 1);
+    }
+    const upsertAnomalyRollup = db.prepare(
+      `INSERT INTO daily_anomaly_rollups (day, kind, anomaly_count) VALUES (?, ?, ?)
+       ON CONFLICT(day, kind) DO UPDATE SET anomaly_count = anomaly_count + excluded.anomaly_count`
+    );
+    for (const [key, count] of anomalyGroups.entries()) {
+      const [day, kind] = key.split('|');
+      upsertAnomalyRollup.run(day, kind, count);
+    }
+    db.prepare('DELETE FROM anomalies WHERE detected_at_ms < ?').run(cutoffMs);
+  }
+
+  // tool_calls/dispatches: unconditional deletion, no rollup -- see this
+  // task's own header note for why (recent-activity view, not an audit log).
+  db.prepare('DELETE FROM tool_calls WHERE closed_at_ms < ?').run(cutoffMs);
+  db.prepare('DELETE FROM dispatches WHERE ended_at_ms < ?').run(cutoffMs);
+
   return { rolledUpDays, deletedRows: staleRows.length };
 }
