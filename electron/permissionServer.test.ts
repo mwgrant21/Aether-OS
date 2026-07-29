@@ -27,19 +27,20 @@ describe('permissionServer', () => {
   });
 
   it('resolves POST /permission-request with the decision returned by onPermissionRequest', async () => {
-    const started = startPermissionServer({
+    const started = await startPermissionServer({
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
     });
     stop = started.stop;
+    expect(started.port).toBeGreaterThan(0);
     const res = await postJson(started.port, '/permission-request', { toolName: 'Read', toolInput: { file_path: 'x' } });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ behavior: 'allow' });
   });
 
   it('propagates a deny decision with a reason', async () => {
-    const started = startPermissionServer({
+    const started = await startPermissionServer({
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'deny' as const, reason: 'nope' }),
@@ -50,7 +51,7 @@ describe('permissionServer', () => {
   });
 
   it('propagates updatedInput when the decision includes it', async () => {
-    const started = startPermissionServer({
+    const started = await startPermissionServer({
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const, updatedInput: { file_path: 'src/**' } }),
@@ -61,7 +62,7 @@ describe('permissionServer', () => {
   });
 
   it('auto-denies with a timeout reason when onPermissionRequest never resolves within timeoutMs', async () => {
-    const started = startPermissionServer({
+    const started = await startPermissionServer({
       port: 0,
       timeoutMs: 50,
       onPermissionRequest: () => new Promise(() => {}), // never resolves
@@ -72,15 +73,43 @@ describe('permissionServer', () => {
     expect(res.body.reason).toMatch(/timeout/i);
   });
 
+  it('auto-denies (instead of hanging) when onPermissionRequest throws synchronously', async () => {
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 50,
+      onPermissionRequest: () => {
+        throw new Error('boom');
+      },
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/permission-request', { toolName: 'Read', toolInput: {} });
+    expect(res.status).toBe(200);
+    expect(res.body.behavior).toBe('deny');
+  });
+
+  it('auto-denies (instead of crashing the process) when onPermissionRequest returns a rejected promise', async () => {
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 50,
+      onPermissionRequest: async () => {
+        throw new Error('rejected');
+      },
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/permission-request', { toolName: 'Read', toolInput: {} });
+    expect(res.status).toBe(200);
+    expect(res.body.behavior).toBe('deny');
+  });
+
   it('returns 400 on malformed request body', async () => {
-    const started = startPermissionServer({ port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
+    const started = await startPermissionServer({ port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
     stop = started.stop;
     const res = await postJson(started.port, '/permission-request', { notToolName: true });
     expect(res.status).toBe(400);
   });
 
   it('a request to an unknown path returns 404', async () => {
-    const started = startPermissionServer({ port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
+    const started = await startPermissionServer({ port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
     stop = started.stop;
     const res = await postJson(started.port, '/nonexistent', {});
     expect(res.status).toBe(404);

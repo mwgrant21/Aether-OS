@@ -39,6 +39,9 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+// promise can settle in three ways: resolve, reject, or never (timeout). All three
+// must converge on a value — a rejected/never-settling promise must never surface
+// as an unhandled rejection or a hung connection.
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => T): Promise<T> {
   return new Promise((resolve) => {
     let settled = false;
@@ -48,17 +51,40 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () =>
         resolve(onTimeout());
       }
     }, timeoutMs);
-    promise.then((value) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
+    promise.then(
+      (value) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        }
+      },
+      () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(onTimeout());
+        }
       }
-    });
+    );
   });
 }
 
-export function startPermissionServer(options: StartPermissionServerOptions): { server: http.Server; port: number; stop: () => void } {
+// Wraps a call to onPermissionRequest so a *synchronous* throw is converted into a
+// rejected promise instead of propagating out of the request handler before
+// withTimeout's setTimeout guard is even created.
+function invokeSafely(
+  onPermissionRequest: StartPermissionServerOptions['onPermissionRequest'],
+  req: { toolName: string; toolInput: unknown }
+): Promise<PermissionDecision> {
+  try {
+    return Promise.resolve(onPermissionRequest(req));
+  } catch (err) {
+    return Promise.reject(err);
+  }
+}
+
+export function startPermissionServer(options: StartPermissionServerOptions): Promise<{ server: http.Server; port: number; stop: () => void }> {
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/permission-request') {
       res.writeHead(404).end();
@@ -78,7 +104,7 @@ export function startPermissionServer(options: StartPermissionServerOptions): { 
     }
 
     const decision = await withTimeout(
-      options.onPermissionRequest({ toolName: parsed.toolName, toolInput: parsed.toolInput }),
+      invokeSafely(options.onPermissionRequest, { toolName: parsed.toolName, toolInput: parsed.toolInput }),
       options.timeoutMs,
       () => ({ behavior: 'deny' as const, reason: 'permission request timeout: no decision received in time' })
     );
@@ -86,12 +112,15 @@ export function startPermissionServer(options: StartPermissionServerOptions): { 
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(decision));
   });
 
-  server.listen(options.port);
-  const actualPort = options.port === 0 ? (server.address() as { port: number }).port : options.port;
-
-  return {
-    server,
-    port: actualPort,
-    stop: () => server.close(),
-  };
+  return new Promise((resolve) => {
+    server.once('listening', () => {
+      const actualPort = options.port === 0 ? (server.address() as { port: number }).port : options.port;
+      resolve({
+        server,
+        port: actualPort,
+        stop: () => server.close(),
+      });
+    });
+    server.listen(options.port);
+  });
 }
