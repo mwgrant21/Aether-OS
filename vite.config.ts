@@ -21,10 +21,14 @@ export default defineConfig(({ mode }) => {
       setupFiles: ['./src/test-setup.ts'],
       // collector/ is a standalone package with its own package.json, build,
       // and test command (see collector/vitest.config.ts, which explicitly
-      // owns scripts/aether-hook-emit.test.ts too). Exclude both from the
-      // root run so they aren't picked up twice under the wrong (jsdom)
-      // test environment.
-      exclude: [...configDefaults.exclude, 'collector/**', 'scripts/aether-hook-emit.test.ts'],
+      // owns scripts/*.test.ts too). Exclude both from the root run so they
+      // aren't picked up twice under the wrong (jsdom) test environment.
+      exclude: [
+        ...configDefaults.exclude,
+        'collector/**',
+        'scripts/aether-hook-emit.test.ts',
+        'scripts/aether-permission-hook.test.ts',
+      ],
     },
   };
 });
