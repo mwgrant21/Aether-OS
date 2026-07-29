@@ -71,6 +71,9 @@ declare global {
         onRequest: (callback: (request: PostToolFlagRequestUI) => void) => () => void;
         respond: (requestId: string, decision: PostToolFlagDecision) => Promise<void>;
       };
+      presence: {
+        onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => () => void;
+      };
       chat: {
         send: (body: unknown) => Promise<{ reply: string } | { error: string }>;
         hasKey: () => Promise<boolean>;

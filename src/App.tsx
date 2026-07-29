@@ -14,6 +14,7 @@ import { useDiagnosticsSync } from './state/useDiagnosticsSync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
 import { PermissionCardStack } from './components/agents/PermissionCardStack';
+import { RecapBanner } from './components/dashboard/RecapBanner';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -36,6 +37,7 @@ export default function App() {
         <DiagnosticsSync />
         <PermissionRequestSync />
         <PostToolFlagSync />
+        <RecapBannerMount />
         <ActiveView />
         <PermissionCardStack />
         <BottomMetricsRow />
@@ -92,4 +94,9 @@ function PermissionRequestSync() {
 function PostToolFlagSync() {
   usePostToolFlagSync();
   return null;
+}
+
+function RecapBannerMount() {
+  const { state, dispatch } = useAetherStore();
+  return <RecapBanner recap={state.recap} onDismiss={() => dispatch({ type: 'DISMISS_RECAP' })} />;
 }

@@ -111,6 +111,11 @@ export interface PostToolFlagRequestUI {
   detail: string;
 }
 
+export interface RecapPayload {
+  entries: { kind: 'dispatchCompleted' | 'anomalyDetected' | 'anomalyCleared'; detail: string; atMs: number }[];
+  tokensBurned: number;
+}
+
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
   dailyTokens: number[];
@@ -244,6 +249,7 @@ export interface AetherState {
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;
   lastNotification: { reason: NotificationReason; atMs: number } | null;
+  recap: RecapPayload | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

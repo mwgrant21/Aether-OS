@@ -134,6 +134,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),
     hasKey: (): Promise<boolean> => ipcRenderer.invoke('chat:hasKey'),
   },
+  presence: {
+    onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, recap: { entries: unknown[]; tokensBurned: number }) => callback(recap);
+      ipcRenderer.on('presence:recap', listener);
+      return () => ipcRenderer.removeListener('presence:recap', listener);
+    },
+  },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     toggleMaximize: () => ipcRenderer.send('window:toggleMaximize'),

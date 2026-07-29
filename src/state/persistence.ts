@@ -34,6 +34,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   pendingPermissionRequest: "an in-flight approval prompt tied to a live pending Promise held in main.ts's resolver map; a rehydrated value after restart would show a prompt with no resolver left to answer it",
   pendingPostToolFlag: "an in-flight flag-review prompt tied to a live pending Promise held in main.ts's pendingPostToolFlagResolvers map; a rehydrated value after restart would show a prompt with no resolver left to answer it -- same reasoning as pendingPermissionRequest",
   lastNotification: 'a live IPC-pushed Notification-hook event used only to trigger a one-shot sound in useAlertSounds; a persisted value would replay a stale sound cue on the next launch',
+  recap: 'an in-memory-only "since you last looked" summary pushed once on refocus; persisting it would show a stale recap from a previous session on next launch, and this stage deliberately scopes recap to in-memory only',
 };
 
 export function loadPersisted(): Partial<AetherState> | null {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAetherStore } from './store';
+import type { RecapPayload } from './types';
 
 export function useRealAgentsSync() {
   const { dispatch } = useAetherStore();
@@ -49,6 +50,14 @@ export function useRealAgentsSync() {
     if (!agents) return;
     return agents.onNotification(({ reason }) => {
       dispatch({ type: 'SET_LAST_NOTIFICATION', reason });
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
+    const presence = window.aetherElectron?.presence;
+    if (!presence) return;
+    return presence.onRecap((recap) => {
+      dispatch({ type: 'RECAP_RECEIVED', recap: recap as RecapPayload });
     });
   }, [dispatch]);
 }

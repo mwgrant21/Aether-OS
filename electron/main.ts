@@ -8,7 +8,8 @@ import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
-import { createLiveAgentTracker } from './liveAgentTracker';
+import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
+import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
 import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';
 import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
@@ -33,6 +34,8 @@ let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let isWindowFocused = true;
 let unfocusedNotificationCount = 0;
+let recapAcc: RecapAccumulator = createEmptyAccumulator();
+let prevTickForRecap: LiveAgentTick | null = null;
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -84,6 +87,10 @@ function createWindow(): void {
     unfocusedNotificationCount = 0;
     win.flashFrame(false);
     win.setOverlayIcon(null, '');
+    if (recapAcc.entries.length > 0 || recapAcc.tokensBurned > 0) {
+      sendToWindow('presence:recap', recapAcc);
+    }
+    recapAcc = createEmptyAccumulator();
   });
   win.on('blur', () => {
     isWindowFocused = false;
@@ -297,7 +304,13 @@ async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
   try {
-    const { open, completed, work, anomalies, cacheHitRatio } = await liveAgentTracker.tick();
+    const result = await liveAgentTracker.tick();
+    const { open, completed, work, anomalies, cacheHitRatio } = result;
+
+    if (!isWindowFocused) {
+      recapAcc = accumulate(recapAcc, result, prevTickForRecap ?? result, Date.now());
+    }
+    prevTickForRecap = result;
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
     if (pinnedSessionId !== lastWrittenOwnSessionId) {
