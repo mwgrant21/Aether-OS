@@ -9,7 +9,7 @@ export const MANAGED_HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'Notification',
 // existing aether-hook-emit.mjs group -- installPermissionHooks appends a
 // second, separately-marked group to that same array rather than replacing
 // it; see isOurGroup's scriptPath parameterization below.
-const PERMISSION_HOOK_EVENTS = ['PermissionRequest', 'PostToolUse'] as const;
+const PERMISSION_HOOK_EVENTS = ['PermissionRequest', 'PostToolUse', 'Notification'] as const;
 const PERMISSION_HOOK_MARKER = 'aether-permission-hook.mjs';
 
 export interface HookInstallState {

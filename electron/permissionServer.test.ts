@@ -142,6 +142,45 @@ describe('permissionServer', () => {
     expect(res.body.reason).toMatch(/timeout/i);
   });
 
+  it('calls onNotification and acks with 200 + empty body, fire-and-forget', async () => {
+    const received: { sessionId: string; notificationType: string }[] = [];
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+      onNotification: (req) => {
+        received.push(req);
+      },
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/notification', { sessionId: 'abc', notificationType: 'agent_needs_input' });
+    expect(res.status).toBe(200);
+    expect(received).toEqual([{ sessionId: 'abc', notificationType: 'agent_needs_input' }]);
+  });
+
+  it('404s /notification when onNotification is not configured', async () => {
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/notification', { sessionId: 'abc', notificationType: 'agent_completed' });
+    expect(res.status).toBe(404);
+  });
+
+  it('400s /notification with a malformed body', async () => {
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+      onNotification: () => {},
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/notification', { sessionId: 123, notificationType: null });
+    expect(res.status).toBe(400);
+  });
+
   it('rejects (instead of crashing the process) when the port is already bound', async () => {
     const holder = await startPermissionServer({
       port: 0,

@@ -27,6 +27,8 @@ export interface StartPermissionServerOptions {
   // PermissionRequest never need to know this route exists.
   onPostToolUse?: (req: { toolUseId: string; toolName: string; toolOutput: unknown }) => Promise<PostToolFlagDecision>;
   postToolUseTimeoutMs?: number;
+  // Fire-and-forget: no decision to return, unlike onPermissionRequest/onPostToolUse.
+  onNotification?: (req: { sessionId: string; notificationType: string }) => void;
 }
 
 const pendingRequests = new Map<string, (decision: PermissionDecision) => void>();
@@ -108,6 +110,32 @@ function invokePostToolUseSafely(
 
 export function startPermissionServer(options: StartPermissionServerOptions): Promise<{ server: http.Server; port: number; stop: () => void }> {
   const server = http.createServer(async (req, res) => {
+    if (req.method === 'POST' && req.url === '/notification') {
+      if (!options.onNotification) {
+        res.writeHead(404).end();
+        return;
+      }
+      let notifParsed: { sessionId?: unknown; notificationType?: unknown };
+      try {
+        notifParsed = JSON.parse(await readBody(req));
+      } catch {
+        res.writeHead(400).end();
+        return;
+      }
+      if (typeof notifParsed.sessionId !== 'string' || typeof notifParsed.notificationType !== 'string') {
+        res.writeHead(400).end();
+        return;
+      }
+      try {
+        options.onNotification({ sessionId: notifParsed.sessionId, notificationType: notifParsed.notificationType });
+      } catch {
+        // Same discipline as invokeSafely elsewhere in this file: a throwing
+        // handler must never surface as a broken hook response.
+      }
+      res.writeHead(200).end();
+      return;
+    }
+
     if (req.method === 'POST' && req.url === '/post-tool-flag-check') {
       if (!options.onPostToolUse) {
         res.writeHead(404).end();

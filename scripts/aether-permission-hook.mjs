@@ -8,8 +8,8 @@
 //
 // Contract (see docs/superpowers/specs/2026-07-28-closing-the-loop-design.md,
 // "Verified real infrastructure"):
-//   Also installed as the `command` for the PostToolUse hook, branching on
-//   stdin's `hook_event_name` field:
+//   Also installed as the `command` for the PostToolUse and Notification hooks,
+//   branching on stdin's `hook_event_name` field:
 //   PermissionRequest --
 //     stdin:  { session_id, permission_mode, tool_name, tool_input, tool_use_id }
 //     stdout (exit 0): { hookSpecificOutput: { hookEventName: "PermissionRequest",
@@ -21,6 +21,11 @@
 //     -- a BARE string field, NOT the nested hookSpecificOutput.decision.behavior
 //     shape PermissionRequest uses above. A clean result (block: false) means
 //     no stdout at all, same fall-through discipline as everything else here.
+//   Notification --
+//     stdin:  { session_id, notification_type, hook_event_name: "Notification" }
+//     -- no `tool_name`, unlike the other two events.
+//     stdout: never. Fire-and-forget ack to the permission server's
+//     /notification route -- no decision contract to honor either way.
 //   Falling through (session mismatch, app not running, any failure) means:
 //   exit 0 with NO stdout, letting Claude Code's native prompt/hooks take over.
 //
@@ -228,6 +233,44 @@ function postToolFlagCheck(port, toolUseId, toolName, toolOutput) {
   });
 }
 
+// Fire-and-forget: no decision to wait for, so this only needs the short
+// connect-timeout discipline (is the app even reachable), not the full
+// DECISION_TIMEOUT_MS wait the other two routes need.
+function postNotification(port, sessionId, notificationType) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const body = JSON.stringify({ sessionId, notificationType });
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/notification',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      },
+      (res) => {
+        res.on('data', () => {});
+        res.on('end', done);
+        res.on('error', done);
+      }
+    );
+    req.on('error', done);
+    const connectTimer = setTimeout(() => {
+      req.destroy();
+      done();
+    }, CONNECT_TIMEOUT_MS);
+    req.once('socket', (socket) => {
+      socket.once('connect', () => clearTimeout(connectTimer));
+    });
+    req.end(body);
+  });
+}
+
 // Translates a /post-tool-flag-check decision into the REAL PostToolUse hook
 // stdout contract: a bare "decision": "block" string field (design spec,
 // "Verified real infrastructure" -- NOT the nested
@@ -254,8 +297,7 @@ async function main() {
   if (!payload || typeof payload !== 'object') return;
 
   const sessionId = typeof payload.session_id === 'string' ? payload.session_id : null;
-  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null;
-  if (!sessionId || !toolName) return; // fall through: unusable payload
+  if (!sessionId) return; // fall through: unusable payload
 
   const aetherDir = join(homedir(), '.aether-os');
   const ownSessionId = readOwnSessionId(join(aetherDir, 'own-session.json'));
@@ -263,6 +305,16 @@ async function main() {
 
   const port = readPort(join(aetherDir, 'permission-server-port'));
   if (!port) return; // fall through: app not running / no port file
+
+  if (payload.hook_event_name === 'Notification') {
+    const notificationType = typeof payload.notification_type === 'string' ? payload.notification_type : null;
+    if (!notificationType) return; // fall through: unusable payload
+    await postNotification(port, sessionId, notificationType);
+    return; // no stdout: Notification has no decision contract to honor
+  }
+
+  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null;
+  if (!toolName) return; // fall through: unusable payload
 
   if (payload.hook_event_name === 'PostToolUse') {
     const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
