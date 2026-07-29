@@ -72,6 +72,15 @@ import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
+import type { PermissionRisk } from '../shared/permissionRisk';
+
+export interface PermissionRequestUI {
+  requestId: string;
+  toolName: string;
+  toolInput: unknown;
+  risk: PermissionRisk;
+  editableField: { label: string; value: string } | null;
+}
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
@@ -203,6 +212,7 @@ export interface AetherState {
   statusline: StatuslineSnapshot | null;
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
+  pendingPermissionRequest: PermissionRequestUI | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

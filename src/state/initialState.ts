@@ -204,4 +204,5 @@ export const initialState: AetherState = {
   statusline: null,
   fleet: null,
   diagnostics: null,
+  pendingPermissionRequest: null,
 };
