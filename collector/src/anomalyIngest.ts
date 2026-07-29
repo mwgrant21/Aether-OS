@@ -55,19 +55,29 @@ function detectZeroEditBurn(events: ClosedToolCall[], tokensUsed: number): Anoma
   return [];
 }
 
+// A relative path segment of exactly '..' (on either / or \ separators)
+// indicates traversal outside whatever root the path is relative to.
+function hasTraversalSegment(p: string): boolean {
+  return p.split(/[/\\]/).some((segment) => segment === '..');
+}
+
 // filePath is what toolCallHistory.ts's extractFilePath pulled verbatim from
 // the tool_use input (an absolute path in the real Electron/collector
 // runtime). Only absolute paths are converted via path.relative + an
 // escape check (docs/privacy-and-data.md SS5: never persist a path
 // containing the home dir/username); a filePath that's already relative
-// (as constructed directly by callers/tests) is passed through unchanged
-// rather than being incorrectly re-resolved against projectRoot.
+// (as constructed directly by callers/tests) is passed through unchanged --
+// but still validated for '..' traversal segments so a crafted relative
+// input like '../../secret' can't slip past the guard just because it never
+// went through path.relative.
 function toProjectRelative(filePath: string | null, projectRoot: string): string | null {
   if (filePath === null) return null;
-  if (!isAbsolute(filePath)) return filePath;
+  if (!isAbsolute(filePath)) {
+    return hasTraversalSegment(filePath) ? null : filePath;
+  }
   try {
     const rel = relative(projectRoot, filePath);
-    return rel.startsWith('..') ? null : rel;
+    return hasTraversalSegment(rel) ? null : rel;
   } catch {
     return null;
   }
@@ -80,9 +90,15 @@ export function ingestToolCallsAndAnomalies(
   nowMs: number,
   projectRoot: string,
 ): { history: ToolCallHistory; toolCallsIngested: number; anomaliesIngested: number } {
-  const before = history.events.length;
   const newHistory = updateHistory(history, events, nowMs);
-  const newlyClosed = newHistory.events.slice(before === newHistory.events.length ? newHistory.events.length : before);
+  // Diff by toolUseId membership rather than array index/length: once
+  // HISTORY_MAX_EVENTS truncation kicks in (toolCallHistory.ts's
+  // updateHistory trims oldest-first), newHistory.events.length can be equal
+  // to or even less than history.events.length even though new closures
+  // happened this tick, so an index-based slice would either re-persist
+  // already-inserted tool calls as duplicates or silently miss new ones.
+  const priorToolUseIds = new Set(history.events.map((e) => e.toolUseId));
+  const newlyClosed = newHistory.events.filter((e) => !priorToolUseIds.has(e.toolUseId));
 
   const insertToolCall = db.prepare(
     `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms) VALUES (?, ?, ?, ?, ?)`

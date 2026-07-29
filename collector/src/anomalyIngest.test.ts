@@ -44,4 +44,60 @@ describe('ingestToolCallsAndAnomalies', () => {
     expect(anomalies[0].kind).toBe('reReadLoop');
     expect(anomalies[0].detail).toContain('src/foo.ts');
   });
+
+  it('nulls out a relative file path that contains ".." traversal segments instead of persisting it', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+    const history = createEmptyHistory();
+
+    const events: TranscriptEvent[] = [
+      readEvent('tu_0', 'Read', '../../secret', 1000),
+      resultEvent('tu_0', 1050),
+    ];
+
+    const result = ingestToolCallsAndAnomalies(db, history, events, 2000, 'proj-a');
+    expect(result.toolCallsIngested).toBe(1);
+
+    const rows = db.prepare('SELECT file_path_rel FROM tool_calls').all() as { file_path_rel: string | null }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].file_path_rel).toBeNull();
+  });
+
+  it('computes newlyClosed by toolUseId diff, not array index, so a tick that pushes past HISTORY_MAX_EVENTS still ingests exactly the new closures with no duplicates', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+
+    // Simulate a history that's already at the 500-event cap from prior
+    // ticks (those tool_calls rows were already persisted by those earlier
+    // calls, not by this test). An index-based `before === after ? [] : ...`
+    // slice would see length 500 -> 500 (one appended, one truncated from
+    // the front) and either emit zero newly-closed rows (missing the new
+    // closure) or -- for other size deltas -- reprocess stale entries.
+    const priorEvents = Array.from({ length: 500 }, (_, i) => ({
+      toolUseId: `tu_${i}`,
+      toolName: 'Read',
+      filePath: `file_${i}.ts`,
+      startedAt: i,
+      closedAt: i,
+    }));
+    const priorHistory = { events: priorEvents, openByToolUseId: {} };
+
+    const events: TranscriptEvent[] = [
+      readEvent('tu_500', 'Read', 'src/new-file.ts', 5000),
+      resultEvent('tu_500', 5050),
+    ];
+
+    const result = ingestToolCallsAndAnomalies(db, priorHistory, events, 6000, 'proj-a');
+
+    expect(result.history.events).toHaveLength(500);
+    expect(result.history.events[result.history.events.length - 1].toolUseId).toBe('tu_500');
+    // Exactly the one genuinely new closure was ingested -- not zero
+    // (the missed-closure failure mode) and not 500+ (the duplicate/stale
+    // re-insert failure mode).
+    expect(result.toolCallsIngested).toBe(1);
+
+    const rows = db.prepare('SELECT tool_use_id FROM tool_calls').all() as { tool_use_id: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tool_use_id).toBe('tu_500');
+  });
 });
