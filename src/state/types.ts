@@ -28,6 +28,22 @@ export interface SysMetric {
   hist: number[];
 }
 
+// Task 8 (Stage 6, 2026-07-28) investigated whether this type/ADD_APPROVAL/
+// state.approvals is dead code now that a real PermissionRequest/PostToolUse
+// approval loop exists (see PermissionRequestUI/PostToolFlagRequestUI below).
+// Disposition: KEEP AS-IS -- this is a different, still-real system, not a
+// redundant one. Approval governs the fictional/simulated "AETHER OS" Agent
+// domain (tick.ts's random risk-event generator, the chat action-JSON
+// pipeline's spawn/kill/throttle confirmations in actionExecutor.ts, and the
+// Terminal's approvals/approve/deny commands in commands.ts) -- an entirely
+// different axis from PermissionRequestUI, which gates a real, live Claude
+// Code tool call. No file reviewed makes Approval redundant: tick.ts's
+// generator is this app's deliberate ongoing "reactor simulation" narrative
+// (same category as its burn-rate/sys-metrics randomness, per this project's
+// own precedent of leaving fictional-simulation pieces additive rather than
+// retrofitting them onto real data -- see PROGRESS.md's Files/Memory/Chat
+// slices), and the chat/terminal paths are real, tested, still-used features
+// built on top of it in later phases. See PROGRESS.md for the full write-up.
 export interface Approval {
   id: number;
   agent: string;
