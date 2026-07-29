@@ -24,6 +24,7 @@ function assistantEvent(overrides: Partial<TranscriptEvent> = {}): TranscriptEve
     usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
     toolUses: [],
     toolResults: [],
+    originKind: null,
     ...overrides,
   };
 }
@@ -80,14 +81,14 @@ describe('ingestDispatchEvent', () => {
     let history = createEmptyHistory();
     history = updateHistory(history, [{
       kind: 'assistant', sessionId: null, timestamp: new Date(1000), cwd: null, model: null, usage: null,
-      toolUses: [{ id: 'tu_task_1', name: 'Task', input: {} }], toolResults: [],
+      toolUses: [{ id: 'tu_task_1', name: 'Task', input: {} }], toolResults: [], originKind: null,
     }], 1000);
 
     const completionEvent = {
       kind: 'assistant' as const, sessionId: null, timestamp: new Date(13000), cwd: null,
       model: 'claude-sonnet-5',
       usage: { inputTokens: 4000, outputTokens: 1000, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-      toolUses: [], toolResults: [],
+      toolUses: [], toolResults: [], originKind: null,
     };
 
     const ingested = ingestDispatchEvent(db, history, completionEvent, 'tu_task_1', 3);

@@ -24,6 +24,7 @@ describe('parseTranscriptLine', () => {
       usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 20 },
       toolUses: [],
       toolResults: [],
+      originKind: null,
     });
   });
 
@@ -45,6 +46,7 @@ describe('parseTranscriptLine', () => {
       usage: null,
       toolUses: [],
       toolResults: [],
+      originKind: null,
     });
   });
 
@@ -121,5 +123,31 @@ describe('parseTranscriptLine tool use/result parsing', () => {
     const event = parseTranscriptLine(line);
     expect(event?.toolUses).toEqual([]);
     expect(event?.toolResults).toEqual([]);
+  });
+
+  it('extracts originKind from json.origin.kind on an assistant line', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      origin: { kind: 'task-notification' },
+      message: { model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [] },
+    });
+    const event = parseTranscriptLine(line);
+    expect(event?.originKind).toBe('task-notification');
+  });
+
+  it('extracts originKind from json.origin.kind on a user line', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      origin: { kind: 'task-notification' },
+      message: { content: 'done' },
+    });
+    const event = parseTranscriptLine(line);
+    expect(event?.originKind).toBe('task-notification');
+  });
+
+  it('defaults originKind to null when json.origin is absent', () => {
+    const line = JSON.stringify({ type: 'assistant', message: { content: [] } });
+    const event = parseTranscriptLine(line);
+    expect(event?.originKind).toBeNull();
   });
 });

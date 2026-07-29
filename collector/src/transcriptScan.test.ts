@@ -139,4 +139,40 @@ describe('scanTranscriptsOnce', () => {
     expect(result.anomaliesIngested).toBe(1);
     db.close();
   });
+
+  it('records a dispatches row when a Task tool_use is followed by its task-notification completion', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+
+    const taskLine = JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:00Z',
+      message: {
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'tool_use', id: 'tu_task_1', name: 'Task', input: { subagent_type: 'general-purpose' } }],
+      },
+    });
+    const completionLine = JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:12Z',
+      origin: { kind: 'task-notification' },
+      message: {
+        model: 'claude-sonnet-4-6',
+        usage: { input_tokens: 4000, output_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        content: [],
+      },
+    });
+    writeFileSync(join(projDir, 'session.jsonl'), `${taskLine}\n${completionLine}\n`, 'utf8');
+
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 30), new Map());
+
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_task_1');
+    expect(row).toBeDefined();
+    expect(row.tokens).toBe(5000);
+    db.close();
+  });
 });

@@ -7,13 +7,13 @@ import type { TranscriptEvent } from './transcriptParser.js';
 function readEvent(id: string, name: string, path: string, ts: number): TranscriptEvent {
   return {
     kind: 'assistant', sessionId: null, timestamp: new Date(ts), cwd: null, model: null, usage: null,
-    toolUses: [{ id, name, input: { file_path: path } }], toolResults: [],
+    toolUses: [{ id, name, input: { file_path: path } }], toolResults: [], originKind: null,
   };
 }
 function resultEvent(id: string, ts: number): TranscriptEvent {
   return {
     kind: 'user', sessionId: null, timestamp: new Date(ts), cwd: null, model: null, usage: null,
-    toolUses: [], toolResults: [{ toolUseId: id, resultLength: 5 }],
+    toolUses: [], toolResults: [{ toolUseId: id, resultLength: 5 }], originKind: null,
   };
 }
 

@@ -25,6 +25,13 @@ export interface TranscriptEvent {
   usage: TranscriptUsage | null;
   toolUses: TranscriptToolUse[];
   toolResults: TranscriptToolResult[];
+  // json.origin?.kind, e.g. 'task-notification'. Unlike electron/transcriptParser.ts
+  // (which only reads this on 'user' messages), the collector reads it on every
+  // branch: transcriptScan.ts's dispatch-completion correlation (Task 5) needs
+  // it on assistant events too -- a subagent completion's real token usage
+  // arrives on the parent session's own next assistant turn, and that turn is
+  // the one the origin.kind marker actually lands on in practice.
+  originKind: string | null;
 }
 
 export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
@@ -58,7 +65,17 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     const toolUses = content
       .filter((item: any) => item.type === 'tool_use')
       .map((item: any) => ({ id: item.id, name: item.name, input: item.input }));
-    return { kind: 'assistant', sessionId, timestamp, cwd, model: msg.model || null, usage, toolUses, toolResults: [] };
+    return {
+      kind: 'assistant',
+      sessionId,
+      timestamp,
+      cwd,
+      model: msg.model || null,
+      usage,
+      toolUses,
+      toolResults: [],
+      originKind: (json.origin && json.origin.kind) || null,
+    };
   }
 
   if (json.type === 'user' && json.message) {
@@ -70,8 +87,28 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
         toolUseId: item.tool_use_id,
         resultLength: JSON.stringify(item.content ?? '').length,
       }));
-    return { kind: 'user', sessionId, timestamp, cwd, model: null, usage: null, toolUses: [], toolResults };
+    return {
+      kind: 'user',
+      sessionId,
+      timestamp,
+      cwd,
+      model: null,
+      usage: null,
+      toolUses: [],
+      toolResults,
+      originKind: (json.origin && json.origin.kind) || null,
+    };
   }
 
-  return { kind: 'other', sessionId, timestamp, cwd, model: null, usage: null, toolUses: [], toolResults: [] };
+  return {
+    kind: 'other',
+    sessionId,
+    timestamp,
+    cwd,
+    model: null,
+    usage: null,
+    toolUses: [],
+    toolResults: [],
+    originKind: (json.origin && json.origin.kind) || null,
+  };
 }
