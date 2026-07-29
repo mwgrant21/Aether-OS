@@ -13,6 +13,13 @@ export interface CollectorUsageEvent {
 
 const MIN_SCHEMA_VERSION_FOR_USAGE_EVENTS = 2;
 const MIN_SCHEMA_VERSION_FOR_FLEET_SESSIONS = 3;
+const MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS = 4;
+
+export interface DiagnosticsSnapshot {
+  toolCalls: { toolUseId: string; toolName: string; filePathRel: string | null; startedAtMs: number; closedAtMs: number }[];
+  dispatches: { toolUseId: string; tokens: number; toolUses: number; durationMs: number; startedAtMs: number; endedAtMs: number }[];
+  anomalies: { kind: string; toolUseId: string; detail: string; detectedAtMs: number }[];
+}
 
 // 3x the collector's 15s fleet-poll interval -- enough margin that one slow
 // poll cycle doesn't false-trigger, while still catching a genuinely dead
@@ -78,6 +85,37 @@ export function readUsageEventsSince(dbPath: string, sinceMs: number): Collector
         cacheReadInputTokens: r.cache_read_input_tokens,
       },
     }));
+  } catch {
+    return null;
+  } finally {
+    db.close();
+  }
+}
+
+export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSnapshot | null {
+  const db = openReadOnly(dbPath);
+  if (!db) return null;
+
+  try {
+    if (schemaVersionOf(db) < MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS) return null;
+
+    const toolCallRows = db
+      .prepare('SELECT tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms FROM tool_calls WHERE closed_at_ms >= ?')
+      .all(sinceMs) as { tool_use_id: string; tool_name: string; file_path_rel: string | null; started_at_ms: number; closed_at_ms: number }[];
+
+    const dispatchRows = db
+      .prepare('SELECT tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms FROM dispatches WHERE ended_at_ms >= ?')
+      .all(sinceMs) as { tool_use_id: string; tokens: number; tool_uses: number; duration_ms: number; started_at_ms: number; ended_at_ms: number }[];
+
+    const anomalyRows = db
+      .prepare('SELECT kind, tool_use_id, detail, detected_at_ms FROM anomalies WHERE detected_at_ms >= ?')
+      .all(sinceMs) as { kind: string; tool_use_id: string; detail: string; detected_at_ms: number }[];
+
+    return {
+      toolCalls: toolCallRows.map((r) => ({ toolUseId: r.tool_use_id, toolName: r.tool_name, filePathRel: r.file_path_rel, startedAtMs: r.started_at_ms, closedAtMs: r.closed_at_ms })),
+      dispatches: dispatchRows.map((r) => ({ toolUseId: r.tool_use_id, tokens: r.tokens, toolUses: r.tool_uses, durationMs: r.duration_ms, startedAtMs: r.started_at_ms, endedAtMs: r.ended_at_ms })),
+      anomalies: anomalyRows.map((r) => ({ kind: r.kind, toolUseId: r.tool_use_id, detail: r.detail, detectedAtMs: r.detected_at_ms })),
+    };
   } catch {
     return null;
   } finally {

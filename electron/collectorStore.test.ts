@@ -3,7 +3,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
-import { readUsageEventsSince, readFleetSessions } from './collectorStore.js';
+import { readUsageEventsSince, readFleetSessions, readDiagnostics } from './collectorStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -190,5 +190,41 @@ describe('readFleetSessions', () => {
 
     expect(() => readFleetSessions(dbPath)).not.toThrow();
     expect(readFleetSessions(dbPath)).toBeNull();
+  });
+});
+
+function tempDbForDiagnostics(schemaVersion = 4): string {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-diagnostics-'));
+  const dbPath = join(dir, 'test.db');
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_use_id TEXT NOT NULL, tool_name TEXT NOT NULL, file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL);
+    CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL, duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL);
+    CREATE TABLE anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, tool_use_id TEXT NOT NULL, detail TEXT NOT NULL, detected_at_ms INTEGER NOT NULL);
+  `);
+  db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', ?)").run(String(schemaVersion));
+  db.close();
+  return dbPath;
+}
+
+describe('readDiagnostics', () => {
+  it('returns null when schema version is below 4', () => {
+    const dbPath = tempDbForDiagnostics(3);
+    expect(readDiagnostics(dbPath, 0)).toBeNull();
+  });
+
+  it('returns tool calls, dispatches, and anomalies since the given timestamp', () => {
+    const dbPath = tempDbForDiagnostics(4);
+    const db = new DatabaseSync(dbPath);
+    db.exec(`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms) VALUES ('tu_1', 'Read', 'a.ts', 1000, 2000)`);
+    db.exec(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms) VALUES ('tu_task', 500, 1, 1000, 1000, 2000)`);
+    db.exec(`INSERT INTO anomalies (kind, tool_use_id, detail, detected_at_ms) VALUES ('reReadLoop', 'tu_1', 'a.ts read 3 times', 1500)`);
+    db.close();
+
+    const snapshot = readDiagnostics(dbPath, 0);
+    expect(snapshot?.toolCalls).toHaveLength(1);
+    expect(snapshot?.dispatches).toHaveLength(1);
+    expect(snapshot?.anomalies).toHaveLength(1);
   });
 });
