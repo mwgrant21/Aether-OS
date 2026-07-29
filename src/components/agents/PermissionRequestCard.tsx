@@ -15,15 +15,23 @@ function fieldKeyFor(toolName: string): string | null {
   return null;
 }
 
-export function PermissionRequestCard() {
+export function PermissionRequestCard({ measureRef }: { measureRef?: (node: HTMLDivElement | null) => void } = {}) {
   const colors = useColors();
   const { state } = useAetherStore();
   const request = state.pendingPermissionRequest;
 
-  return request ? <PermissionRequestCardInner colors={colors} request={request} /> : null;
+  return request ? <PermissionRequestCardInner colors={colors} request={request} measureRef={measureRef} /> : null;
 }
 
-function PermissionRequestCardInner({ colors, request }: { colors: ColorPalette; request: PermissionRequestUI }) {
+function PermissionRequestCardInner({
+  colors,
+  request,
+  measureRef,
+}: {
+  colors: ColorPalette;
+  request: PermissionRequestUI;
+  measureRef?: (node: HTMLDivElement | null) => void;
+}) {
   const [fieldValue, setFieldValue] = useState(request.editableField?.value ?? '');
   const [denyReason, setDenyReason] = useState('');
   const [denying, setDenying] = useState(false);
@@ -60,7 +68,7 @@ function PermissionRequestCardInner({ colors, request }: { colors: ColorPalette;
   }
 
   return (
-    <div style={cardStyle(colors)}>
+    <div ref={measureRef} style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={titleStyle(colors)}>PERMISSION REQUEST</div>
         <span style={riskBadgeStyle(colors, request.risk)}>{request.risk}</span>

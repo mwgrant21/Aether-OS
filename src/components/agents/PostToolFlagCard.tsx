@@ -6,23 +6,22 @@ import { Button } from '../shared/Button';
 import type { ColorPalette } from '../../styles/tokens';
 import type { PostToolFlagRequestUI } from '../../state/types';
 
-export function PostToolFlagCard() {
+// Simultaneity: a PermissionRequest (blocking, gates a tool call) and a
+// PostToolUse flag-review (reviewing something that already ran) can be
+// pending at the same time -- they're independent resolver maps in main.ts.
+// This card doesn't decide its own vertical position: PermissionCardStack.tsx
+// measures PermissionRequestCard's REAL rendered height (via useElementHeight,
+// ResizeObserver-backed) and passes the computed `topOffset` down, so this
+// card stacks exactly below it -- however tall it currently is (editable
+// field expanded, deny-reason box open, wrapped text, etc.) -- rather than a
+// fixed pixel guess that a taller-than-expected permission card could overlap.
+export function PostToolFlagCard({ topOffset = 16 }: { topOffset?: number } = {}) {
   const colors = useColors();
   const { state } = useAetherStore();
   const request = state.pendingPostToolFlag;
   if (!request) return null;
 
-  // Simultaneity: a PermissionRequest (blocking, gates a tool call) and a
-  // PostToolUse flag-review (reviewing something that already ran) can be
-  // pending at the same time -- they're independent resolver maps in
-  // main.ts. Rather than a full stacking/queue system, this card simply
-  // renders lower on screen whenever a PermissionRequestCard is also up, so
-  // the two never visually overlap. The offset is a fixed pixel value (not
-  // DOM-measured) sized to clear PermissionRequestCard's typical rendered
-  // height -- good enough for "never unreadable," not meant to be pixel-exact.
-  const stackedBelowPermission = state.pendingPermissionRequest !== null;
-
-  return <PostToolFlagCardInner colors={colors} request={request} topOffset={stackedBelowPermission ? 230 : 16} />;
+  return <PostToolFlagCardInner colors={colors} request={request} topOffset={topOffset} />;
 }
 
 function PostToolFlagCardInner({
