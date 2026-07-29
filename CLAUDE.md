@@ -167,6 +167,21 @@ and should never grow one.
 
 ## Gotchas
 
+- **Native module toolchain (changed 2026-07-27).** MSVC / VS Build Tools **is
+  now installed on this box.** `docs/roadmap.md` §2 previously cited CLAUDE.md
+  as documenting the opposite — that citation was always dangling (this file
+  never said it) and the underlying fact is now false either way. Both have
+  been corrected. What this does and does not change:
+  - Native modules (`better-sqlite3`, `node-pty` from source) can now be built
+    here. `node-pty` keeps using prebuilds — they work, and a prebuilt path is
+    still the lower-maintenance one.
+  - **A native module inside Electron still costs an `electron-rebuild` on
+    every Electron version bump.** That tax is why the Stage 2 collector, a
+    plain Node process, remains the right home for anything SQLite-backed —
+    a conclusion that no longer depends on the toolchain at all.
+  - `node:sqlite` went **release candidate (stability 1.2) in Node v25.7.0**
+    and is still RC as of v26.5 — no longer experimental, no warning on a
+    modern Node. Pin the collector to Node 26.
 - **node v25** breaks bare-directory `node --test` invocations elsewhere in
   this user's other projects — not directly relevant here since this repo
   uses `vitest`, but worth knowing if debugging cross-project tooling.

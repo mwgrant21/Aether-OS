@@ -56,9 +56,9 @@ complaining about.
 
 | | Idle RAM | Build story on this box | Reuses existing code |
 |---|---|---|---|
-| **Node** (`node:sqlite`, built into Node 22+) | ~40–60MB | Zero new toolchain, **no native deps** | ✅ TS parsers port verbatim |
-| **Go** (`modernc.org/sqlite`, pure Go, no CGO) | ~10MB static `.exe` | Single download, no MSVC | ❌ Reimplement parsing |
-| **Rust** (`rusqlite`, `axum`) | ~5–10MB | ⚠️ **Needs MSVC.** CLAUDE.md documents "no VS Build Tools on the dev box" — the same reason node-pty uses prebuilds | ❌ Reimplement parsing |
+| **Node** (`node:sqlite`, RC since v25.7) | ~40–60MB | Zero new toolchain, **no native deps** | ✅ TS parsers port verbatim |
+| **Go** (`modernc.org/sqlite`, pure Go, no CGO) | ~10MB static `.exe` | Single download, no C toolchain | ❌ Reimplement parsing |
+| **Rust** (`rusqlite`, `axum`) | ~5–10MB | Fine — MSVC installed 2026-07-27 | ❌ Reimplement parsing |
 
 **Recommendation: Node first, behind a deliberately language-agnostic contract** (HTTP in, SQLite
 out, no shared runtime types across the boundary). Then swap to Go as optional Stage 10 if idle
@@ -66,7 +66,26 @@ footprint ever matters. That sequencing is also the better story — *"I split i
 language-agnostic contract, then swapped the implementation for a 5× memory reduction without
 touching the UI"* proves the contract was real rather than aspirational.
 
-Rust is the wrong call here on toolchain grounds, not merit.
+**Why Node, restated on merit (revised 2026-07-27).** This table previously rejected Rust on
+toolchain grounds — *"⚠️ Needs MSVC. CLAUDE.md documents 'no VS Build Tools on the dev box'"* —
+and closed with *"Rust is the wrong call here on toolchain grounds, not merit."* Two problems with
+that, both now fixed. The citation was dangling: CLAUDE.md never contained the claim. And MSVC is
+now installed, so the constraint is gone regardless.
+
+The conclusion survives, but it has to stand on the last column instead. `transcriptParser.ts` and
+`liveAgentTracker.ts` are the collector's actual substance — the parsing, the dispatch lifecycle,
+the anomaly inputs — and in Node they move across unchanged, already covered by the existing
+vitest suite. Rust and Go both mean reimplementing that from scratch and re-earning the test
+coverage, to save ~35MB of idle RAM in a process that runs on one desktop. That is the argument;
+the toolchain line was never more than a convenient tiebreak wearing the clothes of a reason.
+
+Go remains the sensible Stage 10 swap if footprint ever genuinely matters — it never depended on
+the MSVC constraint, and the whole point of the language-agnostic contract is that the swap stays
+cheap.
+
+*General lesson worth keeping: a decision justified by an environmental constraint has no defence
+the day the constraint lifts. When a constraint is doing the arguing, write down the merit case
+underneath it too.*
 
 ---
 
