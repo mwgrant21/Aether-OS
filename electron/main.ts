@@ -22,6 +22,8 @@ import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
+import { startPermissionServer } from './permissionServer';
+import net from 'node:net';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -132,6 +134,7 @@ const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json'
 const collectorDbPath = join(os.homedir(), '.aether-os', 'collector.db');
 
 const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
+const permissionServerPortPath = join(os.homedir(), '.aether-os', 'permission-server-port');
 const aetherOsDir = join(os.homedir(), '.aether-os');
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // Mirrors the .env resolution above: app.getAppPath() resolves the project
@@ -141,6 +144,26 @@ const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // known gap already called out for .env, not something this task solves.
 const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
 let stopStatuslineWatcher: (() => void) | null = null;
+let stopPermissionServer: (() => void) | null = null;
+
+// startPermissionServer's own promise only ever resolves on the underlying
+// server's 'listening' event -- it does not reject on 'error' (e.g.
+// EADDRINUSE), so awaiting it directly on a busy port would hang app launch
+// forever. Probe the desired port with a throwaway net server first so a
+// conflict (a second Aether instance, or a leftover process) falls back to an
+// ephemeral port instead of ever blocking startup -- mirrors this project's
+// "never let infra startup crash the whole app" convention (see the
+// statusline watcher's own defensive design).
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(port);
+  });
+}
 // The last snapshot the watcher emitted, kept for `statusline:snapshot:current` --
 // on the very first `loadURL`/`loadFile`, the watcher's own startup read fires
 // before useStatuslineSync's IPC listener has registered, so that push is
@@ -254,7 +277,7 @@ async function tickAndPushAgents(): Promise<void> {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Load .env into process.env before anything downstream (e.g. the chat:send
   // handler below) reads ANTHROPIC_API_KEY. NOTE: in a packaged build,
   // app.getAppPath() resolves inside resources/app.asar, so a .env shipped
@@ -288,6 +311,19 @@ app.whenReady().then(() => {
     cachedStatuslineSnapshot = snapshot;
     sendToWindow('statusline:snapshot', snapshot);
   });
+
+  // Placeholder onPermissionRequest that always denies -- Task 5 replaces this
+  // with the real renderer round-trip.
+  const desiredPort = 51823; // arbitrary fixed high port; bump-on-conflict handled below
+  const portAvailable = await isPortAvailable(desiredPort);
+  const permission = await startPermissionServer({
+    port: portAvailable ? desiredPort : 0,
+    timeoutMs: 120000,
+    onPermissionRequest: async () => ({ behavior: 'deny', reason: 'permission UI not yet wired (Task 5)' }),
+  });
+  stopPermissionServer = permission.stop;
+  await fsp.mkdir(dirname(permissionServerPortPath), { recursive: true });
+  await fsp.writeFile(permissionServerPortPath, String(permission.port), 'utf8');
 });
 
 app.on('window-all-closed', () => {
@@ -299,6 +335,10 @@ app.on('before-quit', () => {
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();
     stopStatuslineWatcher = null;
+  }
+  if (stopPermissionServer) {
+    stopPermissionServer();
+    stopPermissionServer = null;
   }
 });
 
