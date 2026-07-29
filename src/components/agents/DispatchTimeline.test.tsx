@@ -26,6 +26,20 @@ describe('DispatchTimeline', () => {
     expect(screen.getByText('foo.ts')).toBeTruthy();
   });
 
+  it('renders a visible row for a dispatch-only snapshot instead of a blank card', () => {
+    render(
+      <DispatchTimeline
+        diagnostics={{
+          toolCalls: [],
+          dispatches: [{ toolUseId: 'tu_task', tokens: 1234, toolUses: 7, durationMs: 4200, startedAtMs: 1000, endedAtMs: 5200 }],
+          anomalies: [],
+        }}
+      />
+    );
+    expect(screen.getByText(/1,?234 tokens/i)).toBeTruthy();
+    expect(screen.getByText(/7 tool uses/i)).toBeTruthy();
+  });
+
   it('renders an anomaly row with its kind and detail', () => {
     render(
       <DispatchTimeline
