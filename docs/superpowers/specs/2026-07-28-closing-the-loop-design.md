@@ -58,10 +58,10 @@ back through the still-open HTTP response → hook script → Claude Code
 | File | Purpose |
 |---|---|
 | `electron/permissionServer.ts` (new) | Local HTTP server; `POST /permission-request`, `POST /post-tool-flag-check`; per-`tool_use_id` pending-Promise resolution; timeout-based auto-deny/auto-allow. |
-| Hook script (new, PowerShell — this box) | Reads stdin, checks session, POSTs with short connect-timeout, translates the HTTP response into Claude Code's exact expected JSON/exit-code contract. |
-| `electron/hookInstaller.ts` (extend Stage 2) | Registers `PermissionRequest`/`PostToolUse` entries in the project's `.claude/settings.json`. |
+| Hook script (new, Node `.mjs`) | **Correction post-approval:** the existing hook precedent (`scripts/aether-hook-emit.mjs`, invoked via `node "${scriptPath}"`) is Node, not PowerShell — no `.ps1` script exists anywhere in this repo, and nothing about the hook contract requires PowerShell. The new script follows that precedent. Reads stdin, checks session, POSTs with short connect-timeout, translates the HTTP response into Claude Code's exact expected JSON/exit-code contract. |
+| `collector/src/hookInstaller.ts` (extend Stage 2) | **Correction post-approval:** lives under `collector/src/`, not `electron/`. `MANAGED_HOOK_EVENTS` already includes `PostToolUse` (currently used for the collector's own spool ingestion) — Stage 6's PostToolUse hook is a **second group appended to that existing array** (the installer already supports multiple marker-keyed groups per event), not a replacement. `PermissionRequest` is not yet managed and must be added to the list. |
 | `src/shared/permissionRisk.ts` (new, pure) | `tool_name` + `tool_input` → `'LOW' \| 'MED' \| 'HIGH'`. |
-| `src/state/types.ts` | New `PermissionRequestUI` shape (requestId, toolName, toolInput, editable field, risk, sessionId) — separate from the old fictional `Approval`. One task must check whether `Approval`/`ADD_APPROVAL` has any non-fictional use before deciding to remove or leave it. |
+| `src/state/types.ts` | New `PermissionRequestUI` shape (requestId, toolName, toolInput, editable field, risk, sessionId) — separate from the old fictional `Approval`. **Correction post-approval:** `Approval`/`ADD_APPROVAL`/`state.approvals` are referenced across 17 files (persistence, chat action-JSON pipeline, `TopBar`'s bell, terminal commands, multiple test files) — not just the two call sites originally assumed. The keep-vs-remove decision needs its own properly-scoped task, not a quick check. |
 | Renderer: `PermissionRequestCard` / flag card (new) | Per-tool-aware editable field, risk badge, Approve/Deny (or Block/Dismiss) actions, IPC round-trip to main to resolve the held HTTP response. |
 
 ## Error handling
