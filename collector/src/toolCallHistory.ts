@@ -1,4 +1,47 @@
 import { TranscriptEvent } from './transcriptParser.js';
+import { relative, isAbsolute } from 'node:path';
+
+// A relative path segment of exactly '..' (on either / or \ separators)
+// indicates traversal outside whatever root the path is relative to.
+function hasTraversalSegment(p: string): boolean {
+  return p.split(/[/\\]/).some((segment) => segment === '..');
+}
+
+/**
+ * Sanitizes a raw tool-input file path the moment it enters the history, so
+ * that EVERY downstream consumer (the tool_calls INSERT, the anomaly
+ * detectors and the `detail` strings they build) sees an already-relativized
+ * path by construction, rather than each call site having to remember to
+ * sanitize (docs/privacy-and-data.md SS5: never persist a path containing the
+ * home directory/username).
+ *
+ * `projectRoot` is the transcript event's own `cwd` -- the working directory
+ * of the Claude session that made the tool call, and the only root a real
+ * absolute `file_path` is meaningfully relative to. (The transcript STORAGE
+ * directory, previously passed here, shares no ancestor with the code working
+ * tree, so relativizing against it yielded a '..'-laden path the guard below
+ * correctly rejected -- i.e. a permanently NULL file_path_rel.)
+ *
+ * Absolute paths with no usable root, and any path that escapes the root, are
+ * nulled rather than stored.
+ */
+export function toProjectRelative(filePath: string | null, projectRoot: string | null): string | null {
+  if (filePath === null) return null;
+  if (!isAbsolute(filePath)) {
+    // Already-relative input (as constructed directly by callers/tests) is
+    // passed through, but still traversal-checked so a crafted
+    // '../../secret' can't slip past just because it never hit path.relative.
+    return hasTraversalSegment(filePath) ? null : filePath;
+  }
+  if (projectRoot === null || projectRoot === '') return null;
+  try {
+    const rel = relative(projectRoot, filePath);
+    if (rel === '') return null;
+    return hasTraversalSegment(rel) ? null : rel;
+  } catch {
+    return null;
+  }
+}
 
 export interface ClosedToolCall {
   toolUseId: string;
@@ -29,7 +72,9 @@ export function updateHistory(
 
   for (const event of events) {
     for (const toolUse of event.toolUses) {
-      const filePath = extractFilePath(toolUse.input);
+      // Sanitized here, at the single point a raw tool-input path enters the
+      // history -- see toProjectRelative's doc comment.
+      const filePath = toProjectRelative(extractFilePath(toolUse.input), event.cwd);
       const startedAt = event.timestamp?.getTime() ?? nowMs;
       newOpen[toolUse.id] = { toolName: toolUse.name, filePath, startedAt };
     }

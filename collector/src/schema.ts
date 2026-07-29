@@ -98,6 +98,21 @@ export function migrate(db: DatabaseSync): void {
       PRIMARY KEY (day, kind)
     );
   `);
+  // Anomaly dedup: the detectors re-scan a rolling 5-minute window on every
+  // ~15s scan tick, so one real anomaly is re-detected on ~20 consecutive
+  // ticks. This unique index (together with the INSERT OR IGNORE in
+  // anomalyIngest.ts) collapses those repeats to a single row. Duplicates
+  // written by an earlier build of this branch are collapsed first so the
+  // index can be created on an existing dev database. Deliberately NO
+  // SCHEMA_VERSION bump: an index adds no column or table, and readers gated
+  // on version >= 4 see the identical row shape.
+  db.exec(`
+    DELETE FROM anomalies WHERE id NOT IN (
+      SELECT MIN(id) FROM anomalies GROUP BY kind, tool_use_id
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_anomalies_kind_tool_use_id
+      ON anomalies (kind, tool_use_id);
+  `);
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`

@@ -103,7 +103,7 @@ export function scanTranscriptsOnce(
       }
 
       const priorHistory = historyByFile.get(relativePath) ?? createEmptyHistory();
-      const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, dirPath);
+      const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs);
       historyByFile.set(relativePath, anomalyResult.history);
       toolCallsIngested += anomalyResult.toolCallsIngested;
       anomaliesIngested += anomalyResult.anomaliesIngested;

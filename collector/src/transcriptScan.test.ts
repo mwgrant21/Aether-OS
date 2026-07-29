@@ -107,6 +107,11 @@ describe('scanTranscriptsOnce', () => {
     const projDir = join(projectsRoot, 'my-project');
     mkdirSync(projDir);
 
+    // A genuinely absolute path in a DIFFERENT tree from the transcript
+    // storage dir -- exactly the production shape.
+    const workTree = mkdtempSync(join(tmpdir(), 'aether-worktree-'));
+    const absFilePath = join(workTree, 'src', 'foo.ts');
+
     const lines: string[] = [];
     for (let i = 0; i < 3; i++) {
       const ts = new Date(Date.UTC(2026, 6, 8, 9, 0, i)).toISOString();
@@ -115,10 +120,14 @@ describe('scanTranscriptsOnce', () => {
           type: 'assistant',
           sessionId: 's1',
           timestamp: ts,
+          // Real transcript lines carry the session's working directory; it,
+          // not the transcript storage directory, is the root that an
+          // absolute tool file_path is relative to.
+          cwd: workTree,
           message: {
             model: 'claude-sonnet-4-6',
             usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
-            content: [{ type: 'tool_use', id: `tu_${i}`, name: 'Read', input: { file_path: join(projDir, 'foo.ts') } }],
+            content: [{ type: 'tool_use', id: `tu_${i}`, name: 'Read', input: { file_path: absFilePath } }],
           },
         })
       );
@@ -137,6 +146,19 @@ describe('scanTranscriptsOnce', () => {
     const result = scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 30), new Map());
     expect(result.toolCallsIngested).toBe(3);
     expect(result.anomaliesIngested).toBe(1);
+
+    // docs/privacy-and-data.md SS5: neither the persisted path nor the
+    // anomaly detail may contain the absolute root (home dir/username).
+    const toolRows = db.prepare('SELECT file_path_rel FROM tool_calls').all() as { file_path_rel: string | null }[];
+    for (const r of toolRows) {
+      expect(r.file_path_rel).toBe(join('src', 'foo.ts'));
+      expect(r.file_path_rel).not.toContain(workTree);
+    }
+    const anomalyRows = db.prepare('SELECT detail FROM anomalies').all() as { detail: string }[];
+    expect(anomalyRows).toHaveLength(1);
+    expect(anomalyRows[0].detail).not.toContain(workTree);
+    expect(anomalyRows[0].detail).toContain(join('src', 'foo.ts'));
+
     db.close();
   });
 

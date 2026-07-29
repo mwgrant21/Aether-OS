@@ -1,5 +1,4 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { relative, isAbsolute } from 'node:path';
 import type { TranscriptEvent } from './transcriptParser.js';
 import { type ToolCallHistory, type ClosedToolCall, updateHistory } from './toolCallHistory.js';
 
@@ -55,40 +54,11 @@ function detectZeroEditBurn(events: ClosedToolCall[], tokensUsed: number): Anoma
   return [];
 }
 
-// A relative path segment of exactly '..' (on either / or \ separators)
-// indicates traversal outside whatever root the path is relative to.
-function hasTraversalSegment(p: string): boolean {
-  return p.split(/[/\\]/).some((segment) => segment === '..');
-}
-
-// filePath is what toolCallHistory.ts's extractFilePath pulled verbatim from
-// the tool_use input (an absolute path in the real Electron/collector
-// runtime). Only absolute paths are converted via path.relative + an
-// escape check (docs/privacy-and-data.md SS5: never persist a path
-// containing the home dir/username); a filePath that's already relative
-// (as constructed directly by callers/tests) is passed through unchanged --
-// but still validated for '..' traversal segments so a crafted relative
-// input like '../../secret' can't slip past the guard just because it never
-// went through path.relative.
-function toProjectRelative(filePath: string | null, projectRoot: string): string | null {
-  if (filePath === null) return null;
-  if (!isAbsolute(filePath)) {
-    return hasTraversalSegment(filePath) ? null : filePath;
-  }
-  try {
-    const rel = relative(projectRoot, filePath);
-    return hasTraversalSegment(rel) ? null : rel;
-  } catch {
-    return null;
-  }
-}
-
 export function ingestToolCallsAndAnomalies(
   db: DatabaseSync,
   history: ToolCallHistory,
   events: TranscriptEvent[],
   nowMs: number,
-  projectRoot: string,
 ): { history: ToolCallHistory; toolCallsIngested: number; anomaliesIngested: number } {
   const newHistory = updateHistory(history, events, nowMs);
   // Diff by toolUseId membership rather than array index/length: once
@@ -104,7 +74,12 @@ export function ingestToolCallsAndAnomalies(
     `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms) VALUES (?, ?, ?, ?, ?)`
   );
   for (const call of newlyClosed) {
-    insertToolCall.run(call.toolUseId, call.toolName, toProjectRelative(call.filePath, projectRoot), call.startedAt, call.closedAt);
+    // call.filePath is already project-relative-or-null by construction:
+    // toolCallHistory.ts sanitizes it against the event's own cwd the moment
+    // it enters the history, so no per-call-site sanitization is needed here
+    // (and, critically, none can be forgotten in the anomaly `detail`
+    // builders either). See toProjectRelative's doc comment.
+    insertToolCall.run(call.toolUseId, call.toolName, call.filePath, call.startedAt, call.closedAt);
   }
 
   const recentWindow = newHistory.events.filter((e) => e.closedAt >= nowMs - 300000);
@@ -121,12 +96,19 @@ export function ingestToolCallsAndAnomalies(
     // intentional, not silently dropped.
     ...detectZeroEditBurn(recentWindow, 0),
   ];
+  // The detectors re-scan a rolling 5-minute window on EVERY scan tick
+  // (~15s), so one genuine anomaly is re-detected on ~20 consecutive ticks.
+  // The unique index on anomalies(kind, tool_use_id) plus OR IGNORE collapses
+  // those to a single persisted row instead of ~20 duplicate timeline
+  // entries. anomaliesIngested therefore counts rows actually inserted.
   const insertAnomaly = db.prepare(
-    `INSERT INTO anomalies (kind, tool_use_id, detail, detected_at_ms) VALUES (?, ?, ?, ?)`
+    `INSERT OR IGNORE INTO anomalies (kind, tool_use_id, detail, detected_at_ms) VALUES (?, ?, ?, ?)`
   );
+  let anomaliesIngested = 0;
   for (const a of anomalies) {
-    insertAnomaly.run(a.kind, a.toolUseId, a.detail, nowMs);
+    const info = insertAnomaly.run(a.kind, a.toolUseId, a.detail, nowMs);
+    if (Number(info.changes) > 0) anomaliesIngested += 1;
   }
 
-  return { history: newHistory, toolCallsIngested: newlyClosed.length, anomaliesIngested: anomalies.length };
+  return { history: newHistory, toolCallsIngested: newlyClosed.length, anomaliesIngested };
 }
