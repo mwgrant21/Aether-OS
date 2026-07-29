@@ -11,6 +11,8 @@ import { useOptimizeSync } from './state/useOptimizeSync';
 import { useStatuslineSync } from './state/useStatuslineSync';
 import { useFleetSync } from './state/useFleetSync';
 import { useDiagnosticsSync } from './state/useDiagnosticsSync';
+import { usePermissionRequestSync } from './state/usePermissionRequestSync';
+import { PermissionRequestCard } from './components/agents/PermissionRequestCard';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -31,7 +33,9 @@ export default function App() {
         <StatuslineSync />
         <FleetSync />
         <DiagnosticsSync />
+        <PermissionRequestSync />
         <ActiveView />
+        <PermissionRequestCard />
         <BottomMetricsRow />
       </AppShell>
     </AetherStoreProvider>
@@ -75,5 +79,10 @@ function FleetSync() {
 
 function DiagnosticsSync() {
   useDiagnosticsSync();
+  return null;
+}
+
+function PermissionRequestSync() {
+  usePermissionRequestSync();
   return null;
 }
