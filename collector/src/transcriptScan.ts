@@ -108,25 +108,18 @@ export function scanTranscriptsOnce(
       toolCallsIngested += anomalyResult.toolCallsIngested;
       anomaliesIngested += anomalyResult.anomaliesIngested;
 
-      // Dispatch (Task subagent) completion: applyLinesToOpenDispatches
-      // (src/state/liveAgentsMath.ts) closes an open Task dispatch on a
-      // 'task-notification' origin marker. ingestDispatchEvent (Task 4)
-      // instead keys completion off the *usage-bearing* event itself --
-      // a subagent's real token cost lands on the parent session's own next
-      // assistant turn, not a separate transcript -- so here that same
-      // 'task-notification' marker is read off the assistant event carrying
-      // usage, and used only to identify WHICH open Task tool call it closes.
-      // anomalyResult.history (not priorHistory) is used so a Task tool_use
+      // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
+      // own guards and no-ops unless the event is a genuine 'user'-kind
+      // 'task-notification' carrying a <tool-use-id> that matches a still-open
+      // 'Agent' tool call, so it is simply offered every parsed event -- no
+      // loop over openByToolUseId, which is what previously fanned one
+      // completion out across every open dispatch.
+      // anomalyResult.history (not priorHistory) is used so an Agent tool_use
       // and its completion arriving in the same scan tick still correlate --
-      // updateHistory never closes a Task entry via a normal tool_result, so
+      // updateHistory never closes an Agent entry via a normal tool_result, so
       // the open entry survives into anomalyResult.history either way.
       for (const event of parsedEvents) {
-        if (event.kind !== 'assistant' || event.usage === null || event.originKind !== 'task-notification') continue;
-        for (const [dispatchToolUseId, open] of Object.entries(anomalyResult.history.openByToolUseId)) {
-          if (open.toolName !== 'Task') continue;
-          const toolUseCount = anomalyResult.history.events.filter((e) => e.startedAt >= open.startedAt).length;
-          ingestDispatchEvent(db, anomalyResult.history, event, dispatchToolUseId, toolUseCount);
-        }
+        ingestDispatchEvent(db, anomalyResult.history, event);
       }
 
       filesScanned += 1;
