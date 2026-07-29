@@ -4,6 +4,7 @@ import { pickSelectedRealAgent } from './agentsMath';
 import { AgentRosterCard } from './AgentRosterCard';
 import { AgentDetailCard } from './AgentDetailCard';
 import { FleetCard } from './FleetCard';
+import { DispatchTimeline } from './DispatchTimeline';
 
 export function AgentsView() {
   const { state } = useAetherStore();
@@ -14,6 +15,7 @@ export function AgentsView() {
       <AgentRosterCard selectedToolUseId={selectedAgent?.toolUseId ?? null} />
       <AgentDetailCard agent={selectedAgent} />
       <FleetCard />
+      <DispatchTimeline diagnostics={state.diagnostics} />
     </div>
   );
 }
