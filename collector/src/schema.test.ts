@@ -19,7 +19,19 @@ describe('schema', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'fleet_sessions', 'schema_meta', 'transcript_files', 'usage_events']);
+    expect(tables).toEqual([
+      'anomalies',
+      'daily_anomaly_rollups',
+      'daily_rollups',
+      'dispatches',
+      'drift_log',
+      'events',
+      'fleet_sessions',
+      'schema_meta',
+      'tool_calls',
+      'transcript_files',
+      'usage_events',
+    ]);
     db.close();
   });
 
@@ -45,16 +57,28 @@ describe('schema', () => {
     db.close();
   });
 
-  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 3', () => {
+  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 4', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(3);
+    expect(getSchemaVersion(db)).toBe(4);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    expect(tables).toEqual(['daily_rollups', 'drift_log', 'events', 'fleet_sessions', 'schema_meta', 'transcript_files', 'usage_events']);
+    expect(tables).toEqual([
+      'anomalies',
+      'daily_anomaly_rollups',
+      'daily_rollups',
+      'dispatches',
+      'drift_log',
+      'events',
+      'fleet_sessions',
+      'schema_meta',
+      'tool_calls',
+      'transcript_files',
+      'usage_events',
+    ]);
     db.close();
   });
 
@@ -89,21 +113,25 @@ describe('schema', () => {
     db.close();
   });
 
-  it('migrate also creates fleet_sessions, and bumps schema_meta to version 3', () => {
+  it('migrate also creates fleet_sessions, and bumps schema_meta to version 4', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(3);
+    expect(getSchemaVersion(db)).toBe(4);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
       .all()
       .map((r: any) => r.name);
     expect(tables).toEqual([
+      'anomalies',
+      'daily_anomaly_rollups',
       'daily_rollups',
+      'dispatches',
       'drift_log',
       'events',
       'fleet_sessions',
       'schema_meta',
+      'tool_calls',
       'transcript_files',
       'usage_events',
     ]);
@@ -145,6 +173,24 @@ describe('schema', () => {
     expect(row.last_seen_ms).toBe(5000);
     const count: any = db.prepare('SELECT COUNT(*) as c FROM fleet_sessions').get();
     expect(count.c).toBe(1);
+    db.close();
+  });
+
+  it('creates tool_calls, dispatches, anomalies, and daily_anomaly_rollups tables at v4', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(4);
+
+    db.exec(`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms)
+             VALUES ('tu_1', 'Read', 'src/foo.ts', 1000, 2000)`);
+    db.exec(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
+             VALUES ('tu_task_1', 5000, 3, 12000, 1000, 13000)`);
+    db.exec(`INSERT INTO anomalies (kind, tool_use_id, detail, detected_at_ms)
+             VALUES ('reReadLoop', 'tu_5', 'src/foo.ts read 3 times', 5000)`);
+    db.exec(`INSERT INTO daily_anomaly_rollups (day, kind, anomaly_count) VALUES ('2026-07-28', 'reReadLoop', 1)`);
+
+    const toolCall = db.prepare('SELECT * FROM tool_calls').get() as { tool_name: string };
+    expect(toolCall.tool_name).toBe('Read');
     db.close();
   });
 

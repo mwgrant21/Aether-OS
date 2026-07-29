@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -67,6 +67,35 @@ export function migrate(db: DatabaseSync): void {
       name TEXT NOT NULL,
       started_at_ms INTEGER NOT NULL,
       last_seen_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tool_use_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      file_path_rel TEXT,
+      started_at_ms INTEGER NOT NULL,
+      closed_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS dispatches (
+      tool_use_id TEXT PRIMARY KEY,
+      tokens INTEGER NOT NULL,
+      tool_uses INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      started_at_ms INTEGER NOT NULL,
+      ended_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS anomalies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      tool_use_id TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      detected_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS daily_anomaly_rollups (
+      day TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      anomaly_count INTEGER NOT NULL,
+      PRIMARY KEY (day, kind)
     );
   `);
   db.prepare(
