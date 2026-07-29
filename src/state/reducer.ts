@@ -1,4 +1,5 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryStub, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot } from './types';
+import type { NotificationReason } from '../shared/alertSounds';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
@@ -48,7 +49,8 @@ export type Action =
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
   | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
   | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] }
-  | { type: 'SET_STATUSLINE'; snapshot: StatuslineSnapshot | null };
+  | { type: 'SET_STATUSLINE'; snapshot: StatuslineSnapshot | null }
+  | { type: 'SET_LAST_NOTIFICATION'; reason: NotificationReason };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -273,6 +275,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_STATUSLINE':
       return { ...state, statusline: action.snapshot };
+
+    case 'SET_LAST_NOTIFICATION':
+      return { ...state, lastNotification: { reason: action.reason, atMs: Date.now() } };
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);

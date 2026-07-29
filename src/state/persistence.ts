@@ -33,6 +33,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   diagnostics: 'a live collector-sourced snapshot of tool calls/dispatches/anomalies over the last 24h, stale the instant it is written to disk -- same reasoning as the fleet exclusion',
   pendingPermissionRequest: "an in-flight approval prompt tied to a live pending Promise held in main.ts's resolver map; a rehydrated value after restart would show a prompt with no resolver left to answer it",
   pendingPostToolFlag: "an in-flight flag-review prompt tied to a live pending Promise held in main.ts's pendingPostToolFlagResolvers map; a rehydrated value after restart would show a prompt with no resolver left to answer it -- same reasoning as pendingPermissionRequest",
+  lastNotification: 'a live IPC-pushed Notification-hook event used only to trigger a one-shot sound in useAlertSounds; a persisted value would replay a stale sound cue on the next launch',
 };
 
 export function loadPersisted(): Partial<AetherState> | null {

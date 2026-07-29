@@ -89,6 +89,7 @@ import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { PermissionRisk } from '../shared/permissionRisk';
+import type { NotificationReason } from '../shared/alertSounds';
 
 // Not related to `Approval` (the chat-pipeline/tick-simulation approval
 // queue) despite similar approve/deny language -- see that interface's
@@ -242,6 +243,7 @@ export interface AetherState {
   diagnostics: DiagnosticsSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;
+  lastNotification: { reason: NotificationReason; atMs: number } | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

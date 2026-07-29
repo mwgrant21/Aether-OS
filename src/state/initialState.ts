@@ -206,4 +206,5 @@ export const initialState: AetherState = {
   diagnostics: null,
   pendingPermissionRequest: null,
   pendingPostToolFlag: null,
+  lastNotification: null,
 };

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAetherStore } from './store';
-import { decideAlertActions, playAnomalyChime, playYellowAlert, startRedAlert } from '../shared/alertSounds';
+import { decideAlertActions, playAnomalyChime, playNotificationTone, playYellowAlert, startRedAlert } from '../shared/alertSounds';
 
 export function useAlertSounds(): void {
   const { state } = useAetherStore();
@@ -43,4 +43,14 @@ export function useAlertSounds(): void {
       stopRedRef.current = null;
     }
   }, [state.cfg.sound]);
+
+  useEffect(() => {
+    if (state.cfg.sound && state.lastNotification) {
+      playNotificationTone(state.lastNotification.reason);
+    }
+    // Deliberately keyed on atMs, not the whole object reference, so two
+    // notifications with the same reason in quick succession (e.g. two
+    // permission_prompts) both trigger a fresh play instead of the second
+    // being skipped by a same-value effect-dependency comparison.
+  }, [state.lastNotification?.atMs, state.cfg.sound]);
 }
