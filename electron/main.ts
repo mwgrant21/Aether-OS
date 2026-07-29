@@ -22,8 +22,11 @@ import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
-import { startPermissionServer } from './permissionServer';
+import { startPermissionServer, type PermissionDecision } from './permissionServer';
+import { classifyPermissionRisk } from '../src/shared/permissionRisk';
+import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
 import net from 'node:net';
+import crypto from 'node:crypto';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -145,6 +148,11 @@ const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
 let stopStatuslineWatcher: (() => void) | null = null;
 let stopPermissionServer: (() => void) | null = null;
+
+// requestId -> resolver for a permission request currently awaiting the
+// renderer's decision. Populated in onPermissionRequest below, drained by
+// the 'permission:respond' handler.
+const pendingPermissionResolvers = new Map<string, (decision: PermissionDecision) => void>();
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
@@ -312,14 +320,27 @@ app.whenReady().then(async () => {
     sendToWindow('statusline:snapshot', snapshot);
   });
 
-  // Placeholder onPermissionRequest that always denies -- Task 5 replaces this
-  // with the real renderer round-trip.
   const desiredPort = 51823; // arbitrary fixed high port; bump-on-conflict handled below
   const portAvailable = await isPortAvailable(desiredPort);
   const permissionServerOptions = {
     port: portAvailable ? desiredPort : 0,
     timeoutMs: 120000,
-    onPermissionRequest: async () => ({ behavior: 'deny' as const, reason: 'permission UI not yet wired (Task 5)' }),
+    onPermissionRequest: async (req: { toolName: string; toolInput: unknown }): Promise<PermissionDecision> => {
+      // Bridges the permission server's request to the renderer and back.
+      // This resolution map lives here (not in permissionServer.ts) because
+      // it's specifically about the renderer round-trip, not the HTTP server
+      // itself -- permissionServer.ts's own withTimeout already covers the
+      // "no decision in time" case around this call.
+      if (!mainWindow) return { behavior: 'deny', reason: 'no window available to prompt for permission' };
+      const requestId = crypto.randomUUID();
+      const risk = classifyPermissionRisk(req.toolName, req.toolInput);
+      const editableField = derivePermissionEditableField(req.toolName, req.toolInput);
+      const decision = new Promise<PermissionDecision>((resolve) => {
+        pendingPermissionResolvers.set(requestId, resolve);
+      });
+      sendToWindow('permission:request', { requestId, toolName: req.toolName, toolInput: req.toolInput, risk, editableField });
+      return decision;
+    },
   };
   let permission;
   try {
@@ -400,6 +421,13 @@ ipcMain.handle('optimize:targets', async () => {
     global: { path: globalPath, exists: await pathExists(globalPath) },
     project: projectPath ? { path: projectPath, exists: await pathExists(projectPath) } : null,
   };
+});
+
+ipcMain.handle('permission:respond', (_event, { requestId, decision }: { requestId: string; decision: PermissionDecision }) => {
+  const resolve = pendingPermissionResolvers.get(requestId);
+  if (!resolve) return; // already timed out / resolved / duplicate response
+  pendingPermissionResolvers.delete(requestId);
+  resolve(decision);
 });
 
 ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { findingId: string; target: 'global' | 'project' }) => {

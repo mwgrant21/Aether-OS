@@ -6,6 +6,8 @@ import type { OptimizeFinding, OptimizeSummary } from './shared/optimizeRules';
 import type { GradeRow } from './shared/optimizeGrade';
 import type { StatuslineSnapshot } from './shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../electron/collectorStore';
+import type { PermissionRequestUI } from './state/types';
+import type { PermissionDecision } from '../electron/permissionServer';
 
 export {};
 
@@ -59,6 +61,10 @@ declare global {
         currentSnapshot: () => Promise<StatuslineSnapshot | null>;
         install: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
         uninstall: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
+      };
+      permission: {
+        onRequest: (callback: (request: PermissionRequestUI) => void) => () => void;
+        respond: (requestId: string, decision: PermissionDecision) => Promise<void>;
       };
       chat: {
         send: (body: unknown) => Promise<{ reply: string } | { error: string }>;

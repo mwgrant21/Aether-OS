@@ -8,6 +8,8 @@ import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
 import type { DiagnosticsSnapshot } from './collectorStore';
+import type { PermissionRequestUI } from '../src/state/types';
+import type { PermissionDecision } from './permissionServer';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -106,6 +108,14 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     currentSnapshot: (): Promise<StatuslineSnapshot | null> => ipcRenderer.invoke('statusline:snapshot:current'),
     install: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:install'),
     uninstall: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:uninstall'),
+  },
+  permission: {
+    onRequest: (callback: (request: PermissionRequestUI) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: PermissionRequestUI) => callback(request);
+      ipcRenderer.on('permission:request', listener);
+      return () => ipcRenderer.removeListener('permission:request', listener);
+    },
+    respond: (requestId: string, decision: PermissionDecision): Promise<void> => ipcRenderer.invoke('permission:respond', { requestId, decision }),
   },
   chat: {
     send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),
