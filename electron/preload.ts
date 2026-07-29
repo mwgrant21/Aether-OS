@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:cacheHitRatio', listener);
       return () => ipcRenderer.removeListener('agents:cacheHitRatio', listener);
     },
+    onNotification: (callback: (payload: { reason: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { reason: string }) => callback(payload);
+      ipcRenderer.on('agents:notification', listener);
+      return () => ipcRenderer.removeListener('agents:notification', listener);
+    },
   },
   fleet: {
     onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {

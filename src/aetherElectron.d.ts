@@ -29,6 +29,7 @@ declare global {
         onActiveWork: (callback: (work: RealActiveWork[]) => void) => () => void;
         onAnomalies: (callback: (anomalies: Anomaly[]) => void) => () => void;
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
+        onNotification: (callback: (payload: { reason: string }) => void) => () => void;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;

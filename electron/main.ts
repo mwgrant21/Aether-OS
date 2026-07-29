@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage } from 'electron';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -9,7 +9,7 @@ import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker } from './liveAgentTracker';
-import { writeOwnSessionFile } from './ownSessionFile';
+import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';
 import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
 import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
@@ -25,11 +25,14 @@ import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
 import { classifyPermissionRisk } from '../src/shared/permissionRisk';
 import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
+import { renderNotificationBadge } from './notificationBadge';
 import net from 'node:net';
 import crypto from 'node:crypto';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+let isWindowFocused = true;
+let unfocusedNotificationCount = 0;
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -75,6 +78,16 @@ function createWindow(): void {
 
   win.on('maximize', () => sendToWindow('window:isMaximized', true));
   win.on('unmaximize', () => sendToWindow('window:isMaximized', false));
+
+  win.on('focus', () => {
+    isWindowFocused = true;
+    unfocusedNotificationCount = 0;
+    win.flashFrame(false);
+    win.setOverlayIcon(null, '');
+  });
+  win.on('blur', () => {
+    isWindowFocused = false;
+  });
 
   let saveBoundsTimer: ReturnType<typeof setTimeout> | null = null;
   const persistBounds = (): void => {
@@ -383,6 +396,19 @@ app.whenReady().then(async () => {
         detail: tripped.detail,
       });
       return decision;
+    },
+    onNotification: ({ sessionId, notificationType }: { sessionId: string; notificationType: string }) => {
+      if (sessionId !== readOwnSessionId(ownSessionFilePath(aetherOsDir))) return; // fleet noise, not us
+      if (isWindowFocused) return; // suppression rule: true no-op while focused
+      unfocusedNotificationCount += 1;
+      if (!mainWindow) return;
+      mainWindow.flashFrame(true);
+      const badge = renderNotificationBadge(16);
+      mainWindow.setOverlayIcon(
+        nativeImage.createFromBuffer(badge.buffer, { width: badge.width, height: badge.height }),
+        `${unfocusedNotificationCount} notification${unfocusedNotificationCount === 1 ? '' : 's'} while away`
+      );
+      sendToWindow('agents:notification', { reason: notificationType });
     },
   };
   let permission;

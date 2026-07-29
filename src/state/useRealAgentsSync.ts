@@ -43,4 +43,12 @@ export function useRealAgentsSync() {
       dispatch({ type: 'SET_CACHE_HIT_RATIO', ratio });
     });
   }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onNotification(({ reason }) => {
+      dispatch({ type: 'SET_LAST_NOTIFICATION', reason });
+    });
+  }, [dispatch]);
 }
