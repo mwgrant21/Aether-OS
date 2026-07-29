@@ -5,6 +5,7 @@ import { openDatabase, migrate, stampFleetHeartbeat } from './schema.js';
 import { startSpoolTailer } from './spoolTailer.js';
 import { compact } from './retention.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
+import type { ToolCallHistory } from './toolCallHistory.js';
 import { pollFleet, upsertFleetSessions, type FleetExecFn } from './fleetPoll.js';
 import { readOwnSessionId } from './ownSessionFile.js';
 
@@ -45,9 +46,10 @@ export function startCollector(options: {
 
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
   const compactTimer = setInterval(() => compact(db, Date.now()), options.compactIntervalMs);
-  scanTranscriptsOnce(db, options.projectsRoot, Date.now());
+  const toolCallHistoryByFile = new Map<string, ToolCallHistory>();
+  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile);
   const transcriptScanTimer = setInterval(
-    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now()),
+    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile),
     options.transcriptScanIntervalMs
   );
 

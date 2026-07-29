@@ -29,8 +29,8 @@ describe('scanTranscriptsOnce', () => {
     writeFileSync(join(projDir, 'session.jsonl'), `${assistantLine(100)}\n${assistantLine(200)}\n`, 'utf8');
 
     const db = freshDb();
-    const result = scanTranscriptsOnce(db, projectsRoot, 1000);
-    expect(result).toEqual({ filesScanned: 1, eventsIngested: 2 });
+    const result = scanTranscriptsOnce(db, projectsRoot, 1000, new Map());
+    expect(result).toEqual({ filesScanned: 1, eventsIngested: 2, toolCallsIngested: 0, anomaliesIngested: 0 });
 
     const count: any = db.prepare('SELECT COUNT(*) as c FROM usage_events').get();
     expect(count.c).toBe(2);
@@ -52,9 +52,10 @@ describe('scanTranscriptsOnce', () => {
     writeFileSync(filePath, `${assistantLine(100)}\n`, 'utf8');
 
     const db = freshDb();
-    scanTranscriptsOnce(db, projectsRoot, 1000);
+    const historyByFile = new Map();
+    scanTranscriptsOnce(db, projectsRoot, 1000, historyByFile);
     require('fs').appendFileSync(filePath, `${assistantLine(200)}\n`, 'utf8');
-    const second = scanTranscriptsOnce(db, projectsRoot, 2000);
+    const second = scanTranscriptsOnce(db, projectsRoot, 2000, historyByFile);
     expect(second.eventsIngested).toBe(1);
 
     const count: any = db.prepare('SELECT COUNT(*) as c FROM usage_events').get();
@@ -70,16 +71,21 @@ describe('scanTranscriptsOnce', () => {
     writeFileSync(join(projDir, 'notes.txt'), 'irrelevant', 'utf8');
 
     const db = freshDb();
-    const result = scanTranscriptsOnce(db, projectsRoot, 1000);
-    expect(result).toEqual({ filesScanned: 0, eventsIngested: 0 });
+    const result = scanTranscriptsOnce(db, projectsRoot, 1000, new Map());
+    expect(result).toEqual({ filesScanned: 0, eventsIngested: 0, toolCallsIngested: 0, anomaliesIngested: 0 });
     db.close();
   });
 
   it('returns zero counts and does not throw when projectsRoot does not exist', () => {
     const db = freshDb();
     const missingRoot = join(tmpdir(), 'aether-collector-does-not-exist-' + Date.now());
-    expect(() => scanTranscriptsOnce(db, missingRoot, 1000)).not.toThrow();
-    expect(scanTranscriptsOnce(db, missingRoot, 1000)).toEqual({ filesScanned: 0, eventsIngested: 0 });
+    expect(() => scanTranscriptsOnce(db, missingRoot, 1000, new Map())).not.toThrow();
+    expect(scanTranscriptsOnce(db, missingRoot, 1000, new Map())).toEqual({
+      filesScanned: 0,
+      eventsIngested: 0,
+      toolCallsIngested: 0,
+      anomaliesIngested: 0,
+    });
     db.close();
   });
 
@@ -91,8 +97,46 @@ describe('scanTranscriptsOnce', () => {
     writeFileSync(join(projDir, 'session.jsonl'), `${userLine}\n${assistantLine(100)}\n`, 'utf8');
 
     const db = freshDb();
-    const result = scanTranscriptsOnce(db, projectsRoot, 1000);
+    const result = scanTranscriptsOnce(db, projectsRoot, 1000, new Map());
     expect(result.eventsIngested).toBe(1);
+    db.close();
+  });
+
+  it('ingests tool_calls and flags a reReadLoop anomaly when a fixture transcript reads the same path 3+ times', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+
+    const lines: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const ts = new Date(Date.UTC(2026, 6, 8, 9, 0, i)).toISOString();
+      lines.push(
+        JSON.stringify({
+          type: 'assistant',
+          sessionId: 's1',
+          timestamp: ts,
+          message: {
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+            content: [{ type: 'tool_use', id: `tu_${i}`, name: 'Read', input: { file_path: join(projDir, 'foo.ts') } }],
+          },
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          type: 'user',
+          sessionId: 's1',
+          timestamp: ts,
+          message: { content: [{ type: 'tool_result', tool_use_id: `tu_${i}`, content: 'ok' }] },
+        })
+      );
+    }
+    writeFileSync(join(projDir, 'session.jsonl'), lines.join('\n') + '\n', 'utf8');
+
+    const db = freshDb();
+    const result = scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 30), new Map());
+    expect(result.toolCallsIngested).toBe(3);
+    expect(result.anomaliesIngested).toBe(1);
     db.close();
   });
 });
