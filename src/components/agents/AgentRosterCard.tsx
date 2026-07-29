@@ -5,6 +5,7 @@ import { fmtElapsed } from '../../utils/format';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import type { ColorPalette } from '../../styles/tokens';
+import { groupDispatches } from './rosterGrouping';
 
 export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: string | null }) {
   const colors = useColors();
@@ -16,6 +17,8 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
     return () => clearInterval(id);
   }, []);
 
+  const groups = groupDispatches(state.realAgents, state.anomalies);
+
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -23,21 +26,30 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {state.realAgents.map((a) => {
-          const on = a.toolUseId === selectedToolUseId;
-          return (
-            <Button key={a.toolUseId} onClick={() => dispatch({ type: 'SELECT_REAL_AGENT', toolUseId: a.toolUseId })} style={rowStyle(on)}>
-              <span style={avatarStyle(colors)}>{a.subagentType.slice(0, 2).toUpperCase()}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={nameStyle(colors)}>{a.subagentType}</span>
-                  <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{fmtElapsed(now - new Date(a.startedAt).getTime())}</span>
-                </div>
-                <div style={descStyle(colors)}>{a.description}</div>
-              </div>
-            </Button>
-          );
-        })}
+        {groups.map((group) => (
+          group.dispatches.length > 0 && (
+            <div key={group.label}>
+              <div style={groupHeaderStyle(colors)}>{group.label}</div>
+              {group.dispatches.map((a) => {
+                const on = a.toolUseId === selectedToolUseId;
+                const hasAnomaly = group.label === 'NEEDS INPUT';
+                const headline = state.dispatchHeadlines[a.toolUseId] ?? a.description;
+                return (
+                  <Button key={a.toolUseId} onClick={() => dispatch({ type: 'SELECT_REAL_AGENT', toolUseId: a.toolUseId })} style={rowStyle(on)}>
+                    <span style={glyphStyle(colors, hasAnomaly)} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <span style={nameStyle(colors)}>{a.subagentType}</span>
+                        <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{fmtElapsed(now - new Date(a.startedAt).getTime())}</span>
+                      </div>
+                      <div style={descStyle(colors)}>{headline}</div>
+                    </div>
+                  </Button>
+                );
+              })}
+            </div>
+          )
+        ))}
         {!state.realAgents.length && <div style={emptyStyle(colors)}>no agents currently running</div>}
       </div>
     </div>
@@ -72,19 +84,18 @@ function rowStyle(on: boolean): CSSProperties {
     border: on ? '1px solid rgba(95,220,255,.4)' : '1px solid transparent',
   };
 }
-function avatarStyle(colors: ColorPalette): CSSProperties {
+function glyphStyle(colors: ColorPalette, hasAnomaly: boolean): CSSProperties {
   return {
-    width: 30,
-    height: 30,
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
     flex: 'none',
-    borderRadius: 8,
-    background: 'repeating-linear-gradient(45deg,#0e3340 0 5px,#123f4e 5px 10px)',
-    border: `1px solid ${colors.accentCyanSoft}`,
-    display: 'grid',
-    placeItems: 'center',
-    font: `700 11px/1 ${fonts.mono}`,
-    color: colors.accentCyanSoft,
+    background: colors.accentCyanSoft,
+    boxShadow: hasAnomaly ? `0 0 0 2px ${colors.warn}` : 'none',
   };
+}
+function groupHeaderStyle(colors: ColorPalette): CSSProperties {
+  return { font: `700 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.textMuted, margin: '10px 0 4px' };
 }
 function nameStyle(colors: ColorPalette): CSSProperties {
   return {
