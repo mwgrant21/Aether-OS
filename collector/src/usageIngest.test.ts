@@ -3,8 +3,9 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
-import { ingestUsageEvent } from './usageIngest.js';
+import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import type { TranscriptEvent } from './transcriptParser.js';
+import { createEmptyHistory, updateHistory } from './toolCallHistory.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-usageingest-'));
@@ -68,5 +69,35 @@ describe('ingestUsageEvent', () => {
     const row: any = db.prepare('SELECT model FROM usage_events').get();
     expect(row.model).toBeNull();
     db.close();
+  });
+});
+
+describe('ingestDispatchEvent', () => {
+  it('records a dispatches row when a Task tool call is still open', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+
+    let history = createEmptyHistory();
+    history = updateHistory(history, [{
+      kind: 'assistant', sessionId: null, timestamp: new Date(1000), cwd: null, model: null, usage: null,
+      toolUses: [{ id: 'tu_task_1', name: 'Task', input: {} }], toolResults: [],
+    }], 1000);
+
+    const completionEvent = {
+      kind: 'assistant' as const, sessionId: null, timestamp: new Date(13000), cwd: null,
+      model: 'claude-sonnet-5',
+      usage: { inputTokens: 4000, outputTokens: 1000, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+      toolUses: [], toolResults: [],
+    };
+
+    const ingested = ingestDispatchEvent(db, history, completionEvent, 'tu_task_1', 3);
+    expect(ingested).toBe(true);
+
+    const row = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_task_1') as
+      { tokens: number; tool_uses: number; started_at_ms: number; ended_at_ms: number };
+    expect(row.tokens).toBe(5000);
+    expect(row.tool_uses).toBe(3);
+    expect(row.started_at_ms).toBe(1000);
+    expect(row.ended_at_ms).toBe(13000);
   });
 });
