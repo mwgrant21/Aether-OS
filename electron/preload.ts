@@ -7,6 +7,7 @@ import type { OptimizeFinding, OptimizeSummary } from '../src/shared/optimizeRul
 import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
+import type { DiagnosticsSnapshot } from './collectorStore';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -58,6 +59,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, rows: FleetSessionRow[] | null) => callback(rows);
       ipcRenderer.on('fleet:snapshot', listener);
       return () => ipcRenderer.removeListener('fleet:snapshot', listener);
+    },
+  },
+  diagnostics: {
+    onSnapshot: (callback: (snapshot: DiagnosticsSnapshot | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: DiagnosticsSnapshot | null) => callback(snapshot);
+      ipcRenderer.on('diagnostics:snapshot', listener);
+      return () => ipcRenderer.removeListener('diagnostics:snapshot', listener);
     },
   },
   optimize: {

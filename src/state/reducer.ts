@@ -1,4 +1,5 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryStub, OpMode, RealUsageSnapshot } from './types';
+import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
@@ -41,6 +42,7 @@ export type Action =
   | { type: 'SET_ANOMALIES'; anomalies: Anomaly[] }
   | { type: 'SET_CACHE_HIT_RATIO'; ratio: number }
   | { type: 'SET_FLEET'; fleet: FleetSessionRow[] | null }
+  | { type: 'SET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot | null }
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
   | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
   | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] }
@@ -248,6 +250,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_FLEET':
       return { ...state, fleet: action.fleet };
+
+    case 'SET_DIAGNOSTICS':
+      return { ...state, diagnostics: action.diagnostics };
 
     case 'SET_OPTIMIZE_FINDINGS':
       return { ...state, optimizeFindings: action.findings };

@@ -71,6 +71,7 @@ import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
+import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
@@ -201,6 +202,7 @@ export interface AetherState {
   optimizeBreakdown: GradeRow[];
   statusline: StatuslineSnapshot | null;
   fleet: FleetSessionRow[] | null;
+  diagnostics: DiagnosticsSnapshot | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

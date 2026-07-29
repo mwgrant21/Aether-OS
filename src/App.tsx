@@ -10,6 +10,7 @@ import { useAlertSounds } from './state/useAlertSounds';
 import { useOptimizeSync } from './state/useOptimizeSync';
 import { useStatuslineSync } from './state/useStatuslineSync';
 import { useFleetSync } from './state/useFleetSync';
+import { useDiagnosticsSync } from './state/useDiagnosticsSync';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -29,6 +30,7 @@ export default function App() {
         <OptimizeSync />
         <StatuslineSync />
         <FleetSync />
+        <DiagnosticsSync />
         <ActiveView />
         <BottomMetricsRow />
       </AppShell>
@@ -68,5 +70,10 @@ function StatuslineSync() {
 
 function FleetSync() {
   useFleetSync();
+  return null;
+}
+
+function DiagnosticsSync() {
+  useDiagnosticsSync();
   return null;
 }

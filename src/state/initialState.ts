@@ -203,4 +203,5 @@ export const initialState: AetherState = {
   dispatchUsage: {},
   statusline: null,
   fleet: null,
+  diagnostics: null,
 };
