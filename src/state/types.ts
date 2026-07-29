@@ -250,6 +250,7 @@ export interface AetherState {
   pendingPostToolFlag: PostToolFlagRequestUI | null;
   lastNotification: { reason: NotificationReason; atMs: number } | null;
   recap: RecapPayload | null;
+  dispatchHeadlines: Record<string, string>;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

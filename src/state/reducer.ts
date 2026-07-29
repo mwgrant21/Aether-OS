@@ -52,7 +52,8 @@ export type Action =
   | { type: 'SET_STATUSLINE'; snapshot: StatuslineSnapshot | null }
   | { type: 'SET_LAST_NOTIFICATION'; reason: NotificationReason }
   | { type: 'RECAP_RECEIVED'; recap: RecapPayload }
-  | { type: 'DISMISS_RECAP' };
+  | { type: 'DISMISS_RECAP' }
+  | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -286,6 +287,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'DISMISS_RECAP':
       return { ...state, recap: null };
+
+    case 'SET_DISPATCH_HEADLINE':
+      return { ...state, dispatchHeadlines: { ...state.dispatchHeadlines, [action.toolUseId]: action.headline } };
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);

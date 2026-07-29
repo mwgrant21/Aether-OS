@@ -30,6 +30,7 @@ declare global {
         onAnomalies: (callback: (anomalies: Anomaly[]) => void) => () => void;
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
         onNotification: (callback: (payload: { reason: string }) => void) => () => void;
+        onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;

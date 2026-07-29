@@ -19,6 +19,7 @@ import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import { runChatRequest } from '../src/shared/chatCore';
+import { createHeadlineThrottle, shouldCallForHeadline, generateHeadline } from './headlineGenerator';
 import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
@@ -36,6 +37,11 @@ let isWindowFocused = true;
 let unfocusedNotificationCount = 0;
 let recapAcc: RecapAccumulator = createEmptyAccumulator();
 let prevTickForRecap: LiveAgentTick | null = null;
+// Latest tick snapshot, kept alongside prevTickForRecap so onNotification (fired
+// from the HTTP server callback below, not the tick loop) can read result.open
+// for the blocked-trigger headline without calling tracker.tick() a second time.
+let lastTickResult: LiveAgentTick | null = null;
+const headlineThrottle = createHeadlineThrottle();
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -311,6 +317,19 @@ async function tickAndPushAgents(): Promise<void> {
       recapAcc = accumulate(recapAcc, result, prevTickForRecap ?? result, Date.now());
     }
     prevTickForRecap = result;
+    lastTickResult = result;
+
+    // Periodic status-headline trigger: for each currently-open dispatch, ask
+    // Haiku for a fresh headline at most once per 15s (shouldCallForHeadline's
+    // atomic check-and-set below), fire-and-forget -- a slow or failed call
+    // must never hold up the tick loop itself.
+    for (const d of result.open) {
+      if (shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) {
+        generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY).then((headline) => {
+          if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
+        });
+      }
+    }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
     if (pinnedSessionId !== lastWrittenOwnSessionId) {
@@ -412,6 +431,36 @@ app.whenReady().then(async () => {
     },
     onNotification: ({ sessionId, notificationType }: { sessionId: string; notificationType: string }) => {
       if (sessionId !== readOwnSessionId(ownSessionFilePath(aetherOsDir))) return; // fleet noise, not us
+
+      // Blocked-trigger headline: fires regardless of window focus (unlike the
+      // badge suppression below, which is purely about interrupting an
+      // already-focused user) -- a fresh "what's it actually waiting on"
+      // headline is useful whether or not the window happens to be focused
+      // right now. The real Claude Code Notification hook payload is
+      // session-level -- confirmed against this repo's own verified record of
+      // it: docs/superpowers/specs/2026-07-29-presentation-handoff-design.md's
+      // architecture diagram documents `stdin JSON: session_id,
+      // notification_type` for the Notification hook (no `tool_use_id`), and
+      // this repo's aether-permission-hook.mjs header comment (written when
+      // that hook route shipped) and permissionServer.ts's onNotification
+      // signature (`{ sessionId: string; notificationType: string }`) both
+      // match it exactly -- no `tool_name`/`tool_use_id` field exists on this
+      // event. There is no real per-dispatch correlating ID to prefer over
+      // the documented fallback: apply the headline to the most-recently-
+      // started currently-open dispatch, and skip entirely if none are open
+      // (nothing to attach a headline to).
+      if (notificationType === 'agent_needs_input' || notificationType === 'permission_prompt') {
+        const openDispatches = lastTickResult?.open ?? [];
+        const mostRecentOpen = [...openDispatches].sort(
+          (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+        )[0];
+        if (mostRecentOpen) {
+          generateHeadline(mostRecentOpen, 'blocked', notificationType, process.env.ANTHROPIC_API_KEY).then((headline) => {
+            if (headline) sendToWindow('agents:headline', { toolUseId: mostRecentOpen.toolUseId, headline });
+          });
+        }
+      }
+
       if (isWindowFocused) return; // suppression rule: true no-op while focused
       unfocusedNotificationCount += 1;
       if (!mainWindow) return;

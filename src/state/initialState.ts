@@ -208,4 +208,5 @@ export const initialState: AetherState = {
   pendingPostToolFlag: null,
   lastNotification: null,
   recap: null,
+  dispatchHeadlines: {},
 };

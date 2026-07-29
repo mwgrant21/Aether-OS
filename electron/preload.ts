@@ -60,6 +60,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:notification', listener);
       return () => ipcRenderer.removeListener('agents:notification', listener);
     },
+    onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; headline: string }) => callback(payload);
+      ipcRenderer.on('agents:headline', listener);
+      return () => ipcRenderer.removeListener('agents:headline', listener);
+    },
   },
   fleet: {
     onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {
