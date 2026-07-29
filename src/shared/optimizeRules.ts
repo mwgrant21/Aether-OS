@@ -12,7 +12,7 @@ const BASH_OUTPUT_SIZE_THRESHOLD = 5000;
 const PAGINATION_HINTS = /head|tail|select-object|measure-object|-first|-last/i;
 
 export interface OptimizeFinding {
-  id: 'opus-on-trivial-turns' | 'unpinned-config-re-reads' | 'uncapped-bash-output';
+  id: 'opus-on-trivial-turns' | 'unpinned-config-re-reads' | 'uncapped-bash-output' | 'cost-of-thrash';
   title: string;
   detail: string;
   estSavingsPerWeek: number;
@@ -138,10 +138,72 @@ function findUncappedBashOutput(events: TranscriptEvent[], windowMs: number): Op
   };
 }
 
+// Rough per-extra-call token estimate for a file already read/written once --
+// there is no way to know the file's real size from transcript data alone
+// (privacy-and-data.md SS4: content is never stored), so this mirrors
+// findUncappedBashOutput's existing "rough estimate" precedent rather than
+// pretending to a precision the data doesn't support.
+const ESTIMATED_TOKENS_PER_REDUNDANT_TOOL_CALL = 500;
+const THRASH_THRESHOLD = 3;
+
+function findCostOfThrash(events: TranscriptEvent[], windowMs: number): OptimizeFinding | null {
+  const readCounts = new Map<string, number>();
+  const writeCounts = new Map<string, number>();
+  const openByToolUseId = new Map<string, { name: string; filePath: string | null }>();
+
+  for (const e of events) {
+    if (e.kind === 'assistant') {
+      for (const toolUse of e.toolUses) {
+        const filePath = stringField(toolUse.input, 'file_path') ?? null;
+        openByToolUseId.set(toolUse.id, { name: toolUse.name, filePath });
+      }
+    }
+    if (e.kind === 'user') {
+      for (const result of e.toolResults) {
+        const open = openByToolUseId.get(result.toolUseId);
+        if (!open || !open.filePath) continue;
+        if (open.name === 'Read') readCounts.set(open.filePath, (readCounts.get(open.filePath) ?? 0) + 1);
+        if (open.name === 'Write' || open.name === 'Edit') writeCounts.set(open.filePath, (writeCounts.get(open.filePath) ?? 0) + 1);
+      }
+    }
+  }
+
+  let redundantCalls = 0;
+  const offendingFiles: string[] = [];
+  for (const [filePath, count] of readCounts.entries()) {
+    if (count >= THRASH_THRESHOLD) {
+      redundantCalls += count - 1;
+      offendingFiles.push(path.win32.basename(filePath));
+    }
+  }
+  for (const [filePath, count] of writeCounts.entries()) {
+    if (count >= THRASH_THRESHOLD) {
+      redundantCalls += count - 1;
+      offendingFiles.push(path.win32.basename(filePath));
+    }
+  }
+
+  if (redundantCalls === 0) return null;
+
+  const estimatedTokens = redundantCalls * ESTIMATED_TOKENS_PER_REDUNDANT_TOOL_CALL;
+  const estimatedCost = (estimatedTokens / 1_000_000) * PRICING_PER_MILLION_TOKENS.sonnet.input;
+  const listed = offendingFiles.slice(0, MAX_LISTED_FILES).join(', ');
+  const extra = offendingFiles.length > MAX_LISTED_FILES ? ` (+${offendingFiles.length - MAX_LISTED_FILES} more)` : '';
+
+  return {
+    id: 'cost-of-thrash',
+    title: 'Cost of thrash',
+    detail: `${redundantCalls} redundant read/write calls across ${listed}${extra}`,
+    estSavingsPerWeek: extrapolateToWeekly(estimatedCost, windowMs),
+    fixText: 'cache file contents across turns instead of re-reading/re-writing the same file repeatedly',
+  };
+}
+
 const RULES_BY_ID: Record<OptimizeFinding['id'], (events: TranscriptEvent[], windowMs: number) => OptimizeFinding | null> = {
   'opus-on-trivial-turns': findOpusOnTrivialTurns,
   'unpinned-config-re-reads': findUnpinnedConfigRereads,
   'uncapped-bash-output': findUncappedBashOutput,
+  'cost-of-thrash': findCostOfThrash,
 };
 
 export function evaluateOptimizeRules(events: TranscriptEvent[], windowMs: number): OptimizeFinding[] {

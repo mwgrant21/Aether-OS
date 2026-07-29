@@ -219,4 +219,37 @@ describe('optimizeRules', () => {
     };
     expect(() => evaluateOptimizeRules([collectorShaped as unknown as TranscriptEvent], 60 * 60 * 1000)).toThrow();
   });
+
+  it('findCostOfThrash flags files re-read 3+ times and estimates weekly cost', () => {
+    const windowMs = 60 * 60 * 1000; // 1 hour window
+    const events: TranscriptEvent[] = [];
+    for (let i = 0; i < 3; i++) {
+      events.push({
+        kind: 'assistant', sessionId: null, timestamp: new Date(1000 + i * 100), cwd: null, model: 'claude-sonnet-5', usage: null,
+        toolUses: [{ id: `tu_${i}`, name: 'Read', input: { file_path: '/proj/src/foo.ts' } }], toolResults: [],
+        isHumanPrompt: false, humanText: null, originKind: null,
+      });
+      events.push({
+        kind: 'user', sessionId: null, timestamp: new Date(1050 + i * 100), cwd: null, model: null, usage: null,
+        toolUses: [], toolResults: [{ toolUseId: `tu_${i}`, resultLength: 10 }],
+        isHumanPrompt: false, humanText: null, originKind: null,
+      });
+    }
+
+    const findings = evaluateOptimizeRules(events, windowMs);
+    const thrash = findings.find((f) => f.id === 'cost-of-thrash');
+    expect(thrash).toBeDefined();
+    expect(thrash!.detail).toContain('foo.ts');
+    expect(thrash!.estSavingsPerWeek).toBeGreaterThan(0);
+  });
+
+  it('findCostOfThrash returns no finding when no file is read/written 3+ times', () => {
+    const events: TranscriptEvent[] = [{
+      kind: 'assistant', sessionId: null, timestamp: new Date(1000), cwd: null, model: 'claude-sonnet-5', usage: null,
+      toolUses: [{ id: 'tu_0', name: 'Read', input: { file_path: '/proj/src/foo.ts' } }], toolResults: [],
+      isHumanPrompt: false, humanText: null, originKind: null,
+    }];
+    const findings = evaluateOptimizeRules(events, 60000);
+    expect(findings.find((f) => f.id === 'cost-of-thrash')).toBeUndefined();
+  });
 });
