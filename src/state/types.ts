@@ -90,6 +90,10 @@ import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { PermissionRisk } from '../shared/permissionRisk';
 
+// Not related to `Approval` (the chat-pipeline/tick-simulation approval
+// queue) despite similar approve/deny language -- see that interface's
+// comment for the disambiguation. PermissionRequestUI/PostToolFlagRequestUI
+// below gate real Claude Code tool-call permissions via IPC.
 export interface PermissionRequestUI {
   requestId: string;
   toolName: string;
