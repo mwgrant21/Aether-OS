@@ -112,7 +112,14 @@ export function startPermissionServer(options: StartPermissionServerOptions): Pr
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(decision));
   });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    // Node's EventEmitter contract rethrows an 'error' event with zero
+    // listeners as an uncaught exception on the process -- without this
+    // listener, a real bind failure (e.g. EADDRINUSE) would crash the whole
+    // Electron main process instead of surfacing as a rejected Promise.
+    server.once('error', (err) => {
+      reject(err);
+    });
     server.once('listening', () => {
       const actualPort = options.port === 0 ? (server.address() as { port: number }).port : options.port;
       resolve({

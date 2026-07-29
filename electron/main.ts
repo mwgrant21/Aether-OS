@@ -316,11 +316,23 @@ app.whenReady().then(async () => {
   // with the real renderer round-trip.
   const desiredPort = 51823; // arbitrary fixed high port; bump-on-conflict handled below
   const portAvailable = await isPortAvailable(desiredPort);
-  const permission = await startPermissionServer({
+  const permissionServerOptions = {
     port: portAvailable ? desiredPort : 0,
     timeoutMs: 120000,
-    onPermissionRequest: async () => ({ behavior: 'deny', reason: 'permission UI not yet wired (Task 5)' }),
-  });
+    onPermissionRequest: async () => ({ behavior: 'deny' as const, reason: 'permission UI not yet wired (Task 5)' }),
+  };
+  let permission;
+  try {
+    permission = await startPermissionServer(permissionServerOptions);
+  } catch (err) {
+    // The probe above narrows the window but can't close it (TOCTOU: another
+    // process can grab the port between the probe's close() and this call's
+    // listen()). permissionServer.ts now rejects on a real bind failure
+    // instead of crashing the process -- retry once on an ephemeral port so
+    // app launch never fails over a port conflict either way.
+    console.error('startPermissionServer failed on desired port, retrying on an ephemeral port:', err);
+    permission = await startPermissionServer({ ...permissionServerOptions, port: 0 });
+  }
   stopPermissionServer = permission.stop;
   await fsp.mkdir(dirname(permissionServerPortPath), { recursive: true });
   await fsp.writeFile(permissionServerPortPath, String(permission.port), 'utf8');

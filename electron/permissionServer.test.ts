@@ -114,4 +114,20 @@ describe('permissionServer', () => {
     const res = await postJson(started.port, '/nonexistent', {});
     expect(res.status).toBe(404);
   });
+
+  it('rejects (instead of crashing the process) when the port is already bound', async () => {
+    const holder = await startPermissionServer({
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+    });
+    stop = holder.stop;
+    await expect(
+      startPermissionServer({
+        port: holder.port,
+        timeoutMs: 5000,
+        onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+      })
+    ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+  });
 });
