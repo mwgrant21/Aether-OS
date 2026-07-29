@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createEmptyHistory, updateHistory } from './toolCallHistory.js';
+import { createEmptyHistory, updateHistory, toProjectRelative } from './toolCallHistory.js';
 import type { TranscriptEvent } from './transcriptParser.js';
 
 function assistantEvent(toolUseId: string, toolName: string, filePath: string | null, timestamp: Date): TranscriptEvent {
@@ -32,4 +32,15 @@ describe('collector toolCallHistory', () => {
     ]);
     expect(history.openByToolUseId['tu_1']).toBeUndefined();
   });
+
+  it.runIf(process.platform === 'win32')(
+    'rejects a cross-drive absolute path that relative() cannot make relative (Windows only)',
+    () => {
+      // On win32, path.relative() between paths on different drives returns
+      // the unchanged absolute `to` path with no '..' segments, so the
+      // traversal check alone would let this slip through un-rejected.
+      const result = toProjectRelative(String.raw`D:\Secrets\Matt\x.ts`, String.raw`C:\Users\Matt\projects\foo`);
+      expect(result).toBeNull();
+    },
+  );
 });

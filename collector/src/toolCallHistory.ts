@@ -37,6 +37,10 @@ export function toProjectRelative(filePath: string | null, projectRoot: string |
   try {
     const rel = relative(projectRoot, filePath);
     if (rel === '') return null;
+    // On win32, relative() between paths on different drives gives up and
+    // returns the unchanged absolute `to` path (no '..' segments), so an
+    // absolute result must be rejected the same as a traversal.
+    if (isAbsolute(rel)) return null;
     return hasTraversalSegment(rel) ? null : rel;
   } catch {
     return null;
