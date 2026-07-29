@@ -2,6 +2,7 @@ import { readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { parseTranscriptLine } from './transcriptParser.js';
+import { stampTranscriptScanHeartbeat } from './schema.js';
 import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
@@ -53,6 +54,11 @@ export function scanTranscriptsOnce(
   nowMs: number,
   historyByFile: Map<string, ToolCallHistory>
 ): { filesScanned: number; eventsIngested: number; toolCallsIngested: number; anomaliesIngested: number } {
+  // Stamped first and unconditionally: the heartbeat proves the scan cycle is
+  // alive, not that it succeeded (see stampTranscriptScanHeartbeat), so the
+  // unreadable-projects-root early return below must not skip it.
+  stampTranscriptScanHeartbeat(db, nowMs);
+
   let projectDirs: string[];
   try {
     projectDirs = readdirSync(projectsRoot, { withFileTypes: true })

@@ -242,4 +242,14 @@ describe('scanTranscriptsOnce', () => {
     expect(rows[0].tool_use_id).toBe('tu_a');
     db.close();
   });
+
+  // Liveness heartbeat for the diagnostics reader (electron/collectorStore.ts's
+  // readDiagnostics), mirroring the fleet poll's fleet_last_poll_ms.
+  it('stamps the transcript-scan heartbeat even when the projects root is unreadable', () => {
+    const db = freshDb();
+    scanTranscriptsOnce(db, join(tmpdir(), 'aether-does-not-exist-' + Date.now()), 12345, new Map());
+    const row: any = db.prepare("SELECT value FROM schema_meta WHERE key = 'transcript_last_scan_ms'").get();
+    expect(row?.value).toBe('12345');
+    db.close();
+  });
 });

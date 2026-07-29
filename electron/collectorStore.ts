@@ -26,6 +26,10 @@ export interface DiagnosticsSnapshot {
 // collector within roughly one extra cycle.
 const FLEET_HEARTBEAT_STALE_MS = 45000;
 
+// Same rationale as FLEET_HEARTBEAT_STALE_MS, against the collector's 15s
+// transcript-scan interval.
+const DIAGNOSTICS_HEARTBEAT_STALE_MS = 45000;
+
 function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
@@ -45,9 +49,9 @@ function schemaVersionOf(db: DatabaseSync): number {
   }
 }
 
-function fleetLastPollMs(db: DatabaseSync): number | null {
+function heartbeatMs(db: DatabaseSync, key: 'fleet_last_poll_ms' | 'transcript_last_scan_ms'): number | null {
   try {
-    const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'fleet_last_poll_ms'").get() as
+    const row = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get(key) as
       | { value: string }
       | undefined;
     return row ? Number(row.value) : null;
@@ -99,6 +103,12 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
   try {
     if (schemaVersionOf(db) < MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS) return null;
 
+    // Collector-liveness gate, mirroring readFleetSessions': without it a
+    // crashed collector kept serving up-to-24h-old rows, which
+    // DispatchTimeline rendered as current activity ("looks alive, isn't").
+    const lastScanMs = heartbeatMs(db, 'transcript_last_scan_ms');
+    if (lastScanMs === null || Date.now() - lastScanMs > DIAGNOSTICS_HEARTBEAT_STALE_MS) return null;
+
     const toolCallRows = db
       .prepare('SELECT tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms FROM tool_calls WHERE closed_at_ms >= ?')
       .all(sinceMs) as { tool_use_id: string; tool_name: string; file_path_rel: string | null; started_at_ms: number; closed_at_ms: number }[];
@@ -137,7 +147,7 @@ export function readFleetSessions(dbPath: string): FleetSessionRow[] | null {
     // happen to still be sitting in fleet_sessions. See PROGRESS.md's Fleet
     // Session Browser entry for the "looks alive, isn't" failure mode this
     // closes.
-    const lastPollMs = fleetLastPollMs(db);
+    const lastPollMs = heartbeatMs(db, 'fleet_last_poll_ms');
     if (lastPollMs === null || Date.now() - lastPollMs > FLEET_HEARTBEAT_STALE_MS) return null;
 
     const rows = db

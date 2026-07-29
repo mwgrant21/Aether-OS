@@ -193,7 +193,7 @@ describe('readFleetSessions', () => {
   });
 });
 
-function tempDbForDiagnostics(schemaVersion = 4): string {
+function tempDbForDiagnostics(schemaVersion = 4, transcriptLastScanMs: number | null = Date.now()): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-diagnostics-'));
   const dbPath = join(dir, 'test.db');
   const db = new DatabaseSync(dbPath);
@@ -204,6 +204,9 @@ function tempDbForDiagnostics(schemaVersion = 4): string {
     CREATE TABLE anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, tool_use_id TEXT NOT NULL, detail TEXT NOT NULL, detected_at_ms INTEGER NOT NULL);
   `);
   db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', ?)").run(String(schemaVersion));
+  if (transcriptLastScanMs !== null) {
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('transcript_last_scan_ms', ?)").run(String(transcriptLastScanMs));
+  }
   db.close();
   return dbPath;
 }
@@ -226,5 +229,18 @@ describe('readDiagnostics', () => {
     expect(snapshot?.toolCalls).toHaveLength(1);
     expect(snapshot?.dispatches).toHaveLength(1);
     expect(snapshot?.anomalies).toHaveLength(1);
+  });
+
+  // Collector-liveness gate, mirroring readFleetSessions' fleet_last_poll_ms
+  // check: a dead collector must render as "collector isn't running" rather
+  // than serving up-to-24h-old rows as if they were current activity.
+  it('returns null when the transcript-scan heartbeat is missing', () => {
+    const dbPath = tempDbForDiagnostics(4, null);
+    expect(readDiagnostics(dbPath, 0)).toBeNull();
+  });
+
+  it('returns null when the transcript-scan heartbeat is stale', () => {
+    const dbPath = tempDbForDiagnostics(4, Date.now() - 10 * 60 * 1000);
+    expect(readDiagnostics(dbPath, 0)).toBeNull();
   });
 });

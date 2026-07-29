@@ -141,3 +141,20 @@ export function stampFleetHeartbeat(db: DatabaseSync, nowMs: number): void {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run(String(nowMs));
 }
+
+/**
+ * The transcript-scan cycle's equivalent of stampFleetHeartbeat: "the
+ * collector's transcript scanning is alive and cycling," stamped on EVERY
+ * scan tick regardless of whether the scan found or ingested anything.
+ * electron/collectorStore.ts's readDiagnostics treats a missing or stale
+ * value as "collector isn't running," so a dead collector stops serving
+ * up-to-24h-old tool_calls/dispatches/anomalies rows as if they were current
+ * activity -- the same "looks alive, isn't" failure mode the fleet heartbeat
+ * closes.
+ */
+export function stampTranscriptScanHeartbeat(db: DatabaseSync, nowMs: number): void {
+  db.prepare(
+    `INSERT INTO schema_meta (key, value) VALUES ('transcript_last_scan_ms', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(String(nowMs));
+}
