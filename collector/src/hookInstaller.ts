@@ -3,6 +3,15 @@ import { dirname } from 'node:path';
 
 export const MANAGED_HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'Notification', 'Stop'] as const;
 
+// Stage 6's PermissionRequest/PostToolUse hook group is installed and
+// uninstalled independently of MANAGED_HOOK_EVENTS above (a distinct script
+// path/marker, a distinct event list). PostToolUse is shared with the
+// existing aether-hook-emit.mjs group -- installPermissionHooks appends a
+// second, separately-marked group to that same array rather than replacing
+// it; see isOurGroup's scriptPath parameterization below.
+const PERMISSION_HOOK_EVENTS = ['PermissionRequest', 'PostToolUse'] as const;
+const PERMISSION_HOOK_MARKER = 'aether-permission-hook.mjs';
+
 export interface HookInstallState {
   installedEvents: string[];
   settingsPath: string;
@@ -110,6 +119,94 @@ export async function installHooks(
 
     const merged = { ...parsed, hooks };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
+    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    return { ok: true, backupPath };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? String(err) };
+  }
+}
+
+export async function installPermissionHooks(
+  settingsPath: string,
+  scriptPath: string
+): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> {
+  const result = await readSettings(settingsPath);
+  if (!result.ok) return { ok: false, error: result.error };
+  const { fileExisted, raw, parsed } = result;
+
+  try {
+    let backupPath: string | null = null;
+    if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
+
+    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
+      string,
+      unknown
+    >;
+    for (const eventName of PERMISSION_HOOK_EVENTS) {
+      const current = hooks[eventName];
+      if (current !== undefined && !Array.isArray(current)) {
+        // Same discipline as installHooks: don't touch an unrecognized shape.
+        continue;
+      }
+      const existingGroups = Array.isArray(current) ? current : [];
+      const alreadyInstalled = existingGroups.some((g) => isOurGroup(g, scriptPath));
+      hooks[eventName] = alreadyInstalled ? existingGroups : [...existingGroups, ourGroup(scriptPath)];
+    }
+
+    const merged = { ...parsed, hooks };
+    await fsp.mkdir(dirname(settingsPath), { recursive: true });
+    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    return { ok: true, backupPath };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? String(err) };
+  }
+}
+
+export async function uninstallPermissionHooks(
+  settingsPath: string
+): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> {
+  const result = await readSettings(settingsPath);
+  if (!result.ok) return { ok: false, error: result.error };
+  const { fileExisted, raw, parsed } = result;
+
+  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+    return { ok: true, backupPath: null };
+  }
+
+  try {
+    const backupPath = await writeBackup(settingsPath, raw);
+    const hooks = { ...(parsed.hooks as Record<string, unknown>) };
+    for (const eventName of PERMISSION_HOOK_EVENTS) {
+      const current = hooks[eventName];
+      if (current !== undefined && !Array.isArray(current)) {
+        continue;
+      }
+      const groups = Array.isArray(current) ? current : [];
+      // Same per-group-hooks-level filtering as uninstallHooks, keyed on our
+      // own marker so the coexisting aether-hook-emit.mjs group under
+      // PostToolUse is left completely untouched.
+      const filtered = groups
+        .map((g) => {
+          if (!isOurGroup(g, PERMISSION_HOOK_MARKER)) return g;
+          const groupHooks = (g as HookGroup).hooks;
+          if (!Array.isArray(groupHooks)) return g;
+          const remainingHooks = groupHooks.filter(
+            (h) => !(typeof h?.command === 'string' && h.command.includes(PERMISSION_HOOK_MARKER))
+          );
+          return { ...(g as HookGroup), hooks: remainingHooks };
+        })
+        .filter((g) => {
+          const groupHooks = (g as HookGroup).hooks;
+          return !Array.isArray(groupHooks) || groupHooks.length > 0;
+        });
+      if (filtered.length > 0) {
+        hooks[eventName] = filtered;
+      } else {
+        delete hooks[eventName];
+      }
+    }
+
+    const merged = { ...parsed, hooks };
     await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {

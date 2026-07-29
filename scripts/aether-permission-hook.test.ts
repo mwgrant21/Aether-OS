@@ -138,3 +138,98 @@ describe('aether-permission-hook.mjs', () => {
     expect(result.stdout.trim()).toBe('');
   });
 });
+
+describe('aether-permission-hook.mjs -- PostToolUse branch', () => {
+  it('falls through non-blocking when nothing is listening on the discovered port', () => {
+    const home = setupHome('sess-own', '1'); // port 1 -- nothing listening
+    const payload = JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 'sess-own',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_output: { output: 'ok' },
+      tool_use_id: 'tu-1',
+    });
+    const start = Date.now();
+    const result = runScript(payload, home);
+    const elapsedMs = Date.now() - start;
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('');
+    expect(elapsedMs).toBeLessThan(5000);
+  });
+
+  it('translates a block decision from a fixture server into the real PostToolUse stdout contract', async () => {
+    const server = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', (chunk) => (raw += chunk));
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ block: true, reason: 'anomaly detected: unexpected file write' })
+        );
+      });
+    });
+    activeServers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    const home = setupHome('sess-own', String(port));
+    const payload = JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 'sess-own',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_output: { output: 'ok' },
+      tool_use_id: 'tu-1',
+    });
+    const result = await runScriptAsync(payload, home);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    // Real PostToolUse contract: bare string "decision": "block", NOT the
+    // nested hookSpecificOutput.decision.behavior object shape PermissionRequest uses.
+    expect(parsed).toEqual({
+      decision: 'block',
+      reason: 'anomaly detected: unexpected file write',
+    });
+  });
+
+  it('produces no stdout when the flag-check decision is clean (block: false)', async () => {
+    const server = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', (chunk) => (raw += chunk));
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ block: false }));
+      });
+    });
+    activeServers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    const home = setupHome('sess-own', String(port));
+    const payload = JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 'sess-own',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_output: { output: 'ok' },
+      tool_use_id: 'tu-1',
+    });
+    const result = await runScriptAsync(payload, home);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('falls through non-blocking on session_id mismatch for PostToolUse', () => {
+    const home = setupHome('sess-own', '65535');
+    const payload = JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 'sess-other',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_output: { output: 'ok' },
+      tool_use_id: 'tu-1',
+    });
+    const result = runScript(payload, home);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('');
+  });
+});

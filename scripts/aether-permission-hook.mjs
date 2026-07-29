@@ -8,9 +8,19 @@
 //
 // Contract (see docs/superpowers/specs/2026-07-28-closing-the-loop-design.md,
 // "Verified real infrastructure"):
-//   stdin:  { session_id, permission_mode, tool_name, tool_input, tool_use_id }
-//   stdout (exit 0): { hookSpecificOutput: { hookEventName: "PermissionRequest",
-//                       decision: { behavior: "allow" | "deny", updatedInput? } } }
+//   Also installed as the `command` for the PostToolUse hook, branching on
+//   stdin's `hook_event_name` field:
+//   PermissionRequest --
+//     stdin:  { session_id, permission_mode, tool_name, tool_input, tool_use_id }
+//     stdout (exit 0): { hookSpecificOutput: { hookEventName: "PermissionRequest",
+//                         decision: { behavior: "allow" | "deny", updatedInput? } } }
+//   PostToolUse --
+//     stdin:  { session_id, tool_name, tool_input, tool_output, tool_use_id,
+//               hook_event_name: "PostToolUse" }
+//     stdout (exit 0, only when blocking): { "decision": "block", "reason"? }
+//     -- a BARE string field, NOT the nested hookSpecificOutput.decision.behavior
+//     shape PermissionRequest uses above. A clean result (block: false) means
+//     no stdout at all, same fall-through discipline as everything else here.
 //   Falling through (session mismatch, app not running, any failure) means:
 //   exit 0 with NO stdout, letting Claude Code's native prompt/hooks take over.
 //
@@ -150,6 +160,87 @@ function toHookOutput(decision) {
   };
 }
 
+// Resolves with the parsed flag-check decision ({ block, reason? }), or null
+// if the server was unreachable, timed out, or returned something unusable.
+// Never rejects. Mirrors postPermissionRequest's connect/overall timeout
+// discipline but targets the separate /post-tool-flag-check route, which
+// speaks a different request/response shape (see
+// electron/permissionServer.ts's PostToolFlagDecision).
+function postToolFlagCheck(port, toolUseId, toolName, toolOutput) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const body = JSON.stringify({ toolUseId, toolName, toolOutput });
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/post-tool-flag-check',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (chunk) => (raw += chunk));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && typeof parsed.block === 'boolean') {
+              done(parsed);
+            } else {
+              done(null);
+            }
+          } catch {
+            done(null);
+          }
+        });
+        res.on('error', () => done(null));
+      }
+    );
+
+    req.on('error', () => done(null));
+
+    // Same fail-fast-on-connect discipline as postPermissionRequest above --
+    // "is the app even reachable" for this endpoint too.
+    const connectTimer = setTimeout(() => {
+      req.destroy();
+      done(null);
+    }, CONNECT_TIMEOUT_MS);
+    req.once('socket', (socket) => {
+      socket.once('connect', () => clearTimeout(connectTimer));
+    });
+
+    const overallTimer = setTimeout(() => {
+      req.destroy();
+      done(null);
+    }, DECISION_TIMEOUT_MS);
+    overallTimer.unref?.();
+
+    req.end(body);
+  });
+}
+
+// Translates a /post-tool-flag-check decision into the REAL PostToolUse hook
+// stdout contract: a bare "decision": "block" string field (design spec,
+// "Verified real infrastructure" -- NOT the nested
+// hookSpecificOutput.decision.behavior object shape PermissionRequest uses).
+// Returns null when the decision is clean (block: false) -- no stdout means
+// "let this turn stand," same as PermissionRequest's fall-through discipline.
+function toPostToolUseOutput(decision) {
+  if (!decision.block) return null;
+  const out = { decision: 'block' };
+  if (decision.reason !== undefined) out.reason = decision.reason;
+  return out;
+}
+
 async function main() {
   const raw = readStdin();
   if (raw.trim().length === 0) return; // fall through: nothing to act on
@@ -172,6 +263,16 @@ async function main() {
 
   const port = readPort(join(aetherDir, 'permission-server-port'));
   if (!port) return; // fall through: app not running / no port file
+
+  if (payload.hook_event_name === 'PostToolUse') {
+    const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+    if (!toolUseId) return; // fall through: unusable payload
+    const flagDecision = await postToolFlagCheck(port, toolUseId, toolName, payload.tool_output);
+    if (!flagDecision) return; // fall through: unreachable, timed out, or bad response
+    const out = toPostToolUseOutput(flagDecision);
+    if (out) process.stdout.write(JSON.stringify(out));
+    return;
+  }
 
   const decision = await postPermissionRequest(port, toolName, payload.tool_input);
   if (!decision) return; // fall through: unreachable, timed out, or bad response

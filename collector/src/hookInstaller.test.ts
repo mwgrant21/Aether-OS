@@ -2,9 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { readHookInstallState, installHooks, uninstallHooks, MANAGED_HOOK_EVENTS } from './hookInstaller.js';
+import {
+  readHookInstallState,
+  installHooks,
+  uninstallHooks,
+  installPermissionHooks,
+  uninstallPermissionHooks,
+  MANAGED_HOOK_EVENTS,
+} from './hookInstaller.js';
 
 const SCRIPT_PATH = 'C:\\Users\\test\\.aether-os\\aether-hook-emit.mjs';
+const PERMISSION_SCRIPT_PATH = 'C:\\Users\\test\\.aether-os\\aether-permission-hook.mjs';
 
 function tempSettingsPath(initialContent?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-hookinstaller-'));
@@ -152,5 +160,68 @@ describe('hookInstaller', () => {
     expect(written.hooks.Stop).toHaveLength(1);
     expect(written.hooks.Stop[0].hooks).toHaveLength(1);
     expect(written.hooks.Stop[0].hooks[0].command).toContain('some-other-script.ps1');
+  });
+});
+
+describe('installPermissionHooks / uninstallPermissionHooks', () => {
+  it('installPermissionHooks adds PermissionRequest and PostToolUse groups', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toHaveLength(1);
+    expect(written.hooks.PermissionRequest[0].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
+    expect(written.hooks.PostToolUse).toHaveLength(1);
+    expect(written.hooks.PostToolUse[0].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
+  });
+
+  it('installPermissionHooks coexists with a pre-existing aether-hook-emit.mjs group already occupying PostToolUse', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH); // installs the unrelated spool-ingestion group first
+    const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PostToolUse).toHaveLength(2);
+    expect(written.hooks.PostToolUse[0].hooks[0].command).toContain(SCRIPT_PATH);
+    expect(written.hooks.PostToolUse[1].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
+    // The unrelated group's other managed events (Stop etc.) are untouched.
+    expect(written.hooks.Stop).toHaveLength(1);
+    expect(written.hooks.Stop[0].hooks[0].command).toContain(SCRIPT_PATH);
+    // installPermissionHooks must not itself have added a Stop group.
+    expect(written.hooks.PermissionRequest).toHaveLength(1);
+  });
+
+  it('installPermissionHooks is idempotent -- installing twice does not duplicate our own entry', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH);
+    await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PostToolUse).toHaveLength(2);
+    expect(written.hooks.PermissionRequest).toHaveLength(1);
+  });
+
+  it('uninstallPermissionHooks removes only its own entries, leaving the aether-hook-emit.mjs PostToolUse group intact', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH);
+    await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+
+    const result = await uninstallPermissionHooks(settingsPath);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PostToolUse).toHaveLength(1);
+    expect(written.hooks.PostToolUse[0].hooks[0].command).toContain(SCRIPT_PATH);
+    expect(written.hooks.PermissionRequest).toBeUndefined();
+    // Unrelated managed-event groups from installHooks remain untouched.
+    expect(written.hooks.Stop).toHaveLength(1);
+    expect(written.hooks.Stop[0].hooks[0].command).toContain(SCRIPT_PATH);
+  });
+
+  it('readHookInstallState (using MANAGED_HOOK_EVENTS) does not report PermissionRequest as an event it manages', () => {
+    expect(MANAGED_HOOK_EVENTS).not.toContain('PermissionRequest');
   });
 });
