@@ -198,6 +198,7 @@ export interface Cfg {
   autoThrottle: boolean;
   sound: boolean;
   autoCreateDispatchChannels: boolean;
+  densityLevel: 'normal' | 'verbose' | 'summary';
 }
 
 export interface AetherState {

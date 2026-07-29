@@ -1,11 +1,14 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { useAetherStore } from '../../state/store';
 import { fmtElapsed } from '../../utils/format';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
+import { applyDensity } from '../../shared/transcriptDensity';
 
 export function AgentDetailCard({ agent }: { agent: RealAgentDispatch | null }) {
   const colors = useColors();
+  const { state } = useAetherStore();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -44,7 +47,9 @@ export function AgentDetailCard({ agent }: { agent: RealAgentDispatch | null }) 
 
       <div style={promptWrapStyle}>
         <div style={sectionLabelStyle(colors)}>PROMPT</div>
-        <div style={promptTextStyle(colors)}>{agent.prompt || 'no prompt text available'}</div>
+        <div style={promptTextStyle(colors)}>
+          {applyDensity(agent.prompt, state.cfg.densityLevel, state.dispatchHeadlines[agent.toolUseId] ?? null) || 'no prompt text available'}
+        </div>
       </div>
     </div>
   );

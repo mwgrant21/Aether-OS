@@ -87,6 +87,21 @@ export function AppearanceCard() {
       </div>
 
       <div style={{ marginTop: 16 }}>
+        <div style={labelStyle(colors)}>TRANSCRIPT DENSITY</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          {(['normal', 'verbose', 'summary'] as const).map((level) => (
+            <Button
+              key={level}
+              onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { densityLevel: level } })}
+              style={toggleStyle(colors, cfg.densityLevel === level)}
+            >
+              {level}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <div style={labelStyle(colors)}>CORE GLOW INTENSITY</div>
           <span style={valueStyle(colors)}>{cfg.glow}</span>

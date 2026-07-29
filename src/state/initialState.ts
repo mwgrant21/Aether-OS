@@ -53,6 +53,7 @@ export const initialState: AetherState = {
     autoThrottle: true,
     sound: false,
     autoCreateDispatchChannels: false,
+    densityLevel: 'normal',
   },
   agents: [
     {
