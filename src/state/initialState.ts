@@ -205,4 +205,5 @@ export const initialState: AetherState = {
   fleet: null,
   diagnostics: null,
   pendingPermissionRequest: null,
+  pendingPostToolFlag: null,
 };

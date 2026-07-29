@@ -13,6 +13,8 @@ import { useFleetSync } from './state/useFleetSync';
 import { useDiagnosticsSync } from './state/useDiagnosticsSync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
 import { PermissionRequestCard } from './components/agents/PermissionRequestCard';
+import { usePostToolFlagSync } from './state/usePostToolFlagSync';
+import { PostToolFlagCard } from './components/agents/PostToolFlagCard';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -34,8 +36,10 @@ export default function App() {
         <FleetSync />
         <DiagnosticsSync />
         <PermissionRequestSync />
+        <PostToolFlagSync />
         <ActiveView />
         <PermissionRequestCard />
+        <PostToolFlagCard />
         <BottomMetricsRow />
       </AppShell>
     </AetherStoreProvider>
@@ -84,5 +88,10 @@ function DiagnosticsSync() {
 
 function PermissionRequestSync() {
   usePermissionRequestSync();
+  return null;
+}
+
+function PostToolFlagSync() {
+  usePostToolFlagSync();
   return null;
 }

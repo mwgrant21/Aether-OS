@@ -8,8 +8,8 @@ import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
 import type { DiagnosticsSnapshot } from './collectorStore';
-import type { PermissionRequestUI } from '../src/state/types';
-import type { PermissionDecision } from './permissionServer';
+import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
+import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   pty: {
@@ -116,6 +116,14 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('permission:request', listener);
     },
     respond: (requestId: string, decision: PermissionDecision): Promise<void> => ipcRenderer.invoke('permission:respond', { requestId, decision }),
+  },
+  postToolFlag: {
+    onRequest: (callback: (request: PostToolFlagRequestUI) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: PostToolFlagRequestUI) => callback(request);
+      ipcRenderer.on('postToolFlag:request', listener);
+      return () => ipcRenderer.removeListener('postToolFlag:request', listener);
+    },
+    respond: (requestId: string, decision: PostToolFlagDecision): Promise<void> => ipcRenderer.invoke('postToolFlag:respond', { requestId, decision }),
   },
   chat: {
     send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),

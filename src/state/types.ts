@@ -82,6 +82,14 @@ export interface PermissionRequestUI {
   editableField: { label: string; value: string } | null;
 }
 
+export interface PostToolFlagRequestUI {
+  requestId: string;
+  toolUseId: string;
+  toolName: string;
+  anomalyKind: Anomaly['kind'];
+  detail: string;
+}
+
 export interface RealUsageSnapshot {
   weeklyTokens: number[];
   dailyTokens: number[];
@@ -213,6 +221,7 @@ export interface AetherState {
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
+  pendingPostToolFlag: PostToolFlagRequestUI | null;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

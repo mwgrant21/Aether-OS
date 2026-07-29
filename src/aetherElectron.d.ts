@@ -6,8 +6,8 @@ import type { OptimizeFinding, OptimizeSummary } from './shared/optimizeRules';
 import type { GradeRow } from './shared/optimizeGrade';
 import type { StatuslineSnapshot } from './shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../electron/collectorStore';
-import type { PermissionRequestUI } from './state/types';
-import type { PermissionDecision } from '../electron/permissionServer';
+import type { PermissionRequestUI, PostToolFlagRequestUI } from './state/types';
+import type { PermissionDecision, PostToolFlagDecision } from '../electron/permissionServer';
 
 export {};
 
@@ -65,6 +65,10 @@ declare global {
       permission: {
         onRequest: (callback: (request: PermissionRequestUI) => void) => () => void;
         respond: (requestId: string, decision: PermissionDecision) => Promise<void>;
+      };
+      postToolFlag: {
+        onRequest: (callback: (request: PostToolFlagRequestUI) => void) => () => void;
+        respond: (requestId: string, decision: PostToolFlagDecision) => Promise<void>;
       };
       chat: {
         send: (body: unknown) => Promise<{ reply: string } | { error: string }>;

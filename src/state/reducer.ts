@@ -1,4 +1,4 @@
-import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryStub, OpMode, PermissionRequestUI, RealUsageSnapshot } from './types';
+import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryStub, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot } from './types';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
@@ -44,6 +44,7 @@ export type Action =
   | { type: 'SET_FLEET'; fleet: FleetSessionRow[] | null }
   | { type: 'SET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot | null }
   | { type: 'SET_PENDING_PERMISSION_REQUEST'; request: PermissionRequestUI | null }
+  | { type: 'SET_PENDING_POST_TOOL_FLAG'; request: PostToolFlagRequestUI | null }
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
   | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
   | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] }
@@ -257,6 +258,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_PENDING_PERMISSION_REQUEST':
       return { ...state, pendingPermissionRequest: action.request };
+
+    case 'SET_PENDING_POST_TOOL_FLAG':
+      return { ...state, pendingPostToolFlag: action.request };
 
     case 'SET_OPTIMIZE_FINDINGS':
       return { ...state, optimizeFindings: action.findings };
