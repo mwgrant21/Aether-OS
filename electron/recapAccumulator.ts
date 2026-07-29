@@ -33,9 +33,16 @@ export function accumulate(
   const entries = [...prevAcc.entries];
   let tokensBurned = prevAcc.tokensBurned;
 
-  // completed[] is cumulative per liveAgentTracker's own contract (each tick
-  // carries dispatches completed since the tracker started, not just this
-  // tick) -- diff by toolUseId membership, not array length.
+  // completed[] is a fresh per-tick delta, not a cumulative list: liveAgentTracker's
+  // tick() builds it as a new local array each call, populated only from the
+  // transcript lines newly read during THAT tick (see applyLinesToOpenDispatches
+  // in liveAgentsMath.ts). A given toolUseId can therefore appear in at most one
+  // tick's completed[] ever -- once a dispatch completes it leaves currentOpen and
+  // is never re-emitted -- so nextTick.completed and prevTick.completed are
+  // disjoint by construction. The membership diff below still works (and is used
+  // for symmetry with the anomalies diff just below, which genuinely IS
+  // recomputed/re-evaluated every tick), but the reason it's correct is that
+  // disjointness, not any cumulative-list semantics.
   const prevCompletedIds = new Set(prevTick.completed.map((d) => d.toolUseId));
   for (const d of nextTick.completed) {
     if (!prevCompletedIds.has(d.toolUseId)) {
