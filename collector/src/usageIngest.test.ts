@@ -21,6 +21,8 @@ function assistantEvent(overrides: Partial<TranscriptEvent> = {}): TranscriptEve
     cwd: null,
     model: 'claude-sonnet-4-6',
     usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+    toolUses: [],
+    toolResults: [],
     ...overrides,
   };
 }

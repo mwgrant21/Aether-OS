@@ -22,6 +22,8 @@ describe('parseTranscriptLine', () => {
       cwd: '/proj',
       model: 'claude-sonnet-4-6',
       usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 20 },
+      toolUses: [],
+      toolResults: [],
     });
   });
 
@@ -41,6 +43,8 @@ describe('parseTranscriptLine', () => {
       cwd: null,
       model: null,
       usage: null,
+      toolUses: [],
+      toolResults: [],
     });
   });
 
@@ -80,5 +84,42 @@ describe('parseTranscriptLine', () => {
     expect(() => parseTranscriptLine('[]')).not.toThrow();
     expect(parseTranscriptLine('[]')).toBeNull();
     expect(() => parseTranscriptLine('123')).not.toThrow();
+  });
+});
+
+describe('parseTranscriptLine tool use/result parsing', () => {
+  it('extracts toolUses from an assistant message', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      timestamp: '2026-07-28T00:00:00.000Z',
+      message: {
+        model: 'claude-sonnet-5',
+        content: [
+          { type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: '/abs/path/foo.ts' } },
+          { type: 'text', text: 'reading' },
+        ],
+      },
+    });
+    const event = parseTranscriptLine(line);
+    expect(event?.toolUses).toEqual([{ id: 'tu_1', name: 'Read', input: { file_path: '/abs/path/foo.ts' } }]);
+  });
+
+  it('extracts toolResults from a user message', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      timestamp: '2026-07-28T00:00:01.000Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'file contents here' }],
+      },
+    });
+    const event = parseTranscriptLine(line);
+    expect(event?.toolResults).toEqual([{ toolUseId: 'tu_1', resultLength: 20 }]);
+  });
+
+  it('returns empty arrays for events with no tool activity', () => {
+    const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
+    const event = parseTranscriptLine(line);
+    expect(event?.toolUses).toEqual([]);
+    expect(event?.toolResults).toEqual([]);
   });
 });

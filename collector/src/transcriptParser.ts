@@ -5,6 +5,17 @@ export interface TranscriptUsage {
   cacheReadInputTokens: number;
 }
 
+export interface TranscriptToolUse {
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+export interface TranscriptToolResult {
+  toolUseId: string;
+  resultLength: number;
+}
+
 export interface TranscriptEvent {
   kind: 'assistant' | 'user' | 'other';
   sessionId: string | null;
@@ -12,6 +23,8 @@ export interface TranscriptEvent {
   cwd: string | null;
   model: string | null;
   usage: TranscriptUsage | null;
+  toolUses: TranscriptToolUse[];
+  toolResults: TranscriptToolResult[];
 }
 
 export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
@@ -41,12 +54,24 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
           cacheReadInputTokens: msg.usage.cache_read_input_tokens || 0,
         }
       : null;
-    return { kind: 'assistant', sessionId, timestamp, cwd, model: msg.model || null, usage };
+    const content = Array.isArray(msg.content) ? msg.content : [];
+    const toolUses = content
+      .filter((item: any) => item.type === 'tool_use')
+      .map((item: any) => ({ id: item.id, name: item.name, input: item.input }));
+    return { kind: 'assistant', sessionId, timestamp, cwd, model: msg.model || null, usage, toolUses, toolResults: [] };
   }
 
   if (json.type === 'user' && json.message) {
-    return { kind: 'user', sessionId, timestamp, cwd, model: null, usage: null };
+    const msg = json.message;
+    const content = Array.isArray(msg.content) ? msg.content : [];
+    const toolResults = content
+      .filter((item: any) => item.type === 'tool_result')
+      .map((item: any) => ({
+        toolUseId: item.tool_use_id,
+        resultLength: JSON.stringify(item.content ?? '').length,
+      }));
+    return { kind: 'user', sessionId, timestamp, cwd, model: null, usage: null, toolUses: [], toolResults };
   }
 
-  return { kind: 'other', sessionId, timestamp, cwd, model: null, usage: null };
+  return { kind: 'other', sessionId, timestamp, cwd, model: null, usage: null, toolUses: [], toolResults: [] };
 }
