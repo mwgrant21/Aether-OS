@@ -25,12 +25,16 @@ export interface TranscriptEvent {
   usage: TranscriptUsage | null;
   toolUses: TranscriptToolUse[];
   toolResults: TranscriptToolResult[];
-  // json.origin?.kind, e.g. 'task-notification'. Unlike electron/transcriptParser.ts
-  // (which only reads this on 'user' messages), the collector reads it on every
-  // branch: transcriptScan.ts's dispatch-completion correlation (Task 5) needs
-  // it on assistant events too -- a subagent completion's real token usage
-  // arrives on the parent session's own next assistant turn, and that turn is
-  // the one the origin.kind marker actually lands on in practice.
+  // Plain text content of a 'user'-kind message. Populated ONLY on the 'user'
+  // branch, mirroring electron/transcriptParser.ts. Dispatch completions arrive
+  // as user-kind 'task-notification' events whose text carries the
+  // <tool-use-id>/<subagent_tokens>/<tool_uses>/<duration_ms> tags Claude Code
+  // itself computes; usageIngest.ts extracts those values via regex. The text
+  // itself is transient and MUST NEVER be persisted (docs/privacy-and-data.md).
+  humanText: string | null;
+  // json.origin?.kind, e.g. 'task-notification'. Read on every branch here
+  // (electron/transcriptParser.ts only reads it on 'user' messages); only the
+  // 'user' branch's value is load-bearing -- it marks dispatch completions.
   originKind: string | null;
 }
 
@@ -74,19 +78,28 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       usage,
       toolUses,
       toolResults: [],
+      humanText: null,
       originKind: (json.origin && json.origin.kind) || null,
     };
   }
 
   if (json.type === 'user' && json.message) {
     const msg = json.message;
-    const content = Array.isArray(msg.content) ? msg.content : [];
+    // Normalized the same way electron/transcriptParser.ts does: a bare string
+    // message.content is treated as a single text item so humanText is derived
+    // consistently regardless of which shape the transcript line uses.
+    const content = Array.isArray(msg.content)
+      ? msg.content
+      : typeof msg.content === 'string'
+        ? [{ type: 'text', text: msg.content }]
+        : [];
     const toolResults = content
       .filter((item: any) => item.type === 'tool_result')
       .map((item: any) => ({
         toolUseId: item.tool_use_id,
         resultLength: JSON.stringify(item.content ?? '').length,
       }));
+    const textItem = content.find((item: any) => item.type === 'text');
     return {
       kind: 'user',
       sessionId,
@@ -96,6 +109,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       usage: null,
       toolUses: [],
       toolResults,
+      humanText: textItem ? textItem.text : null,
       originKind: (json.origin && json.origin.kind) || null,
     };
   }
@@ -109,6 +123,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     usage: null,
     toolUses: [],
     toolResults: [],
+    humanText: null,
     originKind: (json.origin && json.origin.kind) || null,
   };
 }

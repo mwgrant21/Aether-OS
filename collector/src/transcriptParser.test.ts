@@ -24,6 +24,7 @@ describe('parseTranscriptLine', () => {
       usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 20 },
       toolUses: [],
       toolResults: [],
+      humanText: null,
       originKind: null,
     });
   });
@@ -46,8 +47,38 @@ describe('parseTranscriptLine', () => {
       usage: null,
       toolUses: [],
       toolResults: [],
+      humanText: 'hello',
       originKind: null,
     });
+  });
+
+  it('populates humanText from a text-type content item on a user line', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      origin: { kind: 'task-notification' },
+      message: { content: [{ type: 'text', text: '<tool-use-id>tu_1</tool-use-id>' }] },
+    });
+    const result = parseTranscriptLine(line);
+    expect(result?.humanText).toBe('<tool-use-id>tu_1</tool-use-id>');
+  });
+
+  it('leaves humanText null on a user line with no text content item', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'ok' }] },
+    });
+    expect(parseTranscriptLine(line)?.humanText).toBeNull();
+  });
+
+  it('leaves humanText null on assistant and other events', () => {
+    const assistant = JSON.stringify({
+      type: 'assistant',
+      message: { model: 'x', content: [{ type: 'text', text: 'not a human prompt' }] },
+    });
+    expect(parseTranscriptLine(assistant)?.humanText).toBeNull();
+    expect(parseTranscriptLine(JSON.stringify({ type: 'summary' }))?.humanText).toBeNull();
   });
 
   it('parses an unrecognized type as kind: other', () => {

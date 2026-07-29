@@ -6,14 +6,14 @@ function assistantEvent(toolUseId: string, toolName: string, filePath: string | 
   return {
     kind: 'assistant', sessionId: null, timestamp, cwd: null, model: null, usage: null,
     toolUses: [{ id: toolUseId, name: toolName, input: filePath ? { file_path: filePath } : {} }],
-    toolResults: [], originKind: null,
+    toolResults: [], humanText: null, originKind: null,
   };
 }
 
 function userResultEvent(toolUseId: string, timestamp: Date): TranscriptEvent {
   return {
     kind: 'user', sessionId: null, timestamp, cwd: null, model: null, usage: null,
-    toolUses: [], toolResults: [{ toolUseId, resultLength: 10 }], originKind: null,
+    toolUses: [], toolResults: [{ toolUseId, resultLength: 10 }], humanText: null, originKind: null,
   };
 }
 
