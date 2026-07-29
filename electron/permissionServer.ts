@@ -14,10 +14,19 @@ export interface PermissionDecision {
   reason?: string;
 }
 
+export interface PostToolFlagDecision {
+  block: boolean;
+  reason?: string;
+}
+
 export interface StartPermissionServerOptions {
   port: number;
   timeoutMs: number;
   onPermissionRequest: (req: { toolName: string; toolInput: unknown }) => Promise<PermissionDecision>;
+  // Both optional: existing callers (and existing tests) that only care about
+  // PermissionRequest never need to know this route exists.
+  onPostToolUse?: (req: { toolUseId: string; toolName: string; toolOutput: unknown }) => Promise<PostToolFlagDecision>;
+  postToolUseTimeoutMs?: number;
 }
 
 const pendingRequests = new Map<string, (decision: PermissionDecision) => void>();
@@ -84,8 +93,53 @@ function invokeSafely(
   }
 }
 
+// Same synchronous-throw-to-rejection guard as invokeSafely above, for the
+// /post-tool-flag-check route's callback.
+function invokePostToolUseSafely(
+  onPostToolUse: NonNullable<StartPermissionServerOptions['onPostToolUse']>,
+  req: { toolUseId: string; toolName: string; toolOutput: unknown }
+): Promise<PostToolFlagDecision> {
+  try {
+    return Promise.resolve(onPostToolUse(req));
+  } catch (err) {
+    return Promise.reject(err);
+  }
+}
+
 export function startPermissionServer(options: StartPermissionServerOptions): Promise<{ server: http.Server; port: number; stop: () => void }> {
   const server = http.createServer(async (req, res) => {
+    if (req.method === 'POST' && req.url === '/post-tool-flag-check') {
+      if (!options.onPostToolUse) {
+        res.writeHead(404).end();
+        return;
+      }
+
+      let flagParsed: { toolUseId?: unknown; toolName?: unknown; toolOutput?: unknown };
+      try {
+        flagParsed = JSON.parse(await readBody(req));
+      } catch {
+        res.writeHead(400).end();
+        return;
+      }
+      if (typeof flagParsed.toolUseId !== 'string' || typeof flagParsed.toolName !== 'string') {
+        res.writeHead(400).end();
+        return;
+      }
+
+      const flagDecision = await withTimeout(
+        invokePostToolUseSafely(options.onPostToolUse, {
+          toolUseId: flagParsed.toolUseId,
+          toolName: flagParsed.toolName,
+          toolOutput: flagParsed.toolOutput,
+        }),
+        options.postToolUseTimeoutMs ?? 30000,
+        () => ({ block: false, reason: 'post-tool-use review timeout: no decision received in time' })
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(flagDecision));
+      return;
+    }
+
     if (req.method !== 'POST' || req.url !== '/permission-request') {
       res.writeHead(404).end();
       return;

@@ -22,7 +22,7 @@ import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
-import { startPermissionServer, type PermissionDecision } from './permissionServer';
+import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
 import { classifyPermissionRisk } from '../src/shared/permissionRisk';
 import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
 import net from 'node:net';
@@ -153,6 +153,23 @@ let stopPermissionServer: (() => void) | null = null;
 // renderer's decision. Populated in onPermissionRequest below, drained by
 // the 'permission:respond' handler.
 const pendingPermissionResolvers = new Map<string, (decision: PermissionDecision) => void>();
+
+// requestId -> resolver for an anomaly-triggered PostToolUse flag-review
+// currently awaiting the renderer's decision. Same pattern as
+// pendingPermissionResolvers above, kept as its own map (rather than reusing
+// the single-slot pendingPermissionRequest renderer state) so a flag-review
+// can't collide with a concurrent, unrelated PermissionRequest card.
+const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDecision) => void>();
+
+// Both pending-resolver maps above have the same latent leak: permissionServer.ts's
+// own withTimeout resolves the HTTP response independently on timeout, without
+// ever calling back into these maps, so a timed-out request's resolver is never
+// removed -- a slow, session-lifetime leak of one Function reference per timeout.
+// Schedule a matching cleanup so a stale entry can't outlive the server-side
+// timeout that already made it moot.
+function scheduleResolverCleanup<T>(map: Map<string, (decision: T) => void>, requestId: string, afterMs: number): void {
+  setTimeout(() => map.delete(requestId), afterMs + 1000).unref();
+}
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
@@ -338,7 +355,33 @@ app.whenReady().then(async () => {
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
       });
+      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs);
       sendToWindow('permission:request', { requestId, toolName: req.toolName, toolInput: req.toolInput, risk, editableField });
+      return decision;
+    },
+    postToolUseTimeoutMs: 30000,
+    onPostToolUse: async (req: { toolUseId: string; toolName: string; toolOutput: unknown }): Promise<PostToolFlagDecision> => {
+      // Zero added latency on clean calls: only push a flag-review card (and
+      // await the user) when this tick's anomaly detectors actually tripped
+      // for this specific tool_use_id -- everything else falls through to an
+      // immediate, unblocked allow.
+      const tick = await liveAgentTracker.tick();
+      const tripped = tick.anomalies.find((a) => a.toolUseId === req.toolUseId);
+      if (!tripped) return { block: false };
+      if (!mainWindow) return { block: false, reason: 'no window available to prompt for flag review' };
+
+      const requestId = crypto.randomUUID();
+      const decision = new Promise<PostToolFlagDecision>((resolve) => {
+        pendingPostToolFlagResolvers.set(requestId, resolve);
+      });
+      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs);
+      sendToWindow('postToolFlag:request', {
+        requestId,
+        toolUseId: req.toolUseId,
+        toolName: req.toolName,
+        anomalyKind: tripped.kind,
+        detail: tripped.detail,
+      });
       return decision;
     },
   };
@@ -427,6 +470,13 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
   const resolve = pendingPermissionResolvers.get(requestId);
   if (!resolve) return; // already timed out / resolved / duplicate response
   pendingPermissionResolvers.delete(requestId);
+  resolve(decision);
+});
+
+ipcMain.handle('postToolFlag:respond', (_event, { requestId, decision }: { requestId: string; decision: PostToolFlagDecision }) => {
+  const resolve = pendingPostToolFlagResolvers.get(requestId);
+  if (!resolve) return; // already timed out / resolved / duplicate response
+  pendingPostToolFlagResolvers.delete(requestId);
   resolve(decision);
 });
 

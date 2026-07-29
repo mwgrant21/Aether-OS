@@ -115,6 +115,33 @@ describe('permissionServer', () => {
     expect(res.status).toBe(404);
   });
 
+  it('POST /post-tool-flag-check calls onPostToolUse and returns its decision when a detector trips', async () => {
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+      onPostToolUse: async () => ({ block: true, reason: 'reReadLoop: src/foo.ts read 3 times' }),
+      postToolUseTimeoutMs: 5000,
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/post-tool-flag-check', { toolUseId: 'tu_1', toolName: 'Read', toolOutput: 'x' });
+    expect(res.body).toEqual({ block: true, reason: 'reReadLoop: src/foo.ts read 3 times' });
+  });
+
+  it('auto-allows (not deny) on /post-tool-flag-check timeout', async () => {
+    const started = await startPermissionServer({
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'allow' as const }),
+      onPostToolUse: () => new Promise(() => {}),
+      postToolUseTimeoutMs: 50,
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/post-tool-flag-check', { toolUseId: 'tu_1', toolName: 'Read', toolOutput: 'x' });
+    expect(res.body.block).toBe(false);
+    expect(res.body.reason).toMatch(/timeout/i);
+  });
+
   it('rejects (instead of crashing the process) when the port is already bound', async () => {
     const holder = await startPermissionServer({
       port: 0,
