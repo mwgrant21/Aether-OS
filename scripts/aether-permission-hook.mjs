@@ -31,7 +31,14 @@ import { homedir } from 'node:os';
 import http from 'node:http';
 import process from 'node:process';
 
-const CONNECT_TIMEOUT_MS = 1500; // "is the app even reachable" -- fail fast
+// "is the app even reachable" -- fail fast. Matches the design spec's
+// explicit ~500ms target (docs/superpowers/specs/2026-07-28-closing-the-loop-design.md,
+// line 29: "attempts a short-timeout (~500ms) connection to the local
+// server"). An earlier draft used 1500ms with no real justification; testing
+// showed 500ms is plenty for a same-machine loopback TCP handshake -- this
+// only guards the connect phase (cleared on the socket 'connect' event), not
+// the full response wait, which has its own 120s DECISION_TIMEOUT_MS below.
+const CONNECT_TIMEOUT_MS = 500;
 const DECISION_TIMEOUT_MS = 120000; // full wait for a real user decision
 
 function readStdin() {
