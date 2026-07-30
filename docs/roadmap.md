@@ -110,7 +110,7 @@ implementer + reviewer + whole-branch-review loop.
 | **10** | **Go collector** | **Status: shipped** — see `docs/superpowers/plans/2026-07-30-go-collector-stage10.md`. Drop-in swap behind the Stage 2 contract, coexisting with the Node collector; cutover/retirement is a separate, later decision. | ~6 tasks |
 | **10.5** | **Spec commit & link repair** | **Both links in PROGRESS.md's Layer 1/2 entry resolve to nothing, and the entire design exists on one disk.** Jumps the queue for the same reason Stage 0.5 did — see §3.3. | ~3 tasks |
 | **11** | **Narration spine** | **Layer 1 Phase 0.** Two-pass run split, `AgentEnvelope`, `ExitState`'s `error`/`fatal` distinction, runtime-computed severity 0–4 in the collector, per-run telemetry persisted keyed by `(agent_id, task_kind)`. **Ships zero visible change** — no voice, no UI, nothing in the chat deck. The spine only. Planned: `2026-07-31-narration-spine-stage11.md`. | ~7 tasks |
-| **12** | **Voice packs & render** | **Layer 1 Phase 1, plus the `personas.ts` reconciliation this project has not yet named.** Voice packs as data files, lazy narration generated in the viewer, verbosity dial with a severity floor, runtime-prepended frozen phrases, interruption-budget mechanism, attention hook. The visible half. Planned: `2026-07-31-voice-packs-stage12.md`. | ~9 tasks |
+| **12** | **Voice packs & render** | **Layer 1 Phase 1.** Voice packs as data files, lazy narration generated in the viewer, verbosity dial with a severity floor, runtime-prepended frozen phrases, interruption-budget mechanism, attention hook. `personas.ts` is untouched — coexists, does not get folded in; see spec §5.10. The visible half. Planned: `2026-07-31-voice-packs-stage12.md`. | ~9 tasks |
 | **13** | **Memory Layer 2** | Phase A store drop-in (already written and green, currently outside this repo), then Phases B–D: extractor model call, `prompt-safety` fencing, private scoring, Memory view rework. **Retires `MemoryStub`** rather than extending it. Depends on Stage 11 for `Revision`. | ~10 tasks |
 
 ### 3.1 — Stage 0.5, and why it jumps the queue
@@ -213,18 +213,21 @@ bugs in the first draft. Bundling them with voice packs means reviewing a circul
 and a set of prose registers in the same diff. Stage 12 is then almost entirely data files and
 render code, which is a genuinely different review.
 
-**Stage 12 carries a decision this project has not made yet.** `src/components/chat/personas.ts`
+**Stage 12's `personas.ts` question is now resolved, not just named.** `src/components/chat/personas.ts`
 is a live, shipped, tested system — 11 hand-authored voices plus `FALLBACK_PERSONA`, resolved by
 `resolvePersona(agentName)` and injected into each channel's system prompt by `systemPrompt.ts`.
-It is the architecture Layer 1 rejects: flat `voice: string` **in the system prompt**, so voice is
-in context while work is generated; no severity, no escalation curve, no telemetry coupling; and
-keyed on `Agent.name`, which that file's own header comment concedes is the only stable per-agent
-identifier and which a user can change with `spawn <name>`. Voice packs key on role. Those do not
-line up. PROGRESS.md names the `MemoryStub` retirement for Layer 2 and says nothing about this
-one. It is not obviously a retirement — talking to the user in a chat channel and reporting fleet
-state through cadence are arguably different jobs, and keeping both is defensible. But it is an
-unmade decision sitting in shipped code, and it gets more expensive once Layer 1 has files on disk.
-Stage 12 must resolve it explicitly, in the design spec, before writing the first voice pack.
+It is the architecture Layer 1 rejects on its own terms: flat `voice: string` **in the system
+prompt**, so voice is in context while work is generated; no severity, no escalation curve, no
+telemetry coupling; and keyed on `Agent.name`, which that file's own header comment concedes is
+the only stable per-agent identifier and which a user can change with `spawn <name>`. Voice packs
+key on role instead. Those do not line up, and the decision was: **coexist, deliberately, not a
+gap to close.** Chat's voice has to sit in the same call as the reply — there is no terminal
+telemetry to narrate from until after the reply the user is waiting on already exists, so P1's
+two-pass split does not fit that job at all, and forcing it on would mean either latency the user
+feels on every message or a P1 exemption on the one surface where it would be noticed fastest.
+Talking to the user in a chat channel and reporting fleet state through cadence are different
+jobs with different constraints, not one job accidentally built twice. Recorded as §5.10 and
+closed in §12 of the spec (revision 3) — Stage 12 builds voice packs only, `personas.ts` untouched.
 
 **Stage 13 depends on Stage 11 for one type.** Layer 2's `revision` and `overrule` private memory
 kinds consume the `Revision{finding_id, cause, detail}` object the spine introduces. Landing Layer

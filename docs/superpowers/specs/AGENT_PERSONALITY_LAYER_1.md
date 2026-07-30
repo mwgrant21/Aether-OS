@@ -2,8 +2,8 @@
 
 **Design document**
 Status: draft for implementation
-Last updated: 2026-07-27
-Revision: 2 (post adversarial review)
+Last updated: 2026-07-30
+Revision: 3 (post personas.ts reconciliation)
 
 ---
 
@@ -516,6 +516,44 @@ That sev-4 handoff is the natural entry point into the adjudication system (§9)
 
 ---
 
+### 5.10 Scope boundary — `personas.ts` is a separate system, deliberately
+
+Stage 12 of `docs/roadmap.md` carried this as an unnamed decision: does Layer 1
+replace `src/components/chat/personas.ts`, the 11 name-keyed voices already
+live in Chat? **No. Coexist, on purpose, and this is why.**
+
+`personas.ts` and the voice-pack system are keyed on different axes and solve
+different problems, and the mismatch is not cosmetic:
+
+| | `personas.ts` | Voice packs |
+|---|---|---|
+| Keyed on | `Agent.name` — 11 fixed roster slots (`Code Builder`, `UI Designer`, …) plus `FALLBACK_PERSONA` for anything else, including any custom `spawn <name>` | Role — `STEWARD` / `CINDER` / `PILGRIM` / `ASSAY` / `FORGE`, five archetypes, not names |
+| Where voice lives | Concatenated straight into the one system prompt that also produces the reply — voice and work share a call | Pass 2 only, strictly after Pass 1 (§2) — voice never touches the call that produces work |
+| The job | Two-way conversation: arbitrary user messages, in-character replies, the action-JSON convention (spawn/kill/theme/renderer/throttle) | One-way status narration: a fleet grid reporting runtime-computed severity, never a conversation partner |
+| Driven by | A static tone sentence, no telemetry, no notion of state | `Severity` (§4), computed by the runtime, passed in as a parameter |
+
+The reason this isn't "two systems that happen to overlap" is P1. Chat's voice
+has to sit in the same call as the reply, because the user is mid-conversation
+and waiting on that exact reply — there is no terminal telemetry to compute a
+severity from until the reply is already generated, and inserting a second
+pass would mean either latency the user feels on every message or a narration
+call with nothing yet to narrate. That is not a Layer 1 implementation gap; it
+is Chat's job being structurally incompatible with the thing P1 requires.
+Forcing personas.ts onto the voice-pack shape would mean either accepting
+two-pass latency on a surface where it costs real UX, or carving Chat a
+P1 exemption — which quietly reopens the "personality renders state, it never
+determines it" guarantee for the one surface where a user would notice first.
+
+So: `personas.ts` is untouched by Stages 11–12. It keeps its own key space,
+its own voice-in-prompt mechanism, and its own job. Voice packs are net-new,
+scoped to fleet-status narration surfaces (Grid and wherever else severity is
+rendered) that never existed before this design. No retirement, no migration,
+no shared roster. If a future stage wants one coherent voice vocabulary across
+both surfaces, that is a new decision to make deliberately — not a default
+this design assumes.
+
+---
+
 ## 6. Frozen phrases
 
 The HCS VoicePacks built on VoiceAttack went stale because they had finite
@@ -892,6 +930,14 @@ narration channel exists and you have watched real traffic move through it.
   fleet, which is §0's stated goal failing.
 - *Does the render layer instrument attention?* — **Yes, hook ships in Phase 1.**
   It is the one item where deferral genuinely costs surgery later.
+
+**Closed since revision 2:**
+
+- *Does Layer 1 replace `personas.ts`, or do the two coexist?* — **Coexist.**
+  See §5.10. Different key space (name vs. role), different channel discipline
+  (voice-in-prompt vs. strict two-pass), different job (two-way conversation
+  vs. one-way status narration). Retiring `personas.ts` would mean exempting
+  Chat from P1 on the one surface a user would notice the exemption fastest.
 
 ---
 
