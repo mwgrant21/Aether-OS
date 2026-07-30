@@ -55,4 +55,12 @@ describe('decideAlertActions', () => {
       { kind: 'playAnomalyChime' },
     ]);
   });
+
+  it('does not emit playNotification from decideAlertActions (it is dispatched directly, not derived from alarmLevel/anomalyCount)', () => {
+    // playNotification is triggered by a distinct state field (lastNotification),
+    // not by decideAlertActions -- this test documents that boundary so a future
+    // change doesn't accidentally fold it into the alarm/anomaly diff.
+    const actions = decideAlertActions({ alarmLevel: 'ok', anomalyCount: 0 }, { alarmLevel: 'ok', anomalyCount: 0 });
+    expect(actions.some((a) => a.kind === 'playNotification')).toBe(false);
+  });
 });

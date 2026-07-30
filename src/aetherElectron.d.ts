@@ -29,6 +29,8 @@ declare global {
         onActiveWork: (callback: (work: RealActiveWork[]) => void) => () => void;
         onAnomalies: (callback: (anomalies: Anomaly[]) => void) => () => void;
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
+        onNotification: (callback: (payload: { reason: string }) => void) => () => void;
+        onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;
@@ -69,6 +71,9 @@ declare global {
       postToolFlag: {
         onRequest: (callback: (request: PostToolFlagRequestUI) => void) => () => void;
         respond: (requestId: string, decision: PostToolFlagDecision) => Promise<void>;
+      };
+      presence: {
+        onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => () => void;
       };
       chat: {
         send: (body: unknown) => Promise<{ reply: string } | { error: string }>;

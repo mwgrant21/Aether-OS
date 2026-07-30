@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { isValidChatBody, runChatRequest } from './chatCore';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { isValidChatBody, runChatRequest, CHAT_MODEL } from './chatCore';
+
+// Mock at the SDK boundary, same convention this repo already uses for
+// other Anthropic-adjacent boundaries: never let a real network call
+// happen from a unit test. mockCreate is declared via vi.hoisted so it's
+// available inside the vi.mock factory despite normal TDZ ordering.
+const mockCreate = vi.hoisted(() => vi.fn());
+
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    messages: { create: mockCreate },
+  })),
+}));
 
 describe('isValidChatBody', () => {
   it('accepts a well-formed body', () => {
@@ -61,6 +73,23 @@ describe('runChatRequest', () => {
       ok: false,
       status: 400,
       error: 'body must be { system: string, messages: {role, text}[] }',
+    });
+  });
+
+  describe('model parameterization', () => {
+    beforeEach(() => {
+      mockCreate.mockReset();
+      mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+    });
+
+    it('defaults to CHAT_MODEL when no override is passed', async () => {
+      await runChatRequest({ system: 'x', messages: [{ role: 'user', text: 'hi' }] }, 'some-key');
+      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: CHAT_MODEL }));
+    });
+
+    it('uses the override model and maxTokens when passed', async () => {
+      await runChatRequest({ system: 'x', messages: [{ role: 'user', text: 'hi' }] }, 'some-key', 'claude-haiku-4-5', 40);
+      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-haiku-4-5', max_tokens: 40 }));
     });
   });
 });

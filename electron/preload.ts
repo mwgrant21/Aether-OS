@@ -55,6 +55,16 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:cacheHitRatio', listener);
       return () => ipcRenderer.removeListener('agents:cacheHitRatio', listener);
     },
+    onNotification: (callback: (payload: { reason: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { reason: string }) => callback(payload);
+      ipcRenderer.on('agents:notification', listener);
+      return () => ipcRenderer.removeListener('agents:notification', listener);
+    },
+    onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; headline: string }) => callback(payload);
+      ipcRenderer.on('agents:headline', listener);
+      return () => ipcRenderer.removeListener('agents:headline', listener);
+    },
   },
   fleet: {
     onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {
@@ -128,6 +138,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
   chat: {
     send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),
     hasKey: (): Promise<boolean> => ipcRenderer.invoke('chat:hasKey'),
+  },
+  presence: {
+    onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, recap: { entries: unknown[]; tokensBurned: number }) => callback(recap);
+      ipcRenderer.on('presence:recap', listener);
+      return () => ipcRenderer.removeListener('presence:recap', listener);
+    },
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

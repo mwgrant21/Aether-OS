@@ -89,6 +89,7 @@ import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { PermissionRisk } from '../shared/permissionRisk';
+import type { NotificationReason } from '../shared/alertSounds';
 import type { RateSample } from '../components/reactor/reactorMath';
 
 // Not related to `Approval` (the chat-pipeline/tick-simulation approval
@@ -109,6 +110,11 @@ export interface PostToolFlagRequestUI {
   toolName: string;
   anomalyKind: Anomaly['kind'];
   detail: string;
+}
+
+export interface RecapPayload {
+  entries: { kind: 'dispatchCompleted' | 'anomalyDetected' | 'anomalyCleared'; detail: string; atMs: number }[];
+  tokensBurned: number;
 }
 
 export interface RealUsageSnapshot {
@@ -193,6 +199,7 @@ export interface Cfg {
   autoThrottle: boolean;
   sound: boolean;
   autoCreateDispatchChannels: boolean;
+  densityLevel: 'normal' | 'verbose' | 'summary';
 }
 
 export interface AetherState {
@@ -245,6 +252,9 @@ export interface AetherState {
   diagnostics: DiagnosticsSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;
+  lastNotification: { reason: NotificationReason; atMs: number } | null;
+  recap: RecapPayload | null;
+  dispatchHeadlines: Record<string, string>;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

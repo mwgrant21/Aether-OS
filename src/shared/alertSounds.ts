@@ -1,10 +1,13 @@
 import type { AlarmLevel } from '../state/types';
 
+export type NotificationReason = 'agent_needs_input' | 'agent_completed' | 'permission_prompt' | string;
+
 export type AlertAction =
   | { kind: 'playYellow' }
   | { kind: 'startRed' }
   | { kind: 'stopRed' }
-  | { kind: 'playAnomalyChime' };
+  | { kind: 'playAnomalyChime' }
+  | { kind: 'playNotification'; reason: NotificationReason };
 
 export interface AlertSnapshot {
   alarmLevel: AlarmLevel;
@@ -79,6 +82,30 @@ export function playYellowAlert(): void {
 export function playAnomalyChime(): void {
   const ctx = getAudioContext();
   playTone(ctx, 1318.5, ctx.currentTime, 0.25, 0.09); // E6, quieter and longer-tailed than the klaxon tones — reads as a notification, not an alarm
+}
+
+// One short synthesized tone per typed Notification reason -- reuses the
+// existing playTone oscillator primitive below, no new audio asset.
+// Unrecognized reasons (a future Claude Code version adding a new
+// notification_type) get a safe default tone rather than silently playing
+// nothing or throwing.
+export function toneForNotificationReason(reason: NotificationReason): { frequencyHz: number; durationSec: number } {
+  switch (reason) {
+    case 'agent_needs_input':
+      return { frequencyHz: 660, durationSec: 0.18 };
+    case 'agent_completed':
+      return { frequencyHz: 440, durationSec: 0.12 };
+    case 'permission_prompt':
+      return { frequencyHz: 880, durationSec: 0.25 };
+    default:
+      return { frequencyHz: 550, durationSec: 0.15 };
+  }
+}
+
+export function playNotificationTone(reason: NotificationReason): void {
+  const ctx = getAudioContext();
+  const { frequencyHz, durationSec } = toneForNotificationReason(reason);
+  playTone(ctx, frequencyHz, ctx.currentTime, durationSec, 0.15);
 }
 
 export function startRedAlert(): () => void {

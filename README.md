@@ -19,6 +19,15 @@ reactor's pulse is your real token burn rate and dispatch concurrency; the termi
 sim pieces exist only where noted, and `PROGRESS.md` tracks exactly which is which — including
 known issues and genuinely-blocked items, not just wins.
 
+![Aether OS Optimize view showing a live cost-of-thrash finding](docs/portfolio-optimize-cost-of-thrash.png)
+*Optimize surfacing a genuine "cost of thrash" finding — 428 redundant read/write calls detected
+live across real session transcripts, priced at ~$0.64/wk, with a one-click fix. Not mocked data.*
+
+![Optimize catching a real re-read loop and pricing it](docs/portfolio-cost-of-thrash-live.gif)
+*The thesis, live: a file re-read three times without a cache hit gets caught, named
+(`CLAUDE.md (3x)`), and priced (~$0.27/wk) in real time — the same detector that once only
+existed as `anomalyDetectors.ts` unit tests, now visibly catching a real one.*
+
 ---
 
 ## What makes this different

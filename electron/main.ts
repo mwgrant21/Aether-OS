@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage } from 'electron';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -8,8 +8,9 @@ import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
-import { createLiveAgentTracker } from './liveAgentTracker';
-import { writeOwnSessionFile } from './ownSessionFile';
+import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
+import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
+import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';
 import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
 import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
@@ -18,6 +19,14 @@ import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import { runChatRequest } from '../src/shared/chatCore';
+import {
+  createHeadlineThrottle,
+  shouldCallForHeadline,
+  generateHeadline,
+  createPeriodicContentCache,
+  isNewPeriodicContent,
+} from './headlineGenerator';
+import { handleNotification } from './notificationHandler';
 import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
@@ -25,11 +34,22 @@ import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
 import { classifyPermissionRisk } from '../src/shared/permissionRisk';
 import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
+import { renderNotificationBadge } from './notificationBadge';
 import net from 'node:net';
 import crypto from 'node:crypto';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+let isWindowFocused = true;
+let unfocusedNotificationCount = 0;
+let recapAcc: RecapAccumulator = createEmptyAccumulator();
+// Latest tick snapshot -- doubles as (a) the "previous tick" fed into
+// accumulate() for recap purposes, and (b) what onNotification (fired from the
+// HTTP server callback below, not the tick loop) reads result.open from for
+// the blocked-trigger headline, without calling tracker.tick() a second time.
+let lastTickResult: LiveAgentTick | null = null;
+const headlineThrottle = createHeadlineThrottle();
+const periodicContentCache = createPeriodicContentCache();
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -75,6 +95,20 @@ function createWindow(): void {
 
   win.on('maximize', () => sendToWindow('window:isMaximized', true));
   win.on('unmaximize', () => sendToWindow('window:isMaximized', false));
+
+  win.on('focus', () => {
+    isWindowFocused = true;
+    unfocusedNotificationCount = 0;
+    win.flashFrame(false);
+    win.setOverlayIcon(null, '');
+    if (recapAcc.entries.length > 0 || recapAcc.tokensBurned > 0) {
+      sendToWindow('presence:recap', recapAcc);
+    }
+    recapAcc = createEmptyAccumulator();
+  });
+  win.on('blur', () => {
+    isWindowFocused = false;
+  });
 
   let saveBoundsTimer: ReturnType<typeof setTimeout> | null = null;
   const persistBounds = (): void => {
@@ -284,7 +318,46 @@ async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
   try {
-    const { open, completed, work, anomalies, cacheHitRatio } = await liveAgentTracker.tick();
+    const result = await liveAgentTracker.tick();
+    const { open, completed, work, anomalies, cacheHitRatio } = result;
+
+    if (!isWindowFocused) {
+      recapAcc = accumulate(recapAcc, result, lastTickResult ?? result, Date.now());
+    }
+    lastTickResult = result;
+
+    // Periodic status-headline trigger: for each currently-open dispatch, ask
+    // Haiku for a fresh headline, fire-and-forget -- a slow or failed call must
+    // never hold up the tick loop itself. dispatch.subagentType/description are
+    // immutable for the dispatch's whole lifetime, so asking again on every
+    // tick with no new signal just re-words the same thing -- two guards keep
+    // this from being pointless:
+    //   1. Only consider a dispatch that has a matching entry in this tick's
+    //      result.work (RealActiveWork) -- if nothing is tracked as active
+    //      work for it right now, skip calling Haiku entirely this tick.
+    //   2. Even with a match, isNewPeriodicContent skips the call unless that
+    //      work entry's label/description actually changed since the last
+    //      call for this toolUseId -- so a dispatch whose active-work content
+    //      never changes gets (at most) one periodic call, not one per 15s.
+    // shouldCallForHeadline's 15s throttle still applies on top as a hard cap.
+    for (const d of result.open) {
+      const matchingWork = result.work.find((w) => w.toolUseId === d.toolUseId);
+      if (!matchingWork) continue; // nothing new happening right now -- don't re-send the same static content
+      // shouldCallForHeadline's atomic check-and-set consumes the 15s throttle
+      // slot as soon as it's checked (see its own doc comment), regardless of
+      // whether a call actually follows -- so it must run BEFORE the content
+      // check below. Reversing this order would let isNewPeriodicContent mark
+      // content as "seen" on a tick where the throttle denies the call, and
+      // that content change would then be silently lost forever (the next
+      // tick would compare it to itself and find nothing new, even though
+      // generateHeadline was never actually called with it).
+      if (!shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) continue;
+      const activeWorkContext = matchingWork.description || matchingWork.label;
+      if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
+      generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext).then((headline) => {
+        if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
+      });
+    }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
     if (pinnedSessionId !== lastWrittenOwnSessionId) {
@@ -383,6 +456,36 @@ app.whenReady().then(async () => {
         detail: tripped.detail,
       });
       return decision;
+    },
+    onNotification: ({ sessionId, notificationType }: { sessionId: string; notificationType: string }) => {
+      // Real notification-handling logic (session-identity check, the
+      // isWindowFocused gate that must cover the ENTIRE handler including the
+      // blocked-trigger headline, and the blocked-trigger headline call
+      // itself) lives in notificationHandler.ts, unit-tested there. This
+      // callback is just the Electron-specific wiring: badge/flash/counter
+      // side effects, which need mainWindow directly.
+      handleNotification(
+        { sessionId, notificationType },
+        readOwnSessionId(ownSessionFilePath(aetherOsDir)),
+        {
+          isWindowFocused: () => isWindowFocused,
+          getOpenDispatches: () => lastTickResult?.open ?? [],
+          headlineThrottle,
+          apiKey: process.env.ANTHROPIC_API_KEY,
+          sendHeadline: (toolUseId, headline) => sendToWindow('agents:headline', { toolUseId, headline }),
+          onUnfocusedNotification: (reason) => {
+            if (!mainWindow) return;
+            unfocusedNotificationCount += 1;
+            mainWindow.flashFrame(true);
+            const badge = renderNotificationBadge(16);
+            mainWindow.setOverlayIcon(
+              nativeImage.createFromBuffer(badge.buffer, { width: badge.width, height: badge.height }),
+              `${unfocusedNotificationCount} notification${unfocusedNotificationCount === 1 ? '' : 's'} while away`
+            );
+            sendToWindow('agents:notification', { reason });
+          },
+        }
+      );
     },
   };
   let permission;

@@ -49,7 +49,9 @@ function isTextBlock(block: Anthropic.ContentBlock): block is Anthropic.TextBloc
 // the HTTP adapter, since that's a transport concern, not a core one.
 export async function runChatRequest(
   body: unknown,
-  apiKey: string | undefined
+  apiKey: string | undefined,
+  model: string = CHAT_MODEL,
+  maxTokens: number = CHAT_MAX_TOKENS
 ): Promise<ChatCoreResult> {
   if (!isValidChatBody(body)) {
     return { ok: false, status: 400, error: 'body must be { system: string, messages: {role, text}[] }' };
@@ -65,8 +67,8 @@ export async function runChatRequest(
   try {
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: CHAT_MODEL,
-      max_tokens: CHAT_MAX_TOKENS,
+      model,
+      max_tokens: maxTokens,
       system: body.system,
       messages: body.messages.map((m) => ({ role: m.role, content: m.text })),
     });

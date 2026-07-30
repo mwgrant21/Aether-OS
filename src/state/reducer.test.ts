@@ -432,6 +432,29 @@ describe('reducer', () => {
     });
   });
 
+  describe('SET_DISPATCH_HEADLINE', () => {
+    it('sets a headline for a toolUseId', () => {
+      const next = reducer(initialState, { type: 'SET_DISPATCH_HEADLINE', toolUseId: 'tu_1', headline: 'waiting on approval' });
+      expect(next.dispatchHeadlines['tu_1']).toBe('waiting on approval');
+    });
+
+    it('preserves existing headlines when adding a new one', () => {
+      const withOne = { ...initialState, dispatchHeadlines: { tu_0: 'first' } };
+      const next = reducer(withOne, { type: 'SET_DISPATCH_HEADLINE', toolUseId: 'tu_1', headline: 'second' });
+      expect(next.dispatchHeadlines).toEqual({ tu_0: 'first', tu_1: 'second' });
+    });
+
+    it('caps dispatchHeadlines at 100 entries, evicting the oldest first', () => {
+      const existing = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`old_${i}`, `headline_${i}`]));
+      const withFull = { ...initialState, dispatchHeadlines: existing };
+      const next = reducer(withFull, { type: 'SET_DISPATCH_HEADLINE', toolUseId: 'new_1', headline: 'newest' });
+      expect(Object.keys(next.dispatchHeadlines)).toHaveLength(100);
+      expect(next.dispatchHeadlines['old_0']).toBeUndefined();
+      expect(next.dispatchHeadlines['old_1']).toBeDefined();
+      expect(next.dispatchHeadlines['new_1']).toBe('newest');
+    });
+  });
+
   describe('RECORD_DISPATCH_USAGE', () => {
     it('merges one completion into dispatchUsage, keyed by toolUseId', () => {
       const next = reducer(initialState, {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAetherStore } from './store';
+import type { RecapPayload } from './types';
 
 export function useRealAgentsSync() {
   const { dispatch } = useAetherStore();
@@ -41,6 +42,30 @@ export function useRealAgentsSync() {
     if (!agents) return;
     return agents.onCacheHitRatio((ratio) => {
       dispatch({ type: 'SET_CACHE_HIT_RATIO', ratio });
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onNotification(({ reason }) => {
+      dispatch({ type: 'SET_LAST_NOTIFICATION', reason });
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onHeadline(({ toolUseId, headline }) => {
+      dispatch({ type: 'SET_DISPATCH_HEADLINE', toolUseId, headline });
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
+    const presence = window.aetherElectron?.presence;
+    if (!presence) return;
+    return presence.onRecap((recap) => {
+      dispatch({ type: 'RECAP_RECEIVED', recap: recap as RecapPayload });
     });
   }, [dispatch]);
 }

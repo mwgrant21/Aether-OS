@@ -12,9 +12,12 @@ subordinate to this document.
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
 by design, and its README carefully scopes what those reports may contain (usage metrics only,
-never prompt content or code). Aether OS has no fleet, no sharing, no reporting, and no network
-listener. The single-user constraint is not a smaller version of TokenMonitor's model; it removes
-the model entirely.
+never prompt content or code). Aether OS has no fleet, no sharing, no reporting, and no
+externally-reachable listener — `electron/permissionServer.ts` does run a local HTTP server for
+`PermissionRequest`/`PostToolUse`/`Notification` hook brokering, but it is bound to `127.0.0.1`
+only, reachable only from this machine, with no port exposed externally and no token or auth
+surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
+model; it removes the model entirely.
 
 **The one exception, stated plainly:** when you supply an `ANTHROPIC_API_KEY`, the Chat feature
 sends a scoped context snapshot and your messages to the Anthropic Messages API, because that is
@@ -35,7 +38,10 @@ Bank these as removed from scope, permanently:
 - No multi-tenant schema, no user/seat/org columns
 - No shared folder, no report writing, no roll-up, no leaderboard
 - No sharing links, no export-to-cloud, no sync
-- **No network listener of any kind** — see §3
+- **No externally-reachable listener.** Collector ingest is a file spool, not a listener at all
+  (§3); the one real local HTTP server in this app (`electron/permissionServer.ts`, for permission
+  and notification hook brokering) is bound to `127.0.0.1` only, with no port exposed externally
+  and no token or auth surface
 
 Every one of those is an attack surface that now simply does not exist.
 

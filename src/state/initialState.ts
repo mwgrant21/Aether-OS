@@ -54,6 +54,7 @@ export const initialState: AetherState = {
     autoThrottle: true,
     sound: false,
     autoCreateDispatchChannels: false,
+    densityLevel: 'normal',
   },
   agents: [
     {
@@ -208,4 +209,7 @@ export const initialState: AetherState = {
   diagnostics: null,
   pendingPermissionRequest: null,
   pendingPostToolFlag: null,
+  lastNotification: null,
+  recap: null,
+  dispatchHeadlines: {},
 };

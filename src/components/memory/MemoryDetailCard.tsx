@@ -6,6 +6,7 @@ import { STRENGTH_TIER_COLOR } from './memoryMath';
 import { short, fmtElapsed } from '../../utils/format';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
+import { applyDensity } from '../../shared/transcriptDensity';
 
 export function MemoryDetailCard({ memory }: { memory: MemoryStub | null }) {
   const colors = useColors();
@@ -47,7 +48,9 @@ export function MemoryDetailCard({ memory }: { memory: MemoryStub | null }) {
 
       <div style={{ marginTop: 20, flex: 1, minHeight: 0, overflow: 'auto' }}>
         <div style={sectionLabelStyle(colors)}>CONTENT</div>
-        <div style={{ marginTop: 8, font: `400 13px/1.6 ${fonts.ui}`, color: colors.textBody }}>{memory.content}</div>
+        <div style={{ marginTop: 8, font: `400 13px/1.6 ${fonts.ui}`, color: colors.textBody }}>
+          {applyDensity(memory.content, state.cfg.densityLevel, memory.name)}
+        </div>
         {usage && (
           <div style={{ marginTop: 12, font: `400 11px/1.4 ${fonts.mono}`, color: colors.textDim }}>
             Used {short(usage.tokens)} tokens · {usage.toolUses} tool call{usage.toolUses === 1 ? '' : 's'} · {fmtElapsed(usage.durationMs)}

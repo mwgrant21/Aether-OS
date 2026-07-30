@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAetherStore } from './store';
-import { decideAlertActions, playAnomalyChime, playYellowAlert, startRedAlert } from '../shared/alertSounds';
+import { decideAlertActions, playAnomalyChime, playNotificationTone, playYellowAlert, startRedAlert } from '../shared/alertSounds';
 
 export function useAlertSounds(): void {
   const { state } = useAetherStore();
@@ -43,4 +43,22 @@ export function useAlertSounds(): void {
       stopRedRef.current = null;
     }
   }, [state.cfg.sound]);
+
+  // Tracks the atMs of the last notification actually played, so toggling
+  // sound off then back on with no new notification in between does not
+  // replay the last one -- lastNotification stays truthy/unchanged across a
+  // sound toggle, so the dependency array alone can't distinguish "genuinely
+  // new notification" from "sound re-enabled".
+  const lastPlayedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const atMs = state.lastNotification?.atMs;
+    if (state.cfg.sound && state.lastNotification && atMs !== lastPlayedAtRef.current) {
+      lastPlayedAtRef.current = atMs ?? null;
+      playNotificationTone(state.lastNotification.reason);
+    }
+    // Deliberately keyed on atMs, not the whole object reference, so two
+    // notifications with the same reason in quick succession (e.g. two
+    // permission_prompts) both trigger a fresh play instead of the second
+    // being skipped by a same-value effect-dependency comparison.
+  }, [state.lastNotification?.atMs, state.cfg.sound]);
 }

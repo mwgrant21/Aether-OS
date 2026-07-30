@@ -164,7 +164,7 @@ describe('hookInstaller', () => {
 });
 
 describe('installPermissionHooks / uninstallPermissionHooks', () => {
-  it('installPermissionHooks adds PermissionRequest and PostToolUse groups', async () => {
+  it('installPermissionHooks adds PermissionRequest, PostToolUse, and Notification groups', async () => {
     const settingsPath = tempSettingsPath('{}');
     const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
     expect(result.ok).toBe(true);
@@ -174,9 +174,11 @@ describe('installPermissionHooks / uninstallPermissionHooks', () => {
     expect(written.hooks.PermissionRequest[0].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
     expect(written.hooks.PostToolUse).toHaveLength(1);
     expect(written.hooks.PostToolUse[0].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
+    expect(written.hooks.Notification).toHaveLength(1);
+    expect(written.hooks.Notification[0].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
   });
 
-  it('installPermissionHooks coexists with a pre-existing aether-hook-emit.mjs group already occupying PostToolUse', async () => {
+  it('installPermissionHooks coexists with a pre-existing aether-hook-emit.mjs group already occupying PostToolUse and Notification', async () => {
     const settingsPath = tempSettingsPath('{}');
     await installHooks(settingsPath, SCRIPT_PATH); // installs the unrelated spool-ingestion group first
     const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
@@ -186,6 +188,9 @@ describe('installPermissionHooks / uninstallPermissionHooks', () => {
     expect(written.hooks.PostToolUse).toHaveLength(2);
     expect(written.hooks.PostToolUse[0].hooks[0].command).toContain(SCRIPT_PATH);
     expect(written.hooks.PostToolUse[1].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
+    expect(written.hooks.Notification).toHaveLength(2);
+    expect(written.hooks.Notification[0].hooks[0].command).toContain(SCRIPT_PATH);
+    expect(written.hooks.Notification[1].hooks[0].command).toContain(PERMISSION_SCRIPT_PATH);
     // The unrelated group's other managed events (Stop etc.) are untouched.
     expect(written.hooks.Stop).toHaveLength(1);
     expect(written.hooks.Stop[0].hooks[0].command).toContain(SCRIPT_PATH);
@@ -201,10 +206,11 @@ describe('installPermissionHooks / uninstallPermissionHooks', () => {
 
     const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(written.hooks.PostToolUse).toHaveLength(2);
+    expect(written.hooks.Notification).toHaveLength(2);
     expect(written.hooks.PermissionRequest).toHaveLength(1);
   });
 
-  it('uninstallPermissionHooks removes only its own entries, leaving the aether-hook-emit.mjs PostToolUse group intact', async () => {
+  it('uninstallPermissionHooks removes only its own entries, leaving the aether-hook-emit.mjs PostToolUse and Notification groups intact', async () => {
     const settingsPath = tempSettingsPath('{}');
     await installHooks(settingsPath, SCRIPT_PATH);
     await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
@@ -215,6 +221,8 @@ describe('installPermissionHooks / uninstallPermissionHooks', () => {
     const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(written.hooks.PostToolUse).toHaveLength(1);
     expect(written.hooks.PostToolUse[0].hooks[0].command).toContain(SCRIPT_PATH);
+    expect(written.hooks.Notification).toHaveLength(1);
+    expect(written.hooks.Notification[0].hooks[0].command).toContain(SCRIPT_PATH);
     expect(written.hooks.PermissionRequest).toBeUndefined();
     // Unrelated managed-event groups from installHooks remain untouched.
     expect(written.hooks.Stop).toHaveLength(1);
