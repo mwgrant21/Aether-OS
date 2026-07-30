@@ -16,17 +16,19 @@ export function Sidebar() {
   return (
     <div style={rootStyle(colors)}>
       <div style={sectionLabelStyle(colors)}>NAVIGATION</div>
-      {SIDEBAR_IDS.map((label) => {
-        const on = label === state.activeTab;
-        return (
-          <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
-            <span style={navDotWrapStyle(on)}>
-              <span style={navDotStyle(colors, on)} />
-            </span>
-            <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
-          </Button>
-        );
-      })}
+      <div data-testid="sidebar-nav" style={sidebarNavStyle}>
+        {SIDEBAR_IDS.map((label) => {
+          const on = label === state.activeTab;
+          return (
+            <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
+              <span style={navDotWrapStyle(on)}>
+                <span style={navDotStyle(colors, on)} />
+              </span>
+              <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
+            </Button>
+          );
+        })}
+      </div>
 
       <div style={{ ...sectionLabelStyle(colors), marginTop: 14 }}>RECENT AGENTS</div>
       {state.agents.slice(0, 4).map((a) => (
@@ -82,6 +84,7 @@ function rootStyle(colors: ColorPalette): CSSProperties {
     overflow: 'auto',
   };
 }
+const sidebarNavStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 };
 function sectionLabelStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
 }

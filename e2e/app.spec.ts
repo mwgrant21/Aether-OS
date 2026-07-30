@@ -17,8 +17,9 @@ test.describe('Aether OS smoke', () => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
     });
 
+    const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
     for (const tab of SIDEBAR_TABS) {
-      await window.getByRole('button', { name: tab }).click();
+      await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
       await window.waitForTimeout(200);
     }
 
@@ -28,7 +29,7 @@ test.describe('Aether OS smoke', () => {
 
   test('the embedded terminal spawns a real pty and echoes a typed command', async () => {
     const { app, window } = await launchApp();
-    await window.getByRole('button', { name: 'Terminal' }).click();
+    await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal', exact: true }).click();
     await window.locator('.xterm-screen').waitFor({ state: 'visible', timeout: 10000 });
 
     const marker = `aether-e2e-${Date.now()}`;
