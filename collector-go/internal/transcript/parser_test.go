@@ -196,6 +196,25 @@ func TestParseTranscriptLine_ExtractsToolResultsFromUser(t *testing.T) {
 	}
 }
 
+// TestParseTranscriptLine_ResultLengthNoHTMLEscaping locks in that
+// stringifiedLength mirrors JSON.stringify's length exactly for strings
+// containing '<', '>', or '&', rather than Go's encoding/json default of
+// HTML-escaping those characters (e.g. '>' becomes the 6-byte '>').
+// JSON.stringify("a > b") is 7 bytes (the 2 quotes plus the 5 literal
+// characters); a naive json.Marshal("a > b") HTML-escapes the '>' and
+// produces 12.
+func TestParseTranscriptLine_ResultLengthNoHTMLEscaping(t *testing.T) {
+	line := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"a > b"}]}}`
+	result := ParseTranscriptLine(line)
+	if result == nil || len(result.ToolResults) != 1 {
+		t.Fatalf("toolResults = %v, want 1 item", result)
+	}
+	tr := result.ToolResults[0]
+	if tr.ResultLength != 7 {
+		t.Errorf("resultLength = %d, want 7 (JSON.stringify(\"a > b\").length, unescaped)", tr.ResultLength)
+	}
+}
+
 func TestParseTranscriptLine_EmptyArraysForNoToolActivity(t *testing.T) {
 	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`
 	result := ParseTranscriptLine(line)

@@ -15,6 +15,7 @@
 package transcript
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"time"
@@ -254,16 +255,26 @@ func extractToolResults(content []interface{}) []ToolResult {
 	return toolResults
 }
 
-// stringifiedLength mirrors JSON.stringify(item.content ?? ”).length.
+// stringifiedLength mirrors JSON.stringify(item.content ?? '').length. It
+// must not use json.Marshal directly: Go's encoding/json HTML-escapes `<`,
+// `>`, and `&` in strings by default, while JSON.stringify never does --
+// e.g. JSON.stringify("a > b") is 9 bytes but json.Marshal("a > b") produces
+// 13 (`>`). This mirrors the same fix hookinstall's marshalSettingsJSON
+// applies for the same root cause, simplified since only a byte length is
+// needed here (no indentation).
 func stringifiedLength(content interface{}) int {
 	if content == nil {
 		content = ""
 	}
-	b, err := json.Marshal(content)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(content); err != nil {
 		return 0
 	}
-	return len(b)
+	// json.Encoder.Encode appends a trailing newline that json.Marshal does
+	// not; trim it so the length matches JSON.stringify's output exactly.
+	return len(bytes.TrimRight(buf.Bytes(), "\n"))
 }
 
 func findHumanText(content []interface{}) *string {
