@@ -75,6 +75,20 @@ func ParseHookPayload(line []byte) (*HookEvent, error) {
 		return nil, ErrInvalidPayload
 	}
 
+	return parseHookPayloadFromObj(obj)
+}
+
+// parseHookPayloadFromObj is ParseHookPayload's derivation logic, factored
+// out so a caller that has already json.Unmarshal'd a spool line for its own
+// purposes (ingest.go's ingestLine, which unmarshals once for canary.ts's
+// drift check) can hand the already-parsed map straight in, instead of
+// paying for a second json.Unmarshal of the same bytes -- mirrors ingest.ts:37
+// (`parseHookPayload(parsed, receivedAtMs)`), which takes the already-parsed
+// object rather than re-parsing. ParseHookPayload itself still does its own
+// unmarshal-then-map-assert before delegating here; this function's
+// signature and behavior for a non-map/malformed shape are unchanged from
+// what ParseHookPayload always did after that point.
+func parseHookPayloadFromObj(obj map[string]interface{}) (*HookEvent, error) {
 	hookEventName := stringField(obj, "hook_event_name")
 	if hookEventName == nil || !knownEventNames[*hookEventName] {
 		return nil, ErrInvalidPayload

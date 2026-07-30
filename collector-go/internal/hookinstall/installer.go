@@ -304,6 +304,10 @@ func InstallHooks(settingsPath, scriptPath string) InstallResult {
 }
 
 // InstallPermissionHooks mirrors hookInstaller.ts's installPermissionHooks.
+// Ported for parity with the TS source and for possible future use; its only
+// real consumer there is the Electron app, which is out of scope for this
+// port, so as of this writing it is not called by either Go binary
+// (cmd/aether-collector or cmd/aether-collector-cli).
 func InstallPermissionHooks(settingsPath, scriptPath string) InstallResult {
 	return installGroup(settingsPath, scriptPath, permissionHookEvents)
 }
@@ -446,7 +450,9 @@ func UninstallHooks(settingsPath string) InstallResult {
 }
 
 // UninstallPermissionHooks mirrors hookInstaller.ts's
-// uninstallPermissionHooks.
+// uninstallPermissionHooks. Like InstallPermissionHooks, this is ported for
+// parity/future use and is not currently called by either Go binary -- see
+// InstallPermissionHooks's doc comment.
 func UninstallPermissionHooks(settingsPath string) InstallResult {
 	return uninstallByMarker(settingsPath, permissionHookEvents, permissionHookMarker)
 }

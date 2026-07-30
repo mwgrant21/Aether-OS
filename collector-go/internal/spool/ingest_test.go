@@ -138,6 +138,27 @@ func TestIngestLine_EmptyToolNameString_IsNotDrift_IngestsWithNullToolName(t *te
 	}
 }
 
+// The double-parse refactor (Task 5, Minor #11) moved the raw-JSON ->
+// map[string]interface{} shape assertion out of ParseHookPayload and into
+// ingestLine itself (so ingestLine can hand the already-parsed map straight
+// to parseHookPayloadFromObj instead of re-unmarshaling the same bytes).
+// This is the regression test for that moved assertion: a syntactically
+// valid but non-object top-level JSON value (an array here) must still be
+// skipped, not passed to parseHookPayloadFromObj as if it were a map.
+func TestIngestLine_NonObjectTopLevelJSON_ReturnsFalse(t *testing.T) {
+	db := freshDB(t)
+	if ingestLine(db, "[1,2,3]", 1000) {
+		t.Fatalf("expected non-object top-level JSON to not be ingested")
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM events").Scan(&count); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 events, got %d", count)
+	}
+}
+
 func TestIngestLine_EmptyString_NeverPanicsReturnsFalse(t *testing.T) {
 	db := freshDB(t)
 	if ingestLine(db, "", 1000) {

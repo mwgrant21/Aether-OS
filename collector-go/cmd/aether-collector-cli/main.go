@@ -115,8 +115,10 @@ func main() {
 	case "install-autostart":
 		collectorExePath := filepath.Join(filepath.Dir(exePath), "aether-collector.exe")
 		// autostart.BuildScheduledTaskCommand formats /TR as `"<nodePath>"
-		// "<entrypointPath>"`; passing the collector's own exe path as
-		// nodePath and "" as entrypointPath yields /TR `"<exe>" ""` -- a
+		// "<entrypointPath>"` when entrypointPath is non-empty, but collapses
+		// to a single-path `"<nodePath>"` when it's ""; passing the
+		// collector's own exe path as nodePath and "" as entrypointPath thus
+		// yields /TR `"<exe>"` with no trailing empty argument -- a
 		// self-contained Go binary needs no separate interpreter argument,
 		// unlike TS's "<node.exe>" "<index.js>" pair. See this file's top
 		// doc comment.
