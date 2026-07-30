@@ -65,7 +65,12 @@ func missingFieldsOf(row interface{}) []string {
 // toFleetSession). Go's path/filepath is host-OS-dependent in the same way
 // (backslash is only a separator when GOOS=windows), so this package defines
 // its own separator-explicit basename instead of relying on path/filepath,
-// to stay deterministic regardless of the host OS running `go test`.
+// to stay deterministic regardless of the host OS running `go test`. Scope
+// note: unlike Node's path.win32.basename, this does not special-case bare
+// drive roots (e.g. "C:\" -> ""); claude agents --json's cwd is always a real
+// project directory, never a drive root, so this was never exercised by the
+// TS original either. Worth revisiting if this helper is ever reused for
+// input that isn't a live agent's cwd.
 func winBasename(p string) string {
 	for len(p) > 0 {
 		last := p[len(p)-1]

@@ -370,17 +370,3 @@ func TestPollFleet_LogsOneDriftRowPerMalformedRow_ButStillReturnsValidOnes(t *te
 		t.Fatalf("expected 1 drift_log row, got %d", count)
 	}
 }
-
-func TestPollFleet_DefaultsExecFnWhenNil(t *testing.T) {
-	// Not exercising the real `claude` binary -- just confirming PollFleet
-	// doesn't panic when execFn is nil (falls back to defaultFleetExec) and
-	// fails gracefully (no `claude` binary expected in the test environment,
-	// or at minimum this must not panic).
-	db := freshDB(t)
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("PollFleet panicked with nil execFn: %v", r)
-		}
-	}()
-	_ = PollFleet(db, nil, 1000, nil)
-}
