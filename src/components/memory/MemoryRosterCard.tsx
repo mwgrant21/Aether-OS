@@ -48,9 +48,9 @@ export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) 
           spellCheck={false}
           style={rememberInputStyle(colors)}
         />
-        <span onClick={submitRemember} style={rememberButtonStyle(colors)}>
+        <Button onClick={submitRemember} style={rememberButtonStyle(colors)}>
           +
-        </span>
+        </Button>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>

@@ -14,9 +14,9 @@ export function ProjectRosterCard({ selectedName }: { selectedName: string | nul
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={titleStyle(colors)}>PROJECTS</div>
-        <span onClick={() => dispatch({ type: 'NEW_PROJECT' })} style={addButtonStyle(colors)}>
+        <Button onClick={() => dispatch({ type: 'NEW_PROJECT' })} style={addButtonStyle(colors)}>
           + ADD
-        </span>
+        </Button>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
