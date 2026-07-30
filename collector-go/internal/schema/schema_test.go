@@ -6,17 +6,17 @@ import (
 )
 
 var expectedTables = map[string]bool{
-	"schema_meta":            true,
-	"events":                 true,
-	"daily_rollups":          true,
-	"drift_log":              true,
-	"usage_events":           true,
-	"transcript_files":       true,
-	"fleet_sessions":         true,
-	"tool_calls":             true,
-	"dispatches":             true,
-	"anomalies":              true,
-	"daily_anomaly_rollups":  true,
+	"schema_meta":           true,
+	"events":                true,
+	"daily_rollups":         true,
+	"drift_log":             true,
+	"usage_events":          true,
+	"transcript_files":      true,
+	"fleet_sessions":        true,
+	"tool_calls":            true,
+	"dispatches":            true,
+	"anomalies":             true,
+	"daily_anomaly_rollups": true,
 }
 
 func TestMigrateCreatesAllTables(t *testing.T) {

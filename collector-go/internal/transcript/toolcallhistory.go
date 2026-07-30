@@ -32,7 +32,7 @@ type OpenToolCall struct {
 
 // ToolCallHistory mirrors toolCallHistory.ts's ToolCallHistory.
 type ToolCallHistory struct {
-	Events         []ClosedToolCall
+	Events          []ClosedToolCall
 	OpenByToolUseID map[string]OpenToolCall
 }
 
