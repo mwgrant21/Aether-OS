@@ -33,9 +33,10 @@ export function computeTick(state: AetherState): Partial<AetherState> {
 
   const memories = state.memories.map((m) => (m.pinned ? m : { ...m, strength: Math.max(0, m.strength - 0.4) }));
 
-  const alarm = state.cfg.alarm;
-  const rateK = effectiveRate / 1000;
-  const level: AlarmLevel = rateK >= alarm ? 'crit' : rateK >= alarm * 0.85 ? 'warn' : 'ok';
+  const pressure = state.statusline
+    ? Math.max(state.statusline.fiveHour?.usedPercentage ?? 0, state.statusline.sevenDay?.usedPercentage ?? 0)
+    : 0;
+  const level: AlarmLevel = pressure >= 90 ? 'crit' : pressure >= 75 ? 'warn' : 'ok';
 
   let notifs = state.notifs;
   let unread = state.unread;
@@ -43,7 +44,7 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     notifs = [
       {
         t: nowShort(),
-        m: level === 'crit' ? `BURN ALARM — rate exceeds ${alarm}K/min` : 'Burn elevated — approaching alarm threshold',
+        m: level === 'crit' ? `RATE LIMIT ALARM — usage at ${Math.round(pressure)}%` : 'Rate limit elevated — approaching threshold',
         c: level === 'crit' ? '#ff6b7a' : '#f5c66b',
       },
       ...notifs,
