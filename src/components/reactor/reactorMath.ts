@@ -43,18 +43,10 @@ export function computeThemeHueDeg(theme: ThemeName, alarmLevel: AlarmLevel, ove
   return hueDeg;
 }
 
-export function computeThemeFilter(theme: ThemeName, alarmLevel: AlarmLevel, glowFx: boolean, overload: boolean = false, modelHueShift: number = 0): string {
-  let hueDeg = computeThemeHueDeg(theme, alarmLevel, overload);
-  hueDeg += modelHueShift;
+export function computeThemeFilter(theme: ThemeName, alarmLevel: AlarmLevel, glowFx: boolean, overload: boolean = false): string {
+  const hueDeg = computeThemeHueDeg(theme, alarmLevel, overload);
   const overloadBrightness = overload ? ' brightness(1.15)' : '';
   return `hue-rotate(${hueDeg}deg)` + (glowFx === false ? ' saturate(.75) brightness(.92)' : '') + overloadBrightness;
-}
-
-const CACHE_CLARITY_MIN = 0.6;
-
-export function computeCacheClarity(cacheHitRatio: number): number {
-  const t = Math.max(0, Math.min(1, cacheHitRatio));
-  return CACHE_CLARITY_MIN + t * (1 - CACHE_CLARITY_MIN);
 }
 
 const TURBULENCE_SATURATION_COUNT = 4; // realAgentCount at/above this reads as maximum turbulence
@@ -63,37 +55,6 @@ export function computeConcurrencyTurbulence(realAgentCount: number): number {
   return Math.max(0, Math.min(1, realAgentCount / TURBULENCE_SATURATION_COUNT));
 }
 
-export function dominantModel(realAgents: { model: string | null }[]): string | null {
-  const counts = new Map<string, number>();
-  for (const a of realAgents) {
-    if (!a.model) continue;
-    counts.set(a.model, (counts.get(a.model) ?? 0) + 1);
-  }
-  let best: string | null = null;
-  let bestCount = 0;
-  for (const [model, count] of counts) {
-    if (count > bestCount) { best = model; bestCount = count; }
-  }
-  return best;
-}
-
-// Model name substrings, checked in this order (first match wins) -- real
-// model identifiers look like "claude-haiku-4-5-..."/"claude-sonnet-5"/etc.
-const MODEL_HUE_SHIFTS: [substring: string, shiftDeg: number][] = [
-  ['haiku', -60],   // cool blue
-  ['opus', 90],     // violet
-  ['fable', 200],   // gold
-  // sonnet and anything unrecognized: no shift (0), sonnet is the visual default
-];
-
-export function computeModelHueShift(model: string | null): number {
-  if (!model) return 0;
-  const lower = model.toLowerCase();
-  for (const [substring, shift] of MODEL_HUE_SHIFTS) {
-    if (lower.includes(substring)) return shift;
-  }
-  return 0;
-}
 
 export function advancePhase(prevPhase: number, dtSeconds: number, durSeconds: number): number {
   return (prevPhase + dtSeconds / (durSeconds || 2.4)) % 1;

@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   advancePhase,
-  computeCacheClarity,
   computeConcurrencyTurbulence,
   computeDispatchIntensity,
-  computeModelHueShift,
   computeMomentum,
   computePulseDuration,
   computeSurge,
   computeThemeFilter,
   computeThemeHueDeg,
-  dominantModel,
 } from './reactorMath';
 
 describe('computePulseDuration', () => {
@@ -75,34 +72,6 @@ describe('computeThemeFilter', () => {
     const overloaded = computeThemeFilter('cyan', 'ok', true, true);
     expect(overloaded).not.toBe(base);
   });
-
-  it('the 4-arg call form is unchanged (modelHueShift defaults to 0)', () => {
-    expect(computeThemeFilter('cyan', 'ok', true)).toBe('hue-rotate(0deg)');
-    expect(computeThemeFilter('violet', 'warn', false, true)).toBe(
-      computeThemeFilter('violet', 'warn', false, true, 0)
-    );
-  });
-
-  it('a 5th-arg modelHueShift shifts the hue on top of the existing shifts', () => {
-    expect(computeThemeFilter('cyan', 'ok', true, false, -60)).toBe('hue-rotate(-60deg)');
-    expect(computeThemeFilter('cyan', 'ok', true, true, 90)).toBe('hue-rotate(130deg) brightness(1.15)');
-  });
-});
-
-describe('computeCacheClarity', () => {
-  it('maps 0 to the clarity floor and 1 to full clarity', () => {
-    expect(computeCacheClarity(0)).toBe(0.6);
-    expect(computeCacheClarity(1)).toBe(1);
-  });
-
-  it('clamps out-of-range inputs', () => {
-    expect(computeCacheClarity(-1)).toBe(0.6);
-    expect(computeCacheClarity(2)).toBe(1);
-  });
-
-  it('maps the midpoint linearly', () => {
-    expect(computeCacheClarity(0.5)).toBeCloseTo(0.8, 5);
-  });
 });
 
 describe('computeConcurrencyTurbulence', () => {
@@ -117,43 +86,6 @@ describe('computeConcurrencyTurbulence', () => {
 
   it('scales linearly below the saturation point', () => {
     expect(computeConcurrencyTurbulence(2)).toBeCloseTo(0.5, 5);
-  });
-});
-
-describe('dominantModel', () => {
-  it('returns null for an empty list', () => {
-    expect(dominantModel([])).toBeNull();
-  });
-
-  it('ignores null models', () => {
-    expect(dominantModel([{ model: null }, { model: null }])).toBeNull();
-  });
-
-  it('picks the majority model in a 3-vs-1 split', () => {
-    const agents = [
-      { model: 'claude-sonnet-5' },
-      { model: 'claude-sonnet-5' },
-      { model: 'claude-sonnet-5' },
-      { model: 'claude-haiku-4-5' },
-    ];
-    expect(dominantModel(agents)).toBe('claude-sonnet-5');
-  });
-});
-
-describe('computeModelHueShift', () => {
-  it('shifts haiku cool and opus warm', () => {
-    expect(computeModelHueShift('claude-haiku-4-5-x')).toBe(-60);
-    expect(computeModelHueShift('claude-opus-4-5')).toBe(90);
-  });
-
-  it('shifts fable and leaves sonnet unshifted', () => {
-    expect(computeModelHueShift('claude-fable-1')).toBe(200);
-    expect(computeModelHueShift('claude-sonnet-5')).toBe(0);
-  });
-
-  it('returns 0 for null or unrecognized models', () => {
-    expect(computeModelHueShift(null)).toBe(0);
-    expect(computeModelHueShift('some-other-model')).toBe(0);
   });
 });
 
