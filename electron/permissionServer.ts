@@ -210,6 +210,6 @@ export function startPermissionServer(options: StartPermissionServerOptions): Pr
         stop: () => server.close(),
       });
     });
-    server.listen(options.port);
+    server.listen(options.port, '127.0.0.1');
   });
 }
