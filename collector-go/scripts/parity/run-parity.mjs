@@ -380,7 +380,7 @@ function coverageProblems(label, dump, root, baseMs) {
   const anomalies = dump.tables.anomalies;
   const seen = new Set();
   for (const a of anomalies) {
-    const key = `${a.kind} ${a.tool_use_id}`;
+    const key = `${a.kind}\0${a.tool_use_id}`;
     if (seen.has(key)) fail(`duplicate anomalies row for (${a.kind}, ${a.tool_use_id}) -- INSERT OR IGNORE + unique index failed to dedup repeat detections`);
     seen.add(key);
   }

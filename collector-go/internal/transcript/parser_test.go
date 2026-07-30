@@ -199,7 +199,7 @@ func TestParseTranscriptLine_ExtractsToolResultsFromUser(t *testing.T) {
 // TestParseTranscriptLine_ResultLengthNoHTMLEscaping locks in that
 // stringifiedLength mirrors JSON.stringify's length exactly for strings
 // containing '<', '>', or '&', rather than Go's encoding/json default of
-// HTML-escaping those characters (e.g. '>' becomes the 6-byte '>').
+// HTML-escaping those characters (e.g. '>' becomes the 6-byte \u003e).
 // JSON.stringify("a > b") is 7 bytes (the 2 quotes plus the 5 literal
 // characters); a naive json.Marshal("a > b") HTML-escapes the '>' and
 // produces 12.
