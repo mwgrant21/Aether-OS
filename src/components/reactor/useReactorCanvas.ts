@@ -7,7 +7,9 @@ import {
   computePulseDuration,
   computeSurge,
   computeThemeFilter,
+  effectivePulseDuration,
 } from './reactorMath';
+import { useReducedMotion } from '../shared/useReducedMotion';
 
 export interface ReactorFrame {
   now: number;
@@ -28,10 +30,11 @@ export interface ReactorFrame {
 // burn rate even when the Terminal view (the only place ReactorCore mounts) isn't open.
 export function usePulseDurationVar() {
   const { state } = useAetherStore();
+  const reducedMotion = useReducedMotion();
   useEffect(() => {
-    const dur = computePulseDuration(state.momentum, state.cfg.pulseMode, state.alarmLevel);
+    const dur = effectivePulseDuration(computePulseDuration(state.momentum, state.cfg.pulseMode, state.alarmLevel), reducedMotion);
     document.documentElement.style.setProperty('--pulse-dur', `${dur.toFixed(2)}s`);
-  }, [state.momentum, state.cfg.pulseMode, state.alarmLevel]);
+  }, [state.momentum, state.cfg.pulseMode, state.alarmLevel, reducedMotion]);
 }
 
 export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
@@ -48,6 +51,9 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
   drawRef.current = draw;
   const stateRef = useRef(state);
   stateRef.current = state;
+  const reducedMotion = useReducedMotion();
+  const reducedMotionRef = useRef(reducedMotion);
+  reducedMotionRef.current = reducedMotion;
 
   usePulseDurationVar();
 
@@ -61,7 +67,7 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
       const glEl = glRef.current;
       const conduitEl = conduitRef.current;
       if (coreEl && glEl && conduitEl) {
-        const dur = computePulseDuration(s.momentum, s.cfg.pulseMode, s.alarmLevel);
+        const dur = effectivePulseDuration(computePulseDuration(s.momentum, s.cfg.pulseMode, s.alarmLevel), reducedMotionRef.current);
         const t = now / 1000;
         const dt = Math.min(0.1, t - (lastTRef.current ?? t));
         lastTRef.current = t;

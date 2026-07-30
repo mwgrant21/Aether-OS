@@ -4,6 +4,7 @@ import {
   computeConcurrencyTurbulence,
   computeDispatchIntensity,
   computeMomentum,
+  effectivePulseDuration,
   computePulseDuration,
   computeRateFromUsage,
   computeSurge,
@@ -200,5 +201,18 @@ describe('computeDispatchIntensity', () => {
   it('is both overdrive and overload at 3 or more concurrent dispatches', () => {
     expect(computeDispatchIntensity(3)).toEqual({ overdrive: true, overload: true, glowMultiplier: 1.25 });
     expect(computeDispatchIntensity(9)).toEqual({ overdrive: true, overload: true, glowMultiplier: 1.25 });
+  });
+});
+
+describe('effectivePulseDuration', () => {
+  it('passes through the computed duration when reduced motion is off', () => {
+    expect(effectivePulseDuration(0.8, false)).toBe(0.8);
+    expect(effectivePulseDuration(2.9, false)).toBe(2.9);
+  });
+
+  it('returns a calm constant, outside the normal 0.8-2.9s range, when reduced motion is on', () => {
+    const reduced = effectivePulseDuration(0.8, true);
+    expect(reduced).toBe(4.0);
+    expect(reduced).toBeGreaterThan(2.9);
   });
 });

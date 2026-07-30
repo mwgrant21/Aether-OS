@@ -48,6 +48,15 @@ export function computePulseDuration(rate: number, pulseMode: 'live' | 'ambient'
   return dur;
 }
 
+// A deliberately calm, steady pulse when the OS's reduced-motion setting is on -- not a
+// frozen/static reactor (which could misread as broken rather than motion-reduced), and well
+// outside computePulseDuration's normal 0.8-2.9s range so the difference is unambiguous.
+const REDUCED_MOTION_PULSE_DUR = 4.0;
+
+export function effectivePulseDuration(dur: number, reducedMotion: boolean): number {
+  return reducedMotion ? REDUCED_MOTION_PULSE_DUR : dur;
+}
+
 const OVERLOAD_HUE_SHIFT = 40;
 
 export function computeThemeHueDeg(theme: ThemeName, alarmLevel: AlarmLevel, overload: boolean = false): number {
