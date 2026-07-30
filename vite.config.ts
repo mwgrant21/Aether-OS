@@ -26,6 +26,7 @@ export default defineConfig(({ mode }) => {
       exclude: [
         ...configDefaults.exclude,
         'collector/**',
+        'e2e/**', // Playwright's own separate test suite, run via npm run test:e2e
         'scripts/aether-hook-emit.test.ts',
         'scripts/aether-permission-hook.test.ts',
       ],
