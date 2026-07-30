@@ -5,8 +5,8 @@ import {
   computeConcurrencyTurbulence,
   computeDispatchIntensity,
   computeModelHueShift,
+  computeMomentum,
   computePulseDuration,
-  computeRateFromUsage,
   computeSurge,
   computeThemeFilter,
   computeThemeHueDeg,
@@ -172,33 +172,59 @@ describe('computeSurge', () => {
   });
 });
 
-describe('computeRateFromUsage', () => {
-  it('falls back to the idle baseline when burn rate is zero', () => {
-    expect(computeRateFromUsage(0)).toBe(92000);
+describe('computeMomentum', () => {
+  it('reads as the idle baseline with zero samples', () => {
+    expect(computeMomentum([])).toBe(92000);
   });
 
-  it('falls back to the idle baseline for a negative burn rate', () => {
-    expect(computeRateFromUsage(-500)).toBe(92000);
+  it('reads as the idle baseline with fewer than 3 samples (insufficient history)', () => {
+    expect(computeMomentum([{ burnRatePerMin: 9000, atMs: 1 }, { burnRatePerMin: 100, atMs: 2 }])).toBe(92000);
   });
 
-  it('falls back to the idle baseline for real burn rates below the activity floor (300 tokens/min)', () => {
-    expect(computeRateFromUsage(299)).toBe(92000);
+  it('reads as the idle baseline when burn rate is flat across the window', () => {
+    const history = [
+      { burnRatePerMin: 4000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 4000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(92000);
   });
 
-  it('maps the activity floor to the visual floor', () => {
-    expect(computeRateFromUsage(300)).toBe(20000);
+  it('rises toward the visual ceiling as burn rate climbs across the window', () => {
+    const history = [
+      { burnRatePerMin: 1000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 7000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(168000);
   });
 
-  it('maps the midpoint of the real range to the midpoint of the visual range', () => {
-    expect(computeRateFromUsage(6150)).toBe(94000);
+  it('falls toward the visual floor as burn rate drops across the window', () => {
+    const history = [
+      { burnRatePerMin: 7000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 1000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(20000);
   });
 
-  it('maps the activity ceiling (12000 tokens/min) to the visual ceiling', () => {
-    expect(computeRateFromUsage(12000)).toBe(168000);
+  it('clamps a rise steeper than the momentum range to the visual ceiling', () => {
+    const history = [
+      { burnRatePerMin: 0, atMs: 1 },
+      { burnRatePerMin: 50000, atMs: 2 },
+      { burnRatePerMin: 100000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(168000);
   });
 
-  it('clamps a real burn rate above the activity ceiling', () => {
-    expect(computeRateFromUsage(400000)).toBe(168000);
+  it('only considers the most recent 3 samples when more are present', () => {
+    const history = [
+      { burnRatePerMin: 9000, atMs: 0 }, // older sample outside the window, must be ignored
+      { burnRatePerMin: 1000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 7000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(168000);
   });
 });
 

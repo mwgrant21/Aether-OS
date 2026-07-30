@@ -6,19 +6,24 @@ const RATE_MIN = 20000;
 const RATE_MAX = 168000;
 const RATE_IDLE = 92000;
 
-// Real burnRatePerMin (input+output tokens/min from actual transcripts) runs
-// 10-100x smaller than this visual band — measured on a real active session,
-// typical bursts land in the low thousands/min. Passing it through unscaled
-// (as this used to) meant real usage almost never cleared RATE_MIN, so the
-// reactor read as permanently idle regardless of actual work. Map the real
-// range onto the visual range instead of clamping it into it.
-const REAL_BURN_FLOOR = 300; // tokens/min below this reads as no measurable activity
-const REAL_BURN_CEILING = 12000; // tokens/min at/above this reads as fully active
+export interface RateSample {
+  burnRatePerMin: number;
+  atMs: number;
+}
 
-export function computeRateFromUsage(burnRatePerMin: number): number {
-  if (burnRatePerMin < REAL_BURN_FLOOR) return RATE_IDLE;
-  const t = Math.min(1, (burnRatePerMin - REAL_BURN_FLOOR) / (REAL_BURN_CEILING - REAL_BURN_FLOOR));
-  return Math.round(RATE_MIN + t * (RATE_MAX - RATE_MIN));
+const MOMENTUM_WINDOW = 3;
+// tokens/min delta across the window that reads as the max visual rise/fall; a starting
+// point, adjustable later without architectural change (same posture as REAL_BURN_CEILING
+// before it).
+const MOMENTUM_RANGE = 6000;
+
+export function computeMomentum(history: RateSample[]): number {
+  if (history.length < MOMENTUM_WINDOW) return RATE_IDLE;
+  const window = history.slice(-MOMENTUM_WINDOW);
+  const delta = window[window.length - 1].burnRatePerMin - window[0].burnRatePerMin;
+  const clamped = Math.max(-MOMENTUM_RANGE, Math.min(MOMENTUM_RANGE, delta));
+  if (clamped >= 0) return Math.round(RATE_IDLE + (clamped / MOMENTUM_RANGE) * (RATE_MAX - RATE_IDLE));
+  return Math.round(RATE_IDLE + (clamped / MOMENTUM_RANGE) * (RATE_IDLE - RATE_MIN));
 }
 
 export function computePulseDuration(rate: number, pulseMode: 'live' | 'ambient', alarmLevel: AlarmLevel): number {
