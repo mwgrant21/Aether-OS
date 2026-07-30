@@ -93,18 +93,12 @@ func ToProjectRelative(filePath *string, projectRoot *string) *string {
 	if projectRoot == nil || *projectRoot == "" {
 		return nil
 	}
-	// Node's win32 path.relative treats drive letters case-insensitively;
-	// filepath.Rel does not and errors out on what it sees as a volume
-	// mismatch (e.g. root "C:\..." vs fp "c:\..."). Normalize fp's volume
-	// prefix to projectRoot's exact casing first so this common case
-	// relativizes instead of being dropped -- a targeted fix for the
-	// single-drive-different-case scenario, not a full reimplementation of
-	// win32 path.relative's normalization.
-	rootVolume := filepath.VolumeName(*projectRoot)
-	fpVolume := filepath.VolumeName(fp)
-	if rootVolume != "" && fpVolume != "" && rootVolume != fpVolume && strings.EqualFold(rootVolume, fpVolume) {
-		fp = rootVolume + fp[len(fpVolume):]
-	}
+	// Node's win32 path.relative treats drive letters case-insensitively.
+	// On this repo's pinned toolchain (go.mod: go 1.26.5), filepath.Rel
+	// already compares volume names case-insensitively on Windows too (an
+	// upstream stdlib behavior, verified directly against this toolchain --
+	// see task-3-report.md's fix-round entry), so root "C:\..." vs fp
+	// "c:\..." already relativizes correctly with no extra handling here.
 	rel, err := filepath.Rel(*projectRoot, fp)
 	if err != nil {
 		return nil

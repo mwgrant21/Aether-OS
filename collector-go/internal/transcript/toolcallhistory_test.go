@@ -88,11 +88,16 @@ func TestToProjectRelative_PosixStyleAbsoluteAgainstWindowsRoot(t *testing.T) {
 
 func TestToProjectRelative_CaseInsensitiveDriveLetter(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("windows-only: exercises drive-letter case normalization")
+		t.Skip("windows-only: exercises drive-letter case handling")
 	}
-	// Node's win32 path.relative is case-insensitive on the drive letter;
-	// filepath.Rel is not. A lowercase-drive file path against an
-	// uppercase-drive root should still relativize successfully.
+	// Node's win32 path.relative is case-insensitive on the drive letter. On
+	// this repo's pinned toolchain (go.mod: go 1.26.5), Go's filepath.Rel
+	// already compares volume names case-insensitively on Windows too (an
+	// upstream stdlib behavior, confirmed by direct reproduction -- see
+	// task-3-report.md's fix-round entry), so this test currently can't
+	// distinguish "ToProjectRelative handles this" from "filepath.Rel always
+	// did" -- it's here as a regression guard on the observable behavior,
+	// not as proof of any normalization logic in this file (there is none).
 	result := ToProjectRelative(strp(`c:\projects\x\src\a.ts`), strp(`C:\projects\x`))
 	if result == nil {
 		t.Fatalf("expected non-nil result for case-varied drive letter")
