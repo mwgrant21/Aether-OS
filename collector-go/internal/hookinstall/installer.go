@@ -10,7 +10,12 @@
 // byte-for-byte in VALUE (see installer_test.go's fixture-based tests, which
 // exercise a settings.json with a pre-existing unrelated hook group already
 // present, not just an empty file) and writes a timestamped backup before
-// ever touching an existing file, exactly mirroring hookInstaller.ts.
+// ever touching an existing file, exactly mirroring hookInstaller.ts. The
+// byte-for-byte-in-VALUE claim depends on marshalSettingsJSON below using
+// json.Encoder with SetEscapeHTML(false): Go's json.MarshalIndent HTML-escapes
+// `<`, `>`, and `&` in every string by default (JSON.stringify does not), which
+// would otherwise silently rewrite unrelated hook command strings containing
+// shell redirection/`&&` on every install/uninstall write.
 //
 // Known, accepted divergence from the TS original: Go's encoding/json always
 // emits object keys in sorted order when marshaling a map[string]interface{},
@@ -24,10 +29,12 @@
 package hookinstall
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -138,6 +145,50 @@ func readSettings(settingsPath string) readSettingsResult {
 	return readSettingsResult{ok: true, fileExisted: true, raw: string(raw), parsed: obj}
 }
 
+// normalizeHooksValue mirrors hookInstaller.ts's
+// `parsed.hooks && typeof parsed.hooks === 'object' ? { ...parsed.hooks } : {}`
+// spread pattern used at every install/uninstall call site. JS's typeof
+// considers arrays 'object' too, so `{...arrayValue}` spreads array elements
+// into a plain object keyed by numeric-string index ("0", "1", ...) rather
+// than discarding them -- this normalizes a Go []interface{} the same way,
+// and returns a shallow copy for an already-object value (never the original
+// map, matching the TS spread's copy semantics) or an empty map for any other
+// shape (missing key, nil/null, string, number, bool).
+func normalizeHooksValue(v interface{}) map[string]interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, val := range t {
+			out[k] = val
+		}
+		return out
+	case []interface{}:
+		out := make(map[string]interface{}, len(t))
+		for i, val := range t {
+			out[strconv.Itoa(i)] = val
+		}
+		return out
+	default:
+		return map[string]interface{}{}
+	}
+}
+
+// marshalSettingsJSON mirrors JSON.stringify(merged, null, 2): 2-space
+// indent, no HTML-escaping of <, >, & (Go's json.MarshalIndent HTML-escapes
+// those by default; JSON.stringify never does). json.Encoder.Encode appends
+// a trailing newline that MarshalIndent does not, so it is trimmed to keep
+// the existing output shape (no trailing newline) unchanged.
+func marshalSettingsJSON(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
 func writeBackup(settingsPath, raw string) (string, error) {
 	backupPath := fmt.Sprintf("%s.aetherbak-%d", settingsPath, time.Now().UnixMilli())
 	if err := os.WriteFile(backupPath, []byte(raw), 0644); err != nil {
@@ -197,12 +248,7 @@ func installGroup(settingsPath, scriptPath string, events []string) InstallResul
 		backupPath = &bp
 	}
 
-	hooks := map[string]interface{}{}
-	if hobj, ok := result.parsed["hooks"].(map[string]interface{}); ok {
-		for k, v := range hobj {
-			hooks[k] = v
-		}
-	}
+	hooks := normalizeHooksValue(result.parsed["hooks"])
 
 	for _, eventName := range events {
 		current, exists := hooks[eventName]
@@ -242,7 +288,7 @@ func installGroup(settingsPath, scriptPath string, events []string) InstallResul
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
 		return InstallResult{OK: false, Error: err.Error()}
 	}
-	body, err := json.MarshalIndent(merged, "", "  ")
+	body, err := marshalSettingsJSON(merged)
 	if err != nil {
 		return InstallResult{OK: false, Error: err.Error()}
 	}
@@ -333,8 +379,17 @@ func uninstallByMarker(settingsPath string, events []string, marker string) Inst
 	if !result.fileExisted {
 		return InstallResult{OK: true, BackupPath: nil}
 	}
-	hooksObj, isObj := result.parsed["hooks"].(map[string]interface{})
-	if !isObj {
+	// Mirrors TS's `typeof parsed.hooks !== 'object' || parsed.hooks === null`
+	// early-return guard exactly: proceed (and write) only when hooks is a
+	// JSON object OR array (JS's typeof array is 'object' too, so an
+	// array-shaped hooks value must NOT early-return here -- it gets spread
+	// into a numeric-keyed object below via normalizeHooksValue, matching
+	// TS's `{ ...parsed.hooks }`). Anything else -- missing key, null,
+	// string, number, bool -- is a true no-op: no backup, no write.
+	switch result.parsed["hooks"].(type) {
+	case map[string]interface{}, []interface{}:
+		// proceed
+	default:
 		return InstallResult{OK: true, BackupPath: nil}
 	}
 
@@ -343,10 +398,7 @@ func uninstallByMarker(settingsPath string, events []string, marker string) Inst
 		return InstallResult{OK: false, Error: err.Error()}
 	}
 
-	hooks := map[string]interface{}{}
-	for k, v := range hooksObj {
-		hooks[k] = v
-	}
+	hooks := normalizeHooksValue(result.parsed["hooks"])
 
 	for _, eventName := range events {
 		current, exists := hooks[eventName]
@@ -372,7 +424,7 @@ func uninstallByMarker(settingsPath string, events []string, marker string) Inst
 	}
 	merged["hooks"] = hooks
 
-	body, err := json.MarshalIndent(merged, "", "  ")
+	body, err := marshalSettingsJSON(merged)
 	if err != nil {
 		return InstallResult{OK: false, Error: err.Error()}
 	}

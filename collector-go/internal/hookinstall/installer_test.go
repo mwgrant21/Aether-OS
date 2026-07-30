@@ -426,6 +426,129 @@ func TestUninstallPermissionHooks_RemovesOnlyItsOwnEntries(t *testing.T) {
 	}
 }
 
+func TestInstallHooks_PreservesArrayShapedTopLevelHooks(t *testing.T) {
+	existing := `{"hooks":["legacy-entry-1","legacy-entry-2"]}`
+	settingsPath := tempSettingsPathWithContent(t, existing)
+	result := InstallHooks(settingsPath, scriptPath)
+	if !result.OK {
+		t.Fatalf("InstallHooks failed: %s", result.Error)
+	}
+
+	written := readWritten(t, settingsPath)
+	hooksObj, ok := written["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("hooks is not an object after install: %#v", written["hooks"])
+	}
+	if got, _ := hooksObj["0"].(string); got != "legacy-entry-1" {
+		t.Errorf(`hooks["0"] = %v, want "legacy-entry-1"`, hooksObj["0"])
+	}
+	if got, _ := hooksObj["1"].(string); got != "legacy-entry-2" {
+		t.Errorf(`hooks["1"] = %v, want "legacy-entry-2"`, hooksObj["1"])
+	}
+	// Plus the newly-installed event groups -- nothing from the original
+	// array is lost, and install still proceeds normally.
+	for _, eventName := range ManagedHookEvents {
+		groups := hooksGroups(t, written, eventName)
+		if len(groups) != 1 {
+			t.Errorf("hooks[%s] length = %d, want 1", eventName, len(groups))
+			continue
+		}
+		if cmd := groupCommand(t, groups[0], 0); !strings.Contains(cmd, scriptPath) {
+			t.Errorf("hooks[%s][0] command = %q, want to contain scriptPath", eventName, cmd)
+		}
+	}
+}
+
+func TestUninstallHooks_ArrayShapedTopLevelHooks_WritesNotNoOp(t *testing.T) {
+	existing := `{"hooks":["legacy-entry-1","legacy-entry-2"]}`
+	settingsPath := tempSettingsPathWithContent(t, existing)
+	result := UninstallHooks(settingsPath)
+	if !result.OK {
+		t.Fatalf("UninstallHooks failed: %s", result.Error)
+	}
+	// None of the array elements match any marker-based removal, so this
+	// must still be a real write (backup taken), not TS's early-return no-op
+	// path, which only applies when hooks is missing/null/non-object.
+	if result.BackupPath == nil || *result.BackupPath == "" {
+		t.Fatalf("BackupPath = %v, want a non-empty path (must not be a no-op for array-shaped hooks)", result.BackupPath)
+	}
+
+	written := readWritten(t, settingsPath)
+	hooksObj, ok := written["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("hooks is not an object after uninstall: %#v", written["hooks"])
+	}
+	if got, _ := hooksObj["0"].(string); got != "legacy-entry-1" {
+		t.Errorf(`hooks["0"] = %v, want "legacy-entry-1"`, hooksObj["0"])
+	}
+	if got, _ := hooksObj["1"].(string); got != "legacy-entry-2" {
+		t.Errorf(`hooks["1"] = %v, want "legacy-entry-2"`, hooksObj["1"])
+	}
+}
+
+func TestInstallHooks_DoesNotHTMLEscapeUnrelatedHookCommand(t *testing.T) {
+	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"powershell -File x.ps1 && echo done > log.txt"}]}]}}`
+	settingsPath := tempSettingsPathWithContent(t, existing)
+	if result := InstallHooks(settingsPath, scriptPath); !result.OK {
+		t.Fatalf("InstallHooks failed: %s", result.Error)
+	}
+
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	content := string(raw)
+	// The literal substrings must survive unescaped ...
+	if !strings.Contains(content, "&&") {
+		t.Errorf("written settings.json does not contain literal &&; got HTML-escaped output:\n%s", content)
+	}
+	if !strings.Contains(content, "echo done > log.txt") {
+		t.Errorf("written settings.json does not contain literal >; got HTML-escaped output:\n%s", content)
+	}
+	// ... and json.MarshalIndent's HTML-escaped forms must NOT appear.
+	if strings.Contains(content, `\u0026`) {
+		t.Errorf("written settings.json contains HTML-escaped &: \\u0026:\n%s", content)
+	}
+	if strings.Contains(content, `\u003e`) {
+		t.Errorf("written settings.json contains HTML-escaped >: \\u003e:\n%s", content)
+	}
+}
+
+func TestInstallHooks_PreservesUnrelatedTopLevelKeyByteIdentical(t *testing.T) {
+	existing := `{"model":"sonnet","hooks":{"Stop":[{"hooks":[{"type":"command","command":"powershell -File some-other-script.ps1"}]}]}}`
+	settingsPath := tempSettingsPathWithContent(t, existing)
+	if result := InstallHooks(settingsPath, scriptPath); !result.OK {
+		t.Fatalf("InstallHooks failed: %s", result.Error)
+	}
+
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"model": "sonnet"`) {
+		t.Errorf("written settings.json does not contain the unrelated top-level key byte-identical:\n%s", raw)
+	}
+}
+
+func TestUninstallHooks_PreservesUnrelatedTopLevelKeyByteIdentical(t *testing.T) {
+	existing := `{"model":"sonnet","hooks":{"Stop":[{"hooks":[{"type":"command","command":"powershell -File some-other-script.ps1"}]}]}}`
+	settingsPath := tempSettingsPathWithContent(t, existing)
+	if result := InstallHooks(settingsPath, scriptPath); !result.OK {
+		t.Fatalf("InstallHooks failed: %s", result.Error)
+	}
+	if result := UninstallHooks(settingsPath); !result.OK {
+		t.Fatalf("UninstallHooks failed: %s", result.Error)
+	}
+
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"model": "sonnet"`) {
+		t.Errorf("written settings.json does not contain the unrelated top-level key byte-identical:\n%s", raw)
+	}
+}
+
 func TestManagedHookEvents_DoesNotContainPermissionRequest(t *testing.T) {
 	for _, e := range ManagedHookEvents {
 		if e == "PermissionRequest" {
