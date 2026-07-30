@@ -2,14 +2,11 @@ import { useEffect, useRef } from 'react';
 import { useAetherStore } from '../../state/store';
 import {
   advancePhase,
-  computeCacheClarity,
   computeConcurrencyTurbulence,
   computeDispatchIntensity,
-  computeModelHueShift,
   computePulseDuration,
   computeSurge,
   computeThemeFilter,
-  dominantModel,
 } from './reactorMath';
 
 export interface ReactorFrame {
@@ -73,10 +70,9 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
         const surge = computeSurge(phase);
         const { overdrive, overload, glowMultiplier } = computeDispatchIntensity(s.realAgents.length);
         const glowFactor = ((s.cfg.glow == null ? 70 : s.cfg.glow) / 70) * glowMultiplier;
-        const clarity = computeCacheClarity(s.cacheHitRatio);
+        const clarity = 1; // cache-clarity axis removed (Stage 8) — full clarity always
         const turbulence = computeConcurrencyTurbulence(s.realAgents.length);
-        const modelHueShift = computeModelHueShift(dominantModel(s.realAgents));
-        const themeFilter = computeThemeFilter(s.cfg.theme, s.alarmLevel, s.cfg.glowFx, overload, modelHueShift);
+        const themeFilter = computeThemeFilter(s.cfg.theme, s.alarmLevel, s.cfg.glowFx, overload);
         [coreEl, glEl, conduitEl].forEach((el) => {
           if (el.style.filter !== themeFilter) el.style.filter = themeFilter;
         });
