@@ -10,6 +10,7 @@ const STORAGE_KEY = 'aetheros-v1';
 export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> = {
   used: 'a live per-session token counter recomputed every tick from the burn simulation; a persisted value would carry a stale total into a new session and misstate current usage',
   rate: 'a live burn rate overwritten by every real-usage snapshot (SET_REAL_USAGE) and every tick; a persisted number would show a stale/wrong rate until the first real snapshot lands',
+  momentum: 'a live pulse-momentum value overwritten by every real-usage snapshot (SET_REAL_USAGE) and every tick; a persisted number would show a stale/wrong momentum reading until the first real snapshot lands',
   ctxUsed: "the current terminal session's context-window usage, replaced by the first real-usage snapshot; a new session starts with a fresh context window, so a persisted value would misrepresent it",
   weekRaw: 'a decorative random-walk mutated every tick by the simulation (tick.ts) with no real signal; persisting it would preserve fake noise as if it were real historical data',
   commandsRun: 'a per-session counter (shown as "Commands run" in the session metrics row); persisting it would carry a stale count into a new session and misrepresent commands run in the current one',
@@ -17,7 +18,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   selectedRealAgent: 'keyed on a toolUseId that will not exist in a new session',
   notifOpen: 'a transient dropdown open/closed UI flag; restoring "open" would pop the notifications panel open on launch with no user action prompting it',
   apprOpen: 'a transient dropdown open/closed UI flag; restoring "open" would pop the approvals panel open on launch with no user action prompting it',
-  alarmLevel: 'derived every tick from rate vs. cfg.alarm (tick.ts); a persisted value could show a stale CRIT/WARN banner that no longer reflects the current burn rate',
+  alarmLevel: 'derived every tick from the real rate-limit window usage in state.statusline (tick.ts); a persisted value could show a stale CRIT/WARN banner that no longer reflects current rate-limit pressure',
   sys: 'simulated CPU/MEM/NET/DISK metrics randomly mutated every tick; no real signal, same category as weekRaw',
   logs: 'stale lines would fake a live STREAMING state after restart',
   realUsage: 'the live real-usage snapshot pushed over IPC (SET_REAL_USAGE); persisting it would show old usage/burn numbers as current until the next real snapshot arrives',

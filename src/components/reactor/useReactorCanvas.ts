@@ -29,9 +29,9 @@ export interface ReactorFrame {
 export function usePulseDurationVar() {
   const { state } = useAetherStore();
   useEffect(() => {
-    const dur = computePulseDuration(state.rate, state.cfg.pulseMode, state.alarmLevel);
+    const dur = computePulseDuration(state.momentum, state.cfg.pulseMode, state.alarmLevel);
     document.documentElement.style.setProperty('--pulse-dur', `${dur.toFixed(2)}s`);
-  }, [state.rate, state.cfg.pulseMode, state.alarmLevel]);
+  }, [state.momentum, state.cfg.pulseMode, state.alarmLevel]);
 }
 
 export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
@@ -61,7 +61,7 @@ export function useReactorCanvas(draw: (frame: ReactorFrame) => void) {
       const glEl = glRef.current;
       const conduitEl = conduitRef.current;
       if (coreEl && glEl && conduitEl) {
-        const dur = computePulseDuration(s.rate, s.cfg.pulseMode, s.alarmLevel);
+        const dur = computePulseDuration(s.momentum, s.cfg.pulseMode, s.alarmLevel);
         const t = now / 1000;
         const dt = Math.min(0.1, t - (lastTRef.current ?? t));
         lastTRef.current = t;

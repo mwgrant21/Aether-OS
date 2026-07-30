@@ -198,6 +198,7 @@ export interface Cfg {
 export interface AetherState {
   used: number;
   rate: number;
+  momentum: number;
   ctxUsed: number;
   weekRaw: number[];
   commandsRun: number;

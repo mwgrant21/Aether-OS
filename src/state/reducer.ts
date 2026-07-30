@@ -6,7 +6,7 @@ import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { buildChatActionResultText } from './chatActionResult';
-import { computeMomentum } from '../components/reactor/reactorMath';
+import { computeMomentum, computeRateFromUsage } from '../components/reactor/reactorMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
@@ -189,7 +189,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
         realUsage: action.snapshot,
         ctxUsed: action.snapshot.ctxUsed,
         rateHistory,
-        rate: computeMomentum(rateHistory),
+        momentum: computeMomentum(rateHistory),
+        rate: computeRateFromUsage(action.snapshot.burnRatePerMin),
       };
     }
 

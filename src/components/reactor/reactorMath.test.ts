@@ -5,6 +5,7 @@ import {
   computeDispatchIntensity,
   computeMomentum,
   computePulseDuration,
+  computeRateFromUsage,
   computeSurge,
   computeThemeFilter,
   computeThemeHueDeg,
@@ -157,6 +158,32 @@ describe('computeMomentum', () => {
       { burnRatePerMin: 7000, atMs: 3 },
     ];
     expect(computeMomentum(history)).toBe(168000);
+  });
+});
+
+describe('computeRateFromUsage', () => {
+  it('reads as idle baseline below the real-burn floor', () => {
+    expect(computeRateFromUsage(0)).toBe(92000);
+    expect(computeRateFromUsage(299)).toBe(92000);
+  });
+
+  it('maps the floor to RATE_MIN', () => {
+    expect(computeRateFromUsage(300)).toBe(20000);
+  });
+
+  it('clamps at RATE_MAX at or above the ceiling', () => {
+    expect(computeRateFromUsage(12000)).toBe(168000);
+    expect(computeRateFromUsage(50000)).toBe(168000);
+  });
+
+  it('maps a midpoint value linearly between floor and ceiling', () => {
+    const mid = 300 + (12000 - 300) / 2;
+    expect(computeRateFromUsage(mid)).toBe(Math.round(20000 + 0.5 * (168000 - 20000)));
+  });
+
+  it('clamps negative or extreme inputs correctly', () => {
+    expect(computeRateFromUsage(-5000)).toBe(92000);
+    expect(computeRateFromUsage(1000000)).toBe(168000);
   });
 });
 

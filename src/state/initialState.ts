@@ -3,6 +3,7 @@ import type { AetherState } from './types';
 export const initialState: AetherState = {
   used: 24391,
   rate: 92000,
+  momentum: 92000,
   ctxUsed: 78432,
   weekRaw: [46, 40, 44, 38, 50, 42, 62],
   commandsRun: 163,

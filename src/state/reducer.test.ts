@@ -317,27 +317,27 @@ describe('reducer', () => {
   });
 
   describe('SET_REAL_USAGE', () => {
-    it('stays at the idle baseline on the first snapshot (insufficient history)', () => {
+    it('stays at the idle momentum baseline on the first snapshot (insufficient history)', () => {
       const snapshot = { ...initialState.realUsage, burnRatePerMin: 6150 };
       const next = reducer(initialState, { type: 'SET_REAL_USAGE', snapshot });
-      expect(next.rate).toBe(92000);
+      expect(next.momentum).toBe(92000);
       expect(next.rateHistory).toHaveLength(1);
       expect(next.realUsage).toBe(snapshot);
     });
 
-    it('stays at the idle baseline with only two accumulated snapshots', () => {
+    it('stays at the idle momentum baseline with only two accumulated snapshots', () => {
       const first = reducer(initialState, { type: 'SET_REAL_USAGE', snapshot: { ...initialState.realUsage, burnRatePerMin: 1000 } });
       const second = reducer(first, { type: 'SET_REAL_USAGE', snapshot: { ...initialState.realUsage, burnRatePerMin: 5000 } });
-      expect(second.rate).toBe(92000);
+      expect(second.momentum).toBe(92000);
       expect(second.rateHistory).toHaveLength(2);
     });
 
-    it('rises toward the visual ceiling once three rising snapshots accumulate', () => {
+    it('momentum rises toward the visual ceiling once three rising snapshots accumulate', () => {
       let s = initialState;
       for (const burnRatePerMin of [1000, 4000, 7000]) {
         s = reducer(s, { type: 'SET_REAL_USAGE', snapshot: { ...initialState.realUsage, burnRatePerMin } }) as typeof initialState;
       }
-      expect(s.rate).toBe(168000);
+      expect(s.momentum).toBe(168000);
     });
 
     it('keeps only the most recent 3 samples in rateHistory', () => {
@@ -347,6 +347,12 @@ describe('reducer', () => {
       }
       expect(s.rateHistory).toHaveLength(3);
       expect(s.rateHistory.map((r) => r.burnRatePerMin)).toEqual([2000, 3000, 4000]);
+    });
+
+    it('rate reflects computeRateFromUsage directly from a single snapshot, no accumulation needed', () => {
+      const snapshot = { ...initialState.realUsage, burnRatePerMin: 6150 };
+      const next = reducer(initialState, { type: 'SET_REAL_USAGE', snapshot });
+      expect(next.rate).toBe(94000);
     });
   });
 

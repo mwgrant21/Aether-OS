@@ -32,7 +32,7 @@ export function ReactorCore() {
           phase: frame.phase,
           overdrive: frame.overdrive,
           glowFactor: frame.glowFactor,
-          burnRate: state.rate,
+          burnRate: state.momentum,
           soft: neb,
           clarity: frame.clarity,
           turbulence: frame.turbulence,
