@@ -65,7 +65,7 @@ func TestScanTranscriptsOnce_DiscoversAndIngestsAndRecordsOffset(t *testing.T) {
 	os.WriteFile(filepath.Join(projDir, "session.jsonl"), []byte(content), 0644)
 
 	db := freshScanDB(t)
-	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
 	}
 	assertCount(t, db, "usage_events", 2)
@@ -97,7 +97,7 @@ func TestScanTranscriptsOnce_SecondCallOnlyIngestsNewLines(t *testing.T) {
 
 	db := freshScanDB(t)
 	historyByFile := map[string]*ToolCallHistory{}
-	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, historyByFile); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, historyByFile, nil); err != nil {
 		t.Fatalf("first scan: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestScanTranscriptsOnce_SecondCallOnlyIngestsNewLines(t *testing.T) {
 	beforeCount := 0
 	db.QueryRow("SELECT COUNT(*) FROM usage_events").Scan(&beforeCount)
 
-	if err := ScanTranscriptsOnce(db, projectsRoot, 2000, historyByFile); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, 2000, historyByFile, nil); err != nil {
 		t.Fatalf("second scan: %v", err)
 	}
 	assertCount(t, db, "usage_events", 2)
@@ -126,7 +126,7 @@ func TestScanTranscriptsOnce_IgnoresNonJsonlAndNonDirs(t *testing.T) {
 	os.WriteFile(filepath.Join(projDir, "notes.txt"), []byte("irrelevant"), 0644)
 
 	db := freshScanDB(t)
-	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
 	}
 	assertCount(t, db, "usage_events", 0)
@@ -137,7 +137,7 @@ func TestScanTranscriptsOnce_MissingProjectsRootDoesNotError(t *testing.T) {
 	db := freshScanDB(t)
 	missingRoot := filepath.Join(os.TempDir(), "aether-collector-does-not-exist-scan")
 	os.RemoveAll(missingRoot)
-	if err := ScanTranscriptsOnce(db, missingRoot, 1000, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, missingRoot, 1000, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("expected no error for missing projects root, got %v", err)
 	}
 	assertCount(t, db, "usage_events", 0)
@@ -155,7 +155,7 @@ func TestScanTranscriptsOnce_SkipsNonAssistantOrUsagelessLines(t *testing.T) {
 	os.WriteFile(filepath.Join(projDir, "session.jsonl"), []byte(content), 0644)
 
 	db := freshScanDB(t)
-	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
 	}
 	assertCount(t, db, "usage_events", 1)
@@ -193,7 +193,7 @@ func TestScanTranscriptsOnce_RecordsDispatchOnAgentCompletion(t *testing.T) {
 
 	db := freshScanDB(t)
 	nowMs := time.Date(2026, 7, 8, 9, 0, 30, 0, time.UTC).UnixMilli()
-	if err := ScanTranscriptsOnce(db, projectsRoot, nowMs, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, nowMs, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
 	}
 	assertCount(t, db, "dispatches", 1)
@@ -244,7 +244,7 @@ func TestScanTranscriptsOnce_NoDispatchRowWithoutCompletion(t *testing.T) {
 
 	db := freshScanDB(t)
 	nowMs := time.Date(2026, 7, 8, 9, 0, 30, 0, time.UTC).UnixMilli()
-	if err := ScanTranscriptsOnce(db, projectsRoot, nowMs, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, projectsRoot, nowMs, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
 	}
 	assertCount(t, db, "dispatches", 1)
@@ -259,7 +259,7 @@ func TestScanTranscriptsOnce_StampsHeartbeatEvenWhenRootUnreadable(t *testing.T)
 	db := freshScanDB(t)
 	missingRoot := filepath.Join(os.TempDir(), "aether-does-not-exist-scan-hb")
 	os.RemoveAll(missingRoot)
-	if err := ScanTranscriptsOnce(db, missingRoot, 12345, map[string]*ToolCallHistory{}); err != nil {
+	if err := ScanTranscriptsOnce(db, missingRoot, 12345, map[string]*ToolCallHistory{}, nil); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
 	}
 	var value string
@@ -268,5 +268,45 @@ func TestScanTranscriptsOnce_StampsHeartbeatEvenWhenRootUnreadable(t *testing.T)
 	}
 	if value != "12345" {
 		t.Fatalf("heartbeat=%q want 12345", value)
+	}
+}
+
+// TestScanTranscriptsOnce_UsesInjectedAnomalyIngestFuncWhenProvided proves the
+// Task 8 wiring point: when a non-nil AnomalyIngestFunc is supplied,
+// ScanTranscriptsOnce calls it (instead of the plain UpdateHistory path) with
+// the prior history and this tick's parsed events, and stores its returned
+// history back into toolCallHistoryByFile for the next tick. This is exactly
+// the seam internal/collector uses to inject anomaly.IngestToolCallsAndAnomalies
+// without an import cycle (see this file's top doc comment).
+func TestScanTranscriptsOnce_UsesInjectedAnomalyIngestFuncWhenProvided(t *testing.T) {
+	projectsRoot := mkTempDir(t, "aether-collector-scan-projects-")
+	projDir := filepath.Join(projectsRoot, "my-project")
+	os.Mkdir(projDir, 0755)
+	os.WriteFile(filepath.Join(projDir, "session.jsonl"), []byte(assistantScanLine(100)+"\n"), 0644)
+
+	db := freshScanDB(t)
+	historyByFile := map[string]*ToolCallHistory{}
+
+	var gotEvents int
+	var gotPriorHistory *ToolCallHistory
+	sentinelHistory := CreateEmptyHistory()
+	stub := func(db *sql.DB, history *ToolCallHistory, events []Event, nowMs int64) (*ToolCallHistory, error) {
+		gotPriorHistory = history
+		gotEvents = len(events)
+		return sentinelHistory, nil
+	}
+
+	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, historyByFile, stub); err != nil {
+		t.Fatalf("ScanTranscriptsOnce: %v", err)
+	}
+	if gotEvents != 1 {
+		t.Fatalf("injected func saw %d events, want 1", gotEvents)
+	}
+	if gotPriorHistory == nil {
+		t.Fatalf("injected func was not called with a non-nil prior history")
+	}
+	relPath := filepath.Join("my-project", "session.jsonl")
+	if historyByFile[relPath] != sentinelHistory {
+		t.Fatalf("toolCallHistoryByFile[%q] was not updated to the injected func's returned history", relPath)
 	}
 }

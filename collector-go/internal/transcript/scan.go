@@ -4,10 +4,15 @@
 // ingests usage events and dispatch completions.
 //
 // anomalyIngest.ts's tool-call/anomaly ingestion (ingestToolCallsAndAnomalies)
-// is NOT ported here -- that is a later task's scope. This function still
-// updates the per-file ToolCallHistory (via UpdateHistory) on every scan tick
-// so Agent-dispatch open/close tracking (and therefore IngestDispatchEvent)
-// works correctly independent of that later task.
+// is wired in via the AnomalyIngestFunc parameter below, injected by the
+// caller (internal/collector, Task 8) rather than called directly from this
+// package. This package cannot import internal/anomaly itself: the anomaly
+// package already imports this package's types (Event, ToolCallHistory,
+// ClosedToolCall), so a direct import here would be a cycle. When
+// ingestAnomalies is nil (every pre-existing test in this file passes nil),
+// ScanTranscriptsOnce falls back to a plain UpdateHistory call with no
+// anomaly detection, preserving this package's original Task 4 behavior
+// exactly.
 package transcript
 
 import (
@@ -40,10 +45,26 @@ func recordOffset(db *sql.DB, filePath string, offset int64, nowMs int64) error 
 	return err
 }
 
+// AnomalyIngestFunc matches the shape of anomaly.IngestToolCallsAndAnomalies
+// (db, priorHistory, parsedEvents, nowMs) -> (newHistory, error), minus that
+// package's own IngestResult wrapper type (which also carries
+// ToolCallsIngested/AnomaliesIngested counts -- not needed by this package's
+// return value, since ScanTranscriptsOnce, like transcriptScan.ts's Go port,
+// only returns an error, not the TS original's stats object). Defined here
+// (not in internal/anomaly) purely to break the import cycle described in
+// this file's top doc comment: internal/collector supplies a closure that
+// adapts anomaly.IngestToolCallsAndAnomalies to this signature.
+type AnomalyIngestFunc func(db *sql.DB, history *ToolCallHistory, events []Event, nowMs int64) (*ToolCallHistory, error)
+
 // ScanTranscriptsOnce mirrors transcriptScan.ts's scanTranscriptsOnce.
 // toolCallHistoryByFile is keyed by the same project-relative path stored in
 // transcript_files (never an absolute path -- docs/privacy-and-data.md SS5).
-func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallHistoryByFile map[string]*ToolCallHistory) error {
+// ingestAnomalies, when non-nil, replaces the plain UpdateHistory call with a
+// call that also runs anomaly detection and persists tool_calls/anomalies
+// rows (matching transcriptScan.ts:112's call to ingestToolCallsAndAnomalies);
+// pass nil to get the pre-Task-8 behavior (history tracking only, no anomaly
+// detection) -- see this file's top doc comment.
+func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallHistoryByFile map[string]*ToolCallHistory, ingestAnomalies AnomalyIngestFunc) error {
 	// Stamped first and unconditionally: the heartbeat proves the scan cycle
 	// is alive, not that it succeeded, so the unreadable-projects-root early
 	// return below must not skip it.
@@ -107,7 +128,15 @@ func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallH
 			if priorHistory == nil {
 				priorHistory = CreateEmptyHistory()
 			}
-			newHistory := UpdateHistory(priorHistory, parsedEvents, nowMs)
+			var newHistory *ToolCallHistory
+			if ingestAnomalies != nil {
+				newHistory, err = ingestAnomalies(db, priorHistory, parsedEvents, nowMs)
+				if err != nil {
+					return err
+				}
+			} else {
+				newHistory = UpdateHistory(priorHistory, parsedEvents, nowMs)
+			}
 			toolCallHistoryByFile[relativePath] = newHistory
 
 			// Dispatch (Agent subagent) completion. IngestDispatchEvent
