@@ -11,6 +11,11 @@
 //
 // Must be run within ~45s of the collectors' last heartbeat, or
 // readDiagnostics/readFleetSessions correctly return null for BOTH databases.
+// run-parity.mjs runs the two collectors CONCURRENTLY partly for this reason:
+// with the default 50s run window their final heartbeats both land ~5s before
+// the harness exits, so this script is usable for roughly the next 40s. If you
+// wait longer, or if you set a much larger AETHER_PARITY_RUN_MS, re-run the
+// harness rather than trusting a null-vs-non-null result here.
 // Requires a Node with TypeScript type-stripping (24.x): collectorStore.ts's
 // only imports are type-only and erase cleanly.
 import { join } from 'node:path';

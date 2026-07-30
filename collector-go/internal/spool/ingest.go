@@ -95,6 +95,13 @@ func boolToInt(b bool) int {
 // vs. ingest.ts:37), so that a known hook event missing both its required
 // field and its session_id still produces the loud drift signal it does in
 // the TS collector.
+//
+// The line is JSON-unmarshaled exactly once here (matching ingest.ts:37's
+// parseHookPayload(parsed, receivedAtMs), which passes the already-parsed
+// object rather than re-parsing): the resulting raw value feeds both the
+// drift check and, via a single map-shape assertion, spool.
+// parseHookPayloadFromObj -- ParseHookPayload's exported re-parsing entry
+// point is not used here, since it would unmarshal the same bytes again.
 func ingestLine(db *sql.DB, rawLine string, nowMs int64) bool {
 	trimmed := bytes.TrimSpace([]byte(rawLine))
 	if len(trimmed) == 0 {
@@ -107,7 +114,11 @@ func ingestLine(db *sql.DB, rawLine string, nowMs int64) bool {
 
 	canary.CheckForDrift(raw, db, nowMs)
 
-	event, err := ParseHookPayload(trimmed)
+	obj, ok := raw.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	event, err := parseHookPayloadFromObj(obj)
 	if err != nil {
 		return false
 	}

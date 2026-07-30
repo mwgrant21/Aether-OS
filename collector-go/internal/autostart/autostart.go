@@ -18,14 +18,24 @@ const taskName = "AetherCollector"
 // explicitly requests standard (non-admin) privilege. Mirrors autostart.ts's
 // buildScheduledTaskCommand exactly, including that action values other than
 // "delete" (i.e. "create") take the /Create branch.
+//
+// entrypointPath == "" is a Go-specific accommodation with no TS equivalent:
+// TS always needs a `"<node.exe>" "<index.js>"` pair since Node requires a
+// separate interpreter, but a self-contained Go binary (nodePath) does not,
+// so an empty entrypointPath produces a single-path `/TR "<nodePath>"`
+// instead of a `/TR "<nodePath>" ""` with a stray trailing empty argument.
 func BuildScheduledTaskCommand(action string, nodePath string, entrypointPath string) []string {
 	if action == "delete" {
 		return []string{"/Delete", "/TN", taskName, "/F"}
 	}
+	tr := fmt.Sprintf(`"%s" "%s"`, nodePath, entrypointPath)
+	if entrypointPath == "" {
+		tr = fmt.Sprintf(`"%s"`, nodePath)
+	}
 	return []string{
 		"/Create",
 		"/TN", taskName,
-		"/TR", fmt.Sprintf(`"%s" "%s"`, nodePath, entrypointPath),
+		"/TR", tr,
 		"/SC", "ONLOGON",
 		"/RL", "LIMITED",
 		"/F",

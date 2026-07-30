@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -62,11 +63,22 @@ func TailSpoolOnce(db *sql.DB, spoolDir string, nowMs int64) TailResult {
 // tailInterval, matching spoolTailer.ts's setInterval-based startSpoolTailer
 // (poll-based, not fs-event-based). The returned stop function stops the
 // ticker and must be called to release the goroutine.
+//
+// stop() blocks until the polling goroutine has fully exited before it
+// returns. That guarantee closes a race: without it, a TailSpoolOnce pass
+// could start (or still be in flight) after stop() returned and the caller had
+// closed the database, at which point every ingestLine call fails but
+// TailSpoolOnce still performs its unconditional os.Remove -- deleting a spool
+// file whose lines were never actually ingested. Once stop() returns, no
+// further pass can begin and none is in progress, so it is safe to close db.
 func StartSpoolTailer(db *sql.DB, spoolDir string, tailInterval time.Duration) (stop func()) {
 	ticker := time.NewTicker(tailInterval)
 	done := make(chan struct{})
+	var wg sync.WaitGroup
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case <-ticker.C:
@@ -80,5 +92,6 @@ func StartSpoolTailer(db *sql.DB, spoolDir string, tailInterval time.Duration) (
 
 	return func() {
 		close(done)
+		wg.Wait()
 	}
 }

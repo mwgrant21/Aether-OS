@@ -125,3 +125,28 @@ func TestStartSpoolTailer_PollsAndIngestsThenStopStopsFurtherPolling(t *testing.
 		t.Fatalf("expected event count to remain 1 after stop, got %d", got)
 	}
 }
+
+func TestStartSpoolTailer_StopWaitsForGoroutineToExit(t *testing.T) {
+	db := freshDB(t)
+	spoolDir := freshSpoolDir(t)
+
+	stop := StartSpoolTailer(db, spoolDir, 5*time.Millisecond)
+	time.Sleep(20 * time.Millisecond) // let a few ticks happen
+	stop()
+
+	// Once stop() returns, the polling goroutine has fully exited, so no
+	// TailSpoolOnce pass can be in flight or start later. A spool file dropped
+	// in after stop() must therefore survive untouched.
+	markerPath := filepath.Join(spoolDir, "marker-after-stop.jsonl")
+	if err := os.WriteFile(markerPath, []byte(`{"hook_event_name":"Stop","session_id":"x"}`+"\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	time.Sleep(30 * time.Millisecond) // bounded wait, not indefinite
+
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("marker file should still exist (no tailer pass ran after stop()): %v", err)
+	}
+	if got := eventCount(t, db); got != 0 {
+		t.Fatalf("expected no events ingested after stop(), got %d", got)
+	}
+}
