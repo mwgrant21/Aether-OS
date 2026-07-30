@@ -29,7 +29,7 @@ export function TopBar() {
   return (
     <div style={rootStyle(colors)}>
       <div style={logoWrapStyle}>
-        <div style={logoDotStyle} />
+        <div className="pulse-anim" style={logoDotStyle} />
         <div style={logoTextStyle(colors)}>
           AETHER<span style={{ color: colors.textMuted, fontWeight: 500 }}> OS</span>
         </div>

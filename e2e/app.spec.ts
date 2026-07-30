@@ -6,25 +6,31 @@ const SIDEBAR_TABS = ['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Me
 test.describe('Aether OS smoke', () => {
   test('launches without crashing', async () => {
     const { app, window } = await launchApp();
-    await expect(window.locator('body')).toBeVisible();
-    await app.close();
+    try {
+      await expect(window.locator('body')).toBeVisible();
+    } finally {
+      await app.close();
+    }
   });
 
   test('every sidebar tab renders its view with no console errors', async () => {
     const { app, window } = await launchApp();
-    const consoleErrors: string[] = [];
-    window.on('console', (msg) => {
-      if (msg.type() === 'error') consoleErrors.push(msg.text());
-    });
+    try {
+      const consoleErrors: string[] = [];
+      window.on('console', (msg) => {
+        if (msg.type() === 'error') consoleErrors.push(msg.text());
+      });
 
-    const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
-    for (const tab of SIDEBAR_TABS) {
-      await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
-      await window.waitForTimeout(200);
+      const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
+      for (const tab of SIDEBAR_TABS) {
+        await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
+        await window.waitForTimeout(200);
+      }
+
+      expect(consoleErrors).toEqual([]);
+    } finally {
+      await app.close();
     }
-
-    expect(consoleErrors).toEqual([]);
-    await app.close();
   });
 
   test('the embedded terminal spawns a real pty and renders real output', async () => {
@@ -36,21 +42,26 @@ test.describe('Aether OS smoke', () => {
     // pty spawned and is producing real, non-trivial output (its own banner/prompt), retiring
     // the recurring manual verification.
     const { app, window } = await launchApp();
-    await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal', exact: true }).click();
-    const xtermScreen = window.locator('.xterm-screen');
-    await xtermScreen.waitFor({ state: 'visible', timeout: 10000 });
+    try {
+      await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal', exact: true }).click();
+      const xtermScreen = window.locator('.xterm-screen');
+      await xtermScreen.waitFor({ state: 'visible', timeout: 10000 });
 
-    await expect(async () => {
-      const text = (await xtermScreen.textContent())?.trim() ?? '';
-      expect(text.length).toBeGreaterThan(40);
-    }).toPass({ timeout: 10000 });
-
-    await app.close();
+      await expect(async () => {
+        const text = (await xtermScreen.textContent())?.trim() ?? '';
+        expect(text.length).toBeGreaterThan(40);
+      }).toPass({ timeout: 10000 });
+    } finally {
+      await app.close();
+    }
   });
 
   test('the dashboard metrics row renders real-usage data', async () => {
     const { app, window } = await launchApp();
-    await expect(window.getByText('Tokens used')).toBeVisible({ timeout: 15000 });
-    await app.close();
+    try {
+      await expect(window.getByText('Tokens used')).toBeVisible({ timeout: 15000 });
+    } finally {
+      await app.close();
+    }
   });
 });

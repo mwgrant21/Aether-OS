@@ -154,6 +154,7 @@ export function StormCore({ filter }: StormCoreProps = {}) {
 
       {/* the sphere: 8 stacked layers = volume */}
       <div
+        className="pulse-anim"
         style={{
           position: 'relative',
           width: 142,

@@ -173,4 +173,12 @@ a:hover {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  /* The reactor pulse (--pulse-dur) is deliberately kept alive and slowed to a
+     calm, steady rate under reduced motion rather than frozen -- a frozen
+     reactor can misread as broken. This overrides the universal freeze above
+     for the pulse-driven elements only (ReactorStatusCard, TopBar, StormCore). */
+  .pulse-anim {
+    animation-duration: var(--pulse-dur) !important;
+    animation-iteration-count: infinite !important;
+  }
 }

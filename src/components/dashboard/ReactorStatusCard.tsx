@@ -85,8 +85,8 @@ export function ReactorStatusCard() {
         <div style={{ position: 'relative', width: 120, height: 120, display: 'grid', placeItems: 'center' }}>
           <div style={ringOuterStyle} />
           <div style={ringInnerStyle} />
-          <div style={glowDiscStyle} />
-          <div style={coreDiscStyle} />
+          <div className="pulse-anim" style={glowDiscStyle} />
+          <div className="pulse-anim" style={coreDiscStyle} />
         </div>
       </div>
       <div style={{ textAlign: 'center', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>
