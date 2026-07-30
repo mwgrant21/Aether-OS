@@ -134,6 +134,12 @@ other tool in this category has any sound design at all.
   tracking, cost-of-thrash attribution, and closing the loop from detection to intervention.
   Planned in `docs/diagnostic-thesis-plan.md`; the competitive research behind it is in
   `docs/competitive-gap-analysis-2026-07.md`.
+- **Agent Personality Layer** — a two-pass work/narration split so each fleet agent's voice
+  renders runtime-computed severity instead of self-reported tone, with a shared 0–4 severity
+  scale, per-agent voice packs, and frozen phrases for high-confidence events. Design only,
+  nothing wired into the app yet — spec in
+  [`docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md`](docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md),
+  staged as roadmap Stages 11–12.
 
 Packaging, installers, and a team fleet view are deliberately out of scope: this is a personal
 cockpit, not a distributed product. Its team-facing sibling is

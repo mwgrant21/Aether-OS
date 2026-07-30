@@ -108,6 +108,10 @@ implementer + reviewer + whole-branch-review loop.
 | **8** | **Reactor redesign** | **Status: shipped** — see `docs/superpowers/plans/2026-07-30-reactor-redesign-stage8.md`. Derivative-not-level encoding, three nameable axes, real rate-limit denominator. | ~5 tasks |
 | **9** | **Hardening** | **Status: shipped** — see `docs/superpowers/plans/2026-07-30-hardening-stage9.md`. Playwright `_electron` e2e (retires the recurring "verification deferred to the user"), keyboard nav, `prefersReducedMotion`. | ~6 tasks |
 | **10** | **Go collector** | **Status: shipped** — see `docs/superpowers/plans/2026-07-30-go-collector-stage10.md`. Drop-in swap behind the Stage 2 contract, coexisting with the Node collector; cutover/retirement is a separate, later decision. | ~6 tasks |
+| **10.5** | **Spec commit & link repair** | **Both links in PROGRESS.md's Layer 1/2 entry resolve to nothing, and the entire design exists on one disk.** Jumps the queue for the same reason Stage 0.5 did — see §3.3. | ~3 tasks |
+| **11** | **Narration spine** | **Layer 1 Phase 0.** Two-pass run split, `AgentEnvelope`, `ExitState`'s `error`/`fatal` distinction, runtime-computed severity 0–4 in the collector, per-run telemetry persisted keyed by `(agent_id, task_kind)`. **Ships zero visible change** — no voice, no UI, nothing in the chat deck. The spine only. Planned: `2026-07-31-narration-spine-stage11.md`. | ~7 tasks |
+| **12** | **Voice packs & render** | **Layer 1 Phase 1, plus the `personas.ts` reconciliation this project has not yet named.** Voice packs as data files, lazy narration generated in the viewer, verbosity dial with a severity floor, runtime-prepended frozen phrases, interruption-budget mechanism, attention hook. The visible half. Planned: `2026-07-31-voice-packs-stage12.md`. | ~9 tasks |
+| **13** | **Memory Layer 2** | Phase A store drop-in (already written and green, currently outside this repo), then Phases B–D: extractor model call, `prompt-safety` fencing, private scoring, Memory view rework. **Retires `MemoryStub`** rather than extending it. Depends on Stage 11 for `Revision`. | ~10 tasks |
 
 ### 3.1 — Stage 0.5, and why it jumps the queue
 
@@ -172,6 +176,70 @@ Stage 7 is that:
   stay visible**.
 - **Transcript density control** (Normal / Verbose / Summary). Universal vendor convergence.
 
+### 3.3 — Stages 10.5–13, and why the personality layer splits in two
+
+The Agent Personality Layer (Layer 1) and Agent Memory Layer (Layer 2) had no stage in this
+roadmap at all until now, despite being the most developed design work in the project — Layer 1
+at rev 3.1, Layer 2 at rev 1.1, with Layer 2's Phase A store written, `tsc --strict` clean, and
+50 tests green. PROGRESS.md's own entry said so plainly ("`docs/roadmap.md` has no stage for any
+of this yet"). These four rows close that.
+
+**Stage 10.5 jumps the queue, and the reason is not cosmetic.** PROGRESS.md links to
+`docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md` and
+`docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`. Neither file exists in this repo, and
+`git log --all --diff-filter=A` confirms neither was ever added. `projects/aether-layer2-phase-a/`
+is deliberately outside the repo per that entry's item (g), which is disclosed — but combined with
+the two dead links it means **every artifact of Layer 1 and Layer 2 exists only on one machine**,
+and what is version-controlled is a summary pointing at nothing. This is the same class as Stage
+0.5's missing LICENSE: a thirty-second fix with a real consequence, made worse here because the
+entry it belongs to is the strongest single piece of design work in the repo and the README does
+not mention the layer at all. Stage 10.5 commits both specs, repairs the links, tracks the Phase A
+store, and adds the README reference.
+
+**Pass 2 placement follows §1's logic, not convenience.** Severity is computed by the collector
+from telemetry it already owns (`elapsed_ms`, `retries`, `exit`) and persisted — no model call, and
+it survives the viewer being closed, so the signal has the same always-on durability as every other
+collector-owned fact. Narration is generated **lazily in the viewer, on read**. The alternative —
+narrating at run time in the collector — costs a model call for every agent run whether or not
+anyone ever opens it, which is the wrong shape for a personal cockpit. The split falls out cleanly:
+**the signal is infrastructure, the voice is a render-time luxury.** Neither half is where it is by
+default; both were placed against §1's coverage-regression rule.
+
+**The layer splits into 11 and 12 because the spine is invisible and the voice is not.** Stage 11
+ships nothing a user can see — no narration string reaches the chat deck. That is uncomfortable to
+review and exactly why it should be its own stage: the two structural decisions it encodes (the
+two-pass split, and severity-computed-never-self-reported) carry the entire design and were both
+bugs in the first draft. Bundling them with voice packs means reviewing a circular-dependency fix
+and a set of prose registers in the same diff. Stage 12 is then almost entirely data files and
+render code, which is a genuinely different review.
+
+**Stage 12 carries a decision this project has not made yet.** `src/components/chat/personas.ts`
+is a live, shipped, tested system — 11 hand-authored voices plus `FALLBACK_PERSONA`, resolved by
+`resolvePersona(agentName)` and injected into each channel's system prompt by `systemPrompt.ts`.
+It is the architecture Layer 1 rejects: flat `voice: string` **in the system prompt**, so voice is
+in context while work is generated; no severity, no escalation curve, no telemetry coupling; and
+keyed on `Agent.name`, which that file's own header comment concedes is the only stable per-agent
+identifier and which a user can change with `spawn <name>`. Voice packs key on role. Those do not
+line up. PROGRESS.md names the `MemoryStub` retirement for Layer 2 and says nothing about this
+one. It is not obviously a retirement — talking to the user in a chat channel and reporting fleet
+state through cadence are arguably different jobs, and keeping both is defensible. But it is an
+unmade decision sitting in shipped code, and it gets more expensive once Layer 1 has files on disk.
+Stage 12 must resolve it explicitly, in the design spec, before writing the first voice pack.
+
+**Stage 13 depends on Stage 11 for one type.** Layer 2's `revision` and `overrule` private memory
+kinds consume the `Revision{finding_id, cause, detail}` object the spine introduces. Landing Layer
+2 first would mean defining a placeholder and reworking it. The Phase A drop-in itself is
+independent — it is one deletion (its sandbox `schema.ts` stub) — but it is not worth a stage of
+its own, and `MemoryStub`'s retirement should happen in the same change that replaces it rather
+than leaving two memory systems live.
+
+**Known and unscheduled, named rather than glossed:** Layer 1's Phase 3 calibration items —
+rolling per-agent baselines, anomaly thresholds, the interruption-budget interval `N`, the second
+round of frozen phrases — have no stage and deliberately should not get one yet. They are tunable
+only against observed traffic, which does not exist until Stages 11 and 12 have been running for a
+while. Stage 11's telemetry-persistence task is what makes them buildable later; skipping it means
+starting the observation window from zero on the day that work begins.
+
 ### Dependency graph
 
 ```
@@ -189,9 +257,21 @@ Stage 7 is that:
                              └─► 10 Go swap (optional)
 
 9 Hardening — anytime, ideally before Stage 5 so the timeline card gets e2e coverage
+
+10.5 Spec commit ── (blocks nothing, do first — see §3.3)
+
+2 Collector ──► 11 Narration spine ──┬──► 12 Voice packs & personas
+                                      │
+                                      └──► 13 Memory Layer 2
 ```
 
 Stages 1 and 2 are independent and can run in either order. **Stage 0.5 first regardless.**
+
+Stage 11 depends on Stage 2 only for the collector process that owns severity computation and
+telemetry persistence; it needs nothing from Stages 3–10. Stages 12 and 13 are independent of each
+other and can run in either order once 11 lands. **Stage 10.5 first regardless** — it is three
+tasks and it stops the current state, where the repo's best design work is unrecoverable if one
+disk fails.
 
 ---
 
