@@ -501,6 +501,28 @@ function runHookInstallParity(sides) {
         push(`${s.label} left a .aethertmp- file behind after ${name}: ${strayTempFiles(s.claudeDir).join(', ')}`);
       }
     }
+    assertNoHtmlEscapes(name);
+  };
+
+  // readCanonical parses-then-restringifies settings.json, so it CANNOT tell
+  // an HTML-escaped file from an unescaped one: JSON.parse turns \u003e back
+  // into a literal >, and JSON.stringify never re-escapes it on the way back
+  // out. This reads the settings.json bytes as written on disk (no parse/
+  // restringify round-trip) and fails if either side's file contains the
+  // literal 6-character escape sequences \u003c, \u003e, or \u0026 --
+  // which is the actual, only regression-detecting check on
+  // marshalSettingsJSON's SetEscapeHTML(false) / json.Marshal's default
+  // HTML-escaping behavior. Without this, reverting SetEscapeHTML(false)
+  // would still report PARITY OK.
+  const assertNoHtmlEscapes = (name) => {
+    for (const s of sides) {
+      const rawTxt = readFileSync(s.settingsPath, 'utf8');
+      for (const esc of ['\\u003c', '\\u003e', '\\u0026']) {
+        if (rawTxt.includes(esc)) {
+          push(`${s.label}: settings.json contains HTML-escaped ${esc} after ${name}; JSON.stringify never emits those (regression in SetEscapeHTML(false))`);
+        }
+      }
+    }
   };
 
   // Like the COVERAGE ASSERTIONS above: comparing node against go proves they

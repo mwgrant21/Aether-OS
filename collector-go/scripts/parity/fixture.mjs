@@ -188,8 +188,15 @@ export function betaTrailingPartialBytes(baseMs) {
 //
 // The command strings deliberately contain <, > and & : Go's
 // json.MarshalIndent HTML-escapes those by default and JSON.stringify does
-// not, so this fixture is also the differential check on
-// marshalSettingsJSON's SetEscapeHTML(false).
+// not. This fixture only EXERCISES that code path -- the actual
+// differential check on marshalSettingsJSON's SetEscapeHTML(false) is
+// run-parity.mjs's assertNoHtmlEscapes (see runHookInstallParity), which
+// reads settings.json's raw bytes and fails if any HTML-escaped sequence
+// appears. A structural JSON.parse/JSON.stringify comparison alone (as
+// readCanonical does elsewhere in that file) cannot detect this: parsing
+// un-escapes HTML entities and re-stringifying never re-escapes them, so an
+// escaped and an unescaped settings.json become byte-identical after that
+// round-trip.
 export function settingsFixture() {
   return {
     model: 'sonnet',
