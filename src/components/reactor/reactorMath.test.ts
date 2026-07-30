@@ -1,16 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   advancePhase,
-  computeCacheClarity,
   computeConcurrencyTurbulence,
   computeDispatchIntensity,
-  computeModelHueShift,
+  computeMomentum,
   computePulseDuration,
   computeRateFromUsage,
   computeSurge,
   computeThemeFilter,
   computeThemeHueDeg,
-  dominantModel,
 } from './reactorMath';
 
 describe('computePulseDuration', () => {
@@ -75,34 +73,6 @@ describe('computeThemeFilter', () => {
     const overloaded = computeThemeFilter('cyan', 'ok', true, true);
     expect(overloaded).not.toBe(base);
   });
-
-  it('the 4-arg call form is unchanged (modelHueShift defaults to 0)', () => {
-    expect(computeThemeFilter('cyan', 'ok', true)).toBe('hue-rotate(0deg)');
-    expect(computeThemeFilter('violet', 'warn', false, true)).toBe(
-      computeThemeFilter('violet', 'warn', false, true, 0)
-    );
-  });
-
-  it('a 5th-arg modelHueShift shifts the hue on top of the existing shifts', () => {
-    expect(computeThemeFilter('cyan', 'ok', true, false, -60)).toBe('hue-rotate(-60deg)');
-    expect(computeThemeFilter('cyan', 'ok', true, true, 90)).toBe('hue-rotate(130deg) brightness(1.15)');
-  });
-});
-
-describe('computeCacheClarity', () => {
-  it('maps 0 to the clarity floor and 1 to full clarity', () => {
-    expect(computeCacheClarity(0)).toBe(0.6);
-    expect(computeCacheClarity(1)).toBe(1);
-  });
-
-  it('clamps out-of-range inputs', () => {
-    expect(computeCacheClarity(-1)).toBe(0.6);
-    expect(computeCacheClarity(2)).toBe(1);
-  });
-
-  it('maps the midpoint linearly', () => {
-    expect(computeCacheClarity(0.5)).toBeCloseTo(0.8, 5);
-  });
 });
 
 describe('computeConcurrencyTurbulence', () => {
@@ -117,43 +87,6 @@ describe('computeConcurrencyTurbulence', () => {
 
   it('scales linearly below the saturation point', () => {
     expect(computeConcurrencyTurbulence(2)).toBeCloseTo(0.5, 5);
-  });
-});
-
-describe('dominantModel', () => {
-  it('returns null for an empty list', () => {
-    expect(dominantModel([])).toBeNull();
-  });
-
-  it('ignores null models', () => {
-    expect(dominantModel([{ model: null }, { model: null }])).toBeNull();
-  });
-
-  it('picks the majority model in a 3-vs-1 split', () => {
-    const agents = [
-      { model: 'claude-sonnet-5' },
-      { model: 'claude-sonnet-5' },
-      { model: 'claude-sonnet-5' },
-      { model: 'claude-haiku-4-5' },
-    ];
-    expect(dominantModel(agents)).toBe('claude-sonnet-5');
-  });
-});
-
-describe('computeModelHueShift', () => {
-  it('shifts haiku cool and opus warm', () => {
-    expect(computeModelHueShift('claude-haiku-4-5-x')).toBe(-60);
-    expect(computeModelHueShift('claude-opus-4-5')).toBe(90);
-  });
-
-  it('shifts fable and leaves sonnet unshifted', () => {
-    expect(computeModelHueShift('claude-fable-1')).toBe(200);
-    expect(computeModelHueShift('claude-sonnet-5')).toBe(0);
-  });
-
-  it('returns 0 for null or unrecognized models', () => {
-    expect(computeModelHueShift(null)).toBe(0);
-    expect(computeModelHueShift('some-other-model')).toBe(0);
   });
 });
 
@@ -172,33 +105,85 @@ describe('computeSurge', () => {
   });
 });
 
+describe('computeMomentum', () => {
+  it('reads as the idle baseline with zero samples', () => {
+    expect(computeMomentum([])).toBe(92000);
+  });
+
+  it('reads as the idle baseline with fewer than 3 samples (insufficient history)', () => {
+    expect(computeMomentum([{ burnRatePerMin: 9000, atMs: 1 }, { burnRatePerMin: 100, atMs: 2 }])).toBe(92000);
+  });
+
+  it('reads as the idle baseline when burn rate is flat across the window', () => {
+    const history = [
+      { burnRatePerMin: 4000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 4000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(92000);
+  });
+
+  it('rises toward the visual ceiling as burn rate climbs across the window', () => {
+    const history = [
+      { burnRatePerMin: 1000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 7000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(168000);
+  });
+
+  it('falls toward the visual floor as burn rate drops across the window', () => {
+    const history = [
+      { burnRatePerMin: 7000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 1000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(20000);
+  });
+
+  it('clamps a rise steeper than the momentum range to the visual ceiling', () => {
+    const history = [
+      { burnRatePerMin: 0, atMs: 1 },
+      { burnRatePerMin: 50000, atMs: 2 },
+      { burnRatePerMin: 100000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(168000);
+  });
+
+  it('only considers the most recent 3 samples when more are present', () => {
+    const history = [
+      { burnRatePerMin: 9000, atMs: 0 }, // older sample outside the window, must be ignored
+      { burnRatePerMin: 1000, atMs: 1 },
+      { burnRatePerMin: 4000, atMs: 2 },
+      { burnRatePerMin: 7000, atMs: 3 },
+    ];
+    expect(computeMomentum(history)).toBe(168000);
+  });
+});
+
 describe('computeRateFromUsage', () => {
-  it('falls back to the idle baseline when burn rate is zero', () => {
+  it('reads as idle baseline below the real-burn floor', () => {
     expect(computeRateFromUsage(0)).toBe(92000);
-  });
-
-  it('falls back to the idle baseline for a negative burn rate', () => {
-    expect(computeRateFromUsage(-500)).toBe(92000);
-  });
-
-  it('falls back to the idle baseline for real burn rates below the activity floor (300 tokens/min)', () => {
     expect(computeRateFromUsage(299)).toBe(92000);
   });
 
-  it('maps the activity floor to the visual floor', () => {
+  it('maps the floor to RATE_MIN', () => {
     expect(computeRateFromUsage(300)).toBe(20000);
   });
 
-  it('maps the midpoint of the real range to the midpoint of the visual range', () => {
-    expect(computeRateFromUsage(6150)).toBe(94000);
-  });
-
-  it('maps the activity ceiling (12000 tokens/min) to the visual ceiling', () => {
+  it('clamps at RATE_MAX at or above the ceiling', () => {
     expect(computeRateFromUsage(12000)).toBe(168000);
+    expect(computeRateFromUsage(50000)).toBe(168000);
   });
 
-  it('clamps a real burn rate above the activity ceiling', () => {
-    expect(computeRateFromUsage(400000)).toBe(168000);
+  it('maps a midpoint value linearly between floor and ceiling', () => {
+    const mid = 300 + (12000 - 300) / 2;
+    expect(computeRateFromUsage(mid)).toBe(Math.round(20000 + 0.5 * (168000 - 20000)));
+  });
+
+  it('clamps negative or extreme inputs correctly', () => {
+    expect(computeRateFromUsage(-5000)).toBe(92000);
+    expect(computeRateFromUsage(1000000)).toBe(168000);
   });
 });
 

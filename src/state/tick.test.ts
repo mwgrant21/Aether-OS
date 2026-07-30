@@ -35,13 +35,48 @@ describe('computeTick', () => {
     expect(result.approvals).toEqual(state.approvals);
   });
 
-  it('flips alarmLevel to crit and fires a notification when the burn rate crosses the alarm threshold', () => {
-    const state = { ...initialState, rate: 168000, agents: [], cfg: { ...initialState.cfg, alarm: 50, autoThrottle: false } };
+  function statuslineWith(fiveHourPct: number | null, sevenDayPct: number | null) {
+    return {
+      capturedAtMs: 0,
+      sessionId: null,
+      modelId: null,
+      modelDisplayName: null,
+      fiveHour: fiveHourPct === null ? null : { usedPercentage: fiveHourPct, resetsAtMs: 0 },
+      sevenDay: sevenDayPct === null ? null : { usedPercentage: sevenDayPct, resetsAtMs: 0 },
+      contextUsedPercentage: null,
+      contextWindowSize: null,
+      contextUsage: null,
+      totalCostUsd: null,
+      currentDir: null,
+      projectDir: null,
+    };
+  }
+
+  it('alarmLevel stays ok when statusline is null (no rate-limit data yet)', () => {
+    const state = { ...initialState, agents: [], statusline: null };
+    const result = computeTick(state);
+    expect(result.alarmLevel).toBe('ok');
+  });
+
+  it('alarmLevel flips to warn at 75% rate-limit usage', () => {
+    const state = { ...initialState, agents: [], statusline: statuslineWith(80, 10) };
+    const result = computeTick(state);
+    expect(result.alarmLevel).toBe('warn');
+  });
+
+  it('flips alarmLevel to crit and fires a notification when rate-limit usage crosses 90%', () => {
+    const state = { ...initialState, agents: [], statusline: statuslineWith(95, 10) };
     const result = computeTick(state);
     expect(result.alarmLevel).toBe('crit');
     expect(result.notifs).toHaveLength(1);
-    expect(result.notifs![0].m).toContain('BURN ALARM');
+    expect(result.notifs![0].m).toContain('RATE LIMIT ALARM');
     expect(result.unread).toBe(1);
+  });
+
+  it('uses the higher of fiveHour/sevenDay usedPercentage', () => {
+    const state = { ...initialState, agents: [], statusline: statuslineWith(20, 95) };
+    const result = computeTick(state);
+    expect(result.alarmLevel).toBe('crit');
   });
 
   it('freezes both pct and hist for a paused agent, leaving unpaused agents unaffected', () => {
