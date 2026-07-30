@@ -191,6 +191,7 @@ export const initialState: AetherState = {
     lastScanAt: null,
     ctxUsed: 78432,
   },
+  rateHistory: [],
   realAgents: [],
   activeWork: [],
   anomalies: [],

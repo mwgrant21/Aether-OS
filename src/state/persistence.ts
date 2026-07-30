@@ -21,6 +21,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   sys: 'simulated CPU/MEM/NET/DISK metrics randomly mutated every tick; no real signal, same category as weekRaw',
   logs: 'stale lines would fake a live STREAMING state after restart',
   realUsage: 'the live real-usage snapshot pushed over IPC (SET_REAL_USAGE); persisting it would show old usage/burn numbers as current until the next real snapshot arrives',
+  rateHistory: 'a live rolling window of real burn-rate samples feeding computeMomentum; a persisted value would seed a new session\'s Momentum reading with a previous session\'s trend',
   realAgents: 'a live snapshot of currently-open dispatches tailed from the transcript; after a restart these dispatches may no longer be running, so a stale value would show phantom active work',
   activeWork: 'a live IPC push of in-flight tool activity for the current session; a stale value would show phantom in-progress work after restart',
   anomalies: 'live-detected anomalies pushed over IPC from the current transcript tail; a stale anomaly would be reported as still-active long after the underlying condition resolved',

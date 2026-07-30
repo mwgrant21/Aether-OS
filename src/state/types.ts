@@ -89,6 +89,7 @@ import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { PermissionRisk } from '../shared/permissionRisk';
+import type { RateSample } from '../components/reactor/reactorMath';
 
 // Not related to `Approval` (the chat-pipeline/tick-simulation approval
 // queue) despite similar approve/deny language -- see that interface's
@@ -227,6 +228,7 @@ export interface AetherState {
   operatorName: string;
   chatActionResults: ChatActionResult[];
   realUsage: RealUsageSnapshot;
+  rateHistory: RateSample[];
   realAgents: RealAgentDispatch[];
   recentCompletedDispatches: RealAgentDispatch[];
   dispatchChannels: DispatchChannelStub[];

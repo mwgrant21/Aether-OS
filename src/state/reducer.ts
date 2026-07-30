@@ -6,7 +6,7 @@ import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { buildChatActionResultText } from './chatActionResult';
-import { computeRateFromUsage } from '../components/reactor/reactorMath';
+import { computeMomentum } from '../components/reactor/reactorMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
@@ -182,13 +182,16 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_OPERATOR_NAME':
       return { ...state, operatorName: action.name };
 
-    case 'SET_REAL_USAGE':
+    case 'SET_REAL_USAGE': {
+      const rateHistory = state.rateHistory.concat({ burnRatePerMin: action.snapshot.burnRatePerMin, atMs: Date.now() }).slice(-3);
       return {
         ...state,
         realUsage: action.snapshot,
         ctxUsed: action.snapshot.ctxUsed,
-        rate: computeRateFromUsage(action.snapshot.burnRatePerMin),
+        rateHistory,
+        rate: computeMomentum(rateHistory),
       };
+    }
 
     case 'SET_REAL_AGENTS': {
       const completed = detectCompletedDispatches(state.realAgents, action.agents);
