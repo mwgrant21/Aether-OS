@@ -147,9 +147,11 @@ before designing anything that persists or transmits data. The short version:
 - **Nothing leaves this machine** except Chat's scoped context snapshot to the Anthropic Messages
   API, which requires a key the user supplies. Without a key, nothing leaves at all.
 - **No telemetry, ever.** Not opt-out, not anonymous, not aggregate.
-- **No network listener.** Hook ingest is an append-only file spool
-  (`~/.aether-os/spool/`), never a loopback HTTP server — no port, no token, no auth surface, and
-  a file append cannot hang a real Claude Code session the way a POST to a dead listener can.
+- **No externally-reachable listener.** Hook ingest itself is an append-only file spool
+  (`~/.aether-os/spool/`), not an HTTP server. Separately, `electron/permissionServer.ts` runs a
+  local HTTP server bound to `127.0.0.1` (never `0.0.0.0`) for `PermissionRequest`/`PostToolUse`/
+  `Notification` hook brokering — reachable only from this machine, with no port exposed
+  externally, no token, and nothing bound off-loopback.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
   detector and optimize rule has been checked against this and none of them need content.

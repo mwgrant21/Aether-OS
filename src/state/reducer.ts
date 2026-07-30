@@ -288,8 +288,18 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'DISMISS_RECAP':
       return { ...state, recap: null };
 
-    case 'SET_DISPATCH_HEADLINE':
-      return { ...state, dispatchHeadlines: { ...state.dispatchHeadlines, [action.toolUseId]: action.headline } };
+    case 'SET_DISPATCH_HEADLINE': {
+      let dispatchHeadlines = { ...state.dispatchHeadlines, [action.toolUseId]: action.headline };
+      const headlineKeys = Object.keys(dispatchHeadlines);
+      if (headlineKeys.length > 100) {
+        // Same eviction pattern as dispatchUsage above -- Object.keys() preserves
+        // insertion order for these (non-integer-like) string keys, so this
+        // evicts the oldest entries first, not a random subset.
+        const toEvict = new Set(headlineKeys.slice(0, headlineKeys.length - 100));
+        dispatchHeadlines = Object.fromEntries(Object.entries(dispatchHeadlines).filter(([k]) => !toEvict.has(k)));
+      }
+      return { ...state, dispatchHeadlines };
+    }
 
     case 'CREATE_DISPATCH_CHANNEL': {
       const alreadyExists = state.dispatchChannels.some((d) => d.toolUseId === action.toolUseId);

@@ -95,7 +95,7 @@ export function AppearanceCard() {
               onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { densityLevel: level } })}
               style={toggleStyle(colors, cfg.densityLevel === level)}
             >
-              {level}
+              {level.toUpperCase()}
             </Button>
           ))}
         </div>
