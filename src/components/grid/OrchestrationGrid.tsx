@@ -106,7 +106,20 @@ export function OrchestrationGrid({ agents, rate, anomalies, onSelectRealAgent }
           {layout.agentNodes.map((node) => {
             const flagged = !!node.agent.toolUseId && anomalies.some((a) => a.toolUseId === node.agent.toolUseId);
             return (
-            <g key={node.agent.toolUseId} onClick={() => onSelectRealAgent(node.agent.toolUseId)} style={{ cursor: 'pointer' }}>
+            <g
+              key={node.agent.toolUseId}
+              onClick={() => onSelectRealAgent(node.agent.toolUseId)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelectRealAgent(node.agent.toolUseId);
+                }
+              }}
+              tabIndex={0}
+              role="button"
+              aria-label={node.agent.label}
+              style={{ cursor: 'pointer' }}
+            >
               {flagged && (
                 <circle
                   cx={node.x}
