@@ -40,6 +40,17 @@ type HookEvent struct {
 	HadToolInput     bool
 	HadToolResponse  bool
 	NotificationType *string
+
+	// rawHadToolName / rawHadNotificationType mirror canary.ts's
+	// checkForDrift semantics exactly: true when the raw JSON field was
+	// present and non-null, regardless of type or emptiness (so
+	// `"tool_name": ""` counts as present here, even though ToolName above
+	// is nil for it -- stringField's stricter "non-empty string" rule is
+	// hookPayload.ts's own semantics, a different, unrelated notion of
+	// "missing" from canary.ts's). Unexported: internal to the drift check
+	// in ingest.go, not part of the public HookEvent contract.
+	rawHadToolName         bool
+	rawHadNotificationType bool
 }
 
 // ParseHookPayload parses one raw hook JSON line (as Claude Code sends it on
@@ -82,6 +93,9 @@ func ParseHookPayload(line []byte) (*HookEvent, error) {
 		HadToolInput:     presentField(obj, "tool_input"),
 		HadToolResponse:  presentField(obj, "tool_response"),
 		NotificationType: stringField(obj, "notification_type"),
+
+		rawHadToolName:         presentField(obj, "tool_name"),
+		rawHadNotificationType: presentField(obj, "notification_type"),
 	}, nil
 }
 

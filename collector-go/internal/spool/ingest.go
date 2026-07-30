@@ -10,9 +10,14 @@ import (
 // ErrSkipped is returned by IngestHookEvent when a known event is missing a
 // field this collector depends on -- the drift canary case from
 // collector/src/canary.ts's checkForDrift + collector/src/ingest.ts's
-// missing-required-field guard, both folded in here since HookEvent's typed
-// nil fields already carry the same presence information the TS version
-// re-derives from the raw object. A drift_log row is written before this is
+// missing-required-field guard, both folded in here. This check uses
+// HookEvent's unexported rawHad* fields (raw JSON presence: not
+// undefined/null), NOT the exported ToolName/NotificationType pointers --
+// canary.ts's checkForDrift runs against the raw untyped payload, where e.g.
+// `"tool_name": ""` counts as present, even though hookPayload.ts's own
+// stringField (which does produce ToolName) treats an empty string as
+// absent. Conflating the two would flag `"tool_name": ""` as drift, which
+// the TS original does not. A drift_log row is written before this is
 // returned; the event is never inserted.
 var ErrSkipped = errors.New("spool: event skipped (missing required field)")
 
@@ -42,11 +47,11 @@ func IngestHookEvent(db *sql.DB, event *HookEvent, nowMs int64) error {
 		for _, field := range required {
 			switch field {
 			case "tool_name":
-				if event.ToolName == nil {
+				if !event.rawHadToolName {
 					missing = append(missing, field)
 				}
 			case "notification_type":
-				if event.NotificationType == nil {
+				if !event.rawHadNotificationType {
 					missing = append(missing, field)
 				}
 			}

@@ -100,6 +100,41 @@ func TestIngestLine_MissingRequiredField_LogsDriftButReturnsFalse(t *testing.T) 
 	}
 }
 
+func TestIngestLine_EmptyToolNameString_IsNotDrift_IngestsWithNullToolName(t *testing.T) {
+	// canary.ts's checkForDrift operates on the raw JSON payload, where
+	// "tool_name": "" is present (not undefined/null) -- so it must NOT be
+	// flagged as drift, even though hookPayload.ts's own stringField (a
+	// separate, stricter "non-empty string" rule) turns "" into a null
+	// tool_name column. This is the regression test for the gap where the
+	// Go port originally re-derived "missing" from the already-typed
+	// ToolName pointer instead of raw presence.
+	db := freshDB(t)
+	line, _ := json.Marshal(map[string]interface{}{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "s1",
+		"tool_name":       "",
+	})
+	if !ingestLine(db, string(line), 1000) {
+		t.Fatalf("expected empty-string tool_name to be ingested, not treated as drift")
+	}
+
+	var driftCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM drift_log").Scan(&driftCount); err != nil {
+		t.Fatalf("count drift_log: %v", err)
+	}
+	if driftCount != 0 {
+		t.Fatalf("expected 0 drift_log rows, got %d", driftCount)
+	}
+
+	var toolName sql.NullString
+	if err := db.QueryRow("SELECT tool_name FROM events").Scan(&toolName); err != nil {
+		t.Fatalf("query events: %v", err)
+	}
+	if toolName.Valid {
+		t.Fatalf("expected null tool_name column, got %q", toolName.String)
+	}
+}
+
 func TestIngestLine_EmptyString_NeverPanicsReturnsFalse(t *testing.T) {
 	db := freshDB(t)
 	if ingestLine(db, "", 1000) {
