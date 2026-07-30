@@ -64,14 +64,21 @@ func ingestAnomalies(db *sql.DB, history *transcript.ToolCallHistory, events []t
 // original's try/finally: the heartbeat proves the poll cycle is alive, not
 // that it succeeded, so it must be stamped even when UpsertFleetSessions
 // itself errors below.
-func PollAndUpsertFleet(db *sql.DB, ownSessionFilePath string, execFn fleet.FleetExecFn) error {
+// The return value is named (err) and every assignment to it -- both the
+// direct `err = ...` below and the deferred heartbeat-failure case -- writes
+// through the same named variable, so the defer's mutation actually reaches
+// the caller. A bare `var upsertErr error; ...; return upsertErr` would NOT
+// do this: `return upsertErr` copies upsertErr's current value into the
+// return slot before the deferred func runs, so a later `upsertErr = hbErr`
+// inside the defer would mutate a variable nothing reads anymore -- a real
+// bug caught in this task's fix round (see this task's report).
+func PollAndUpsertFleet(db *sql.DB, ownSessionFilePath string, execFn fleet.FleetExecFn) (err error) {
 	ownSessionID := fleet.ReadOwnSessionID(ownSessionFilePath)
 	nowMs := time.Now().UnixMilli()
 
-	var upsertErr error
 	defer func() {
-		if hbErr := schema.StampFleetHeartbeat(db, nowMs); hbErr != nil && upsertErr == nil {
-			upsertErr = hbErr
+		if hbErr := schema.StampFleetHeartbeat(db, nowMs); hbErr != nil && err == nil {
+			err = hbErr
 		}
 	}()
 
@@ -79,8 +86,8 @@ func PollAndUpsertFleet(db *sql.DB, ownSessionFilePath string, execFn fleet.Flee
 	if sessions == nil {
 		sessions = []fleet.FleetSession{}
 	}
-	upsertErr = fleet.UpsertFleetSessions(db, sessions, nowMs)
-	return upsertErr
+	err = fleet.UpsertFleetSessions(db, sessions, nowMs)
+	return err
 }
 
 // startTickerLoop runs fn on every tick of a time.NewTicker(interval) until

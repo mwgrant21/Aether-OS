@@ -1,11 +1,14 @@
 package collector
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -374,4 +377,105 @@ func TestPollAndUpsertFleet_UpdatesHeartbeatRatherThanAccumulatingRows(t *testin
 	if rowCount != 1 {
 		t.Fatalf("fleet_last_poll_ms row count = %d, want 1 (upsert, not accumulate)", rowCount)
 	}
+}
+
+// TestPollAndUpsertFleet_PropagatesHeartbeatErrorWhenUpsertSucceeds is a
+// direct regression test for the fix-round Finding 1 bug: PollAndUpsertFleet
+// used to have an unnamed `error` return, so `return upsertErr` copied the
+// (still-nil, since UpsertFleetSessions succeeded) value into the return
+// slot BEFORE the deferred heartbeat-stamp failure could mutate it -- the
+// function always returned nil in exactly this scenario, silently
+// swallowing a genuine heartbeat-write failure. Dropping schema_meta after
+// migration (but leaving fleet_sessions intact) isolates precisely this
+// case: UpsertFleetSessions succeeds (its table still exists),
+// StampFleetHeartbeat fails (its table does not), and the caller must see a
+// non-nil error.
+func TestPollAndUpsertFleet_PropagatesHeartbeatErrorWhenUpsertSucceeds(t *testing.T) {
+	db := freshFleetDB(t)
+	if _, err := db.Exec("DROP TABLE schema_meta"); err != nil {
+		t.Fatalf("drop schema_meta: %v", err)
+	}
+
+	err := PollAndUpsertFleet(db, filepath.Join(t.TempDir(), "own-session.json"), noSessionsExecFn)
+	if err == nil {
+		t.Fatalf("PollAndUpsertFleet returned nil error; want a propagated heartbeat-stamp failure (schema_meta was dropped)")
+	}
+}
+
+// TestStartCollector_FleetHeartbeatFailureLogsAndDoesNotCrashOtherLoops
+// exercises the actual log-and-continue branch at collector.go's fleet-poll
+// ticker wrapper (`if pollErr != nil { log.Printf(...) }`), which
+// TestStartCollector_FleetPollFailureDoesNotCrashOtherLoops does NOT reach:
+// that test's always-erroring FleetExecFn is swallowed internally by
+// fleet.PollFleet (returns nil sessions, logs to drift_log instead of
+// erroring), so PollAndUpsertFleet itself returns nil there and the
+// log.Printf branch never runs. Here, dropping schema_meta after the
+// collector has migrated (mirroring the direct PollAndUpsertFleet test
+// above) forces a real non-nil error out of PollAndUpsertFleet on every
+// fleet-poll tick while StartCollector is actually running, letting this
+// test assert three things at once: (1) the log line is actually emitted,
+// (2) the process does not crash/panic, (3) the other loops (spool tail)
+// keep working despite the fleet-poll loop erroring every cycle.
+func TestStartCollector_FleetHeartbeatFailureLogsAndDoesNotCrashOtherLoops(t *testing.T) {
+	dir := mkTempDir(t, "aether-collector-hbfail-")
+	dbPath := filepath.Join(dir, "collector.db")
+	spoolDir := filepath.Join(dir, "spool")
+	projectsRoot := filepath.Join(dir, "projects")
+	os.MkdirAll(spoolDir, 0755)
+	os.MkdirAll(projectsRoot, 0755)
+
+	var logBuf bytes.Buffer
+	origOutput := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(origOutput)
+		log.SetFlags(origFlags)
+	})
+
+	stop, err := StartCollector(Options{
+		DBPath:                 dbPath,
+		SpoolDir:               spoolDir,
+		TailInterval:           20 * time.Millisecond,
+		CompactInterval:        100 * time.Second,
+		ProjectsRoot:           projectsRoot,
+		TranscriptScanInterval: 100 * time.Second, // immediate run only, keeps schema_meta writes out of this test's window once dropped below
+		OwnSessionFilePath:     filepath.Join(dir, "own-session.json"),
+		FleetPollInterval:      20 * time.Millisecond,
+		FleetExecFn:            noSessionsExecFn,
+	})
+	if err != nil {
+		t.Fatalf("StartCollector: %v", err)
+	}
+	defer stop()
+
+	// StartCollector's own schema.Migrate call (CREATE TABLE IF NOT EXISTS)
+	// would just recreate schema_meta if dropped beforehand, so the table is
+	// dropped here, AFTER startup, via a second independent connection --
+	// simulating the table becoming unwritable mid-run. Only the fleet-poll
+	// loop's 20ms ticks land in the window after this drop (transcript scan
+	// is set to a 100s interval above, so its one schema_meta write already
+	// happened during StartCollector, before the drop).
+	dropDB := openForInspection(t, dbPath)
+	if _, err := dropDB.Exec("DROP TABLE schema_meta"); err != nil {
+		t.Fatalf("drop schema_meta: %v", err)
+	}
+
+	// Give at least one more fleet-poll ticker cycle time to hit the
+	// now-missing table and log.
+	time.Sleep(100 * time.Millisecond)
+
+	if !strings.Contains(logBuf.String(), "[aether-collector] fleet poll failed") {
+		t.Fatalf("expected a logged fleet-poll-failed line from the heartbeat error, got log output: %q", logBuf.String())
+	}
+
+	// Other loops (spool tail) must keep working despite every fleet-poll
+	// tick erroring on the (now schema_meta-less) shared connection.
+	payload, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "s1"})
+	os.WriteFile(filepath.Join(spoolDir, "s1.jsonl"), append(payload, '\n'), 0644)
+	time.Sleep(150 * time.Millisecond)
+
+	inspectDB := openForInspection(t, dbPath)
+	assertCount(t, inspectDB, "events", 1)
 }
