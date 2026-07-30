@@ -7,6 +7,7 @@ interface ButtonProps {
   hoverStyle?: CSSProperties;
   title?: string;
   disabled?: boolean;
+  'aria-label'?: string;
   children: ReactNode;
 }
 
@@ -30,7 +31,7 @@ function withoutUndefined(style: CSSProperties): CSSProperties {
   return Object.fromEntries(Object.entries(style).filter(([, value]) => value !== undefined)) as CSSProperties;
 }
 
-export function Button({ onClick, style, hoverStyle, title, disabled, children }: ButtonProps) {
+export function Button({ onClick, style, hoverStyle, title, disabled, 'aria-label': ariaLabel, children }: ButtonProps) {
   const mergedStyle = { ...RESET_STYLE, ...withoutUndefined(style) };
   const mergedHoverStyle = hoverStyle && { ...mergedStyle, ...withoutUndefined(hoverStyle) };
   const { style: hoveredStyle, onMouseEnter, onMouseLeave } = useHoverStyle(mergedStyle, mergedHoverStyle);
@@ -43,6 +44,7 @@ export function Button({ onClick, style, hoverStyle, title, disabled, children }
       style={hoveredStyle}
       title={title}
       disabled={disabled}
+      aria-label={ariaLabel}
     >
       {children}
     </button>

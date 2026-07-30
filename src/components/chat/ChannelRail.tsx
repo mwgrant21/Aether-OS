@@ -83,7 +83,21 @@ export function ChannelRail({
           const on = c.id === activeChannelId;
           const unread = unreadCounts[c.id] ?? 0;
           return (
-            <div key={c.id} onClick={() => onSelect(c.id)} style={rowStyle(on, c.archived)}>
+            <div
+              key={c.id}
+              onClick={() => onSelect(c.id)}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return; // let the nested remove Button handle its own Enter/Space
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(c.id);
+                }
+              }}
+              tabIndex={0}
+              role="button"
+              aria-label={c.name}
+              style={rowStyle(on, c.archived)}
+            >
               <span style={avatarStyle(c.hue)}>{c.initials}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={nameStyle(colors, c.archived)}>{c.name}</div>
@@ -97,6 +111,7 @@ export function ChannelRail({
                       if (confirm('Remove this dispatch channel?')) onRemoveDispatchChannel(c.toolUseId!);
                     }}
                     style={removeStyle(colors)}
+                    aria-label="Remove channel"
                   >
                     ×
                   </Button>
