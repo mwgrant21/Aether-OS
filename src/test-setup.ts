@@ -22,3 +22,13 @@ if (realWindow?.sessionStorage) {
     writable: true,
   });
 }
+
+// Polyfill ResizeObserver for jsdom tests
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    constructor(_callback: any) {}
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as any;
+}
