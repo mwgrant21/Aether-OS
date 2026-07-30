@@ -6,7 +6,7 @@ import type { RealActiveWork } from '../../state/liveAgentsMath';
 beforeAll(() => {
   if (typeof globalThis.ResizeObserver === 'undefined') {
     globalThis.ResizeObserver = class ResizeObserver {
-      constructor(callback: any) {}
+      constructor(_callback: any) {}
       observe() {}
       unobserve() {}
       disconnect() {}

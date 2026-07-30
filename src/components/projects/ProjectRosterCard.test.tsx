@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { ProjectRosterCard } from './ProjectRosterCard';
 import { AetherStoreProvider } from '../../state/store';
 
