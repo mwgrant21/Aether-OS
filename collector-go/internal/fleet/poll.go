@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/mwgrant21/aether-os/collector-go/internal/canary"
 )
 
 // FleetSession mirrors fleetPoll.ts's FleetSession interface.
@@ -198,12 +200,23 @@ func UpsertFleetSessions(db *sql.DB, sessions []FleetSession, nowMs int64) error
 	return err
 }
 
-// logDrift mirrors canary.ts's logDrift for this package, matching the
-// spool package's own local best-effort port (internal/spool/ingest.go): a
-// failure to write the drift_log row must never stop pollFleet from
-// otherwise completing correctly, so the error is intentionally discarded.
+// logDrift delegates to canary.LogDrift, the one Go port of canary.ts's
+// logDrift -- which fleetPoll.ts likewise imports from canary.ts rather than
+// reimplementing. This package previously had its own local INSERT here,
+// which silently dropped the loud stderr line ("[aether-collector] contract
+// drift detected: ...") that canary.ts's console.error emits; the drift_log
+// row landed but the operator-visible signal did not. See this branch's
+// Task 9 parity report.
+//
+// The returned error is still intentionally discarded: a failure to write
+// the drift_log row must never stop pollFleet from otherwise completing
+// correctly. (fleetPoll.ts's own logDrift call would instead throw out of
+// pollFleet on a DB failure and be caught by index.ts's .catch -- a
+// divergence confined to the already-degraded "SQLite write is failing"
+// path, disclosed rather than changed, since correcting it would mean
+// changing PollFleet's exported signature.)
 func logDrift(db *sql.DB, nowMs int64, detail string) {
-	_, _ = db.Exec(`INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)`, nowMs, detail)
+	_ = canary.LogDrift(db, nowMs, detail)
 }
 
 // FleetExecFn mirrors fleetPoll.ts's FleetExecFn type: the injectable

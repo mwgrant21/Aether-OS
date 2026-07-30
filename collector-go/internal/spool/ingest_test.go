@@ -1,8 +1,11 @@
 package spool
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -139,5 +142,86 @@ func TestIngestLine_EmptyString_NeverPanicsReturnsFalse(t *testing.T) {
 	db := freshDB(t)
 	if ingestLine(db, "", 1000) {
 		t.Fatalf("expected empty line to not be ingested")
+	}
+}
+
+// captureStderr swaps os.Stderr for a pipe for the duration of fn and returns
+// everything written to it. canary.LogDrift reads os.Stderr at call time, so
+// swapping the package variable is enough. Not parallel-safe -- callers must
+// not t.Parallel().
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	w.Close()
+	os.Stderr = orig
+	out := <-done
+	r.Close()
+	return out
+}
+
+// Regression test for a real port bug found by Task 9's golden-file parity
+// run. ingest.ts runs canary.ts's checkForDrift against the RAW payload
+// (ingest.ts:22) BEFORE parseHookPayload (ingest.ts:37), so a known hook
+// event that is missing both its required field AND its session_id still
+// produces a drift_log row even though the line is then skipped as
+// unparseable. The Go port originally folded the drift check into
+// IngestHookEvent, which only ever runs on a successfully-parsed payload --
+// so this class of line silently produced no drift row at all.
+func TestIngestLine_KnownEventMissingRequiredFieldAndUnparseable_StillLogsDrift(t *testing.T) {
+	cases := []map[string]interface{}{
+		// PostToolUse with no tool_name and no session_id.
+		{"hook_event_name": "PostToolUse", "cwd": `C:\projects\x`},
+		// Notification with an explicitly-null notification_type and an
+		// empty-string session_id (stringField treats "" as absent).
+		{"hook_event_name": "Notification", "session_id": "", "notification_type": nil},
+	}
+	for _, raw := range cases {
+		db := freshDB(t)
+		line, _ := json.Marshal(raw)
+		if ingestLine(db, string(line), 1000) {
+			t.Fatalf("expected unparseable line to not be ingested: %s", line)
+		}
+
+		var driftCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM drift_log").Scan(&driftCount); err != nil {
+			t.Fatalf("count drift_log: %v", err)
+		}
+		if driftCount != 1 {
+			t.Fatalf("expected 1 drift_log row for %s, got %d", line, driftCount)
+		}
+
+		var eventCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM events").Scan(&eventCount); err != nil {
+			t.Fatalf("count events: %v", err)
+		}
+		if eventCount != 0 {
+			t.Fatalf("expected the line to be skipped, got %d events rows", eventCount)
+		}
+	}
+}
+
+// canary.ts's logDrift is loud on purpose: console.error plus the drift_log
+// row. The Go port's spool package originally wrote the row with a bare
+// db.Exec and emitted nothing, so a live contract drift left no
+// operator-visible trace in the collector's console output.
+func TestIngestLine_Drift_WritesLoudStderrLine(t *testing.T) {
+	db := freshDB(t)
+	line, _ := json.Marshal(map[string]interface{}{"hook_event_name": "PreToolUse", "session_id": "s1"})
+	out := captureStderr(t, func() { ingestLine(db, string(line), 1000) })
+	const want = "[aether-collector] contract drift detected: PreToolUse payload missing expected field(s): tool_name"
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected stderr to contain %q, got %q", want, out)
 	}
 }

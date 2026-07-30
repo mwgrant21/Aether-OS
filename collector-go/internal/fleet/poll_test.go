@@ -1,8 +1,11 @@
 package fleet
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -368,5 +371,40 @@ func TestPollFleet_LogsOneDriftRowPerMalformedRow_ButStillReturnsValidOnes(t *te
 	}
 	if count != 1 {
 		t.Fatalf("expected 1 drift_log row, got %d", count)
+	}
+}
+
+// Regression test for a real port bug found by Task 9's golden-file parity
+// run. fleetPoll.ts imports logDrift from canary.ts, which is loud on purpose
+// (console.error + a drift_log row). This package originally reimplemented
+// logDrift locally as a bare INSERT, so a live `claude agents --json`
+// contract drift landed a row but produced no operator-visible console
+// output at all -- exactly the signal a canary exists to raise.
+func TestPollFleet_Drift_WritesLoudStderrLine(t *testing.T) {
+	db := freshDB(t)
+
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	PollFleet(db, nil, 1000, func() (string, error) { return "", errors.New("spawn claude ENOENT") })
+
+	w.Close()
+	os.Stderr = orig
+	out := <-done
+	r.Close()
+
+	const want = "[aether-collector] contract drift detected: claude agents --json failed to run: spawn claude ENOENT"
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected stderr to contain %q, got %q", want, out)
 	}
 }
