@@ -57,6 +57,22 @@ func hasTraversalSegment(p string) bool {
 	return false
 }
 
+// isAbsoluteLikeNode matches Node's win32 path.isAbsolute semantics, which
+// are looser than filepath.IsAbs: any path whose first byte is a path
+// separator ('/' or '\') is absolute, even without a drive letter (e.g.
+// '/home/matt/secret.ts'). Go's filepath.IsAbs on Windows requires an actual
+// volume prefix (drive letter + colon, or a \\server\share UNC prefix) and
+// returns false for such POSIX-style paths, which would otherwise let them
+// skip the Rel-and-traversal-guard path below and pass through unredacted --
+// the privacy-sensitive direction, since docs/privacy-and-data.md names raw
+// absolute paths as the one thing this guard must never leak.
+func isAbsoluteLikeNode(p string) bool {
+	if filepath.IsAbs(p) {
+		return true
+	}
+	return len(p) > 0 && (p[0] == '/' || p[0] == '\\')
+}
+
 // ToProjectRelative mirrors toolCallHistory.ts's toProjectRelative exactly,
 // including its Windows cross-drive guard (see that file's doc comment for
 // the full rationale).
@@ -65,7 +81,7 @@ func ToProjectRelative(filePath *string, projectRoot *string) *string {
 		return nil
 	}
 	fp := *filePath
-	if !filepath.IsAbs(fp) {
+	if !isAbsoluteLikeNode(fp) {
 		// Already-relative input is passed through, but still
 		// traversal-checked so a crafted '../../secret' can't slip past just
 		// because it never went through filepath.Rel.
@@ -76,6 +92,18 @@ func ToProjectRelative(filePath *string, projectRoot *string) *string {
 	}
 	if projectRoot == nil || *projectRoot == "" {
 		return nil
+	}
+	// Node's win32 path.relative treats drive letters case-insensitively;
+	// filepath.Rel does not and errors out on what it sees as a volume
+	// mismatch (e.g. root "C:\..." vs fp "c:\..."). Normalize fp's volume
+	// prefix to projectRoot's exact casing first so this common case
+	// relativizes instead of being dropped -- a targeted fix for the
+	// single-drive-different-case scenario, not a full reimplementation of
+	// win32 path.relative's normalization.
+	rootVolume := filepath.VolumeName(*projectRoot)
+	fpVolume := filepath.VolumeName(fp)
+	if rootVolume != "" && fpVolume != "" && rootVolume != fpVolume && strings.EqualFold(rootVolume, fpVolume) {
+		fp = rootVolume + fp[len(fpVolume):]
 	}
 	rel, err := filepath.Rel(*projectRoot, fp)
 	if err != nil {

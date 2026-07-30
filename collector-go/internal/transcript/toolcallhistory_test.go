@@ -72,6 +72,36 @@ func TestToProjectRelative_CrossDriveWindowsOnly(t *testing.T) {
 	}
 }
 
+func TestToProjectRelative_PosixStyleAbsoluteAgainstWindowsRoot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only: exercises filepath.IsAbs vs Node's win32 isAbsolute divergence")
+	}
+	// A POSIX-style path (no drive letter) is absolute per Node's win32
+	// path.isAbsolute (leading separator alone suffices), so it must be
+	// routed through Rel-and-traversal-guard and rejected -- never passed
+	// through unredacted just because Go's filepath.IsAbs says it's relative.
+	result := ToProjectRelative(strp(`/home/matt/secret.ts`), strp(`C:\projects\x`))
+	if result != nil {
+		t.Fatalf("expected nil for POSIX-style absolute path against Windows root, got %q", *result)
+	}
+}
+
+func TestToProjectRelative_CaseInsensitiveDriveLetter(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only: exercises drive-letter case normalization")
+	}
+	// Node's win32 path.relative is case-insensitive on the drive letter;
+	// filepath.Rel is not. A lowercase-drive file path against an
+	// uppercase-drive root should still relativize successfully.
+	result := ToProjectRelative(strp(`c:\projects\x\src\a.ts`), strp(`C:\projects\x`))
+	if result == nil {
+		t.Fatalf("expected non-nil result for case-varied drive letter")
+	}
+	if *result != `src\a.ts` {
+		t.Fatalf("expected %q, got %q", `src\a.ts`, *result)
+	}
+}
+
 func TestToProjectRelative_RelativizesUnderRoot(t *testing.T) {
 	root := `/home/matt/projects/foo`
 	abs := `/home/matt/projects/foo/src/bar.ts`
