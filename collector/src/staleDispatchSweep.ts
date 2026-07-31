@@ -21,8 +21,10 @@ const FATAL_TIMEOUT_MS = 30 * 60 * 1000;
  * event (see usageIngest.ts#ingestDispatchEvent) and writes them into
  * `dispatches` as exit_state='fatal' rows, via the same
  * INSERT ... ON CONFLICT(tool_use_id) DO UPDATE upsert Task 4 established --
- * so re-sweeping the same stale entry on a later tick is idempotent (updates
- * duration_ms/ended_at_ms to the newer nowMs rather than duplicating a row).
+ * but a fatal row, once written, is final: re-sweeping the same stale entry
+ * on a later tick is a no-op (see the `if (existing) continue;` guard below),
+ * so duration_ms/ended_at_ms reflect "age at first fatal detection" rather
+ * than drifting with every subsequent scan tick.
  *
  * Two independent fatal conditions, either one triggers:
  *   (a) the dispatch's session has no fleet_sessions row at all, OR that row's
@@ -45,7 +47,12 @@ export function sweepStaleDispatches(
   // instead (see ingestDispatchEvent), so a completed Agent entry lingers in
   // history.openByToolUseId forever. Without this guard, a dispatch that
   // completed genuinely ('ok') would be re-swept and overwritten as 'fatal'
-  // the moment it aged past the grace period / session went stale.
+  // the moment it aged past the grace period / session went stale. Skipping
+  // ANY existing row (ok OR already-fatal) also makes a fatal row final once
+  // written, instead of being re-upserted with a drifting duration_ms on every
+  // tick; a genuinely-late 'ok' completion still wins because
+  // ingestDispatchEvent's own upsert in usageIngest.ts runs before this sweep
+  // on each tick (see transcriptScan.ts) and owns the row via tool_use_id.
   const existingExitState = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?');
   const upsert = db.prepare(
     `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
@@ -64,7 +71,7 @@ export function sweepStaleDispatches(
     if (open.toolName !== 'Agent') continue;
 
     const existing = existingExitState.get(toolUseId) as { exit_state: string } | undefined;
-    if (existing && existing.exit_state !== 'fatal') continue;
+    if (existing) continue;
 
     const ageMs = nowMs - open.startedAt;
     const timedOut = ageMs >= FATAL_TIMEOUT_MS;

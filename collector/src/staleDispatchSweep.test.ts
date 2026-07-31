@@ -107,19 +107,25 @@ describe('sweepStaleDispatches', () => {
     db.close();
   });
 
-  it('sweeping the same stale entry twice does not duplicate rows or throw', () => {
+  it('sweeping the same stale entry twice is an idempotent no-op: the fatal row stays as first written', () => {
     const db = freshDb();
     const nowMs = THIRTY_MIN + 1000;
     const history = historyWithOpen('tu6', { startedAt: 0, sessionId: 'ghost-session' });
 
-    expect(() => sweepStaleDispatches(db, history, nowMs)).not.toThrow();
+    const first = sweepStaleDispatches(db, history, nowMs);
+    expect(first.staleFound).toBe(1);
+
     const nowMs2 = nowMs + 5000;
-    expect(() => sweepStaleDispatches(db, history, nowMs2)).not.toThrow();
+    const second = sweepStaleDispatches(db, history, nowMs2);
+    expect(second.staleFound).toBe(0); // already-fatal row is skipped, not re-swept
 
     const count: any = db.prepare('SELECT COUNT(*) as c FROM dispatches WHERE tool_use_id = ?').get('tu6');
     expect(count.c).toBe(1);
     const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu6');
-    expect(row.ended_at_ms).toBe(nowMs2); // second sweep's nowMs won via upsert
+    // ended_at_ms/duration_ms stay pinned to the FIRST sweep's nowMs -- a fatal
+    // row is final once written, not overwritten on every subsequent tick.
+    expect(row.ended_at_ms).toBe(nowMs);
+    expect(row.duration_ms).toBe(nowMs - 0);
     db.close();
   });
 
