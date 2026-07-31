@@ -57,7 +57,7 @@ export interface ClosedToolCall {
 
 export interface ToolCallHistory {
   events: ClosedToolCall[];
-  openByToolUseId: Record<string, { toolName: string; filePath: string | null; startedAt: number }>;
+  openByToolUseId: Record<string, { toolName: string; filePath: string | null; startedAt: number; subagentType: string | null; sessionId: string | null }>;
 }
 
 export const HISTORY_MAX_EVENTS = 500;
@@ -80,7 +80,9 @@ export function updateHistory(
       // history -- see toProjectRelative's doc comment.
       const filePath = toProjectRelative(extractFilePath(toolUse.input), event.cwd);
       const startedAt = event.timestamp?.getTime() ?? nowMs;
-      newOpen[toolUse.id] = { toolName: toolUse.name, filePath, startedAt };
+      const subagentType = extractSubagentType(toolUse.input);
+      const sessionId = event.sessionId ?? null;
+      newOpen[toolUse.id] = { toolName: toolUse.name, filePath, startedAt, subagentType, sessionId };
     }
 
     for (const toolResult of event.toolResults) {
@@ -111,5 +113,13 @@ function extractFilePath(input: unknown): string | null {
   const obj = input as Record<string, unknown>;
   const filePath = obj.file_path;
   if (typeof filePath === 'string') return filePath;
+  return null;
+}
+
+function extractSubagentType(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const obj = input as Record<string, unknown>;
+  const subagentType = obj.subagent_type;
+  if (typeof subagentType === 'string') return subagentType;
   return null;
 }

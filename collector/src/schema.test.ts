@@ -57,10 +57,10 @@ describe('schema', () => {
     db.close();
   });
 
-  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 4', () => {
+  it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(4);
+    expect(getSchemaVersion(db)).toBe(5);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -113,10 +113,10 @@ describe('schema', () => {
     db.close();
   });
 
-  it('migrate also creates fleet_sessions, and bumps schema_meta to version 4', () => {
+  it('migrate also creates fleet_sessions, and bumps schema_meta to version 5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(4);
+    expect(getSchemaVersion(db)).toBe(5);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -176,10 +176,10 @@ describe('schema', () => {
     db.close();
   });
 
-  it('creates tool_calls, dispatches, anomalies, and daily_anomaly_rollups tables at v4', () => {
+  it('creates tool_calls, dispatches, anomalies, and daily_anomaly_rollups tables at v5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(4);
+    expect(getSchemaVersion(db)).toBe(5);
 
     db.exec(`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms)
              VALUES ('tu_1', 'Read', 'src/foo.ts', 1000, 2000)`);
@@ -209,6 +209,161 @@ describe('schema', () => {
       .prepare("SELECT COUNT(*) as c FROM schema_meta WHERE key = 'fleet_last_poll_ms'")
       .get();
     expect(count.c).toBe(1);
+    db.close();
+  });
+
+  it('v5 migrate creates dispatches with all seven new telemetry columns', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(5);
+
+    // Query the full column info for the dispatches table
+    const columns: any[] = db
+      .prepare("PRAGMA table_info(dispatches)")
+      .all();
+
+    const columnMap = new Map(columns.map((c: any) => [c.name, c]));
+
+    // Verify all original columns exist
+    expect(columnMap.has('tool_use_id')).toBe(true);
+    expect(columnMap.has('tokens')).toBe(true);
+    expect(columnMap.has('tool_uses')).toBe(true);
+    expect(columnMap.has('duration_ms')).toBe(true);
+    expect(columnMap.has('started_at_ms')).toBe(true);
+    expect(columnMap.has('ended_at_ms')).toBe(true);
+
+    // Verify the seven new columns
+    expect(columnMap.has('agent_id')).toBe(true);
+    expect(columnMap.get('agent_id').type).toBe('TEXT');
+    expect(columnMap.get('agent_id').notnull).toBe(0); // nullable
+
+    expect(columnMap.has('task_kind')).toBe(true);
+    expect(columnMap.get('task_kind').type).toBe('TEXT');
+    expect(columnMap.get('task_kind').notnull).toBe(0);
+
+    expect(columnMap.has('session_id')).toBe(true);
+    expect(columnMap.get('session_id').type).toBe('TEXT');
+    expect(columnMap.get('session_id').notnull).toBe(0);
+
+    expect(columnMap.has('retries')).toBe(true);
+    expect(columnMap.get('retries').type).toBe('INTEGER');
+    expect(columnMap.get('retries').notnull).toBe(1); // NOT NULL
+    expect(columnMap.get('retries').dflt_value).toBe('0'); // DEFAULT 0
+
+    expect(columnMap.has('exit_state')).toBe(true);
+    expect(columnMap.get('exit_state').type).toBe('TEXT');
+    expect(columnMap.get('exit_state').notnull).toBe(1); // NOT NULL
+    expect(columnMap.get('exit_state').dflt_value).toBe("'ok'"); // DEFAULT 'ok'
+
+    expect(columnMap.has('severity')).toBe(true);
+    expect(columnMap.get('severity').type).toBe('INTEGER');
+    expect(columnMap.get('severity').notnull).toBe(0); // nullable
+
+    expect(columnMap.has('median_ms_at_eval')).toBe(true);
+    expect(columnMap.get('median_ms_at_eval').type).toBe('INTEGER');
+    expect(columnMap.get('median_ms_at_eval').notnull).toBe(0); // nullable
+
+    db.close();
+  });
+
+  it('v5 migrate on an existing v4 DB preserves existing rows and applies defaults to new columns', () => {
+    const db = openDatabase(tempDbPath());
+
+    // Create a v4 schema manually
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS dispatches (
+        tool_use_id TEXT PRIMARY KEY,
+        tokens INTEGER NOT NULL,
+        tool_uses INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        started_at_ms INTEGER NOT NULL,
+        ended_at_ms INTEGER NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO schema_meta (key, value) VALUES ('version', '4')`
+    ).run();
+
+    // Insert some real v4 rows
+    db.prepare(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('tu_old_1', 1000, 2, 5000, 100, 5100);
+    db.prepare(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('tu_old_2', 2000, 3, 8000, 200, 8200);
+
+    // Now migrate to v5
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(5);
+
+    // Verify the rows still exist with original data
+    const rows: any[] = db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all();
+    expect(rows.length).toBe(2);
+
+    expect(rows[0].tool_use_id).toBe('tu_old_1');
+    expect(rows[0].tokens).toBe(1000);
+    expect(rows[0].tool_uses).toBe(2);
+    expect(rows[0].duration_ms).toBe(5000);
+
+    expect(rows[1].tool_use_id).toBe('tu_old_2');
+    expect(rows[1].tokens).toBe(2000);
+
+    // Verify defaults are applied
+    expect(rows[0].agent_id).toBeNull();
+    expect(rows[0].task_kind).toBeNull();
+    expect(rows[0].session_id).toBeNull();
+    expect(rows[0].retries).toBe(0); // DEFAULT 0
+    expect(rows[0].exit_state).toBe('ok'); // DEFAULT 'ok'
+    expect(rows[0].severity).toBeNull();
+    expect(rows[0].median_ms_at_eval).toBeNull();
+
+    expect(rows[1].retries).toBe(0);
+    expect(rows[1].exit_state).toBe('ok');
+
+    db.close();
+  });
+
+  it('v5 migrate is idempotent -- calling it twice does not attempt to re-add columns', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(5);
+
+    // Calling migrate again should not throw and should not modify anything
+    expect(() => migrate(db)).not.toThrow();
+    expect(getSchemaVersion(db)).toBe(5);
+
+    const columns: any[] = db.prepare("PRAGMA table_info(dispatches)").all();
+    // Count should be exactly the original 6 + 7 new = 13 columns
+    expect(columns.length).toBe(13);
+
+    db.close();
+  });
+
+  it('v5 dispatches table can accept a full row with all new columns', () => {
+    const db = openDatabase(tempDbPath());
+    migrate(db);
+
+    db.prepare(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('tu_new_1', 5000, 4, 10000, 1000, 11000, 'ag-123', 'fetch', 'sess-1', 2, 'timeout', 2, 4500);
+
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_new_1');
+    expect(row.tokens).toBe(5000);
+    expect(row.agent_id).toBe('ag-123');
+    expect(row.task_kind).toBe('fetch');
+    expect(row.session_id).toBe('sess-1');
+    expect(row.retries).toBe(2);
+    expect(row.exit_state).toBe('timeout');
+    expect(row.severity).toBe(2);
+    expect(row.median_ms_at_eval).toBe(4500);
+
     db.close();
   });
 });

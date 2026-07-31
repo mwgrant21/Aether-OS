@@ -6,6 +6,7 @@ import { openDatabase, migrate } from './schema.js';
 import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import type { TranscriptEvent } from './transcriptParser.js';
 import { createEmptyHistory, updateHistory } from './toolCallHistory.js';
+import { computeSeverity } from './personalitySpine.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-usageingest-'));
@@ -214,6 +215,47 @@ describe('ingestDispatchEvent', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].tokens).toBe(250);
     expect(rows[0].ended_at_ms).toBe(14000);
+    db.close();
+  });
+
+  it('populates task_kind/agent_id/session_id/retries/exit_state/severity/median_ms_at_eval on real completion', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    history.openByToolUseId['tu_1'].sessionId = 'sess-abc';
+
+    const event = completionEvent('tu_1', 13000, { durationMs: 4321 });
+    expect(ingestDispatchEvent(db, history, event)).toBe(true);
+
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
+    expect(row.task_kind).toBe('general-purpose');
+    expect(row.agent_id).toBe('general-purpose');
+    expect(row.session_id).toBe('sess-abc');
+    expect(row.retries).toBe(0);
+    expect(row.exit_state).toBe('ok');
+    expect(row.median_ms_at_eval).toBeNull();
+    const expectedSeverity = computeSeverity({
+      exit: 'ok',
+      retries: 0,
+      elapsedMs: 4321,
+      medianMsAtEval: null,
+    });
+    expect(row.severity).toBe(expectedSeverity);
+    expect(expectedSeverity).toBe(1);
+    db.close();
+  });
+
+  it('writes task_kind/agent_id as null when the open dispatch has no subagent_type', () => {
+    const db = freshDb();
+    const history = updateHistory(createEmptyHistory(), [{
+      kind: 'assistant', sessionId: null, timestamp: new Date(1000), cwd: null, model: null, usage: null,
+      toolUses: [{ id: 'tu_1', name: 'Agent', input: {} }],
+      toolResults: [], humanText: null, originKind: null,
+    }], 1000);
+
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_1', 13000))).toBe(true);
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
+    expect(row.task_kind).toBeNull();
+    expect(row.agent_id).toBeNull();
     db.close();
   });
 

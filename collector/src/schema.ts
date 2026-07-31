@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -113,6 +113,22 @@ export function migrate(db: DatabaseSync): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_anomalies_kind_tool_use_id
       ON anomalies (kind, tool_use_id);
   `);
+
+  // v5 migration: add telemetry columns to dispatches table
+  // Only run this migration when upgrading from schema version < 5
+  const currentVersion = getSchemaVersion(db);
+  if (currentVersion < 5) {
+    db.exec(`
+      ALTER TABLE dispatches ADD COLUMN agent_id TEXT;
+      ALTER TABLE dispatches ADD COLUMN task_kind TEXT;
+      ALTER TABLE dispatches ADD COLUMN session_id TEXT;
+      ALTER TABLE dispatches ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE dispatches ADD COLUMN exit_state TEXT NOT NULL DEFAULT 'ok';
+      ALTER TABLE dispatches ADD COLUMN severity INTEGER;
+      ALTER TABLE dispatches ADD COLUMN median_ms_at_eval INTEGER;
+    `);
+  }
+
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`

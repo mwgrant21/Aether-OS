@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { TranscriptEvent } from './transcriptParser.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
+import { computeSeverity } from './personalitySpine.js';
 
 export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent): boolean {
   if (event.kind !== 'assistant' || event.usage === null || event.timestamp === null) return false;
@@ -51,11 +52,25 @@ export function ingestDispatchEvent(
   const durationMs = durationMatch ? Number(durationMatch[1]) : 0;
   const endedAtMs = event.timestamp.getTime();
 
+  const severity = computeSeverity({
+    exit: 'ok',
+    retries: 0,
+    elapsedMs: durationMs,
+    medianMsAtEval: null,
+  });
+
   db.prepare(
-    `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
+       agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tool_use_id) DO UPDATE SET tokens = excluded.tokens, tool_uses = excluded.tool_uses,
-       duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms`
-  ).run(dispatchToolUseId, tokens, toolUses, durationMs, open.startedAt, endedAtMs);
+       duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms,
+       agent_id = excluded.agent_id, task_kind = excluded.task_kind, session_id = excluded.session_id,
+       retries = excluded.retries, exit_state = excluded.exit_state, severity = excluded.severity,
+       median_ms_at_eval = excluded.median_ms_at_eval`
+  ).run(
+    dispatchToolUseId, tokens, toolUses, durationMs, open.startedAt, endedAtMs,
+    open.subagentType, open.subagentType, open.sessionId, 0, 'ok', severity, null
+  );
   return true;
 }
