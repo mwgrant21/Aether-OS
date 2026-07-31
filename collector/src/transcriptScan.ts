@@ -6,6 +6,7 @@ import { stampTranscriptScanHeartbeat } from './schema.js';
 import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
+import { sweepStaleDispatches } from './staleDispatchSweep.js';
 
 function getLastOffset(db: DatabaseSync, filePath: string): number {
   const row = db.prepare('SELECT last_offset FROM transcript_files WHERE file_path = ?').get(filePath) as
@@ -127,6 +128,12 @@ export function scanTranscriptsOnce(
       for (const event of parsedEvents) {
         ingestDispatchEvent(db, anomalyResult.history, event);
       }
+
+      // Fatal-via-staleness sweep: run after the above ingest work so it sees
+      // this tick's freshest history (an Agent open entry that just closed via
+      // ingestDispatchEvent above is no longer in anomalyResult.history and
+      // will not be swept).
+      sweepStaleDispatches(db, anomalyResult.history, nowMs);
 
       filesScanned += 1;
       recordOffset(db, relativePath, newOffset, nowMs);

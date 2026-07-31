@@ -208,7 +208,7 @@ describe('scanTranscriptsOnce', () => {
     db.close();
   });
 
-  it('does not write a dispatches row for a dispatch that has no completion notification', () => {
+  it('writes only the completed dispatch as ok, and the never-completed dispatch is later swept as fatal', () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
     const projDir = join(projectsRoot, 'my-project');
     mkdirSync(projDir);
@@ -237,9 +237,16 @@ describe('scanTranscriptsOnce', () => {
     const db = freshDb();
     scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 30), new Map());
 
-    const rows: any[] = db.prepare('SELECT * FROM dispatches').all() as any[];
-    expect(rows.length).toBe(1);
+    // tu_a completed genuinely (ok) via its task-notification; tu_b never
+    // completed and, at this tick's nowMs (30s after it opened, with 's1'
+    // never seen in fleet_sessions), is past the staleDispatchSweep grace
+    // period with no live session -- so it is swept as fatal in the same tick.
+    const rows: any[] = db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all() as any[];
+    expect(rows.length).toBe(2);
     expect(rows[0].tool_use_id).toBe('tu_a');
+    expect(rows[0].exit_state).toBe('ok');
+    expect(rows[1].tool_use_id).toBe('tu_b');
+    expect(rows[1].exit_state).toBe('fatal');
     db.close();
   });
 
