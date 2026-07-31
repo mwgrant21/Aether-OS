@@ -130,9 +130,14 @@ export function scanTranscriptsOnce(
       }
 
       // Fatal-via-staleness sweep: run after the above ingest work so it sees
-      // this tick's freshest history (an Agent open entry that just closed via
-      // ingestDispatchEvent above is no longer in anomalyResult.history and
-      // will not be swept).
+      // this tick's freshest history. ingestDispatchEvent does not mutate
+      // history or remove entries from openByToolUseId, so an Agent entry
+      // that just completed via ingestDispatchEvent above still survives into
+      // anomalyResult.history and is offered to the sweep below. It is only
+      // the `exit_state !== 'fatal'` guard inside sweepStaleDispatches (in
+      // staleDispatchSweep.ts) that prevents that already-completed dispatch
+      // from being re-flagged as fatal -- that guard is load-bearing, not
+      // redundant.
       sweepStaleDispatches(db, anomalyResult.history, nowMs);
 
       filesScanned += 1;
