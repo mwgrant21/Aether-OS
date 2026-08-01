@@ -7,6 +7,8 @@ import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
+import { extractDispatchResultText } from './dispatchResultText.js';
+import type { MemoryExtractQueue } from './memoryExtractQueue.js';
 
 function getLastOffset(db: DatabaseSync, filePath: string): number {
   const row = db.prepare('SELECT last_offset FROM transcript_files WHERE file_path = ?').get(filePath) as
@@ -49,11 +51,21 @@ function readNewLinesSync(filePath: string, offset: number): { lines: string[]; 
   }
 }
 
+// docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md SS4.
+// Trivial one-shot dispatches are unlikely to produce a judgment worth
+// remembering; this keeps claude -p spawn frequency proportional to
+// substantive work. Not tuned against real traffic -- revisit once this has
+// run for a while, same caveat as the Layer 2 spec's own Phase E.
+function clearsExtractionBar(durationMs: number, toolUses: number): boolean {
+  return durationMs >= 60_000 || toolUses >= 5;
+}
+
 export function scanTranscriptsOnce(
   db: DatabaseSync,
   projectsRoot: string,
   nowMs: number,
-  historyByFile: Map<string, ToolCallHistory>
+  historyByFile: Map<string, ToolCallHistory>,
+  extractQueue?: MemoryExtractQueue
 ): { filesScanned: number; eventsIngested: number; toolCallsIngested: number; anomaliesIngested: number } {
   // Stamped first and unconditionally: the heartbeat proves the scan cycle is
   // alive, not that it succeeded (see stampTranscriptScanHeartbeat), so the
@@ -102,9 +114,10 @@ export function scanTranscriptsOnce(
         continue;
       }
 
-      const parsedEvents = lines
-        .map((l) => parseTranscriptLine(l))
-        .filter((e): e is NonNullable<typeof e> => e !== null);
+      const parsedPairs = lines
+        .map((l) => ({ rawLine: l, event: parseTranscriptLine(l) }))
+        .filter((p): p is { rawLine: string; event: NonNullable<ReturnType<typeof parseTranscriptLine>> } => p.event !== null);
+      const parsedEvents = parsedPairs.map((p) => p.event);
       for (const event of parsedEvents) {
         if (ingestUsageEvent(db, event)) eventsIngested += 1;
       }
@@ -127,6 +140,43 @@ export function scanTranscriptsOnce(
       // the open entry survives into anomalyResult.history either way.
       for (const event of parsedEvents) {
         ingestDispatchEvent(db, anomalyResult.history, event);
+      }
+
+      // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
+      // SS2). extractQueue is optional so every existing caller (including this
+      // file's own tests) is unaffected when omitted -- extraction is simply
+      // skipped. Reads pair.rawLine (the raw JSONL line still in memory for this
+      // scan tick), never re-opens the file and never persists the text anywhere.
+      if (extractQueue) {
+        for (const pair of parsedPairs) {
+          if (pair.event.originKind !== 'task-notification') continue;
+          const idMatch = (pair.event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
+          if (!idMatch) continue;
+          const toolUseId = idMatch[1];
+
+          const row = db
+            .prepare(
+              'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
+            )
+            .get(toolUseId) as
+            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number; tool_uses: number; exit_state: string }
+            | undefined;
+          if (!row || !row.agent_id) continue;
+          if (row.exit_state !== 'ok') continue;
+          if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
+
+          const runSummary = extractDispatchResultText(pair.event.humanText);
+          if (!runSummary) continue;
+
+          extractQueue.push({
+            agentId: row.agent_id,
+            taskKind: row.task_kind ?? row.agent_id,
+            sessionId: row.session_id,
+            toolUseId,
+            runSummary,
+            queuedAtMs: nowMs,
+          });
+        }
       }
 
       // Fatal-via-staleness sweep: run after the above ingest work so it sees

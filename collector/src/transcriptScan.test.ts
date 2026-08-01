@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
+import { createMemoryExtractQueue } from './memoryExtractQueue.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-scan-db-'));
@@ -257,6 +258,109 @@ describe('scanTranscriptsOnce', () => {
     scanTranscriptsOnce(db, join(tmpdir(), 'aether-does-not-exist-' + Date.now()), 12345, new Map());
     const row: any = db.prepare("SELECT value FROM schema_meta WHERE key = 'transcript_last_scan_ms'").get();
     expect(row?.value).toBe('12345');
+    db.close();
+  });
+});
+
+// A closed, substantive Agent dispatch: an assistant tool_use named 'Agent'
+// followed by its task-notification completion, with a tool_result on the
+// SAME toolUseId carrying the subagent's final report text. Mirrors the real
+// shape verified in usageIngest.test.ts's openDispatch/completionEvent
+// helpers, plus the tool_result line this plan's Task 1 reads from.
+function agentToolUseLine(toolUseId: string, timestamp: string): string {
+  return JSON.stringify({
+    type: 'assistant',
+    sessionId: 's1',
+    timestamp,
+    message: {
+      model: 'claude-sonnet-4-6',
+      content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { subagent_type: 'CINDER' } }],
+    },
+  });
+}
+
+function taskNotificationLine(
+  toolUseId: string,
+  timestamp: string,
+  parts: { tokens?: number; toolUses?: number; durationMs?: number } = {},
+): string {
+  const { tokens = 100, toolUses = 6, durationMs = 65_000 } = parts;
+  return JSON.stringify({
+    type: 'user',
+    sessionId: 's1',
+    timestamp,
+    origin: { kind: 'task-notification' },
+    message: {
+      content: [
+        {
+          type: 'text',
+          text:
+            `<tool-use-id>${toolUseId}</tool-use-id>` +
+            `<subagent_tokens>${tokens}</subagent_tokens>` +
+            `<tool_uses>${toolUses}</tool_uses>` +
+            `<duration_ms>${durationMs}</duration_ms>` +
+            `<result>Implemented the feature, all tests passing.</result>`,
+        },
+      ],
+    },
+  });
+}
+
+describe('scanTranscriptsOnce -- memory extraction queueing', () => {
+  it('queues a closed, substantive Agent dispatch for extraction when a queue is provided', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const lines = [
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { durationMs: 65_000, toolUses: 6 }),
+    ].join('\n');
+    writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
+
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+
+    expect(queue.size()).toBe(1);
+    const drained = queue.drain();
+    expect(drained[0]).toMatchObject({
+      agentId: 'CINDER',
+      toolUseId: 'tu_1',
+      runSummary: 'Implemented the feature, all tests passing.',
+    });
+    db.close();
+  });
+
+  it('does not queue a dispatch that falls below the extraction bar (short duration, few tool uses)', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const lines = [
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:00:05Z', { durationMs: 3_000, toolUses: 1 }),
+    ].join('\n');
+    writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
+
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+
+    expect(queue.size()).toBe(0);
+    db.close();
+  });
+
+  it('does not queue anything, and does not throw, when no queue is provided (existing callers unaffected)', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const lines = [
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { durationMs: 65_000, toolUses: 6 }),
+    ].join('\n');
+    writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
+
+    const db = freshDb();
+    expect(() => scanTranscriptsOnce(db, projectsRoot, 2000, new Map())).not.toThrow();
     db.close();
   });
 });

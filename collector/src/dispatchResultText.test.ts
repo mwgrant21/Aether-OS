@@ -1,63 +1,60 @@
 import { describe, it, expect } from 'vitest';
 import { extractDispatchResultText } from './dispatchResultText.js';
 
-function rawLine(content: unknown, toolUseId = 'tu_1'): string {
-  return JSON.stringify({
-    type: 'user',
-    sessionId: 's1',
-    timestamp: '2026-07-08T09:00:00Z',
-    message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
-  });
+// Shaped after a real captured task-notification event's humanText: all
+// tags concatenated in one string, <result> containing multi-line markdown.
+function notificationText(resultBody: string): string {
+  return (
+    '<task-notification>\n' +
+    '<task-id>a97f700e2e359a28b</task-id>\n' +
+    '<tool-use-id>toolu_01NESNPGPYBESN4SrbugEy7K</tool-use-id>\n' +
+    '<status>completed</status>\n' +
+    '<summary>Agent "Explore src/state directory" finished</summary>\n' +
+    `<result>${resultBody}</result>\n` +
+    '<subagent_tokens>500</subagent_tokens>\n' +
+    '<tool_uses>8</tool_uses>\n' +
+    '<duration_ms>90000</duration_ms>\n' +
+    '</task-notification>'
+  );
 }
 
 describe('extractDispatchResultText', () => {
-  it('extracts a plain string tool_result content', () => {
-    const result = extractDispatchResultText(rawLine('Implemented the feature, all tests passing.'), 'tu_1');
+  it('extracts a single-line result body', () => {
+    const result = extractDispatchResultText(notificationText('Implemented the feature, all tests passing.'));
     expect(result).toBe('Implemented the feature, all tests passing.');
   });
 
-  it('extracts and joins text blocks from an array-shaped tool_result content', () => {
-    const line = rawLine([
-      { type: 'text', text: 'First finding.' },
-      { type: 'text', text: 'Second finding.' },
-    ]);
-    const result = extractDispatchResultText(line, 'tu_1');
-    expect(result).toBe('First finding.\nSecond finding.');
+  it('extracts a multi-line markdown result body', () => {
+    const body = '## Task 1 Complete\n\n**Status**: DONE\n\n**Commit SHA**: c9c406b';
+    const result = extractDispatchResultText(notificationText(body));
+    expect(result).toBe(body);
   });
 
-  it('ignores non-text blocks when joining an array-shaped content', () => {
-    const line = rawLine([
-      { type: 'text', text: 'Kept.' },
-      { type: 'image', source: { data: 'irrelevant' } },
-    ]);
-    const result = extractDispatchResultText(line, 'tu_1');
-    expect(result).toBe('Kept.');
+  it('trims leading/trailing whitespace from the captured result', () => {
+    const result = extractDispatchResultText(notificationText('  padded on both sides  '));
+    expect(result).toBe('padded on both sides');
   });
 
-  it('returns null when no tool_result matches the given toolUseId', () => {
-    const result = extractDispatchResultText(rawLine('some content', 'tu_other'), 'tu_1');
-    expect(result).toBeNull();
+  it('returns null when there is no <result> tag at all', () => {
+    const text = '<task-notification>\n<tool-use-id>tu_1</tool-use-id>\n</task-notification>';
+    expect(extractDispatchResultText(text)).toBeNull();
   });
 
-  it('returns null when the message has no tool_result at all', () => {
-    const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
-    const result = extractDispatchResultText(line, 'tu_1');
-    expect(result).toBeNull();
+  it('returns null for an empty or whitespace-only result body', () => {
+    expect(extractDispatchResultText(notificationText(''))).toBeNull();
+    expect(extractDispatchResultText(notificationText('   '))).toBeNull();
   });
 
-  it('returns null for empty or whitespace-only content', () => {
-    expect(extractDispatchResultText(rawLine(''), 'tu_1')).toBeNull();
-    expect(extractDispatchResultText(rawLine('   '), 'tu_1')).toBeNull();
+  it('returns null for null input', () => {
+    expect(extractDispatchResultText(null)).toBeNull();
   });
 
-  it('never throws on malformed JSON', () => {
-    expect(() => extractDispatchResultText('not json at all {{', 'tu_1')).not.toThrow();
-    expect(extractDispatchResultText('not json at all {{', 'tu_1')).toBeNull();
+  it('returns null for a plain empty string', () => {
+    expect(extractDispatchResultText('')).toBeNull();
   });
 
-  it('never throws on a well-formed but unexpected shape', () => {
-    const line = JSON.stringify({ type: 'user', message: { content: 'not an array' } });
-    expect(() => extractDispatchResultText(line, 'tu_1')).not.toThrow();
-    expect(extractDispatchResultText(line, 'tu_1')).toBeNull();
+  it('never throws on text containing unbalanced or nested angle brackets', () => {
+    const text = notificationText('a < b and c > d, plus <stray');
+    expect(() => extractDispatchResultText(text)).not.toThrow();
   });
 });
