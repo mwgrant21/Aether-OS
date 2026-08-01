@@ -223,6 +223,63 @@ export function findForbiddenContent(content: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Private scoring (§4.4, Phase C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Weights/half-lives below are Phase C's initial defaults, not tuned values
+ * -- Phase E ("parked, needs real traffic") owns tuning. Every constant here
+ * is named and isolated specifically so that tuning is a numbers-only change,
+ * never a structural one. See
+ * docs/superpowers/specs/2026-07-31-memory-layer2-phase-c-retrieval-design.md §1.
+ */
+
+// Partial, not a full Record<MemoryKind, number>: shared kinds ('decision',
+// 'preference') never reach this function -- getPrivateCandidates only ever
+// queries scope='private' rows -- so they have no entry here.
+const KIND_WEIGHT: Partial<Record<MemoryKind, number>> = {
+  overrule: 1.0,
+  revision: 0.67,
+  habit: 0.33,
+};
+
+const RECENCY_HALF_LIFE_DAYS = 90;
+const STALENESS_HALF_LIFE_DAYS = 90;
+const SECONDS_PER_DAY = 86_400;
+
+/**
+ * score = 2.0*kind_weight + 1.5*salience(norm) + 1.0*recency - 0.5*staleness_risk
+ *
+ * `nowSeconds` matches the store's own now() convention exactly (seconds,
+ * not milliseconds) -- see this file's `now` in MemoryStoreOptions. Pure,
+ * no I/O, independently testable without a store.
+ *
+ * DIVERGENCE from Miriel: no `overuse` term. §4.4: "an agent that keeps
+ * reaching for the same overrule is an agent that keeps hitting the same
+ * wall, and that is signal, not noise."
+ */
+export function scorePrivateCandidate(row: MemoryRow, nowSeconds: number): number {
+  const kindWeight = KIND_WEIGHT[row.kind] ?? 0;
+  const salienceNorm = row.salience / 5;
+
+  // Keyed on created_at, NEVER updated_at or a "last surfaced" timestamp --
+  // §4.4's own documented trap: surfacing a memory must never raise its own
+  // future score.
+  const ageDaysSinceCreated = (nowSeconds - row.created_at) / SECONDS_PER_DAY;
+  const recency = Math.pow(0.5, ageDaysSinceCreated / RECENCY_HALF_LIFE_DAYS);
+
+  // Zero for any non-'open' status. Keyed on updated_at, which TOUCH
+  // legitimately resets -- a TOUCHed open row's staleness_risk resetting is
+  // correct (the extractor re-confirmed it's still live), not the same
+  // feedback trap as recency/surfacing.
+  const ageDaysSinceUpdated = (nowSeconds - row.updated_at) / SECONDS_PER_DAY;
+  const stalenessRisk =
+    row.status === 'open' ? 1 - Math.pow(0.5, ageDaysSinceUpdated / STALENESS_HALF_LIFE_DAYS) : 0;
+
+  return 2.0 * kindWeight + 1.5 * salienceNorm + 1.0 * recency - 0.5 * stalenessRisk;
+}
+
+// ---------------------------------------------------------------------------
 // Schema (§3.2)
 // ---------------------------------------------------------------------------
 

@@ -13,7 +13,9 @@ import { join } from 'node:path';
 import {
   createMemoryStore,
   findForbiddenContent,
+  scorePrivateCandidate,
   SHARED_WRITER,
+  type MemoryRow,
   type MemoryStore,
 } from './memoryStore.js';
 
@@ -402,5 +404,118 @@ describe("the 'constraint' kind stays removed (§9 #3)", () => {
     ], steward);
     expect(r.added).toBe(0);
     expect(r.rejected[0]).toMatchObject({ reason: 'invalid_kind', detail: 'constraint' });
+  });
+});
+
+describe('scorePrivateCandidate', () => {
+  const NOW = 1_000_000; // seconds, arbitrary fixed epoch matching this file's `clock` convention
+  const DAY = 86_400;
+
+  function row(overrides: Partial<MemoryRow> = {}): MemoryRow {
+    return {
+      id: 1,
+      scope: 'private',
+      owner_agent: 'CINDER',
+      kind: 'habit',
+      content: 'x',
+      status: null,
+      salience: 3,
+      subject: null,
+      source_kind: 'run',
+      source_run_id: null,
+      created_at: NOW,
+      updated_at: NOW,
+      asked_at: null,
+      reference_count: 0,
+      ...overrides,
+    };
+  }
+
+  it('weights kind in the order overrule > revision > habit, all else equal', () => {
+    const overruleScore = scorePrivateCandidate(row({ kind: 'overrule' }), NOW);
+    const revisionScore = scorePrivateCandidate(row({ kind: 'revision' }), NOW);
+    const habitScore = scorePrivateCandidate(row({ kind: 'habit' }), NOW);
+    expect(overruleScore).toBeGreaterThan(revisionScore);
+    expect(revisionScore).toBeGreaterThan(habitScore);
+  });
+
+  it('pins the exact kind_weight values (overrule=1.0, revision=0.67, habit=0.33)', () => {
+    // With salience=3 (norm 0.6), created_at=updated_at=NOW (recency=1, staleness_risk=0
+    // since status defaults to null, not 'open'): score = 2.0*kindWeight + 1.5*0.6 + 1.0*1 - 0 = 2.0*kindWeight + 1.9
+    expect(scorePrivateCandidate(row({ kind: 'overrule' }), NOW)).toBeCloseTo(2.0 * 1.0 + 1.9, 5);
+    expect(scorePrivateCandidate(row({ kind: 'revision' }), NOW)).toBeCloseTo(2.0 * 0.67 + 1.9, 5);
+    expect(scorePrivateCandidate(row({ kind: 'habit' }), NOW)).toBeCloseTo(2.0 * 0.33 + 1.9, 5);
+  });
+
+  it('scales linearly with salience via /5 normalization', () => {
+    const low = scorePrivateCandidate(row({ salience: 1 }), NOW);
+    const mid = scorePrivateCandidate(row({ salience: 3 }), NOW);
+    const high = scorePrivateCandidate(row({ salience: 5 }), NOW);
+    expect(high).toBeGreaterThan(mid);
+    expect(mid).toBeGreaterThan(low);
+    // 1.5 * (salience/5) is the salience term's exact contribution; difference
+    // between salience=5 and salience=1 is 1.5 * (5/5 - 1/5) = 1.5 * 0.8 = 1.2
+    expect(high - low).toBeCloseTo(1.2, 5);
+  });
+
+  it('recency is 1.0 at age zero and 0.5 at exactly 90 days, keyed on created_at not updated_at', () => {
+    const fresh = row({ created_at: NOW, updated_at: NOW });
+    const ninetyDaysOld = row({ created_at: NOW - 90 * DAY, updated_at: NOW - 90 * DAY });
+    const freshScore = scorePrivateCandidate(fresh, NOW);
+    const oldScore = scorePrivateCandidate(ninetyDaysOld, NOW);
+    // Both have kind='habit', salience=3, status=null (staleness_risk=0) --
+    // only recency differs. recency term contribution: 1.0*1.0 vs 1.0*0.5,
+    // so the score difference should be exactly 0.5 (the 1.0 coefficient on recency).
+    expect(freshScore - oldScore).toBeCloseTo(0.5, 5);
+  });
+
+  it('a row updated recently (created long ago) still uses created_at for recency, not updated_at', () => {
+    // created 200 days ago, but updated (e.g. via TOUCH) just now -- recency
+    // must still reflect the OLD created_at, not the fresh updated_at, per
+    // the design doc's explicit "keyed on created_at, never updated_at" rule.
+    const oldButTouched = row({ created_at: NOW - 200 * DAY, updated_at: NOW, status: null });
+    const trulyFresh = row({ created_at: NOW, updated_at: NOW, status: null });
+    expect(scorePrivateCandidate(oldButTouched, NOW)).toBeLessThan(scorePrivateCandidate(trulyFresh, NOW));
+  });
+
+  it('staleness_risk is zero for any non-open status, regardless of updated_at age', () => {
+    const veryStaleButSettled = row({ status: 'settled', updated_at: NOW - 300 * DAY });
+    const veryStaleButMoving = row({ status: 'moving', updated_at: NOW - 300 * DAY });
+    const veryStaleButNull = row({ status: null, updated_at: NOW - 300 * DAY });
+    const fresh = row({ status: 'settled', updated_at: NOW });
+    // All should score identically to their fresh-updated_at counterpart,
+    // since staleness_risk only applies to status='open'.
+    expect(scorePrivateCandidate(veryStaleButSettled, NOW)).toBeCloseTo(scorePrivateCandidate(fresh, NOW), 5);
+    expect(scorePrivateCandidate(veryStaleButMoving, NOW)).toBeCloseTo(scorePrivateCandidate(fresh, NOW), 5);
+    expect(scorePrivateCandidate(veryStaleButNull, NOW)).toBeCloseTo(scorePrivateCandidate(fresh, NOW), 5);
+  });
+
+  it('staleness_risk grows with updated_at age for open-status rows, 0 at age zero, 0.5 at 90 days', () => {
+    const freshOpen = row({ status: 'open', updated_at: NOW });
+    const ninetyDayOpen = row({ status: 'open', updated_at: NOW - 90 * DAY });
+    const freshScore = scorePrivateCandidate(freshOpen, NOW);
+    const staleScore = scorePrivateCandidate(ninetyDayOpen, NOW);
+    // staleness_risk term contribution is -0.5*staleness_risk; at 90 days
+    // staleness_risk=0.5, so the score difference should be exactly 0.25
+    // (0.5 coefficient * 0.5 risk).
+    expect(freshScore - staleScore).toBeCloseTo(0.25, 5);
+  });
+
+  it('an open row that was just TOUCHed (updated_at reset to now) has near-zero staleness_risk even if created long ago', () => {
+    const justTouched = row({ status: 'open', created_at: NOW - 200 * DAY, updated_at: NOW });
+    // staleness_risk depends on updated_at only, not created_at -- this row
+    // should have staleness_risk ~= 0 despite being old.
+    const scoreWithFreshTouch = scorePrivateCandidate(justTouched, NOW);
+    const scoreIfNeverTouched = scorePrivateCandidate(
+      row({ status: 'open', created_at: NOW - 200 * DAY, updated_at: NOW - 200 * DAY }),
+      NOW,
+    );
+    expect(scoreWithFreshTouch).toBeGreaterThan(scoreIfNeverTouched);
+  });
+
+  it('has no overuse/reference_count term at all -- reference_count does not affect score', () => {
+    const neverReferenced = row({ reference_count: 0 });
+    const heavilyReferenced = row({ reference_count: 500 });
+    expect(scorePrivateCandidate(neverReferenced, NOW)).toBe(scorePrivateCandidate(heavilyReferenced, NOW));
   });
 });
