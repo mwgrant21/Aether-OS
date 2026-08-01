@@ -282,27 +282,28 @@ function agentToolUseLine(toolUseId: string, timestamp: string): string {
 function taskNotificationLine(
   toolUseId: string,
   timestamp: string,
-  parts: { tokens?: number; toolUses?: number; durationMs?: number } = {},
+  parts: { tokens?: number; toolUses?: number; durationMs?: number; resultBody?: string } = {},
 ): string {
-  const { tokens = 100, toolUses = 6, durationMs = 65_000 } = parts;
+  const {
+    tokens = 100,
+    toolUses = 6,
+    durationMs = 65_000,
+    resultBody = 'Implemented the feature, all tests passing.',
+  } = parts;
+  const content =
+    '<task-notification>\n' +
+    `<tool-use-id>${toolUseId}</tool-use-id>\n` +
+    `<result>${resultBody}</result>\n` +
+    `<subagent_tokens>${tokens}</subagent_tokens>\n` +
+    `<tool_uses>${toolUses}</tool_uses>\n` +
+    `<duration_ms>${durationMs}</duration_ms>\n` +
+    '</task-notification>';
   return JSON.stringify({
     type: 'user',
     sessionId: 's1',
     timestamp,
     origin: { kind: 'task-notification' },
-    message: {
-      content: [
-        {
-          type: 'text',
-          text:
-            `<tool-use-id>${toolUseId}</tool-use-id>` +
-            `<subagent_tokens>${tokens}</subagent_tokens>` +
-            `<tool_uses>${toolUses}</tool_uses>` +
-            `<duration_ms>${durationMs}</duration_ms>` +
-            `<result>Implemented the feature, all tests passing.</result>`,
-        },
-      ],
-    },
+    message: { content },
   });
 }
 
@@ -338,6 +339,24 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
     const lines = [
       agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
       taskNotificationLine('tu_1', '2026-07-08T09:00:05Z', { durationMs: 3_000, toolUses: 1 }),
+    ].join('\n');
+    writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
+
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+
+    expect(queue.size()).toBe(0);
+    db.close();
+  });
+
+  it('does not queue a dispatch whose task-notification carries no <result> tag', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const lines = [
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { durationMs: 65_000, toolUses: 6, resultBody: '' }),
     ].join('\n');
     writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
 

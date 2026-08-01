@@ -114,10 +114,9 @@ export function scanTranscriptsOnce(
         continue;
       }
 
-      const parsedPairs = lines
-        .map((l) => ({ rawLine: l, event: parseTranscriptLine(l) }))
-        .filter((p): p is { rawLine: string; event: NonNullable<ReturnType<typeof parseTranscriptLine>> } => p.event !== null);
-      const parsedEvents = parsedPairs.map((p) => p.event);
+      const parsedEvents = lines
+        .map((l) => parseTranscriptLine(l))
+        .filter((e): e is NonNullable<typeof e> => e !== null);
       for (const event of parsedEvents) {
         if (ingestUsageEvent(db, event)) eventsIngested += 1;
       }
@@ -145,12 +144,13 @@ export function scanTranscriptsOnce(
       // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
       // SS2). extractQueue is optional so every existing caller (including this
       // file's own tests) is unaffected when omitted -- extraction is simply
-      // skipped. Reads pair.rawLine (the raw JSONL line still in memory for this
-      // scan tick), never re-opens the file and never persists the text anywhere.
+      // skipped. Reads event.humanText (already parsed, already in memory for
+      // this scan tick), never re-opens the file and never persists the text
+      // anywhere.
       if (extractQueue) {
-        for (const pair of parsedPairs) {
-          if (pair.event.originKind !== 'task-notification') continue;
-          const idMatch = (pair.event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
+        for (const event of parsedEvents) {
+          if (event.originKind !== 'task-notification') continue;
+          const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
           if (!idMatch) continue;
           const toolUseId = idMatch[1];
 
@@ -165,7 +165,7 @@ export function scanTranscriptsOnce(
           if (row.exit_state !== 'ok') continue;
           if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
 
-          const runSummary = extractDispatchResultText(pair.event.humanText);
+          const runSummary = extractDispatchResultText(event.humanText);
           if (!runSummary) continue;
 
           extractQueue.push({
