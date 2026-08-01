@@ -81,18 +81,18 @@ staleness_risk = status === 'open'
 ### 1.5 Composition
 
 ```ts
-function scorePrivateCandidate(row: MemoryRow, nowMs: number): number {
+function scorePrivateCandidate(row: MemoryRow, nowSeconds: number): number {
   const kindWeight = KIND_WEIGHT[row.kind] ?? 0;
   const salienceNorm = row.salience / 5;
-  const ageDaysSinceCreated = (nowMs / 1000 - row.created_at) / 86_400;
+  const ageDaysSinceCreated = (nowSeconds - row.created_at) / 86_400;
   const recency = Math.pow(0.5, ageDaysSinceCreated / 90);
-  const ageDaysSinceUpdated = (nowMs / 1000 - row.updated_at) / 86_400;
+  const ageDaysSinceUpdated = (nowSeconds - row.updated_at) / 86_400;
   const stalenessRisk = row.status === 'open' ? 1 - Math.pow(0.5, ageDaysSinceUpdated / 90) : 0;
   return 2.0 * kindWeight + 1.5 * salienceNorm + 1.0 * recency - 0.5 * stalenessRisk;
 }
 ```
 
-(`row.created_at`/`row.updated_at` are seconds, per the store's existing `now()` convention — `memoryStore.ts:321`; `nowMs` here is milliseconds to match `Date.now()`/injectable-clock convention elsewhere in this plan's own code, converted once at the top.)
+(`row.created_at`/`row.updated_at`/`nowSeconds` are all seconds, matching the store's existing injectable-clock convention exactly — `opts.now` in `memoryStore.ts:321` is `() => Math.floor(Date.now() / 1000)`. This function takes seconds, not milliseconds, specifically so `getPrivateCandidates` can pass its own `now()` straight through with no conversion — a conversion step at exactly one call site is where a units bug would hide.)
 
 No `overuse` term — the spec is explicit this is deliberate (§4.4: *"an agent that keeps reaching for the same overrule is an agent that keeps hitting the same wall, and that is signal, not noise"*). This document does not add one.
 
@@ -102,17 +102,17 @@ No `overuse` term — the spec is explicit this is deliberate (§4.4: *"an agent
 
 `memoryStore.ts` (already shipped) is the only file this document modifies. Two changes:
 
-1. **New exported pure function** `scorePrivateCandidate(row: MemoryRow, nowMs: number): number` — same file, alongside the existing `clampSalience`/`findForbiddenContent` free functions, so it is independently unit-testable without spinning up a store.
-2. **`getPrivateCandidates` re-implemented** to use it: fetch a bounded candidate set from SQLite (existing `stmtPrivate`, but widen its `ORDER BY`/`LIMIT` to a generous internal cap — e.g. 500 — since the real ranking now happens in JS, not SQL), score each row with `scorePrivateCandidate`, sort descending by score, then slice to the caller's requested `limit`. `getPrivateCandidates`'s own public signature (`ownerAgent: string, limit = 200`) does not change — only what determines the returned order and which rows survive the cut.
+1. **New exported pure function** `scorePrivateCandidate(row: MemoryRow, nowSeconds: number): number` — same file, alongside the existing `clampSalience`/`findForbiddenContent` free functions (both defined at module top level, outside `createMemoryStore`'s closure), so it is independently unit-testable without spinning up a store.
+2. **`getPrivateCandidates` re-implemented** to use it: fetch a bounded candidate set from SQLite (existing `stmtPrivate`, but widen its `ORDER BY`/`LIMIT` to a generous internal cap — e.g. 500 — since the real ranking now happens in JS, not SQL), score each row with `scorePrivateCandidate`, sort descending by score, then slice to the caller's requested `limit`. `getPrivateCandidates`'s own public signature (`ownerAgent: string, limit = 200`) does not change — only what determines the returned order and which rows survive the cut. It already runs inside `createMemoryStore`'s closure, which already has the injectable `now()` clock (`memoryStore.ts:321`, the same clock every write path uses) — pass that straight through, no new clock source:
 
 ```ts
 function getPrivateCandidates(ownerAgent: string, limit = 200): MemoryRow[] {
   if (!ownerAgent) throw new Error('getPrivateCandidates requires an ownerAgent');
-  const now = Date.now();
+  const t = now();
   return stmtPrivate
     .all(ownerAgent, PRIVATE_CANDIDATE_INTERNAL_CAP)
     .map((r) => plain<MemoryRow>(r))
-    .map((row) => ({ row, score: scorePrivateCandidate(row, now) }))
+    .map((row) => ({ row, score: scorePrivateCandidate(row, t) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((x) => x.row);
