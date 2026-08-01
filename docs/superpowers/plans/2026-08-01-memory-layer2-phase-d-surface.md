@@ -245,12 +245,26 @@ git commit -m "feat(memory-layer-2): poll memory.db and push snapshots over IPC"
 
 ### Task 3: State layer — types, reducer, retire all six `MemoryStub` sites, `memSeq`
 
+> **Corrected mid-implementation.** The design doc's audit only searched for
+> `MemoryStub`-*construction* sites, missing two *consumption* sites that
+> also needed removal: `src/state/tick.ts` (the actual strength-decay tick,
+> `m.strength - 0.4` every cycle — the literal mechanism this phase retires)
+> and `src/components/dashboard/SystemsCard.tsx` (a dashboard "Pinned" stat
+> row). Both are now in this task's scope. Also, `src/state/persistence.ts`
+> was listed but its test file, `persistence.test.ts`, was not — three of
+> its tests reference the old `MemoryStub`/`memSeq` shape directly and
+> needed the same treatment as `reducer.test.ts`.
+
 **Files:**
 - Modify: `src/state/types.ts`
 - Modify: `src/state/reducer.ts`
 - Modify: `src/state/reducer.test.ts`
 - Modify: `src/state/initialState.ts`
 - Modify: `src/state/persistence.ts`
+- Modify: `src/state/persistence.test.ts`
+- Modify: `src/state/tick.ts`
+- Modify: `src/state/tick.test.ts`
+- Modify: `src/components/dashboard/SystemsCard.tsx`
 
 **Interfaces:**
 - Produces: `MemoryRow`, `MemoryTombstone` (types), `SET_MEMORIES`, `SET_MEMORY_TOMBSTONES`, `SET_MEMORY_SCOPE_FILTER`, `TOGGLE_MEMORY_TOMBSTONE_VIEW` (actions) — used by Task 4 (sync hook dispatches `SET_MEMORIES`/`SET_MEMORY_TOMBSTONES`) and Task 6 (components dispatch the filter/toggle actions).
