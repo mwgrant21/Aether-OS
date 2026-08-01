@@ -717,16 +717,36 @@ is why it is first.
 existing `vitest run` and fail on the alias above. Move it to
 `collector/memory/` when Stage 2 lands.
 
-### Phase B — the write path
+### Phase B — the write path — ✅ WRITTEN AND GREEN
 
-- [ ] Extractor prompt with all four §4.3 rules
-- [ ] Tolerant JSON parser (ported from Miriel's `parseExtractorOutput`)
-- [ ] `prompt-safety` fencing ported and wired
+- [x] Extractor prompt with all four §4.3 rules — `collector/src/memoryExtractPrompt.ts`
+- [x] Tolerant JSON parser (ported from Miriel's `parseExtractorOutput`) —
+      `collector/src/memoryExtractParser.ts`
+- [x] `prompt-safety` fencing ported and wired — `collector/src/promptSafety.ts`,
+      wired into every untrusted string `memoryExtractPrompt.ts` embeds
 - [x] ~~Content check for §3.4 forbidden classes at write time~~ — landed in
       Phase A alongside the rest of `applyOps` validation; it is one of the
       cheapest guarantees in the system and there was no reason to defer it
-- [ ] Single-writer enforcement at the collector boundary
-- [ ] Tests pinning the forbidden-content check against real violation examples
+- [x] Single-writer enforcement at the collector boundary — `memoryExtract.ts`'s
+      `runExtractor` takes `writer` as a caller-supplied parameter; model
+      output has no writer/identity field in any op shape, so `applyOps`'s
+      existing `ctx.writer` check is the only thing that can authorize a
+      write, exercised end-to-end by `memoryExtract.test.ts`'s
+      "enforces single-writer" case
+- [x] Tests pinning the forbidden-content check against real violation
+      examples — pinned at two layers: `memoryStore.test.ts` (Phase A, unit)
+      and `memoryExtract.test.ts` (Phase B, through the full model-call →
+      parse → apply pipeline)
+
+**Status: Phase B is written and green** — 4 new modules
+(`promptSafety.ts`, `memoryExtractParser.ts`, `memoryExtractPrompt.ts`,
+`memoryExtract.ts`) in `collector/src/`, 29 new tests, `tsc -b` clean.
+`runExtractor`'s real model call (`defaultExtractExec`) shells out to
+`claude -p <prompt> --model haiku --output-format text`, following the same
+injected-exec-function pattern `fleetPoll.ts` established for `claude agents
+--json` — nothing in this phase has been run against the real CLI yet
+outside its own test suite; that is Phase C/D's job once retrieval exists to
+give the extractor a real run to summarize.
 
 ### Phase C — retrieval
 
