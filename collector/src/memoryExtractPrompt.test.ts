@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildExtractorPrompt } from './memoryExtractPrompt.js';
+import { KINDS, STATUSES } from './memoryStore.js';
 
 describe('buildExtractorPrompt', () => {
   const baseInput = {
@@ -53,5 +54,29 @@ describe('buildExtractorPrompt', () => {
   it('states the writer identity so the model has context for private-scope framing', () => {
     const prompt = buildExtractorPrompt(baseInput);
     expect(prompt).toContain('CINDER');
+  });
+
+  it('enumerates every legal kind value from memoryStore.KINDS', () => {
+    const prompt = buildExtractorPrompt(baseInput);
+    for (const kind of KINDS) {
+      expect(prompt).toContain(kind);
+    }
+  });
+
+  it('enumerates every legal status value from memoryStore.STATUSES', () => {
+    const prompt = buildExtractorPrompt(baseInput);
+    for (const status of STATUSES) {
+      expect(prompt).toContain(status);
+    }
+  });
+
+  it('states the salience range as 1-5', () => {
+    const prompt = buildExtractorPrompt(baseInput);
+    expect(prompt).toMatch(/1-5/);
+  });
+
+  it('does not advertise owner_agent as a settable ADD field', () => {
+    const prompt = buildExtractorPrompt(baseInput);
+    expect(prompt).not.toContain('owner_agent');
   });
 });

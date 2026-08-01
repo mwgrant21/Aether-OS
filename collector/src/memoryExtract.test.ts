@@ -114,4 +114,23 @@ describe('runExtractor', () => {
       cleanup();
     }
   });
+
+  it('gives each failed extraction its own fresh rejected array, never a shared instance', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const execFailResult = await runExtractor(
+        { store, writer: 'CINDER', sourceKind: 'run', runSummary: 'x', existingMemories: [] },
+        async () => { throw new Error('spawn ENOENT'); },
+      );
+      const parseFailResult = await runExtractor(
+        { store, writer: 'CINDER', sourceKind: 'run', runSummary: 'x', existingMemories: [] },
+        async () => ({ stdout: 'not json' }),
+      );
+      expect(execFailResult.rejected).not.toBe(parseFailResult.rejected);
+      execFailResult.rejected.push({ op: {}, reason: 'unknown_op' });
+      expect(parseFailResult.rejected).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
 });

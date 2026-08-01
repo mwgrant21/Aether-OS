@@ -54,9 +54,9 @@ export interface RunExtractorResult extends ApplyResult {
   parseError: string | null;
 }
 
-const EMPTY_APPLY_RESULT: ApplyResult = {
-  added: 0, updated: 0, superseded: 0, revised: 0, touched: 0, rejected: [],
-};
+function emptyApplyResult(): ApplyResult {
+  return { added: 0, updated: 0, superseded: 0, revised: 0, touched: 0, rejected: [] };
+}
 
 export async function runExtractor(
   input: RunExtractorInput,
@@ -73,14 +73,14 @@ export async function runExtractor(
     stdout = (await execFn(prompt)).stdout;
   } catch (err) {
     return {
-      ...EMPTY_APPLY_RESULT,
+      ...emptyApplyResult(),
       parseError: `exec_failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
   const { ops, parseError } = parseExtractorOutput(stdout);
   if (parseError) {
-    return { ...EMPTY_APPLY_RESULT, parseError };
+    return { ...emptyApplyResult(), parseError };
   }
 
   const applyResult = input.store.applyOps(ops, {

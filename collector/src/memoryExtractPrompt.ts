@@ -14,6 +14,7 @@
  */
 
 import { fence } from './promptSafety.js';
+import { KINDS, STATUSES, SHARED_KINDS, PRIVATE_KINDS } from './memoryStore.js';
 
 export interface ExtractorPromptInput {
   /** SHARED_WRITER for a shared-scope proposal, or the agent's own id. */
@@ -78,8 +79,12 @@ ${existingBlock}
 
 ${RULES}
 
+Legal "kind" values: ${SHARED_KINDS.join(', ')} (shared, only when writer is the shared writer) or ${PRIVATE_KINDS.join(', ')} (private, this agent's own history). Full set: ${KINDS.join(', ')}.
+Legal "status" values: ${STATUSES.join(', ')}.
+"salience" is an integer 1-5.
+
 Each element of the output array is one of:
-  {"op":"ADD","kind":...,"content":"...","status"?,"salience"?,"subject"?,"owner_agent"?}
+  {"op":"ADD","kind":...,"content":"...","status"?,"salience"?,"subject"?}
   {"op":"UPDATE","id":...,"content"?,"status"?,"salience"?,"subject"?}
   {"op":"SUPERSEDE","id":...,"content":"...","kind"?,"status"?,"salience"?,"subject"?}
   {"op":"REVISE","id":...,"cause":"new_evidence"|"reasoning_flaw","detail":"..."}
