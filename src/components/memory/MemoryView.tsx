@@ -6,12 +6,26 @@ import { MemoryDetailCard } from './MemoryDetailCard';
 
 export function MemoryView() {
   const { state } = useAetherStore();
+
+  if (state.memoryShowTombstones) {
+    const selected =
+      (state.selectedMemory && state.memoryTombstones.find((t) => String(t.id) === state.selectedMemory)) ||
+      state.memoryTombstones[0] ||
+      null;
+    return (
+      <div style={rootStyle}>
+        <MemoryRosterCard selectedId={selected?.id ?? null} />
+        <MemoryDetailCard memory={null} tombstone={selected} />
+      </div>
+    );
+  }
+
   const selectedMemory = pickSelectedMemory(state.memories, state.selectedMemory);
 
   return (
     <div style={rootStyle}>
       <MemoryRosterCard selectedId={selectedMemory?.id ?? null} />
-      <MemoryDetailCard memory={selectedMemory} />
+      <MemoryDetailCard memory={selectedMemory} tombstone={null} />
     </div>
   );
 }

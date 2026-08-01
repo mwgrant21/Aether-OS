@@ -7,6 +7,7 @@ import { spawnPty } from './ptyManager';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
+import { readMemories, readMemoryTombstones } from './memoryStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
 import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
@@ -165,10 +166,12 @@ const USAGE_SCAN_INTERVAL_MS = 60000;
 const AGENT_TICK_INTERVAL_MS = 1000;
 const FLEET_SCAN_INTERVAL_MS = 15000;
 const DIAGNOSTICS_SCAN_INTERVAL_MS = 15000;
+const MEMORY_SCAN_INTERVAL_MS = 15000; // matches FLEET_SCAN_INTERVAL_MS/DIAGNOSTICS_SCAN_INTERVAL_MS
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const optimizeStatePath = join(os.homedir(), '.aether-os', 'optimize-state.json');
 const collectorDbPath = join(os.homedir(), '.aether-os', 'collector.db');
+const memoryDbPath = join(os.homedir(), '.aether-os', 'memory.db');
 
 const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
 const permissionServerPortPath = join(os.homedir(), '.aether-os', 'permission-server-port');
@@ -298,6 +301,14 @@ function scanAndPushDiagnostics(): void {
   sendToWindow('diagnostics:snapshot', snapshot);
 }
 
+function scanAndPushMemory(): void {
+  if (!mainWindow) return;
+  const rows = readMemories(memoryDbPath);
+  sendToWindow('memory:snapshot', rows);
+  const tombstones = readMemoryTombstones(memoryDbPath);
+  sendToWindow('memory:tombstones', tombstones);
+}
+
 function optimizeGlobalTargetPath(): string {
   return join(os.homedir(), '.claude', 'CLAUDE.md');
 }
@@ -404,6 +415,9 @@ app.whenReady().then(async () => {
 
   scanAndPushDiagnostics();
   setInterval(scanAndPushDiagnostics, DIAGNOSTICS_SCAN_INTERVAL_MS);
+
+  scanAndPushMemory();
+  setInterval(scanAndPushMemory, MEMORY_SCAN_INTERVAL_MS);
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
     cachedStatuslineSnapshot = snapshot;

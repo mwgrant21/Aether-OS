@@ -31,8 +31,6 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     return { ...m, val, hist: m.hist.slice(1).concat(val) };
   });
 
-  const memories = state.memories.map((m) => (m.pinned ? m : { ...m, strength: Math.max(0, m.strength - 0.4) }));
-
   const pressure = state.statusline
     ? Math.max(state.statusline.fiveHour?.usedPercentage ?? 0, state.statusline.sevenDay?.usedPercentage ?? 0)
     : 0;
@@ -68,5 +66,5 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     }
   }
 
-  return { used, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq, memories };
+  return { used, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq };
 }

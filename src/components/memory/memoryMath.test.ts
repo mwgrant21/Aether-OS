@@ -1,59 +1,69 @@
-import { describe, expect, it } from 'vitest';
-import { STRENGTH_TIER_COLOR, groupMemoriesForRoster, pickSelectedMemory } from './memoryMath';
-import { initialState } from '../../state/initialState';
+import { describe, it, expect } from 'vitest';
+import type { MemoryRow } from '../../state/types';
+import { pickSelectedMemory, groupMemoriesByScope, KIND_TIER_COLOR } from './memoryMath';
+
+function row(overrides: Partial<MemoryRow> = {}): MemoryRow {
+  return {
+    id: 1, scope: 'private', ownerAgent: 'CINDER', kind: 'habit', content: 'x',
+    status: null, salience: 3, subject: null, createdAtMs: 0, updatedAtMs: 0,
+    referenceCount: 0, ...overrides,
+  };
+}
 
 describe('pickSelectedMemory', () => {
-  it('returns the memory matching selected (by id, as a string) when present', () => {
-    const memory = pickSelectedMemory(initialState.memories, '2');
-    expect(memory?.id).toBe(2);
+  it('returns the memory matching the stringified selected id', () => {
+    const memories = [row({ id: 1 }), row({ id: 2 })];
+    expect(pickSelectedMemory(memories, '2')?.id).toBe(2);
   });
 
   it('falls back to the first memory when selected is null', () => {
-    const memory = pickSelectedMemory(initialState.memories, null);
-    expect(memory?.id).toBe(initialState.memories[0].id);
+    const memories = [row({ id: 5 }), row({ id: 6 })];
+    expect(pickSelectedMemory(memories, null)?.id).toBe(5);
   });
 
-  it('falls back to the first memory when selected does not match any id', () => {
-    const memory = pickSelectedMemory(initialState.memories, '999');
-    expect(memory?.id).toBe(initialState.memories[0].id);
+  it('falls back to the first memory when selected matches nothing', () => {
+    const memories = [row({ id: 5 })];
+    expect(pickSelectedMemory(memories, '999')?.id).toBe(5);
   });
 
-  it('returns null when there are no memories at all', () => {
-    expect(pickSelectedMemory([], 'Anything')).toBeNull();
-  });
-});
-
-describe('groupMemoriesForRoster', () => {
-  it('splits the seed memories into pinned (array order) and unpinned (strength descending)', () => {
-    const { pinned, unpinned } = groupMemoriesForRoster(initialState.memories);
-    expect(pinned.map((m) => m.id)).toEqual([1]);
-    expect(unpinned.map((m) => m.id)).toEqual([2, 3, 4]);
-  });
-
-  it('returns an empty pinned array when nothing is pinned', () => {
-    const allUnpinned = initialState.memories.map((m) => ({ ...m, pinned: false }));
-    const { pinned } = groupMemoriesForRoster(allUnpinned);
-    expect(pinned).toEqual([]);
-  });
-
-  it('returns both empty for an empty input', () => {
-    expect(groupMemoriesForRoster([])).toEqual({ pinned: [], unpinned: [] });
+  it('returns null for an empty list', () => {
+    expect(pickSelectedMemory([], null)).toBeNull();
   });
 });
 
-describe('STRENGTH_TIER_COLOR', () => {
-  it('returns the healthy color above 60', () => {
-    expect(STRENGTH_TIER_COLOR(92)).toBe('#3be0a0');
-    expect(STRENGTH_TIER_COLOR(61)).toBe('#3be0a0');
+describe('groupMemoriesByScope', () => {
+  it('splits shared rows and groups private rows by ownerAgent', () => {
+    const memories = [
+      row({ id: 1, scope: 'shared', ownerAgent: null, kind: 'decision' }),
+      row({ id: 2, scope: 'private', ownerAgent: 'CINDER' }),
+      row({ id: 3, scope: 'private', ownerAgent: 'FORGE' }),
+      row({ id: 4, scope: 'private', ownerAgent: 'CINDER' }),
+    ];
+    const { shared, byAgent } = groupMemoriesByScope(memories);
+    expect(shared.map((m) => m.id)).toEqual([1]);
+    expect(byAgent.get('CINDER')?.map((m) => m.id)).toEqual([2, 4]);
+    expect(byAgent.get('FORGE')?.map((m) => m.id)).toEqual([3]);
   });
 
-  it('returns the fading color from 31 to 60 inclusive', () => {
-    expect(STRENGTH_TIER_COLOR(60)).toBe('#f5c66b');
-    expect(STRENGTH_TIER_COLOR(31)).toBe('#f5c66b');
+  it('skips a private row with a null ownerAgent rather than throwing', () => {
+    const memories = [row({ scope: 'private', ownerAgent: null })];
+    const { byAgent } = groupMemoriesByScope(memories);
+    expect(byAgent.size).toBe(0);
   });
 
-  it('returns the dim/at-sweep-threshold color at 30 and below', () => {
-    expect(STRENGTH_TIER_COLOR(30)).toBe('#4e7c8b');
-    expect(STRENGTH_TIER_COLOR(0)).toBe('#4e7c8b');
+  it('returns an empty shared array and empty map for no memories', () => {
+    const { shared, byAgent } = groupMemoriesByScope([]);
+    expect(shared).toEqual([]);
+    expect(byAgent.size).toBe(0);
+  });
+});
+
+describe('KIND_TIER_COLOR', () => {
+  it('returns a color for every MemoryKind without throwing', () => {
+    const kinds: MemoryRow['kind'][] = ['decision', 'preference', 'overrule', 'habit', 'revision'];
+    for (const kind of kinds) {
+      expect(typeof KIND_TIER_COLOR(kind)).toBe('string');
+      expect(KIND_TIER_COLOR(kind).length).toBeGreaterThan(0);
+    }
   });
 });

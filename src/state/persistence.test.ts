@@ -50,17 +50,18 @@ describe('persistence', () => {
     expect(loaded?.selectedProject).toBe('Mobile Beta');
   });
 
-  it('persists memories and selectedMemory across reloads', () => {
+  it('persists selectedMemory but not memories across reloads (memories are a live collector-sourced snapshot, not locally-owned state -- see Memory Layer 2 Phase D)', () => {
     savePersisted({ ...initialState, selectedMemory: '2' });
     const loaded = loadPersisted();
-    expect(loaded?.memories).toEqual(initialState.memories);
     expect(loaded?.selectedMemory).toBe('2');
+    expect(loaded?.memories).toBeUndefined();
   });
 
-  it('persists memSeq across reloads', () => {
-    savePersisted({ ...initialState, memSeq: 42 });
+  it('persists memoryScopeFilter and memoryShowTombstones across reloads', () => {
+    savePersisted({ ...initialState, memoryScopeFilter: 'shared', memoryShowTombstones: true });
     const loaded = loadPersisted();
-    expect(loaded?.memSeq).toBe(42);
+    expect(loaded?.memoryScopeFilter).toBe('shared');
+    expect(loaded?.memoryShowTombstones).toBe(true);
   });
 
   it('persists chatActionResults across reloads', () => {
@@ -141,11 +142,8 @@ describe('persistence', () => {
       selected: 'Ghost Agent',
       selectedProject: 'Ghost Project',
       selectedMemory: '999',
-      memories: [
-        { id: 10, name: 'a', content: 'a', source: 'a', ts: 't', pinned: false, strength: 50 },
-        { id: 11, name: 'b', content: 'b', source: 'b', ts: 't', pinned: true, strength: 60 },
-      ],
-      memSeq: 12,
+      memoryScopeFilter: 'general-purpose',
+      memoryShowTombstones: true,
       chatActionResults: [{ channelId: 'AETHER', text: 'done' }],
       recentCompletedDispatches: [
         {
@@ -190,8 +188,8 @@ describe('persistence', () => {
     expect(loaded?.selected).toBe('Ghost Agent');
     expect(loaded?.selectedProject).toBe('Ghost Project');
     expect(loaded?.selectedMemory).toBe('999');
-    expect(loaded?.memories).toEqual(distinctiveState.memories);
-    expect(loaded?.memSeq).toBe(12);
+    expect(loaded?.memoryScopeFilter).toBe('general-purpose');
+    expect(loaded?.memoryShowTombstones).toBe(true);
     expect(loaded?.chatActionResults).toEqual(distinctiveState.chatActionResults);
     expect(loaded?.recentCompletedDispatches).toEqual(distinctiveState.recentCompletedDispatches);
     expect(loaded?.dispatchChannels).toEqual(distinctiveState.dispatchChannels);
@@ -218,12 +216,5 @@ describe('persistence', () => {
       startedAt: '2026-07-27T10:05:00.000Z',
       createdAt: '10:05',
     });
-
-    // The memSeq-style bug class specifically: memSeq must survive strictly ahead of
-    // every persisted memory's id, or the next memory created after rehydration would
-    // collide with an existing one (duplicate React keys, two memories toggling pinned
-    // together, wrong memory selected on click).
-    const maxMemoryId = Math.max(...(loaded?.memories ?? []).map((m) => m.id));
-    expect(loaded?.memSeq).toBeGreaterThan(maxMemoryId);
   });
 });

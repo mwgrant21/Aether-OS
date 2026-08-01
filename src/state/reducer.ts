@@ -1,4 +1,4 @@
-import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryStub, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
+import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
@@ -28,7 +28,10 @@ export type Action =
   | { type: 'REACTIVATE_AGENT'; name: string }
   | { type: 'SELECT_PROJECT'; name: string }
   | { type: 'SELECT_MEMORY'; id: number }
-  | { type: 'TOGGLE_MEMORY_PIN'; id: number }
+  | { type: 'SET_MEMORIES'; memories: MemoryRow[] }
+  | { type: 'SET_MEMORY_TOMBSTONES'; tombstones: MemoryTombstone[] }
+  | { type: 'SET_MEMORY_SCOPE_FILTER'; filter: string }
+  | { type: 'TOGGLE_MEMORY_TOMBSTONE_VIEW' }
   | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
   | { type: 'TOGGLE_PROVIDER_CONNECTION'; name: string }
   | { type: 'SET_ROUTE_DEFAULT'; value: string }
@@ -99,25 +102,6 @@ function applyApprovalResolution(state: AetherState, req: Approval, approve: boo
     rate = Math.min(168000, rate + 9000);
   }
 
-  // A HIGH-risk request being resolved is notable regardless of outcome --
-  // unlike the mutation branches above (which only ever apply on approve),
-  // this fires on both approve and deny.
-  let memories = state.memories;
-  let memSeq = state.memSeq;
-  if (req.risk === 'HIGH') {
-    const memory: MemoryStub = {
-      id: memSeq,
-      name: `${ok ? 'Approved' : 'Denied'}: ${req.action}`,
-      content: `${req.agent} — HIGH-risk request ${ok ? 'approved' : 'denied'}: ${req.action}`,
-      source: req.agent,
-      ts: nowShort(),
-      pinned: false,
-      strength: 100,
-    };
-    memories = [...memories, memory];
-    memSeq += 1;
-  }
-
   const chatActionResults = req.channelId
     ? [...state.chatActionResults, { channelId: req.channelId, text: buildChatActionResultText(req, ok) }]
     : state.chatActionResults;
@@ -127,8 +111,6 @@ function applyApprovalResolution(state: AetherState, req: Approval, approve: boo
     agents,
     idleList,
     rate,
-    memories,
-    memSeq,
     chatActionResults,
     approvals: state.approvals.filter((a) => a.id !== req.id),
     notifs: [
@@ -158,11 +140,17 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SELECT_MEMORY':
       return { ...state, selectedMemory: String(action.id) };
 
-    case 'TOGGLE_MEMORY_PIN':
-      return {
-        ...state,
-        memories: state.memories.map((m) => (m.id === action.id ? { ...m, pinned: !m.pinned } : m)),
-      };
+    case 'SET_MEMORIES':
+      return { ...state, memories: action.memories };
+
+    case 'SET_MEMORY_TOMBSTONES':
+      return { ...state, memoryTombstones: action.tombstones };
+
+    case 'SET_MEMORY_SCOPE_FILTER':
+      return { ...state, memoryScopeFilter: action.filter };
+
+    case 'TOGGLE_MEMORY_TOMBSTONE_VIEW':
+      return { ...state, memoryShowTombstones: !state.memoryShowTombstones };
 
     case 'SET_OP_MODE':
       return {
@@ -202,8 +190,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_REAL_AGENTS': {
       const completed = detectCompletedDispatches(state.realAgents, action.agents);
       const started = detectStartedDispatches(state.realAgents, action.agents);
-      let memories = state.memories;
-      let memSeq = state.memSeq;
       let recentCompletedDispatches = state.recentCompletedDispatches;
       let dispatchChannels = state.dispatchChannels;
       let logs = state.logs;
@@ -213,22 +199,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
       }
 
       for (const dispatch of completed) {
-        const label = dispatch.description || dispatch.subagentType;
-        memories = [
-          ...memories,
-          {
-            id: memSeq,
-            name: label,
-            content: `${dispatch.subagentType} dispatch completed: ${dispatch.description || 'no description'}`,
-            source: dispatch.subagentType,
-            ts: nowShort(),
-            pinned: false,
-            strength: 100,
-            toolUseId: dispatch.toolUseId,
-          },
-        ];
-        memSeq += 1;
-
         recentCompletedDispatches = [dispatch, ...recentCompletedDispatches].slice(0, 20);
 
         if (state.cfg.autoCreateDispatchChannels && !dispatchChannels.some((d) => d.toolUseId === dispatch.toolUseId)) {
@@ -247,7 +217,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
           logs = logs.concat({ t: nowLong(), m: `${dispatch.subagentType}: dispatch channel opened`, c: '#7fd8ef' }).slice(-14);
         }
       }
-      return { ...state, realAgents: action.agents, memories, memSeq, recentCompletedDispatches, dispatchChannels, logs };
+      return { ...state, realAgents: action.agents, recentCompletedDispatches, dispatchChannels, logs };
     }
 
     case 'SET_ACTIVE_WORK':

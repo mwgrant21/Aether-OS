@@ -10,7 +10,6 @@ export function SystemsCard() {
   const rows = [
     { k: 'Uplinks online', v: `${state.providers.filter((pv) => pv.connected).length} / ${state.providers.length}`, c: colors.success },
     { k: 'Memory engrams', v: String(state.memories.length), c: '#8ab6ff' },
-    { k: 'Pinned', v: String(state.memories.filter((m) => m.pinned).length), c: colors.warn },
     { k: 'Pending approvals', v: String(state.approvals.length), c: state.approvals.length ? colors.warn : colors.success },
     { k: 'Idle agents', v: String(state.idleList.length), c: colors.textSecondary },
     { k: 'Default runtime', v: state.routeDefault.toUpperCase(), c: colors.accentCyan },

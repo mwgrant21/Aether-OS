@@ -38,14 +38,6 @@ describe('reducer', () => {
     expect(next.selectedMemory).toBe('2');
   });
 
-  it('TOGGLE_MEMORY_PIN flips pinned on the matching memory only', () => {
-    const next = reducer(initialState, { type: 'TOGGLE_MEMORY_PIN', id: 2 });
-    expect(next.memories.find((m) => m.id === 2)?.pinned).toBe(true);
-    expect(next.memories.find((m) => m.id === 1)?.pinned).toBe(true); // unchanged (already pinned in seed data)
-    const restored = reducer(next, { type: 'TOGGLE_MEMORY_PIN', id: 2 });
-    expect(restored.memories.find((m) => m.id === 2)?.pinned).toBe(false);
-  });
-
   it('RESOLVE_APPROVAL removes the request and bumps rate only for HIGH risk approvals', () => {
     const next = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: true });
     expect(next.approvals.map((a) => a.id)).toEqual([2]);
@@ -62,19 +54,15 @@ describe('reducer', () => {
     expect(next).toBe(initialState);
   });
 
-  it('RESOLVE_APPROVAL appends a memory for HIGH-risk approvals on both approve and deny, but not for MED/LOW', () => {
+  it('RESOLVE_APPROVAL leaves memories unchanged regardless of risk or outcome (memory construction was retired -- see Memory Layer 2 Phase D)', () => {
     const approved = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: true });
-    expect(approved.memories).toHaveLength(initialState.memories.length + 1);
-    expect(approved.memories.at(-1)?.name).toBe('Approved: Deploy build #214 to production');
-    expect(approved.memSeq).toBe(initialState.memSeq + 1);
+    expect(approved.memories).toEqual(initialState.memories);
 
     const denied = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: false });
-    expect(denied.memories).toHaveLength(initialState.memories.length + 1);
-    expect(denied.memories.at(-1)?.name).toBe('Denied: Deploy build #214 to production');
+    expect(denied.memories).toEqual(initialState.memories);
 
     const medResolved = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 2, approve: true });
     expect(medResolved.memories).toEqual(initialState.memories);
-    expect(medResolved.memSeq).toBe(initialState.memSeq);
   });
 
   it('NEW_PROJECT adds an unused project from the pool, cycling hues', () => {
@@ -164,7 +152,7 @@ describe('reducer', () => {
     expect(next.operatorName).toBe('');
   });
 
-  describe('SET_REAL_AGENTS memory creation', () => {
+  describe('SET_REAL_AGENTS leaves memories untouched (memory construction was retired -- see Memory Layer 2 Phase D)', () => {
     const completedDispatch: RealAgentDispatch = {
       toolUseId: 'tu_1',
       subagentType: 'general-purpose',
@@ -174,47 +162,23 @@ describe('reducer', () => {
       model: null,
     };
 
-    it('creates a memory sourced from the real dispatch when it disappears from realAgents', () => {
+    it('does not touch memories when a dispatch completes', () => {
       const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
       const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
-      expect(next.memories).toHaveLength(withOpenDispatch.memories.length + 1);
-      const created = next.memories.at(-1);
-      expect(created?.source).toBe('general-purpose');
-      expect(created?.name).toBe('Explore the repo');
-      expect(created?.content).toBe('general-purpose dispatch completed: Explore the repo');
-      expect(created?.pinned).toBe(false);
-      expect(created?.strength).toBe(100);
-      expect(created?.toolUseId).toBe('tu_1');
+      expect(next.memories).toEqual(withOpenDispatch.memories);
     });
 
-    it('increments memSeq by exactly the number of dispatches that complete in one action', () => {
+    it('does not touch memories when multiple dispatches complete in one action', () => {
       const secondDispatch: RealAgentDispatch = { ...completedDispatch, toolUseId: 'tu_2', subagentType: 'Explore' };
       const withTwoOpen = { ...initialState, realAgents: [completedDispatch, secondDispatch] };
       const next = reducer(withTwoOpen, { type: 'SET_REAL_AGENTS', agents: [] });
-      expect(next.memSeq).toBe(withTwoOpen.memSeq + 2);
-      expect(next.memories).toHaveLength(withTwoOpen.memories.length + 2);
+      expect(next.memories).toEqual(withTwoOpen.memories);
     });
 
-    it('creates no new memory when nothing completed', () => {
+    it('does not touch memories when nothing completed', () => {
       const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
       const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [completedDispatch] });
       expect(next.memories).toEqual(withOpenDispatch.memories);
-      expect(next.memSeq).toBe(withOpenDispatch.memSeq);
-    });
-
-    it('falls back to subagentType and a placeholder when description is empty', () => {
-      const noDescription: RealAgentDispatch = { ...completedDispatch, description: '' };
-      const withOpenDispatch = { ...initialState, realAgents: [noDescription] };
-      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
-      const created = next.memories.at(-1);
-      expect(created?.name).toBe('general-purpose');
-      expect(created?.content).toBe('general-purpose dispatch completed: no description');
-    });
-
-    it('preserves existing memories, appending rather than replacing', () => {
-      const withOpenDispatch = { ...initialState, realAgents: [completedDispatch] };
-      const next = reducer(withOpenDispatch, { type: 'SET_REAL_AGENTS', agents: [] });
-      expect(next.memories.slice(0, -1)).toEqual(withOpenDispatch.memories);
     });
 
     it('still updates realAgents to the new list', () => {
@@ -654,6 +618,26 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     expect(next.agents.map((a) => a.name)).toContain('Test Runner');
     expect(next.approvals.map((a) => a.id)).toContain(concurrentApprovalId);
     expect(next.approvals).toHaveLength(concurrent.approvals.length);
+  });
+
+  it('SET_MEMORIES replaces memories wholesale', () => {
+    const memories = [
+      {
+        id: 1,
+        scope: 'shared' as const,
+        ownerAgent: null,
+        kind: 'decision' as const,
+        content: 'Use pnpm for this repo',
+        status: 'settled' as const,
+        salience: 4,
+        subject: 'tooling',
+        createdAtMs: 1785200000000,
+        updatedAtMs: 1785200000000,
+        referenceCount: 2,
+      },
+    ];
+    const next = reducer(initialState, { type: 'SET_MEMORIES', memories });
+    expect(next.memories).toEqual(memories);
   });
 
   it('SET_ANOMALIES replaces anomalies wholesale', () => {
