@@ -263,10 +263,10 @@ describe('scanTranscriptsOnce', () => {
 });
 
 // A closed, substantive Agent dispatch: an assistant tool_use named 'Agent'
-// followed by its task-notification completion, with a tool_result on the
-// SAME toolUseId carrying the subagent's final report text. Mirrors the real
-// shape verified in usageIngest.test.ts's openDispatch/completionEvent
-// helpers, plus the tool_result line this plan's Task 1 reads from.
+// followed by its task-notification completion. Shaped after a REAL captured
+// task-notification event: message.content is a plain string with every tag
+// inline, including <result> -- not a content-block array, and no separate
+// tool_result item at all.
 function agentToolUseLine(toolUseId: string, timestamp: string): string {
   return JSON.stringify({
     type: 'assistant',
