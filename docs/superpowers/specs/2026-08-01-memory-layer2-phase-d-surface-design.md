@@ -247,12 +247,17 @@ Wired into the app root alongside `useFleetSync()`/`useDiagnosticsSync()` (find 
 
 `src/state/reducer.ts`:
 
-- **Remove all three `MemoryStub`-constructing sites in `reducer.ts`**, confirmed by name:
-  1. `resolveApproval`'s HIGH-risk-approval-decision block (`reducer.ts:105-119`) — synthesizes a memory entry on every HIGH-risk approve/deny.
-  2. `SET_REAL_AGENTS`'s completed-dispatch block (`reducer.ts:205-229`) — synthesizes a memory entry on every dispatch completion.
-  3. `commands.ts`'s `remember`/`sweep`-adjacent construction site (§ below).
+- **Remove every `MemoryStub`-constructing site.** A full audit found six, not three:
+  1. `reducer.ts`'s `resolveApproval` HIGH-risk-approval-decision block (`reducer.ts:105-119`).
+  2. `reducer.ts`'s `SET_REAL_AGENTS` completed-dispatch block (`reducer.ts:205-229`).
+  3. `commands.ts`'s `kill` case, "decommissioned" entry (`commands.ts:111-119`).
+  4. `commands.ts`'s `sweep` case (`commands.ts:148-152`, entire case removed per §1).
+  5. `commands.ts`'s `remember` case (`commands.ts:154-171`, entire case removed per §1).
+  6. `commands.ts`'s `approve`/`deny` case's own HIGH-risk memory block (`commands.ts:232-246`) — a second, separate implementation of the same approval-decision logic as site 1, apparently a parallel/older terminal-command path.
 
-  **Confirmed decision:** these first two are not "fake memories" in the same sense as `remember`/`sweep` — they're a real, currently-working activity-log mechanism (approval decisions, dispatch completions), just piggybacking on the `memories` array as their display surface. Retiring `MemoryStub` removes them from the Memory tab **entirely**, with no replacement mechanism added by this plan. This is not a silent loss: `resolveApproval` already pushes an equivalent line into `state.notifs` in the same block (`reducer.ts:135`, unaffected by this removal), and dispatch completions already populate `state.recentCompletedDispatches`/`state.logs` independently (`reducer.ts:207-213`, also unaffected) — both events remain visible elsewhere in the app after this change, just no longer duplicated into the Memory tab. If a future need for a Memory-tab-specific activity trail arises, that is new scope, not an extension of this document.
+  **Confirmed decision, applies uniformly to all six:** none of these are real Layer 2 memories (§1 — self-report, not extractor-written). Retiring `MemoryStub` removes all six from the Memory tab entirely, with no replacement mechanism added by this plan. Nothing is a silent loss: `resolveApproval` already pushes an equivalent line into `state.notifs` (`reducer.ts:135`), dispatch completions already populate `state.recentCompletedDispatches`/`state.logs` (`reducer.ts:207-213`), and `kill`/`commands.ts`'s approve/deny already push their own `TermLine` output (`commands.ts:110`, `:231`) — every one of these events remains visible elsewhere after this change.
+
+  **`memSeq` (`AetherState.memSeq`, `types.ts:234`) becomes fully dead** once all six sites are removed — it exists only to hand out client-generated `MemoryStub.id` values. Remove it too: from `types.ts`, `initialState.ts` (`memSeq: 5`), `persistence.ts:73`, and every site above. Real `MemoryRow.id` values come from the collector's own `AUTOINCREMENT` primary key, never client-generated.
 - **Remove** `TOGGLE_MEMORY_PIN` action and its case.
 - **Add** `SET_MEMORIES` (`{ type: 'SET_MEMORIES'; memories: MemoryRow[] }`) — replaces `state.memories` wholesale, matching `SET_FLEET`'s existing pattern.
 - **Add** `SET_MEMORY_TOMBSTONES` similarly.
