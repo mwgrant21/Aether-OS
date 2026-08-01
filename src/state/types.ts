@@ -153,15 +153,32 @@ export interface Provider {
   connected: boolean;
 }
 
-export interface MemoryStub {
+export type MemoryScope = 'shared' | 'private';
+export type MemoryKind = 'decision' | 'preference' | 'overrule' | 'habit' | 'revision';
+export type MemoryStatus = 'open' | 'moving' | 'settled';
+
+export interface MemoryRow {
   id: number;
-  name: string;
+  scope: MemoryScope;
+  ownerAgent: string | null;
+  kind: MemoryKind;
   content: string;
-  source: string;
-  ts: string;
-  pinned: boolean;
-  strength: number;
-  toolUseId?: string;
+  status: MemoryStatus | null;
+  salience: number;
+  subject: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+  referenceCount: number;
+}
+
+export interface MemoryTombstone {
+  id: number;
+  scope: MemoryScope;
+  ownerAgent: string | null;
+  content: string;
+  deletedAtMs: number;
+  cause: 'superseded' | 'operator' | 'invalidated';
+  supersededBy: number | null;
 }
 
 export interface DispatchUsage {
@@ -229,8 +246,10 @@ export interface AetherState {
   sys: SysMetric[];
   logs: LogEntry[];
   projects: ProjectStub[];
-  memories: MemoryStub[];
-  memSeq: number;
+  memories: MemoryRow[];
+  memoryTombstones: MemoryTombstone[];
+  memoryScopeFilter: 'all' | 'shared' | string;
+  memoryShowTombstones: boolean;
   providers: Provider[];
   routeDefault: string;
   operatorName: string;
