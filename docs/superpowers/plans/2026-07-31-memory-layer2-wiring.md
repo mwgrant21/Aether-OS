@@ -4,7 +4,7 @@
 
 **Goal:** Turn a closed, substantive Agent dispatch into a real `claude -p` extraction call and, sometimes, a row in `memory.db` — the one missing piece Phase B (already shipped) left unwired.
 
-**Architecture:** Two new small modules (`dispatchResultText.ts`: pure raw-JSONL text extractor; `memoryExtractQueue.ts`: an in-memory queue plus an async drain function) glue into two existing files (`transcriptScan.ts` gains an extraction-bar check and a queue-push pass; `index.ts` gains a `memoryStore` open and a drain `setInterval`, mirroring the existing `fleetPollTimer` pattern). No new runtime dependencies.
+**Architecture:** Two new small modules (`dispatchResultText.ts`: pure `<result>`-tag text extractor over `event.humanText`; `memoryExtractQueue.ts`: an in-memory queue plus an async drain function) glue into two existing files (`transcriptScan.ts` gains an extraction-bar check and a queue-push pass; `index.ts` gains a `memoryStore` open and a drain `setInterval`, mirroring the existing `fleetPollTimer` pattern). No new runtime dependencies.
 
 **Tech Stack:** TypeScript (`NodeNext`), `node:sqlite` (via existing `memoryStore.ts`), Vitest. Same conventions as every other file in `collector/src/`.
 
@@ -14,21 +14,33 @@
 - Every relative import ends in `.js` (NodeNext). `node:sqlite` imported as a type only, via `createRequire` inside `schema.ts#openDatabase` (unchanged by this plan — no file in this plan opens `node:sqlite` directly except through `createMemoryStore`, already built).
 - Zero new npm dependencies.
 - Source of truth for every decision below: `docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md` (committed at `e5b84e3`), which itself defers to `docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md` for the store/extractor contracts (already shipped, do not modify `collector/src/memoryStore.ts`, `memoryExtract.ts`, `memoryExtractPrompt.ts`, or `memoryExtractParser.ts` in this plan).
-- **Privacy invariant, binding on every task:** the Agent dispatch's raw result text is read live and passed into `runExtractor`'s prompt; it is never written to any SQLite table, never logged in full (a truncated/length-only log line is fine), and never added to the shared `TranscriptEvent` type in `transcriptParser.ts` (that file is not modified by this plan at all).
+- **Privacy invariant, binding on every task:** the Agent dispatch's `<result>` text (extracted from `event.humanText`) is read live and passed into `runExtractor`'s prompt; it is never written to any SQLite table, never logged in full (a truncated/length-only log line is fine), and `transcriptParser.ts` itself is not modified by this plan at all — `humanText` is already an existing field there, already documented as never-persisted.
 - `scanTranscriptsOnce`'s new `extractQueue` parameter must be **optional**, defaulting to "extraction pass skipped" when omitted — every existing call site in `transcriptScan.test.ts` and `index.ts`'s prior behavior calls it positionally without a 5th argument, and none of those call sites are touched by this plan.
 - The `dispatches` table's full current column set (for the SELECT this plan adds): `tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval` (`collector/src/schema.ts:79-86` base + `:122-128` migration).
 - Every task's final check runs `npx vitest run` and `npx tsc -b` from `collector/` before commit.
 
 ---
 
-### Task 1: `dispatchResultText.ts` — extract raw result text from a JSONL line
+### Task 1: `dispatchResultText.ts` — extract the `<result>` tag from a dispatch's humanText
+
+> **Revised 2026-07-31, mid-implementation.** The original version of this
+> task re-parsed a raw JSONL line for a `tool_result` content block. A real
+> captured transcript disproved that premise: a task-notification event's
+> `message.content` is a plain string already containing a
+> `<result>...</result>` tag with the subagent's full report, inline with
+> the `<tool-use-id>`/`<subagent_tokens>`/etc. tags `ingestDispatchEvent`
+> already parses out of `event.humanText`. See
+> `docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md`'s
+> revision note (top of file) and §2.1 for the full explanation. This task
+> is now a plain-text regex extraction over `event.humanText` — no JSON
+> parsing, no raw line, no new I/O.
 
 **Files:**
 - Create: `collector/src/dispatchResultText.ts`
 - Test: `collector/src/dispatchResultText.test.ts`
 
 **Interfaces:**
-- Produces: `extractDispatchResultText(rawLine: string, toolUseId: string): string | null` — used by Task 3.
+- Produces: `extractDispatchResultText(humanText: string | null): string | null` — used by Task 3.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -36,64 +48,61 @@
 import { describe, it, expect } from 'vitest';
 import { extractDispatchResultText } from './dispatchResultText.js';
 
-function rawLine(content: unknown, toolUseId = 'tu_1'): string {
-  return JSON.stringify({
-    type: 'user',
-    sessionId: 's1',
-    timestamp: '2026-07-08T09:00:00Z',
-    message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
-  });
+// Shaped after a real captured task-notification event's humanText: all
+// tags concatenated in one string, <result> containing multi-line markdown.
+function notificationText(resultBody: string): string {
+  return (
+    '<task-notification>\n' +
+    '<task-id>a97f700e2e359a28b</task-id>\n' +
+    '<tool-use-id>toolu_01NESNPGPYBESN4SrbugEy7K</tool-use-id>\n' +
+    '<status>completed</status>\n' +
+    '<summary>Agent "Explore src/state directory" finished</summary>\n' +
+    `<result>${resultBody}</result>\n` +
+    '<subagent_tokens>500</subagent_tokens>\n' +
+    '<tool_uses>8</tool_uses>\n' +
+    '<duration_ms>90000</duration_ms>\n' +
+    '</task-notification>'
+  );
 }
 
 describe('extractDispatchResultText', () => {
-  it('extracts a plain string tool_result content', () => {
-    const result = extractDispatchResultText(rawLine('Implemented the feature, all tests passing.'), 'tu_1');
+  it('extracts a single-line result body', () => {
+    const result = extractDispatchResultText(notificationText('Implemented the feature, all tests passing.'));
     expect(result).toBe('Implemented the feature, all tests passing.');
   });
 
-  it('extracts and joins text blocks from an array-shaped tool_result content', () => {
-    const line = rawLine([
-      { type: 'text', text: 'First finding.' },
-      { type: 'text', text: 'Second finding.' },
-    ]);
-    const result = extractDispatchResultText(line, 'tu_1');
-    expect(result).toBe('First finding.\nSecond finding.');
+  it('extracts a multi-line markdown result body', () => {
+    const body = '## Task 1 Complete\n\n**Status**: DONE\n\n**Commit SHA**: c9c406b';
+    const result = extractDispatchResultText(notificationText(body));
+    expect(result).toBe(body);
   });
 
-  it('ignores non-text blocks when joining an array-shaped content', () => {
-    const line = rawLine([
-      { type: 'text', text: 'Kept.' },
-      { type: 'image', source: { data: 'irrelevant' } },
-    ]);
-    const result = extractDispatchResultText(line, 'tu_1');
-    expect(result).toBe('Kept.');
+  it('trims leading/trailing whitespace from the captured result', () => {
+    const result = extractDispatchResultText(notificationText('  padded on both sides  '));
+    expect(result).toBe('padded on both sides');
   });
 
-  it('returns null when no tool_result matches the given toolUseId', () => {
-    const result = extractDispatchResultText(rawLine('some content', 'tu_other'), 'tu_1');
-    expect(result).toBeNull();
+  it('returns null when there is no <result> tag at all', () => {
+    const text = '<task-notification>\n<tool-use-id>tu_1</tool-use-id>\n</task-notification>';
+    expect(extractDispatchResultText(text)).toBeNull();
   });
 
-  it('returns null when the message has no tool_result at all', () => {
-    const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
-    const result = extractDispatchResultText(line, 'tu_1');
-    expect(result).toBeNull();
+  it('returns null for an empty or whitespace-only result body', () => {
+    expect(extractDispatchResultText(notificationText(''))).toBeNull();
+    expect(extractDispatchResultText(notificationText('   '))).toBeNull();
   });
 
-  it('returns null for empty or whitespace-only content', () => {
-    expect(extractDispatchResultText(rawLine(''), 'tu_1')).toBeNull();
-    expect(extractDispatchResultText(rawLine('   '), 'tu_1')).toBeNull();
+  it('returns null for null input', () => {
+    expect(extractDispatchResultText(null)).toBeNull();
   });
 
-  it('never throws on malformed JSON', () => {
-    expect(() => extractDispatchResultText('not json at all {{', 'tu_1')).not.toThrow();
-    expect(extractDispatchResultText('not json at all {{', 'tu_1')).toBeNull();
+  it('returns null for a plain empty string', () => {
+    expect(extractDispatchResultText('')).toBeNull();
   });
 
-  it('never throws on a well-formed but unexpected shape', () => {
-    const line = JSON.stringify({ type: 'user', message: { content: 'not an array' } });
-    expect(() => extractDispatchResultText(line, 'tu_1')).not.toThrow();
-    expect(extractDispatchResultText(line, 'tu_1')).toBeNull();
+  it('never throws on text containing unbalanced or nested angle brackets', () => {
+    const text = notificationText('a < b and c > d, plus <stray');
+    expect(() => extractDispatchResultText(text)).not.toThrow();
   });
 });
 ```
@@ -107,53 +116,34 @@ Expected: FAIL — module not found.
 
 ```typescript
 /**
- * Aether OS — Layer 2 wiring: live (never-persisted) read of an Agent
- * dispatch's raw result text.
+ * Aether OS — Layer 2 wiring: extract the subagent's final report out of a
+ * closed dispatch's task-notification text.
  *
  * Design: docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
- * SS2.1. The shared TranscriptEvent type (transcriptParser.ts) deliberately
- * reduces a tool_result to { toolUseId, resultLength } -- the content is
- * read once to compute .length and discarded, per docs/privacy-and-data.md.
- * This function is the one narrow exception: it re-parses the SAME raw
- * JSONL line already in memory for this scan tick, reads the content ONE
- * caller needs (feeding runExtractor's prompt, never a database write), and
- * is never wired into transcriptParser.ts or its TranscriptEvent output.
+ * SS2.1 (revised). A real captured task-notification event's
+ * message.content is a plain string containing <result>...</result> inline
+ * with the tags usageIngest.ts#ingestDispatchEvent already parses
+ * (<tool-use-id>, <subagent_tokens>, etc.) out of that exact string, surfaced
+ * on TranscriptEvent as `humanText`. This function extracts one more tag
+ * from the same already-in-memory string -- no JSON re-parsing, no raw
+ * line, no new file I/O, and no widening of TranscriptEvent.
+ *
+ * `humanText` is already documented in transcriptParser.ts as "transient
+ * and MUST NEVER be persisted" -- this function's caller (Task 3) must
+ * honor that for whatever this returns, exactly as it already must for
+ * humanText itself.
  *
  * Never throws -- same tolerant-parsing convention as every other parser in
  * this package (parseExtractorOutput, parseTranscriptLine).
  */
 
-export function extractDispatchResultText(rawLine: string, toolUseId: string): string | null {
-  let json: any;
-  try {
-    json = JSON.parse(rawLine);
-  } catch {
-    return null;
-  }
-  if (typeof json !== 'object' || json === null) return null;
+const RESULT_TAG_RE = /<result>([\s\S]*?)<\/result>/;
 
-  const content = json.message?.content;
-  if (!Array.isArray(content)) return null;
-
-  const match = content.find(
-    (item: any) => item && item.type === 'tool_result' && item.tool_use_id === toolUseId,
-  );
+export function extractDispatchResultText(humanText: string | null): string | null {
+  if (!humanText) return null;
+  const match = humanText.match(RESULT_TAG_RE);
   if (!match) return null;
-
-  const raw = match.content;
-  let text: string;
-  if (typeof raw === 'string') {
-    text = raw;
-  } else if (Array.isArray(raw)) {
-    text = raw
-      .filter((block: any) => block && block.type === 'text' && typeof block.text === 'string')
-      .map((block: any) => block.text)
-      .join('\n');
-  } else {
-    return null;
-  }
-
-  const trimmed = text.trim();
+  const trimmed = match[1].trim();
   return trimmed ? trimmed : null;
 }
 ```
@@ -168,7 +158,7 @@ Expected: PASS (8 tests).
 ```bash
 cd collector
 git add src/dispatchResultText.ts src/dispatchResultText.test.ts
-git commit -m "feat(memory-layer-2): add live (never-persisted) dispatch result text reader"
+git commit -m "feat(memory-layer-2): extract <result> tag from dispatch task-notification text"
 ```
 
 ---
@@ -414,6 +404,14 @@ git commit -m "feat(memory-layer-2): add async extraction queue draining runExtr
 
 ### Task 3: Wire the extraction pass into `transcriptScan.ts`
 
+> **Revised 2026-07-31, mid-implementation**, alongside Task 1 — see that
+> task's revision note. Because `extractDispatchResultText` now reads
+> `event.humanText` (already on `TranscriptEvent`) instead of a raw JSONL
+> line, this task **no longer needs the `parsedPairs` restructuring** an
+> earlier version of this task and the design doc required. The new pass
+> below iterates the existing, unmodified `parsedEvents` — same array the
+> existing `ingestDispatchEvent` loop already iterates.
+
 **Files:**
 - Modify: `collector/src/transcriptScan.ts`
 - Test: `collector/src/transcriptScan.test.ts` (add cases; existing cases must keep passing unmodified)
@@ -430,10 +428,13 @@ Add these `describe` blocks to the existing `collector/src/transcriptScan.test.t
 import { createMemoryExtractQueue } from './memoryExtractQueue.js';
 
 // A closed, substantive Agent dispatch: an assistant tool_use named 'Agent'
-// followed by its task-notification completion, with a tool_result on the
-// SAME toolUseId carrying the subagent's final report text. Mirrors the real
-// shape verified in usageIngest.test.ts's openDispatch/completionEvent
-// helpers, plus the tool_result line this plan's Task 1 reads from.
+// followed by its task-notification completion. Shaped after a REAL
+// captured task-notification event (message.content is a plain string
+// containing every tag inline, including <result>) -- not a content-block
+// array, and NOT carrying any separate tool_result item. See
+// dispatchResultText.test.ts's notificationText helper for the same shape;
+// duplicated here rather than imported, since test fixtures are kept local
+// to the file that uses them per this codebase's convention.
 function agentToolUseLine(toolUseId: string, timestamp: string): string {
   return JSON.stringify({
     type: 'assistant',
@@ -449,27 +450,28 @@ function agentToolUseLine(toolUseId: string, timestamp: string): string {
 function taskNotificationLine(
   toolUseId: string,
   timestamp: string,
-  parts: { tokens?: number; toolUses?: number; durationMs?: number } = {},
+  parts: { tokens?: number; toolUses?: number; durationMs?: number; resultBody?: string } = {},
 ): string {
-  const { tokens = 100, toolUses = 6, durationMs = 65_000 } = parts;
+  const {
+    tokens = 100,
+    toolUses = 6,
+    durationMs = 65_000,
+    resultBody = 'Implemented the feature, all tests passing.',
+  } = parts;
+  const content =
+    '<task-notification>\n' +
+    `<tool-use-id>${toolUseId}</tool-use-id>\n` +
+    `<result>${resultBody}</result>\n` +
+    `<subagent_tokens>${tokens}</subagent_tokens>\n` +
+    `<tool_uses>${toolUses}</tool_uses>\n` +
+    `<duration_ms>${durationMs}</duration_ms>\n` +
+    '</task-notification>';
   return JSON.stringify({
     type: 'user',
     sessionId: 's1',
     timestamp,
     origin: { kind: 'task-notification' },
-    message: {
-      content: [
-        {
-          type: 'text',
-          text:
-            `<tool-use-id>${toolUseId}</tool-use-id>` +
-            `<subagent_tokens>${tokens}</subagent_tokens>` +
-            `<tool_uses>${toolUses}</tool_uses>` +
-            `<duration_ms>${durationMs}</duration_ms>`,
-        },
-        { type: 'tool_result', tool_use_id: toolUseId, content: 'Implemented the feature, all tests passing.' },
-      ],
-    },
+    message: { content },
   });
 }
 
@@ -516,6 +518,24 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
     db.close();
   });
 
+  it('does not queue a dispatch whose task-notification carries no <result> tag', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const lines = [
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { durationMs: 65_000, toolUses: 6, resultBody: '' }),
+    ].join('\n');
+    writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
+
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+
+    expect(queue.size()).toBe(0);
+    db.close();
+  });
+
   it('does not queue anything, and does not throw, when no queue is provided (existing callers unaffected)', () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
     const projDir = join(projectsRoot, 'my-project');
@@ -536,9 +556,11 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `npx vitest run src/transcriptScan.test.ts`
-Expected: FAIL — `scanTranscriptsOnce` does not accept/use a 5th argument, `queue.size()` stays 0 in the first two new cases (behavior not implemented yet); TypeScript may also flag the extra argument since the parameter doesn't exist yet.
+Expected: FAIL — `scanTranscriptsOnce` does not accept/use a 5th argument, `queue.size()` stays 0 in the qualifying cases (behavior not implemented yet); TypeScript may also flag the extra argument since the parameter doesn't exist yet.
 
 - [ ] **Step 3: Modify `transcriptScan.ts`**
+
+First, read the CURRENT content of `collector/src/transcriptScan.ts` in full before editing — the exact surrounding lines matter for placing the new code correctly.
 
 Add the import at the top (alongside the existing imports):
 
@@ -560,29 +582,23 @@ function clearsExtractionBar(durationMs: number, toolUses: number): boolean {
 }
 ```
 
-Change the `parsedEvents` construction (currently a single `.map().filter()` chain) to preserve raw-line/event pairing, and derive `parsedEvents` from the pairs:
+**Do not change how `parsedEvents` is built.** It stays exactly as it is
+today (`lines.map((l) => parseTranscriptLine(l)).filter((e) => e !== null)`
+or equivalent) — no raw-line pairing is needed.
 
-```typescript
-const parsedPairs = lines
-  .map((l) => ({ rawLine: l, event: parseTranscriptLine(l) }))
-  .filter((p): p is { rawLine: string; event: NonNullable<ReturnType<typeof parseTranscriptLine>> } => p.event !== null);
-const parsedEvents = parsedPairs.map((p) => p.event);
-```
-
-(This replaces the existing `const parsedEvents = lines.map((l) => parseTranscriptLine(l)).filter(...)` block. Every existing use of `parsedEvents` below it — `ingestUsageEvent`, `ingestToolCallsAndAnomalies`, the `ingestDispatchEvent` loop, `sweepStaleDispatches` — is unchanged; they still iterate `parsedEvents`, which has the same contents and order as before.)
-
-Add the new pass **after** the existing `ingestDispatchEvent` loop and **before** `sweepStaleDispatches` (extraction should see a dispatch that just closed this tick, and should not fire for a dispatch the sweep is about to mark fatal instead — `sweepStaleDispatches` only fires on dispatches `ingestDispatchEvent` did NOT just close, per its own existing guard, so ordering relative to it does not change which dispatches qualify, but placing extraction after real closures and before the fatal sweep keeps the read-then-queue logic adjacent to the closure it depends on):
+Add the new pass **after** the existing `ingestDispatchEvent` loop and **before** `sweepStaleDispatches` (extraction should see a dispatch that just closed this tick, and should not fire for a dispatch the sweep is about to mark fatal instead — `sweepStaleDispatches` only fires on dispatches `ingestDispatchEvent` did NOT just close, per its own existing guard, so ordering relative to it does not change which dispatches qualify, but placing extraction after real closures and before the fatal sweep keeps the read-then-queue logic adjacent to the closure it depends on), iterating the same `parsedEvents` the loop above it already iterates:
 
 ```typescript
 // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
 // SS2). extractQueue is optional so every existing caller (including this
 // file's own tests) is unaffected when omitted -- extraction is simply
-// skipped. Reads pair.rawLine (the raw JSONL line still in memory for this
-// scan tick), never re-opens the file and never persists the text anywhere.
+// skipped. Reads event.humanText (already parsed, already in memory for
+// this scan tick), never re-opens the file and never persists the text
+// anywhere.
 if (extractQueue) {
-  for (const pair of parsedPairs) {
-    if (pair.event.originKind !== 'task-notification') continue;
-    const idMatch = (pair.event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
+  for (const event of parsedEvents) {
+    if (event.originKind !== 'task-notification') continue;
+    const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
     if (!idMatch) continue;
     const toolUseId = idMatch[1];
 
@@ -597,7 +613,7 @@ if (extractQueue) {
     if (row.exit_state !== 'ok') continue;
     if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
 
-    const runSummary = extractDispatchResultText(pair.rawLine, toolUseId);
+    const runSummary = extractDispatchResultText(event.humanText);
     if (!runSummary) continue;
 
     extractQueue.push({
@@ -629,7 +645,7 @@ export function scanTranscriptsOnce(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run src/transcriptScan.test.ts`
-Expected: PASS (all existing cases plus 3 new ones).
+Expected: PASS (all existing cases plus 4 new ones).
 
 - [ ] **Step 5: Commit**
 
@@ -842,28 +858,23 @@ function agentToolUseLine(toolUseId: string, timestamp: string): string {
 }
 
 function taskNotificationLine(toolUseId: string, timestamp: string): string {
+  // Shaped after a REAL captured task-notification event: message.content is
+  // a plain string with every tag inline, including <result> -- not a
+  // content-block array, and no separate tool_result item at all.
+  const content =
+    '<task-notification>\n' +
+    `<tool-use-id>${toolUseId}</tool-use-id>\n` +
+    '<result>User overruled a suggestion to add a retry loop, accepting unbounded retry instead.</result>\n' +
+    '<subagent_tokens>500</subagent_tokens>\n' +
+    '<tool_uses>8</tool_uses>\n' +
+    '<duration_ms>90000</duration_ms>\n' +
+    '</task-notification>';
   return JSON.stringify({
     type: 'user',
     sessionId: 's1',
     timestamp,
     origin: { kind: 'task-notification' },
-    message: {
-      content: [
-        {
-          type: 'text',
-          text:
-            `<tool-use-id>${toolUseId}</tool-use-id>` +
-            `<subagent_tokens>500</subagent_tokens>` +
-            `<tool_uses>8</tool_uses>` +
-            `<duration_ms>90000</duration_ms>`,
-        },
-        {
-          type: 'tool_result',
-          tool_use_id: toolUseId,
-          content: 'User overruled a suggestion to add a retry loop, accepting unbounded retry instead.',
-        },
-      ],
-    },
+    message: { content },
   });
 }
 
@@ -915,7 +926,7 @@ Expected: PASS (1 test).
 - [ ] **Step 3: Run the full collector test suite**
 
 Run: `npx vitest run`
-Expected: PASS — every existing suite plus all new tests from Tasks 1-5 (this plan adds 8 + 5 + 3 + 1 + 1 = 18 new tests).
+Expected: PASS — every existing suite plus all new tests from Tasks 1-5 (this plan adds 8 + 5 + 4 + 1 + 1 = 19 new tests).
 
 - [ ] **Step 4: Run the TypeScript build**
 
