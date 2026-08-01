@@ -8,6 +8,7 @@ import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
 import type { DiagnosticsSnapshot } from './collectorStore';
+import type { MemoryRowUI, MemoryTombstoneUI } from './memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
 
@@ -78,6 +79,18 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, snapshot: DiagnosticsSnapshot | null) => callback(snapshot);
       ipcRenderer.on('diagnostics:snapshot', listener);
       return () => ipcRenderer.removeListener('diagnostics:snapshot', listener);
+    },
+  },
+  memory: {
+    onSnapshot: (callback: (rows: MemoryRowUI[] | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, rows: MemoryRowUI[] | null) => callback(rows);
+      ipcRenderer.on('memory:snapshot', listener);
+      return () => ipcRenderer.removeListener('memory:snapshot', listener);
+    },
+    onTombstones: (callback: (rows: MemoryTombstoneUI[] | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, rows: MemoryTombstoneUI[] | null) => callback(rows);
+      ipcRenderer.on('memory:tombstones', listener);
+      return () => ipcRenderer.removeListener('memory:tombstones', listener);
     },
   },
   optimize: {
