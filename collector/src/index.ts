@@ -8,6 +8,8 @@ import { scanTranscriptsOnce } from './transcriptScan.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { pollFleet, upsertFleetSessions, type FleetExecFn } from './fleetPoll.js';
 import { readOwnSessionId } from './ownSessionFile.js';
+import { createMemoryStore } from './memoryStore.js';
+import { createMemoryExtractQueue, drainMemoryExtractQueue } from './memoryExtractQueue.js';
 
 // Exported (not just module-private) so tests can drive it directly with an
 // injected execFn, matching pollFleet's own injectable-exec-function
@@ -40,16 +42,21 @@ export function startCollector(options: {
   transcriptScanIntervalMs: number;
   ownSessionFilePath: string;
   fleetPollIntervalMs: number;
+  memoryDbPath: string;
+  memoryExtractIntervalMs: number;
 }): () => void {
   const db = openDatabase(options.dbPath);
   migrate(db);
 
+  const memoryStore = createMemoryStore(options.memoryDbPath);
+  const extractQueue = createMemoryExtractQueue();
+
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
   const compactTimer = setInterval(() => compact(db, Date.now()), options.compactIntervalMs);
   const toolCallHistoryByFile = new Map<string, ToolCallHistory>();
-  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile);
+  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, extractQueue);
   const transcriptScanTimer = setInterval(
-    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile),
+    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, extractQueue),
     options.transcriptScanIntervalMs
   );
 
@@ -62,11 +69,22 @@ export function startCollector(options: {
     );
   }, options.fleetPollIntervalMs);
 
+  drainMemoryExtractQueue(memoryStore, extractQueue).catch((err) =>
+    console.error('[aether-collector] memory extraction failed:', err)
+  );
+  const memoryExtractTimer = setInterval(() => {
+    drainMemoryExtractQueue(memoryStore, extractQueue).catch((err) =>
+      console.error('[aether-collector] memory extraction failed:', err)
+    );
+  }, options.memoryExtractIntervalMs);
+
   return () => {
     stopTailer();
     clearInterval(compactTimer);
     clearInterval(transcriptScanTimer);
     clearInterval(fleetPollTimer);
+    clearInterval(memoryExtractTimer);
+    memoryStore.close();
     db.close();
   };
 }
@@ -86,6 +104,8 @@ if (isMainModule) {
     transcriptScanIntervalMs: 15000,
     ownSessionFilePath: join(aetherDir, 'own-session.json'),
     fleetPollIntervalMs: 15000,
+    memoryDbPath: join(aetherDir, 'memory.db'),
+    memoryExtractIntervalMs: 15000,
   });
 
   console.log('[aether-collector] running');

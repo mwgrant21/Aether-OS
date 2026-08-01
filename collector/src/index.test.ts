@@ -28,6 +28,8 @@ describe('startCollector', () => {
       transcriptScanIntervalMs: 100000,
       ownSessionFilePath: join(dir, 'own-session.json'),
       fleetPollIntervalMs: 100000,
+      memoryDbPath: join(dir, 'memory.db'),
+      memoryExtractIntervalMs: 100000,
     });
     await new Promise((resolve) => setTimeout(resolve, 100)); // let the first tick fire
 
@@ -37,6 +39,40 @@ describe('startCollector', () => {
     expect(count.c).toBe(1);
     db.close();
     stop();
+  });
+
+  it('opens a memory store at the configured path and closes it on stop', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-index-mem-'));
+    const stop = startCollector({
+      dbPath: join(dir, 'collector.db'),
+      spoolDir: join(dir, 'spool'),
+      tailIntervalMs: 1_000_000, // effectively never fires during this test
+      compactIntervalMs: 1_000_000,
+      projectsRoot: join(dir, 'projects'),
+      transcriptScanIntervalMs: 1_000_000,
+      ownSessionFilePath: join(dir, 'own-session.json'),
+      fleetPollIntervalMs: 1_000_000,
+      memoryDbPath: join(dir, 'memory.db'),
+      memoryExtractIntervalMs: 1_000_000,
+    });
+
+    expect(existsSync(join(dir, 'memory.db'))).toBe(true);
+    expect(() => stop()).not.toThrow();
+    // A second start against the same path must succeed (proves stop() actually
+    // closed the file handle rather than leaking it).
+    const stop2 = startCollector({
+      dbPath: join(dir, 'collector.db'),
+      spoolDir: join(dir, 'spool'),
+      tailIntervalMs: 1_000_000,
+      compactIntervalMs: 1_000_000,
+      projectsRoot: join(dir, 'projects'),
+      transcriptScanIntervalMs: 1_000_000,
+      ownSessionFilePath: join(dir, 'own-session.json'),
+      fleetPollIntervalMs: 1_000_000,
+      memoryDbPath: join(dir, 'memory.db'),
+      memoryExtractIntervalMs: 1_000_000,
+    });
+    expect(() => stop2()).not.toThrow();
   });
 });
 
