@@ -762,11 +762,6 @@ export function createMemoryStore(dbPath: string, opts: MemoryStoreOptions = {})
   }
 
   /**
-   * Private candidates for one agent. `ownerAgent` is required and there is no
-   * overload that omits it: cross-agent private reads are impossible by
-   * construction, not by convention (Layer 1 §8).
-   */
-  /**
    * Private candidates for one agent, ranked by scorePrivateCandidate (§4.4,
    * Phase C) -- not raw SQL order. `ownerAgent` is required and there is no
    * overload that omits it: cross-agent private reads are impossible by
