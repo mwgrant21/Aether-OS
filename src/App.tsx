@@ -12,6 +12,7 @@ import { useOptimizeSync } from './state/useOptimizeSync';
 import { useStatuslineSync } from './state/useStatuslineSync';
 import { useFleetSync } from './state/useFleetSync';
 import { useDiagnosticsSync } from './state/useDiagnosticsSync';
+import { useMemorySync } from './state/useMemorySync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
 import { PermissionCardStack } from './components/agents/PermissionCardStack';
@@ -36,6 +37,7 @@ export default function App() {
         <StatuslineSync />
         <FleetSync />
         <DiagnosticsSync />
+        <MemorySync />
         <PermissionRequestSync />
         <PostToolFlagSync />
         <RecapBannerMount />
@@ -84,6 +86,11 @@ function FleetSync() {
 
 function DiagnosticsSync() {
   useDiagnosticsSync();
+  return null;
+}
+
+function MemorySync() {
+  useMemorySync();
   return null;
 }
 
