@@ -4,6 +4,25 @@
 Status: approved, ready for implementation plan
 Companion to: `AETHER_MEMORY_LAYER_2.md` (Phase B, already shipped at `2f786bc`)
 
+> **Revised during Task 3 of the implementation plan (2026-07-31), before any
+> real transcript data was checked.** §1 and §2.1 originally assumed the
+> subagent's final report text lives in a `tool_result` content block on the
+> Agent tool_use's own `tool_use_id`, read live from the raw JSONL line. A
+> real captured transcript (`~/.claude/projects/.../*.jsonl`, a genuine
+> `task-notification` event) disproves this: the event's `message.content` is
+> a **plain string**, not a content-block array, and that string already
+> contains a `<result>...</result>` tag carrying the subagent's full final
+> report — inline with `<tool-use-id>`, `<subagent_tokens>`, etc., all of
+> which `ingestDispatchEvent` (`usageIngest.ts`) already parses out of exactly
+> this string via `event.humanText`. There is no separate `tool_result` block
+> for an Agent dispatch's completion at all — which is also *why* the
+> pre-existing comment in `transcriptScan.ts` ("updateHistory never closes an
+> Agent entry via a normal tool_result") is true in production: there is
+> nothing there to close on. §1 and §2.1 below are corrected to match. This
+> also **eliminates §2's `parsedPairs` restructuring entirely** — no raw line
+> is needed, only `event.humanText`, already present on every `TranscriptEvent`
+> at its existing position in `parsedEvents`.
+
 ---
 
 ## 0. What this is
@@ -24,53 +43,36 @@ is separate future work with no design here.
 
 ## 1. The blocking problem this document solves
 
-`runExtractor`'s `runSummary: string` input has no source. The collector's
-shared `TranscriptEvent` type (`transcriptParser.ts`) deliberately reduces a
-tool result to `{ toolUseId, resultLength }` — the actual content is read once
-to compute `.length` and discarded, per `docs/privacy-and-data.md`'s house
-rule that tool-result payloads must never be persisted. That type is used
-everywhere in the collector and is privacy-audited as such; widening it to
-carry content would relax a guarantee well beyond this one use.
+`runExtractor`'s `runSummary: string` input has no source in the collector's
+existing data model — **but not for the reason originally assumed here.**
 
-**Resolution: read the Agent tool's result content live, from the raw JSONL
-line already in hand, at the one call site that needs it — never persist it,
-never add it to the shared parser's output type.**
+A real task-notification event's `message.content` is a plain string, not a
+content-block array, and `parseTranscriptLine` already surfaces that whole
+string as `event.humanText` for exactly this purpose (`ingestDispatchEvent`
+already regexes `<tool-use-id>`/`<subagent_tokens>`/`<tool_uses>`/
+`<duration_ms>` out of it). What was missing is only that nothing yet reads
+the `<result>...</result>` tag also present in that same string — the
+subagent's full final report, delivered inline by Claude Code itself, not
+via any separate `tool_result` block.
+
+**Resolution: regex the `<result>...</result>` tag out of `event.humanText`,
+the same field and the same event `ingestDispatchEvent` already reads —
+one more tag alongside the ones already extracted there. No raw JSONL
+re-parsing, no new file I/O, no widening of `TranscriptEvent`.**
+
+The privacy posture is unchanged from before this correction:
+`event.humanText` is already documented in `transcriptParser.ts` as
+"transient and MUST NEVER be persisted" — this document's obligation not to
+write the extracted `<result>` text to any table stands exactly as
+originally stated, just against a field that already exists rather than one
+this document would have added a new reader for.
 
 ---
 
 ## 2. Where this hooks in
 
-`transcriptScan.ts`'s `scanTranscriptsOnce` builds `parsedEvents` like this
-today:
-
-```ts
-const parsedEvents = lines
-  .map((l) => parseTranscriptLine(l))
-  .filter((e): e is NonNullable<typeof e> => e !== null);
-```
-
-**This drops the positional correspondence between `lines[i]` and
-`parsedEvents[i]`** — a line that fails to parse is filtered out, so index `i`
-in one array does not mean index `i` in the other from that point on. Reading
-the raw line for a given event (§2.1) needs that correspondence, so this
-document changes the construction to filter as pairs instead of filtering
-after mapping:
-
-```ts
-const parsedPairs = lines
-  .map((l) => ({ rawLine: l, event: parseTranscriptLine(l) }))
-  .filter((p): p is { rawLine: string; event: TranscriptEvent } => p.event !== null);
-const parsedEvents = parsedPairs.map((p) => p.event);
-```
-
-`parsedEvents` keeps its existing name and shape (every other call site in
-this function — `ingestUsageEvent`, `ingestToolCallsAndAnomalies`,
-`ingestDispatchEvent`, `sweepStaleDispatches` — is unaffected and unchanged),
-derived from `parsedPairs` rather than being the primary array. Only the new
-pass (below) iterates `parsedPairs` instead of `parsedEvents`, to reach each
-event's raw line.
-
-The existing dispatch-completion loop:
+`transcriptScan.ts`'s `scanTranscriptsOnce` already has a loop, right after
+`ingestDispatchEvent` closes a dispatch, that runs once per parsed event:
 
 ```ts
 for (const event of parsedEvents) {
@@ -78,13 +80,15 @@ for (const event of parsedEvents) {
 }
 ```
 
-gains a second pass over `parsedPairs`, after it, that:
+This document adds a second pass, over the **same, unmodified `parsedEvents`
+array** (no restructuring of how it is built — see the revision note at the
+top of this document for why an earlier draft here required one and no
+longer does), that:
 
 1. Confirms the just-closed dispatch is `exit_state: 'ok'` (never `'fatal'` —
    a stale/timed-out dispatch produced no real final report to extract from).
 2. Confirms it clears the extraction bar (§4).
-3. Extracts the raw result text for that `tool-use-id` from `pair.rawLine`
-   (§2.1), not from the already-reduced `TranscriptEvent`.
+3. Extracts the `<result>...</result>` text from `event.humanText` (§2.1).
 4. Pushes a queue entry — never calls `runExtractor` inline (§3).
 
 `ingestDispatchEvent` already returns `boolean` (closed or not); this
@@ -94,27 +98,21 @@ get `agent_id`, `task_kind`, `duration_ms`, `tool_uses`, `session_id`,
 `exit_state`, and `tool_use_id`, rather than re-deriving those values from
 `ToolCallHistory` a second time.
 
-### 2.1 Reading the raw result text
+### 2.1 Reading the result text
 
 New function, `collector/src/dispatchResultText.ts`:
 
 ```ts
-export function extractDispatchResultText(rawLine: string, toolUseId: string): string | null
+export function extractDispatchResultText(humanText: string | null): string | null
 ```
 
-Parses `rawLine` as JSON itself (independent of `parseTranscriptLine`, which
-already ran and discarded what we need), finds the `user`-kind message's
-`content` array, finds the `tool_result` item whose `tool_use_id` matches,
-and returns its `content` coerced to a string (the Agent tool's result
-content is either a plain string or a content-block array with `type:
-'text'` items — join text items if it's the latter, matching the
-`transcriptParser.ts` text-extraction convention already used for `humanText`).
-Returns `null` on any parse failure, missing match, or empty content — never
-throws, matching every other tolerant-parsing convention in this package.
-
-This function touches **only** the raw line already read into memory for
-this scan tick (`readNewLinesSync` already has it); it opens no new file
-handle and adds no new I/O.
+Regexes `<result>([\s\S]*?)<\/result>` out of `humanText` (non-greedy,
+matching across newlines — the report is multi-line markdown, per the real
+captured example in the revision note above), trims it, and returns `null`
+on no match, a `null` input, or empty/whitespace-only captured content.
+Never throws — same tolerant-parsing convention as every other parser in
+this package. Pure function, no I/O, no JSON parsing (the string is already
+parsed — this only needs one more tag extracted from it).
 
 ---
 
@@ -283,15 +281,16 @@ strong reason to diverge — the queue is typically near-empty between ticks).
 
 ## 7. Build order
 
-1. `dispatchResultText.ts` — `extractDispatchResultText`, pure function, unit
-   tested against raw JSONL fixtures (string-content and array-content
-   shapes, missing match, malformed JSON).
+1. `dispatchResultText.ts` — `extractDispatchResultText`, pure function
+   over `humanText: string | null`, unit tested against real-shaped
+   `<result>...</result>` fixtures (multi-line content, no match, `null`
+   input, empty/whitespace-only capture).
 2. `memoryExtractQueue.ts` — `createMemoryExtractQueue`, `drainMemoryExtractQueue`,
    tested with an injected `execFn` (same convention as `runExtractor` itself)
    and a real `createMemoryStore`-backed store, not mocked.
 3. `transcriptScan.ts` — thread the queue through `scanTranscriptsOnce`'s
-   options, add the extraction-bar check and the new pass over
-   `parsedEvents`/raw `lines` pairing.
+   options, add the extraction-bar check and the new pass over the existing,
+   unmodified `parsedEvents`.
 4. `index.ts` — open `memoryStore`, wire the drain timer, extend
    `startCollector`'s options and the real-process wiring block.
 5. End-to-end integration test: a synthetic transcript fixture with a
