@@ -740,7 +740,7 @@ existing `vitest run` and fail on the alias above. Move it to
 
 **Status: Phase B is written and green** — 4 new modules
 (`promptSafety.ts`, `memoryExtractParser.ts`, `memoryExtractPrompt.ts`,
-`memoryExtract.ts`) in `collector/src/`, 29 new tests, `tsc -b` clean.
+`memoryExtract.ts`) in `collector/src/`, 28 new tests, `tsc -b` clean.
 `runExtractor`'s real model call (`defaultExtractExec`) shells out to
 `claude -p <prompt> --model haiku --output-format text`, following the same
 injected-exec-function pattern `fleetPoll.ts` established for `claude agents
