@@ -452,6 +452,12 @@ export function createMemoryStore(dbPath: string, opts: MemoryStoreOptions = {})
     ORDER BY salience DESC, updated_at DESC
     LIMIT ?
   `);
+  // Internal pre-filter only, not the final ranking -- scorePrivateCandidate
+  // (§4.4, Phase C) does the real ranking in JS after this SQL query bounds
+  // the scan. Comfortably above getPrivateCandidates's public default (200)
+  // so the pre-filter essentially never discards a row a default-limit caller
+  // would have wanted, while still bounding a pathologically large private set.
+  const PRIVATE_CANDIDATE_INTERNAL_CAP = 500;
 
   const stmtAllRows = db.prepare('SELECT * FROM memories ORDER BY created_at DESC');
   const stmtAllTombstones = db.prepare('SELECT * FROM memory_tombstones ORDER BY deleted_at DESC');
@@ -760,9 +766,22 @@ export function createMemoryStore(dbPath: string, opts: MemoryStoreOptions = {})
    * overload that omits it: cross-agent private reads are impossible by
    * construction, not by convention (Layer 1 §8).
    */
+  /**
+   * Private candidates for one agent, ranked by scorePrivateCandidate (§4.4,
+   * Phase C) -- not raw SQL order. `ownerAgent` is required and there is no
+   * overload that omits it: cross-agent private reads are impossible by
+   * construction, not by convention (Layer 1 §8).
+   */
   function getPrivateCandidates(ownerAgent: string, limit = 200): MemoryRow[] {
     if (!ownerAgent) throw new Error('getPrivateCandidates requires an ownerAgent');
-    return stmtPrivate.all(ownerAgent, limit).map((r) => plain<MemoryRow>(r));
+    const t = now();
+    return stmtPrivate
+      .all(ownerAgent, PRIVATE_CANDIDATE_INTERNAL_CAP)
+      .map((r) => plain<MemoryRow>(r))
+      .map((row) => ({ row, score: scorePrivateCandidate(row, t) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((x) => x.row);
   }
 
   function markReferenced(ids: number[]): void {

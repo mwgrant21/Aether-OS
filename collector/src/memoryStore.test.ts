@@ -167,6 +167,42 @@ describe('scope enforcement lives in the store, not the prompt (§3.2)', () => {
   it('getPrivateCandidates refuses an empty owner rather than returning everything', () => {
     expect(() => store.getPrivateCandidates('')).toThrow();
   });
+
+  it('getPrivateCandidates orders by score, not raw salience/updated_at', () => {
+    // A low-salience 'overrule' should outrank a high-salience 'habit', because
+    // kind_weight (coefficient 2.0) dominates salience (coefficient 1.5) at
+    // these values: overrule score ≈ 2.0*1.0 + 1.5*0.2 + 1.0 = 3.3;
+    // habit score ≈ 2.0*0.33 + 1.5*1.0 + 1.0 = 3.16. The OLD placeholder
+    // ordering (ORDER BY salience DESC) would have put the habit row first;
+    // the real formula puts the overrule row first.
+    store.applyOps([{ op: 'ADD', kind: 'overrule', content: 'Low-salience overrule.', salience: 1 }], cinder);
+    store.applyOps([{ op: 'ADD', kind: 'habit', content: 'High-salience habit.', salience: 5 }], cinder);
+
+    const results = store.getPrivateCandidates('CINDER');
+    expect(results[0].kind).toBe('overrule');
+    expect(results[1].kind).toBe('habit');
+  });
+
+  it('getPrivateCandidates still respects the caller-supplied limit after scoring', () => {
+    for (let i = 0; i < 10; i++) {
+      store.applyOps([{ op: 'ADD', kind: 'habit', content: `Habit ${i}.`, salience: 3 }], cinder);
+    }
+    const results = store.getPrivateCandidates('CINDER', 3);
+    expect(results).toHaveLength(3);
+  });
+
+  it('getPrivateCandidates never returns a shared-scope row, regardless of score', () => {
+    store.applyOps([{ op: 'ADD', kind: 'decision', content: 'A shared decision.', salience: 5 }], steward);
+    store.applyOps([{ op: 'ADD', kind: 'habit', content: 'A private habit.', salience: 1 }], cinder);
+
+    const results = store.getPrivateCandidates('CINDER');
+    expect(results).toHaveLength(1);
+    expect(results[0].kind).toBe('habit');
+  });
+
+  it('getPrivateCandidates still requires an ownerAgent (scope enforcement unchanged)', () => {
+    expect(() => store.getPrivateCandidates('')).toThrow();
+  });
 });
 
 describe('forbidden content is a write-time guarantee, not a prompt request (§3.4)', () => {

@@ -748,12 +748,25 @@ injected-exec-function pattern `fleetPoll.ts` established for `claude agents
 outside its own test suite; that is Phase C/D's job once retrieval exists to
 give the extractor a real run to summarize.
 
-### Phase C — retrieval
+### Phase C — retrieval — ✅ WRITTEN AND GREEN
 
-- [ ] Unconditional shared injection
-- [ ] Private scoring function
-- [ ] Tests pinning every weight (the Miriel discipline — a memory that quietly
-      drifts is worse than no memory at all)
+- [x] Unconditional shared injection — already done in Phase A (`getShared()`,
+      `memoryStore.ts`); nothing to build
+- [x] Private scoring function — `scorePrivateCandidate` in `memoryStore.ts`,
+      wired into `getPrivateCandidates`; see
+      `docs/superpowers/specs/2026-07-31-memory-layer2-phase-c-retrieval-design.md`
+      for the exact formula and the initial weight/half-life defaults
+- [x] Tests pinning every weight (the Miriel discipline — a memory that quietly
+      drifts is worse than no memory at all) — 9 tests in `memoryStore.test.ts`
+      pin `kind_weight`, salience normalization, the recency curve (keyed on
+      `created_at`, never `updated_at`), and the staleness_risk curve
+      (`open`-status only, keyed on `updated_at`)
+
+**Status: Phase C is written and green.** No caller-visible signature change —
+`memoryExtractQueue.ts`'s existing `getPrivateCandidates` call (Phase B
+wiring) needed no change and now receives genuinely score-ranked results.
+Weights and half-lives are Phase C's initial defaults, not tuned values —
+Phase E owns tuning against real traffic.
 
 ### Phase D — the surface
 
