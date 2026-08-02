@@ -55,6 +55,7 @@ export const initialState: AetherState = {
     sound: false,
     autoCreateDispatchChannels: false,
     densityLevel: 'normal',
+    modelPolicyMode: 'Local',
   },
   agents: [
     {
