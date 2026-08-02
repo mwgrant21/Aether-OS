@@ -56,6 +56,8 @@ const periodicContentCache = createPeriodicContentCache();
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
+const MIN_WIDTH = 1280;
+const MIN_HEIGHT = 700;
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 const boundsFilePath = join(app.getPath('userData'), 'window-bounds.json');
 const iconPath = join(__dirname, '../../build/icon.png');
@@ -75,7 +77,18 @@ function createWindow(): void {
   const saved = loadWindowBounds(boundsFilePath);
   const displays = screen.getAllDisplays().map((d) => d.workArea);
   const clamped = saved ? clampBoundsToDisplays(saved, displays) : null;
-  const initialBounds: Bounds = clamped ?? { x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  const unclamped = clamped ?? { x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  // A bounds file saved before MIN_WIDTH/MIN_HEIGHT were raised (or persisted from a
+  // display where the window was manually resized below today's minimums) must not
+  // be allowed to reopen the window narrower/shorter than the TopBar's fixed content
+  // needs -- see the window-controls-clipped-at-the-right-edge report this guards
+  // against. BrowserWindow's own `minWidth`/`minHeight` only constrain future resizes,
+  // not the initial `width`/`height` passed to the constructor.
+  const initialBounds: Bounds = {
+    ...unclamped,
+    width: Math.max(unclamped.width, MIN_WIDTH),
+    height: Math.max(unclamped.height, MIN_HEIGHT),
+  };
   const shouldPositionWindow = clamped !== null;
   const shouldMaximize = saved?.isMaximized === true;
 
@@ -83,8 +96,8 @@ function createWindow(): void {
     width: initialBounds.width,
     height: initialBounds.height,
     ...(shouldPositionWindow ? { x: initialBounds.x, y: initialBounds.y } : {}),
-    minWidth: 1024,
-    minHeight: 700,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     autoHideMenuBar: true,
     frame: false,
     ...(existsSync(iconPath) ? { icon: iconPath } : {}),
