@@ -184,6 +184,11 @@ at rev 3.1, Layer 2 at rev 1.1, with Layer 2's Phase A store written, `tsc --str
 50 tests green. PROGRESS.md's own entry said so plainly ("`docs/roadmap.md` has no stage for any
 of this yet"). These four rows close that.
 
+**Status: shipped.** The state below is described in the present tense because that's how it
+was found; Stage 10.5 closed it 2026-07-31 — both specs are committed, the Phase A store lives
+in `collector/src/`, and both links resolve. Left here as the historical record of why this
+stage jumped the queue.
+
 **Stage 10.5 jumps the queue, and the reason is not cosmetic.** PROGRESS.md links to
 `docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md` and
 `docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`. Neither file exists in this repo, and
@@ -229,12 +234,23 @@ Talking to the user in a chat channel and reporting fleet state through cadence 
 jobs with different constraints, not one job accidentally built twice. Recorded as §5.10 and
 closed in §12 of the spec (revision 3) — Stage 12 builds voice packs only, `personas.ts` untouched.
 
-**Stage 13 depends on Stage 11 for one type.** Layer 2's `revision` and `overrule` private memory
-kinds consume the `Revision{finding_id, cause, detail}` object the spine introduces. Landing Layer
-2 first would mean defining a placeholder and reworking it. The Phase A drop-in itself is
-independent — it is one deletion (its sandbox `schema.ts` stub) — but it is not worth a stage of
-its own, and `MemoryStub`'s retirement should happen in the same change that replaces it rather
-than leaving two memory systems live.
+**Stage 13 depends on Stage 11 for one type — the ordering held, the reuse didn't.** The rationale
+below was the reason Stage 13 was sequenced after Stage 11: Layer 2's `revision` and `overrule`
+private memory kinds were meant to consume the `Revision{finding_id, cause, detail}` object the
+spine introduces, so that landing Layer 2 first wouldn't mean defining a placeholder and reworking
+it later. **Checked against the shipped code, not assumed:** `collector/src/memoryStore.ts:56`
+declares its own `RevisionCause = 'new_evidence' | 'reasoning_flaw'`; `collector/src/personalitySpine.ts:61`
+declares the identical union inline on `Revision.cause`; `memoryStore.ts` never references
+`personalitySpine.ts`. The sequencing avoided the *placeholder-and-rework* failure mode this
+paragraph was written to prevent, but the two-declarations-of-one-fact outcome it was also meant
+to prevent happened anyway, just via a different path (independent duplication instead of a
+placeholder). **Recorded here, not fixed** — unifying them is a small follow-up (`Revision.cause`
+importing `RevisionCause` instead of restating it), deliberately not bundled into this docs pass.
+If that follow-up lands, this paragraph needs one line saying so, the same way this note exists
+because the original paragraph didn't get one. The Phase A drop-in itself was independent — it was
+one deletion (its sandbox `schema.ts` stub) — but wasn't worth a stage of its own, and
+`MemoryStub`'s retirement happened in the same change that replaced it rather than leaving two
+memory systems live.
 
 **Known and unscheduled, named rather than glossed:** Layer 1's Phase 3 calibration items —
 rolling per-agent baselines, anomaly thresholds, the interruption-budget interval `N`, the second
@@ -242,6 +258,13 @@ round of frozen phrases — have no stage and deliberately should not get one ye
 only against observed traffic, which does not exist until Stages 11 and 12 have been running for a
 while. Stage 11's telemetry-persistence task is what makes them buildable later; skipping it means
 starting the observation window from zero on the day that work begins.
+
+**This is the same blocker as Layer 2's Phase E** (private scoring weights, `recency`/
+`staleness_risk` half-lives — `docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`'s own Phase E),
+not a coincidence worth two separate orphaned caveats. Both need the collector to have run for
+real, over time, producing real dispatch/extraction rows — a deployment-and-observation gap, not
+a coding one. They unblock together the day that traffic exists, from the same underlying
+precondition. One entry point for "has the collector run long enough yet," not two.
 
 ### Dependency graph
 
