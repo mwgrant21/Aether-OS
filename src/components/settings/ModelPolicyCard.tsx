@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
@@ -13,10 +13,18 @@ const COPY: Record<ModelPolicyMode, string> = {
   Off: 'Off · no model calls, ever',
 };
 
+type SpendInfo = { monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' };
+
+const GATE_WARNING: Partial<Record<SpendInfo['gate'], string>> = {
+  degrade: 'Approaching the monthly ceiling',
+  blocked: 'Monthly ceiling reached — no further calls this month',
+};
+
 export function ModelPolicyCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const { modelPolicyMode } = state.cfg;
+  const [spend, setSpend] = useState<SpendInfo | null>(null);
 
   // Push the persisted preference to main on every mount and on every
   // change -- same pattern as ChatBackendCard's autoHeadlines effect, for
@@ -24,6 +32,14 @@ export function ModelPolicyCard() {
   useEffect(() => {
     window.aetherElectron?.agents.setModelPolicyMode(modelPolicyMode);
   }, [modelPolicyMode]);
+
+  // Fetch-on-mount plus fetch-after-mode-change is enough for a live signal
+  // here -- continuous polling is deliberately out of scope (see finding 6).
+  useEffect(() => {
+    window.aetherElectron?.agents.getModelSpend().then(setSpend).catch(() => setSpend(null));
+  }, [modelPolicyMode]);
+
+  const warning = spend ? GATE_WARNING[spend.gate] : undefined;
 
   return (
     <div style={cardStyle(colors)}>
@@ -40,6 +56,8 @@ export function ModelPolicyCard() {
         ))}
       </div>
       <div style={hintStyle(colors)}>{COPY[modelPolicyMode]}</div>
+      {spend && <div style={hintStyle(colors)}>${spend.monthTotalUsd.toFixed(2)} spent this month</div>}
+      {warning && <div style={warningStyle(colors)}>{warning}</div>}
       <div style={hintStyle(colors)}>
         Once the monthly ceiling is reached, no further calls are made — Aether can see what it has spent, never your account balance.
       </div>
@@ -82,5 +100,12 @@ function hintStyle(colors: ColorPalette): CSSProperties {
     marginTop: 6,
     font: `500 11px/1.4 ${fonts.ui}`,
     color: colors.textMuted,
+  };
+}
+function warningStyle(colors: ColorPalette): CSSProperties {
+  return {
+    marginTop: 6,
+    font: `600 11px/1.4 ${fonts.ui}`,
+    color: colors.danger,
   };
 }

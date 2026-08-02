@@ -348,13 +348,16 @@ function currentMonthKey(): string {
 async function modelCallsCurrentlyPermitted(): Promise<boolean> {
   if (!isModelCallAllowed(modelPolicyMode)) return false;
   // Spend state is a self-imposed, balance-blind budget guard (see modelSpendTracker
-  // comments), not a hard billing limit enforced by the provider. If we can't read it
-  // (locked file, disk hiccup, malformed JSON), we cannot confirm the ceiling was
-  // reached -- fail OPEN (permit the call) rather than silently blocking a policy mode
-  // the user explicitly turned on because of an unrelated disk/IO error. A stuck
-  // "blocked" state from a persistent read failure would be far more disruptive (and
-  // harder to diagnose) than the rare case where a genuinely near-ceiling month allows
-  // one extra call while the read is failing.
+  // comments), not a hard billing limit enforced by the provider. loadSpendState
+  // distinguishes "no file yet" (returns {} -- legitimate) from "file exists but is
+  // corrupt/unreadable" (throws) -- so the catch below is reachable and real: a
+  // locked file or malformed JSON lands here, not in a silent {} that would read as
+  // "$0 spent this month" and reset the ceiling indefinitely. We fail OPEN (permit
+  // the call) rather than silently blocking a policy mode the user explicitly turned
+  // on because of an unrelated disk/IO error. A stuck "blocked" state from a
+  // persistent read failure would be far more disruptive (and harder to diagnose)
+  // than the rare case where a genuinely near-ceiling month allows one extra call
+  // while the read is failing.
   let state: Record<string, number>;
   try {
     state = await loadSpendState(modelSpendStatePath);
@@ -398,6 +401,16 @@ async function tickAndPushAgents(): Promise<void> {
     //      never changes gets (at most) one periodic call, not one per 15s.
     // shouldCallForHeadline's 15s throttle still applies on top as a hard cap.
     for (const d of autoHeadlinesEnabled ? result.open : []) {
+      // Checked first, before either state-mutating guard below: when policy
+      // forbids calls (Local/Off mode, or the monthly spend ceiling hit),
+      // this must short-circuit before shouldCallForHeadline consumes a
+      // throttle slot or isNewPeriodicContent marks content as "seen" --
+      // otherwise every tick under a no-calls policy would burn both, and
+      // switching back to API mode later would silently skip the first
+      // headline for every dispatch whose content was already marked seen
+      // while calls were forbidden (see the "silently lost forever" note
+      // below, which is exactly the failure mode this ordering prevents).
+      if (!(await modelCallsCurrentlyPermitted())) continue;
       const matchingWork = result.work.find((w) => w.toolUseId === d.toolUseId);
       if (!matchingWork) continue; // nothing new happening right now -- don't re-send the same static content
       // shouldCallForHeadline's atomic check-and-set consumes the 15s throttle
@@ -411,7 +424,6 @@ async function tickAndPushAgents(): Promise<void> {
       if (!shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) continue;
       const activeWorkContext = matchingWork.description || matchingWork.label;
       if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
-      if (!(await modelCallsCurrentlyPermitted())) continue;
       generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext)
         .then((headline) => {
           if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
@@ -597,6 +609,24 @@ ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
 
 ipcMain.on('agents:setModelPolicyMode', (_event, mode: ModelPolicyMode) => {
   modelPolicyMode = mode;
+});
+
+// Live spend/gate signal for the Settings card (finding 6, final review):
+// spendGate can return 'degrade' but until now nothing consumed it -- the
+// comment in modelSpendTracker.ts claims "UI warns" when nothing did. This
+// is deliberately scoped to current-month total + gate, not full historical
+// spend; the card fetches on mount and after mode changes rather than
+// polling continuously.
+ipcMain.handle('modelSpend:get', async (): Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }> => {
+  let state: Record<string, number>;
+  try {
+    state = await loadSpendState(modelSpendStatePath);
+  } catch (err) {
+    console.error('modelSpend:get: failed to read spend state, reporting $0/ok', err);
+    return { monthTotalUsd: 0, gate: 'ok' };
+  }
+  const monthTotalUsd = state[currentMonthKey()] ?? 0;
+  return { monthTotalUsd, gate: spendGate(monthTotalUsd) };
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());

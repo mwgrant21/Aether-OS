@@ -37,6 +37,7 @@ declare global {
         onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
         setAutoHeadlines: (enabled: boolean) => void;
         setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => void;
+        getModelSpend: () => Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }>;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;

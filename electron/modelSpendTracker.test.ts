@@ -30,10 +30,10 @@ describe('spend persistence', () => {
     expect(await loadSpendState(statePath)).toEqual({});
   });
 
-  it('loadSpendState on invalid JSON -> {} (must not throw)', async () => {
+  it('loadSpendState on invalid JSON -> throws (corrupt state must not silently read as $0 spent)', async () => {
     const statePath = await tempStatePath();
     await fsp.writeFile(statePath, 'not json{{', 'utf8');
-    expect(await loadSpendState(statePath)).toEqual({});
+    await expect(loadSpendState(statePath)).rejects.toThrow();
   });
 
   it('recordSpend accumulates within the same month and returns the running total', async () => {

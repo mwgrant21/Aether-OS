@@ -38,12 +38,27 @@ async function writeSpendState(statePath: string, state: Record<string, number>)
   await fsp.writeFile(statePath, JSON.stringify(state, null, 2), 'utf8');
 }
 
+// Distinguishes "no state yet" (legitimate: ENOENT, first run) from "state
+// exists but can't be trusted" (corrupt JSON, permission error, or any other
+// read failure). The former returns {} -- there is genuinely nothing to
+// report. The latter THROWS rather than silently returning {}: swallowing it
+// here would make a locked/corrupt file read as "$0 spent this month" to
+// every caller, silently resetting the self-imposed spend ceiling to zero
+// for as long as the file stays unreadable. Callers (main.ts's
+// modelCallsCurrentlyPermitted) decide the fail-open/fail-closed policy;
+// this function's job is only to tell the truth about which case occurred.
 export async function loadSpendState(statePath: string): Promise<Record<string, number>> {
+  let raw: string;
   try {
-    const raw = await fsp.readFile(statePath, 'utf8');
+    raw = await fsp.readFile(statePath, 'utf8');
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') return {};
+    throw err;
+  }
+  try {
     return sanitizeSpendState(JSON.parse(raw));
-  } catch {
-    return {};
+  } catch (err) {
+    throw new Error(`model spend state at ${statePath} is corrupt/unparseable: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

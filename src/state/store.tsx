@@ -14,7 +14,13 @@ const StoreContext = createContext<StoreValue | null>(null);
 export function AetherStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState, (init) => {
     const persisted = loadPersisted();
-    return persisted ? { ...init, ...persisted } : init;
+    if (!persisted) return init;
+    // Merge cfg field-by-field rather than replacing it wholesale -- a
+    // pre-branch persisted blob (e.g. an old `aetheros-v1` localStorage
+    // entry) is missing newer Cfg fields like modelPolicyMode/autoHeadlines,
+    // and `{ ...init, ...persisted }` alone lets persisted.cfg replace
+    // init.cfg outright, leaving those fields undefined for existing users.
+    return { ...init, ...persisted, cfg: { ...init.cfg, ...persisted.cfg } };
   });
 
   useEffect(() => {
