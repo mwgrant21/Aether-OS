@@ -107,10 +107,32 @@ function createWindow(): void {
   });
   mainWindow = win;
 
-  if (shouldMaximize) win.maximize();
-
-  win.on('maximize', () => sendToWindow('window:isMaximized', true));
+  // Registered BEFORE the initial win.maximize() call below so that call's
+  // own 'maximize' event doesn't fire before this listener is attached.
+  win.on('maximize', () => {
+    // Windows-only bug: a frame:false BrowserWindow's native maximize()
+    // sizes the window past the actual visible screen by the invisible
+    // native resize-border thickness (a long-documented Electron/Windows
+    // issue specific to frameless windows) -- the OS reports the window as
+    // maximized, but it is measurably larger than the display's work area,
+    // so content pinned to an edge (the custom window controls in TopBar's
+    // top-right corner, including Close) renders partly or fully
+    // off-screen. Immediately re-set bounds to the real workArea to correct
+    // it. This handler runs on every maximize trigger -- the toggle button
+    // (ipcMain 'window:toggleMaximize' below), the initial
+    // shouldMaximize restore, or the native title-bar double-click Windows
+    // still honors on -webkit-app-region: drag areas -- since all three
+    // call the same underlying win.maximize() and therefore emit this same
+    // event.
+    if (process.platform === 'win32') {
+      const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
+      win.setBounds(workArea);
+    }
+    sendToWindow('window:isMaximized', true);
+  });
   win.on('unmaximize', () => sendToWindow('window:isMaximized', false));
+
+  if (shouldMaximize) win.maximize();
 
   win.on('focus', () => {
     isWindowFocused = true;
