@@ -110,6 +110,7 @@ implementer + reviewer + whole-branch-review loop.
 | **10** | **Go collector** | **Status: shipped** — see `docs/superpowers/plans/2026-07-30-go-collector-stage10.md`. Drop-in swap behind the Stage 2 contract, coexisting with the Node collector; cutover/retirement is a separate, later decision. | ~6 tasks |
 | **10.5** | **Spec commit & link repair** | **Status: shipped.** Task 1 (commit `AGENT_PERSONALITY_LAYER_1.md`) shipped 2026-07-30. Tasks 2-3 (commit `AETHER_MEMORY_LAYER_2.md`, move the Phase A store into `collector/src/`, repair the remaining dead link) shipped 2026-07-31 — the Layer 2 spec is committed and its Phase A store (`memoryStore.ts`) lives in `collector/src/`, not on another machine. Both links now resolve. | ~3 tasks |
 | **11** | **Narration spine** | **Status: shipped** — see `docs/superpowers/plans/2026-07-31-narration-spine-stage11.md`. Layer 1 Phase 0, mapped onto real dispatch data (Aether observes, it doesn't orchestrate). Schema v5 adds seven new columns to `dispatches`: `task_kind`, `agent_id`, `session_id`, `retries`, `exit_state`, `severity`, `median_ms_at_eval`; `AgentEnvelope`, `ExitState`, and `Severity` types ported from `AGENT_PERSONALITY_LAYER_1.md` into `collector/src/personalitySpine.ts`; subagent type and session ID captured at dispatch-open time; real dispatch completions now populate all columns via `computeSeverity()`; a stale-dispatch sweep detects Agent dispatches never completing and marks them `exit_state='fatal'`; telemetry persisted keyed by `(agent_id, task_kind)` for future baseline queries; end-to-end integration test. **Ships zero visible change** — no voice, no UI, nothing in the chat deck, zero `electron/`/`src/` files touched. **Named limitation:** fatal-via-staleness detection does not survive a collector restart — a dispatch hanging when the collector restarts is never swept and silently never gets a `dispatches` row. | 7 tasks |
+| **11.5** | **Model policy** | **A shipped feature running a top-tier model nobody chose, plus no mechanism preventing the next one.** `CHAT_MODEL = 'claude-opus-4-8'` was typed once and never revisited; `headlineGenerator.ts` declares its own constant in a second file with a second convention. Replaces per-feature model literals with a single policy module features query by *tier*, an allowlist test that fails on any unapproved model, and a `Local`/`API`/`Off` policy governing every call site. Jumps ahead of Stage 12, which would otherwise add a third call site under the same defect — see §3.4. | ~7 tasks |
 | **12** | **Voice packs & render** | **Layer 1 Phase 1.** Voice packs as data files, lazy narration generated in the viewer, verbosity dial with a severity floor, runtime-prepended frozen phrases, interruption-budget mechanism, attention hook. `personas.ts` is untouched — coexists, does not get folded in; see spec §5.10. The visible half. Planned: `2026-07-31-voice-packs-stage12.md`. | ~9 tasks |
 | **13** | **Memory Layer 2** | **Status: shipped** — see `docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`. Phase A (the atom store, `collector/src/memoryStore.ts`, 50+ tests) through Phase D (the surface) all shipped: `prompt-safety` fencing and the extractor call path (`memoryExtract.ts`), real dispatch-completion wiring (`memoryExtractQueue.ts`, threaded into `transcriptScan.ts`/`index.ts`), `scorePrivateCandidate` private-retrieval ranking, and the Memory view rework (`electron/memoryStore.ts` read-only reader, scope filter, tombstone view). **Retires `MemoryStub`** — all six real construction sites removed, including `tick.ts`'s decay tick and `SystemsCard.tsx`'s Pinned stat, both caught during implementation. **Phase E (weight/half-life tuning) is parked** — needs real extraction traffic that doesn't exist yet on this machine; nothing to build until the collector has run for real over time. | ~10 tasks |
 
@@ -263,6 +264,32 @@ not a coincidence worth two separate orphaned caveats. Both need the collector t
 real, over time, producing real dispatch/extraction rows — a deployment-and-observation gap, not
 a coding one. They unblock together the day that traffic exists, from the same underlying
 precondition. One entry point for "has the collector run long enough yet," not two.
+
+### 3.4 — Stage 11.5, and the three days the roadmap was wrong
+
+On 2026-07-31 a $24 day landed on the API key named `Aether OS`, and the
+conclusion drawn from it was that the live reactor feed was expensive enough to
+remove. That conclusion was wrong, and it stood for three days.
+
+The check that settles it is model composition, not key name. Aether's entire
+codebase makes model calls from exactly two sites — `chatCore.ts` (Opus 4.8) and
+`headlineGenerator.ts` (Haiku 4.5) — verified by grepping `fetch(` /
+`new Anthropic` / `messages.create` across `src electron collector
+vite-plugins`. `src/components/reactor` and `src/state` make none at all. The
+$24 bar is Sonnet 5, which appears nowhere in this repo: it is Claude Code
+running in Aether's own pty, inheriting the key from the environment. Aether's
+real contribution that day is the two thin bands at the top of the bar.
+
+**Recorded because the near-miss is the point.** A diagnostic instrument built to
+attribute token spend misattributed its own, and the wrong answer was one
+deletion away from removing the feature the project exists for. The key name was
+plausible enough that nobody checked the composition underneath it.
+
+**Status: shipped.** `modelPolicy.ts` now owns every model ID; features request
+a tier and cannot name a model; an allowlist test (`modelPolicyEnforcement.test.ts`)
+goes red the moment an unapproved one becomes reachable; a `Local`/`API`/`Off`
+policy setting (default `Local`) and a self-imposed monthly spend ceiling with
+graceful degradation (`modelSpendTracker.ts`) govern every call site.
 
 ### Dependency graph
 
