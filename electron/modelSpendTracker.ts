@@ -1,0 +1,71 @@
+//
+// Tracks Aether's own model spend (chatCore/headlineGenerator calls only --
+// this has nothing to do with, and cannot see, spend from Claude Code
+// sessions run in Aether's embedded terminal). Same JSON-file persistence
+// shape as optimizeState.ts. Aether cannot query the account's remaining
+// balance -- no API exposes it -- so this can only ever answer "how much
+// have *we* spent," never "how much is left." See docs/roadmap.md §3.4.
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+
+// USD per million tokens, input/output split. Update only here if pricing
+// changes -- this is the one place per-model rates are allowed to live,
+// mirroring modelPolicy.ts's "one place owns the fact" rule.
+const RATES_PER_MILLION_TOKENS: Record<string, { input: number; output: number }> = {
+  'claude-opus-4-8': { input: 15, output: 75 },
+  'claude-haiku-4-5': { input: 1, output: 5 },
+};
+
+export function costUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const rate = RATES_PER_MILLION_TOKENS[model];
+  if (!rate) return 0;
+  return (inputTokens / 1_000_000) * rate.input + (outputTokens / 1_000_000) * rate.output;
+}
+
+export function sanitizeSpendState(raw: unknown): Record<string, number> {
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const out: Record<string, number> = {};
+  for (const [monthKey, usd] of Object.entries(src)) {
+    if (typeof usd === 'number' && Number.isFinite(usd) && usd >= 0) out[monthKey] = usd;
+  }
+  return out;
+}
+
+async function writeSpendState(statePath: string, state: Record<string, number>): Promise<void> {
+  await fsp.mkdir(path.dirname(statePath), { recursive: true });
+  await fsp.writeFile(statePath, JSON.stringify(state, null, 2), 'utf8');
+}
+
+export async function loadSpendState(statePath: string): Promise<Record<string, number>> {
+  try {
+    const raw = await fsp.readFile(statePath, 'utf8');
+    return sanitizeSpendState(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+// Adds usd to monthKey's running total and persists it, returning the new
+// total so callers can check it against the ceiling without a second read.
+export async function recordSpend(statePath: string, monthKey: string, usd: number): Promise<number> {
+  const state = await loadSpendState(statePath);
+  const next = (state[monthKey] ?? 0) + usd;
+  state[monthKey] = next;
+  await writeSpendState(statePath, state);
+  return next;
+}
+
+export const MONTHLY_SPEND_CEILING_USD = 10;
+export const DEGRADE_THRESHOLD_RATIO = 0.8;
+
+export type SpendGate = 'ok' | 'degrade' | 'blocked';
+
+// Pure decision function. Never throws, never touches the network or the
+// account balance -- degradation is graceful (calls still work, UI warns)
+// until the self-imposed ceiling, at which point Aether stops calling out
+// on its own rather than erroring.
+export function spendGate(monthTotalUsd: number, ceilingUsd: number = MONTHLY_SPEND_CEILING_USD): SpendGate {
+  if (monthTotalUsd >= ceilingUsd) return 'blocked';
+  if (monthTotalUsd >= ceilingUsd * DEGRADE_THRESHOLD_RATIO) return 'degrade';
+  return 'ok';
+}
