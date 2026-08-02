@@ -35,7 +35,19 @@ export function TopBar() {
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+      {/*
+        minWidth: 0 overrides the flexbox default (a flex:1 item's min-width
+        defaults to its content's natural width, not 0), which otherwise lets
+        this row refuse to shrink below the sum of every tab's width -- once
+        that sum plus the fixed-width groups on either side (logo, op-mode
+        buttons, notification/approval icons, the operator chip, window
+        controls) exceeds the window's actual width, the row overflows and
+        pushes WindowControls (Close, the last element) off the visible
+        edge, however wide the window is. overflowX: 'auto' makes that the
+        graceful-degradation path -- the tab strip scrolls internally --
+        instead of the whole TopBar overflowing the window.
+      */}
+      <div style={{ flex: 1, display: 'flex', gap: 4, minWidth: 0, overflowX: 'auto' }}>
         {TOP_BAR_IDS.map((label) => {
           const on = label === state.activeTab;
           return (
