@@ -768,11 +768,26 @@ wiring) needed no change and now receives genuinely score-ranked results.
 Weights and half-lives are Phase C's initial defaults, not tuned values —
 Phase E owns tuning against real traffic.
 
-### Phase D — the surface
+### Phase D — the surface — ✅ WRITTEN AND GREEN
 
-- [ ] Retire `MemoryStub` / `strength` / `sweep` / `pinned`
-- [ ] Re-point roster + detail at collector rows
-- [ ] Scope filter and tombstone view
+- [x] Retire `MemoryStub` / `strength` / `sweep` / `pinned` — all six real
+      construction sites removed (`reducer.ts`'s approval/dispatch blocks,
+      `commands.ts`'s kill/sweep/remember/approve-deny), plus `tick.ts`'s
+      actual decay tick and `SystemsCard.tsx`'s Pinned stat, both missed by
+      the design doc's first audit and caught during implementation; see
+      `docs/superpowers/specs/2026-08-01-memory-layer2-phase-d-surface-design.md`
+- [x] Re-point roster + detail at collector rows — `electron/memoryStore.ts`
+      (read-only, mirrors `collectorStore.ts`) polled and pushed over IPC,
+      consumed by `useMemorySync`, rendered by the re-pointed
+      `MemoryRosterCard`/`MemoryDetailCard`
+- [x] Scope filter and tombstone view — filter derived from real
+      `owner_agent` values (no hardcoded roster); tombstone view swaps the
+      roster's data source to `memory_tombstones`
+
+**Status: Phase D is written and green** — 775/775 tests, `tsc -b` clean
+repo-wide. Manual GUI verification was blocked by a pre-existing,
+documented environment issue (AppContainer ACL) unrelated to this work;
+deferred to a post-merge spot-check.
 
 ### Phase E — parked, needs real traffic
 
