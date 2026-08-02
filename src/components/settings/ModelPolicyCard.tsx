@@ -41,8 +41,7 @@ export function ModelPolicyCard() {
       </div>
       <div style={hintStyle(colors)}>{COPY[modelPolicyMode]}</div>
       <div style={hintStyle(colors)}>
-        We&apos;ve spent what you allotted us this month once the ceiling is reached, sir —
-        Aether cannot see your account balance, only what it has spent itself.
+        Once the monthly ceiling is reached, no further calls are made — Aether can see what it has spent, never your account balance.
       </div>
     </div>
   );
