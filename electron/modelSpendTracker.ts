@@ -7,13 +7,15 @@
 // have *we* spent," never "how much is left." See docs/roadmap.md §3.4.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { resolveModel } from '../src/shared/modelPolicy';
 
-// USD per million tokens, input/output split. Update only here if pricing
-// changes -- this is the one place per-model rates are allowed to live,
-// mirroring modelPolicy.ts's "one place owns the fact" rule.
+// USD per million tokens, input/output split. Keyed by resolveModel() rather
+// than a literal string so this table can never drift from modelPolicy.ts's
+// single source of truth, and so it doesn't itself become a model-ID literal
+// the enforcement test would (correctly) flag.
 const RATES_PER_MILLION_TOKENS: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-8': { input: 15, output: 75 },
-  'claude-haiku-4-5': { input: 1, output: 5 },
+  [resolveModel('chat')]: { input: 15, output: 75 },
+  [resolveModel('headline')]: { input: 1, output: 5 },
 };
 
 export function costUsd(model: string, inputTokens: number, outputTokens: number): number {
