@@ -123,6 +123,16 @@ docs/superpowers/
   request a tier via `resolveModel()`, never a model name directly. Enforced
   by `src/shared/modelPolicyEnforcement.test.ts`, which fails the build the
   moment an unapproved model becomes reachable. See `docs/roadmap.md` §3.4.
+  **Aether is meant to not cost a user money.** `Chat` is the only feature
+  left that calls a model, and it only ever does so when the user sends a
+  message — no feature may make an unprompted or periodic model call. If a
+  new feature seems to need one (a "live"-feeling status line, a background
+  summarizer, anything ticking on a timer), prefer a deterministic, local
+  formatter over a model call, the way `electron/headlineGenerator.ts`'s
+  `formatHeadline()` replaced the old billed Haiku headline rewrite. See
+  `docs/roadmap.md`'s Stage 11.5 addendum for the incident (a $24 July 31st
+  overrun, mostly unrelated Claude Code terminal spend, but real Aether
+  spend too) and the decision it produced.
 - **Testing philosophy**: pure logic (reducers, `tick.ts`, `anomalyDetectors.ts`,
   `alertSounds.ts`'s `decideAlertActions`) is exhaustively unit tested. Anything
   requiring a real `AudioContext`, real WebGL/canvas, or actual visual judgment

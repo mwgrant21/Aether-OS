@@ -55,12 +55,15 @@ export const initialState: AetherState = {
     sound: false,
     autoCreateDispatchChannels: false,
     densityLevel: 'normal',
-    // Defaults off, independent of modelPolicyMode: this is the one feature that
-    // bills continuously and unprompted (a Haiku call every ~15s per active agent),
-    // not just when the user acts. Requiring two separate opt-ins (raise
-    // modelPolicyMode to 'API' AND enable this) before any recurring spend is
-    // possible is deliberate -- see docs/roadmap.md Stage 11.5 / July 31st overrun.
-    autoHeadlines: false,
+    // Was defaulted off (briefly) as a belt-and-suspenders guard against
+    // background billing -- this feature used to make a periodic, unprompted
+    // Haiku call every ~15s per active agent. It now costs nothing at all
+    // (see headlineGenerator.ts's formatHeadline(), a local string formatter
+    // with no model call), so defaulting it back on restores the live
+    // roster feel it was meant to have, at zero cost. See docs/roadmap.md's
+    // Stage 11.5 addendum for the full "Aether should not cost a user
+    // money" rationale behind this and the July 31st overrun it followed.
+    autoHeadlines: true,
     modelPolicyMode: 'Local',
   },
   agents: [

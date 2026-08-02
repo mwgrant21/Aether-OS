@@ -1,13 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   createHeadlineThrottle,
   shouldCallForHeadline,
   recordHeadlineCall,
   createPeriodicContentCache,
   isNewPeriodicContent,
-  generateHeadline,
+  formatHeadline,
 } from './headlineGenerator';
-import * as chatCore from '../src/shared/chatCore';
 
 const mockDispatch = { toolUseId: 't1', subagentType: 'general-purpose', description: 'refactor the reducer', prompt: '' };
 
@@ -81,29 +80,43 @@ describe('isNewPeriodicContent / createPeriodicContentCache', () => {
   });
 });
 
-describe('generateHeadline activeWorkContext', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
+describe('formatHeadline', () => {
+  it('uses activeWorkContext for the periodic trigger when provided', () => {
+    expect(formatHeadline(mockDispatch, 'periodic', null, 'npm install')).toBe('general-purpose: npm install');
   });
 
-  it('appends activeWorkContext to the periodic prompt when provided', async () => {
-    const spy = vi.spyOn(chatCore, 'runChatRequest').mockResolvedValue({ ok: true, reply: 'headline' } as any);
-    await generateHeadline(mockDispatch, 'periodic', null, 'key', 'npm install');
-    const call = spy.mock.calls[0][0] as any;
-    expect(call.messages[0].text).toBe('general-purpose: refactor the reducer -- currently: npm install');
+  it('falls back to dispatch.description when no activeWorkContext is provided', () => {
+    expect(formatHeadline(mockDispatch, 'periodic', null)).toBe('general-purpose: refactor the reducer');
   });
 
-  it('omits the activeWorkContext suffix when none is provided', async () => {
-    const spy = vi.spyOn(chatCore, 'runChatRequest').mockResolvedValue({ ok: true, reply: 'headline' } as any);
-    await generateHeadline(mockDispatch, 'periodic', null, 'key');
-    const call = spy.mock.calls[0][0] as any;
-    expect(call.messages[0].text).toBe('general-purpose: refactor the reducer');
+  it('formats a readable label for a known blocked notification type, ignoring activeWorkContext', () => {
+    expect(formatHeadline(mockDispatch, 'blocked', 'permission_prompt', 'some active work')).toBe(
+      'general-purpose needs a permission decision'
+    );
   });
 
-  it('ignores activeWorkContext for a blocked trigger (blockingContext still wins)', async () => {
-    const spy = vi.spyOn(chatCore, 'runChatRequest').mockResolvedValue({ ok: true, reply: 'headline' } as any);
-    await generateHeadline(mockDispatch, 'blocked', 'waiting on npm install approval', 'key', 'some active work');
-    const call = spy.mock.calls[0][0] as any;
-    expect(call.messages[0].text).toBe('waiting on npm install approval');
+  it('formats a readable label for the other known blocked notification type', () => {
+    expect(formatHeadline(mockDispatch, 'blocked', 'agent_needs_input')).toBe('general-purpose is waiting for input');
+  });
+
+  it('falls back to a generic label for an unrecognized blocked notification type', () => {
+    expect(formatHeadline(mockDispatch, 'blocked', 'something_else')).toBe('general-purpose is blocked');
+  });
+
+  it('falls back to a generic label when blockingContext is null on a blocked trigger', () => {
+    expect(formatHeadline(mockDispatch, 'blocked', null)).toBe('general-purpose is blocked');
+  });
+
+  it('truncates a long headline to 70 characters with an ellipsis', () => {
+    const longWork = 'a'.repeat(100);
+    const result = formatHeadline(mockDispatch, 'periodic', null, longWork);
+    expect(result.length).toBe(70);
+    expect(result.endsWith('…')).toBe(true);
+  });
+
+  it('never throws and never returns an empty string, given only the required arguments', () => {
+    const result = formatHeadline(mockDispatch, 'periodic', null);
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
   });
 });

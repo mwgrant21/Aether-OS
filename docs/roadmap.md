@@ -291,6 +291,42 @@ goes red the moment an unapproved one becomes reachable; a `Local`/`API`/`Off`
 policy setting (default `Local`) and a self-imposed monthly spend ceiling with
 graceful degradation (`modelSpendTracker.ts`) govern every call site.
 
+#### Addendum (2026-08-02) — the headline call site was removed, not just gated
+
+A spend ceiling still lets money burn before it trips: the gate can only refuse
+the *next* call, never retroactively refuse the one that already happened, and
+a monthly ceiling resets every month, so it is a recurring permission to spend,
+not a one-time budget. That is inherent to how metered API billing works and no
+amount of tuning the ceiling fixes it.
+
+Auto Headlines was the sharper problem underneath that: it was the one feature
+in the app that billed *continuously and unprompted* — a Haiku rewrite every
+~15s per active agent, regardless of whether the user had done anything —
+where every other feature (Chat above all) only ever calls a model in direct
+response to something the user typed. A `Local`/`API`/`Off` policy toggle and a
+monthly ceiling reduce that exposure; they do not make the feature free, and an
+enterprise deployment inherits an indefinitely-recurring cost the moment
+someone flips the policy to `API`.
+
+**Decision: Aether is meant to not cost a user money, full stop — not "cost
+less," not "cost up to a self-imposed ceiling." Where a feature's only way to
+be free is to not call a model at all, it does not call a model.** Auto
+Headlines' Haiku rewrite is retired. `electron/headlineGenerator.ts`'s
+`formatHeadline()` now builds the same dashboard-row headline deterministically
+from data Aether already has (the dispatch's `subagentType` and its live
+active-work snippet, or a small fixed set of readable labels for the
+notification types that used to trigger a "blocked" headline) — no model call,
+no network request, no cost, and therefore nothing for a spend ceiling to have
+to protect against in the first place. The throttle/dedup machinery that used
+to ration a billed call is unchanged, now serving a purely cosmetic purpose
+(don't spam the roster with redundant re-renders). `modelPolicy.ts`'s `chat`
+tier is now the only tier and Chat the only remaining model call site in the
+whole app — it is also the only feature for which "the user asked for this
+specific reply" is unambiguously true, which is the bar every model call in
+this project should have to clear. Auto Headlines' default flipped back to
+`true` (it was briefly defaulted off as a belt-and-suspenders measure while it
+still cost money) now that leaving it on costs nothing.
+
 ### Dependency graph
 
 ```

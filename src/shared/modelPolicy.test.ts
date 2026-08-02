@@ -5,15 +5,11 @@ describe('resolveModel', () => {
   it('resolves the chat tier to the opus model', () => {
     expect(resolveModel('chat')).toBe('claude-opus-4-8');
   });
-
-  it('resolves the headline tier to the haiku model', () => {
-    expect(resolveModel('headline')).toBe('claude-haiku-4-5');
-  });
 });
 
 describe('ALLOWED_MODELS', () => {
-  it('contains exactly the two models the app is allowed to call', () => {
-    expect([...ALLOWED_MODELS].sort()).toEqual(['claude-haiku-4-5', 'claude-opus-4-8']);
+  it('contains exactly the one model the app is allowed to call (headlines no longer call a model)', () => {
+    expect([...ALLOWED_MODELS]).toEqual(['claude-opus-4-8']);
   });
 });
 

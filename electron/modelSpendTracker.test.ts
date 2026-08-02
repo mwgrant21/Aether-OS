@@ -15,8 +15,8 @@ describe('costUsd', () => {
     expect(costUsd('claude-opus-4-8', 1_000_000, 1_000_000)).toBe(15 + 75);
   });
 
-  it('computes cost for the haiku (headline) model', () => {
-    expect(costUsd('claude-haiku-4-5', 1_000_000, 1_000_000)).toBe(1 + 5);
+  it('returns 0 for an unrecognized model rather than throwing (e.g. the retired headline/haiku tier)', () => {
+    expect(costUsd('claude-haiku-4-5', 1_000_000, 1_000_000)).toBe(0);
   });
 
   it('returns 0 for an unrecognized model rather than throwing', () => {

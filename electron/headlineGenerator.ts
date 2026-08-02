@@ -1,6 +1,3 @@
-import { runChatRequest } from '../src/shared/chatCore';
-import { resolveModel } from '../src/shared/modelPolicy';
-
 const PERIODIC_THROTTLE_MS = 15000;
 
 export type HeadlineTrigger = 'periodic' | 'blocked';
@@ -16,7 +13,7 @@ export function createHeadlineThrottle(): HeadlineThrottle {
 // Atomic check-and-set for the periodic path: an allowed periodic call
 // immediately marks the throttle slot as consumed at `nowMs`, so the mere
 // act of checking (even if the caller never gets around to calling
-// generateHeadline afterward) counts as "a call happened" for throttling
+// formatHeadline afterward) counts as "a call happened" for throttling
 // purposes -- this is deliberate (matches a permitted check consuming the
 // slot, not just an actual dispatch) and is what makes back-to-back
 // `shouldCallForHeadline` calls throttle correctly without a separate
@@ -77,30 +74,43 @@ interface DispatchForHeadline {
   prompt: string;
 }
 
-// Reuses the existing chat pipeline with a Haiku-class model rather than a
-// parallel one. Never throws -- a failure returns null, and callers must
-// keep the dispatch's local-derived default summary (dispatch.description)
-// on null, per this stage's error-handling discipline.
-export async function generateHeadline(
+const MAX_HEADLINE_LENGTH = 70;
+
+function truncate(text: string, maxLength: number = MAX_HEADLINE_LENGTH): string {
+  const trimmed = text.trim();
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1).trimEnd()}…` : trimmed;
+}
+
+// Notification types this app actually raises a blocked-trigger headline
+// for -- see notificationHandler.ts's own check on event.notificationType.
+// A type not in this map (there shouldn't be one, given that check) still
+// gets a readable fallback rather than a raw enum value leaking into the UI.
+const BLOCKED_LABELS: Record<string, string> = {
+  permission_prompt: 'needs a permission decision',
+  agent_needs_input: 'is waiting for input',
+};
+
+// Formats a dashboard-row headline from data Aether already has on hand --
+// no model call, no network request, no cost. This used to ask Claude
+// (Haiku) to rewrite the same inputs into prose; that made headline
+// generation the one feature in this app that spent money continuously and
+// unprompted (a call roughly every 15s per active agent), rather than only
+// when the user took an action. Retired as part of the "Aether should not
+// cost a user money" decision -- see docs/roadmap.md's Stage 11.5 addendum
+// for the full rationale. This function never fails and never returns
+// null/empty -- there is no I/O to fail, only string formatting -- so
+// callers no longer need a null-on-failure fallback to dispatch.description;
+// see main.ts and notificationHandler.ts, both simplified accordingly.
+export function formatHeadline(
   dispatch: DispatchForHeadline,
   trigger: HeadlineTrigger,
   blockingContext: string | null,
-  apiKey: string | undefined,
   activeWorkContext: string | null = null
-): Promise<string | null> {
-  const system =
-    trigger === 'blocked'
-      ? 'Rewrite the following into a single short (under 12 words) headline that states the actual question blocking this agent, not a generic "blocked" label. Reply with only the headline text, no punctuation wrapper.'
-      : 'Rewrite the following into a single short (under 12 words) status headline for a dashboard row. Reply with only the headline text.';
-  const baseText = trigger === 'blocked' && blockingContext ? blockingContext : `${dispatch.subagentType}: ${dispatch.description}`;
-  // activeWorkContext only ever applies to the periodic path (blocked already
-  // has its own dedicated blockingContext) -- appended rather than replacing
-  // baseText so the model still has the dispatch's identity, not just the
-  // momentary work snippet.
-  const userText = trigger === 'periodic' && activeWorkContext ? `${baseText} -- currently: ${activeWorkContext}` : baseText;
-
-  const result = await runChatRequest({ system, messages: [{ role: 'user', text: userText }] }, apiKey, resolveModel('headline'), 40);
-  if (!result.ok) return null;
-  const trimmed = result.reply.trim();
-  return trimmed.length > 0 ? trimmed : null;
+): string {
+  if (trigger === 'blocked') {
+    const label = (blockingContext && BLOCKED_LABELS[blockingContext]) ?? 'is blocked';
+    return truncate(`${dispatch.subagentType} ${label}`);
+  }
+  const body = activeWorkContext || dispatch.description;
+  return truncate(`${dispatch.subagentType}: ${body}`);
 }

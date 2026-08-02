@@ -1,10 +1,16 @@
 //
-// Tracks Aether's own model spend (chatCore/headlineGenerator calls only --
-// this has nothing to do with, and cannot see, spend from Claude Code
-// sessions run in Aether's embedded terminal). Same JSON-file persistence
-// shape as optimizeState.ts. Aether cannot query the account's remaining
-// balance -- no API exposes it -- so this can only ever answer "how much
-// have *we* spent," never "how much is left." See docs/roadmap.md §3.4.
+// Tracks Aether's own model spend (chatCore calls only -- this has nothing
+// to do with, and cannot see, spend from Claude Code sessions run in
+// Aether's embedded terminal). Same JSON-file persistence shape as
+// optimizeState.ts. Aether cannot query the account's remaining balance --
+// no API exposes it -- so this can only ever answer "how much have *we*
+// spent," never "how much is left." See docs/roadmap.md §3.4.
+//
+// Headline generation used to be a second, billed call site (Haiku) tracked
+// here too; it was retired in favor of a deterministic, free formatter (see
+// electron/headlineGenerator.ts and modelPolicy.ts's header comment) as part
+// of the "Aether should not cost a user money" decision. `chat` is the only
+// tier left, and Chat is the only remaining call site.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { resolveModel } from '../src/shared/modelPolicy';
@@ -15,7 +21,6 @@ import { resolveModel } from '../src/shared/modelPolicy';
 // the enforcement test would (correctly) flag.
 const RATES_PER_MILLION_TOKENS: Record<string, { input: number; output: number }> = {
   [resolveModel('chat')]: { input: 15, output: 75 },
-  [resolveModel('headline')]: { input: 1, output: 5 },
 };
 
 export function costUsd(model: string, inputTokens: number, outputTokens: number): number {

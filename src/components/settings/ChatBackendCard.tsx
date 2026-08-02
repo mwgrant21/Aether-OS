@@ -39,7 +39,7 @@ export function ChatBackendCard() {
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={labelStyle(colors)}>AUTO HEADLINES (USES API)</div>
+        <div style={labelStyle(colors)}>AUTO HEADLINES</div>
         <Button
           onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { autoHeadlines: !autoHeadlines } })}
           style={toggleStyle(colors, autoHeadlines)}
@@ -48,10 +48,9 @@ export function ChatBackendCard() {
         </Button>
       </div>
       <div style={hintStyle(colors)}>
-        Periodically asks Claude (Haiku) to write a live status headline for each active
-        agent — a billed API call every ~15s per agent. Turn off to stop that background
-        spend; the roster falls back to each dispatch's static description. Chat replies
-        are unaffected — those only call the API when you send a message.
+        Periodically updates each active agent's status line with a snippet of its current
+        work, computed locally with no API call and no cost. Turn off to keep the roster on
+        each dispatch's static description instead.
       </div>
     </div>
   );

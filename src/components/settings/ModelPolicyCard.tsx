@@ -9,7 +9,7 @@ const MODES: ModelPolicyMode[] = ['Local', 'API', 'Off'];
 
 const COPY: Record<ModelPolicyMode, string> = {
   Local: 'Local · no model calls yet (Stage 12 adds on-device detection)',
-  API: 'API · Chat and headlines call Anthropic, billed to your key',
+  API: 'API · Chat calls Anthropic, billed to your key',
   Off: 'Off · no model calls, ever',
 };
 
@@ -56,6 +56,10 @@ export function ModelPolicyCard() {
         ))}
       </div>
       <div style={hintStyle(colors)}>{COPY[modelPolicyMode]}</div>
+      <div style={hintStyle(colors)}>
+        Governs Chat only — the only feature left that calls a model. Dashboard headlines are
+        generated locally and never cost anything, regardless of this setting.
+      </div>
       {spend && <div style={hintStyle(colors)}>${spend.monthTotalUsd.toFixed(2)} spent this month</div>}
       {warning && <div style={warningStyle(colors)}>{warning}</div>}
       <div style={hintStyle(colors)}>

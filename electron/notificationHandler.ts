@@ -1,11 +1,10 @@
 import type { RealAgentDispatch } from '../src/state/liveAgentsMath';
-import { generateHeadline, recordHeadlineCall, type HeadlineThrottle } from './headlineGenerator';
+import { formatHeadline, recordHeadlineCall, type HeadlineThrottle } from './headlineGenerator';
 
 export interface NotificationHandlerDeps {
   isWindowFocused: () => boolean;
   getOpenDispatches: () => RealAgentDispatch[];
   headlineThrottle: HeadlineThrottle;
-  apiKey: string | undefined;
   sendHeadline: (toolUseId: string, headline: string) => void;
   // Everything the pre-existing badge/flash/counter suppression path does --
   // stays in main.ts since it's all Electron/mainWindow-specific.
@@ -39,16 +38,15 @@ export function handleNotification(
   if (event.notificationType === 'agent_needs_input' || event.notificationType === 'permission_prompt') {
     const mostRecentOpen = selectMostRecentOpenDispatch(deps.getOpenDispatches());
     if (mostRecentOpen) {
-      generateHeadline(mostRecentOpen, 'blocked', event.notificationType, deps.apiKey).then((headline) => {
-        if (headline) {
-          deps.sendHeadline(mostRecentOpen.toolUseId, headline);
-          // Final-review bug #1: record into the shared throttle map so the
-          // periodic loop's shouldCallForHeadline treats this toolUseId as
-          // "already handled recently" and doesn't immediately overwrite this
-          // headline at its next 15s boundary while still blocked.
-          recordHeadlineCall(deps.headlineThrottle, mostRecentOpen.toolUseId, Date.now());
-        }
-      });
+      // formatHeadline is a pure string formatter now (no model call, no
+      // network, no failure mode) -- no .then()/null-check needed.
+      const headline = formatHeadline(mostRecentOpen, 'blocked', event.notificationType);
+      deps.sendHeadline(mostRecentOpen.toolUseId, headline);
+      // Final-review bug #1: record into the shared throttle map so the
+      // periodic loop's shouldCallForHeadline treats this toolUseId as
+      // "already handled recently" and doesn't immediately overwrite this
+      // headline at its next 15s boundary while still blocked.
+      recordHeadlineCall(deps.headlineThrottle, mostRecentOpen.toolUseId, Date.now());
     }
   }
 

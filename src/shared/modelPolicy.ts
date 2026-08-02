@@ -5,13 +5,21 @@
 // (resolveModel) rather than naming a model, so adding or changing a model
 // requires editing this file, which is where a reviewer actually looks.
 // See docs/roadmap.md Stage 11.5 for why this module exists.
+//
+// 'headline' was retired here (see the "Aether should not cost a user
+// money" note in docs/roadmap.md's Stage 11.5 addendum): the dashboard's
+// live status headline used to be a periodic, unprompted, billed Haiku
+// call -- the one feature in this app that spent money without the user
+// taking an action. It is now generated deterministically in
+// electron/headlineGenerator.ts's formatHeadline(), with no model call at
+// all. 'chat' is the only tier left, and it is the only remaining call
+// site, and it only ever runs when the user sends a chat message.
 
-export type ModelTier = 'chat' | 'headline';
+export type ModelTier = 'chat';
 export type ModelPolicyMode = 'Local' | 'API' | 'Off';
 
 const TIER_MODELS: Record<ModelTier, string> = {
   chat: 'claude-opus-4-8',
-  headline: 'claude-haiku-4-5',
 };
 
 export const ALLOWED_MODELS: readonly string[] = Object.freeze(Object.values(TIER_MODELS));

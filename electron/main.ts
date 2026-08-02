@@ -25,7 +25,7 @@ import { loadSpendState, recordSpend, costUsd, spendGate } from './modelSpendTra
 import {
   createHeadlineThrottle,
   shouldCallForHeadline,
-  generateHeadline,
+  formatHeadline,
   createPeriodicContentCache,
   isNewPeriodicContent,
 } from './headlineGenerator';
@@ -340,9 +340,10 @@ const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os',
 let agentTickInFlight = false;
 let lastWrittenOwnSessionId: string | null | undefined = undefined;
 // User-facing toggle (Settings > Chat Backend > Auto headlines) for the periodic
-// Haiku headline calls below -- each is a billed Anthropic API call, so this lets
-// a user testing/dev-looping the app opt out of that background spend entirely.
-// Chat itself is unaffected: those calls only happen when the user sends a message.
+// headline updates below. These no longer cost anything -- see
+// headlineGenerator.ts's formatHeadline() header comment for why -- so this is
+// purely a display preference now (default true): turn off to keep the roster
+// on each dispatch's static description instead of a live work snippet.
 let autoHeadlinesEnabled = true;
 
 // Mirrors autoHeadlinesEnabled immediately above: main.ts starts with its own
@@ -399,54 +400,27 @@ async function tickAndPushAgents(): Promise<void> {
     }
     lastTickResult = result;
 
-    // Periodic status-headline trigger: for each currently-open dispatch, ask
-    // Haiku for a fresh headline, fire-and-forget -- a slow or failed call must
-    // never hold up the tick loop itself. dispatch.subagentType/description are
-    // immutable for the dispatch's whole lifetime, so asking again on every
-    // tick with no new signal just re-words the same thing -- two guards keep
-    // this from being pointless:
+    // Periodic status-headline trigger: for each currently-open dispatch,
+    // format a fresh headline from data already on hand -- no model call, no
+    // cost (see headlineGenerator.ts's formatHeadline() for why). Still
+    // throttled/deduped the same as before, now purely to avoid redundant
+    // IPC pushes and roster-row churn rather than to ration a billed call:
     //   1. Only consider a dispatch that has a matching entry in this tick's
     //      result.work (RealActiveWork) -- if nothing is tracked as active
-    //      work for it right now, skip calling Haiku entirely this tick.
-    //   2. Even with a match, isNewPeriodicContent skips the call unless that
-    //      work entry's label/description actually changed since the last
-    //      call for this toolUseId -- so a dispatch whose active-work content
-    //      never changes gets (at most) one periodic call, not one per 15s.
+    //      work for it right now, skip formatting entirely this tick.
+    //   2. Even with a match, isNewPeriodicContent skips the update unless
+    //      that work entry's label/description actually changed since the
+    //      last update for this toolUseId -- so a dispatch whose active-work
+    //      content never changes gets (at most) one update, not one per 15s.
     // shouldCallForHeadline's 15s throttle still applies on top as a hard cap.
     for (const d of autoHeadlinesEnabled ? result.open : []) {
-      // Checked first, before either state-mutating guard below: when policy
-      // forbids calls (Local/Off mode, or the monthly spend ceiling hit),
-      // this must short-circuit before shouldCallForHeadline consumes a
-      // throttle slot or isNewPeriodicContent marks content as "seen" --
-      // otherwise every tick under a no-calls policy would burn both, and
-      // switching back to API mode later would silently skip the first
-      // headline for every dispatch whose content was already marked seen
-      // while calls were forbidden (see the "silently lost forever" note
-      // below, which is exactly the failure mode this ordering prevents).
-      if (!(await modelCallsCurrentlyPermitted())) continue;
       const matchingWork = result.work.find((w) => w.toolUseId === d.toolUseId);
       if (!matchingWork) continue; // nothing new happening right now -- don't re-send the same static content
-      // shouldCallForHeadline's atomic check-and-set consumes the 15s throttle
-      // slot as soon as it's checked (see its own doc comment), regardless of
-      // whether a call actually follows -- so it must run BEFORE the content
-      // check below. Reversing this order would let isNewPeriodicContent mark
-      // content as "seen" on a tick where the throttle denies the call, and
-      // that content change would then be silently lost forever (the next
-      // tick would compare it to itself and find nothing new, even though
-      // generateHeadline was never actually called with it).
       if (!shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) continue;
       const activeWorkContext = matchingWork.description || matchingWork.label;
       if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
-      generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext)
-        .then((headline) => {
-          if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
-          // generateHeadline itself doesn't return usage -- Task 2 only added
-          // usage to ChatCoreResult, which generateHeadline consumes and
-          // discards down to a string. Headline spend is small and
-          // Haiku-priced; tracked at zero granularity here is an accepted
-          // gap, not silently dropped -- recorded in PROGRESS.md (Task 7).
-        })
-        .catch((err) => console.error('generateHeadline failed:', err));
+      const headline = formatHeadline(d, 'periodic', null, activeWorkContext);
+      sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
     }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
@@ -566,7 +540,6 @@ app.whenReady().then(async () => {
           isWindowFocused: () => isWindowFocused,
           getOpenDispatches: () => lastTickResult?.open ?? [],
           headlineThrottle,
-          apiKey: process.env.ANTHROPIC_API_KEY,
           sendHeadline: (toolUseId, headline) => sendToWindow('agents:headline', { toolUseId, headline }),
           onUnfocusedNotification: (reason) => {
             if (!mainWindow) return;
