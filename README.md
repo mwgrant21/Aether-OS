@@ -106,8 +106,13 @@ other tool in this category has any sound design at all.
   Claude Code usage, rescanned periodically; alerts and systems cells on a single view registry.
 - **Agents / Grid / Analytics** — real currently-open `Agent`-tool subagent dispatches, tracked
   live and rendered as the roster, the radial hub-and-spoke map, and the analytics views.
-- **Memory** — dispatch completions auto-captured as memories with per-tick strength decay and
-  pinning; the live event feed replaced the original random log pool with real event kinds.
+- **Memory** — a real Layer 2 agent-memory store (`collector/src/memoryStore.ts`): substantive
+  closed dispatches are extracted into typed judgment rows (never self-reported by the agent that
+  made the call), shared decisions inject unconditionally into every agent, private per-agent
+  history is retrieval-ranked, and invalidation is hard-delete-plus-tombstone rather than decay —
+  a reversed preference can't be cited back with the authority of a current one. The Memory view
+  reads it read-only, with a scope filter and a tombstone audit view. No pinning, no strength, no
+  `sweep`/`remember` — retired along with the fake data they operated on.
 - **Chat** — a channel per agent plus AETHER, with real Claude replies via a server-side proxy
   (API key never touches the renderer), scoped system prompts, per-persona voices, and post-mortem
   channels for completed dispatches. Replies can carry a trailing action-JSON convention: safe
@@ -124,6 +129,13 @@ other tool in this category has any sound design at all.
   deliberate exception (visual signal, not theme surface).
 - Every remaining nav tab (Projects, Files/attachments, Uplinks, Settings, and friends) is a built
   view — no "coming soon" panels left.
+- **Agent Memory Layer 2** — durable memory split by fact type rather than by agent: shared
+  standing decisions every agent reads, private per-agent history, and a hard-delete-plus-tombstone
+  invalidation path instead of decay-based forgetting, so a reversed preference can never be cited
+  back at you with the authority of a current one. Shipped as roadmap Stage 13 (Phases A–D);
+  retires the old `MemoryStub`. Phase E (weight tuning) is parked — needs real extraction traffic
+  that doesn't exist yet. Spec in
+  [`docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`](docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md).
 
 ## In flight
 
@@ -136,10 +148,13 @@ other tool in this category has any sound design at all.
   `docs/competitive-gap-analysis-2026-07.md`.
 - **Agent Personality Layer** — a two-pass work/narration split so each fleet agent's voice
   renders runtime-computed severity instead of self-reported tone, with a shared 0–4 severity
-  scale, per-agent voice packs, and frozen phrases for high-confidence events. Design only,
-  nothing wired into the app yet — spec in
-  [`docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md`](docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md),
-  staged as roadmap Stages 11–12.
+  scale, per-agent voice packs, and frozen phrases for high-confidence events. **Phase 0 (the
+  spine) has shipped** as roadmap Stage 11: schema v5 persists a runtime-computed `severity` per
+  dispatch alongside `exit_state`, `retries`, and `median_ms_at_eval`, and
+  `collector/src/personalitySpine.ts` holds the ported contract. **No voice yet** — Stage 12
+  (voice packs, lazy narration in the viewer, verbosity dial) is designed but unbuilt, and the
+  chat deck is unchanged. Spec in
+  [`docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md`](docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md).
 
 Packaging, installers, and a team fleet view are deliberately out of scope: this is a personal
 cockpit, not a distributed product. Its team-facing sibling is
