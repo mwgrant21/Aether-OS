@@ -347,7 +347,21 @@ function currentMonthKey(): string {
 
 async function modelCallsCurrentlyPermitted(): Promise<boolean> {
   if (!isModelCallAllowed(modelPolicyMode)) return false;
-  const state = await loadSpendState(modelSpendStatePath);
+  // Spend state is a self-imposed, balance-blind budget guard (see modelSpendTracker
+  // comments), not a hard billing limit enforced by the provider. If we can't read it
+  // (locked file, disk hiccup, malformed JSON), we cannot confirm the ceiling was
+  // reached -- fail OPEN (permit the call) rather than silently blocking a policy mode
+  // the user explicitly turned on because of an unrelated disk/IO error. A stuck
+  // "blocked" state from a persistent read failure would be far more disruptive (and
+  // harder to diagnose) than the rare case where a genuinely near-ceiling month allows
+  // one extra call while the read is failing.
+  let state: Record<string, number>;
+  try {
+    state = await loadSpendState(modelSpendStatePath);
+  } catch (err) {
+    console.error('modelCallsCurrentlyPermitted: failed to read spend state, failing open', err);
+    return true;
+  }
   const monthTotal = state[currentMonthKey()] ?? 0;
   return spendGate(monthTotal) !== 'blocked';
 }
@@ -738,7 +752,15 @@ ipcMain.handle('chat:send', async (_event, body: unknown) => {
     return { error: `Model policy is "${modelPolicyMode}" or the monthly spend ceiling was reached; no model calls are permitted right now` };
   }
   const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);
-  if (result.ok) await recordModelSpend(resolveModel('chat'), result.usage);
+  if (result.ok) {
+    try {
+      await recordModelSpend(resolveModel('chat'), result.usage);
+    } catch (err) {
+      // The API call already succeeded and was billed -- a bookkeeping write failure
+      // here must never discard the reply the user already paid for.
+      console.error('chat:send: failed to record model spend', err);
+    }
+  }
   // Deliberately do not surface result.status to the renderer -- askClaude()
   // treats every failure identically, and returning a status would invite a
   // future caller to branch on it and quietly break the null-on-any-failure
