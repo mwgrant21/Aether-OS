@@ -324,6 +324,11 @@ const liveAgentTracker = createLiveAgentTracker(os.homedir());
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 let lastWrittenOwnSessionId: string | null | undefined = undefined;
+// User-facing toggle (Settings > Chat Backend > Auto headlines) for the periodic
+// Haiku headline calls below -- each is a billed Anthropic API call, so this lets
+// a user testing/dev-looping the app opt out of that background spend entirely.
+// Chat itself is unaffected: those calls only happen when the user sends a message.
+let autoHeadlinesEnabled = true;
 
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
@@ -351,7 +356,7 @@ async function tickAndPushAgents(): Promise<void> {
     //      call for this toolUseId -- so a dispatch whose active-work content
     //      never changes gets (at most) one periodic call, not one per 15s.
     // shouldCallForHeadline's 15s throttle still applies on top as a hard cap.
-    for (const d of result.open) {
+    for (const d of autoHeadlinesEnabled ? result.open : []) {
       const matchingWork = result.work.find((w) => w.toolUseId === d.toolUseId);
       if (!matchingWork) continue; // nothing new happening right now -- don't re-send the same static content
       // shouldCallForHeadline's atomic check-and-set consumes the 15s throttle
@@ -365,9 +370,11 @@ async function tickAndPushAgents(): Promise<void> {
       if (!shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) continue;
       const activeWorkContext = matchingWork.description || matchingWork.label;
       if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
-      generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext).then((headline) => {
-        if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
-      });
+      generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext)
+        .then((headline) => {
+          if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
+        })
+        .catch((err) => console.error('generateHeadline failed:', err));
     }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
@@ -407,8 +414,10 @@ app.whenReady().then(async () => {
     scanAndPushUsage().catch((err) => console.error('scanAndPushUsage failed:', err));
   }, USAGE_SCAN_INTERVAL_MS);
 
-  tickAndPushAgents();
-  setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
+  tickAndPushAgents().catch((err) => console.error('tickAndPushAgents failed:', err));
+  setInterval(() => {
+    tickAndPushAgents().catch((err) => console.error('tickAndPushAgents failed:', err));
+  }, AGENT_TICK_INTERVAL_MS);
 
   scanAndPushFleet();
   setInterval(scanAndPushFleet, FLEET_SCAN_INTERVAL_MS);
@@ -534,6 +543,12 @@ app.on('before-quit', () => {
     stopPermissionServer = null;
   }
 });
+
+ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
+  autoHeadlinesEnabled = enabled;
+});
+
+ipcMain.handle('app:getVersion', () => app.getVersion());
 
 let activePty: ReturnType<typeof spawnPty> | null = null;
 

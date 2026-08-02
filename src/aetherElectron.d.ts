@@ -15,6 +15,9 @@ export {};
 declare global {
   interface Window {
     aetherElectron?: {
+      app: {
+        getVersion: () => Promise<string>;
+      };
       pty: {
         start: (opts: { cols: number; rows: number }) => Promise<void>;
         write: (input: string) => void;
@@ -32,6 +35,7 @@ declare global {
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
         onNotification: (callback: (payload: { reason: string }) => void) => () => void;
         onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
+        setAutoHeadlines: (enabled: boolean) => void;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;

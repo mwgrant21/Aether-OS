@@ -1,6 +1,8 @@
-import { type CSSProperties } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
+import { Button } from '../shared/Button';
 import { useChatBackendState, type ChatBackendState } from '../chat/useChatBackendState';
 
 const COPY: Record<ChatBackendState, string> = {
@@ -12,6 +14,15 @@ const COPY: Record<ChatBackendState, string> = {
 export function ChatBackendCard() {
   const colors = useColors();
   const backendState = useChatBackendState();
+  const { state, dispatch } = useAetherStore();
+  const { autoHeadlines } = state.cfg;
+
+  // Push the persisted preference to main on every mount (covers app restart,
+  // where main.ts always starts with its own default until told otherwise)
+  // and on every toggle.
+  useEffect(() => {
+    window.aetherElectron?.agents.setAutoHeadlines(autoHeadlines);
+  }, [autoHeadlines]);
 
   return (
     <div style={cardStyle(colors)}>
@@ -26,6 +37,22 @@ export function ChatBackendCard() {
           </div>
         )}
       </div>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={labelStyle(colors)}>AUTO HEADLINES (USES API)</div>
+        <Button
+          onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { autoHeadlines: !autoHeadlines } })}
+          style={toggleStyle(colors, autoHeadlines)}
+        >
+          {autoHeadlines ? 'ON' : 'OFF'}
+        </Button>
+      </div>
+      <div style={hintStyle(colors)}>
+        Periodically asks Claude (Haiku) to write a live status headline for each active
+        agent — a billed API call every ~15s per agent. Turn off to stop that background
+        spend; the roster falls back to each dispatch's static description. Chat replies
+        are unaffected — those only call the API when you send a message.
+      </div>
     </div>
   );
 }
@@ -39,6 +66,7 @@ function cardStyle(colors: ColorPalette): CSSProperties {
     display: 'flex',
     flexDirection: 'column',
     minHeight: 0,
+    flexShrink: 0,
   };
 }
 function titleStyle(colors: ColorPalette): CSSProperties {
@@ -52,6 +80,21 @@ function valueStyle(colors: ColorPalette, backendState: ChatBackendState | null)
     marginTop: 8,
     font: `600 13px/1.4 ${fonts.ui}`,
     color: backendState === 'live' ? colors.success : backendState === 'offline' ? colors.warn : colors.textBody,
+  };
+}
+function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
+  return {
+    minWidth: 52,
+    textAlign: 'center',
+    cursor: 'pointer',
+    padding: '6px 12px',
+    borderRadius: 7,
+    font: `600 10px/1 ${fonts.ui}`,
+    letterSpacing: 1,
+    color: on ? '#04202b' : colors.textMuted,
+    background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',
+    boxShadow: on ? '0 0 10px rgba(95,220,255,.4)' : undefined,
+    border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
   };
 }
 function hintStyle(colors: ColorPalette): CSSProperties {

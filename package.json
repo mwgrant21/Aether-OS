@@ -6,6 +6,7 @@
   "license": "MIT",
   "main": "out/main/main.js",
   "scripts": {
+    "postinstall": "node scripts/grant-appcontainer-acl.js",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

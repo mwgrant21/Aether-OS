@@ -218,6 +218,7 @@ export interface Cfg {
   sound: boolean;
   autoCreateDispatchChannels: boolean;
   densityLevel: 'normal' | 'verbose' | 'summary';
+  autoHeadlines: boolean;
   modelPolicyMode: ModelPolicyMode;
 }
 

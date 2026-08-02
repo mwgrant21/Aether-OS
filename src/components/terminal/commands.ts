@@ -71,7 +71,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
 
     case 'status': {
       out.push(
-        line(`◇ Reactor nominal — ${state.agents.length} agents drawing power`, GOOD),
+        line(`◇ Reactor nominal — ${state.realAgents.length} agents drawing power`, GOOD),
         line(`  burn rate    ${fmt(state.rate)} tok/min`),
         line(`  session use  ${fmt(state.used)} tokens`),
         line(`  context      ${fmt(state.ctxUsed)} / 125,000`),

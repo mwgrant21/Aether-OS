@@ -22,4 +22,4 @@ export function SettingsView() {
 }
 
 const rootStyle: CSSProperties = { flex: 1, minHeight: 0, display: 'flex', gap: 14 };
-const columnStyle: CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 };
+const columnStyle: CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' };
