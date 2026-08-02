@@ -36,6 +36,7 @@ declare global {
         onNotification: (callback: (payload: { reason: string }) => void) => () => void;
         onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
         setAutoHeadlines: (enabled: boolean) => void;
+        setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => void;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;

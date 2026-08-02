@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('agents:headline', listener);
     },
     setAutoHeadlines: (enabled: boolean) => ipcRenderer.send('agents:setAutoHeadlines', enabled),
+    setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => ipcRenderer.send('agents:setModelPolicyMode', mode),
   },
   fleet: {
     onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {

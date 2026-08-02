@@ -8,5 +8,5 @@
     "strict": true,
     "outDir": "node_modules/.tmp/tsnode"
   },
-  "include": ["vite.config.ts", "vite-plugins/**/*.ts", "src/shared/chatCore.ts", "e2e/**/*.ts", "playwright.config.ts"]
+  "include": ["vite.config.ts", "vite-plugins/**/*.ts", "src/shared/chatCore.ts", "src/shared/modelPolicy.ts", "e2e/**/*.ts", "playwright.config.ts"]
 }

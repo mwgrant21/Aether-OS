@@ -20,6 +20,8 @@ import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import { runChatRequest } from '../src/shared/chatCore';
+import { isModelCallAllowed, resolveModel, type ModelPolicyMode } from '../src/shared/modelPolicy';
+import { loadSpendState, recordSpend, costUsd, spendGate } from './modelSpendTracker';
 import {
   createHeadlineThrottle,
   shouldCallForHeadline,
@@ -330,6 +332,31 @@ let lastWrittenOwnSessionId: string | null | undefined = undefined;
 // Chat itself is unaffected: those calls only happen when the user sends a message.
 let autoHeadlinesEnabled = true;
 
+// Mirrors autoHeadlinesEnabled immediately above: main.ts starts with its own
+// default until the renderer's persisted preference is pushed on mount (see
+// ModelPolicyCard.tsx's useEffect, same pattern as ChatBackendCard.tsx's for
+// autoHeadlines). 'Local' has no cascade yet (Stage 12) so isModelCallAllowed
+// treats it identically to 'Off' -- see modelPolicy.ts.
+let modelPolicyMode: ModelPolicyMode = 'Local';
+const modelSpendStatePath = join(app.getPath('userData'), 'model-spend.json');
+
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function modelCallsCurrentlyPermitted(): Promise<boolean> {
+  if (!isModelCallAllowed(modelPolicyMode)) return false;
+  const state = await loadSpendState(modelSpendStatePath);
+  const monthTotal = state[currentMonthKey()] ?? 0;
+  return spendGate(monthTotal) !== 'blocked';
+}
+
+async function recordModelSpend(model: string, usage: { inputTokens: number; outputTokens: number }): Promise<void> {
+  const usd = costUsd(model, usage.inputTokens, usage.outputTokens);
+  if (usd > 0) await recordSpend(modelSpendStatePath, currentMonthKey(), usd);
+}
+
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
@@ -370,9 +397,15 @@ async function tickAndPushAgents(): Promise<void> {
       if (!shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) continue;
       const activeWorkContext = matchingWork.description || matchingWork.label;
       if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
+      if (!(await modelCallsCurrentlyPermitted())) continue;
       generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext)
         .then((headline) => {
           if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
+          // generateHeadline itself doesn't return usage -- Task 2 only added
+          // usage to ChatCoreResult, which generateHeadline consumes and
+          // discards down to a string. Headline spend is small and
+          // Haiku-priced; tracked at zero granularity here is an accepted
+          // gap, not silently dropped -- recorded in PROGRESS.md (Task 7).
         })
         .catch((err) => console.error('generateHeadline failed:', err));
     }
@@ -548,6 +581,10 @@ ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
   autoHeadlinesEnabled = enabled;
 });
 
+ipcMain.on('agents:setModelPolicyMode', (_event, mode: ModelPolicyMode) => {
+  modelPolicyMode = mode;
+});
+
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
 let activePty: ReturnType<typeof spawnPty> | null = null;
@@ -697,7 +734,11 @@ ipcMain.handle('statusline:uninstall', async () => {
 });
 
 ipcMain.handle('chat:send', async (_event, body: unknown) => {
+  if (!(await modelCallsCurrentlyPermitted())) {
+    return { error: `Model policy is "${modelPolicyMode}" or the monthly spend ceiling was reached; no model calls are permitted right now` };
+  }
   const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);
+  if (result.ok) await recordModelSpend(resolveModel('chat'), result.usage);
   // Deliberately do not surface result.status to the renderer -- askClaude()
   // treats every failure identically, and returning a status would invite a
   // future caller to branch on it and quietly break the null-on-any-failure
