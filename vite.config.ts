@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
         'e2e/**', // Playwright's own separate test suite, run via npm run test:e2e
         'scripts/aether-hook-emit.test.ts',
         'scripts/aether-permission-hook.test.ts',
+        '.worktrees/**', // sibling git worktrees each carry their own full copy of this suite
       ],
     },
   };
