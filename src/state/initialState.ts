@@ -55,7 +55,12 @@ export const initialState: AetherState = {
     sound: false,
     autoCreateDispatchChannels: false,
     densityLevel: 'normal',
-    autoHeadlines: true,
+    // Defaults off, independent of modelPolicyMode: this is the one feature that
+    // bills continuously and unprompted (a Haiku call every ~15s per active agent),
+    // not just when the user acts. Requiring two separate opt-ins (raise
+    // modelPolicyMode to 'API' AND enable this) before any recurring spend is
+    // possible is deliberate -- see docs/roadmap.md Stage 11.5 / July 31st overrun.
+    autoHeadlines: false,
     modelPolicyMode: 'Local',
   },
   agents: [
