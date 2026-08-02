@@ -3,8 +3,8 @@
 // reads no key itself, but importing it into the renderer would bundle the SDK there and
 // put key handling one refactor away from running in the wrong process.
 import Anthropic from '@anthropic-ai/sdk';
+import { resolveModel } from './modelPolicy';
 
-export const CHAT_MODEL = 'claude-opus-4-8';
 export const CHAT_MAX_TOKENS = 300;
 
 export interface ChatTurn {
@@ -18,7 +18,7 @@ export interface ChatRequestBody {
 }
 
 export type ChatCoreResult =
-  | { ok: true; reply: string }
+  | { ok: true; reply: string; usage: { inputTokens: number; outputTokens: number } }
   | { ok: false; status: 400 | 500 | 503; error: string };
 
 function isChatTurn(value: unknown): value is ChatTurn {
@@ -50,7 +50,7 @@ function isTextBlock(block: Anthropic.ContentBlock): block is Anthropic.TextBloc
 export async function runChatRequest(
   body: unknown,
   apiKey: string | undefined,
-  model: string = CHAT_MODEL,
+  model: string = resolveModel('chat'),
   maxTokens: number = CHAT_MAX_TOKENS
 ): Promise<ChatCoreResult> {
   if (!isValidChatBody(body)) {
@@ -73,7 +73,14 @@ export async function runChatRequest(
       messages: body.messages.map((m) => ({ role: m.role, content: m.text })),
     });
     const textBlock = response.content.find(isTextBlock);
-    return { ok: true, reply: textBlock?.text ?? '' };
+    return {
+      ok: true,
+      reply: textBlock?.text ?? '',
+      usage: {
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      },
+    };
   } catch (err) {
     // Never let an Anthropic SDK error (rate limit, auth, network, etc.)
     // crash the caller -- surface it as a clean 500 and let askClaude()
