@@ -9,6 +9,14 @@
 // declared here as types but are NOT populated by real Stage 11 data; they
 // exist so Tasks 4/5 (and later Stage 12/13) have a stable contract to grow
 // into without a breaking type change.
+//
+// RevisionCause is imported, not restated: memoryStore.ts (Layer 2) declares
+// the canonical union and this file's Revision.cause uses it directly, so
+// there is exactly one declaration of what a revision cause is, not two
+// independently-maintained copies. See docs/roadmap.md §3.3's Stage 13
+// paragraph for why this was worth calling out.
+
+import type { RevisionCause } from './memoryStore.js';
 
 export type Severity = 0 | 1 | 2 | 3 | 4;
 
@@ -58,7 +66,7 @@ export interface Finding {
 
 export interface Revision {
   finding_id: string;
-  cause: 'new_evidence' | 'reasoning_flaw';
+  cause: RevisionCause;
   detail: string; // the specific fact or flaw
 }
 

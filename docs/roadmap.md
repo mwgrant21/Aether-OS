@@ -234,23 +234,21 @@ Talking to the user in a chat channel and reporting fleet state through cadence 
 jobs with different constraints, not one job accidentally built twice. Recorded as §5.10 and
 closed in §12 of the spec (revision 3) — Stage 12 builds voice packs only, `personas.ts` untouched.
 
-**Stage 13 depends on Stage 11 for one type — the ordering held, the reuse didn't.** The rationale
-below was the reason Stage 13 was sequenced after Stage 11: Layer 2's `revision` and `overrule`
-private memory kinds were meant to consume the `Revision{finding_id, cause, detail}` object the
-spine introduces, so that landing Layer 2 first wouldn't mean defining a placeholder and reworking
-it later. **Checked against the shipped code, not assumed:** `collector/src/memoryStore.ts:56`
-declares its own `RevisionCause = 'new_evidence' | 'reasoning_flaw'`; `collector/src/personalitySpine.ts:61`
-declares the identical union inline on `Revision.cause`; `memoryStore.ts` never references
-`personalitySpine.ts`. The sequencing avoided the *placeholder-and-rework* failure mode this
-paragraph was written to prevent, but the two-declarations-of-one-fact outcome it was also meant
-to prevent happened anyway, just via a different path (independent duplication instead of a
-placeholder). **Recorded here, not fixed** — unifying them is a small follow-up (`Revision.cause`
-importing `RevisionCause` instead of restating it), deliberately not bundled into this docs pass.
-If that follow-up lands, this paragraph needs one line saying so, the same way this note exists
-because the original paragraph didn't get one. The Phase A drop-in itself was independent — it was
-one deletion (its sandbox `schema.ts` stub) — but wasn't worth a stage of its own, and
-`MemoryStub`'s retirement happened in the same change that replaced it rather than leaving two
-memory systems live.
+**Stage 13 depends on Stage 11 for one type — the ordering held, and so did the reuse, as of
+2026-08-02.** Layer 2's `revision` and `overrule` private memory kinds were meant to consume the
+`Revision{finding_id, cause, detail}` object the spine introduces, so that landing Layer 2 first
+wouldn't mean defining a placeholder and reworking it later. The sequencing avoided that
+*placeholder-and-rework* failure mode as designed. It initially failed to avoid a second one on
+the way there: `collector/src/memoryStore.ts:56` declared its own `RevisionCause` union while
+`collector/src/personalitySpine.ts:61` declared the identical union inline on `Revision.cause`,
+with zero cross-reference — independent duplication of one fact, arrived at by a different path
+than a placeholder would have, but the same *two declarations of one fact* outcome this paragraph
+exists to flag. **Closed, not just recorded:** `personalitySpine.ts` now imports `RevisionCause`
+from `memoryStore.ts` rather than restating it (`personalitySpine.ts:15-18`) — one declaration,
+verified via `tsc -b` clean and the full collector suite green. The Phase A drop-in itself was
+independent — it was one deletion (its sandbox `schema.ts` stub) — but wasn't worth a stage of
+its own, and `MemoryStub`'s retirement happened in the same change that replaced it rather than
+leaving two memory systems live.
 
 **Known and unscheduled, named rather than glossed:** Layer 1's Phase 3 calibration items —
 rolling per-agent baselines, anomaly thresholds, the interruption-budget interval `N`, the second
