@@ -118,6 +118,11 @@ docs/superpowers/
   IPC-driven state (live agents, anomalies, usage) flows in via hooks that
   dispatch actions on IPC events — see `useRealAgentsSync.ts` for the pattern;
   new IPC-reactive features should mirror it, not invent a new subscription style.
+- **Model calls**: no `messages.create` call and no model-ID string literal
+  outside `src/shared/chatCore.ts` / `src/shared/modelPolicy.ts` — features
+  request a tier via `resolveModel()`, never a model name directly. Enforced
+  by `src/shared/modelPolicyEnforcement.test.ts`, which fails the build the
+  moment an unapproved model becomes reachable. See `docs/roadmap.md` §3.4.
 - **Testing philosophy**: pure logic (reducers, `tick.ts`, `anomalyDetectors.ts`,
   `alertSounds.ts`'s `decideAlertActions`) is exhaustively unit tested. Anything
   requiring a real `AudioContext`, real WebGL/canvas, or actual visual judgment

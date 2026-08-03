@@ -64,7 +64,7 @@ export function Sidebar() {
           REACTOR · {short(state.rate)} TOK/MIN
         </div>
         <div style={{ font: `400 10px/1.4 ${fonts.ui}`, color: colors.textDim, textAlign: 'center', marginTop: 3 }}>
-          Reactor nominal — {state.agents.length} agents drawing power.
+          Reactor nominal — {state.realAgents.length} agents drawing power.
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { initialState } from './initialState';
 import type { Approval } from './types';
 import type { RealAgentDispatch } from './liveAgentsMath';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
+import type { ModelPolicyMode } from '../shared/modelPolicy';
 
 describe('reducer', () => {
   it('SET_ACTIVE_TAB switches the active tab', () => {
@@ -121,6 +122,12 @@ describe('reducer', () => {
     expect(next.cfg.theme).toBe(initialState.cfg.theme);
     expect(next.cfg.opMode).toBe(initialState.cfg.opMode);
     expect(next.cfg.alarm).toBe(initialState.cfg.alarm);
+  });
+
+  it('UPDATE_CFG round-trips modelPolicyMode without touching other cfg fields', () => {
+    const next = reducer(initialState, { type: 'UPDATE_CFG', patch: { modelPolicyMode: 'API' as ModelPolicyMode } });
+    expect(next.cfg.modelPolicyMode).toBe('API');
+    expect(next.cfg.glow).toBe(initialState.cfg.glow);
   });
 
   it('TOGGLE_PROVIDER_CONNECTION flips the named provider\'s connected state only', () => {

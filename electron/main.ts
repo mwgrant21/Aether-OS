@@ -20,6 +20,8 @@ import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import { runChatRequest } from '../src/shared/chatCore';
+import { isModelCallAllowed, resolveModel, type ModelPolicyMode } from '../src/shared/modelPolicy';
+import { loadSpendState, recordSpend, costUsd, spendGate } from './modelSpendTracker';
 import {
   createHeadlineThrottle,
   shouldCallForHeadline,
@@ -324,6 +326,53 @@ const liveAgentTracker = createLiveAgentTracker(os.homedir());
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 let lastWrittenOwnSessionId: string | null | undefined = undefined;
+// User-facing toggle (Settings > Chat Backend > Auto headlines) for the periodic
+// Haiku headline calls below -- each is a billed Anthropic API call, so this lets
+// a user testing/dev-looping the app opt out of that background spend entirely.
+// Chat itself is unaffected: those calls only happen when the user sends a message.
+let autoHeadlinesEnabled = true;
+
+// Mirrors autoHeadlinesEnabled immediately above: main.ts starts with its own
+// default until the renderer's persisted preference is pushed on mount (see
+// ModelPolicyCard.tsx's useEffect, same pattern as ChatBackendCard.tsx's for
+// autoHeadlines). 'Local' has no cascade yet (Stage 12) so isModelCallAllowed
+// treats it identically to 'Off' -- see modelPolicy.ts.
+let modelPolicyMode: ModelPolicyMode = 'Local';
+const modelSpendStatePath = join(app.getPath('userData'), 'model-spend.json');
+
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function modelCallsCurrentlyPermitted(): Promise<boolean> {
+  if (!isModelCallAllowed(modelPolicyMode)) return false;
+  // Spend state is a self-imposed, balance-blind budget guard (see modelSpendTracker
+  // comments), not a hard billing limit enforced by the provider. loadSpendState
+  // distinguishes "no file yet" (returns {} -- legitimate) from "file exists but is
+  // corrupt/unreadable" (throws) -- so the catch below is reachable and real: a
+  // locked file or malformed JSON lands here, not in a silent {} that would read as
+  // "$0 spent this month" and reset the ceiling indefinitely. We fail OPEN (permit
+  // the call) rather than silently blocking a policy mode the user explicitly turned
+  // on because of an unrelated disk/IO error. A stuck "blocked" state from a
+  // persistent read failure would be far more disruptive (and harder to diagnose)
+  // than the rare case where a genuinely near-ceiling month allows one extra call
+  // while the read is failing.
+  let state: Record<string, number>;
+  try {
+    state = await loadSpendState(modelSpendStatePath);
+  } catch (err) {
+    console.error('modelCallsCurrentlyPermitted: failed to read spend state, failing open', err);
+    return true;
+  }
+  const monthTotal = state[currentMonthKey()] ?? 0;
+  return spendGate(monthTotal) !== 'blocked';
+}
+
+async function recordModelSpend(model: string, usage: { inputTokens: number; outputTokens: number }): Promise<void> {
+  const usd = costUsd(model, usage.inputTokens, usage.outputTokens);
+  if (usd > 0) await recordSpend(modelSpendStatePath, currentMonthKey(), usd);
+}
 
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
@@ -351,7 +400,17 @@ async function tickAndPushAgents(): Promise<void> {
     //      call for this toolUseId -- so a dispatch whose active-work content
     //      never changes gets (at most) one periodic call, not one per 15s.
     // shouldCallForHeadline's 15s throttle still applies on top as a hard cap.
-    for (const d of result.open) {
+    for (const d of autoHeadlinesEnabled ? result.open : []) {
+      // Checked first, before either state-mutating guard below: when policy
+      // forbids calls (Local/Off mode, or the monthly spend ceiling hit),
+      // this must short-circuit before shouldCallForHeadline consumes a
+      // throttle slot or isNewPeriodicContent marks content as "seen" --
+      // otherwise every tick under a no-calls policy would burn both, and
+      // switching back to API mode later would silently skip the first
+      // headline for every dispatch whose content was already marked seen
+      // while calls were forbidden (see the "silently lost forever" note
+      // below, which is exactly the failure mode this ordering prevents).
+      if (!(await modelCallsCurrentlyPermitted())) continue;
       const matchingWork = result.work.find((w) => w.toolUseId === d.toolUseId);
       if (!matchingWork) continue; // nothing new happening right now -- don't re-send the same static content
       // shouldCallForHeadline's atomic check-and-set consumes the 15s throttle
@@ -365,9 +424,16 @@ async function tickAndPushAgents(): Promise<void> {
       if (!shouldCallForHeadline(headlineThrottle, d.toolUseId, 'periodic', Date.now())) continue;
       const activeWorkContext = matchingWork.description || matchingWork.label;
       if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
-      generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext).then((headline) => {
-        if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
-      });
+      generateHeadline(d, 'periodic', null, process.env.ANTHROPIC_API_KEY, activeWorkContext)
+        .then((headline) => {
+          if (headline) sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
+          // generateHeadline itself doesn't return usage -- Task 2 only added
+          // usage to ChatCoreResult, which generateHeadline consumes and
+          // discards down to a string. Headline spend is small and
+          // Haiku-priced; tracked at zero granularity here is an accepted
+          // gap, not silently dropped -- recorded in PROGRESS.md (Task 7).
+        })
+        .catch((err) => console.error('generateHeadline failed:', err));
     }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
@@ -407,8 +473,10 @@ app.whenReady().then(async () => {
     scanAndPushUsage().catch((err) => console.error('scanAndPushUsage failed:', err));
   }, USAGE_SCAN_INTERVAL_MS);
 
-  tickAndPushAgents();
-  setInterval(tickAndPushAgents, AGENT_TICK_INTERVAL_MS);
+  tickAndPushAgents().catch((err) => console.error('tickAndPushAgents failed:', err));
+  setInterval(() => {
+    tickAndPushAgents().catch((err) => console.error('tickAndPushAgents failed:', err));
+  }, AGENT_TICK_INTERVAL_MS);
 
   scanAndPushFleet();
   setInterval(scanAndPushFleet, FLEET_SCAN_INTERVAL_MS);
@@ -534,6 +602,34 @@ app.on('before-quit', () => {
     stopPermissionServer = null;
   }
 });
+
+ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
+  autoHeadlinesEnabled = enabled;
+});
+
+ipcMain.on('agents:setModelPolicyMode', (_event, mode: ModelPolicyMode) => {
+  modelPolicyMode = mode;
+});
+
+// Live spend/gate signal for the Settings card (finding 6, final review):
+// spendGate can return 'degrade' but until now nothing consumed it -- the
+// comment in modelSpendTracker.ts claims "UI warns" when nothing did. This
+// is deliberately scoped to current-month total + gate, not full historical
+// spend; the card fetches on mount and after mode changes rather than
+// polling continuously.
+ipcMain.handle('modelSpend:get', async (): Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }> => {
+  let state: Record<string, number>;
+  try {
+    state = await loadSpendState(modelSpendStatePath);
+  } catch (err) {
+    console.error('modelSpend:get: failed to read spend state, reporting $0/ok', err);
+    return { monthTotalUsd: 0, gate: 'ok' };
+  }
+  const monthTotalUsd = state[currentMonthKey()] ?? 0;
+  return { monthTotalUsd, gate: spendGate(monthTotalUsd) };
+});
+
+ipcMain.handle('app:getVersion', () => app.getVersion());
 
 let activePty: ReturnType<typeof spawnPty> | null = null;
 
@@ -682,7 +778,19 @@ ipcMain.handle('statusline:uninstall', async () => {
 });
 
 ipcMain.handle('chat:send', async (_event, body: unknown) => {
+  if (!(await modelCallsCurrentlyPermitted())) {
+    return { error: `Model policy is "${modelPolicyMode}" or the monthly spend ceiling was reached; no model calls are permitted right now` };
+  }
   const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);
+  if (result.ok) {
+    try {
+      await recordModelSpend(resolveModel('chat'), result.usage);
+    } catch (err) {
+      // The API call already succeeded and was billed -- a bookkeeping write failure
+      // here must never discard the reply the user already paid for.
+      console.error('chat:send: failed to record model spend', err);
+    }
+  }
   // Deliberately do not surface result.status to the renderer -- askClaude()
   // treats every failure identically, and returning a status would invite a
   // future caller to branch on it and quietly break the null-on-any-failure

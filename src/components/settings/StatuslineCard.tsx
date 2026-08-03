@@ -182,6 +182,7 @@ function cardStyle(colors: ColorPalette): CSSProperties {
     display: 'flex',
     flexDirection: 'column',
     minHeight: 0,
+    flexShrink: 0,
   };
 }
 function titleStyle(colors: ColorPalette): CSSProperties {

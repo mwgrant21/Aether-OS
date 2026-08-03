@@ -2,8 +2,8 @@
 
 **Design document**
 Status: draft for implementation
-Last updated: 2026-07-30
-Revision: 3 (post personas.ts reconciliation)
+Last updated: 2026-07-27
+Revision: 3.1 (Miriel port resolved; toolchain reasoning restated on merit)
 
 ---
 
@@ -516,44 +516,6 @@ That sev-4 handoff is the natural entry point into the adjudication system (§9)
 
 ---
 
-### 5.10 Scope boundary — `personas.ts` is a separate system, deliberately
-
-Stage 12 of `docs/roadmap.md` carried this as an unnamed decision: does Layer 1
-replace `src/components/chat/personas.ts`, the 11 name-keyed voices already
-live in Chat? **No. Coexist, on purpose, and this is why.**
-
-`personas.ts` and the voice-pack system are keyed on different axes and solve
-different problems, and the mismatch is not cosmetic:
-
-| | `personas.ts` | Voice packs |
-|---|---|---|
-| Keyed on | `Agent.name` — 11 fixed roster slots (`Code Builder`, `UI Designer`, …) plus `FALLBACK_PERSONA` for anything else, including any custom `spawn <name>` | Role — `STEWARD` / `CINDER` / `PILGRIM` / `ASSAY` / `FORGE`, five archetypes, not names |
-| Where voice lives | Concatenated straight into the one system prompt that also produces the reply — voice and work share a call | Pass 2 only, strictly after Pass 1 (§2) — voice never touches the call that produces work |
-| The job | Two-way conversation: arbitrary user messages, in-character replies, the action-JSON convention (spawn/kill/theme/renderer/throttle) | One-way status narration: a fleet grid reporting runtime-computed severity, never a conversation partner |
-| Driven by | A static tone sentence, no telemetry, no notion of state | `Severity` (§4), computed by the runtime, passed in as a parameter |
-
-The reason this isn't "two systems that happen to overlap" is P1. Chat's voice
-has to sit in the same call as the reply, because the user is mid-conversation
-and waiting on that exact reply — there is no terminal telemetry to compute a
-severity from until the reply is already generated, and inserting a second
-pass would mean either latency the user feels on every message or a narration
-call with nothing yet to narrate. That is not a Layer 1 implementation gap; it
-is Chat's job being structurally incompatible with the thing P1 requires.
-Forcing personas.ts onto the voice-pack shape would mean either accepting
-two-pass latency on a surface where it costs real UX, or carving Chat a
-P1 exemption — which quietly reopens the "personality renders state, it never
-determines it" guarantee for the one surface where a user would notice first.
-
-So: `personas.ts` is untouched by Stages 11–12. It keeps its own key space,
-its own voice-in-prompt mechanism, and its own job. Voice packs are net-new,
-scoped to fleet-status narration surfaces (Grid and wherever else severity is
-rendered) that never existed before this design. No retirement, no migration,
-no shared roster. If a future stage wants one coherent voice vocabulary across
-both surfaces, that is a new decision to make deliberately — not a default
-this design assumes.
-
----
-
 ## 6. Frozen phrases
 
 The HCS VoicePacks built on VoiceAttack went stale because they had finite
@@ -816,22 +778,197 @@ An LLM will write the second one if you do not explicitly forbid it. This is P4
 applied to memory: a stored overrule is evidence about *your preferences*, never
 licence to stop looking.
 
-### Open — Miriel engine port
+### Resolved — Miriel engine port
 
-**Unresolved. Could not read the repo this session.** The three questions below
-determine the answer; the paragraph after them is an untested hypothesis, not a
-conclusion.
+**Read against `Miriels-publish/data/memory-store.js`, `memory-engine.js` and
+`docs/memory-engine.md` on 2026-07-27.** The three questions are answered below.
 
-1. **Concurrent writers** — is there versioning, or any conflict resolution?
-2. **Fact types** — are entries typed, or is it one flat bag of notes?
-3. **Expiry** — does retrieval have any notion of staleness or TTL?
+**Verdict: port it — but revision 2's hypothesis was inverted.** It predicted
+that *"the retrieval layer ports and the write path is replaced."* The code says
+the opposite: **the store and the write path are the reusable parts; the
+retrieval layer is the piece most welded to tarot.** Full spec in
+`AETHER_MEMORY_LAYER_2.md`; the summary follows.
 
-*Hypothesis (untested):* Miriel's workload is probably single-writer,
-latency-tolerant, and staleness-safe — a note about a card design from three
-weeks ago is still valid. Agent memory is multi-writer, contended, and staleness
-is actively dangerous. If that holds, the retrieval layer ports and the write
-path is replaced. **Verify against the three questions before relying on any of
-this.**
+#### Q1 — Concurrent writers: versioning or conflict resolution?
+
+**None.** Not weak — absent.
+
+- `applyOps` is a bare loop of individual statements; no transaction wraps the
+  batch. (`markReferenced`/`markAsked` *are* wrapped in `db.transaction`, so the
+  pattern was available and is not used on the write path — whether that was a
+  decision or an omission is not recorded either way.)
+- `UPDATE` is `COALESCE(@field, field)` keyed on `id + reader_slug` only. No
+  version check, no `updated_at` guard. Last writer wins, silently.
+- Capture is read-modify-write *across an LLM call*: read 30 atoms → send to
+  Haiku → wait seconds → apply `{op:"UPDATE", id:12}`. Two concurrent captures
+  interleave across a multi-second window and neither notices.
+- Deduplication is delegated **entirely to the prompt** (*"ADD a NEW memory only
+  for something not already listed above"*). No uniqueness constraint in SQL.
+- WAL is on; `busy_timeout` is not set.
+
+**But §10 already mandates single-writer** — *agents propose, `STEWARD` commits*.
+Hold that line and Miriel's concurrency model is not a gap, it is already
+correct. Enforce it structurally at the process boundary rather than building
+locking that a correct architecture never exercises.
+
+#### Q2 — Are entries typed?
+
+**Yes, and mostly well.** `TYPES = person | thread | event | feeling |
+prediction | fact | preference`; `STATUSES = open | moving | resolved |
+dormant`. Plus `memory_links(from_id, to_id, relation)`, provenance
+(`source_kind`, `source_id`), `salience` 1–5, and guarded `ALTER TABLE`
+migrations.
+
+One asymmetry worth not porting: `type` is validated with a reject, but an
+unrecognised `status` is silently coerced to `null` and the operation applies
+anyway. Harmless for a tarot reader; here it would let a malformed op through
+looking well-formed, which is exactly what the reject path exists to prevent.
+
+**But it is typed on the wrong axis.** Miriel types by *narrative kind*. This
+design splits by *epistemic kind* — shared-judgment vs. private-history vs.
+runtime-telemetry — and P3 splits judgment vs. state. Orthogonal.
+
+Ownership itself is not missing: `reader_slug` is a NOT NULL, four-way-indexed
+column threaded through nearly every statement. What is missing is an *agent*
+axis on top of it. Fix is cheap: add `scope` and `owner_agent`. The *mechanism*
+— typed, validated, closed enum, migration-safe, ownership-keyed — is exactly
+right and already load-bearing.
+
+**The gift:** `prediction` + `RESOLVE` + verdict (`came_to_pass | did_not |
+partly`) + a `resolves` edge permanently joining claim to outcome is
+**structurally identical to `Revision` (§3, §7)**. A stated claim, later graded
+against evidence, with the original and its outcome inseparable. The update
+contract's audit trail already exists, in SQL, with tests.
+
+`'too_soon'` is not a fourth verdict — it is a separate defer branch that
+re-stamps the ask clock, leaves the row open and stores no outcome. That is the
+better half of the gift: it maps onto *deferred, not conceded*, and §7 currently
+forces a binary that invites a false concession.
+
+#### Q3 — Expiry / staleness?
+
+**A rich sense of *time*. No notion of *invalidation*.** That distinction is the
+whole question.
+
+What exists — `freshness` (0→1 over 30 days since last surfaced), `overuse`
+(`reference_count / 5`), jittered dormancy (60d ±3 via `id % 7`), prediction
+ripening (14d ±3), and a 21-day prediction-surfacing TTL described in her design
+doc but not visible in the two files read — is **anti-repetition and
+re-prompting machinery**, every bit of it. None of it is invalidation.
+
+What does not exist: nothing is ever invalidated by external state, and
+**nothing is ever deleted** — there is no delete in the store's API at all. A
+`resolved` atom zeroes only the *status term*; the other four still score, so it
+stays retrievable. Two things bound it in practice — a 200-row candidate cap
+ordered open-first, and a score > 0 filter — but neither is invalidation.
+
+**Miriel's staleness model is inverted from ours.** Her premise is that
+everything old is still true and merely needs surfacing tactfully; staleness is
+a *social* problem (don't nag, don't repeat yourself). Under P3, staleness is a
+*correctness* problem. Same word, opposite failure mode.
+
+#### Why the retrieval layer does not port
+
+```
+score = 3.0·overlap + 1.5·salience + 1.5·status + 0.5·freshness − 0.4·overuse
+```
+
+1. `overlap` dominates *because relevance to this reading matters most* — and it
+   is stopword-filtered keyword intersection against a natural-language question
+   plus card names. Our query is `(agent_id, task_kind, file set)`. Overlap
+   between *"Matt accepts unbounded retry on token refresh"* and a `task_kind`
+   of `review` is ≈ 0. The dominant term goes dead.
+2. `freshness` and `overuse` **invert for standing decisions.** They exist so no
+   memory becomes Miriel's catchphrase. But §10's whole point is that every
+   agent knows you said no — you want that injected *every single time*. The
+   formula penalises a decision precisely for being repeatedly relevant.
+3. Shared decisions should not be scored at all. They are injected
+   unconditionally. Scoring belongs to private history alone.
+
+#### Two failures the three questions missed
+
+**No delete, anywhere.** Miriel's answer to *"that's over"* is `status:
+resolved` — score → 0, row stays. For us a **superseded decision that still
+scores above zero is a live hazard**: an agent citing a preference you reversed,
+in voice, with the authority of a correct memory. That is the failure mode this
+section already names, arriving through a door revision 2 did not check.
+**Decision: hard delete from the retrievable set, plus a tombstone row and a
+`supersedes` edge on a separate audit path agents never read.** A soft status
+behind a score penalty is one forgotten `WHERE` clause away from resurrection.
+The tombstone is what makes the delete safe to actually perform — it carries the
+old content forward so the Memory view keeps a full history.
+
+**`applyOps` drops invalid operations silently** (`if (!TYPES.includes(op.type))
+continue;`). Fine for a tarot reader. But §7 says *a position change without an
+accompanying `Revision` is a contract breach the runtime can detect* — silent
+drops mean the runtime detects nothing, and Phase 2's schema validation
+validates a stream that already discarded the violations. `applyOps` must
+**return its rejects**, not swallow them.
+
+#### Where Layer 2 runs — revised 2026-07-27
+
+**Layer 2 lives in the Stage 2 collector, not in Electron main.** The conclusion
+has not changed; the argument for it has, and the change is worth recording.
+
+Rev 3 originally called this *forced by toolchain*: `better-sqlite3` is a native
+module, and there were no VS Build Tools on this box. That reason is gone —
+MSVC was installed the following day — and it was shaky to begin with, since the
+"no build tools" claim was attributed to `CLAUDE.md`, which never contained it
+(`docs/roadmap.md` §2 asserted it and credited `CLAUDE.md`; the citation chain
+was dangling from the start). Both documents are corrected.
+
+What actually carries the decision, in order:
+
+1. **The single writer.** §10 requires agents to *propose* and `STEWARD` to
+   *commit*. Across a process boundary that is structural; in Electron main it
+   is a convention any IPC handler can break by accident. Q1 above shows Miriel
+   has no concurrency control at all, so this property is doing real work.
+2. **The Electron native-module tax.** `better-sqlite3` is buildable here now,
+   but inside Electron it needs an `electron-rebuild` on every version bump,
+   permanently. A *maintenance* argument, not a capability one.
+3. **The store is already going there.** Roadmap Stage 2 puts the history store
+   in the collector and Stage 3 has the viewer read from it.
+
+Versions: `node:sqlite` reached **release candidate (stability 1.2) in Node
+v25.7.0** and remains RC at v26.5 — not experimental, no warning. Electron 31
+still ships Node 20, so it is unavailable in main either way. Pin the collector
+to **Node 26**; keep `better-sqlite3` as an in-collector fallback.
+
+**The lesson, which the four principles nearly missed:** a decision justified by
+an environmental constraint has no defence the day the constraint lifts. This
+one lasted under twenty-four hours. Where a constraint is doing the arguing,
+write the merit case underneath it.
+
+#### Ported, replaced, added
+
+| Component | Verdict |
+|---|---|
+| Atom store shape, closed enums, `applyOps` validation, guarded migrations | Port ~90%; add `scope`, `owner_agent` |
+| Cheap-extractor write path (narrow job, *"Never invent"*, tolerant parser, validate-before-write) | Port wholesale — this *is* §2's two-pass discipline applied to memory |
+| `prediction` → `RESOLVE` → verdict → `resolves` edge | Port, rename to `Revision` |
+| `prompt-safety` fencing (`fence`, `sanitizeUntrusted`) | Port unchanged — built for exactly this second-order path |
+| `(id % 7)` stable jitter | Port the trick into §8's interruption budget |
+| Conservative-capture prompt discipline | Port the shape; rewrite the rules (substance-not-location, anti-suppression) |
+| Test pinning of weights, windows, TTLs | Port the discipline; Phase 3 tuning is unsafe without it |
+| Scoring function | **Replace** |
+| `freshness` / `overuse` on shared scope | **Delete** — actively harmful |
+| `better-sqlite3` | **Replace** with `node:sqlite` in the collector — kept as a fallback there, no longer blocked |
+| Concurrency control | **Not built** — enforced by the single-writer process boundary |
+| Hard delete + tombstone + `supersedes` audit edge | **New** — no Miriel analogue; her store has no delete at all |
+| Scope/ownership read enforcement in the store, not the prompt | **New** |
+
+Call it 60–70% of Layer 2 by volume. The 30% written from scratch is the part
+that was always going to be Aether-specific.
+
+#### Collision with the existing Memory view
+
+`src/components/memory/` and `MemoryStub` are **themed simulation**, not this
+system: `strength` decay, `pinned`, and the `sweep` command that prunes weak
+unpinned entries. That is decay-based forgetting of standing decisions — the
+same anti-pattern flagged above in `freshness`/`overuse`, already shipped as
+fiction. The view is the natural render surface for Layer 2, but `MemoryStub`'s
+data model contradicts it and must be retired, not extended. Tracked in
+`AETHER_MEMORY_LAYER_2.md`.
 
 ---
 
@@ -901,11 +1038,18 @@ unknowable in advance; picking them now means picking wrong.
 
 - [ ] Disagreement triage (§9)
 - [ ] Adjudication UI on top of `DecisionRequest` (§9)
-- [ ] Shared/private memory split (§10)
-- [ ] Miriel port assessment against the three questions (§10)
+- [x] ~~Miriel port assessment against the three questions~~ — **done, rev 3**
+- [ ] Shared/private memory split (§10) → **now specified in
+      `AETHER_MEMORY_LAYER_2.md`, with its own build order**
+- [ ] Retire `MemoryStub` / `sweep` / `strength` decay when Layer 2 lands
 
 All real builds. None block anything. All get substantially easier once the
 narration channel exists and you have watched real traffic move through it.
+
+**Sequencing, updated 2026-07-28:** Layer 2 runs in the roadmap's Stage 2
+collector, which **shipped on 2026-07-27** — so it is unblocked, and Phase A of
+its store is already written and green. Phases 0–3 of *this* document remain
+entirely independent of Layer 2 and should not wait on it.
 
 ---
 
@@ -914,7 +1058,7 @@ narration channel exists and you have watched real traffic move through it.
 | # | Decision | Notes |
 |---|---|---|
 | 1 | Keep the alchemical naming set, or rename? | STEWARD / CINDER / PILGRIM / ASSAY / FORGE. Coherence matters more than the specific words. |
-| 2 | Cross-session memory of overrules — in or out of scope? | Makes agents feel genuinely continuous. Also the single largest build here. Possibly scope creep in a trenchcoat. |
+| 2 | Cross-session memory of overrules — in or out of scope? | Makes agents feel genuinely continuous. Also the single largest build here. Possibly scope creep in a trenchcoat. **Cheaper than rev 2 assumed** — ~60–70% of it ports from Miriel (§10). Still the largest build; no longer the riskiest. |
 | 3 | Which model runs Pass 2? | Narration is styling, not reasoning. Cheapest model that holds a register. Worth benchmarking one tier down from your default. |
 | 4 | Does the heartbeat pulse have a visual weight, or is it binary? | FORGE at sev 1 is silent-but-alive. Whether the grid conveys *how long* it has been quiet is a design call. |
 
@@ -933,11 +1077,17 @@ narration channel exists and you have watched real traffic move through it.
 
 **Closed since revision 2:**
 
-- *Does Layer 1 replace `personas.ts`, or do the two coexist?* — **Coexist.**
-  See §5.10. Different key space (name vs. role), different channel discipline
-  (voice-in-prompt vs. strict two-pass), different job (two-way conversation
-  vs. one-way status narration). Retiring `personas.ts` would mean exempting
-  Chat from P1 on the one surface a user would notice the exemption fastest.
+- *Does the Miriel engine port?* — **Partly, and not the part rev 2 predicted.**
+  The store and write path port; the retrieval layer does not. See §10.
+- *How is a reversed decision retired?* — **Hard delete from the retrievable set,
+  plus a `supersedes` edge on a separate audit path.** Miriel's soft-status
+  approach leaves a stale row one forgotten `WHERE` clause from resurrection,
+  and P3 treats that as a correctness failure rather than a tidiness one.
+- *Where does the memory store run?* — **The Stage 2 collector, not Electron
+  main.** Originally decided on toolchain grounds; that reason expired within a
+  day (MSVC installed 2026-07-27) and the decision was restated on merit — the
+  single-writer process boundary, the Electron native-module rebuild tax, and
+  the fact that the history store is already headed there. See §10.
 
 ---
 
@@ -964,3 +1114,12 @@ trusted to operate on its own.
 The rulebook is the achievement. Protect it — when a new feature does not follow
 from one of the four, that is a reason to question the feature, not to add a
 fifth principle.
+
+**Revision 3 note.** The Miriel assessment was run as a test of exactly that
+filter, and it held: every component that ported did so because it already
+obeyed one of the four principles under a different name (the cheap-extractor
+split *is* P1; the prediction/verdict loop *is* P4), and every component
+rejected was rejected by a principle rather than by taste (`freshness`/`overuse`
+fail P3; prompt-level dedup fails P1's "never self-reported"). No fifth
+principle was needed to explain any of it. That is the strongest evidence yet
+that the four are load-bearing rather than decorative.

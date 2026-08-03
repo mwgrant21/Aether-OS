@@ -13,6 +13,9 @@ import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/ty
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
+  app: {
+    getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+  },
   pty: {
     start: (opts: { cols: number; rows: number }) => ipcRenderer.invoke('pty:start', opts),
     write: (input: string) => ipcRenderer.send('pty:write', input),
@@ -66,6 +69,9 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:headline', listener);
       return () => ipcRenderer.removeListener('agents:headline', listener);
     },
+    setAutoHeadlines: (enabled: boolean) => ipcRenderer.send('agents:setAutoHeadlines', enabled),
+    setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => ipcRenderer.send('agents:setModelPolicyMode', mode),
+    getModelSpend: (): Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }> => ipcRenderer.invoke('modelSpend:get'),
   },
   fleet: {
     onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {

@@ -1,6 +1,6 @@
 import { runChatRequest } from '../src/shared/chatCore';
+import { resolveModel } from '../src/shared/modelPolicy';
 
-export const HAIKU_MODEL = 'claude-haiku-4-5';
 const PERIODIC_THROTTLE_MS = 15000;
 
 export type HeadlineTrigger = 'periodic' | 'blocked';
@@ -99,7 +99,7 @@ export async function generateHeadline(
   // momentary work snippet.
   const userText = trigger === 'periodic' && activeWorkContext ? `${baseText} -- currently: ${activeWorkContext}` : baseText;
 
-  const result = await runChatRequest({ system, messages: [{ role: 'user', text: userText }] }, apiKey, HAIKU_MODEL, 40);
+  const result = await runChatRequest({ system, messages: [{ role: 'user', text: userText }] }, apiKey, resolveModel('headline'), 40);
   if (!result.ok) return null;
   const trimmed = result.reply.trim();
   return trimmed.length > 0 ? trimmed : null;

@@ -4,6 +4,7 @@ import { AppearanceCard } from './AppearanceCard';
 import { BudgetAlertsCard } from './BudgetAlertsCard';
 import { OperatorCard } from './OperatorCard';
 import { ChatBackendCard } from './ChatBackendCard';
+import { ModelPolicyCard } from './ModelPolicyCard';
 import { StatuslineCard } from './StatuslineCard';
 
 export function SettingsView() {
@@ -13,6 +14,7 @@ export function SettingsView() {
         <OperatorCard />
         <OperatingModeCard />
         <ChatBackendCard />
+        <ModelPolicyCard />
         <BudgetAlertsCard />
         <StatuslineCard />
       </div>
@@ -22,4 +24,4 @@ export function SettingsView() {
 }
 
 const rootStyle: CSSProperties = { flex: 1, minHeight: 0, display: 'flex', gap: 14 };
-const columnStyle: CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 };
+const columnStyle: CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' };

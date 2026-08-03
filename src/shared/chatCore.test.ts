@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { isValidChatBody, runChatRequest, CHAT_MODEL } from './chatCore';
+import { isValidChatBody, runChatRequest } from './chatCore';
+import { resolveModel } from './modelPolicy';
 
 // Mock at the SDK boundary, same convention this repo already uses for
 // other Anthropic-adjacent boundaries: never let a real network call
@@ -82,9 +83,19 @@ describe('runChatRequest', () => {
       mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
     });
 
-    it('defaults to CHAT_MODEL when no override is passed', async () => {
-      await runChatRequest({ system: 'x', messages: [{ role: 'user', text: 'hi' }] }, 'some-key');
-      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: CHAT_MODEL }));
+    it('defaults to the policy-resolved chat model when no override is passed', async () => {
+      mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'hi' }] });
+      await runChatRequest({ system: 'x', messages: [{ role: 'user', text: 'hi' }] }, 'key');
+      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: resolveModel('chat') }));
+    });
+
+    it('returns input/output token usage on success', async () => {
+      mockCreate.mockResolvedValue({
+        content: [{ type: 'text', text: 'hi' }],
+        usage: { input_tokens: 42, output_tokens: 7 },
+      });
+      const result = await runChatRequest({ system: 'x', messages: [{ role: 'user', text: 'hi' }] }, 'key');
+      expect(result).toMatchObject({ ok: true, usage: { inputTokens: 42, outputTokens: 7 } });
     });
 
     it('uses the override model and maxTokens when passed', async () => {

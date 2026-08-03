@@ -36,6 +36,14 @@ async function handleChatRequest(req: IncomingMessage, res: ServerResponse): Pro
     return;
   }
 
+  // Deliberately dev-only and ungated: this plugin only runs under the Vite
+  // dev server (`npm run dev`, browser-mode chat). It has no access to the
+  // Electron main process's policy-mode state or spend tracker (those live
+  // in electron/main.ts), so it cannot be wired into the Local/API/Off gate
+  // or modelSpendTracker without duplicating that machinery in a dev-only
+  // Vite plugin -- not worth it for a path that never ships. Not a
+  // production risk, but real: it is a genuine, unaudited model-call site,
+  // tracked as such rather than silently assumed away.
   const result = await runChatRequest(parsed, process.env.ANTHROPIC_API_KEY);
   if (result.ok) {
     sendJson(res, 200, { reply: result.reply });
