@@ -10,7 +10,7 @@ export interface HoverStyleResult {
 export function useHoverStyle(base: CSSProperties, hover?: CSSProperties): HoverStyleResult {
   const colors = useColors();
   const [isHovering, setIsHovering] = useState(false);
-  const resolvedHover = hover ?? { filter: 'brightness(1.1)', borderColor: colors.activeBorder };
+  const resolvedHover = hover ?? { filter: 'brightness(1.1)', border: `1px solid ${colors.activeBorder}` };
   return {
     style: isHovering ? { ...base, ...resolvedHover } : base,
     onMouseEnter: () => setIsHovering(true),

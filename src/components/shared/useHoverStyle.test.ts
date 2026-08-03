@@ -29,6 +29,20 @@ describe('useHoverStyle', () => {
     const { result } = renderHook(() => useHoverStyle({ color: 'red' }), { wrapper });
     act(() => result.current.onMouseEnter());
     expect(result.current.style.filter).toBe('brightness(1.1)');
-    expect(result.current.style.borderColor).toBe(colors.activeBorder);
+    // The shorthand `border` form (not the `borderColor` longhand) so it never
+    // mixes shorthand/longhand with a base style's own `border: '...'`/`'none'` --
+    // see useHoverStyle.ts's comment on the shorthand-mixing React warning.
+    expect(result.current.style.border).toBe(`1px solid ${colors.activeBorder}`);
+  });
+
+  it('does not mix border shorthand and longhand with a base style that sets border', () => {
+    // Regression check for the "mixing shorthand and non-shorthand properties"
+    // React warning: a base style using the `border` shorthand (this repo's
+    // documented Button convention) must not end up alongside a `borderColor`
+    // longhand in the same merged style object during hover.
+    const { result } = renderHook(() => useHoverStyle({ border: 'none' }), { wrapper });
+    act(() => result.current.onMouseEnter());
+    expect(result.current.style.borderColor).toBeUndefined();
+    expect(result.current.style.border).toBe(`1px solid ${colors.activeBorder}`);
   });
 });
