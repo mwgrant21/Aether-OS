@@ -2,8 +2,8 @@
 
 **Design document**
 Status: draft for implementation
-Last updated: 2026-07-27
-Revision: 3.1 (Miriel port resolved; toolchain reasoning restated on merit)
+Last updated: 2026-08-03
+Revision: 3.2 (Stage 12 scoping: §5.10 personas.ts coexistence recorded; naming, Pass 2 model, heartbeat weight, and role-mapping open decisions closed)
 
 ---
 
@@ -513,6 +513,31 @@ in-progress work.
 | 4 | *"Blocked. Schema decision needed."* → `DecisionRequest{ fork: "Drop the column or backfill it?", options: ["drop", "backfill"], if_nothing: "migration stays reverted; three downstream tasks stay queued" }` |
 
 That sev-4 handoff is the natural entry point into the adjudication system (§9).
+
+---
+
+### 5.10 — Coexistence with `personas.ts`
+
+`src/components/chat/personas.ts` is a live, shipped, tested system — 11
+hand-authored voices plus `FALLBACK_PERSONA`, resolved by
+`resolvePersona(agentName)` and injected into each channel's system prompt by
+`systemPrompt.ts`. It is the architecture this layer rejects on its own terms:
+flat `voice: string` **in the system prompt**, so voice is in context while
+work is generated; no severity, no escalation curve, no telemetry coupling;
+and keyed on `Agent.name` — a user-changeable `spawn <name>` value — rather
+than role.
+
+**Decision: coexist, deliberately, not a gap to close.** Chat's voice has to
+sit in the same call as the reply — there is no terminal telemetry to narrate
+from until after the reply the user is waiting on already exists, so P1's
+two-pass split does not fit that job at all. Forcing it on would mean either
+latency the user feels on every message, or a P1 exemption on the one surface
+where it would be noticed fastest. Talking to the user in a chat channel and
+reporting fleet state through cadence are different jobs with different
+constraints, not one job accidentally built twice.
+
+**Consequence for Stage 12:** voice packs render in the agent roster, not the
+chat channels. `personas.ts` is untouched.
 
 ---
 
@@ -1057,10 +1082,26 @@ entirely independent of Layer 2 and should not wait on it.
 
 | # | Decision | Notes |
 |---|---|---|
-| 1 | Keep the alchemical naming set, or rename? | STEWARD / CINDER / PILGRIM / ASSAY / FORGE. Coherence matters more than the specific words. |
 | 2 | Cross-session memory of overrules — in or out of scope? | Makes agents feel genuinely continuous. Also the single largest build here. Possibly scope creep in a trenchcoat. **Cheaper than rev 2 assumed** — ~60–70% of it ports from Miriel (§10). Still the largest build; no longer the riskiest. |
-| 3 | Which model runs Pass 2? | Narration is styling, not reasoning. Cheapest model that holds a register. Worth benchmarking one tier down from your default. |
-| 4 | Does the heartbeat pulse have a visual weight, or is it binary? | FORGE at sev 1 is silent-but-alive. Whether the grid conveys *how long* it has been quiet is a design call. |
+
+**Closed since revision 3 (Stage 12 scoping, 2026-08-03):**
+
+- *Keep the alchemical naming set, or rename?* — **Keep.** STEWARD / CINDER /
+  PILGRIM / ASSAY / FORGE ship as final names. Coherence over bikeshedding.
+- *Which model runs Pass 2?* — **Cheapest billed tier, via `modelPolicy`.**
+  Narration needs real generative range (register, escalation curve) that a
+  deterministic formatter (the pattern Auto Headlines moved to, `d55d050`)
+  cannot produce — unlike a headline, it isn't paraphrasing existing text.
+- *Does the heartbeat pulse have a visual weight, or is it binary?* — **Binary
+  for Phase 1.** Duration-aware weighting is a Phase 3 polish item once real
+  traffic exists to judge against.
+- *How do real `subagent_type` values map onto the 5 fixed voice-pack roles?*
+  — **New decision, not in rev 1–3: a static lookup table, unmapped →
+  FORGE.** Nothing in the codebase mapped arbitrary dispatch `task_kind`
+  strings (e.g. `code-reviewer`, `general-purpose`) onto
+  STEWARD/CINDER/PILGRIM/ASSAY/FORGE before Stage 12; voice packs key on role
+  (§5.1), and role is not a field either the collector or `Agent` type
+  carries. Mirrors `personas.ts`'s own `FALLBACK_PERSONA` pattern.
 
 **Closed since revision 1:**
 
