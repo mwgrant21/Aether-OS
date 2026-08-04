@@ -22,6 +22,12 @@ describe('NarrationVerbosityCard', () => {
       </AetherStoreProvider>,
     );
     fireEvent.click(screen.getByText('SILENT'));
-    expect(screen.getByText(/severity 3\+/i)).toBeTruthy();
+
+    const silentButton = screen.getByText('SILENT');
+    const fullButton = screen.getByText('FULL');
+    expect(silentButton.style.background).toContain('linear-gradient');
+    expect(silentButton.style.boxShadow).toContain('rgba(95,220,255');
+    expect(fullButton.style.background).not.toContain('linear-gradient');
+    expect(fullButton.style.boxShadow).toBe('');
   });
 });
