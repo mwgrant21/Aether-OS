@@ -7,6 +7,14 @@ describe('resolveVoiceRole', () => {
     expect(resolveVoiceRole('silent-failure-hunter')).toBe('CINDER');
   });
 
+  it('maps the plugin-scoped code-reviewer dispatch to CINDER (the real, dominant form)', () => {
+    expect(resolveVoiceRole('pr-review-toolkit:code-reviewer')).toBe('CINDER');
+  });
+
+  it('maps the fork self-dispatch to FORGE', () => {
+    expect(resolveVoiceRole('fork')).toBe('FORGE');
+  });
+
   it('maps known explorer subagent types to PILGRIM', () => {
     expect(resolveVoiceRole('Explore')).toBe('PILGRIM');
   });

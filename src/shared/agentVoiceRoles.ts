@@ -11,6 +11,12 @@ const ROLE_MAP: Record<string, VoiceRole> = {
   'design-studio-pm': 'STEWARD',
 
   'code-reviewer': 'CINDER',
+  // Plugin-scoped agent names carry a "plugin:agent" prefix at dispatch time
+  // -- confirmed against this machine's real ~/.claude/projects transcripts,
+  // where 'pr-review-toolkit:code-reviewer' outnumbers the bare
+  // 'code-reviewer' 44:2. Without this entry the dominant real critic
+  // dispatch silently fell through to the FORGE default.
+  'pr-review-toolkit:code-reviewer': 'CINDER',
   'silent-failure-hunter': 'CINDER',
   'comment-analyzer': 'CINDER',
   'type-design-analyzer': 'CINDER',
@@ -19,6 +25,11 @@ const ROLE_MAP: Record<string, VoiceRole> = {
 
   'Explore': 'PILGRIM',
   'general-purpose': 'FORGE',
+  // Claude Code's own self-fork dispatch (subagent_type: 'fork') -- 31
+  // real occurrences on this machine. Continues the parent's own work
+  // silently, same shape as FORGE ("works, does not narrate working"),
+  // so this maps explicitly rather than relying on the unmapped fallback.
+  fork: 'FORGE',
 
   'pr-test-analyzer': 'ASSAY',
   'post-deployment-validator': 'ASSAY',
