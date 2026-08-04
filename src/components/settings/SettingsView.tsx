@@ -5,6 +5,7 @@ import { BudgetAlertsCard } from './BudgetAlertsCard';
 import { OperatorCard } from './OperatorCard';
 import { ChatBackendCard } from './ChatBackendCard';
 import { ModelPolicyCard } from './ModelPolicyCard';
+import { NarrationVerbosityCard } from './NarrationVerbosityCard';
 import { StatuslineCard } from './StatuslineCard';
 
 export function SettingsView() {
@@ -15,6 +16,7 @@ export function SettingsView() {
         <OperatingModeCard />
         <ChatBackendCard />
         <ModelPolicyCard />
+        <NarrationVerbosityCard />
         <BudgetAlertsCard />
         <StatuslineCard />
       </div>

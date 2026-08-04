@@ -92,6 +92,7 @@ import type { PermissionRisk } from '../shared/permissionRisk';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { RateSample } from '../components/reactor/reactorMath';
 import type { ModelPolicyMode } from '../shared/modelPolicy';
+import type { NarrationVerbosity } from '../shared/narrationVerbosity';
 
 // Not related to `Approval` (the chat-pipeline/tick-simulation approval
 // queue) despite similar approve/deny language -- see that interface's
@@ -220,6 +221,7 @@ export interface Cfg {
   densityLevel: 'normal' | 'verbose' | 'summary';
   autoHeadlines: boolean;
   modelPolicyMode: ModelPolicyMode;
+  narrationVerbosity: NarrationVerbosity;
 }
 
 export interface AetherState {
