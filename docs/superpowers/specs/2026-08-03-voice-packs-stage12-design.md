@@ -55,7 +55,7 @@ memory — already tracked separately as Layer 2, Stage 13, shipped).
 
 | Decision | Resolution | Why |
 |---|---|---|
-| Which model runs Pass 2 narration? | Cheapest billed tier, via `modelPolicy` (Stage 11.5) | Narration needs generative range (register, escalation curve) a deterministic formatter can't produce — unlike the Auto Headlines rework (`d55d050`), this isn't paraphrasing existing text |
+| Which model runs Pass 2 narration? | No model call — deterministic template renderer (§5's `samples` per role/severity, real facts substituted in), same shape as `formatHeadline()` | Reversed after finding roadmap Stage 11.5's addendum: "Aether is meant to not cost a user money, full stop." Narration is unprompted/continuous, same shape as the retired Auto Headlines call — fails that bar identically |
 | Where does narration render? | `AgentRosterCard` rows (Stage 7), grouped by NEEDS INPUT/WORKING/DONE | Matches the "cadence you register before reading" framing; keeps `personas.ts`'s chat-reply voice untouched (spec §5.10) |
 | Keep alchemical names or rename? | Keep: STEWARD/CINDER/PILGRIM/ASSAY/FORGE | Coherence over bikeshedding |
 | FORGE's sev-1 heartbeat: weighted or binary? | Binary (pulse/no-pulse) for Phase 1 | Duration-aware weighting needs real traffic to tune against — Phase 3 item |
@@ -68,6 +68,16 @@ enforcement, interruption-budget mechanism, frozen-phrase prepend) goes in
 `src/shared/` or `collector/src/` with matching `test/*.test.ts` /
 `*.test.ts` files; render-layer wiring gets component tests on
 `AgentRosterCard`. Run `npm test` (root) before declaring any task done.
+
+## Governing constraint (added after initial scoping)
+
+`docs/roadmap.md`'s Stage 11.5 addendum (2026-08-02): *"Aether is meant to
+not cost a user money, full stop... the only feature for which 'the user
+asked for this specific reply' is unambiguously true[ is] the bar every
+model call in this project should have to clear."* Narration is unprompted
+and continuous, so it fails that bar the same way the retired Auto Headlines
+call did. Applies project-wide, not just to this stage — any future call
+site needs to clear the same bar.
 
 ## Next step
 

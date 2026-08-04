@@ -1088,10 +1088,20 @@ entirely independent of Layer 2 and should not wait on it.
 
 - *Keep the alchemical naming set, or rename?* — **Keep.** STEWARD / CINDER /
   PILGRIM / ASSAY / FORGE ship as final names. Coherence over bikeshedding.
-- *Which model runs Pass 2?* — **Cheapest billed tier, via `modelPolicy`.**
-  Narration needs real generative range (register, escalation curve) that a
-  deterministic formatter (the pattern Auto Headlines moved to, `d55d050`)
-  cannot produce — unlike a headline, it isn't paraphrasing existing text.
+- *Which model runs Pass 2?* — **No model call. Deterministic template
+  renderer, per role/severity/`EventKind`, in the same shape as
+  `formatHeadline()`.** Reversed from an earlier "cheapest billed tier"
+  answer in this same scoping pass, on discovering `docs/roadmap.md`'s Stage
+  11.5 addendum: *"Aether is meant to not cost a user money, full stop... the
+  only feature for which 'the user asked for this specific reply' is
+  unambiguously true[ is] the bar every model call in this project should
+  have to clear."* Narration is unprompted and continuous — the same shape
+  as the retired Auto Headlines call — and fails that bar identically. §5's
+  `samples: Partial<Record<Severity, string>>` already gives each pack a
+  literal string per severity tier per role; Phase 1 renders by selecting
+  the matching sample and substituting real dispatch facts (subagent type,
+  counts, elapsed time) into it, the same interpolation shape
+  `formatHeadline()` already uses. No new `modelPolicy` tier is added.
 - *Does the heartbeat pulse have a visual weight, or is it binary?* — **Binary
   for Phase 1.** Duration-aware weighting is a Phase 3 polish item once real
   traffic exists to judge against.
