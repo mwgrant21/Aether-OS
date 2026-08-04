@@ -7,15 +7,15 @@ export interface RosterGroup {
   collapsible: boolean;
 }
 
-// state.realAgents only ever carries currently-open dispatches (see
-// useRealAgentsSync's SET_REAL_AGENTS wiring) -- there is no "done but still
-// shown" dispatch in this array today, so the DONE group is always empty
-// until/unless a future stage feeds completed-but-recently-visible dispatches
-// into this function. It's still modeled explicitly (not omitted) because the
-// design spec's survival rule is specifically about DONE being the only
-// collapsible group -- that rule needs a group to apply to even if it's
-// empty today.
-export function groupDispatches(dispatches: RealAgentDispatch[], anomalies: Anomaly[]): RosterGroup[] {
+// The DONE group is sourced from state.recentCompletedDispatches (populated
+// by the SET_REAL_AGENTS reducer case via detectCompletedDispatches, capped
+// at 20 entries there) -- state.realAgents only ever carries currently-open
+// dispatches, so DONE can never be derived from it directly.
+export function groupDispatches(
+  dispatches: RealAgentDispatch[],
+  anomalies: Anomaly[],
+  completedDispatches: RealAgentDispatch[],
+): RosterGroup[] {
   const anomalyToolUseIds = new Set(anomalies.map((a) => a.toolUseId));
   const needsInput = dispatches.filter((d) => anomalyToolUseIds.has(d.toolUseId));
   const working = dispatches.filter((d) => !anomalyToolUseIds.has(d.toolUseId));
@@ -23,6 +23,6 @@ export function groupDispatches(dispatches: RealAgentDispatch[], anomalies: Anom
   return [
     { label: 'NEEDS INPUT', dispatches: needsInput, collapsible: false },
     { label: 'WORKING', dispatches: working, collapsible: false },
-    { label: 'DONE', dispatches: [], collapsible: true },
+    { label: 'DONE', dispatches: completedDispatches, collapsible: true },
   ];
 }

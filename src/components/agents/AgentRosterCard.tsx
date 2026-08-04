@@ -18,7 +18,7 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
     return () => clearInterval(id);
   }, []);
 
-  const groups = groupDispatches(state.realAgents, state.anomalies);
+  const groups = groupDispatches(state.realAgents, state.anomalies, state.recentCompletedDispatches);
 
   return (
     <div style={cardStyle(colors)}>
@@ -34,7 +34,12 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
               {group.dispatches.map((a) => {
                 const on = a.toolUseId === selectedToolUseId;
                 const hasAnomaly = group.label === 'NEEDS INPUT';
+                const isDone = group.label === 'DONE';
                 const headline = state.dispatchHeadlines[a.toolUseId] ?? a.description;
+                const finalDurationMs = state.dispatchUsage[a.toolUseId]?.durationMs;
+                const elapsedLabel = isDone
+                  ? (finalDurationMs !== undefined ? fmtElapsed(finalDurationMs) : '--')
+                  : fmtElapsed(now - new Date(a.startedAt).getTime());
                 const rawNarration = state.dispatchNarrations[a.toolUseId];
                 // Severity is hardcoded to 1 here (not the real severity) because this
                 // stage's IPC payload (Task 8, agents:narration) only carries
@@ -51,7 +56,7 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                         <span style={nameStyle(colors)}>{a.subagentType}</span>
-                        <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{fmtElapsed(now - new Date(a.startedAt).getTime())}</span>
+                        <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{elapsedLabel}</span>
                       </div>
                       <div style={descStyle(colors)}>{headline}</div>
                       {narration && <div data-testid="narration-line" style={narrationStyle(colors)}>{narration}</div>}

@@ -19,6 +19,6 @@ export function canVolunteer(state: InterruptionBudgetState, nowMs: number, wind
   return nowMs - state.lastVolunteeredAtMs >= windowMs;
 }
 
-export function spendBudget(state: InterruptionBudgetState, nowMs: number): InterruptionBudgetState {
+export function spendBudget(_state: InterruptionBudgetState, nowMs: number): InterruptionBudgetState {
   return { lastVolunteeredAtMs: nowMs };
 }

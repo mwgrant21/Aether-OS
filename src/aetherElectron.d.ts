@@ -35,6 +35,7 @@ declare global {
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
         onNotification: (callback: (payload: { reason: string }) => void) => () => void;
         onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
+        onNarration: (callback: (payload: { toolUseId: string; narration: string }) => void) => () => void;
         setAutoHeadlines: (enabled: boolean) => void;
         setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => void;
         getModelSpend: () => Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }>;

@@ -14,7 +14,7 @@ export function createAttentionState(): AttentionState {
   return { focusedPanel: null, lastInteractionAtMs: null };
 }
 
-export function recordFocus(state: AttentionState, panel: string, nowMs: number): AttentionState {
+export function recordFocus(state: AttentionState, panel: string, _nowMs: number): AttentionState {
   return { ...state, focusedPanel: panel };
 }
 
