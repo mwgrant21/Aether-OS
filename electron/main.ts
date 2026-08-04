@@ -30,6 +30,7 @@ import {
   isNewPeriodicContent,
 } from './headlineGenerator';
 import { formatNarration } from './narrationGenerator';
+import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
 import { handleNotification } from './notificationHandler';
 import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
@@ -53,6 +54,7 @@ let recapAcc: RecapAccumulator = createEmptyAccumulator();
 // the blocked-trigger headline, without calling tracker.tick() a second time.
 let lastTickResult: LiveAgentTick | null = null;
 const headlineThrottle = createHeadlineThrottle();
+const narrationDurationBaseline = createDurationBaseline();
 const periodicContentCache = createPeriodicContentCache();
 
 const DEFAULT_WIDTH = 1400;
@@ -452,8 +454,14 @@ async function tickAndPushAgents(): Promise<void> {
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
     for (const c of result.completed) {
-      const narration = formatNarration({ subagentType: c.subagentType, durationMs: c.durationMs }, null);
-      if (narration) sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration });
+      // Snapshot the baseline BEFORE recording this run -- a run must never
+      // be compared against a baseline it has already contributed to.
+      const medianMsAtEval = getMedianMs(narrationDurationBaseline, c.subagentType);
+      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: c.durationMs }, medianMsAtEval);
+      recordDuration(narrationDurationBaseline, c.subagentType, c.durationMs);
+      if (narrated) {
+        sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration: narrated.narration, severity: narrated.severity });
+      }
     }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();

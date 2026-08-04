@@ -64,8 +64,8 @@ export function useRealAgentsSync() {
   useEffect(() => {
     const agents = window.aetherElectron?.agents;
     if (!agents) return;
-    return agents.onNarration(({ toolUseId, narration }) => {
-      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration });
+    return agents.onNarration(({ toolUseId, narration, severity }) => {
+      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity });
     });
   }, [dispatch]);
 

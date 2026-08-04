@@ -279,7 +279,7 @@ export interface AetherState {
   lastNotification: { reason: NotificationReason; atMs: number } | null;
   recap: RecapPayload | null;
   dispatchHeadlines: Record<string, string>;
-  dispatchNarrations: Record<string, string>;
+  dispatchNarrations: Record<string, { narration: string; severity: number }>;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

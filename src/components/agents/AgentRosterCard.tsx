@@ -41,14 +41,8 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
                   ? (finalDurationMs !== undefined ? fmtElapsed(finalDurationMs) : '--')
                   : fmtElapsed(now - new Date(a.startedAt).getTime());
                 const rawNarration = state.dispatchNarrations[a.toolUseId];
-                // Severity is hardcoded to 1 here (not the real severity) because this
-                // stage's IPC payload (Task 8, agents:narration) only carries
-                // { toolUseId, narration } -- no severity. This means the sev>=3 dial
-                // floor in applyNarrationVerbosity is not yet reachable from the roster.
-                // Deliberate scope limit; wiring real severity through the IPC payload
-                // is a fast-follow, not an oversight.
                 const narration = rawNarration
-                  ? applyNarrationVerbosity(rawNarration, state.cfg.narrationVerbosity, 1)
+                  ? applyNarrationVerbosity(rawNarration.narration, state.cfg.narrationVerbosity, rawNarration.severity as 0 | 1 | 2 | 3 | 4)
                   : null;
                 return (
                   <Button key={a.toolUseId} onClick={() => dispatch({ type: 'SELECT_REAL_AGENT', toolUseId: a.toolUseId })} style={rowStyle(on)}>

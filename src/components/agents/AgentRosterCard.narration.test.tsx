@@ -12,7 +12,7 @@ function Setter({ agents, narrations }: { agents: RealAgentDispatch[]; narration
   useEffect(() => {
     dispatch({ type: 'SET_REAL_AGENTS', agents });
     for (const [toolUseId, narration] of Object.entries(narrations)) {
-      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration });
+      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity: 1 });
     }
   }, [dispatch, agents, narrations]);
   return null;
@@ -64,7 +64,7 @@ function CompletionSetter({ toolUseId, narration }: { toolUseId: string; narrati
     // agents:narration emission timing.
     dispatch({ type: 'SET_REAL_AGENTS', agents: [dispatchInfo] });
     dispatch({ type: 'SET_REAL_AGENTS', agents: [] });
-    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration });
+    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity: 2 });
   }, [dispatch, toolUseId, narration]);
   return null;
 }
@@ -79,5 +79,40 @@ describe('AgentRosterCard DONE group narration', () => {
     );
     expect(screen.getByText('DONE')).toBeTruthy();
     expect(screen.getByText('Done. Four files touched.')).toBeTruthy();
+  });
+});
+
+function SilentDialSetter({ toolUseId, narration, severity }: { toolUseId: string; narration: string; severity: number }) {
+  const { dispatch } = useAetherStore();
+  useEffect(() => {
+    dispatch({ type: 'UPDATE_CFG', patch: { narrationVerbosity: 'silent' } });
+    dispatch({
+      type: 'SET_REAL_AGENTS',
+      agents: [{ toolUseId, subagentType: 'x', description: 'd', startedAt: new Date().toISOString(), prompt: '', model: null }],
+    });
+    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity });
+  }, [dispatch, toolUseId, narration, severity]);
+  return null;
+}
+
+describe('AgentRosterCard real severity reaches the verbosity floor', () => {
+  it('suppresses a low-severity narration under the silent dial', () => {
+    render(
+      <AetherStoreProvider>
+        <SilentDialSetter toolUseId="tu-sev1" narration="low sev narration" severity={1} />
+        <AgentRosterCard selectedToolUseId={null} />
+      </AetherStoreProvider>,
+    );
+    expect(screen.queryByText('low sev narration')).toBeFalsy();
+  });
+
+  it('still renders a severity>=3 narration under the silent dial (the floor)', () => {
+    render(
+      <AetherStoreProvider>
+        <SilentDialSetter toolUseId="tu-sev4" narration="high sev narration" severity={4} />
+        <AgentRosterCard selectedToolUseId={null} />
+      </AetherStoreProvider>,
+    );
+    expect(screen.getByText('high sev narration')).toBeTruthy();
   });
 });

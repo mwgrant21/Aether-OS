@@ -69,8 +69,8 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:headline', listener);
       return () => ipcRenderer.removeListener('agents:headline', listener);
     },
-    onNarration: (callback: (payload: { toolUseId: string; narration: string }) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; narration: string }) => callback(payload);
+    onNarration: (callback: (payload: { toolUseId: string; narration: string; severity: number }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; narration: string; severity: number }) => callback(payload);
       ipcRenderer.on('agents:narration', listener);
       return () => ipcRenderer.removeListener('agents:narration', listener);
     },

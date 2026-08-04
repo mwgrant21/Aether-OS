@@ -25,10 +25,20 @@ function computeNarrationSeverity(durationMs: number, medianMsAtEval: number | n
   return Math.min(4, sev) as Severity;
 }
 
-export function formatNarration(dispatch: DispatchForNarration, medianMsAtEval: number | null): string | null {
+export interface NarrationResult {
+  narration: string;
+  severity: Severity;
+}
+
+// Returns severity alongside the rendered line -- not just the string --
+// because the caller (main.ts) needs severity too, to include in the
+// agents:narration IPC payload so the renderer's verbosity-dial floor
+// (severity >= 3 always renders, spec §11 Phase 1) has a real value to act
+// on instead of a hardcoded placeholder.
+export function formatNarration(dispatch: DispatchForNarration, medianMsAtEval: number | null): NarrationResult | null {
   const role = resolveVoiceRole(dispatch.subagentType);
   const pack = VOICE_PACKS[role];
   const severity = computeNarrationSeverity(dispatch.durationMs, medianMsAtEval);
   const narration = renderNarration(pack, severity, null);
-  return narration || null;
+  return narration ? { narration, severity } : null;
 }

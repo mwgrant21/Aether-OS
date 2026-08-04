@@ -5,8 +5,9 @@ import { formatNarration } from './narrationGenerator';
 // (Step 3) so a future edit to formatNarration's signature is caught here
 // before it silently breaks the wiring.
 describe('main.ts narration wiring shape', () => {
-  it('formatNarration accepts a completed-dispatch-shaped object and a nullable median', () => {
+  it('formatNarration accepts a completed-dispatch-shaped object and a nullable median, returning {narration, severity} or null', () => {
     const result = formatNarration({ subagentType: 'code-reviewer', durationMs: 1200 }, null);
-    expect(typeof result === 'string' || result === null).toBe(true);
+    const shapeOk = result === null || (typeof result.narration === 'string' && typeof result.severity === 'number');
+    expect(shapeOk).toBe(true);
   });
 });
