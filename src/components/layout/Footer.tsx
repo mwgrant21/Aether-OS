@@ -17,7 +17,6 @@ export function Footer() {
   return (
     <div style={rootStyle(colors)}>
       <span>◇ AETHER OS {version ? `v${version}` : ''}</span>
-      <span style={{ color: colors.textMuted }}>Reactor draws power on demand — tokens are contained, never wasted.</span>
       <span style={{ marginLeft: 'auto' }}>Uptime 3h 42m</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: c }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: `0 0 8px ${c}` }} />

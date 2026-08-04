@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage } from 'electron';
 import { join, dirname } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
@@ -648,7 +648,15 @@ ipcMain.handle('modelSpend:get', async (): Promise<{ monthTotalUsd: number; gate
   return { monthTotalUsd, gate: spendGate(monthTotalUsd) };
 });
 
-ipcMain.handle('app:getVersion', () => app.getVersion());
+// app.getVersion() reads Electron's resolved app manifest, which falls back
+// to a default (not package.json's version) when the app isn't a proper
+// packaged bundle -- true under `electron-vite dev`. app.getAppPath()
+// resolves the real app root in both dev and packaged builds, so read
+// package.json directly instead of trusting Electron's own resolution.
+ipcMain.handle('app:getVersion', () => {
+  const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf-8'));
+  return pkg.version as string;
+});
 
 let activePty: ReturnType<typeof spawnPty> | null = null;
 
