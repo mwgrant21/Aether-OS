@@ -69,6 +69,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:headline', listener);
       return () => ipcRenderer.removeListener('agents:headline', listener);
     },
+    onNarration: (callback: (payload: { toolUseId: string; narration: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; narration: string }) => callback(payload);
+      ipcRenderer.on('agents:narration', listener);
+      return () => ipcRenderer.removeListener('agents:narration', listener);
+    },
     setAutoHeadlines: (enabled: boolean) => ipcRenderer.send('agents:setAutoHeadlines', enabled),
     setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => ipcRenderer.send('agents:setModelPolicyMode', mode),
     getModelSpend: (): Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }> => ipcRenderer.invoke('modelSpend:get'),

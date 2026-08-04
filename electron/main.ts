@@ -29,6 +29,7 @@ import {
   createPeriodicContentCache,
   isNewPeriodicContent,
 } from './headlineGenerator';
+import { formatNarration } from './narrationGenerator';
 import { handleNotification } from './notificationHandler';
 import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
@@ -443,6 +444,16 @@ async function tickAndPushAgents(): Promise<void> {
       if (!isNewPeriodicContent(periodicContentCache, d.toolUseId, activeWorkContext)) continue;
       const headline = formatHeadline(d, 'periodic', null, activeWorkContext);
       sendToWindow('agents:headline', { toolUseId: d.toolUseId, headline });
+    }
+
+    // Narration: for each dispatch that completed this tick, render a
+    // role-based voice line -- no model call (see narrationGenerator.ts).
+    // Unlike the headline loop above (which re-renders periodically for
+    // still-open work), this fires once per completed dispatch, matching
+    // FORGE's "speaks when finished or when stuck" register (spec §5.9).
+    for (const c of result.completed) {
+      const narration = formatNarration({ subagentType: c.subagentType, durationMs: c.durationMs }, null);
+      if (narration) sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration });
     }
 
     const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
