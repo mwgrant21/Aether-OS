@@ -62,6 +62,14 @@ export function useRealAgentsSync() {
   }, [dispatch]);
 
   useEffect(() => {
+    const agents = window.aetherElectron?.agents;
+    if (!agents) return;
+    return agents.onNarration(({ toolUseId, narration }) => {
+      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration });
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
     const presence = window.aetherElectron?.presence;
     if (!presence) return;
     return presence.onRecap((recap) => {

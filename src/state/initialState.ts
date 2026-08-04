@@ -187,4 +187,5 @@ export const initialState: AetherState = {
   lastNotification: null,
   recap: null,
   dispatchHeadlines: {},
+  dispatchNarrations: {},
 };

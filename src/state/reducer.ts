@@ -56,7 +56,8 @@ export type Action =
   | { type: 'SET_LAST_NOTIFICATION'; reason: NotificationReason }
   | { type: 'RECAP_RECEIVED'; recap: RecapPayload }
   | { type: 'DISMISS_RECAP' }
-  | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string };
+  | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string }
+  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -273,6 +274,16 @@ export function reducer(state: AetherState, action: Action): AetherState {
         dispatchHeadlines = Object.fromEntries(Object.entries(dispatchHeadlines).filter(([k]) => !toEvict.has(k)));
       }
       return { ...state, dispatchHeadlines };
+    }
+
+    case 'SET_DISPATCH_NARRATION': {
+      let dispatchNarrations = { ...state.dispatchNarrations, [action.toolUseId]: action.narration };
+      const narrationKeys = Object.keys(dispatchNarrations);
+      if (narrationKeys.length > 100) {
+        const toEvict = new Set(narrationKeys.slice(0, narrationKeys.length - 100));
+        dispatchNarrations = Object.fromEntries(Object.entries(dispatchNarrations).filter(([k]) => !toEvict.has(k)));
+      }
+      return { ...state, dispatchNarrations };
     }
 
     case 'CREATE_DISPATCH_CHANNEL': {

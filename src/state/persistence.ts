@@ -38,6 +38,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   lastNotification: 'a live IPC-pushed Notification-hook event used only to trigger a one-shot sound in useAlertSounds; a persisted value would replay a stale sound cue on the next launch',
   recap: 'an in-memory-only "since you last looked" summary pushed once on refocus; persisting it would show a stale recap from a previous session on next launch, and this stage deliberately scopes recap to in-memory only',
   dispatchHeadlines: 'model-written headlines keyed to live toolUseIds from the current session; a persisted value would attach a stale headline to a toolUseId that no longer exists after restart',
+  dispatchNarrations: 'model-written narrations keyed to live toolUseIds from the current session; a persisted value would attach a stale narration to a toolUseId that no longer exists after restart -- same reasoning as dispatchHeadlines',
   memories: 'a live collector-sourced snapshot read from memory.db on every poll (SET_MEMORIES); same reasoning as realAgents/realUsage -- a persisted value would show stale memory rows as current until the next real snapshot arrives',
   memoryTombstones: 'a live collector-sourced snapshot read from memory.db on every poll (SET_MEMORY_TOMBSTONES); same reasoning as memories',
 };
