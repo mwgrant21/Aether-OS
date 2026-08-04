@@ -6,6 +6,7 @@ import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import type { ColorPalette } from '../../styles/tokens';
 import { groupDispatches } from './rosterGrouping';
+import { applyNarrationVerbosity } from '../../shared/narrationVerbosity';
 
 export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: string | null }) {
   const colors = useColors();
@@ -34,6 +35,16 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
                 const on = a.toolUseId === selectedToolUseId;
                 const hasAnomaly = group.label === 'NEEDS INPUT';
                 const headline = state.dispatchHeadlines[a.toolUseId] ?? a.description;
+                const rawNarration = state.dispatchNarrations[a.toolUseId];
+                // Severity is hardcoded to 1 here (not the real severity) because this
+                // stage's IPC payload (Task 8, agents:narration) only carries
+                // { toolUseId, narration } -- no severity. This means the sev>=3 dial
+                // floor in applyNarrationVerbosity is not yet reachable from the roster.
+                // Deliberate scope limit; wiring real severity through the IPC payload
+                // is a fast-follow, not an oversight.
+                const narration = rawNarration
+                  ? applyNarrationVerbosity(rawNarration, state.cfg.narrationVerbosity, 1)
+                  : null;
                 return (
                   <Button key={a.toolUseId} onClick={() => dispatch({ type: 'SELECT_REAL_AGENT', toolUseId: a.toolUseId })} style={rowStyle(on)}>
                     <span style={glyphStyle(colors, hasAnomaly)} />
@@ -43,6 +54,7 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
                         <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{fmtElapsed(now - new Date(a.startedAt).getTime())}</span>
                       </div>
                       <div style={descStyle(colors)}>{headline}</div>
+                      {narration && <div data-testid="narration-line" style={narrationStyle(colors)}>{narration}</div>}
                     </div>
                   </Button>
                 );
@@ -114,6 +126,14 @@ function descStyle(colors: ColorPalette): CSSProperties {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+  };
+}
+function narrationStyle(colors: ColorPalette): CSSProperties {
+  return {
+    marginTop: 2,
+    font: `500 10px/1.4 ${fonts.mono}`,
+    color: colors.textMuted,
+    fontStyle: 'italic',
   };
 }
 function emptyStyle(colors: ColorPalette): CSSProperties {
