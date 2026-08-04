@@ -33,13 +33,22 @@ memory — already tracked separately as Layer 2, Stage 13, shipped).
 
 ## Gaps found in the existing codebase (not previously scoped)
 
-1. **`electron/collectorStore.ts`'s dispatch reader is stale.** It selects
+1. **`electron/collectorStore.ts`'s dispatch reader is stale, but it is not
+   on Stage 12's critical path.** It selects
    `tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms`
-   only. The Stage 11 schema-v5 columns (`agent_id`, `task_kind`,
+   only — the Stage 11 schema-v5 columns (`agent_id`, `task_kind`,
    `severity`, `median_ms_at_eval`, `exit_state`, `retries`) exist in SQLite
-   but are never read into the viewer. Stage 12 must extend this query and
-   the `dispatches` shape it returns before anything downstream can consume
-   telemetry.
+   but are never read into the viewer. This remains a real, named gap
+   (nothing surfaces the collector's persisted telemetry), but the roster's
+   live narration doesn't need it: `main.ts#tickAndPushAgents` already
+   receives `result.completed` (`CompletedDispatchUsage[]`, with
+   `durationMs`/`toolUses`) fresh from `liveAgentTracker.tick()` every tick,
+   in the same process, and can call `computeSeverity()` directly on that —
+   exactly how the collector's own `ingestDispatchEvent` does it
+   (`exit: 'ok'`, `retries: 0`, hardcoded the same way Stage 11 hardcodes
+   them today). Left as unscheduled follow-up, not folded into this stage's
+   tasks — named rather than glossed, per this project's own documentation
+   standard.
 2. **No role-mapping layer exists.** `agent_id`/`task_kind` are populated
    directly from the real `subagent_type` string at dispatch time
    (`collector/src/usageIngest.ts`, `open.subagentType`) — e.g.
