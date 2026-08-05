@@ -35,17 +35,6 @@ npm run build           # tsc -b && vite build (renderer)
 npm run electron:build  # electron-vite build (main + preload + renderer, for the Electron app)
 ```
 
-Real Claude replies in Chat need `ANTHROPIC_API_KEY`: copy `.env.example` to `.env`.
-Without a key, an offline in-world responder answers instead — nothing breaks.
-The key is read server-side only, and real replies work in both the Electron app and browser
-dev mode. In the Electron app, `askClaude()` (`src/components/chat/claudeClient.ts`) calls
-`chat:send` over IPC to the main process, which loads `.env` (`electron/loadDotEnv.ts`) and
-runs the request through `src/shared/chatCore.ts` (`electron/main.ts`'s `runChatRequest`). In
-browser mode (`npm run dev`, no `window.aetherElectron`), `askClaude()` falls back to POSTing
-the Vite dev-server plugin's `/api/chat` route (`vite-plugins/chatProxyPlugin.ts`). Stage 0.5
-(`docs/superpowers/plans/2026-07-27-chat-ipc-correctness.md`) shipped this IPC path — see
-`ChatBackendCard.tsx` (Settings) and the chat header chip for a live Live/Offline/Browser
-indicator of which backend is actually answering. `.env` is gitignored.
 
 ## Architecture map
 
@@ -118,21 +107,24 @@ docs/superpowers/
   IPC-driven state (live agents, anomalies, usage) flows in via hooks that
   dispatch actions on IPC events — see `useRealAgentsSync.ts` for the pattern;
   new IPC-reactive features should mirror it, not invent a new subscription style.
-- **Model calls**: no `messages.create` call and no model-ID string literal
-  outside `src/shared/chatCore.ts` / `src/shared/modelPolicy.ts` — features
-  request a tier via `resolveModel()`, never a model name directly. Enforced
-  by `src/shared/modelPolicyEnforcement.test.ts`, which fails the build the
-  moment an unapproved model becomes reachable. See `docs/roadmap.md` §3.4.
-  **Aether is meant to not cost a user money.** `Chat` is the only feature
-  left that calls a model, and it only ever does so when the user sends a
-  message — no feature may make an unprompted or periodic model call. If a
-  new feature seems to need one (a "live"-feeling status line, a background
-  summarizer, anything ticking on a timer), prefer a deterministic, local
-  formatter over a model call, the way `electron/headlineGenerator.ts`'s
-  `formatHeadline()` replaced the old billed Haiku headline rewrite. See
-  `docs/roadmap.md`'s Stage 11.5 addendum for the incident (a $24 July 31st
-  overrun, mostly unrelated Claude Code terminal spend, but real Aether
-  spend too) and the decision it produced.
+- **Model calls**: no model call site exists anywhere in this repo. The
+  `@anthropic-ai/sdk` dependency is gone from `package.json`; `chatCore.ts`,
+  `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC
+  pair, `.env` key loading (`electron/loadDotEnv.ts`), and the `modelPolicy.ts`
+  allowlist module have all been deleted (Stage 13.5). `Comms` (the renamed
+  `Chat` tab) answers only through `localResponder.ts` — a local, deterministic
+  responder, no network request. `src/shared/noApiCalls.test.ts` is the guard:
+  it fails the build if `@anthropic-ai/sdk` reappears in `package.json`, if any
+  source file imports it or references `api.anthropic.com`, or if a
+  `messages.create(` call site reappears. There is no allowlist to consult
+  because there is nothing to allow. If a new feature seems to need a model
+  call (a "live"-feeling status line, a background summarizer, anything
+  ticking on a timer), prefer a deterministic, local formatter instead, the way
+  `electron/headlineGenerator.ts`'s `formatHeadline()` replaced the old billed
+  Haiku headline rewrite — this is now the only option, not the preference.
+  See `docs/roadmap.md` §3.5 for the incident that motivated the teardown and
+  its honest limitation: this stage cannot verify or fix the environment-level
+  cause of the spend that triggered it.
 - **Testing philosophy**: pure logic (reducers, `tick.ts`, `anomalyDetectors.ts`,
   `alertSounds.ts`'s `decideAlertActions`) is exhaustively unit tested. Anything
   requiring a real `AudioContext`, real WebGL/canvas, or actual visual judgment
@@ -159,8 +151,7 @@ deliberate scope exclusions exist (Grid/Reactor theming, packaging, etc.).
 **Aether OS is single-user and local-only.** Full stance in `docs/privacy-and-data.md` — read it
 before designing anything that persists or transmits data. The short version:
 
-- **Nothing leaves this machine** except Chat's scoped context snapshot to the Anthropic Messages
-  API, which requires a key the user supplies. Without a key, nothing leaves at all.
+- **Nothing leaves this machine. There is no exception.**
 - **No telemetry, ever.** Not opt-out, not anonymous, not aggregate.
 - **No externally-reachable listener.** Hook ingest itself is an append-only file spool
   (`~/.aether-os/spool/`), not an HTTP server. Separately, `electron/permissionServer.ts` runs a
@@ -173,9 +164,8 @@ before designing anything that persists or transmits data. The short version:
 - **Paths are the remaining sensitive surface** — store project-relative, display basenames only.
 - **Retention is a privacy control**, not a disk concern. Aggregates survive, event rows age out,
   and Settings exposes store size plus a real Purge action.
-- `systemPrompt.ts`'s scoped snapshots are a privacy control, not just an architecture pattern:
-  any new field added to a chat snapshot is a decision about what gets transmitted. Keep the
-  leak tests current when the snapshot shape changes.
+- `systemPrompt.ts` and its scoped-snapshot leak tests were retired in Stage 13.5 along with the
+  rest of the model call path — the surface they guarded no longer exists.
 
 Single-user also **deletes** a lot of scope permanently: no auth model, no multi-tenant schema, no
 shared folder or report writing, no roll-up, no sharing links, no cloud sync. TokenMonitor is the

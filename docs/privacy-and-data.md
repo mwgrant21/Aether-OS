@@ -19,10 +19,13 @@ only, reachable only from this machine, with no port exposed externally and no t
 surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
-**The one exception, stated plainly:** when you supply an `ANTHROPIC_API_KEY`, the Chat feature
-sends a scoped context snapshot and your messages to the Anthropic Messages API, because that is
-what the feature is. Without a key, the offline in-world responder answers and **nothing leaves the
-machine at all.** No other feature in this app makes a network request, now or on the roadmap.
+**Nothing leaves this machine. There is no exception.** As of Stage 13.5 (`docs/roadmap.md` §3.5),
+there is no model call site anywhere in this codebase: the `@anthropic-ai/sdk` dependency is gone,
+`chatCore.ts`/`claudeClient.ts`/`systemPrompt.ts`/`chatProxyPlugin.ts` and the `chat:*` IPC pair are
+deleted, and `.env` key loading (`electron/loadDotEnv.ts`) is gone too — the app cannot read a key
+from disk even if one exists. `Comms` (the renamed Chat tab) answers only through
+`localResponder.ts`, a local, deterministic responder. No feature in this app makes a network
+request, now or on the roadmap.
 
 **No telemetry. Ever.** Not opt-out, not anonymous, not aggregate. Worth stating explicitly because
 it is a live differentiator: `agent-flow`, one of the two comparable agent-trace visualizers,
@@ -185,25 +188,18 @@ designed as such:
 
 ---
 
-## 8. The LLM boundary is already a privacy control
+## 8. The LLM boundary — retired in Stage 13.5
 
-The scoped-context work in `src/components/chat/systemPrompt.ts` is not only an architecture
-pattern — it is the privacy control that governs the one path where data does leave the machine.
-AETHER receives the full fleet snapshot; an individual agent channel receives only its own task,
-files and a thin summary; and tests assert that an agent channel cannot leak the roster, approval
-queue or project list.
+The scoped-context work in `src/components/chat/systemPrompt.ts` used to be the privacy control
+governing the one path where data left the machine: AETHER received the full fleet snapshot, an
+individual agent channel received only its own task/files/a thin summary, and tests asserted an
+agent channel could never leak the roster, approval queue, or project list.
 
-That is least-privilege applied at the exact boundary where it matters, and it was built before
-there was a document telling anyone to build it. Two consequences worth stating:
-
-1. **Any new field added to a chat snapshot is a privacy decision**, because it is a decision about
-   what gets transmitted. Treat `systemPrompt.ts` accordingly, and keep the leak tests updated when
-   the snapshot shape changes.
-2. **The model-written status headlines proposed for Stage 7 cross this boundary too.** A Haiku
-   classifier summarizing a dispatch necessarily receives that dispatch's description and prompt.
-   That is defensible and it is the same trust boundary Chat already crosses — but it must be an
-   explicit, documented, default-off setting rather than something that quietly starts sending
-   dispatch text to an API because it made the roster prettier.
+**That file and its leak tests were retired in Stage 13.5** (`docs/roadmap.md` §3.5) along with the
+rest of the model call path they scoped context for — the surface they guarded no longer exists,
+since there is no longer any path by which chat context reaches a model at all. Recorded here as
+history, not as an active control: if a future stage reintroduces a model call, this boundary (or
+its equivalent) has to be rebuilt from scratch, not assumed to still be standing.
 
 ---
 

@@ -113,6 +113,7 @@ implementer + reviewer + whole-branch-review loop.
 | **11.5** | **Model policy** | **A shipped feature running a top-tier model nobody chose, plus no mechanism preventing the next one.** `CHAT_MODEL = 'claude-opus-4-8'` was typed once and never revisited; `headlineGenerator.ts` declares its own constant in a second file with a second convention. Replaces per-feature model literals with a single policy module features query by *tier*, an allowlist test that fails on any unapproved model, and a `Local`/`API`/`Off` policy governing every call site. Jumps ahead of Stage 12, which would otherwise add a third call site under the same defect — see §3.4. | ~7 tasks |
 | **12** | **Voice packs & render** | **Status: shipped** — see `docs/superpowers/plans/2026-07-31-voice-packs-stage12.md`. Layer 1 Phase 1: 5 voice packs (STEWARD/CINDER/PILGRIM/ASSAY/FORGE) as data files, deterministic narration renderer (no model call — see the Stage 11.5 no-cost rule), verbosity dial with a severity-3+ floor, runtime-prepended frozen phrases, interruption-budget mechanism and attention hook (both instrumented, unconsumed scaffolding). `personas.ts` is untouched — coexists, does not get folded in; see spec §5.10. Narration renders in the agent roster's DONE group, wired end-to-end through a real completion event. **Follow-up (2026-08-04), closed:** severity now reaches the roster for real — `durationBaseline.ts` tracks a per-subagent-type rolling median in-memory (session-lifetime, matching spec §8's runtime-telemetry framing) that `main.ts` snapshots before recording each completed dispatch's own duration, and `agents:narration`'s IPC payload, the reducer, and `AgentRosterCard` all carry severity through instead of a hardcoded `1` — the sev≥3 dial floor is verified reachable by test. `ROLE_MAP` in `agentVoiceRoles.ts` was also corrected against this machine's real `~/.claude/projects` transcripts: `pr-review-toolkit:code-reviewer` (44 real dispatches) had been silently falling through to FORGE, and `fork` (31 dispatches) is now mapped explicitly. **Still open, not glossed:** all 4 frozen phrases remain unreachable — `formatNarration` always passes `eventKind: null`, since detecting `all_clear`/`empty_result`/`no_signal`/`critic_tell` needs per-role business logic (e.g. "PILGRIM found nothing") this stage's data doesn't carry; and `ROLE_MAP`'s coverage was spot-verified against the highest-frequency real dispatches, not exhaustively against every possible `subagent_type`. | 11 tasks, 2 final-review fix rounds, 2 follow-ups |
 | **13** | **Memory Layer 2** | **Status: shipped** — see `docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`. Phase A (the atom store, `collector/src/memoryStore.ts`, 50+ tests) through Phase D (the surface) all shipped: `prompt-safety` fencing and the extractor call path (`memoryExtract.ts`), real dispatch-completion wiring (`memoryExtractQueue.ts`, threaded into `transcriptScan.ts`/`index.ts`), `scorePrivateCandidate` private-retrieval ranking, and the Memory view rework (`electron/memoryStore.ts` read-only reader, scope filter, tombstone view). **Retires `MemoryStub`** — all six real construction sites removed, including `tick.ts`'s decay tick and `SystemsCard.tsx`'s Pinned stat, both caught during implementation. **Phase E (weight/half-life tuning) is parked** — needs real extraction traffic that doesn't exist yet on this machine; nothing to build until the collector has run for real over time. | ~10 tasks |
+| **13.5** | **API teardown** | **Status: shipped** — see `docs/superpowers/plans/2026-08-05-api-teardown-stage13.5.md`. Removes every model-calling capability from Aether OS rather than governing it: `@anthropic-ai/sdk` out of `package.json`, `chatCore.ts`/`claudeClient.ts`/`systemPrompt.ts`/`chatProxyPlugin.ts` and the `chat:*` IPC pair deleted, `.env` key loading (`electron/loadDotEnv.ts`) deleted, `modelPolicy.ts`'s allowlist retired in favor of `noApiCalls.test.ts` (a capability guard with no allowlist to consult), `Chat` renamed to `Comms` (`git mv`, history preserved) and reduced to answering only through `localResponder.ts`. A second unexpected API charge on 2026-08-05 motivated this — jumps the queue; see §3.5. | 7 tasks |
 
 ### 3.1 — Stage 0.5, and why it jumps the queue
 
@@ -326,6 +327,39 @@ specific reply" is unambiguously true, which is the bar every model call in
 this project should have to clear. Auto Headlines' default flipped back to
 `true` (it was briefly defaulted off as a belt-and-suspenders measure while it
 still cost money) now that leaving it on costs nothing.
+
+### 3.5 — Stage 13.5, and why it jumped the queue
+
+On 2026-08-05, a second unexpected API charge locked the operator out of Aether at both home and
+work. Stage 11.5 had already established the rule ("Aether is meant to not cost a user money, full
+stop") and built `modelPolicy.ts` to enforce it by convention. Stage 13.5 jumps the queue because
+this incident showed a policy module isn't the same guarantee as an absent capability — a boolean
+can be flipped at 1am by the same person it's meant to restrain; a missing dependency is a compile
+error.
+
+**The honest finding, stated plainly, the same way §3.4 named the July 31st near-miss:**
+`modelPolicy.ts` was wired to `claude-opus-4-8`, but the models actually billed that day were
+Sonnet 5 and Haiku 4.5 — models Aether's own call site was never configured to name. That means the
+spend did **not** originate at Aether's own call site. The likely path is an `ANTHROPIC_API_KEY`
+exported into the dev environment and billed directly by that day's heavy Claude Code subagent
+work in this repo — the same shape as the July 31st incident, where Aether was a minority
+contributor to a bill it got blamed for.
+
+**This stage hardens the app; it is not the fix for what actually charged the account.** Removing
+Chat's model path does not touch the environment-level cause. The load-bearing fixes — no key
+exported in either machine's shell, a hard spend cap on the console — live outside this repo, and
+nothing in this repository can enforce or verify them. What Stage 13.5 guarantees instead is
+narrower and structural: Aether OS can no longer be a candidate explanation for a surprise charge,
+because there is no model call site left to investigate. The next time a bill needs attributing,
+this codebase is eliminated by one grep (`noApiCalls.test.ts`) instead of an audit — that is the
+whole of what this stage claims, no more.
+
+**Status: shipped.** `@anthropic-ai/sdk` is out of `package.json`; the model call path
+(`chatCore.ts`, `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC pair)
+and the key-reachability path (`electron/loadDotEnv.ts`) are deleted; `modelPolicy.ts`'s allowlist
+is retired in favor of `noApiCalls.test.ts`, a stricter guard with no allowlist to consult; `Chat`
+is renamed to `Comms` via `git mv` and answers only through the existing zero-cost
+`localResponder.ts`, so no commit in the sequence left the app broken or a tab inert.
 
 ### Dependency graph
 

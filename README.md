@@ -7,8 +7,9 @@ before you think to look.
 
 It runs as an Electron desktop app: a real `claude` CLI session, live tracking of your actual
 Claude Code usage and subagent dispatches, behavioral anomaly detection over that stream, and a
-chat deck where the mission-control intelligence (AETHER) and every agent are real Claude-backed
-personas.
+Comms deck where the mission-control intelligence (AETHER) and every agent reply through a local,
+deterministic responder — no model call, no API key, no way for this app to place a paid API call
+at all (Stage 13.5; see `docs/roadmap.md` §3.5).
 
 One honest line up front: **this started as a simulation and has been migrated to live data.**
 The original build ran on fictitious information by design — a deterministic tick fed synthetic
@@ -55,19 +56,21 @@ budget-driven alarm tiers.
 can false-positive on legitimately slow tools. The fix is planned — see
 `docs/diagnostic-thesis-plan.md`.
 
-### Least-privilege context for LLM personas — enforced by tests
+### No model call site, enforced by a test
 
-Each chat channel gets a deliberately scoped snapshot of the world
-(`src/components/chat/systemPrompt.ts`). AETHER sees the full fleet: roster, approvals, projects,
-burn, recent events. An individual agent sees **only its own task, files, and a thin fleet
-summary**.
+As of Stage 13.5 (2026-08-05), Aether OS contains no model call site of any kind: the
+`@anthropic-ai/sdk` dependency is gone from `package.json`, every chat-model call path
+(`chatCore.ts`, `claudeClient.ts`, `systemPrompt.ts`, the Vite chat proxy) is deleted, and `.env`
+key loading is gone too. `src/shared/noApiCalls.test.ts` fails the build if the SDK reappears, if
+any source file references `api.anthropic.com`, or if a `messages.create(` call site reappears —
+not a convention, a failing test.
 
-Tests verify an agent channel can never leak the roster, the approval queue, or the project list.
-Not a convention, not a code comment — a failing test if you break it.
-
-This started as fiction-accurate flavor and turned into a real agent-platform architecture
-pattern. Persona systems elsewhere bundle prompt + model + params; none of them scope *what
-world-state a persona can observe*, and none of them test the boundary.
+This replaces an earlier least-privilege-context design (a per-channel scoped snapshot, tested to
+never leak the fleet roster or approval queue to an individual agent's chat) that governed the one
+path where data used to leave the machine. That design and its tests are retired along with the
+model call path they scoped — there's no longer a boundary to enforce because there's no longer a
+path across it. Comms (formerly Chat) now answers every message through `localResponder.ts`, a
+local, deterministic responder with no network request.
 
 ### The bug that green tests couldn't see
 
@@ -113,11 +116,11 @@ other tool in this category has any sound design at all.
   a reversed preference can't be cited back with the authority of a current one. The Memory view
   reads it read-only, with a scope filter and a tombstone audit view. No pinning, no strength, no
   `sweep`/`remember` — retired along with the fake data they operated on.
-- **Chat** — a channel per agent plus AETHER, with real Claude replies via a server-side proxy
-  (API key never touches the renderer), scoped system prompts, per-persona voices, and post-mortem
-  channels for completed dispatches. Replies can carry a trailing action-JSON convention: safe
-  verbs execute immediately, risky verbs route through the approval queue under a risk policy, and
-  the resolution posts back into the requesting channel.
+- **Comms** (formerly Chat) — a channel per agent plus AETHER, with per-persona voices and
+  post-mortem channels for completed dispatches. Replies come from `localResponder.ts`, a local,
+  deterministic responder — there is no model call site left in the app (Stage 13.5). The
+  model-fed reply and its action-JSON pipeline are gone; a real conversational responder is
+  planned for Stage 14, built on this stage's `comms/` rename.
 - **Instrument + Alarm** — the anomaly-detection pipeline above surfaces as warning rings on Grid
   nodes and an amber reactor flicker; the reactor itself doubles as an instrument — model hue,
   cache-hit clarity, and concurrency turbulence are real signals, not decoration.
@@ -170,14 +173,13 @@ npm run electron:dev   # the real thing: desktop app, live terminal, real sessio
 npm run dev            # browser-only mode at http://localhost:5173 (no PTY / live tracking)
 ```
 
-Real Claude replies in Chat: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Without a
-key, the offline responder answers in-world instead; nothing breaks. The key is read server-side
-only and `.env` is gitignored.
+Comms (formerly Chat) answers every message through a local, deterministic responder — no API key,
+no `.env`, no model call of any kind. See `docs/roadmap.md` §3.5 for the Stage 13.5 teardown that
+removed the model call path.
 
 ```bash
-npm test               # vitest — reducer, tick, view math, personas, prompt scoping,
-                       # action parsing/execution, proxy validation, anomaly detection,
-                       # alert-sound decision logic (572 tests at last count)
+npm test               # vitest — reducer, tick, view math, anomaly detection,
+                       # alert-sound decision logic, noApiCalls capability guard
 npm run build          # tsc -b && vite build
 ```
 
