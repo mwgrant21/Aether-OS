@@ -3,8 +3,6 @@ import { OperatingModeCard } from './OperatingModeCard';
 import { AppearanceCard } from './AppearanceCard';
 import { BudgetAlertsCard } from './BudgetAlertsCard';
 import { OperatorCard } from './OperatorCard';
-import { ChatBackendCard } from './ChatBackendCard';
-import { ModelPolicyCard } from './ModelPolicyCard';
 import { NarrationVerbosityCard } from './NarrationVerbosityCard';
 import { StatuslineCard } from './StatuslineCard';
 
@@ -14,8 +12,6 @@ export function SettingsView() {
       <div style={columnStyle}>
         <OperatorCard />
         <OperatingModeCard />
-        <ChatBackendCard />
-        <ModelPolicyCard />
         <NarrationVerbosityCard />
         <BudgetAlertsCard />
         <StatuslineCard />

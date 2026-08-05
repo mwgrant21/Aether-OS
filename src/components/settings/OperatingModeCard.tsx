@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
@@ -14,6 +14,14 @@ const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
 export function OperatingModeCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
+  const { autoHeadlines } = state.cfg;
+
+  // Push the persisted preference to main on every mount (covers app restart,
+  // where main.ts always starts with its own default until told otherwise)
+  // and on every toggle.
+  useEffect(() => {
+    window.aetherElectron?.agents.setAutoHeadlines(autoHeadlines);
+  }, [autoHeadlines]);
 
   return (
     <div style={cardStyle(colors)}>
@@ -27,6 +35,21 @@ export function OperatingModeCard() {
             </Button>
           );
         })}
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={labelStyle(colors)}>AUTO HEADLINES</div>
+        <Button
+          onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { autoHeadlines: !autoHeadlines } })}
+          style={toggleStyle(colors, autoHeadlines)}
+        >
+          {autoHeadlines ? 'ON' : 'OFF'}
+        </Button>
+      </div>
+      <div style={hintStyle(colors)}>
+        Periodically updates each active agent's status line with a snippet of its current
+        work, computed locally with no API call and no cost. Turn off to keep the roster on
+        each dispatch's static description instead.
       </div>
     </div>
   );
@@ -60,5 +83,30 @@ function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): CSSPropert
     background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : 'rgba(10,32,43,.6)',
     boxShadow: on ? (key === 'AUTO' ? '0 0 12px rgba(245,198,107,.45)' : '0 0 12px rgba(95,220,255,.4)') : undefined,
     border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
+  };
+}
+function labelStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+}
+function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
+  return {
+    minWidth: 52,
+    textAlign: 'center',
+    cursor: 'pointer',
+    padding: '6px 12px',
+    borderRadius: 7,
+    font: `600 10px/1 ${fonts.ui}`,
+    letterSpacing: 1,
+    color: on ? '#04202b' : colors.textMuted,
+    background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',
+    boxShadow: on ? '0 0 10px rgba(95,220,255,.4)' : undefined,
+    border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
+  };
+}
+function hintStyle(colors: ColorPalette): CSSProperties {
+  return {
+    marginTop: 6,
+    font: `500 11px/1.4 ${fonts.ui}`,
+    color: colors.textMuted,
   };
 }
