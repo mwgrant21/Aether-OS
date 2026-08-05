@@ -71,19 +71,28 @@ export function useChatChannels(state: AetherState, _dispatch: Dispatch<Action>)
     // action-JSON convention it used to feed (spawn/kill/theme/renderer/
     // throttle) was only ever meaningful for a genuine model reply, so it
     // goes with it (see actionParser.ts/actionExecutor.ts deletion).
-    const displayText = localResponder(channel, text, state);
-    const assistantMsg: ChatMessage = { id: makeMessageId(), role: 'assistant', text: displayText, t: nowShort() };
+    //
+    // localResponder() is synchronous, so committing its reply in the same
+    // tick as the typing-indicator set would flip isTyping true then false
+    // before React ever paints it -- an instant reply that reads as broken
+    // (see MessageThread's typing indicator). A short deferral gives the
+    // indicator a moment to actually render; it is not standing in for
+    // network latency, just keeping the existing UI affordance observable.
+    setTimeout(() => {
+      const displayText = localResponder(channel, text, state);
+      const assistantMsg: ChatMessage = { id: makeMessageId(), role: 'assistant', text: displayText, t: nowShort() };
 
-    setMessagesByChannel((prev) => ({
-      ...prev,
-      [channelId]: appendChannelMessage(channelId, prev[channelId] ?? historyWithUserMsg, assistantMsg),
-    }));
-    setTypingChannelIds((prev) => {
-      const next = new Set(prev);
-      next.delete(channelId);
-      return next;
-    });
-    setUnreadCounts((prev) => (channelId === activeChannelIdRef.current ? prev : { ...prev, [channelId]: (prev[channelId] ?? 0) + 1 }));
+      setMessagesByChannel((prev) => ({
+        ...prev,
+        [channelId]: appendChannelMessage(channelId, prev[channelId] ?? historyWithUserMsg, assistantMsg),
+      }));
+      setTypingChannelIds((prev) => {
+        const next = new Set(prev);
+        next.delete(channelId);
+        return next;
+      });
+      setUnreadCounts((prev) => (channelId === activeChannelIdRef.current ? prev : { ...prev, [channelId]: (prev[channelId] ?? 0) + 1 }));
+    }, 250);
   }
 
   return {

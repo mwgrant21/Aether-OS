@@ -33,17 +33,21 @@ export interface SysMetric {
 // approval loop exists (see PermissionRequestUI/PostToolFlagRequestUI below).
 // Disposition: KEEP AS-IS -- this is a different, still-real system, not a
 // redundant one. Approval governs the fictional/simulated "AETHER OS" Agent
-// domain (tick.ts's random risk-event generator, the chat action-JSON
-// pipeline's spawn/kill/throttle confirmations in actionExecutor.ts, and the
-// Terminal's approvals/approve/deny commands in commands.ts) -- an entirely
-// different axis from PermissionRequestUI, which gates a real, live Claude
-// Code tool call. No file reviewed makes Approval redundant: tick.ts's
-// generator is this app's deliberate ongoing "reactor simulation" narrative
-// (same category as its burn-rate/sys-metrics randomness, per this project's
-// own precedent of leaving fictional-simulation pieces additive rather than
+// domain (tick.ts's random risk-event generator and the Terminal's
+// approvals/approve/deny commands in commands.ts) -- an entirely different
+// axis from PermissionRequestUI, which gates a real, live Claude Code tool
+// call. No file reviewed makes Approval redundant: tick.ts's generator is
+// this app's deliberate ongoing "reactor simulation" narrative (same
+// category as its burn-rate/sys-metrics randomness, per this project's own
+// precedent of leaving fictional-simulation pieces additive rather than
 // retrofitting them onto real data -- see PROGRESS.md's Files/Memory/Chat
-// slices), and the chat/terminal paths are real, tested, still-used features
-// built on top of it in later phases. See PROGRESS.md for the full write-up.
+// slices), and the Terminal path is a real, tested, still-used feature built
+// on top of it. See PROGRESS.md for the full write-up. (The chat feature
+// also used to build on this system via actionExecutor.ts's spawn/kill/
+// throttle confirmations, feeding ADD_APPROVAL from model-emitted action
+// JSON -- removed in the API teardown, Stage 13.5, since a genuine model
+// reply was the only producer on that path; see verb/targetAgentName/
+// channelId below.)
 export interface Approval {
   id: number;
   agent: string;
@@ -53,8 +57,11 @@ export interface Approval {
   detail: string;
   risk: 'HIGH' | 'MED' | 'LOW';
   // Phase 2b (chat action-JSON pipeline) — optional, so every pre-existing
-  // (seed + tick.ts-generated) approval is unaffected. Set together only by
-  // the chat feature's risky-verb path (see actionExecutor.ts).
+  // (seed + tick.ts-generated) approval is unaffected. Were set together only
+  // by the chat feature's risky-verb path (actionExecutor.ts, deleted in the
+  // API teardown, Stage 13.5) -- kept here as dead-but-harmless optional
+  // fields rather than pulled, since Approval itself is still real, live
+  // machinery for tick.ts/commands.ts.
   verb?: 'spawn' | 'kill' | 'throttle';
   targetAgentName?: string; // spawn: name of the agent to create; kill/throttle: name of the existing agent targeted
   channelId?: string; // originating chat channel id, so resolution can post a confirmation back to it
