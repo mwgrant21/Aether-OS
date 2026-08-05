@@ -2,7 +2,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import { configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import { chatProxyPlugin } from './vite-plugins/chatProxyPlugin';
 
 export default defineConfig(({ mode }) => {
   // Populate process.env from .env / .env.local for the dev server's own
@@ -15,7 +14,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), chatProxyPlugin()],
+    plugins: [react()],
     test: {
       environment: 'jsdom',
       setupFiles: ['./src/test-setup.ts'],
