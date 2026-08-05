@@ -6,7 +6,6 @@ import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispa
 import { makeAgent, runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
-import { buildChatActionResultText } from './chatActionResult';
 import { computeMomentum, computeRateFromUsage } from '../components/reactor/reactorMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
@@ -18,7 +17,6 @@ export type Action =
   | { type: 'TOGGLE_NOTIFS' }
   | { type: 'RESOLVE_APPROVAL'; id: number; approve: boolean }
   | { type: 'ADD_APPROVAL'; approval: Omit<Approval, 'id'>; autoResolve?: boolean }
-  | { type: 'CLEAR_CHAT_ACTION_RESULTS'; count: number }
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
@@ -64,10 +62,10 @@ const THROTTLE_SHARE_CEILING = 0.08;
 // Shared by RESOLVE_APPROVAL (existing, queued approval resolved later) and
 // ADD_APPROVAL's autoResolve path (Phase 2b chat auto-approve, resolved in
 // the same dispatch it's created in -- see ADD_APPROVAL below). Applying the
-// verb-specific mutation, the HIGH-risk legacy shorthand, the
-// chatActionResults emission, and the notif/log push all in one place means
-// there is exactly one implementation of "what resolving an approval does",
-// so the two callers can never drift out of sync with each other.
+// verb-specific mutation, the HIGH-risk legacy shorthand, and the notif/log
+// push all in one place means there is exactly one implementation of "what
+// resolving an approval does", so the two callers can never drift out of
+// sync with each other.
 //
 // `req` need not be present in `state.approvals` when this is called -- the
 // `approvals.filter` below is a harmless no-op in that case (ADD_APPROVAL's
@@ -103,16 +101,11 @@ function applyApprovalResolution(state: AetherState, req: Approval, approve: boo
     rate = Math.min(168000, rate + 9000);
   }
 
-  const chatActionResults = req.channelId
-    ? [...state.chatActionResults, { channelId: req.channelId, text: buildChatActionResultText(req, ok) }]
-    : state.chatActionResults;
-
   return {
     ...state,
     agents,
     idleList,
     rate,
-    chatActionResults,
     approvals: state.approvals.filter((a) => a.id !== req.id),
     notifs: [
       { t: nowShort(), m: `${ok ? 'Approved: ' : 'Denied: '}${req.action} (${req.agent})`, c: ok ? '#3be0a0' : '#ff9d9d' },
@@ -347,9 +340,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
       }
       return { ...bumped, approvals: [...state.approvals, newApproval] };
     }
-
-    case 'CLEAR_CHAT_ACTION_RESULTS':
-      return { ...state, chatActionResults: state.chatActionResults.slice(action.count) };
 
     case 'RESOLVE_APPROVAL': {
       const req = state.approvals.find((a) => a.id === action.id);

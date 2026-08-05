@@ -3,29 +3,15 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { useChatChannels } from './useChatChannels';
-import { useChatBackendState, type ChatBackendState } from './useChatBackendState';
 import { ChannelRail } from './ChannelRail';
 import { MessageThread } from './MessageThread';
 import { MessageInput } from './MessageInput';
-
-const CHIP_LABEL: Record<ChatBackendState, string> = {
-  live: 'LIVE',
-  offline: 'OFFLINE',
-  browser: 'BROWSER',
-};
-
-const CHIP_TITLE: Record<ChatBackendState, string> = {
-  live: 'Claude replies enabled',
-  offline: 'Not confirmed live — replies may fall back to the offline in-world responder',
-  browser: 'Browser mode — replies via the dev-server proxy',
-};
 
 export function ChatView() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const chat = useChatChannels(state, dispatch);
   const [draft, setDraft] = useState('');
-  const backendState = useChatBackendState();
 
   function send() {
     if (!draft.trim()) return;
@@ -50,11 +36,6 @@ export function ChatView() {
           <span style={headerDotStyle(chat.activeChannel.hue)} />
           <span style={headerNameStyle(colors)}>{chat.activeChannel.name}</span>
           {chat.activeChannel.archived && <span style={archivedPillStyle(colors)}>TERMINATED</span>}
-          {backendState !== null && (
-            <span style={backendChipStyle(colors, backendState)} title={CHIP_TITLE[backendState]}>
-              {CHIP_LABEL[backendState]}
-            </span>
-          )}
         </div>
         <MessageThread channel={chat.activeChannel} messages={chat.messages} isTyping={chat.isTyping} />
         <MessageInput
@@ -105,18 +86,6 @@ function archivedPillStyle(colors: ColorPalette): CSSProperties {
     letterSpacing: 1,
     color: colors.textDim,
     border: `1px solid ${colors.chromeBorder}`,
-    padding: '3px 7px',
-    borderRadius: 5,
-  };
-}
-function backendChipStyle(colors: ColorPalette, backendState: ChatBackendState): CSSProperties {
-  return {
-    marginLeft: 'auto',
-    font: `600 9px/1 ${fonts.ui}`,
-    letterSpacing: 1,
-    color: backendState === 'live' ? colors.success : backendState === 'offline' ? colors.warn : colors.textDim,
-    border: `1px solid ${colors.chipBorder}`,
-    background: colors.panelInset,
     padding: '3px 7px',
     borderRadius: 5,
   };

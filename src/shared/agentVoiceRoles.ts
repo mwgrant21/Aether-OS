@@ -2,8 +2,9 @@
 // extractSubagentType, e.g. "code-reviewer", "general-purpose") onto one of
 // the 5 fixed voice-pack roles (spec §5.1). Voice packs key on role, not on
 // the freeform subagent_type string, so this table is the seam between them.
-// Mirrors src/components/chat/personas.ts's own FALLBACK_PERSONA pattern:
-// a static map with a named default rather than a heuristic.
+// Mirrored src/components/chat/personas.ts's own FALLBACK_PERSONA pattern
+// (deleted in the API teardown, Stage 13.5): a static map with a named
+// default rather than a heuristic.
 export type VoiceRole = 'STEWARD' | 'CINDER' | 'PILGRIM' | 'ASSAY' | 'FORGE';
 
 const ROLE_MAP: Record<string, VoiceRole> = {

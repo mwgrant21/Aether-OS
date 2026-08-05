@@ -64,13 +64,6 @@ describe('persistence', () => {
     expect(loaded?.memoryShowTombstones).toBe(true);
   });
 
-  it('persists chatActionResults across reloads', () => {
-    const pending = [{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }];
-    savePersisted({ ...initialState, chatActionResults: pending });
-    const loaded = loadPersisted();
-    expect(loaded?.chatActionResults).toEqual(pending);
-  });
-
   it('persists operatorName across reloads', () => {
     savePersisted({ ...initialState, operatorName: 'Matt' });
     const loaded = loadPersisted();
@@ -144,7 +137,6 @@ describe('persistence', () => {
       selectedMemory: '999',
       memoryScopeFilter: 'general-purpose',
       memoryShowTombstones: true,
-      chatActionResults: [{ channelId: 'AETHER', text: 'done' }],
       recentCompletedDispatches: [
         {
           toolUseId: 'ghost-tool-use-1',
@@ -190,7 +182,6 @@ describe('persistence', () => {
     expect(loaded?.selectedMemory).toBe('999');
     expect(loaded?.memoryScopeFilter).toBe('general-purpose');
     expect(loaded?.memoryShowTombstones).toBe(true);
-    expect(loaded?.chatActionResults).toEqual(distinctiveState.chatActionResults);
     expect(loaded?.recentCompletedDispatches).toEqual(distinctiveState.recentCompletedDispatches);
     expect(loaded?.dispatchChannels).toEqual(distinctiveState.dispatchChannels);
     expect(loaded?.dispatchUsage).toEqual(distinctiveState.dispatchUsage);

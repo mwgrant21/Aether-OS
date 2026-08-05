@@ -60,11 +60,6 @@ export interface Approval {
   channelId?: string; // originating chat channel id, so resolution can post a confirmation back to it
 }
 
-export interface ChatActionResult {
-  channelId: string;
-  text: string;
-}
-
 export interface Notif {
   t: string;
   m: string;
@@ -256,7 +251,6 @@ export interface AetherState {
   providers: Provider[];
   routeDefault: string;
   operatorName: string;
-  chatActionResults: ChatActionResult[];
   realUsage: RealUsageSnapshot;
   rateHistory: RateSample[];
   realAgents: RealAgentDispatch[];

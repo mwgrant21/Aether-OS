@@ -518,7 +518,6 @@ describe('reducer — Phase 2b chat action pipeline', () => {
     const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 50, approve: true });
     expect(next.agents.map((a) => a.name)).toContain('Nightwatch');
     expect(next.rate).toBe(initialState.rate + 18000);
-    expect(next.chatActionResults).toEqual([{ channelId: 'AETHER', text: '✓ Approved — Nightwatch spawned.' }]);
   });
 
   it('RESOLVE_APPROVAL on an approved kill approval moves the target agent to idleList and does not touch rate', () => {
@@ -535,43 +534,31 @@ describe('reducer — Phase 2b chat action pipeline', () => {
     expect(next.agents.find((a) => a.name === 'Code Builder')?.share).toBe(0.08);
   });
 
-  it('RESOLVE_APPROVAL gracefully no-ops the mutation (but still resolves + emits the result) when the target agent is already gone', () => {
+  it('RESOLVE_APPROVAL gracefully no-ops the mutation (but still resolves) when the target agent is already gone', () => {
     const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 53, verb: 'kill', targetAgentName: 'Nobody', risk: 'HIGH', channelId: 'AETHER' })] };
     const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 53, approve: true });
     expect(next.approvals.map((a) => a.id)).not.toContain(53);
-    expect(next.chatActionResults).toHaveLength(1);
   });
 
-  it('RESOLVE_APPROVAL on a denied chat approval emits a denial line to its channel and applies no mutation', () => {
+  it('RESOLVE_APPROVAL on a denied chat approval applies no mutation', () => {
     const withApproval = { ...initialState, approvals: [...initialState.approvals, chatApproval({ id: 54, verb: 'spawn', targetAgentName: 'Nightwatch', risk: 'MED', channelId: 'AETHER' })] };
     const next = reducer(withApproval, { type: 'RESOLVE_APPROVAL', id: 54, approve: false });
     expect(next.agents.map((a) => a.name)).not.toContain('Nightwatch');
-    expect(next.chatActionResults).toEqual([{ channelId: 'AETHER', text: '✗ Denied: Spawn Nightwatch.' }]);
   });
 
-  it('RESOLVE_APPROVAL on the pre-existing seed approvals is byte-for-byte unchanged (no verb, no chatActionResults emitted)', () => {
+  it('RESOLVE_APPROVAL on the pre-existing seed approvals is byte-for-byte unchanged (no verb)', () => {
     const next = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 1, approve: true });
     expect(next.rate).toBe(initialState.rate + 9000);
-    expect(next.chatActionResults).toEqual([]);
-  });
-
-  it('CLEAR_CHAT_ACTION_RESULTS removes exactly the first N entries, preserving any added after', () => {
-    const withResults = { ...initialState, chatActionResults: [{ channelId: 'a', text: '1' }, { channelId: 'b', text: '2' }, { channelId: 'c', text: '3' }] };
-    const next = reducer(withResults, { type: 'CLEAR_CHAT_ACTION_RESULTS', count: 2 });
-    expect(next.chatActionResults).toEqual([{ channelId: 'c', text: '3' }]);
   });
 });
 
 describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-mode race)', () => {
-  it('autoResolve: true immediately executes the mutation and emits chatActionResults, never adding the approval to state.approvals', () => {
+  it('autoResolve: true immediately executes the mutation, never adding the approval to state.approvals', () => {
     const payload = chatApproval({ id: undefined as any, verb: 'throttle', targetAgentName: 'Code Builder', risk: 'LOW', channelId: 'Code Builder' }) as any;
     const next = reducer(initialState, { type: 'ADD_APPROVAL', approval: payload, autoResolve: true });
 
     // The mutation happened immediately.
     expect(next.agents.find((a) => a.name === 'Code Builder')?.share).toBe(0.08);
-    // The chat confirmation was emitted immediately.
-    expect(next.chatActionResults).toHaveLength(1);
-    expect(next.chatActionResults[0].channelId).toBe('Code Builder');
     // apprSeq still advances (the id was assigned and consumed)...
     expect(next.apprSeq).toBe(initialState.apprSeq + 1);
     // ...but the approval itself never appears in the queue, not even transiently.
@@ -586,7 +573,6 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
 
     for (const next of [withFalse, withOmitted]) {
       expect(next.agents.map((a) => a.name)).not.toContain('Nightwatch');
-      expect(next.chatActionResults).toEqual([]);
       expect(next.approvals).toHaveLength(initialState.approvals.length + 1);
       expect(next.approvals[next.approvals.length - 1].id).toBe(initialState.apprSeq);
       expect(next.apprSeq).toBe(initialState.apprSeq + 1);

@@ -74,7 +74,6 @@ export function savePersisted(state: AetherState): void {
       selectedMemory: state.selectedMemory,
       memoryScopeFilter: state.memoryScopeFilter,
       memoryShowTombstones: state.memoryShowTombstones,
-      chatActionResults: state.chatActionResults,
       recentCompletedDispatches: state.recentCompletedDispatches,
       dispatchChannels: state.dispatchChannels,
       dispatchUsage: state.dispatchUsage,
