@@ -19,9 +19,6 @@ import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
-import { runChatRequest } from '../src/shared/chatCore';
-import { isModelCallAllowed, resolveModel, type ModelPolicyMode } from '../src/shared/modelPolicy';
-import { loadSpendState, recordSpend, costUsd, spendGate } from './modelSpendTracker';
 import {
   createHeadlineThrottle,
   shouldCallForHeadline,
@@ -32,7 +29,6 @@ import {
 import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
 import { handleNotification } from './notificationHandler';
-import { loadDotEnvInto } from './loadDotEnv';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
@@ -217,11 +213,10 @@ const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json'
 const permissionServerPortPath = join(os.homedir(), '.aether-os', 'permission-server-port');
 const aetherOsDir = join(os.homedir(), '.aether-os');
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
-// Mirrors the .env resolution above: app.getAppPath() resolves the project
-// root in dev, and inside resources/app.asar for a packaged build. Task 3's
-// script is not yet wired into packaging (no extraResources config exists in
-// this repo), so a packaged build will not find it at this path -- the same
-// known gap already called out for .env, not something this task solves.
+// app.getAppPath() resolves the project root in dev, and inside
+// resources/app.asar for a packaged build. This repo has no extraResources
+// packaging config, so a packaged build will not find the script at this
+// path -- a known gap, not something this task solves.
 const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
 let stopStatuslineWatcher: (() => void) | null = null;
 let stopPermissionServer: (() => void) | null = null;
@@ -371,48 +366,6 @@ let lastWrittenOwnSessionId: string | null | undefined = undefined;
 // on each dispatch's static description instead of a live work snippet.
 let autoHeadlinesEnabled = true;
 
-// Mirrors autoHeadlinesEnabled immediately above: main.ts starts with its own
-// default until the renderer's persisted preference is pushed on mount (see
-// ModelPolicyCard.tsx's useEffect, same pattern as ChatBackendCard.tsx's for
-// autoHeadlines). 'Local' has no cascade yet (Stage 12) so isModelCallAllowed
-// treats it identically to 'Off' -- see modelPolicy.ts.
-let modelPolicyMode: ModelPolicyMode = 'Local';
-const modelSpendStatePath = join(app.getPath('userData'), 'model-spend.json');
-
-function currentMonthKey(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
-async function modelCallsCurrentlyPermitted(): Promise<boolean> {
-  if (!isModelCallAllowed(modelPolicyMode)) return false;
-  // Spend state is a self-imposed, balance-blind budget guard (see modelSpendTracker
-  // comments), not a hard billing limit enforced by the provider. loadSpendState
-  // distinguishes "no file yet" (returns {} -- legitimate) from "file exists but is
-  // corrupt/unreadable" (throws) -- so the catch below is reachable and real: a
-  // locked file or malformed JSON lands here, not in a silent {} that would read as
-  // "$0 spent this month" and reset the ceiling indefinitely. We fail OPEN (permit
-  // the call) rather than silently blocking a policy mode the user explicitly turned
-  // on because of an unrelated disk/IO error. A stuck "blocked" state from a
-  // persistent read failure would be far more disruptive (and harder to diagnose)
-  // than the rare case where a genuinely near-ceiling month allows one extra call
-  // while the read is failing.
-  let state: Record<string, number>;
-  try {
-    state = await loadSpendState(modelSpendStatePath);
-  } catch (err) {
-    console.error('modelCallsCurrentlyPermitted: failed to read spend state, failing open', err);
-    return true;
-  }
-  const monthTotal = state[currentMonthKey()] ?? 0;
-  return spendGate(monthTotal) !== 'blocked';
-}
-
-async function recordModelSpend(model: string, usage: { inputTokens: number; outputTokens: number }): Promise<void> {
-  const usd = costUsd(model, usage.inputTokens, usage.outputTokens);
-  if (usd > 0) await recordSpend(modelSpendStatePath, currentMonthKey(), usd);
-}
-
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
@@ -481,14 +434,6 @@ async function tickAndPushAgents(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  // Load .env into process.env before anything downstream (e.g. the chat:send
-  // handler below) reads ANTHROPIC_API_KEY. NOTE: in a packaged build,
-  // app.getAppPath() resolves inside resources/app.asar, so a .env shipped
-  // beside the executable will NOT be found there -- a real shell-exported
-  // ANTHROPIC_API_KEY is the supported path for packaged builds, and Task 5's
-  // Settings surface must make that legible rather than leaving the user guessing.
-  loadDotEnvInto(join(app.getAppPath(), '.env'), process.env);
-
   Menu.setApplicationMenu(null);
   createWindow();
 
@@ -632,28 +577,6 @@ app.on('before-quit', () => {
 
 ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
   autoHeadlinesEnabled = enabled;
-});
-
-ipcMain.on('agents:setModelPolicyMode', (_event, mode: ModelPolicyMode) => {
-  modelPolicyMode = mode;
-});
-
-// Live spend/gate signal for the Settings card (finding 6, final review):
-// spendGate can return 'degrade' but until now nothing consumed it -- the
-// comment in modelSpendTracker.ts claims "UI warns" when nothing did. This
-// is deliberately scoped to current-month total + gate, not full historical
-// spend; the card fetches on mount and after mode changes rather than
-// polling continuously.
-ipcMain.handle('modelSpend:get', async (): Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }> => {
-  let state: Record<string, number>;
-  try {
-    state = await loadSpendState(modelSpendStatePath);
-  } catch (err) {
-    console.error('modelSpend:get: failed to read spend state, reporting $0/ok', err);
-    return { monthTotalUsd: 0, gate: 'ok' };
-  }
-  const monthTotalUsd = state[currentMonthKey()] ?? 0;
-  return { monthTotalUsd, gate: spendGate(monthTotalUsd) };
 });
 
 // app.getVersion() reads Electron's resolved app manifest, which falls back
@@ -811,31 +734,6 @@ ipcMain.handle('statusline:uninstall', async () => {
   }
   return result;
 });
-
-ipcMain.handle('chat:send', async (_event, body: unknown) => {
-  if (!(await modelCallsCurrentlyPermitted())) {
-    return { error: `Model policy is "${modelPolicyMode}" or the monthly spend ceiling was reached; no model calls are permitted right now` };
-  }
-  const result = await runChatRequest(body, process.env.ANTHROPIC_API_KEY);
-  if (result.ok) {
-    try {
-      await recordModelSpend(resolveModel('chat'), result.usage);
-    } catch (err) {
-      // The API call already succeeded and was billed -- a bookkeeping write failure
-      // here must never discard the reply the user already paid for.
-      console.error('chat:send: failed to record model spend', err);
-    }
-  }
-  // Deliberately do not surface result.status to the renderer -- askClaude()
-  // treats every failure identically, and returning a status would invite a
-  // future caller to branch on it and quietly break the null-on-any-failure
-  // contract.
-  return result.ok ? { reply: result.reply } : { error: result.error };
-});
-
-// Returns a boolean only -- never the key, never a prefix, never a length.
-// The API key must never reach the renderer.
-ipcMain.handle('chat:hasKey', async () => typeof process.env.ANTHROPIC_API_KEY === 'string' && process.env.ANTHROPIC_API_KEY.length > 0);
 
 ipcMain.on('window:minimize', () => {
   mainWindow?.minimize();

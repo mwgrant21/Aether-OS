@@ -37,8 +37,6 @@ declare global {
         onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
         onNarration: (callback: (payload: { toolUseId: string; narration: string; severity: number }) => void) => () => void;
         setAutoHeadlines: (enabled: boolean) => void;
-        setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => void;
-        getModelSpend: () => Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }>;
       };
       fleet: {
         onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => () => void;
@@ -86,10 +84,6 @@ declare global {
       };
       presence: {
         onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => () => void;
-      };
-      chat: {
-        send: (body: unknown) => Promise<{ reply: string } | { error: string }>;
-        hasKey: () => Promise<boolean>;
       };
       window: {
         minimize: () => void;

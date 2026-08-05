@@ -4,7 +4,6 @@ out
 .DS_Store
 *.local
 *.tsbuildinfo
-.env
 .worktrees/
 electron-dev*.log
 test-results/

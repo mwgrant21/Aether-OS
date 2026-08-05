@@ -75,8 +75,6 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('agents:narration', listener);
     },
     setAutoHeadlines: (enabled: boolean) => ipcRenderer.send('agents:setAutoHeadlines', enabled),
-    setModelPolicyMode: (mode: 'Local' | 'API' | 'Off') => ipcRenderer.send('agents:setModelPolicyMode', mode),
-    getModelSpend: (): Promise<{ monthTotalUsd: number; gate: 'ok' | 'degrade' | 'blocked' }> => ipcRenderer.invoke('modelSpend:get'),
   },
   fleet: {
     onSnapshot: (callback: (rows: FleetSessionRow[] | null) => void) => {
@@ -158,10 +156,6 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('postToolFlag:request', listener);
     },
     respond: (requestId: string, decision: PostToolFlagDecision): Promise<void> => ipcRenderer.invoke('postToolFlag:respond', { requestId, decision }),
-  },
-  chat: {
-    send: (body: unknown): Promise<{ reply: string } | { error: string }> => ipcRenderer.invoke('chat:send', body),
-    hasKey: (): Promise<boolean> => ipcRenderer.invoke('chat:hasKey'),
   },
   presence: {
     onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => {
