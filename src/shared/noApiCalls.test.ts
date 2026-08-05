@@ -1,21 +1,19 @@
-// src/shared/modelPolicyEnforcement.test.ts
+// src/shared/noApiCalls.test.ts
 //
-// This is the allowlist test the handoff (STAGE_11.5_HANDOFF.md §3, requirement
-// 3) calls for: it scans the actual source tree rather than trusting that
-// modelPolicy.ts stayed the only place model IDs live. Same shape as
-// persistence.test.ts's coverage test -- encode *why* a miss matters, not just
-// *what* the current state is, so a future feature adding a third model call
-// site fails loudly instead of silently replaying the Stage 11.5 defect.
+// Replaces modelPolicyEnforcement.test.ts's allowlist-shaped guard now that the
+// model-policy module it protected (modelPolicy.ts) is gone. That module was the
+// last remaining API call site; this file proves the app has no path back to a
+// paid API call short of reinstalling a dependency and writing new code -- see
+// the $10.76/day incident (2026-08-04) and docs/superpowers/plans's
+// 2026-08-05-api-teardown-stage13.5.md for why this exists.
+//
+// Reuses the ROOTS / SKIP_DIR_NAMES / walk() / allSourceFiles() scaffolding
+// verbatim from modelPolicyEnforcement.test.ts -- proven, deliberate reuse.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ALLOWED_MODELS } from './modelPolicy';
 
 const ROOTS = ['src', 'electron', 'vite-plugins'];
-const OWNING_FILES = new Set([
-  path.normalize('src/shared/modelPolicy.ts'),
-  path.normalize('src/shared/chatCore.ts'),
-]);
 const SKIP_DIR_NAMES = new Set(['node_modules', '.worktrees', 'dist', 'dist-electron', 'release']);
 
 function walk(dir: string, out: string[]): void {
@@ -36,38 +34,49 @@ function allSourceFiles(): string[] {
   return out;
 }
 
-describe('model policy enforcement', () => {
-  it('no model-ID literal appears outside the owning files', () => {
+describe('no API calls', () => {
+  it('@anthropic-ai/sdk is not a dependency or devDependency', () => {
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(pkg.dependencies?.['@anthropic-ai/sdk']).toBeUndefined();
+    expect(pkg.devDependencies?.['@anthropic-ai/sdk']).toBeUndefined();
+  });
+
+  it('no source file imports @anthropic-ai/sdk', () => {
     const offenders: string[] = [];
     for (const file of allSourceFiles()) {
       const rel = path.normalize(path.relative('.', file));
-      if (OWNING_FILES.has(rel)) continue;
       const text = fs.readFileSync(file, 'utf8');
-      for (const model of ALLOWED_MODELS) {
-        if (text.includes(model)) offenders.push(`${rel} references "${model}"`);
-      }
+      if (text.includes('@anthropic-ai/sdk')) offenders.push(rel);
     }
     expect(offenders).toEqual([]);
   });
 
-  it('no messages.create call appears outside chatCore.ts', () => {
+  it('no source file references api.anthropic.com', () => {
     const offenders: string[] = [];
     for (const file of allSourceFiles()) {
       const rel = path.normalize(path.relative('.', file));
-      if (rel === path.normalize('src/shared/chatCore.ts')) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      if (text.includes('api.anthropic.com')) offenders.push(rel);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('no source file contains a messages.create( call', () => {
+    const offenders: string[] = [];
+    for (const file of allSourceFiles()) {
+      const rel = path.normalize(path.relative('.', file));
       const text = fs.readFileSync(file, 'utf8');
       if (/messages\.create\s*\(/.test(text)) offenders.push(rel);
     }
     expect(offenders).toEqual([]);
   });
 
-  // The two checks above only catch the two models modelPolicy.ts already
-  // knows about -- they cannot catch an entirely NEW, unapproved model ID
-  // introduced somewhere else (e.g. a new file hardcoding a model string and
-  // passing it as an argument, never as a literal named in ALLOWED_MODELS).
-  // This scans for the shape of a Claude model ID generically, so the build
-  // fails the moment ANY such literal becomes reachable outside the owning
-  // files -- not just the two currently-approved ones.
+  // Generic model-ID shape check. With ALLOWED_MODELS gone, this is the only
+  // model-ID guard left -- that is intended. Stage 15 will lean on this same
+  // pattern.
   const MODEL_ID_SHAPE = /claude-[a-z]+-\d/;
 
   // Legitimate non-call-site literals: pricing/comparison-only model-ID
@@ -82,11 +91,10 @@ describe('model policy enforcement', () => {
     path.normalize('src/shared/optimizeRules.ts'),
   ]);
 
-  it('no new/unapproved Claude model-ID-shaped literal appears outside the owning files', () => {
+  it('no new/unapproved Claude model-ID-shaped literal appears outside LITERAL_EXCEPTIONS', () => {
     const offenders: string[] = [];
     for (const file of allSourceFiles()) {
       const rel = path.normalize(path.relative('.', file));
-      if (OWNING_FILES.has(rel)) continue;
       if (LITERAL_EXCEPTIONS.has(rel)) continue;
       const text = fs.readFileSync(file, 'utf8');
       if (MODEL_ID_SHAPE.test(text)) offenders.push(rel);

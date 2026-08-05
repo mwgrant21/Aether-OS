@@ -64,7 +64,6 @@ export const initialState: AetherState = {
     // Stage 11.5 addendum for the full "Aether should not cost a user
     // money" rationale behind this and the July 31st overrun it followed.
     autoHeadlines: true,
-    modelPolicyMode: 'Local',
     narrationVerbosity: 'full',
   },
   agents: [

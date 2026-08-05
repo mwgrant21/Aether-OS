@@ -17,7 +17,7 @@ export function AetherStoreProvider({ children }: { children: ReactNode }) {
     if (!persisted) return init;
     // Merge cfg field-by-field rather than replacing it wholesale -- a
     // pre-branch persisted blob (e.g. an old `aetheros-v1` localStorage
-    // entry) is missing newer Cfg fields like modelPolicyMode/autoHeadlines,
+    // entry) is missing newer Cfg fields like autoHeadlines/narrationVerbosity,
     // and `{ ...init, ...persisted }` alone lets persisted.cfg replace
     // init.cfg outright, leaving those fields undefined for existing users.
     return { ...init, ...persisted, cfg: { ...init.cfg, ...persisted.cfg } };
