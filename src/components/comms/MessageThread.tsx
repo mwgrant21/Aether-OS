@@ -1,12 +1,12 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
-import type { ChatChannel } from './chatChannels';
-import type { ChatMessage } from './chatPersistence';
+import type { CommsChannel } from './commsChannels';
+import type { ChatMessage } from './commsPersistence';
 import { TypingIndicator } from './TypingIndicator';
 
 interface MessageThreadProps {
-  channel: ChatChannel;
+  channel: CommsChannel;
   messages: ChatMessage[];
   isTyping: boolean;
 }

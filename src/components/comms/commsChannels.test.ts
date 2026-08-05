@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AETHER_CHANNEL_ID, deriveChannels, findChannel } from './chatChannels';
+import { AETHER_CHANNEL_ID, deriveChannels, findChannel } from './commsChannels';
 import { initialState } from '../../state/initialState';
 import { colors } from '../../styles/tokens';
 import type { AetherState } from '../../state/types';

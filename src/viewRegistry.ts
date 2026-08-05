@@ -3,7 +3,7 @@ import { TerminalView } from './components/terminal/TerminalView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { AgentsView } from './components/agents/AgentsView';
 import { GridView } from './components/grid/GridView';
-import { ChatView } from './components/chat/ChatView';
+import { CommsView } from './components/comms/CommsView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { MemoryView } from './components/memory/MemoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
@@ -22,7 +22,7 @@ export interface ViewDef {
 export const VIEWS: ViewDef[] = [
   { id: 'Dashboard', inTopBar: false, inSidebar: true, component: DashboardView },
   { id: 'Terminal', inTopBar: true, inSidebar: true, component: TerminalView },
-  { id: 'Chat', inTopBar: true, inSidebar: false, component: ChatView },
+  { id: 'Comms', inTopBar: true, inSidebar: false, component: CommsView },
   { id: 'Agents', inTopBar: true, inSidebar: true, component: AgentsView },
   { id: 'Grid', inTopBar: true, inSidebar: true, component: GridView },
   { id: 'Projects', inTopBar: true, inSidebar: true, component: ProjectsView },

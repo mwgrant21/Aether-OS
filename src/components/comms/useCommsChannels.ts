@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import type { AetherState } from '../../state/types';
 import type { Action } from '../../state/reducer';
-import { AETHER_CHANNEL_ID, deriveChannels, findChannel, type ChatChannel } from './chatChannels';
-import { appendChannelMessage, loadChannelMessages, type ChatMessage } from './chatPersistence';
+import { AETHER_CHANNEL_ID, deriveChannels, findChannel, type CommsChannel } from './commsChannels';
+import { appendChannelMessage, loadChannelMessages, type ChatMessage } from './commsPersistence';
 import { localResponder } from './localResponder';
 import { nowShort } from '../../utils/format';
 
@@ -10,9 +10,9 @@ function makeMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export interface UseChatChannelsResult {
-  channels: ChatChannel[];
-  activeChannel: ChatChannel;
+export interface UseCommsChannelsResult {
+  channels: CommsChannel[];
+  activeChannel: CommsChannel;
   activeChannelId: string;
   setActiveChannelId: (id: string) => void;
   messages: ChatMessage[];
@@ -28,9 +28,9 @@ export interface UseChatChannelsResult {
 // axis entirely and would be wrong to conflate just because both happen to
 // name an agent. See Global Constraints.
 // The `dispatch` param is kept in the public signature for Stage 14 to build
-// on (see the file-level comment on UseChatChannelsResult) even though this
+// on (see the file-level comment on UseCommsChannelsResult) even though this
 // teardown's local-responder-only sendMessage no longer needs it itself.
-export function useChatChannels(state: AetherState, _dispatch: Dispatch<Action>): UseChatChannelsResult {
+export function useCommsChannels(state: AetherState, _dispatch: Dispatch<Action>): UseCommsChannelsResult {
   const channels = useMemo(() => deriveChannels(state), [state.agents, state.idleList, state.dispatchChannels]);
   const [activeChannelId, setActiveChannelId] = useState<string>(AETHER_CHANNEL_ID);
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, ChatMessage[]>>({});

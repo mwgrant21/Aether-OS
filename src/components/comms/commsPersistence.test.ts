@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { appendChannelMessage, loadChannelMessages, MAX_MESSAGES_PER_CHANNEL, saveChannelMessages } from './chatPersistence';
-import type { ChatMessage } from './chatPersistence';
+import { appendChannelMessage, loadChannelMessages, MAX_MESSAGES_PER_CHANNEL, saveChannelMessages } from './commsPersistence';
+import type { ChatMessage } from './commsPersistence';
 
 beforeEach(() => {
   localStorage.clear();

@@ -3,7 +3,7 @@ import { colors } from '../../styles/tokens';
 
 export const AETHER_CHANNEL_ID = 'AETHER';
 
-export interface ChatChannel {
+export interface CommsChannel {
   id: string;
   kind: 'aether' | 'agent' | 'dispatch';
   name: string;
@@ -32,8 +32,8 @@ function agentInitials(name: string): string {
 // a `hue` (that data doesn't survive termination), so archived channels get a
 // flat muted tone -- which also happens to be the "greyed out" look the
 // design spec calls for.
-export function deriveChannels(state: AetherState): ChatChannel[] {
-  const aether: ChatChannel = {
+export function deriveChannels(state: AetherState): CommsChannel[] {
+  const aether: CommsChannel = {
     id: AETHER_CHANNEL_ID,
     kind: 'aether',
     name: 'AETHER',
@@ -42,7 +42,7 @@ export function deriveChannels(state: AetherState): ChatChannel[] {
     archived: false,
   };
 
-  const activeChannels: ChatChannel[] = state.agents.map((a) => ({
+  const activeChannels: CommsChannel[] = state.agents.map((a) => ({
     id: a.name,
     kind: 'agent',
     name: a.name,
@@ -51,7 +51,7 @@ export function deriveChannels(state: AetherState): ChatChannel[] {
     archived: false,
   }));
 
-  const archivedChannels: ChatChannel[] = state.idleList.map((idle) => ({
+  const archivedChannels: CommsChannel[] = state.idleList.map((idle) => ({
     id: idle.name,
     kind: 'agent',
     name: idle.name,
@@ -60,7 +60,7 @@ export function deriveChannels(state: AetherState): ChatChannel[] {
     archived: true,
   }));
 
-  const dispatchChannelEntries: ChatChannel[] = state.dispatchChannels.map((d) => ({
+  const dispatchChannelEntries: CommsChannel[] = state.dispatchChannels.map((d) => ({
     id: `dispatch:${d.toolUseId}`,
     kind: 'dispatch',
     name: d.description || d.subagentType,
@@ -73,6 +73,6 @@ export function deriveChannels(state: AetherState): ChatChannel[] {
   return [aether, ...activeChannels, ...archivedChannels, ...dispatchChannelEntries];
 }
 
-export function findChannel(channels: ChatChannel[], id: string): ChatChannel | null {
+export function findChannel(channels: CommsChannel[], id: string): CommsChannel | null {
   return channels.find((c) => c.id === id) ?? null;
 }

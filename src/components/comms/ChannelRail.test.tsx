@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { AetherStoreProvider } from '../../state/store';
 import { ChannelRail } from './ChannelRail';
-import type { ChatChannel } from './chatChannels';
+import type { CommsChannel } from './commsChannels';
 
 afterEach(cleanup);
 
@@ -15,7 +15,7 @@ function renderRail(props: ComponentProps<typeof ChannelRail>) {
   );
 }
 
-function channel(id: string, name: string): ChatChannel {
+function channel(id: string, name: string): CommsChannel {
   return { id, name, initials: name.slice(0, 2).toUpperCase(), hue: '#7ef0ff', kind: 'aether', archived: false };
 }
 
@@ -48,7 +48,7 @@ describe('ChannelRail keyboard access', () => {
 
   it('pressing Enter on the remove control does not also fire onSelect on the row', () => {
     const onSelect = vi.fn();
-    const dispatchChannel: ChatChannel = { ...channel('c2', 'Dispatch'), kind: 'dispatch', toolUseId: 'tu_1' };
+    const dispatchChannel: CommsChannel = { ...channel('c2', 'Dispatch'), kind: 'dispatch', toolUseId: 'tu_1' };
     const { getByRole } = renderRail({
       ...baseProps,
       channels: [dispatchChannel],

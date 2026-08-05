@@ -10,7 +10,7 @@ describe('viewRegistry', () => {
   it('matches the current app\'s top-bar tabs and sidebar nav exactly', () => {
     const topBarIds = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
     const sidebarIds = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
-    expect(topBarIds).toEqual(['Terminal', 'Chat', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Attachments', 'Optimize']);
+    expect(topBarIds).toEqual(['Terminal', 'Comms', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Attachments', 'Optimize']);
     expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Optimize', 'Uplinks', 'Settings']);
   });
 
@@ -18,8 +18,8 @@ describe('viewRegistry', () => {
     expect(getViewComponent('NotARealTab')).toBeNull();
   });
 
-  it('getViewComponent resolves Chat now that it is built', () => {
-    expect(getViewComponent('Chat')).not.toBeNull();
+  it('getViewComponent resolves Comms now that it is built', () => {
+    expect(getViewComponent('Comms')).not.toBeNull();
   });
 
   it('getViewComponent resolves Dashboard now that it is built', () => {

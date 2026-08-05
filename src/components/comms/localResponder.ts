@@ -1,5 +1,5 @@
 import type { AetherState } from '../../state/types';
-import type { ChatChannel } from './chatChannels';
+import type { CommsChannel } from './commsChannels';
 import { fmt, fmtEta } from '../../utils/format';
 
 // The one piece of "interesting" logic in Phase 1: a keyword-driven,
@@ -7,7 +7,7 @@ import { fmt, fmtEta } from '../../utils/format';
 // `components/terminal/commands.ts`'s `runCommand` -- a switch over
 // recognized phrases producing contextual (not randomly-cycled) text. Phase 2
 // treats this as the offline/failure fallback for the real Claude-backed
-// responder (see `useChatChannels.ts`), so it must always return *something*
+// responder (see `useCommsChannels.ts`), so it must always return *something*
 // usable, never throw, and never return an empty string.
 function aetherReply(text: string, state: AetherState): string {
   const t = text.toLowerCase();
@@ -42,7 +42,7 @@ function aetherReply(text: string, state: AetherState): string {
   return `Acknowledged: "${text.trim().slice(0, 60)}". Ask about burn rate, budget, roster, or approvals for a live readout.`;
 }
 
-function agentReply(channel: ChatChannel, text: string, state: AetherState): string {
+function agentReply(channel: CommsChannel, text: string, state: AetherState): string {
   const agent = state.agents.find((a) => a.name === channel.name);
   if (!agent) {
     return `${channel.name} is offline — this channel is archived. Reactivate the agent from the Agents view to resume the conversation.`;
@@ -72,6 +72,6 @@ function agentReply(channel: ChatChannel, text: string, state: AetherState): str
   return `Noted: "${text.trim().slice(0, 60)}". Currently ${Math.round(agent.pct)}% through "${agent.task}".`;
 }
 
-export function localResponder(channel: ChatChannel, text: string, state: AetherState): string {
+export function localResponder(channel: CommsChannel, text: string, state: AetherState): string {
   return channel.kind === 'aether' ? aetherReply(text, state) : agentReply(channel, text, state);
 }

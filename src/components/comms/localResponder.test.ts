@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { localResponder } from './localResponder';
-import { AETHER_CHANNEL_ID, deriveChannels } from './chatChannels';
+import { AETHER_CHANNEL_ID, deriveChannels } from './commsChannels';
 import { initialState } from '../../state/initialState';
 import type { AetherState } from '../../state/types';
 

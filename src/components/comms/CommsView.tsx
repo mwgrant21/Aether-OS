@@ -2,15 +2,15 @@ import { useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
-import { useChatChannels } from './useChatChannels';
+import { useCommsChannels } from './useCommsChannels';
 import { ChannelRail } from './ChannelRail';
 import { MessageThread } from './MessageThread';
 import { MessageInput } from './MessageInput';
 
-export function ChatView() {
+export function CommsView() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
-  const chat = useChatChannels(state, dispatch);
+  const chat = useCommsChannels(state, dispatch);
   const [draft, setDraft] = useState('');
 
   function send() {

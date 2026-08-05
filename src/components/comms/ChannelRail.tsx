@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
-import type { ChatChannel } from './chatChannels';
+import type { CommsChannel } from './commsChannels';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 import type { DispatchChannelStub } from '../../state/types';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 
 interface ChannelRailProps {
-  channels: ChatChannel[];
+  channels: CommsChannel[];
   activeChannelId: string;
   unreadCounts: Record<string, number>;
   onSelect: (id: string) => void;
