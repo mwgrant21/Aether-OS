@@ -359,7 +359,7 @@ const liveAgentTracker = createLiveAgentTracker(os.homedir());
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 let lastWrittenOwnSessionId: string | null | undefined = undefined;
-// User-facing toggle (Settings > Chat Backend > Auto headlines) for the periodic
+// User-facing toggle (Settings > Operating Mode > Auto headlines) for the periodic
 // headline updates below. These no longer cost anything -- see
 // headlineGenerator.ts's formatHeadline() header comment for why -- so this is
 // purely a display preference now (default true): turn off to keep the roster

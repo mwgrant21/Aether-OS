@@ -27,6 +27,15 @@ from disk even if one exists. `Comms` (the renamed Chat tab) answers only throug
 `localResponder.ts`, a local, deterministic responder. No feature in this app makes a network
 request, now or on the roadmap.
 
+This claim is about Aether's own code and holds no API key — it does not extend to the embedded
+terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`),
+which sends prompts to Anthropic on every turn under the user's own credentials, exactly like
+running `claude` in any other terminal window. That traffic is the user's Claude Code usage, not
+something Aether initiates, proxies, or can see — Aether has no visibility into it and no path to
+influence it beyond scrubbing `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` from the
+environment the terminal shell inherits, so a key exported for other tools on the operator's
+machine cannot be picked up by the session Aether starts.
+
 **No telemetry. Ever.** Not opt-out, not anonymous, not aggregate. Worth stating explicitly because
 it is a live differentiator: `agent-flow`, one of the two comparable agent-trace visualizers,
 ships anonymous telemetry **enabled by default**.

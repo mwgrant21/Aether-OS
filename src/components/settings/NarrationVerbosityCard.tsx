@@ -1,4 +1,5 @@
-// Modeled on ModelPolicyCard.tsx's button-row pattern. Governs the roster's
+// Was modeled on ModelPolicyCard.tsx's button-row pattern before that card was
+// removed in the API teardown; kept for the historical rationale. Governs the roster's
 // voice-pack narration line (AgentRosterCard) only -- unrelated to Chat's
 // densityLevel dial, which governs transcript summarization, not narration.
 import type { CSSProperties } from 'react';

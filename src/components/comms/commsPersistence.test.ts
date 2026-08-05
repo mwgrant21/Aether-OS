@@ -10,7 +10,7 @@ function msg(text: string, role: ChatMessage['role'] = 'user'): ChatMessage {
   return { id: `${text}-${Math.random()}`, role, text, t: '00:00' };
 }
 
-describe('chatPersistence', () => {
+describe('commsPersistence', () => {
   it('round-trips messages through a per-channel localStorage key', () => {
     saveChannelMessages('AETHER', [msg('hello'), msg('hi there', 'assistant')]);
     const loaded = loadChannelMessages('AETHER');

@@ -13,8 +13,21 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOTS = ['src', 'electron', 'vite-plugins'];
+// collector-go/ is a pure Go module (cmd/, internal/, go.mod) with no JS/TS
+// anywhere in it -- out of scope for this JS/TS-source guard by construction,
+// not by an oversight. If it ever grows a JS/TS component, add it here.
+const ROOTS = ['src', 'electron', 'vite-plugins', 'scripts', 'collector'];
 const SKIP_DIR_NAMES = new Set(['node_modules', '.worktrees', 'dist', 'dist-electron', 'release']);
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs'];
+
+function isTestOrDecl(name: string): boolean {
+  return (
+    name.endsWith('.test.ts') ||
+    name.endsWith('.test.tsx') ||
+    name.endsWith('.test.js') ||
+    name.endsWith('.d.ts')
+  );
+}
 
 function walk(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -22,7 +35,11 @@ function walk(dir: string, out: string[]): void {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walk(full, out);
-    } else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') && !entry.name.endsWith('.d.ts')) {
+    } else if (
+      entry.isFile() &&
+      SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext)) &&
+      !isTestOrDecl(entry.name)
+    ) {
       out.push(full);
     }
   }
@@ -30,13 +47,26 @@ function walk(dir: string, out: string[]): void {
 
 function allSourceFiles(): string[] {
   const out: string[] = [];
-  for (const root of ROOTS) walk(root, out);
+  for (const root of ROOTS) {
+    if (fs.existsSync(root)) walk(root, out);
+  }
   return out;
 }
 
 describe('no API calls', () => {
   it('@anthropic-ai/sdk is not a dependency or devDependency', () => {
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(pkg.dependencies?.['@anthropic-ai/sdk']).toBeUndefined();
+    expect(pkg.devDependencies?.['@anthropic-ai/sdk']).toBeUndefined();
+  });
+
+  it('collector/package.json (separate npm package) does not depend on @anthropic-ai/sdk either', () => {
+    const collectorPkgPath = path.join('collector', 'package.json');
+    if (!fs.existsSync(collectorPkgPath)) return;
+    const pkg = JSON.parse(fs.readFileSync(collectorPkgPath, 'utf8')) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
