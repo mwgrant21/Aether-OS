@@ -3,6 +3,13 @@ dist
 out
 .DS_Store
 *.local
+
+# Secrets. Never commit. Aether OS has no model call path (Stage 13.5), so a
+# .env here is a leftover from the retired chat feature, not a live dependency.
+.env
+.env.*
+!.env.example
+
 *.tsbuildinfo
 .worktrees/
 electron-dev*.log
