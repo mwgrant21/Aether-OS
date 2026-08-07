@@ -2,6 +2,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import type { FleetSessionRow } from '../src/state/types';
+// Type-only import, so nothing from the collector package is bundled into the
+// main process -- these are erased at compile time. Reused rather than
+// restated so there is exactly one declaration of what an exit state or a
+// severity is, matching how personalitySpine.ts itself imports RevisionCause
+// from memoryStore.ts instead of redeclaring it.
+import type { ExitState, Severity } from '../collector/src/personalitySpine';
 
 const require = createRequire(import.meta.url);
 
@@ -15,10 +21,85 @@ const MIN_SCHEMA_VERSION_FOR_USAGE_EVENTS = 2;
 const MIN_SCHEMA_VERSION_FOR_FLEET_SESSIONS = 3;
 const MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS = 4;
 
+// The schema-v5 migration (collector/src/schema.ts) ALTERs the dispatches
+// table to add the telemetry columns. A database still at v4 has the rows but
+// not the columns, so the SELECT below is chosen per-version: asking a v4
+// database for agent_id is a hard SQLite error, and this reader's catch would
+// turn that into a blanket null -- an operator on an old collector would lose
+// the Ledger entirely rather than seeing a degraded one.
+const MIN_SCHEMA_VERSION_FOR_DISPATCH_TELEMETRY = 5;
+
+/**
+ * A persisted dispatch as the viewer sees it.
+ *
+ * The six base fields have always been read. The telemetry fields below them
+ * were added to SQLite by the Stage 11 schema-v5 migration and then never read
+ * into the viewer -- the gap named in
+ * `docs/superpowers/specs/2026-08-03-voice-packs-stage12-design.md`
+ * §"Gaps found in the existing codebase" item 1, which deliberately left it
+ * unscheduled because Stage 12's live narration did not need it. Stage 15's
+ * Ledger does: `exitState` and `retries` are what make the dispatch table a
+ * cost-of-failure view rather than a cost-of-work one.
+ *
+ * Every telemetry field is nullable, and null means "not available" -- either
+ * the database predates v5, or the column is genuinely null for this row.
+ * Callers must not read null as a zero or an 'ok'.
+ *
+ * (That spec and the Stage 15 plan both enumerate six v5 columns and omit
+ * `session_id`; the migration adds seven. All seven are read here.)
+ */
+export interface DispatchRow {
+  toolUseId: string;
+  tokens: number;
+  toolUses: number;
+  durationMs: number;
+  startedAtMs: number;
+  endedAtMs: number;
+  agentId: string | null;
+  taskKind: string | null;
+  sessionId: string | null;
+  retries: number | null;
+  exitState: ExitState | null;
+  severity: Severity | null;
+  medianMsAtEval: number | null;
+}
+
 export interface DiagnosticsSnapshot {
   toolCalls: { toolUseId: string; toolName: string; filePathRel: string | null; startedAtMs: number; closedAtMs: number }[];
-  dispatches: { toolUseId: string; tokens: number; toolUses: number; durationMs: number; startedAtMs: number; endedAtMs: number }[];
+  dispatches: DispatchRow[];
   anomalies: { kind: string; toolUseId: string; detail: string; detectedAtMs: number }[];
+}
+
+// SQLite is untyped at the boundary: exit_state is a TEXT column with a
+// DEFAULT, not a constrained enum, so a value that is not an ExitState can
+// physically be in there. Casting blind would let a garbage string reach the
+// Ledger's fatal-exit styling and silently miss. Narrow instead, and treat
+// anything unrecognized as "not available" rather than inventing a state.
+const EXIT_STATES: ReadonlySet<string> = new Set<ExitState>([
+  'ok',
+  'partial',
+  'error',
+  'fatal',
+  'timeout',
+  'blocked',
+]);
+
+function asExitState(value: unknown): ExitState | null {
+  return typeof value === 'string' && EXIT_STATES.has(value) ? (value as ExitState) : null;
+}
+
+function asSeverity(value: unknown): Severity | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 4
+    ? (value as Severity)
+    : null;
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
 }
 
 // 3x the collector's 15s fleet-poll interval -- enough margin that one slow
@@ -101,7 +182,8 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
   if (!db) return null;
 
   try {
-    if (schemaVersionOf(db) < MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS) return null;
+    const version = schemaVersionOf(db);
+    if (version < MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS) return null;
 
     // Collector-liveness gate, mirroring readFleetSessions': without it a
     // crashed collector kept serving up-to-24h-old rows, which
@@ -113,9 +195,16 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
       .prepare('SELECT tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms FROM tool_calls WHERE closed_at_ms >= ?')
       .all(sinceMs) as { tool_use_id: string; tool_name: string; file_path_rel: string | null; started_at_ms: number; closed_at_ms: number }[];
 
+    // Pre-v5 databases lack the telemetry columns entirely, so the column list
+    // is selected by schema version rather than asking for them and hoping.
+    const hasDispatchTelemetry = version >= MIN_SCHEMA_VERSION_FOR_DISPATCH_TELEMETRY;
+    const dispatchColumns = hasDispatchTelemetry
+      ? 'tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval'
+      : 'tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms';
+
     const dispatchRows = db
-      .prepare('SELECT tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms FROM dispatches WHERE ended_at_ms >= ?')
-      .all(sinceMs) as { tool_use_id: string; tokens: number; tool_uses: number; duration_ms: number; started_at_ms: number; ended_at_ms: number }[];
+      .prepare(`SELECT ${dispatchColumns} FROM dispatches WHERE ended_at_ms >= ?`)
+      .all(sinceMs) as Record<string, unknown>[];
 
     const anomalyRows = db
       .prepare('SELECT kind, tool_use_id, detail, detected_at_ms FROM anomalies WHERE detected_at_ms >= ?')
@@ -123,7 +212,26 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
 
     return {
       toolCalls: toolCallRows.map((r) => ({ toolUseId: r.tool_use_id, toolName: r.tool_name, filePathRel: r.file_path_rel, startedAtMs: r.started_at_ms, closedAtMs: r.closed_at_ms })),
-      dispatches: dispatchRows.map((r) => ({ toolUseId: r.tool_use_id, tokens: r.tokens, toolUses: r.tool_uses, durationMs: r.duration_ms, startedAtMs: r.started_at_ms, endedAtMs: r.ended_at_ms })),
+      dispatches: dispatchRows.map(
+        (r): DispatchRow => ({
+          toolUseId: r.tool_use_id as string,
+          tokens: r.tokens as number,
+          toolUses: r.tool_uses as number,
+          durationMs: r.duration_ms as number,
+          startedAtMs: r.started_at_ms as number,
+          endedAtMs: r.ended_at_ms as number,
+          // On a pre-v5 database these keys are absent from the row object, so
+          // the narrowing helpers see undefined and yield null -- the same
+          // "not available" answer a v5 row with a null column gives.
+          agentId: asNullableString(r.agent_id),
+          taskKind: asNullableString(r.task_kind),
+          sessionId: asNullableString(r.session_id),
+          retries: asNullableNumber(r.retries),
+          exitState: asExitState(r.exit_state),
+          severity: asSeverity(r.severity),
+          medianMsAtEval: asNullableNumber(r.median_ms_at_eval),
+        }),
+      ),
       anomalies: anomalyRows.map((r) => ({ kind: r.kind, toolUseId: r.tool_use_id, detail: r.detail, detectedAtMs: r.detected_at_ms })),
     };
   } catch {

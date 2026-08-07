@@ -1,6 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DispatchTimeline } from './DispatchTimeline';
+import type { DispatchRow } from '../../../electron/collectorStore';
+
+// Stage 15 widened DispatchRow with the schema-v5 telemetry columns. This view
+// doesn't read them, so its fixtures default them to null (the same "not
+// available" value a pre-v5 collector database yields) and stay focused on the
+// fields under test. Spelling them out per-fixture would be noise here, but
+// they are NOT optional on the type -- a caller that needs them must handle
+// null explicitly.
+function dispatch(base: Pick<DispatchRow, 'toolUseId' | 'tokens' | 'toolUses' | 'durationMs' | 'startedAtMs' | 'endedAtMs'>): DispatchRow {
+  return {
+    ...base,
+    agentId: null,
+    taskKind: null,
+    sessionId: null,
+    retries: null,
+    exitState: null,
+    severity: null,
+    medianMsAtEval: null,
+  };
+}
 
 describe('DispatchTimeline', () => {
   it('shows "collector isn\'t running" when diagnostics is null', () => {
@@ -31,7 +51,7 @@ describe('DispatchTimeline', () => {
       <DispatchTimeline
         diagnostics={{
           toolCalls: [],
-          dispatches: [{ toolUseId: 'tu_task', tokens: 1234, toolUses: 7, durationMs: 4200, startedAtMs: 1000, endedAtMs: 5200 }],
+          dispatches: [dispatch({ toolUseId: 'tu_task', tokens: 1234, toolUses: 7, durationMs: 4200, startedAtMs: 1000, endedAtMs: 5200 })],
           anomalies: [],
         }}
       />
