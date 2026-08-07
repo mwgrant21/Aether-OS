@@ -41,15 +41,19 @@ npm run electron:build  # electron-vite build (main + preload + renderer, for th
 ```
 src/
   components/    React views, one directory per nav tab (agents/, analytics/, comms/,
-                 dashboard/, files/, grid/, layout/, memory/, projects/, reactor/,
-                 settings/, terminal/, uplinks/) plus components/shared/ for the
+                 dashboard/, files/, grid/, layout/, ledger/, memory/, projects/,
+                 reactor/, settings/, terminal/, uplinks/) plus components/shared/ for the
                  cross-cutting primitives (Button, useColors, useHoverStyle). comms/
                  (renamed from chat/, Stage 13.5) holds the Comms deck: real
                  transcript rendering, filter parsing, narration through the
                  Stage 12 voice packs, and the frozen-phrase predicates.
   shared/        PURE logic, unit-tested, imported by both main and renderer:
                  alertSounds.ts (decideAlertActions + Web Audio synthesis),
-                 anomalyDetectors.ts (the 4 anomaly detectors), chatActionResult.ts.
+                 anomalyDetectors.ts (the 4 anomaly detectors), chatActionResult.ts,
+                 modelPricing.ts (the verified rate table + costForEvent /
+                 costBreakdownForEvent), ledgerMath.ts (Stage 15 cost aggregation:
+                 sessionLedger, estimateDispatchCost, reconcile, bucketByDay,
+                 cacheImpact, buildLedgerSnapshot).
   state/         The single useReducer store — no external state library.
                  store.tsx (AetherStoreProvider/useAetherStore), reducer.ts,
                  types.ts (AetherState shape), initialState.ts, tick.ts (the
@@ -117,6 +121,21 @@ docs/superpowers/
   never dispatches into the store, because transcript *content* is exactly the
   payload `docs/privacy-and-data.md`'s "store the signal, not the payload" rule
   exists to keep out; see that doc's Stage 14 amendment for the full reasoning.
+- **Cost figures (Stage 15, binding)**: exact and estimated dollar amounts are
+  **distinct types and must stay that way**. `ExactCost` (`usd`) comes from a
+  full input/output/cache token split and is exact to the pricing table;
+  `EstimatedCost` (`usdApprox`) comes from a scalar token count with no split
+  available. They share no supertype **and no field names** — the differing
+  field name is what makes the compiler reject substituting one for the other,
+  since TypeScript is structural and a shared `usd` field would let an estimate
+  pass silently where an exact figure was expected. Do **not** "simplify" these
+  into one type with an `isEstimate` flag: a boolean is checkable only if
+  someone remembers to check it, and it would compile cleanly at exactly the
+  call site where being wrong matters most. In the UI, an estimated figure
+  always carries a `~` and names its basis; an exact one never does. Equally
+  binding: a cost bucket with no observed data is `null`, never `0` — see
+  `RollupCard`, where "no data" and "$0.00" are deliberately different
+  renderings, and `bucketByDay`, whose return type forces the distinction.
 - **Model calls**: no model call site exists anywhere in this repo. The
   `@anthropic-ai/sdk` dependency is gone from `package.json`; `chatCore.ts`,
   `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC

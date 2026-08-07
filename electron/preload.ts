@@ -4,6 +4,7 @@ import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../src/shared/optimizeRules';
+import type { LedgerSnapshot } from '../src/shared/ledgerMath';
 import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
@@ -90,6 +91,17 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('diagnostics:snapshot', listener);
       return () => ipcRenderer.removeListener('diagnostics:snapshot', listener);
     },
+  },
+  ledger: {
+    onSnapshot: (callback: (snapshot: LedgerSnapshot | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: LedgerSnapshot | null) => callback(snapshot);
+      ipcRenderer.on('ledger:snapshot', listener);
+      return () => ipcRenderer.removeListener('ledger:snapshot', listener);
+    },
+    // Pull the last snapshot main computed. The push can land before this
+    // renderer's listener exists, and the interval is 60s -- same startup race
+    // the statusline channel already solves this way.
+    current: (): Promise<LedgerSnapshot | null> => ipcRenderer.invoke('ledger:snapshot:current'),
   },
   memory: {
     onSnapshot: (callback: (rows: MemoryRowUI[] | null) => void) => {

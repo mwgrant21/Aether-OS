@@ -193,6 +193,18 @@ describe('readFleetSessions', () => {
   });
 });
 
+// The dispatches table is built to match the schema version being simulated:
+// a v4 database genuinely does not have the telemetry columns, and building it
+// with them would make the pre-v5 test vacuous -- it would pass whether or not
+// the reader actually branches on version.
+//
+// Column definitions mirror the v5 ALTER TABLE block in collector/src/schema.ts,
+// including the NOT NULL DEFAULTs on retries and exit_state.
+const DISPATCHES_V4 =
+  'CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL, duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL);';
+const DISPATCHES_V5 =
+  'CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL, duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL, agent_id TEXT, task_kind TEXT, session_id TEXT, retries INTEGER NOT NULL DEFAULT 0, exit_state TEXT NOT NULL DEFAULT \'ok\', severity INTEGER, median_ms_at_eval INTEGER);';
+
 function tempDbForDiagnostics(schemaVersion = 4, transcriptLastScanMs: number | null = Date.now()): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-diagnostics-'));
   const dbPath = join(dir, 'test.db');
@@ -200,7 +212,7 @@ function tempDbForDiagnostics(schemaVersion = 4, transcriptLastScanMs: number | 
   db.exec(`
     CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_use_id TEXT NOT NULL, tool_name TEXT NOT NULL, file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL);
-    CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL, duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL);
+    ${schemaVersion >= 5 ? DISPATCHES_V5 : DISPATCHES_V4}
     CREATE TABLE anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, tool_use_id TEXT NOT NULL, detail TEXT NOT NULL, detected_at_ms INTEGER NOT NULL);
   `);
   db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', ?)").run(String(schemaVersion));
@@ -242,5 +254,132 @@ describe('readDiagnostics', () => {
   it('returns null when the transcript-scan heartbeat is stale', () => {
     const dbPath = tempDbForDiagnostics(4, Date.now() - 10 * 60 * 1000);
     expect(readDiagnostics(dbPath, 0)).toBeNull();
+  });
+});
+
+// Closes the gap named in
+// docs/superpowers/specs/2026-08-03-voice-packs-stage12-design.md
+// §"Gaps found in the existing codebase" item 1: the schema-v5 telemetry
+// columns existed in SQLite but were never read into the viewer.
+describe('readDiagnostics dispatch telemetry (schema v5)', () => {
+  it('reads all seven v5 telemetry columns from a v5 database', () => {
+    const dbPath = tempDbForDiagnostics(5);
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval)
+       VALUES ('tu_task', 500, 3, 1200, 1000, 2200, 'agent-7', 'research', 'sess-42', 0, 'ok', 2, 900)`,
+    );
+    db.close();
+
+    const snapshot = readDiagnostics(dbPath, 0);
+    expect(snapshot?.dispatches).toHaveLength(1);
+    expect(snapshot!.dispatches[0]).toEqual({
+      toolUseId: 'tu_task',
+      tokens: 500,
+      toolUses: 3,
+      durationMs: 1200,
+      startedAtMs: 1000,
+      endedAtMs: 2200,
+      agentId: 'agent-7',
+      taskKind: 'research',
+      sessionId: 'sess-42',
+      retries: 0,
+      exitState: 'ok',
+      severity: 2,
+      medianMsAtEval: 900,
+    });
+  });
+
+  // The degraded path. A v4 database physically lacks these columns, so the
+  // reader must choose a narrower SELECT -- asking for agent_id here is a hard
+  // SQLite error, and this reader's catch would convert that into a blanket
+  // null, costing the operator the whole Ledger instead of seven fields.
+  it('returns null telemetry, not a throw or a dropped snapshot, on a pre-v5 database', () => {
+    const dbPath = tempDbForDiagnostics(4);
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
+       VALUES ('tu_old', 100, 1, 500, 1000, 1500)`,
+    );
+    db.close();
+
+    expect(() => readDiagnostics(dbPath, 0)).not.toThrow();
+    const snapshot = readDiagnostics(dbPath, 0);
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.dispatches).toHaveLength(1);
+    const row = snapshot!.dispatches[0];
+    // Base fields still read normally...
+    expect(row.tokens).toBe(100);
+    expect(row.durationMs).toBe(500);
+    // ...and every telemetry field degrades to null rather than to 0 or 'ok',
+    // which a caller could not distinguish from a real zero-retry success.
+    expect(row.agentId).toBeNull();
+    expect(row.taskKind).toBeNull();
+    expect(row.sessionId).toBeNull();
+    expect(row.retries).toBeNull();
+    expect(row.exitState).toBeNull();
+    expect(row.severity).toBeNull();
+    expect(row.medianMsAtEval).toBeNull();
+  });
+
+  // The cost-of-failure case the Ledger's dispatch table exists to surface:
+  // tokens were spent, the work failed unrecoverably, and it was retried.
+  it('reads a fatal exit with retries > 0', () => {
+    const dbPath = tempDbForDiagnostics(5);
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval)
+       VALUES ('tu_fatal', 9000, 12, 60000, 1000, 61000, 'agent-3', 'build', 'sess-42', 2, 'fatal', 4, 1500)`,
+    );
+    db.close();
+
+    const row = readDiagnostics(dbPath, 0)!.dispatches[0];
+    expect(row.exitState).toBe('fatal');
+    expect(row.retries).toBe(2);
+    expect(row.severity).toBe(4);
+    expect(row.tokens).toBe(9000);
+  });
+
+  // exit_state is a TEXT column with a DEFAULT, not a constrained enum, so an
+  // out-of-union value can physically be stored. It must not reach the Ledger's
+  // fatal-exit styling as an unrecognized string.
+  it('narrows an unrecognized exit_state to null instead of passing it through', () => {
+    const dbPath = tempDbForDiagnostics(5);
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, retries, exit_state, severity)
+       VALUES ('tu_weird', 10, 1, 100, 1000, 1100, 0, 'exploded', 99)`,
+    );
+    db.close();
+
+    const row = readDiagnostics(dbPath, 0)!.dispatches[0];
+    expect(row.exitState).toBeNull();
+    // 99 is outside the 0-4 Severity union and is rejected the same way.
+    expect(row.severity).toBeNull();
+    // The row itself still comes through -- one bad column does not drop it.
+    expect(row.toolUseId).toBe('tu_weird');
+    expect(row.retries).toBe(0);
+  });
+
+  it('maps genuinely-null v5 columns through as null', () => {
+    const dbPath = tempDbForDiagnostics(5);
+    const db = new DatabaseSync(dbPath);
+    // agent_id, task_kind, session_id, severity and median_ms_at_eval are
+    // nullable in the migration; retries and exit_state carry NOT NULL DEFAULTs.
+    db.exec(
+      `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
+       VALUES ('tu_sparse', 42, 1, 200, 1000, 1200)`,
+    );
+    db.close();
+
+    const row = readDiagnostics(dbPath, 0)!.dispatches[0];
+    expect(row.agentId).toBeNull();
+    expect(row.taskKind).toBeNull();
+    expect(row.sessionId).toBeNull();
+    expect(row.severity).toBeNull();
+    expect(row.medianMsAtEval).toBeNull();
+    // The defaults applied, so these are real values rather than absences.
+    expect(row.retries).toBe(0);
+    expect(row.exitState).toBe('ok');
   });
 });

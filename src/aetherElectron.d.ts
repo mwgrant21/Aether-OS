@@ -6,6 +6,7 @@ import type { OptimizeFinding, OptimizeSummary } from './shared/optimizeRules';
 import type { GradeRow } from './shared/optimizeGrade';
 import type { StatuslineSnapshot } from './shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../electron/collectorStore';
+import type { LedgerSnapshot } from './shared/ledgerMath';
 import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from './state/types';
 import type { PermissionDecision, PostToolFlagDecision } from '../electron/permissionServer';
@@ -44,6 +45,10 @@ declare global {
       };
       diagnostics: {
         onSnapshot: (callback: (snapshot: DiagnosticsSnapshot | null) => void) => () => void;
+      };
+      ledger: {
+        onSnapshot: (callback: (snapshot: LedgerSnapshot | null) => void) => () => void;
+        current: () => Promise<LedgerSnapshot | null>;
       };
       memory: {
         onSnapshot: (callback: (rows: MemoryRowUI[] | null) => void) => () => void;

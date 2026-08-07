@@ -7,6 +7,7 @@ import { CommsView } from './components/comms/CommsView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { MemoryView } from './components/memory/MemoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { LedgerView } from './components/ledger/LedgerView';
 import { SettingsView } from './components/settings/SettingsView';
 import { FilesView } from './components/files/FilesView';
 import { UplinksView } from './components/uplinks/UplinksView';
@@ -28,6 +29,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Projects', inTopBar: true, inSidebar: true, component: ProjectsView },
   { id: 'Memory', inTopBar: true, inSidebar: true, component: MemoryView },
   { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
+  { id: 'Ledger', inTopBar: true, inSidebar: true, component: LedgerView },
   { id: 'Attachments', inTopBar: true, inSidebar: false, component: FilesView },
   { id: 'Optimize', inTopBar: true, inSidebar: true, component: OptimizeView },
   { id: 'Uplinks', inTopBar: false, inSidebar: true, component: UplinksView },

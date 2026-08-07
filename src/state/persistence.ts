@@ -33,6 +33,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   statusline: 'a rehydrated stale snapshot would show a fresh-looking rate-limit percentage from a previous session -- the same class of dishonesty the logs exclusion prevents',
   fleet: 'a live external-process snapshot of other claude sessions on the machine, stale the instant it is written to disk -- same reasoning as the logs exclusion',
   diagnostics: 'a live collector-sourced snapshot of tool calls/dispatches/anomalies over the last 24h, stale the instant it is written to disk -- same reasoning as the fleet exclusion',
+  ledger: 'cost aggregates recomputed in main from the current transcript scan on every tick; a rehydrated value would render yesterday\'s spend under a "today" heading, which is the exact zero-versus-unknown confusion the Ledger exists to avoid',
   pendingPermissionRequest: "an in-flight approval prompt tied to a live pending Promise held in main.ts's resolver map; a rehydrated value after restart would show a prompt with no resolver left to answer it",
   pendingPostToolFlag: "an in-flight flag-review prompt tied to a live pending Promise held in main.ts's pendingPostToolFlagResolvers map; a rehydrated value after restart would show a prompt with no resolver left to answer it -- same reasoning as pendingPermissionRequest",
   lastNotification: 'a live IPC-pushed Notification-hook event used only to trigger a one-shot sound in useAlertSounds; a persisted value would replay a stale sound cue on the next launch',

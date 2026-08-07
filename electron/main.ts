@@ -20,6 +20,7 @@ import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules
 import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
+import { buildLedgerSnapshot, type LedgerSnapshot } from '../src/shared/ledgerMath';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import {
   createHeadlineThrottle,
@@ -271,6 +272,12 @@ function isPortAvailable(port: number): Promise<boolean> {
 // come during the current session).
 let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
 
+// Same startup-race workaround as cachedStatuslineSnapshot above: the first
+// scan can finish before the renderer's useLedgerSync listener is registered,
+// and with a 60s interval the Ledger would show "no snapshot yet" for a full
+// minute after launch. The renderer pulls this on mount.
+let cachedLedgerSnapshot: LedgerSnapshot | null = null;
+
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const now = new Date();
@@ -324,6 +331,18 @@ async function scanAndPushUsage(): Promise<void> {
   sendToWindow('optimize:findings', findings);
   sendToWindow('optimize:summary', summary);
   sendToWindow('optimize:breakdown', breakdown);
+
+  // The Ledger derives from the same TranscriptEvent[] Optimize just scanned --
+  // no second scan, and only derived numbers cross the IPC boundary (raw
+  // transcript content must not, per docs/privacy-and-data.md). The system time
+  // zone is resolved here, at the impure edge; buildLedgerSnapshot itself takes
+  // it as a parameter and stays pure.
+  cachedLedgerSnapshot = buildLedgerSnapshot(
+    optimizeEvents,
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    Date.now(),
+  );
+  sendToWindow('ledger:snapshot', cachedLedgerSnapshot);
 }
 
 function scanAndPushFleet(): void {
@@ -733,6 +752,8 @@ ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath
 // 'statusline:snapshot' event. Returns null when nothing has been captured yet,
 // which is a legitimate "no snapshot" state the renderer already treats as such.
 ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
+
+ipcMain.handle('ledger:snapshot:current', () => cachedLedgerSnapshot);
 
 // Explicit user actions only -- never invoked from any automatic path. The
 // renderer names the action; the main process is the only place the script
