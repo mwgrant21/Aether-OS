@@ -14,16 +14,24 @@ import { usd, usdPrecise } from './format';
  * costForEvent is defined as the sum of costBreakdownForEvent -- so the parts
  * shown here provably add up to the number above them.
  */
-export function SessionCostCard({ session, tiers }: { session: ExactCost; tiers: PricingTier[] }) {
+export function SessionCostCard({ total, tiers }: { total: ExactCost; tiers: PricingTier[] }) {
   const colors = useColors();
-  const { input, output, cacheCreation, cacheRead } = session.breakdown;
+  const { input, output, cacheCreation, cacheRead } = total.breakdown;
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={cardTitleStyle(colors)}>OBSERVED SESSION COST</div>
-      <div style={totalStyle(colors)}>{usd(session.usd)}</div>
+      {/* Says its window in the title. This card previously read "OBSERVED
+          SESSION COST" while showing an all-projects, all-history total --
+          caught by the whole-branch review. A figure that large under the word
+          "session" is misread by exactly the operator this view is for. */}
+      <div style={cardTitleStyle(colors)}>OBSERVED TOTAL — ALL TRANSCRIPTS</div>
+      <div style={totalStyle(colors)}>{usd(total.usd)}</div>
       <div style={tierLineStyle(colors)}>
         {tiers.length === 0 ? 'no priced activity observed' : `tier${tiers.length > 1 ? 's' : ''}: ${tiers.join(', ')}`}
+      </div>
+      <div style={windowNoteStyle(colors)}>
+        Every Claude Code transcript on this machine, all projects, no time limit. Not a session and not a
+        billing period — see the rollup for time-scoped figures.
       </div>
 
       <div style={breakdownStyle}>
@@ -68,6 +76,13 @@ const tierLineStyle = (c: ColorPalette): CSSProperties => ({
   font: `400 11px/1.4 ${fonts.ui}`,
   color: c.textMuted,
   marginTop: 2,
+});
+
+const windowNoteStyle = (c: ColorPalette): CSSProperties => ({
+  font: `400 10px/1.5 ${fonts.ui}`,
+  color: c.textDim,
+  marginTop: 6,
+  maxWidth: 420,
 });
 
 const breakdownStyle: CSSProperties = {

@@ -49,13 +49,13 @@ describe('SessionCostCard', () => {
   };
 
   it('shows the exact total with no tilde, because it is exact', () => {
-    render(<SessionCostCard session={session} tiers={['sonnet']} />);
+    render(<SessionCostCard total={session} tiers={['sonnet']} />);
     expect(screen.getByText('$22.05')).toBeTruthy();
     expect(screen.queryByText('~$22.05')).toBeNull();
   });
 
   it('shows a four-way breakdown that adds up to the displayed total', () => {
-    render(<SessionCostCard session={session} tiers={['sonnet']} />);
+    render(<SessionCostCard total={session} tiers={['sonnet']} />);
     for (const part of ['$3.00', '$15.00', '$3.75', '$0.30']) {
       expect(screen.getByText(part)).toBeTruthy();
     }
@@ -64,14 +64,14 @@ describe('SessionCostCard', () => {
   });
 
   it('names every tier involved when a session mixes them', () => {
-    render(<SessionCostCard session={session} tiers={['sonnet', 'opus']} />);
+    render(<SessionCostCard total={session} tiers={['sonnet', 'opus']} />);
     expect(screen.getByText(/tiers: sonnet, opus/)).toBeTruthy();
   });
 
   it('says so plainly when nothing priced was observed', () => {
     render(
       <SessionCostCard
-        session={{ usd: 0, breakdown: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 } }}
+        total={{ usd: 0, breakdown: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 } }}
         tiers={[]}
       />,
     );

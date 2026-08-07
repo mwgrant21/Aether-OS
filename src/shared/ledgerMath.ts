@@ -1,5 +1,6 @@
 import type { TranscriptEvent } from '../../electron/transcriptParser';
 import type { CompletedDispatchUsage } from '../state/liveAgentsMath';
+import { computeCacheHitRate } from './cacheHitRate';
 import {
   costForEvent,
   costBreakdownForEvent,
@@ -147,12 +148,24 @@ export interface Reconciliation {
   residualUsd: number;
 }
 
-export function reconcile(exact: ExactCost, estimates: EstimatedCost[]): Reconciliation {
+/**
+ * Takes the exact side as a plain number rather than an ExactCost, because the
+ * only defensible reconciliation compares a WINDOW to the dispatches in that
+ * same window.
+ *
+ * The whole-branch review caught this: reconciling the all-transcripts total
+ * against the handful of dispatches this app has tracked live produced a
+ * residual that was always ~the entire total, which reads as "the estimator is
+ * catastrophically broken" when the two sides simply measured different
+ * things. Passing a day's figure and that day's dispatches makes the residual
+ * mean what the spec intended.
+ */
+export function reconcile(exactUsd: number, estimates: EstimatedCost[]): Reconciliation {
   const attributedUsdApprox = estimates.reduce((sum, e) => sum + e.usdApprox, 0);
   return {
-    sessionUsd: exact.usd,
+    sessionUsd: exactUsd,
     attributedUsdApprox,
-    residualUsd: exact.usd - attributedUsdApprox,
+    residualUsd: exactUsd - attributedUsdApprox,
   };
 }
 
@@ -242,11 +255,31 @@ export function bucketByDay(events: TranscriptEvent[], timeZone: string, nowMs: 
  * next to the row that renders it.
  */
 export interface LedgerSnapshot {
-  session: ExactCost;
+  /**
+   * The total across every transcript the scan covered -- ALL projects and ALL
+   * history, because that is what electron/historyScanner.ts's scanAllProjects
+   * returns (it walks every .jsonl under the projects root with no time
+   * bound). Named `total` rather than `session` after the whole-branch review
+   * found the view labelling it "SESSION COST", which would have read a year
+   * of accumulated spend as the current session's.
+   */
+  total: ExactCost;
   tiers: PricingTier[];
   rollups: RollupBuckets;
   cache: CacheImpact;
-  /** When main computed this, so the view can say how fresh it is. */
+  /**
+   * Computed over the same events as `cache`, so the impact card's saving and
+   * its hit rate cannot come from different datasets. state.cacheHitRatio is
+   * the live session's ring-buffer ratio and is deliberately NOT used here.
+   */
+  cacheHitRate: number;
+  /**
+   * The zone main bucketed with. Carried so the renderer scopes "today" the
+   * same way rather than resolving the zone a second time and risking a
+   * disagreement about which day it is.
+   */
+  timeZone: string;
+  /** When main computed this, so both sides agree on "now". */
   computedAtMs: number;
 }
 
@@ -256,12 +289,24 @@ export function buildLedgerSnapshot(
   nowMs: number,
 ): LedgerSnapshot {
   return {
-    session: sessionLedger(events),
+    total: sessionLedger(events),
     tiers: tiersInSession(events),
     rollups: bucketByDay(events, timeZone, nowMs),
     cache: cacheImpact(events),
+    cacheHitRate: computeCacheHitRate(events),
+    timeZone,
     computedAtMs: nowMs,
   };
+}
+
+/**
+ * True when `iso` falls on the same local day as `nowMs` in `timeZone`.
+ * Exported so the view can scope dispatches to the same day the rollup used.
+ */
+export function isSameLocalDay(iso: string, timeZone: string, nowMs: number): boolean {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  return localDayKey(d, timeZone) === localDayKey(new Date(nowMs), timeZone);
 }
 
 /** `YYYY-MM-DD` for a Date as observed in the given IANA time zone. */

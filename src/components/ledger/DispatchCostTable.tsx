@@ -8,6 +8,8 @@ import { approxUsd, tokens as fmtTokens, duration as fmtDuration, ESTIMATE_BASIS
 
 export interface DispatchCostRow {
   toolUseId: string;
+  /** ISO timestamp the dispatch opened; used to scope rows to a day. */
+  startedAt: string;
   description: string;
   subagentType: string;
   durationMs: number;

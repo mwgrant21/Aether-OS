@@ -22,6 +22,7 @@ function row(over: Partial<DispatchCostRow> & { usdApprox?: number } = {}): Disp
   const { usdApprox = 1, ...rest } = over;
   return {
     toolUseId: 'tu_1',
+    startedAt: new Date('2026-08-07T12:00:00Z').toISOString(),
     description: 'a dispatch',
     subagentType: 'general-purpose',
     durationMs: 1000,

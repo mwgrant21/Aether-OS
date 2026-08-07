@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
-import { estimateDispatchCost, reconcile, type EstimatedCost } from '../../shared/ledgerMath';
+import { estimateDispatchCost, reconcile, isSameLocalDay, type EstimatedCost } from '../../shared/ledgerMath';
 import type { CompletedDispatchUsage } from '../../state/liveAgentsMath';
 import { SessionCostCard } from './SessionCostCard';
 import { RollupCard } from './RollupCard';
@@ -27,8 +27,18 @@ export function LedgerView() {
   const ledger = state.ledger;
 
   const rows = buildDispatchRows(state);
-  const estimates: EstimatedCost[] = rows.map((r) => r.estimate);
-  const reconciliation = ledger ? reconcile(ledger.session, estimates) : null;
+
+  // The residual is only meaningful when both sides cover the same window.
+  // The exact side is today's rollup; the estimated side is today's dispatches,
+  // scoped with the same time zone and clock main bucketed with. When today has
+  // no observed data at all there is nothing to reconcile against, and the row
+  // is omitted rather than reconciling against an assumed zero.
+  const todaysRows = ledger
+    ? rows.filter((r) => isSameLocalDay(r.startedAt, ledger.timeZone, ledger.computedAtMs))
+    : [];
+  const todaysEstimates: EstimatedCost[] = todaysRows.map((r) => r.estimate);
+  const reconciliation =
+    ledger && ledger.rollups.today !== null ? reconcile(ledger.rollups.today, todaysEstimates) : null;
 
   return (
     <div style={rootStyle}>
@@ -45,10 +55,14 @@ export function LedgerView() {
         <>
           <div style={cardsRowStyle}>
             <div style={{ flex: '1 1 320px' }}>
-              <SessionCostCard session={ledger.session} tiers={ledger.tiers} />
+              <SessionCostCard total={ledger.total} tiers={ledger.tiers} />
             </div>
             <div style={{ flex: '1 1 260px' }}>
-              <CacheImpactCard cache={ledger.cache} hitRatio={state.cacheHitRatio} />
+              {/* Hit rate comes from the snapshot, NOT state.cacheHitRatio:
+                  the latter is the live session's ring-buffer ratio, and
+                  pairing it with an all-transcripts saving would put two
+                  different datasets in one card. */}
+              <CacheImpactCard cache={ledger.cache} hitRatio={ledger.cacheHitRate} />
             </div>
           </div>
 
@@ -58,8 +72,8 @@ export function LedgerView() {
 
           {reconciliation !== null && (
             <div style={residualStyle(colors)} title={ESTIMATE_BASIS_TOOLTIP}>
-              Dispatch estimates account for {approxUsd(reconciliation.attributedUsdApprox)} of the{' '}
-              {usd(reconciliation.sessionUsd)} session total;{' '}
+              Today: dispatch estimates account for {approxUsd(reconciliation.attributedUsdApprox)} of the{' '}
+              {usd(reconciliation.sessionUsd)} observed;{' '}
               <strong style={residualNumberStyle(colors)}>{approxUsd(reconciliation.residualUsd)}</strong>{' '}
               {reconciliation.residualUsd < 0 ? 'over-attributed' : 'unattributed'}.
             </div>
@@ -115,6 +129,7 @@ export function buildDispatchRows(state: {
     const t = telemetry.get(d.toolUseId);
     return {
       toolUseId: d.toolUseId,
+      startedAt: d.startedAt,
       description: d.description,
       subagentType: d.subagentType,
       durationMs: completed.durationMs,

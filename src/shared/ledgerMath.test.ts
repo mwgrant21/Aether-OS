@@ -11,6 +11,7 @@ import {
   bucketByDay,
   cacheImpact,
   buildLedgerSnapshot,
+  isSameLocalDay,
 } from './ledgerMath';
 
 // Verified rates (see modelPricing.ts): sonnet 3/15, opus 5/25, haiku 1/5,
@@ -162,7 +163,7 @@ describe('reconcile', () => {
   it('reports a non-zero residual rather than forcing the numbers to agree', () => {
     const exact = sessionLedger([ev({ usage: usage(0, M, 0, 0) })]); // $15
     const estimates = [estimateDispatchCost(dispatch({ tokens: M / 2 }))]; // $6.30
-    const r = reconcile(exact, estimates);
+    const r = reconcile(exact.usd, estimates);
     expect(r.sessionUsd).toBeCloseTo(15, 6);
     expect(r.attributedUsdApprox).toBeCloseTo(6.3, 6);
     expect(r.residualUsd).toBeCloseTo(8.7, 6);
@@ -174,14 +175,14 @@ describe('reconcile', () => {
   it('keeps a negative residual negative instead of clamping it to zero', () => {
     const exact = sessionLedger([ev({ usage: usage(0, M / 10, 0, 0) })]); // $1.50
     const estimates = [estimateDispatchCost(dispatch({ tokens: M }))]; // $12.60
-    const r = reconcile(exact, estimates);
+    const r = reconcile(exact.usd, estimates);
     expect(r.residualUsd).toBeLessThan(0);
     expect(r.residualUsd).toBeCloseTo(-11.1, 6);
   });
 
   it('attributes nothing when there are no dispatches, leaving the whole total unattributed', () => {
     const exact = sessionLedger([ev({ usage: usage(0, M, 0, 0) })]);
-    const r = reconcile(exact, []);
+    const r = reconcile(exact.usd, []);
     expect(r.attributedUsdApprox).toBe(0);
     expect(r.residualUsd).toBeCloseTo(r.sessionUsd, 12);
   });
@@ -253,10 +254,33 @@ describe('bucketByDay', () => {
 describe('buildLedgerSnapshot', () => {
   const NOW = Date.UTC(2026, 7, 7, 12, 0, 0);
 
+  // Whole-branch review finding: the view titled this "SESSION COST" while it
+  // held an all-projects, all-history total. The field is named `total` so the
+  // shape itself says what window it covers.
+  it('names the all-transcripts figure `total`, not `session`', () => {
+    const snap = buildLedgerSnapshot([ev({ usage: usage(M) })], 'UTC', NOW);
+    expect(snap).not.toHaveProperty('session');
+    expect(snap.total.usd).toBeGreaterThan(0);
+  });
+
+  // Second review finding: the impact card paired an all-transcripts saving
+  // with state.cacheHitRatio, the live session's ring-buffer ratio. Carrying
+  // the rate on the snapshot means both halves come from the same events.
+  it('carries a cache hit rate computed over the same events as the saving', () => {
+    const events = [ev({ usage: usage(M, 0, 0, M) })];
+    const snap = buildLedgerSnapshot(events, 'UTC', NOW);
+    expect(snap.cacheHitRate).toBeCloseTo(0.5, 6); // 1M cache read / (1M input + 1M cache read)
+    expect(snap.cache.cacheReadTokens).toBe(M);
+  });
+
+  it('carries the time zone it bucketed with, so the view scopes "today" identically', () => {
+    expect(buildLedgerSnapshot([], 'America/Denver', NOW).timeZone).toBe('America/Denver');
+  });
+
   it('assembles the four aggregates plus the computation time', () => {
     const events = [ev({ timestamp: new Date(NOW), usage: usage(M, M, 0, M) })];
     const snap = buildLedgerSnapshot(events, 'UTC', NOW);
-    expect(snap.session).toEqual(sessionLedger(events));
+    expect(snap.total).toEqual(sessionLedger(events));
     expect(snap.tiers).toEqual(['sonnet']);
     expect(snap.rollups).toEqual(bucketByDay(events, 'UTC', NOW));
     expect(snap.cache).toEqual(cacheImpact(events));
@@ -268,9 +292,32 @@ describe('buildLedgerSnapshot', () => {
   // than zero, so the view can tell "nothing observed" from "nothing spent".
   it('produces null rollups, not zeroes, for an empty scan', () => {
     const snap = buildLedgerSnapshot([], 'UTC', NOW);
-    expect(snap.session.usd).toBe(0);
+    expect(snap.total.usd).toBe(0);
     expect(snap.rollups).toEqual({ today: null, week: null, month: null });
     expect(snap.tiers).toEqual([]);
+  });
+});
+
+describe('isSameLocalDay', () => {
+  const NOW = Date.UTC(2026, 7, 7, 12, 0, 0);
+
+  it('scopes a dispatch to the same local day the rollup used', () => {
+    expect(isSameLocalDay(new Date(Date.UTC(2026, 7, 7, 1, 0, 0)).toISOString(), 'UTC', NOW)).toBe(true);
+    expect(isSameLocalDay(new Date(Date.UTC(2026, 7, 6, 23, 0, 0)).toISOString(), 'UTC', NOW)).toBe(false);
+  });
+
+  it('honours the time zone, matching bucketByDay', () => {
+    // 02:00 UTC on the 7th is still the 6th in Denver.
+    const iso = new Date(Date.UTC(2026, 7, 7, 2, 0, 0)).toISOString();
+    expect(isSameLocalDay(iso, 'UTC', NOW)).toBe(true);
+    expect(isSameLocalDay(iso, 'America/Denver', NOW)).toBe(false);
+  });
+
+  // recentCompletedDispatches is persisted, so a restored dispatch can carry
+  // an empty or malformed startedAt. It must not be counted into today.
+  it('excludes an empty or unparseable timestamp rather than defaulting it into today', () => {
+    expect(isSameLocalDay('', 'UTC', NOW)).toBe(false);
+    expect(isSameLocalDay('not-a-date', 'UTC', NOW)).toBe(false);
   });
 });
 
