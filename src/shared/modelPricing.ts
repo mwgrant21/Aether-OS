@@ -53,16 +53,40 @@ export function pricingTierForModel(modelName: string | null): PricingTier {
   return 'sonnet';
 }
 
-export function costForEvent(event: {
+export interface CostBreakdown {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+}
+
+export interface PricedEvent {
   model: string | null;
   usage: { inputTokens: number; outputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number } | null;
-}): number {
-  if (!event || !event.usage) return 0;
-  const tier = pricingTierForModel(event.model);
-  const rates = PRICING_PER_MILLION_TOKENS[tier];
-  const inputCost = (event.usage.inputTokens / 1_000_000) * rates.input;
-  const cacheWriteCost = (event.usage.cacheCreationInputTokens / 1_000_000) * rates.input * CACHE_WRITE_MULTIPLIER;
-  const cacheReadCost = (event.usage.cacheReadInputTokens / 1_000_000) * rates.input * CACHE_READ_DISCOUNT;
-  const outputCost = (event.usage.outputTokens / 1_000_000) * rates.output;
-  return inputCost + cacheWriteCost + cacheReadCost + outputCost;
+}
+
+/**
+ * The four-way USD split behind costForEvent.
+ *
+ * This exists so the Ledger's session card can show a breakdown that provably
+ * sums to the total it displays. Deriving the split anywhere else would mean a
+ * second copy of CACHE_WRITE_MULTIPLIER and CACHE_READ_DISCOUNT, which is
+ * exactly the kind of duplicate arithmetic that drifts apart silently -- so
+ * costForEvent is defined as the sum of this, rather than the two being
+ * computed independently and trusted to agree.
+ */
+export function costBreakdownForEvent(event: PricedEvent): CostBreakdown {
+  if (!event || !event.usage) return { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+  const rates = PRICING_PER_MILLION_TOKENS[pricingTierForModel(event.model)];
+  return {
+    input: (event.usage.inputTokens / 1_000_000) * rates.input,
+    output: (event.usage.outputTokens / 1_000_000) * rates.output,
+    cacheCreation: (event.usage.cacheCreationInputTokens / 1_000_000) * rates.input * CACHE_WRITE_MULTIPLIER,
+    cacheRead: (event.usage.cacheReadInputTokens / 1_000_000) * rates.input * CACHE_READ_DISCOUNT,
+  };
+}
+
+export function costForEvent(event: PricedEvent): number {
+  const b = costBreakdownForEvent(event);
+  return b.input + b.output + b.cacheCreation + b.cacheRead;
 }

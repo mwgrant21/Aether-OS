@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { pricingTierForModel, costForEvent, PRICING_VERIFIED_AT, PRICING_PER_MILLION_TOKENS } from './modelPricing';
+import {
+  pricingTierForModel,
+  costForEvent,
+  costBreakdownForEvent,
+  PRICING_VERIFIED_AT,
+  PRICING_PER_MILLION_TOKENS,
+} from './modelPricing';
 
 describe('modelPricing', () => {
   describe('PRICING_VERIFIED_AT', () => {
@@ -144,6 +150,20 @@ describe('modelPricing', () => {
       // 1M input @ $10 + 1M output @ $50 = $60. Was $18 while fable fell
       // through to the sonnet default.
       expect(cost).toBeCloseTo(60, 5);
+    });
+
+    // costForEvent is defined as the sum of costBreakdownForEvent, so the
+    // Ledger's session card can show a breakdown that provably adds up to the
+    // total beside it. This pins that relationship rather than assuming it.
+    it('equals the sum of costBreakdownForEvent for the same event', () => {
+      for (const model of ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-fable-5']) {
+        const event = {
+          model,
+          usage: { inputTokens: 123_456, outputTokens: 7_890, cacheCreationInputTokens: 45_678, cacheReadInputTokens: 901_234 },
+        };
+        const b = costBreakdownForEvent(event);
+        expect(costForEvent(event)).toBeCloseTo(b.input + b.output + b.cacheCreation + b.cacheRead, 12);
+      }
     });
 
     it('combines all token types in cost calculation', () => {
