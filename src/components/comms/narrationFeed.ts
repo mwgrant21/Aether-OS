@@ -18,7 +18,7 @@ import type { VoiceRole } from '../../shared/agentVoiceRoles';
 import { resolveVoiceRole } from '../../shared/agentVoiceRoles';
 import { renderNarration } from '../../shared/voiceRender';
 import { detectEventKind } from '../../shared/frozenPhraseDetect';
-import { applyNarrationVerbosity } from '../../shared/narrationVerbosity';
+import { applyNarrationVerbosity, NARRATION_FLOOR_SEVERITY } from '../../shared/narrationVerbosity';
 import { canVolunteer, spendBudget, createInterruptionBudget, type InterruptionBudgetState } from '../../shared/interruptionBudget';
 import type { AetherState, NarrationMessage } from '../../state/types';
 import type { Anomaly } from '../../shared/anomalyDetectors';
@@ -197,7 +197,7 @@ export function rankForInterruption(
 ): { interrupts: boolean; budgets: Record<string, InterruptionBudgetState> } {
   const current = budgets[message.channelId] ?? createInterruptionBudget();
 
-  if (message.severity >= 3 || canVolunteer(current, nowMs, windowMs)) {
+  if (message.severity >= NARRATION_FLOOR_SEVERITY || canVolunteer(current, nowMs, windowMs)) {
     return { interrupts: true, budgets: { ...budgets, [message.channelId]: spendBudget(current, nowMs) } };
   }
 
