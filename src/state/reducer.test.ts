@@ -645,6 +645,32 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     expect(next.optimizeFindings).toEqual(findings);
   });
 
+  it('SET_LEDGER replaces ledger wholesale', () => {
+    const ledger = {
+      session: { usd: 1.5, breakdown: { input: 1, output: 0.5, cacheCreation: 0, cacheRead: 0 } },
+      tiers: ['sonnet' as const],
+      rollups: { today: 1.5, week: 1.5, month: 1.5 },
+      cache: { cacheReadTokens: 0, wouldHaveCostUsd: 0, actuallyCostUsd: 0, savedUsd: 0 },
+      computedAtMs: 1000,
+    };
+    const next = reducer(initialState, { type: 'SET_LEDGER', ledger });
+    expect(next.ledger).toEqual(ledger);
+  });
+
+  it('SET_LEDGER accepts null, so a failed scan clears rather than freezes the view', () => {
+    const seeded = reducer(initialState, {
+      type: 'SET_LEDGER',
+      ledger: {
+        session: { usd: 9, breakdown: { input: 9, output: 0, cacheCreation: 0, cacheRead: 0 } },
+        tiers: ['opus' as const],
+        rollups: { today: 9, week: 9, month: 9 },
+        cache: { cacheReadTokens: 0, wouldHaveCostUsd: 0, actuallyCostUsd: 0, savedUsd: 0 },
+        computedAtMs: 1,
+      },
+    });
+    expect(reducer(seeded, { type: 'SET_LEDGER', ledger: null }).ledger).toBeNull();
+  });
+
   it('SET_STATUSLINE replaces statusline wholesale', () => {
     const snapshot: StatuslineSnapshot = {
       capturedAtMs: 1785200000000,

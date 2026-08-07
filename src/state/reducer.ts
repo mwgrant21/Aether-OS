@@ -1,6 +1,7 @@
 import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
+import type { LedgerSnapshot } from '../shared/ledgerMath';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
@@ -46,6 +47,7 @@ export type Action =
   | { type: 'SET_CACHE_HIT_RATIO'; ratio: number }
   | { type: 'SET_FLEET'; fleet: FleetSessionRow[] | null }
   | { type: 'SET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot | null }
+  | { type: 'SET_LEDGER'; ledger: LedgerSnapshot | null }
   | { type: 'SET_PENDING_PERMISSION_REQUEST'; request: PermissionRequestUI | null }
   | { type: 'SET_PENDING_POST_TOOL_FLAG'; request: PostToolFlagRequestUI | null }
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
@@ -268,6 +270,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_DIAGNOSTICS':
       return { ...state, diagnostics: action.diagnostics };
+
+    case 'SET_LEDGER':
+      return { ...state, ledger: action.ledger };
 
     case 'SET_PENDING_PERMISSION_REQUEST': {
       const eventState = { ...state, pendingPermissionRequest: action.request };

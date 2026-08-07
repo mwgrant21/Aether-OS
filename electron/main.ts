@@ -20,6 +20,7 @@ import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules
 import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
+import { buildLedgerSnapshot } from '../src/shared/ledgerMath';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import {
   createHeadlineThrottle,
@@ -324,6 +325,16 @@ async function scanAndPushUsage(): Promise<void> {
   sendToWindow('optimize:findings', findings);
   sendToWindow('optimize:summary', summary);
   sendToWindow('optimize:breakdown', breakdown);
+
+  // The Ledger derives from the same TranscriptEvent[] Optimize just scanned --
+  // no second scan, and only derived numbers cross the IPC boundary (raw
+  // transcript content must not, per docs/privacy-and-data.md). The system time
+  // zone is resolved here, at the impure edge; buildLedgerSnapshot itself takes
+  // it as a parameter and stays pure.
+  sendToWindow(
+    'ledger:snapshot',
+    buildLedgerSnapshot(optimizeEvents, Intl.DateTimeFormat().resolvedOptions().timeZone, Date.now()),
+  );
 }
 
 function scanAndPushFleet(): void {

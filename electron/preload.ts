@@ -4,6 +4,7 @@ import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../src/shared/optimizeRules';
+import type { LedgerSnapshot } from '../src/shared/ledgerMath';
 import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
@@ -89,6 +90,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, snapshot: DiagnosticsSnapshot | null) => callback(snapshot);
       ipcRenderer.on('diagnostics:snapshot', listener);
       return () => ipcRenderer.removeListener('diagnostics:snapshot', listener);
+    },
+  },
+  ledger: {
+    onSnapshot: (callback: (snapshot: LedgerSnapshot | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: LedgerSnapshot | null) => callback(snapshot);
+      ipcRenderer.on('ledger:snapshot', listener);
+      return () => ipcRenderer.removeListener('ledger:snapshot', listener);
     },
   },
   memory: {

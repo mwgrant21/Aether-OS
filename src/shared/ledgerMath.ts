@@ -222,6 +222,48 @@ export function bucketByDay(events: TranscriptEvent[], timeZone: string, nowMs: 
   return { today, week, month };
 }
 
+// ---------------------------------------------------------------------------
+// The snapshot shipped to the renderer
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything the Ledger needs that the renderer cannot compute for itself.
+ *
+ * The renderer has never received raw TranscriptEvents and must not start:
+ * docs/privacy-and-data.md's "store the signal, not the payload" rule keeps
+ * transcript content out of the store, and per-event usage would drag the
+ * whole event across the IPC boundary. So the aggregation happens in main --
+ * on the TranscriptEvent[] main already scans each tick for Optimize -- and
+ * only derived numbers cross.
+ *
+ * Deliberately NOT included: per-dispatch estimates. The renderer can already
+ * build those from state it holds (recentCompletedDispatches joined with
+ * dispatchUsage) and calling estimateDispatchCost there keeps the estimate
+ * next to the row that renders it.
+ */
+export interface LedgerSnapshot {
+  session: ExactCost;
+  tiers: PricingTier[];
+  rollups: RollupBuckets;
+  cache: CacheImpact;
+  /** When main computed this, so the view can say how fresh it is. */
+  computedAtMs: number;
+}
+
+export function buildLedgerSnapshot(
+  events: TranscriptEvent[],
+  timeZone: string,
+  nowMs: number,
+): LedgerSnapshot {
+  return {
+    session: sessionLedger(events),
+    tiers: tiersInSession(events),
+    rollups: bucketByDay(events, timeZone, nowMs),
+    cache: cacheImpact(events),
+    computedAtMs: nowMs,
+  };
+}
+
 /** `YYYY-MM-DD` for a Date as observed in the given IANA time zone. */
 function localDayKey(date: Date, timeZone: string): string {
   // 'en-CA' formats as YYYY-MM-DD, which sorts and slices correctly.

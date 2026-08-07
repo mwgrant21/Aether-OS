@@ -10,6 +10,7 @@ import {
   reconcile,
   bucketByDay,
   cacheImpact,
+  buildLedgerSnapshot,
 } from './ledgerMath';
 
 // Verified rates (see modelPricing.ts): sonnet 3/15, opus 5/25, haiku 1/5,
@@ -246,6 +247,30 @@ describe('bucketByDay', () => {
         NOW,
       ),
     ).toEqual({ today: null, week: null, month: null });
+  });
+});
+
+describe('buildLedgerSnapshot', () => {
+  const NOW = Date.UTC(2026, 7, 7, 12, 0, 0);
+
+  it('assembles the four aggregates plus the computation time', () => {
+    const events = [ev({ timestamp: new Date(NOW), usage: usage(M, M, 0, M) })];
+    const snap = buildLedgerSnapshot(events, 'UTC', NOW);
+    expect(snap.session).toEqual(sessionLedger(events));
+    expect(snap.tiers).toEqual(['sonnet']);
+    expect(snap.rollups).toEqual(bucketByDay(events, 'UTC', NOW));
+    expect(snap.cache).toEqual(cacheImpact(events));
+    expect(snap.computedAtMs).toBe(NOW);
+  });
+
+  // A machine that has never run the collector, or a fresh install: the
+  // snapshot must still be a well-formed object whose rollups are null rather
+  // than zero, so the view can tell "nothing observed" from "nothing spent".
+  it('produces null rollups, not zeroes, for an empty scan', () => {
+    const snap = buildLedgerSnapshot([], 'UTC', NOW);
+    expect(snap.session.usd).toBe(0);
+    expect(snap.rollups).toEqual({ today: null, week: null, month: null });
+    expect(snap.tiers).toEqual([]);
   });
 });
 

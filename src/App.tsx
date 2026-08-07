@@ -12,6 +12,7 @@ import { useOptimizeSync } from './state/useOptimizeSync';
 import { useStatuslineSync } from './state/useStatuslineSync';
 import { useFleetSync } from './state/useFleetSync';
 import { useDiagnosticsSync } from './state/useDiagnosticsSync';
+import { useLedgerSync } from './state/useLedgerSync';
 import { useMemorySync } from './state/useMemorySync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
@@ -37,6 +38,7 @@ export default function App() {
         <StatuslineSync />
         <FleetSync />
         <DiagnosticsSync />
+        <LedgerSync />
         <MemorySync />
         <PermissionRequestSync />
         <PostToolFlagSync />
@@ -86,6 +88,11 @@ function FleetSync() {
 
 function DiagnosticsSync() {
   useDiagnosticsSync();
+  return null;
+}
+
+function LedgerSync() {
+  useLedgerSync();
   return null;
 }
 

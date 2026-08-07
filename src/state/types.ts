@@ -90,6 +90,7 @@ import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
+import type { LedgerSnapshot } from '../shared/ledgerMath';
 import type { PermissionRisk } from '../shared/permissionRisk';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { RateSample } from '../components/reactor/reactorMath';
@@ -297,6 +298,7 @@ export interface AetherState {
   statusline: StatuslineSnapshot | null;
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
+  ledger: LedgerSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;
   lastNotification: { reason: NotificationReason; atMs: number } | null;
