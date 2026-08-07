@@ -27,7 +27,7 @@ function row(over: Partial<DispatchCostRow> & { usdApprox?: number } = {}): Disp
     subagentType: 'general-purpose',
     durationMs: 1000,
     toolUses: 2,
-    estimate: { usdApprox, basis: 'blended-tier-rate', tokens: 1000 },
+    estimate: { usdApprox, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
     exitState: null,
     retries: null,
     ...rest,
@@ -66,7 +66,7 @@ describe('DispatchCostTable', () => {
 
   it('names the estimate basis in full rather than just saying "estimated"', () => {
     render(<DispatchCostTable rows={[row({ usdApprox: 2.5 })]} />);
-    expect(screen.getByText('~$2.50').getAttribute('title')).toBe(ESTIMATE_BASIS_TOOLTIP);
+    expect(screen.getByText('~$2.50').closest('[role="cell"]')!.getAttribute('title')).toContain(ESTIMATE_BASIS_TOOLTIP);
     expect(ESTIMATE_BASIS_TOOLTIP).toContain('no input/output split');
   });
 
@@ -92,6 +92,37 @@ describe('DispatchCostTable', () => {
     );
     expect(screen.queryByText(/fatal/)).toBeNull();
     expect(screen.queryByText(/retr/)).toBeNull();
+  });
+
+  // Review finding: `troubled` matched only 'fatal', so a dispatch that burned
+  // tokens and exited 'error'/'timeout'/'blocked' rendered as an ordinary row
+  // -- precisely the case this table exists to surface.
+  it.each(['error', 'timeout', 'blocked', 'fatal'] as const)('flags a %s exit', (exitState) => {
+    render(<DispatchCostTable rows={[row({ exitState })]} />);
+    expect(screen.getByText(exitState, { exact: true })).toBeTruthy();
+  });
+
+  it.each(['ok', 'partial'] as const)('does not flag a %s exit', (exitState) => {
+    render(<DispatchCostTable rows={[row({ exitState, retries: 0 })]} />);
+    expect(screen.queryByText(exitState, { exact: true })).toBeNull();
+  });
+
+  // Review finding: a defaulted tier is the COMMON case, and unmarked it is a
+  // silent ~40% undercount on any dispatch that really ran on Opus.
+  it('marks an estimate whose tier was assumed, and explains it on hover', () => {
+    render(
+      <DispatchCostTable
+        rows={[row({ estimate: { usdApprox: 5, basis: 'blended-tier-rate', tokens: 10, tier: 'sonnet', tierSource: 'defaulted' } })]}
+      />,
+    );
+    expect(screen.getByText('?')).toBeTruthy();
+    const cell = screen.getByText('~$5.00').closest('[role="cell"]')!;
+    expect(cell.getAttribute('title')).toContain('recorded no model');
+  });
+
+  it('does not mark an estimate whose tier was observed', () => {
+    render(<DispatchCostTable rows={[row({ usdApprox: 5 })]} />);
+    expect(screen.queryByText('?')).toBeNull();
   });
 
   it('renders an explicit empty state rather than a blank card', () => {

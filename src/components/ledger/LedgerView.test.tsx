@@ -25,14 +25,23 @@ describe('RollupCard', () => {
   // The single most important rendering rule in the view.
   it('renders a null bucket as an explicit no-data gap, never as $0.00', () => {
     render(<RollupCard rollups={{ today: null, week: null, month: null }} />);
-    expect(screen.getAllByText(/collector not running/i)).toHaveLength(3);
+    expect(screen.getAllByText(/no activity observed/i)).toHaveLength(3);
     expect(screen.queryByText('$0.00')).toBeNull();
   });
 
   it('renders an observed-but-free period as $0.00, distinct from no data', () => {
     render(<RollupCard rollups={{ today: 0, week: 1.5, month: 1.5 }} />);
     expect(screen.getByText('$0.00')).toBeTruthy();
-    expect(screen.queryByText(/collector not running/i)).toBeNull();
+    expect(screen.queryByText(/no activity observed/i)).toBeNull();
+  });
+
+  // Review finding: the no-data copy blamed the collector, but the ledger is
+  // built by scanning transcripts directly and never touches the collector at
+  // all. An operator who simply didn't work today was being sent to debug
+  // healthy instrumentation.
+  it('does not blame the collector, which this view does not use', () => {
+    render(<RollupCard rollups={{ today: null, week: null, month: null }} />);
+    expect(screen.queryByText(/collector/i)).toBeNull();
   });
 
   it('marks a sub-cent total as smaller than a cent rather than rounding it to free', () => {

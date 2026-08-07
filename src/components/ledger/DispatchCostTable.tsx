@@ -71,15 +71,20 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
         {sorted.map((row) => {
           // The cost-of-failure signal: a dispatch that burned tokens and then
           // failed, or had to be retried, is exactly what this table is for.
-          const troubled = row.exitState === 'fatal' || (row.retries !== null && row.retries > 0);
+          // Every FAILURE state, not just 'fatal'. ExitState also has
+          // 'error' (recoverable), 'timeout' and 'blocked' -- a dispatch that
+          // burned 80k tokens and exited 'error' is exactly the cost-of-failure
+          // case this table exists to surface, and it was rendering clean.
+          const failed = row.exitState !== null && row.exitState !== 'ok' && row.exitState !== 'partial';
+          const troubled = failed || (row.retries !== null && row.retries > 0);
           return (
             <div role="row" key={row.toolUseId} style={bodyRowStyle(colors, troubled)}>
               <span role="cell" style={{ ...colDesc, ...descCellStyle(colors) }} title={row.description}>
                 {row.description}
                 {troubled && (
                   <span style={flagStyle(colors)}>
-                    {row.exitState === 'fatal' ? 'fatal' : null}
-                    {row.exitState === 'fatal' && row.retries ? ' · ' : null}
+                    {failed ? row.exitState : null}
+                    {failed && row.retries ? ' · ' : null}
                     {row.retries ? `${row.retries} ${row.retries === 1 ? 'retry' : 'retries'}` : null}
                   </span>
                 )}
@@ -88,8 +93,21 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
               <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{fmtDuration(row.durationMs)}</span>
               <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.toolUses}</span>
               <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{fmtTokens(row.estimate.tokens)}</span>
-              <span role="cell" style={{ ...colNum, ...estCellStyle(colors) }} title={ESTIMATE_BASIS_TOOLTIP}>
+              <span
+                role="cell"
+                style={{ ...colNum, ...estCellStyle(colors) }}
+                title={
+                  row.estimate.tierSource === 'defaulted'
+                    ? `${ESTIMATE_BASIS_TOOLTIP}. This dispatch recorded no model, so the ${row.estimate.tier} rate was assumed — if it actually ran on a costlier tier this figure is low.`
+                    : `${ESTIMATE_BASIS_TOOLTIP}. Priced at the ${row.estimate.tier} rate.`
+                }
+              >
                 {approxUsd(row.estimate.usdApprox)}
+                {/* The Agent tool's `model` is an optional override omitted on
+                    most dispatches, so a defaulted tier is the common case, not
+                    the edge one. Unmarked, it is a silent ~40% undercount on
+                    any run that was really Opus. */}
+                {row.estimate.tierSource === 'defaulted' && <span style={assumedStyle(colors)}>?</span>}
               </span>
             </div>
           );
@@ -175,6 +193,12 @@ const descCellStyle = (c: ColorPalette): CSSProperties => ({
 const estCellStyle = (c: ColorPalette): CSSProperties => ({
   font: `500 12px/1.4 ${fonts.mono}`,
   color: c.textPrimary,
+});
+
+const assumedStyle = (c: ColorPalette): CSSProperties => ({
+  color: c.warn,
+  marginLeft: 3,
+  cursor: 'help',
 });
 
 const flagStyle = (c: ColorPalette): CSSProperties => ({

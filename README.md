@@ -126,14 +126,16 @@ other tool in this category has any sound design at all.
   never enters the store, persistence, or disk — see `docs/privacy-and-data.md`'s render-vs-store
   amendment, enforced by `noPayloadInStore.test.ts`.
 - **Ledger** — cost forensics for what this machine's Claude Code transcripts actually show: an
-  exact session total broken out by input / output / cache-write / cache-read, a dispatch table
-  sorted worst-offender-first, today/week/month rollups, and the counterfactual saving the prompt
-  cache is earning. Its design is mostly an argument about honesty. Session totals are exact to a
+  exact all-transcripts total broken out by input / output / cache-write / cache-read, a dispatch
+  table sorted worst-offender-first, today/week/month rollups, and the counterfactual saving the
+  prompt cache is earning. Its design is mostly an argument about honesty. Totals are exact to a
   pricing table whose verification date is rendered in the footer, so it cannot quietly age into
-  wrong. Per-dispatch figures are *estimates* — the completion event carries one scalar token count
+  wrong, and every card states the window it covers — the headline figure is *all* history across
+  *all* projects, not a session, and says so. Per-dispatch figures are *estimates* — the completion event carries one scalar token count
   with no input/output split — so they are a structurally different type that always renders with a
-  `~` and names its basis on hover, and the gap between the exact total and the sum of the estimates
-  is displayed rather than normalized away. A period the collector wasn't running for renders as an
+  `~` and names its basis on hover, and the gap between the exact figure and the sum of the estimates
+  is displayed rather than normalized away — scoped to a single day, so the two sides actually cover
+  the same window and the residual means something. A period the collector wasn't running for renders as an
   explicit gap, never as `$0.00`; zero and unknown are different answers. **What it deliberately
   does not claim:** this is what was *observed in this machine's Claude Code transcripts*, not your
   bill. Spend that never passed through a transcript is invisible here. The Ledger narrows the

@@ -34,8 +34,12 @@ function Bucket({ label, value, colors }: { label: string; value: number | null;
     <div style={bucketStyle}>
       <div style={bucketLabelStyle(colors)}>{label}</div>
       {value === null ? (
+        // NOT "collector not running": the ledger is built by scanning
+        // transcripts directly (historyScanner.ts), never from the collector
+        // database, so blaming the collector would send an operator who simply
+        // didn't work today off to debug healthy instrumentation.
         <div style={noDataStyle(colors)} title="No priced activity was observed for this period. This is not the same as spending nothing.">
-          no data — collector not running
+          no activity observed
         </div>
       ) : (
         <div style={bucketValueStyle(colors)}>{usdPrecise(value)}</div>

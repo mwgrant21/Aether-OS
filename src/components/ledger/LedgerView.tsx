@@ -72,10 +72,19 @@ export function LedgerView() {
 
           {reconciliation !== null && (
             <div style={residualStyle(colors)} title={ESTIMATE_BASIS_TOOLTIP}>
-              Today: dispatch estimates account for {approxUsd(reconciliation.attributedUsdApprox)} of the{' '}
-              {usd(reconciliation.sessionUsd)} observed;{' '}
-              <strong style={residualNumberStyle(colors)}>{approxUsd(reconciliation.residualUsd)}</strong>{' '}
-              {reconciliation.residualUsd < 0 ? 'over-attributed' : 'unattributed'}.
+              Today: {todaysRows.length} tracked dispatch{todaysRows.length === 1 ? '' : 'es'} account for{' '}
+              {approxUsd(reconciliation.attributedUsdApprox)} of the {usd(reconciliation.sessionUsd)} observed;{' '}
+              {/* Magnitude only -- the label carries the direction. Printing the
+                  sign here produced "~$-11.10 over-attributed", a malformed
+                  figure and a double negative. */}
+              <strong style={residualNumberStyle(colors)}>
+                {approxUsd(Math.abs(reconciliation.residualUsd))}
+              </strong>{' '}
+              {reconciliation.residualUsd < 0 ? 'over-attributed' : 'unattributed'}.{' '}
+              <span style={residualCaveatStyle(colors)}>
+                Only dispatches this app tracked live are counted, most recent {DISPATCH_HISTORY_CAP} — anything
+                older or from another session lands in the unattributed figure rather than being estimator error.
+              </span>
             </div>
           )}
 
@@ -141,6 +150,9 @@ export function buildDispatchRows(state: {
   });
 }
 
+// Mirrors the slice(0, 20) cap in reducer.ts's SET_REAL_AGENTS case.
+const DISPATCH_HISTORY_CAP = 20;
+
 const rootStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -183,6 +195,10 @@ const residualStyle = (c: ColorPalette): CSSProperties => ({
 const residualNumberStyle = (c: ColorPalette): CSSProperties => ({
   color: c.warn,
   fontWeight: 600,
+});
+
+const residualCaveatStyle = (c: ColorPalette): CSSProperties => ({
+  color: c.textDim,
 });
 
 const aetherRowStyle = (c: ColorPalette): CSSProperties => ({

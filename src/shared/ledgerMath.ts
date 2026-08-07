@@ -38,6 +38,19 @@ export interface EstimatedCost {
   usdApprox: number;
   basis: 'blended-tier-rate';
   tokens: number;
+  /** The tier the blend was taken from. */
+  tier: PricingTier;
+  /**
+   * Whether that tier came from a recorded model name or from the fallback.
+   *
+   * `RealAgentDispatch.model` is `input.model || null` (liveAgentsMath.ts), and
+   * the Agent tool's `model` is an OPTIONAL override that is omitted on most
+   * dispatches -- so `pricingTierForModel(null)` returning 'sonnet' silently
+   * prices an Opus run at the sonnet blend, roughly a 40% undercount. That is
+   * a bigger error than the blend ratio itself, and unlike the blend ratio it
+   * was invisible. Carried on the value so a renderer can mark it.
+   */
+  tierSource: 'observed' | 'defaulted';
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +134,13 @@ export function tiersInSession(events: TranscriptEvent[]): PricingTier[] {
 
 export function estimateDispatchCost(dispatch: CompletedDispatchUsage): EstimatedCost {
   const tokens = Number.isFinite(dispatch.tokens) && dispatch.tokens > 0 ? dispatch.tokens : 0;
+  const tier = pricingTierForModel(dispatch.model);
   return {
-    usdApprox: (tokens / 1_000_000) * blendedRateForTier(pricingTierForModel(dispatch.model)),
+    usdApprox: (tokens / 1_000_000) * blendedRateForTier(tier),
     basis: 'blended-tier-rate',
     tokens,
+    tier,
+    tierSource: dispatch.model ? 'observed' : 'defaulted',
   };
 }
 
@@ -207,11 +223,8 @@ export function bucketByDay(events: TranscriptEvent[], timeZone: string, nowMs: 
   const todayKey = localDayKey(now, timeZone);
   const monthKey = todayKey.slice(0, 7);
 
-  // Rolling 7-day window: today plus the six preceding local days.
-  const weekKeys = new Set<string>();
-  for (let i = 0; i < 7; i += 1) {
-    weekKeys.add(localDayKey(new Date(nowMs - i * 86_400_000), timeZone));
-  }
+  // Rolling 7-day window: today plus the six preceding calendar days.
+  const weekKeys = new Set(recentDayKeys(todayKey, 7));
 
   // null until something lands in the bucket, so an untouched period stays
   // distinguishable from one that genuinely totalled zero.
@@ -309,15 +322,54 @@ export function isSameLocalDay(iso: string, timeZone: string, nowMs: number): bo
   return localDayKey(d, timeZone) === localDayKey(new Date(nowMs), timeZone);
 }
 
+// Intl.DateTimeFormat construction is among the most expensive calls in the
+// Intl surface, and localDayKey runs once per assistant event. main.ts feeds
+// bucketByDay every transcript event on the machine, on the main thread, every
+// scan tick -- constructing a formatter per event stalls IPC to the renderer
+// on a machine with a long history. One formatter per zone, reused.
+const dayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function dayFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = dayFormatters.get(timeZone);
+  if (!formatter) {
+    // 'en-CA' formats as YYYY-MM-DD, which sorts and slices correctly.
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    dayFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 /** `YYYY-MM-DD` for a Date as observed in the given IANA time zone. */
 function localDayKey(date: Date, timeZone: string): string {
-  // 'en-CA' formats as YYYY-MM-DD, which sorts and slices correctly.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
+  return dayFormatter(timeZone).format(date);
+}
+
+/**
+ * The `count` calendar day keys ending at `todayKey`, walking the CALENDAR
+ * rather than subtracting fixed 24h offsets.
+ *
+ * Subtracting 86_400_000ms repeatedly is not a local day across a DST
+ * transition: in America/New_York from 2026-03-10, it skips 2026-03-08
+ * entirely, so every dollar spent on the transition day silently vanishes from
+ * the week bucket. Fall-back produces the mirror bug -- a duplicate key
+ * collapses and the window covers six days. Date.UTC arithmetic on a date-only
+ * value has no such edge, because no zone is involved.
+ */
+function recentDayKeys(todayKey: string, count: number): string[] {
+  const [y, m, d] = todayKey.split('-').map(Number);
+  const keys: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const dt = new Date(Date.UTC(y, m - 1, d - i));
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    keys.push(`${dt.getUTCFullYear()}-${mm}-${dd}`);
+  }
+  return keys;
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import type { CacheImpact } from '../../shared/ledgerMath';
-import { usd, usdPrecise, tokens as fmtTokens } from './format';
+import { usdPrecise, tokens as fmtTokens } from './format';
 
 /**
  * The counterfactual: what the cache reads would have cost at the full input
@@ -24,7 +24,9 @@ export function CacheImpactCard({ cache, hitRatio }: { cache: CacheImpact; hitRa
         <div style={emptyStyle(colors)}>No cache reads observed.</div>
       ) : (
         <>
-          <div style={savedStyle(colors)}>{usd(cache.savedUsd)} saved</div>
+          {/* usdPrecise, not usd: the card's largest number is where a real
+              sub-cent saving rendering as "$0.00 saved" misleads most. */}
+          <div style={savedStyle(colors)}>{usdPrecise(cache.savedUsd)} saved</div>
           <div style={subStyle(colors)}>
             {fmtTokens(cache.cacheReadTokens)} cached tokens would have cost {usdPrecise(cache.wouldHaveCostUsd)} at
             the full input rate; they cost {usdPrecise(cache.actuallyCostUsd)}.

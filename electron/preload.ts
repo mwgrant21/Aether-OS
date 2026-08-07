@@ -98,6 +98,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('ledger:snapshot', listener);
       return () => ipcRenderer.removeListener('ledger:snapshot', listener);
     },
+    // Pull the last snapshot main computed. The push can land before this
+    // renderer's listener exists, and the interval is 60s -- same startup race
+    // the statusline channel already solves this way.
+    current: (): Promise<LedgerSnapshot | null> => ipcRenderer.invoke('ledger:snapshot:current'),
   },
   memory: {
     onSnapshot: (callback: (rows: MemoryRowUI[] | null) => void) => {

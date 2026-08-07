@@ -48,6 +48,7 @@ declare global {
       };
       ledger: {
         onSnapshot: (callback: (snapshot: LedgerSnapshot | null) => void) => () => void;
+        current: () => Promise<LedgerSnapshot | null>;
       };
       memory: {
         onSnapshot: (callback: (rows: MemoryRowUI[] | null) => void) => () => void;

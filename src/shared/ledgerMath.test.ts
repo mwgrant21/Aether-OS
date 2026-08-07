@@ -157,6 +157,22 @@ describe('estimateDispatchCost', () => {
   it('falls back to the sonnet tier for a dispatch with no model recorded', () => {
     expect(estimateDispatchCost(dispatch({ model: null, tokens: M })).usdApprox).toBeCloseTo(12.6, 6);
   });
+
+  // Review finding: RealAgentDispatch.model is `input.model || null`, and the
+  // Agent tool's model is an OPTIONAL override omitted on most dispatches -- so
+  // the sonnet fallback silently prices an Opus run ~40% low. Bigger than the
+  // blend-ratio error, and it was invisible. The estimate now says which it is.
+  it('reports whether the tier was observed or defaulted', () => {
+    expect(estimateDispatchCost(dispatch({ model: 'claude-opus-4-8', tokens: M }))).toMatchObject({
+      tier: 'opus',
+      tierSource: 'observed',
+    });
+    expect(estimateDispatchCost(dispatch({ model: null, tokens: M }))).toMatchObject({
+      tier: 'sonnet',
+      tierSource: 'defaulted',
+    });
+    expect(estimateDispatchCost(dispatch({ model: '', tokens: M })).tierSource).toBe('defaulted');
+  });
 });
 
 describe('reconcile', () => {
@@ -238,6 +254,23 @@ describe('bucketByDay', () => {
     const denver = bucketByDay([e], 'America/Denver', NOW);
     expect(denver.today).toBeNull(); // yesterday, locally
     expect(denver.week).toBeCloseTo(3, 6); // still inside the rolling window
+  });
+
+  // Review finding: the window was built by subtracting a fixed 86_400_000ms
+  // seven times, which is not a local day across a DST transition. From
+  // 2026-03-10 in New York that skipped 2026-03-08 entirely, silently dropping
+  // every dollar spent on the transition day out of the week bucket.
+  it('covers seven distinct calendar days across a spring-forward transition', () => {
+    const now = Date.parse('2026-03-10T04:30:00Z');
+    const spent = (iso: string) => ev({ timestamp: new Date(iso), usage: usage(M, 0, 0, 0) }); // $3 each
+    const onTransitionDay = spent('2026-03-08T18:00:00Z'); // 2026-03-08 locally
+    expect(bucketByDay([onTransitionDay], 'America/New_York', now).week).toBeCloseTo(3, 6);
+  });
+
+  it('covers seven distinct calendar days across a fall-back transition', () => {
+    const now = Date.parse('2026-11-03T17:00:00Z');
+    const onTransitionDay = ev({ timestamp: new Date('2026-11-01T18:00:00Z'), usage: usage(M, 0, 0, 0) });
+    expect(bucketByDay([onTransitionDay], 'America/New_York', now).week).toBeCloseTo(3, 6);
   });
 
   it('skips events with no timestamp or an invalid one', () => {
