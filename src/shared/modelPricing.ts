@@ -34,14 +34,16 @@ export const PRICING_PER_MILLION_TOKENS = {
 // Cache reads are priced at 10% of the tier's input rate. Confirmed at the same
 // verification as the table above -- this is the published multiplier, not the
 // approximation the previous comment admitted to.
-const CACHE_READ_DISCOUNT = 0.1;
+// Exported so the Ledger's PricingBasisFooter can render the actual multiplier
+// in force rather than a hardcoded "10%" that could drift away from it.
+export const CACHE_READ_DISCOUNT = 0.1;
 
 // Cache WRITES cost more than a fresh input token, not the same: 1.25x the input
 // rate for the 5-minute TTL and 2x for the 1-hour TTL. Claude Code writes
 // 5-minute ephemeral entries, and a transcript records no TTL, so 1.25 is the
 // only defensible constant here. A workload using 1-hour caching would be
 // under-reported by this factor; that is a known limitation, not an oversight.
-const CACHE_WRITE_MULTIPLIER = 1.25;
+export const CACHE_WRITE_MULTIPLIER = 1.25;
 
 export type PricingTier = keyof typeof PRICING_PER_MILLION_TOKENS;
 
