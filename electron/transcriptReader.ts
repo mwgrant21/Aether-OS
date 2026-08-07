@@ -59,6 +59,15 @@ export interface TranscriptSource {
   kind: 'session' | 'dispatch';
   label: string;
   isLive: boolean;
+  // Set for kind: 'dispatch' sources whose meta.json carries it (Stage 14
+  // Task 3: commsChannels.ts's CommsChannel.transcriptSourceId is a dispatch
+  // channel's toolUseId, since that's the stable key CommsChannel already
+  // carries -- see resolveVoiceRole/RealAgentDispatch. This field is how the
+  // renderer resolves that toolUseId back to the dispatch's real source id
+  // without transcriptReader.ts's own id format (dispatch:<sessionId>:<base>)
+  // leaking into commsChannels.ts). Undefined for kind: 'session', and for a
+  // dispatch whose meta.json is missing or malformed.
+  toolUseId?: string;
 }
 
 const CHUNK_SIZE = 64 * 1024;
@@ -280,14 +289,16 @@ export async function listTranscriptSources(
     const base = path.basename(file, '.jsonl');
     const filePath = path.join(subagentsDir, file);
     let label = base;
+    let toolUseId: string | undefined;
     try {
       const metaRaw = await fsp.readFile(path.join(subagentsDir, `${base}.meta.json`), 'utf8');
       const meta = JSON.parse(metaRaw);
       label = meta.description || meta.agentType || base;
+      toolUseId = typeof meta.toolUseId === 'string' ? meta.toolUseId : undefined;
     } catch {
       // No meta file, or malformed -- fall back to the file's own basename.
     }
-    sources.push({ id: `dispatch:${pinnedSessionId}:${base}`, kind: 'dispatch', label, isLive: await isLive(filePath) });
+    sources.push({ id: `dispatch:${pinnedSessionId}:${base}`, kind: 'dispatch', label, isLive: await isLive(filePath), toolUseId });
   }
 
   return sources;

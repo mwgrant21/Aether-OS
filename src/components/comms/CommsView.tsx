@@ -1,23 +1,66 @@
-import { useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { useCommsChannels } from './useCommsChannels';
+import { useTranscriptSource } from './useTranscriptSource';
 import { ChannelRail } from './ChannelRail';
 import { MessageThread } from './MessageThread';
 import { MessageInput } from './MessageInput';
+import { parseFilter, applyFilter, type DisplayMessage } from './transcriptFilter';
+import { localResponder } from './localResponder';
+
+function makeMessageId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export function CommsView() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const chat = useCommsChannels(state, dispatch);
-  const [draft, setDraft] = useState('');
+  const [filterValue, setFilterValue] = useState('');
+  // localResponder replies, kept per the design doc's "What happens to
+  // localResponder" decision (kept, as the AETHER channel's fallback for
+  // non-filter input). These are synthetic DisplayMessage entries, not
+  // transcript content, so they live in this component's own useState right
+  // alongside the transcript messages they're interleaved with -- same
+  // render-not-store discipline, see src/state/noPayloadInStore.test.ts.
+  const [localReplies, setLocalReplies] = useState<Record<string, DisplayMessage[]>>({});
 
-  function send() {
-    if (!draft.trim()) return;
-    chat.sendMessage(draft);
-    setDraft('');
+  const source = useTranscriptSource(chat.activeChannel.transcriptSourceId);
+
+  const filter = useMemo(() => parseFilter(filterValue), [filterValue]);
+  const combinedMessages = useMemo(() => {
+    const extra = localReplies[chat.activeChannelId] ?? [];
+    if (!extra.length) return source.messages;
+    return [...source.messages, ...extra].sort((a, b) => a.atMs - b.atMs);
+  }, [source.messages, localReplies, chat.activeChannelId]);
+  const visibleMessages = useMemo(() => applyFilter(combinedMessages, filter), [combinedMessages, filter]);
+
+  function onFilterSubmit() {
+    const text = filterValue.trim();
+    if (!text) return;
+    // Only the AETHER channel gets a localResponder reply, and only when the
+    // text isn't a /tool /human /error filter expression -- those still just
+    // narrow the thread, per the task-3 brief.
+    if (chat.activeChannel.kind === 'aether' && (filter.type === 'text' || filter.type === 'empty')) {
+      const replyText = localResponder(chat.activeChannel, text, state);
+      const humanMsg: DisplayMessage = { id: makeMessageId(), role: 'human', atMs: Date.now(), text, toolCalls: [], toolResults: [] };
+      const assistantMsg: DisplayMessage = {
+        id: makeMessageId(),
+        role: 'assistant',
+        atMs: Date.now() + 1,
+        text: replyText,
+        toolCalls: [],
+        toolResults: [],
+      };
+      const channelId = chat.activeChannelId;
+      setLocalReplies((prev) => ({ ...prev, [channelId]: [...(prev[channelId] ?? []), humanMsg, assistantMsg] }));
+      setFilterValue('');
+    }
   }
+
+  const statusLabel = !chat.activeChannel.transcriptSourceId ? 'ENDED' : source.isLive ? 'LIVE' : 'REPLAY';
 
   return (
     <div style={rootStyle}>
@@ -25,7 +68,10 @@ export function CommsView() {
         channels={chat.channels}
         activeChannelId={chat.activeChannelId}
         unreadCounts={chat.unreadCounts}
-        onSelect={chat.setActiveChannelId}
+        onSelect={(id) => {
+          chat.setActiveChannelId(id);
+          setFilterValue('');
+        }}
         recentCompletedDispatches={state.recentCompletedDispatches}
         dispatchChannels={state.dispatchChannels}
         onCreateDispatchChannel={(toolUseId) => dispatch({ type: 'CREATE_DISPATCH_CHANNEL', toolUseId })}
@@ -35,15 +81,14 @@ export function CommsView() {
         <div style={headerStyle(colors)}>
           <span style={headerDotStyle(chat.activeChannel.hue)} />
           <span style={headerNameStyle(colors)}>{chat.activeChannel.name}</span>
-          {chat.activeChannel.archived && <span style={archivedPillStyle(colors)}>TERMINATED</span>}
+          <span style={statusPillStyle(colors, statusLabel)}>{statusLabel}</span>
         </div>
-        <MessageThread channel={chat.activeChannel} messages={chat.messages} isTyping={chat.isTyping} />
+        <MessageThread channel={chat.activeChannel} messages={visibleMessages} />
         <MessageInput
-          value={draft}
-          onChange={setDraft}
-          onSend={send}
-          disabled={chat.activeChannel.archived}
-          placeholder={chat.activeChannel.archived ? 'This channel is archived — read only' : `Message ${chat.activeChannel.name}…`}
+          value={filterValue}
+          onChange={setFilterValue}
+          onSubmit={onFilterSubmit}
+          placeholder={`Filter ${chat.activeChannel.name}… (/tool, /human, /error)`}
         />
       </div>
     </div>
@@ -80,12 +125,12 @@ function headerDotStyle(hue: string): CSSProperties {
 function headerNameStyle(colors: ColorPalette): CSSProperties {
   return { font: `700 15px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textPrimary };
 }
-function archivedPillStyle(colors: ColorPalette): CSSProperties {
+function statusPillStyle(colors: ColorPalette, label: string): CSSProperties {
   return {
     font: `600 9px/1 ${fonts.ui}`,
     letterSpacing: 1,
-    color: colors.textDim,
-    border: `1px solid ${colors.chromeBorder}`,
+    color: label === 'LIVE' ? colors.accentCyan : colors.textDim,
+    border: `1px solid ${label === 'LIVE' ? colors.accentCyan : colors.chromeBorder}`,
     padding: '3px 7px',
     borderRadius: 5,
   };

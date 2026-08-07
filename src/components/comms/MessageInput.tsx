@@ -1,21 +1,28 @@
 import type { CSSProperties, KeyboardEvent } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
-import { Button } from '../shared/Button';
 
 interface MessageInputProps {
   value: string;
   onChange: (value: string) => void;
-  onSend: () => void;
-  disabled: boolean;
+  onSubmit: () => void;
   placeholder: string;
 }
 
-export function MessageInput({ value, onChange, onSend, disabled, placeholder }: MessageInputProps) {
+// The filter box, not a send box (Stage 14, Task 3). No send affordance: a
+// disabled send button is the "looks-alive-isn't" class this project has
+// repeatedly designed against, and there is no send path in this stage.
+// Typing narrows the thread live (onChange); Enter also submits the current
+// text to CommsView, which — only for the AETHER channel, and only when the
+// text isn't a /tool /human /error filter expression — routes it to
+// localResponder (kept per the design doc's "What happens to localResponder"
+// decision). Enter on a filter expression, or on any other channel, is a
+// no-op beyond the live narrowing that already happened on change.
+export function MessageInput({ value, onChange, onSubmit, placeholder }: MessageInputProps) {
   const colors = useColors();
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') onSend();
+    if (e.key === 'Enter') onSubmit();
   }
 
   return (
@@ -25,18 +32,10 @@ export function MessageInput({ value, onChange, onSend, disabled, placeholder }:
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
-          disabled={disabled}
           placeholder={placeholder}
           spellCheck={false}
           style={inputStyle(colors)}
         />
-        <Button
-          onClick={onSend}
-          style={sendButtonStyle(disabled)}
-          disabled={disabled}
-        >
-          ➤
-        </Button>
       </div>
     </div>
   );
@@ -63,19 +62,5 @@ function inputStyle(colors: ColorPalette): CSSProperties {
     border: 'none',
     outline: 'none',
     caretColor: colors.accentCyan,
-  };
-}
-function sendButtonStyle(disabled: boolean): CSSProperties {
-  return {
-    cursor: disabled ? 'default' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    background: 'linear-gradient(180deg,#17b8d8,#0f7f97)',
-    display: 'grid',
-    placeItems: 'center',
-    color: 'inherit',
-    boxShadow: disabled ? 'none' : '0 0 14px rgba(95,240,255,.5)',
   };
 }

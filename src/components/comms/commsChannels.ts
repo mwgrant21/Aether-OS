@@ -3,6 +3,13 @@ import { colors } from '../../styles/tokens';
 
 export const AETHER_CHANNEL_ID = 'AETHER';
 
+// Sentinel `transcriptSourceId` for the AETHER channel: it resolves to the
+// pinned session, not a dispatch, and there is no toolUseId for "the whole
+// session" to key off of. useTranscriptSource.ts resolves this sentinel by
+// asking electron/transcriptReader.ts (via aetherElectron.transcript.sources)
+// for the source of kind 'session'.
+export const SESSION_TRANSCRIPT_SENTINEL = '__session__';
+
 export interface CommsChannel {
   id: string;
   kind: 'aether' | 'agent' | 'dispatch';
@@ -11,6 +18,15 @@ export interface CommsChannel {
   hue: string;
   archived: boolean;
   toolUseId?: string;
+  // The id useTranscriptSource.ts needs to resolve this channel's real
+  // transcript: SESSION_TRANSCRIPT_SENTINEL for AETHER, the dispatch's
+  // toolUseId for a dispatch channel, or null for a channel with no backing
+  // transcript at all -- both the fictional/simulated `state.agents` roster
+  // (see the Approval-vs-RealAgentDispatch disambiguation in state/types.ts)
+  // and its archived (idleList) counterparts are simulation-only and were
+  // never a real Claude session or dispatch, so they get null regardless of
+  // archived state.
+  transcriptSourceId: string | null;
 }
 
 function agentInitials(name: string): string {
@@ -40,6 +56,7 @@ export function deriveChannels(state: AetherState): CommsChannel[] {
     initials: 'AE',
     hue: colors.accentCyanSoft,
     archived: false,
+    transcriptSourceId: SESSION_TRANSCRIPT_SENTINEL,
   };
 
   const activeChannels: CommsChannel[] = state.agents.map((a) => ({
@@ -49,6 +66,7 @@ export function deriveChannels(state: AetherState): CommsChannel[] {
     initials: a.i,
     hue: a.hue,
     archived: false,
+    transcriptSourceId: null,
   }));
 
   const archivedChannels: CommsChannel[] = state.idleList.map((idle) => ({
@@ -58,6 +76,7 @@ export function deriveChannels(state: AetherState): CommsChannel[] {
     initials: agentInitials(idle.name),
     hue: colors.textMuted,
     archived: true,
+    transcriptSourceId: null,
   }));
 
   const dispatchChannelEntries: CommsChannel[] = state.dispatchChannels.map((d) => ({
@@ -68,6 +87,7 @@ export function deriveChannels(state: AetherState): CommsChannel[] {
     hue: colors.accentCyanSoft,
     archived: false,
     toolUseId: d.toolUseId,
+    transcriptSourceId: d.toolUseId,
   }));
 
   return [aether, ...activeChannels, ...archivedChannels, ...dispatchChannelEntries];
