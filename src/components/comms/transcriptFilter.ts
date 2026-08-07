@@ -1,14 +1,6 @@
-// DisplayMessage is defined in electron/transcriptReader.ts (Task 1) and has this exact shape.
-// We reproduce it here for type checking since the filter logic is pure and lives in src/,
-// which is compiled separately from electron/. Consumers will pass the same type.
-export interface DisplayMessage {
-  id: string;
-  role: 'human' | 'assistant' | 'system';
-  atMs: number;
-  text: string | null;
-  toolCalls: { name: string; label: string }[];
-  toolResults: { resultLength: number }[];
-}
+import type { DisplayMessage } from '../../../electron/transcriptReader';
+
+export type { DisplayMessage };
 
 export type Filter =
   | { type: 'empty' }
@@ -85,7 +77,7 @@ export function applyFilter(messages: DisplayMessage[], filter: Filter): Display
         return true;
       }
       // Search in tool call labels
-      if (msg.toolCalls.some((tc: { name: string; label: string }) => tc.label.toLowerCase().includes(query))) {
+      if (msg.toolCalls.some((tc) => tc.label.toLowerCase().includes(query))) {
         return true;
       }
       return false;
@@ -94,7 +86,7 @@ export function applyFilter(messages: DisplayMessage[], filter: Filter): Display
 
   if (filter.type === 'tool') {
     const name = filter.name.toLowerCase();
-    return messages.filter((msg) => msg.toolCalls.some((tc: { name: string; label: string }) => tc.name.toLowerCase() === name));
+    return messages.filter((msg) => msg.toolCalls.some((tc) => tc.name.toLowerCase() === name));
   }
 
   if (filter.type === 'human') {
@@ -108,7 +100,7 @@ export function applyFilter(messages: DisplayMessage[], filter: Filter): Display
       if (msg.toolResults.length === 0) {
         return false;
       }
-      return msg.toolCalls.some((tc: { name: string; label: string }) => {
+      return msg.toolCalls.some((tc) => {
         const label = tc.label.toLowerCase();
         return label.includes('error') || label.includes('fail');
       });
