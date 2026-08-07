@@ -146,6 +146,21 @@ because it might need them later.
 is a *new decision with its own privacy analysis*, not an incremental extension of an existing
 store. Do not widen the schema to "keep options open."
 
+**Rendering is not storing (Stage 14 amendment, binding).** Stage 14's Comms deck reads real
+transcript content and renders it in a mounted view — exactly the payload this section exists to
+keep out of the store. The resolution is a distinction this rule already implied but never had to
+state, because until now nothing rendered payload: transcript content may be read from disk and
+held in the rendering component's own React state for as long as the view is mounted. It must
+never enter the `useReducer` store, never enter `persistence.ts`'s whitelist, never be written to
+`~/.aether-os/`, and never reach the collector's SQLite schema. The read path is pull-based —
+requested by the mounted view (on mount, on an explicit refresh, and, for a live source, re-fetched
+on the app's existing 1s tick) — never a `state` push, and it is the one deliberate exception to
+the `useRealAgentsSync.ts` pattern that feeds every other real-data surface into the store.
+`src/components/comms/noPayloadInStore.test.ts` is the mechanical enforcement: it asserts no
+transcript-message type is reachable from `AetherState`. The operator is the only reader of their
+own transcripts on their own machine, and nothing leaves it — the original rule was written to
+prevent a *store* that could leak, not to prevent the operator from looking at their own session.
+
 ---
 
 ## 5. File paths are the remaining sensitive surface

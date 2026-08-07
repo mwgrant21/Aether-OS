@@ -40,10 +40,13 @@ npm run electron:build  # electron-vite build (main + preload + renderer, for th
 
 ```
 src/
-  components/    React views, one directory per nav tab (agents/, analytics/, chat/,
+  components/    React views, one directory per nav tab (agents/, analytics/, comms/,
                  dashboard/, files/, grid/, layout/, memory/, projects/, reactor/,
                  settings/, terminal/, uplinks/) plus components/shared/ for the
-                 cross-cutting primitives (Button, useColors, useHoverStyle).
+                 cross-cutting primitives (Button, useColors, useHoverStyle). comms/
+                 (renamed from chat/, Stage 13.5) holds the Comms deck: real
+                 transcript rendering, filter parsing, narration through the
+                 Stage 12 voice packs, and the frozen-phrase predicates.
   shared/        PURE logic, unit-tested, imported by both main and renderer:
                  alertSounds.ts (decideAlertActions + Web Audio synthesis),
                  anomalyDetectors.ts (the 4 anomaly detectors), chatActionResult.ts.
@@ -107,6 +110,13 @@ docs/superpowers/
   IPC-driven state (live agents, anomalies, usage) flows in via hooks that
   dispatch actions on IPC events — see `useRealAgentsSync.ts` for the pattern;
   new IPC-reactive features should mirror it, not invent a new subscription style.
+  **One deliberate exception**: `src/components/comms/useTranscriptSource.ts`
+  (Stage 14) reads real transcript content over a pull-based, request/response
+  IPC channel — on mount, on explicit refresh, and, for a live source, re-fetched
+  on the existing 1s tick — and holds it only in the view's own React state. It
+  never dispatches into the store, because transcript *content* is exactly the
+  payload `docs/privacy-and-data.md`'s "store the signal, not the payload" rule
+  exists to keep out; see that doc's Stage 14 amendment for the full reasoning.
 - **Model calls**: no model call site exists anywhere in this repo. The
   `@anthropic-ai/sdk` dependency is gone from `package.json`; `chatCore.ts`,
   `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC
