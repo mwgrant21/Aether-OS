@@ -6,12 +6,16 @@ const FIXTURE = path.join(__dirname, '__fixtures__', 'transcript-sample.jsonl');
 const FIXTURES_DIR = path.join(__dirname, '__fixtures__');
 
 describe('readTranscript', () => {
-  it('parses the fixture into display messages, skipping the malformed line', async () => {
+  it('parses the fixture into display messages, skipping the malformed line and the fully-correlated tool-result carrier', async () => {
     const { messages } = await readTranscript(FIXTURE, { limit: 50 });
 
-    // 5 lines in the fixture, 1 malformed -> 4 display messages.
-    expect(messages).toHaveLength(4);
-    expect(messages.map((m) => m.id)).toEqual(['u1', 'u2', 'u3', 'u4']);
+    // 5 lines in the fixture, 1 malformed. u3 is a pure tool_result carrier
+    // whose one result (tool-1) gets correlated onto u2's Bash call, so u3
+    // is dropped rather than rendering as a redundant blank row -- see the
+    // post-hoc fix (final review, findings 1/2) in readTranscript's
+    // correlation pass. 4 raw messages -> 3 display messages.
+    expect(messages).toHaveLength(3);
+    expect(messages.map((m) => m.id)).toEqual(['u1', 'u2', 'u4']);
   });
 
   it('does not throw on the malformed line', async () => {
@@ -25,23 +29,26 @@ describe('readTranscript', () => {
     expect(human.text).toBe('Please run the test suite and fix any failures.');
   });
 
-  it('surfaces assistant text and both tool_use blocks with labels', async () => {
+  it('surfaces assistant text and both tool_use blocks with labels, with the Bash call correlated to its later tool_result', async () => {
     const { messages } = await readTranscript(FIXTURE, { limit: 50 });
     const assistant = messages.find((m) => m.id === 'u2')!;
     expect(assistant.role).toBe('assistant');
     expect(assistant.text).toBe("I'll run the tests and check the failing file.");
     expect(assistant.toolCalls).toEqual([
-      { name: 'Bash', label: 'npm test' },
-      { name: 'Read', label: 'index.ts' },
+      { name: 'Bash', label: 'npm test', toolUseId: 'tool-1', resultLength: expect.any(Number) },
+      { name: 'Read', label: 'index.ts', toolUseId: 'tool-2', resultLength: null },
     ]);
   });
 
-  it('surfaces a tool_result as resultLength only, never content', async () => {
+  it('correlates a tool_result onto its tool_use as resultLength only, never content, and drops the now-redundant carrier line', async () => {
     const { messages } = await readTranscript(FIXTURE, { limit: 50 });
-    const result = messages.find((m) => m.id === 'u3')!;
-    expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]).toEqual({ resultLength: expect.any(Number) });
-    expect(JSON.stringify(result)).not.toContain('passing');
+    // u3 was the pure tool_result carrier for tool-1 -- fully consumed by
+    // correlation, so it's gone from the returned list (see readTranscript's
+    // correlation pass).
+    expect(messages.find((m) => m.id === 'u3')).toBeUndefined();
+    const assistant = messages.find((m) => m.id === 'u2')!;
+    expect(assistant.toolCalls[0].resultLength).toEqual(expect.any(Number));
+    expect(JSON.stringify(messages)).not.toContain('passing');
   });
 
   it('includes a task-notification completion line', async () => {
@@ -70,8 +77,10 @@ describe('readTranscript', () => {
     const secondPage = await readTranscript(FIXTURE, { limit: 50, before: firstPage.nextBefore! });
     // Paging back from the tail-most 2 lines should reach every earlier line,
     // and nothing in the second page should overlap the first (strictly
-    // older, since `before` is exclusive of the line it points at).
-    expect(secondPage.messages.map((m) => m.id)).toEqual(['u1', 'u2', 'u3']);
+    // older, since `before` is exclusive of the line it points at). u3's
+    // result correlates onto u2's Bash call within this page's own window,
+    // so u3 itself is dropped -- see readTranscript's correlation pass.
+    expect(secondPage.messages.map((m) => m.id)).toEqual(['u1', 'u2']);
     expect(secondPage.nextBefore).toBeNull();
   });
 

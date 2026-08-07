@@ -89,9 +89,21 @@ function MessageRow({ message, channel, colors }: { message: DisplayMessage; cha
           <span style={toolNameStyle(colors)}>{tc.name}</span>
           <span style={toolDotStyle(colors)}>·</span>
           <span style={toolLabelStyle(colors)}>{tc.label}</span>
-          {message.toolResults[i] && <span style={sizeChipStyle(colors)}>{message.toolResults[i].resultLength}c</span>}
+          {tc.resultLength !== null && <span style={sizeChipStyle(colors)}>{tc.resultLength}c</span>}
         </div>
       ))}
+      {/* A tool-result-only line whose matching tool_use fell outside the
+          read window (so readTranscript's correlation pass in
+          transcriptReader.ts couldn't attach it to a call's size chip) still
+          reaches here rather than being dropped -- show it as its own compact
+          row instead of a bare SYSTEM label + timestamp with nothing under it. */}
+      {message.toolCalls.length === 0 &&
+        message.toolResults.map((tr, i) => (
+          <div key={i} style={toolRowStyle(colors)}>
+            <span style={toolLabelStyle(colors)}>tool result (call not in view)</span>
+            <span style={sizeChipStyle(colors)}>{tr.resultLength}c</span>
+          </div>
+        ))}
     </div>
   );
 }

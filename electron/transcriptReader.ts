@@ -50,8 +50,22 @@ export interface DisplayMessage {
   role: 'human' | 'assistant' | 'system';
   atMs: number;
   text: string | null;
-  toolCalls: { name: string; label: string }[];
-  toolResults: { resultLength: number }[];
+  // Post-hoc fix (final review, findings 1/2): `resultLength` is populated by
+  // readTranscript's correlation pass below, matching this call's
+  // `toolUseId` against a later `tool_result` line's `tool_use_id` in the
+  // same read window. null until (if ever) a matching result is found --
+  // never assume it's set just because the message came from a real
+  // transcript. `toolUseId` is carried for that correlation and for
+  // debugging; it is not otherwise part of the render contract.
+  toolCalls: { name: string; label: string; toolUseId?: string; resultLength: number | null }[];
+  // Raw tool_result blocks parsed off THIS line, before correlation. Once
+  // correlation (below) successfully attaches a result's length onto the
+  // toolCall that produced it, the tool-result-only message that originally
+  // carried it is dropped from the returned list -- see readTranscript.
+  // Results that can't be correlated (matching tool_use line outside the
+  // read window, or truly orphaned) stay on their own message here so the
+  // renderer has something to show instead of losing them silently.
+  toolResults: { resultLength: number; toolUseId?: string }[];
 }
 
 export interface TranscriptSource {
@@ -162,8 +176,13 @@ function toDisplayMessage(line: string, startOffset: number): DisplayMessage | n
     text = event.humanText;
   }
 
-  const toolCalls = event.toolUses.map((tu) => ({ name: tu.name, label: labelForToolUse(tu.name, tu.input) }));
-  const toolResults = event.toolResults.map((tr) => ({ resultLength: tr.resultLength }));
+  const toolCalls = event.toolUses.map((tu) => ({
+    name: tu.name,
+    label: labelForToolUse(tu.name, tu.input),
+    toolUseId: tu.id,
+    resultLength: null as number | null,
+  }));
+  const toolResults = event.toolResults.map((tr) => ({ resultLength: tr.resultLength, toolUseId: tr.toolUseId }));
 
   return { id, role, atMs, text, toolCalls, toolResults };
 }
@@ -189,11 +208,45 @@ export async function readTranscript(
   const beforeOffset = opts.before !== undefined ? Number(opts.before) : undefined;
   const lines = await readTailLines(filePath, opts.limit, Number.isFinite(beforeOffset) ? beforeOffset : undefined);
 
-  const messages: DisplayMessage[] = [];
+  const rawMessages: DisplayMessage[] = [];
   for (const { text, startOffset } of lines) {
     const msg = toDisplayMessage(text, startOffset);
-    if (msg) messages.push(msg);
+    if (msg) rawMessages.push(msg);
   }
+
+  // Post-hoc fix (final review, findings 1/2): correlate each tool_use to
+  // its tool_result by `tool_use_id`, across the whole read window --
+  // parseTranscriptLine/toDisplayMessage only ever see ONE line at a time,
+  // so a tool_use on an assistant line and its tool_result on a later user
+  // line can never be paired within a single call to toDisplayMessage. This
+  // is the only place with visibility into the full set of lines from this
+  // read, so it's the only place that can do the pairing.
+  const resultLengthByToolUseId = new Map<string, number>();
+  for (const msg of rawMessages) {
+    for (const tr of msg.toolResults) {
+      if (tr.toolUseId) resultLengthByToolUseId.set(tr.toolUseId, tr.resultLength);
+    }
+  }
+  const attachedToolUseIds = new Set<string>();
+  for (const msg of rawMessages) {
+    for (const tc of msg.toolCalls) {
+      if (tc.toolUseId && resultLengthByToolUseId.has(tc.toolUseId)) {
+        tc.resultLength = resultLengthByToolUseId.get(tc.toolUseId)!;
+        attachedToolUseIds.add(tc.toolUseId);
+      }
+    }
+  }
+
+  // A tool-result-only line (no text, no tool calls of its own) whose every
+  // result got attached to a tool call above now renders through that call's
+  // size chip -- keeping the original line too would just be a blank row
+  // under a bare SYSTEM label. Drop it. A line with at least one result that
+  // couldn't be correlated (its tool_use fell outside this read window) is
+  // kept, so MessageThread still has something to show for it.
+  const messages = rawMessages.filter((msg) => {
+    if (msg.toolCalls.length > 0 || msg.text !== null || msg.toolResults.length === 0) return true;
+    return !msg.toolResults.every((tr) => tr.toolUseId && attachedToolUseIds.has(tr.toolUseId));
+  });
 
   // The oldest LINE's startOffset (not the oldest MESSAGE's, since a
   // malformed/filtered line still occupies the byte range paging needs to

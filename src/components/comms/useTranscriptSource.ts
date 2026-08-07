@@ -20,6 +20,11 @@ export interface UseTranscriptSourceResult {
   isLive: boolean;
   loadOlder: () => Promise<void>;
   refresh: () => Promise<void>;
+  // Post-hoc fix (final review, finding 3): true once loadOlder has paged
+  // back and the tick-triggered re-fetch below is suspended as a result --
+  // surfaced so the UI (CommsView.tsx) can show the user they're not
+  // currently tracking the live tail, and offer `refresh()` as the way back.
+  hasPagedBack: boolean;
 }
 
 const TAIL_LIMIT = 200;
@@ -43,6 +48,13 @@ export function useTranscriptSource(sourceId: string | null): UseTranscriptSourc
   const [isLive, setIsLive] = useState(false);
   const nextBeforeRef = useRef<string | null>(null);
   const resolvedIdRef = useRef<string | null>(null);
+  // Post-hoc fix (final review, finding 3): once the user has paged back via
+  // loadOlder, the tick effect below must stop calling fetchTail -- fetchTail
+  // does a full setMessages(result.messages) replace, which would silently
+  // wipe the older messages loadOlder just prepended within one ~900ms tick.
+  // Cleared back to false by a fresh source (new sourceId) or an explicit
+  // refresh() -- both are "start over from the tail" actions.
+  const [hasPagedBack, setHasPagedBack] = useState(false);
 
   const fetchTail = useCallback(async (id: string) => {
     const api = window.aetherElectron;
@@ -70,16 +82,21 @@ export function useTranscriptSource(sourceId: string | null): UseTranscriptSourc
       setMessages([]);
       setIsLive(false);
       nextBeforeRef.current = null;
+      setHasPagedBack(false);
       return;
     }
+    setHasPagedBack(false);
     fetchTail(sourceId);
   }, [sourceId, fetchTail]);
 
   // Re-fetch the tail on the app's existing tick, but only while the source
   // is live -- a replay/ended source's content never changes underneath the
-  // reader, so polling it would just be wasted IPC traffic.
+  // reader, so polling it would just be wasted IPC traffic. Also suspended
+  // while hasPagedBack is true (finding 3): fetchTail fully replaces
+  // `messages`, so ticking while the user has paged back via loadOlder would
+  // wipe those older messages again within one tick.
   useEffect(() => {
-    if (!sourceId || !isLive) return;
+    if (!sourceId || !isLive || hasPagedBack) return;
     fetchTail(sourceId);
     // Deliberately keyed on `state` (the app's 900ms TICK cadence, see
     // store.tsx) rather than a bespoke interval, per the design doc's "Does
@@ -96,12 +113,14 @@ export function useTranscriptSource(sourceId: string | null): UseTranscriptSourc
     const result = await api.transcript.read({ source: resolvedId, limit: LOAD_OLDER_LIMIT, before });
     setMessages((prev) => [...result.messages, ...prev]);
     nextBeforeRef.current = result.nextBefore;
+    setHasPagedBack(true);
   }, []);
 
   const refresh = useCallback(async () => {
     if (!sourceId) return;
+    setHasPagedBack(false);
     await fetchTail(sourceId);
   }, [sourceId, fetchTail]);
 
-  return { messages, isLive, loadOlder, refresh };
+  return { messages, isLive, loadOlder, refresh, hasPagedBack };
 }

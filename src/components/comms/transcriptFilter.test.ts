@@ -16,7 +16,7 @@ const messages: DisplayMessage[] = [
     role: 'assistant',
     atMs: 2000,
     text: 'The API rate limit is 100 requests per minute.',
-    toolCalls: [{ name: 'fetch_docs', label: 'Fetch API documentation' }],
+    toolCalls: [{ name: 'fetch_docs', label: 'Fetch API documentation', resultLength: null }],
     toolResults: [],
   },
   {
@@ -24,16 +24,16 @@ const messages: DisplayMessage[] = [
     role: 'assistant',
     atMs: 3000,
     text: null,
-    toolCalls: [{ name: 'run_test', label: 'Run unit tests' }],
-    toolResults: [{ resultLength: 250 }],
+    toolCalls: [{ name: 'run_test', label: 'Run unit tests', resultLength: 250 }],
+    toolResults: [],
   },
   {
     id: '4',
     role: 'assistant',
     atMs: 4000,
     text: null,
-    toolCalls: [{ name: 'run_test', label: 'Run failed test suite' }],
-    toolResults: [{ resultLength: 512 }],
+    toolCalls: [{ name: 'run_test', label: 'Run failed test suite', resultLength: 512 }],
+    toolResults: [],
   },
   {
     id: '5',
@@ -48,8 +48,8 @@ const messages: DisplayMessage[] = [
     role: 'assistant',
     atMs: 6000,
     text: 'Checking logs...',
-    toolCalls: [{ name: 'read_logs', label: 'Error log reader' }],
-    toolResults: [{ resultLength: 1024 }],
+    toolCalls: [{ name: 'read_logs', label: 'Error log reader', resultLength: 1024 }],
+    toolResults: [],
   },
   {
     id: '7',
@@ -64,8 +64,8 @@ const messages: DisplayMessage[] = [
     role: 'assistant',
     atMs: 8000,
     text: 'Deployment failed.',
-    toolCalls: [{ name: 'deploy', label: 'Deploy failure handler' }],
-    toolResults: [{ resultLength: 100 }],
+    toolCalls: [{ name: 'deploy', label: 'Deploy failure handler', resultLength: 100 }],
+    toolResults: [],
   },
 ];
 
@@ -314,8 +314,8 @@ describe('applyFilter', () => {
           role: 'assistant',
           atMs: 1000,
           text: 'All good',
-          toolCalls: [{ name: 'tool', label: 'Normal label' }],
-          toolResults: [{ resultLength: 100 }],
+          toolCalls: [{ name: 'tool', label: 'Normal label', resultLength: 100 }],
+          toolResults: [],
         },
       ];
       const filter = parseFilter('/error');
@@ -323,10 +323,10 @@ describe('applyFilter', () => {
       expect(result).toEqual([]);
     });
 
-    it('ignores messages with no tool results', () => {
+    it('ignores messages with no correlated tool results', () => {
       const filter = parseFilter('/error');
       const result = applyFilter(messages, filter);
-      // Message 1 and 5 are human messages with no toolResults
+      // Message 1 and 5 are human messages with no toolCalls at all
       expect(result.some((m) => m.id === '1')).toBe(false);
       expect(result.some((m) => m.id === '5')).toBe(false);
     });
@@ -338,16 +338,16 @@ describe('applyFilter', () => {
           role: 'assistant',
           atMs: 1000,
           text: null,
-          toolCalls: [{ name: 'tool', label: 'ERROR Handler' }],
-          toolResults: [{ resultLength: 100 }],
+          toolCalls: [{ name: 'tool', label: 'ERROR Handler', resultLength: 100 }],
+          toolResults: [],
         },
         {
           id: '2',
           role: 'assistant',
           atMs: 2000,
           text: null,
-          toolCalls: [{ name: 'tool', label: 'FAILED operation' }],
-          toolResults: [{ resultLength: 100 }],
+          toolCalls: [{ name: 'tool', label: 'FAILED operation', resultLength: 100 }],
+          toolResults: [],
         },
       ];
       const filter = parseFilter('/error');

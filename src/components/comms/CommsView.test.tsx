@@ -10,7 +10,7 @@ const SOURCE: TranscriptSource = { id: 'sess-1', kind: 'session', label: 'Sessio
 
 const MESSAGES: DisplayMessage[] = [
   { id: 'm1', role: 'human', atMs: 1000, text: 'run the test suite', toolCalls: [], toolResults: [] },
-  { id: 'm2', role: 'assistant', atMs: 2000, text: null, toolCalls: [{ name: 'Bash', label: 'npm test' }], toolResults: [{ resultLength: 40 }] },
+  { id: 'm2', role: 'assistant', atMs: 2000, text: null, toolCalls: [{ name: 'Bash', label: 'npm test', resultLength: 40 }], toolResults: [] },
   { id: 'm3', role: 'assistant', atMs: 3000, text: 'All green.', toolCalls: [], toolResults: [] },
 ];
 

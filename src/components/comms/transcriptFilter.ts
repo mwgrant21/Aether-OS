@@ -17,10 +17,16 @@ export type Filter =
  * - Bare text: case-insensitive substring search across message text and tool labels
  * - `/tool <name>`: filters to messages containing a tool call with the given name
  * - `/human`: filters to messages from the 'human' role
- * - `/error`: filters to messages with tool results that have failure-shaped labels
- *   (contains "error" or "fail"), combined with tool-result presence.
+ * - `/error`: filters to messages with a tool call that (a) has a correlated
+ *   result (`resultLength !== null` -- see readTranscript's correlation pass
+ *   in electron/transcriptReader.ts, which pairs a tool_use with its later
+ *   tool_result by tool_use_id) and (b) has a failure-shaped label (contains
+ *   "error" or "fail").
  *   **Limitation:** Result content is not available (only resultLength), so this
  *   cannot detect a command that failed silently with a successful response.
+ *   A tool call whose result fell outside the read window (paged out) won't
+ *   have a correlated resultLength and so won't match, even if its label
+ *   looks failure-shaped.
  * - Unrecognized `/verb`: falls through to bare text search (same philosophy as
  *   localResponder's catch-all) — a filter box that rejects input is worse than
  *   one that over-matches.
@@ -94,17 +100,13 @@ export function applyFilter(messages: DisplayMessage[], filter: Filter): Display
   }
 
   if (filter.type === 'error') {
-    return messages.filter((msg) => {
-      // Match messages that have tool results AND a failure-shaped tool label.
-      // "Failure-shaped" means the label contains "error" or "fail" (case-insensitive).
-      if (msg.toolResults.length === 0) {
-        return false;
-      }
-      return msg.toolCalls.some((tc) => {
+    return messages.filter((msg) =>
+      msg.toolCalls.some((tc) => {
+        if (tc.resultLength === null) return false;
         const label = tc.label.toLowerCase();
         return label.includes('error') || label.includes('fail');
-      });
-    });
+      })
+    );
   }
 
   // TypeScript exhaustiveness check

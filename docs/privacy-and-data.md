@@ -154,9 +154,9 @@ held in the rendering component's own React state for as long as the view is mou
 never enter the `useReducer` store, never enter `persistence.ts`'s whitelist, never be written to
 `~/.aether-os/`, and never reach the collector's SQLite schema. The read path is pull-based —
 requested by the mounted view (on mount, on an explicit refresh, and, for a live source, re-fetched
-on the app's existing 1s tick) — never a `state` push, and it is the one deliberate exception to
+on the app's existing 900ms tick) — never a `state` push, and it is the one deliberate exception to
 the `useRealAgentsSync.ts` pattern that feeds every other real-data surface into the store.
-`src/components/comms/noPayloadInStore.test.ts` is the mechanical enforcement: it asserts no
+`src/state/noPayloadInStore.test.ts` is the mechanical enforcement: it asserts no
 transcript-message type is reachable from `AetherState`. The operator is the only reader of their
 own transcripts on their own machine, and nothing leaves it — the original rule was written to
 prevent a *store* that could leak, not to prevent the operator from looking at their own session.

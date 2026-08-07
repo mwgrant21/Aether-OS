@@ -82,6 +82,28 @@ export function CommsView() {
           <span style={headerDotStyle(chat.activeChannel.hue)} />
           <span style={headerNameStyle(colors)}>{chat.activeChannel.name}</span>
           <span style={statusPillStyle(colors, statusLabel)}>{statusLabel}</span>
+          {/* Post-hoc fix (final review, finding 2): loadOlder/refresh were
+              built in useTranscriptSource.ts but never reachable from the UI
+              -- the design doc and privacy amendment both describe reads
+              happening "on an explicit refresh" and a "load older" action.
+              Minimal chip-style affordances, consistent with the deck's
+              existing visual language (see statusPillStyle above). */}
+          <button type="button" style={chipButtonStyle(colors)} onClick={() => source.loadOlder()} disabled={!chat.activeChannel.transcriptSourceId}>
+            Load older
+          </button>
+          {source.hasPagedBack && (
+            <button type="button" style={chipButtonStyle(colors)} onClick={() => source.refresh()}>
+              Back to live
+            </button>
+          )}
+          <button
+            type="button"
+            style={{ ...chipButtonStyle(colors), marginLeft: source.hasPagedBack ? 0 : 'auto' }}
+            onClick={() => source.refresh()}
+            disabled={!chat.activeChannel.transcriptSourceId}
+          >
+            Refresh
+          </button>
         </div>
         <MessageThread
           channel={chat.activeChannel}
@@ -128,6 +150,18 @@ function headerDotStyle(hue: string): CSSProperties {
 }
 function headerNameStyle(colors: ColorPalette): CSSProperties {
   return { font: `700 15px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textPrimary };
+}
+function chipButtonStyle(colors: ColorPalette): CSSProperties {
+  return {
+    font: `600 9px/1 ${fonts.ui}`,
+    letterSpacing: 0.5,
+    color: colors.textDim,
+    background: 'transparent',
+    border: `1px solid ${colors.chromeBorder}`,
+    borderRadius: 5,
+    padding: '3px 7px',
+    cursor: 'pointer',
+  };
 }
 function statusPillStyle(colors: ColorPalette, label: string): CSSProperties {
   return {
