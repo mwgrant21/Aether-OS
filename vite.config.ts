@@ -19,7 +19,21 @@ export default defineConfig(() => {
         'e2e/**', // Playwright's own separate test suite, run via npm run test:e2e
         'scripts/aether-hook-emit.test.ts',
         'scripts/aether-permission-hook.test.ts',
-        '.worktrees/**', // sibling git worktrees each carry their own full copy of this suite
+        // A git worktree carries a full second copy of this suite, so a root
+        // run collects every test twice and reports failures from whatever
+        // stale branch the worktree is parked on -- tests that are correct for
+        // that branch and meaningless here.
+        //
+        // Matched at ANY depth, under both directory names in use. CLAUDE.md's
+        // convention is `.worktrees/<branch>/`, but Claude Code creates its own
+        // at `.claude/worktrees/<branch>/`, which a root-anchored
+        // `.worktrees/**` never matched -- the stale
+        // `.claude/worktrees/aether-packages-core-task4` on this machine was
+        // contributing 121 test files and 3 phantom failures to every local
+        // run. Nothing tracked in this repo lives under a directory of either
+        // name, so these globs cannot swallow real source.
+        '**/.worktrees/**',
+        '**/worktrees/**',
       ],
     },
   };
