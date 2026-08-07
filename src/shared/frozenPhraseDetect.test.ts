@@ -70,6 +70,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore', // PILGRIM
           severity: 1,
+          completed: true,
           toolUses: [
             { name: 'Read' },
             { name: 'Glob' },
@@ -90,6 +91,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [
             { name: 'Read' },
             { name: 'Write' }, // not read-like
@@ -108,6 +110,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [
             { name: 'Read' },
             { name: 'Read' },
@@ -126,6 +129,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer', // CINDER, not PILGRIM
           severity: 1,
+          completed: true,
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 10 }],
         },
@@ -138,6 +142,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [],
           toolResults: [],
         },
@@ -150,6 +155,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolResults: [{ resultLength: 10 }],
         },
       };
@@ -161,6 +167,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [{ name: 'Read' }],
         },
       };
@@ -172,6 +179,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [
             { name: 'WebFetch' },
             { name: 'WebSearch' },
@@ -191,6 +199,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [
             { name: 'Read' },
             { name: 'Read' },
@@ -204,6 +213,23 @@ describe('detectEventKind', () => {
       // Should still return true if all available results are small and all tools are read-like
       expect(detectEventKind(input)).toBe('empty_result');
     });
+
+    it('returns null when dispatch is not yet completed', () => {
+      const input: FrozenPhraseInput = {
+        dispatch: {
+          subagentType: 'Explore',
+          severity: 1,
+          completed: false,
+          toolUses: [
+            { name: 'Read' },
+          ],
+          toolResults: [
+            { resultLength: 10 },
+          ],
+        },
+      };
+      expect(detectEventKind(input)).toBeNull();
+    });
   });
 
   describe('no_signal (ASSAY)', () => {
@@ -212,6 +238,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator', // ASSAY
           severity: 4,
+          completed: true,
           exitState: 'fatal',
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 100 }],
@@ -225,6 +252,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 3,
+          completed: true,
           exitState: 'error',
           toolUses: [],
           toolResults: [],
@@ -239,6 +267,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 1,
+          completed: true,
           exitState: 'ok',
           toolUses: [],
           toolResults: [],
@@ -252,6 +281,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'general-purpose', // FORGE (default), not ASSAY
           severity: 4,
+          completed: true,
           exitState: 'fatal',
         },
       };
@@ -263,6 +293,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 2,
+          completed: true,
           exitState: 'partial',
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 50 }],
@@ -276,6 +307,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 3,
+          completed: true,
           exitState: 'timeout',
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 50 }],
@@ -289,6 +321,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 4,
+          completed: true,
           exitState: 'blocked',
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 50 }],
@@ -302,6 +335,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 3,
+          completed: true,
           toolUses: [],
           toolResults: [],
         },
@@ -316,6 +350,7 @@ describe('detectEventKind', () => {
           dispatch: {
             subagentType: 'post-deployment-validator',
             severity: 2,
+            completed: true,
             exitState: exitState as any,
             toolUses: [],
             toolResults: [],
@@ -332,10 +367,23 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'post-deployment-validator',
           severity: 4,
+          completed: true,
           exitState: 'fatal',
         },
       };
       expect(detectEventKind(input)).toBe('no_signal');
+    });
+
+    it('returns null when dispatch is not yet completed', () => {
+      const input: FrozenPhraseInput = {
+        dispatch: {
+          subagentType: 'post-deployment-validator',
+          severity: 4,
+          completed: false,
+          exitState: 'fatal',
+        },
+      };
+      expect(detectEventKind(input)).toBeNull();
     });
   });
 
@@ -345,6 +393,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer', // CINDER
           severity: 3,
+          completed: true,
         },
       };
       expect(detectEventKind(input)).toBe('critic_tell');
@@ -355,6 +404,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'pr-review-toolkit:code-reviewer', // CINDER (plugin-scoped)
           severity: 3,
+          completed: true,
         },
       };
       expect(detectEventKind(input)).toBe('critic_tell');
@@ -365,6 +415,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'security-code-reviewer', // CINDER
           severity: 4,
+          completed: true,
         },
       };
       expect(detectEventKind(input)).toBe('critic_tell');
@@ -375,6 +426,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer',
           severity: 2,
+          completed: true,
         },
       };
       expect(detectEventKind(input)).toBeNull();
@@ -385,6 +437,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer',
           severity: 1,
+          completed: true,
         },
       };
       expect(detectEventKind(input)).toBeNull();
@@ -395,6 +448,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore', // PILGRIM, not CINDER
           severity: 4,
+          completed: true,
         },
       };
       expect(detectEventKind(input)).toBeNull();
@@ -407,10 +461,22 @@ describe('detectEventKind', () => {
           dispatch: {
             subagentType: role,
             severity: 3,
+            completed: true,
           },
         };
         expect(detectEventKind(input)).toBe('critic_tell');
       }
+    });
+
+    it('returns null when dispatch is not yet completed', () => {
+      const input: FrozenPhraseInput = {
+        dispatch: {
+          subagentType: 'code-reviewer',
+          severity: 4,
+          completed: false,
+        },
+      };
+      expect(detectEventKind(input)).toBeNull();
     });
   });
 
@@ -421,6 +487,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer', // CINDER
           severity: 4, // triggers critic_tell
+          completed: true,
           exitState: 'fatal', // would trigger no_signal if role were ASSAY
         },
       };
@@ -432,6 +499,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore', // PILGRIM
           severity: 1,
+          completed: true,
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 25 }],
           exitState: 'fatal', // would trigger no_signal if role were ASSAY
@@ -469,6 +537,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 50 }],
         },
@@ -479,6 +548,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'Explore',
           severity: 1,
+          completed: true,
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 51 }],
         },
@@ -491,6 +561,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer',
           severity: 3,
+          completed: true,
         },
       };
       expect(detectEventKind(input3)).toBe('critic_tell');
@@ -499,6 +570,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'code-reviewer',
           severity: 2,
+          completed: true,
         },
       };
       expect(detectEventKind(input2)).toBeNull();
@@ -521,6 +593,7 @@ describe('detectEventKind', () => {
         dispatch: {
           subagentType: 'unknown-unmapped-agent',
           severity: 4,
+          completed: true,
           toolUses: [{ name: 'Read' }],
           toolResults: [{ resultLength: 10 }],
           exitState: 'fatal',

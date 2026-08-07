@@ -25,15 +25,17 @@ import { resolveVoiceRole } from './agentVoiceRoles';
  */
 export interface FrozenPhraseInput {
   // For dispatch-specific predicates (empty_result, no_signal, critic_tell)
+  // All require: completed === true. Per spec, these fire only on completed dispatches.
   dispatch?: {
     subagentType: string; // Used to resolve VoiceRole
     severity: Severity;
+    completed: boolean; // REQUIRED: empty_result/no_signal/critic_tell fire only on completed dispatches
     toolUses?: Array<{ name: string }>;
     toolResults?: Array<{ resultLength: number }>;
     exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | null;
   };
 
-  // For all_clear predicate (global state)
+  // For all_clear predicate (global state) — not affected by completion status
   state?: {
     openDispatchCount: number;
     anomalyCount: number;
@@ -48,8 +50,8 @@ export interface FrozenPhraseInput {
  * prepend a frozen phrase, or null if the input does not match any predicate.
  */
 export function detectEventKind(input: FrozenPhraseInput): EventKind | null {
-  // Try dispatch-specific predicates if dispatch data is available
-  if (input.dispatch) {
+  // Try dispatch-specific predicates if dispatch data is available and completed
+  if (input.dispatch && input.dispatch.completed) {
     const role = resolveVoiceRole(input.dispatch.subagentType);
 
     // CINDER: completed review dispatch at severity >= 3
@@ -68,6 +70,7 @@ export function detectEventKind(input: FrozenPhraseInput): EventKind | null {
   }
 
   // STEWARD: global state check (zero open dispatches, zero anomalies, zero pending permission requests)
+  // Not tied to any single dispatch's completion status — checks fleet state
   if (input.state) {
     const allClear = detectAllClear(input.state);
     if (allClear) return 'all_clear';
