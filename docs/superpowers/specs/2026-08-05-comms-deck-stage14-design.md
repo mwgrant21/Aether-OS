@@ -104,10 +104,15 @@ nothing rendered payload:
 
 Concretely, this means:
 
-- A new IPC channel returns transcript messages **on request from the mounted view**, not on
-  the 1s tick, and not as a `state` push. It does not use the `useRealAgentsSync.ts` pattern,
-  which exists to feed the store; this is the first IPC consumer in the app that deliberately
-  does not.
+- A new IPC channel returns transcript messages **on request** — on view mount, on an explicit
+  refresh, and, for a live source only, re-fetched on the app's existing 900ms tick
+  (`useTranscriptSource.ts`'s tick-triggered re-fetch, gated on `isLive`). It is a pull, never a
+  `state` push: the tick triggers a request/response read, not a broadcast, and it does not use
+  the `useRealAgentsSync.ts` pattern, which exists to feed the store; this is the first IPC
+  consumer in the app that deliberately does not. The distinction that matters for the privacy
+  rule is not "on the tick or not" but **push vs. pull** — the payload is fetched by request and
+  held only in the view's own state, never broadcast into anything that could route it into the
+  store.
 - `persistence.test.ts`'s round-trip coverage test is the mechanical enforcement: if a future
   change routes transcript content through the store, the test's documented-exclusions list
   forces someone to write down why.
@@ -126,7 +131,7 @@ next feature will cite whichever version it finds.
 | Decision | Resolution | Why |
 |---|---|---|
 | Where does transcript reading happen? | Electron main, over a new request/response IPC channel | The renderer has no filesystem access, and main already owns transcript tailing. Adding a second reader in the renderer would duplicate `transcriptParser.ts`'s contract — `CLAUDE.md` names that file as the one place raw lines become typed events. |
-| Push or pull? | Pull, on view mount and on an explicit refresh | A push would tempt a future change into caching payload in the store. Pull keeps the payload's lifetime tied to the view's. |
+| Push or pull? | Pull — on view mount, on an explicit refresh, and (for a live source) re-fetched on the app's existing 900ms tick | A `state` push would tempt a future change into caching payload in the store. Pull keeps the payload's lifetime tied to the view's, even when the tick is what triggers the re-fetch. |
 | How much of a transcript loads at once? | Last N messages, N tunable, with a "load older" action | Transcripts run to tens of megabytes. Naive full-file reads will stall the main process on a long session. |
 | Does the thread live-follow an active session? | Yes, but by re-requesting the tail on the existing tick, not by streaming | Reuses the cadence the app already has. Streaming is a second transport for no added value at this scale. |
 | Does narration go into the same thread as transcript messages? | Yes — interleaved chronologically, visually distinct | Two panes would waste the shell's whole advantage. The voices commenting on the work, in line with the work, is the feature. |

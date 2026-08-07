@@ -94,6 +94,30 @@ import type { PermissionRisk } from '../shared/permissionRisk';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { RateSample } from '../components/reactor/reactorMath';
 import type { NarrationVerbosity } from '../shared/narrationVerbosity';
+import type { VoiceRole } from '../shared/agentVoiceRoles';
+import type { Severity } from '../shared/voicePacks';
+import type { InterruptionBudgetState } from '../shared/interruptionBudget';
+
+// A single rendered voice-pack line appended to a Comms channel's feed
+// (Stage 14 Task 5, narrationFeed.ts). Distinct from `dispatchNarrations`
+// above: that's the model-written free-text line shown on the roster card;
+// this is the deterministic, voice-pack-rendered line shown in Comms,
+// derived from real events (dispatch completion, anomalies, permission/flag
+// requests) via detectEventKind + renderNarration. Contains no transcript
+// payload -- only a rendered string derived from event metadata.
+export interface NarrationMessage {
+  id: string;
+  channelId: string;
+  role: VoiceRole;
+  voiceName: string;
+  text: string;
+  severity: Severity;
+  atMs: number;
+  // Whether interruptionBudget's ranking allowed this line to raise the
+  // channel's unread badge (spec §8). Lines that lose the ranking still
+  // appear in-thread -- see narrationFeed.ts's rankForInterruption.
+  interrupts: boolean;
+}
 
 // Not related to `Approval` (the chat-pipeline/tick-simulation approval
 // queue) despite similar approve/deny language -- see that interface's
@@ -279,6 +303,8 @@ export interface AetherState {
   recap: RecapPayload | null;
   dispatchHeadlines: Record<string, string>;
   dispatchNarrations: Record<string, { narration: string; severity: number }>;
+  narrationMessages: Record<string, NarrationMessage[]>;
+  narrationBudgets: Record<string, InterruptionBudgetState>;
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

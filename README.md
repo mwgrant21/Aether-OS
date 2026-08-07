@@ -116,11 +116,15 @@ other tool in this category has any sound design at all.
   a reversed preference can't be cited back with the authority of a current one. The Memory view
   reads it read-only, with a scope filter and a tombstone audit view. No pinning, no strength, no
   `sweep`/`remember` — retired along with the fake data they operated on.
-- **Comms** (formerly Chat) — a channel per agent plus AETHER, with per-persona voices and
-  post-mortem channels for completed dispatches. Replies come from `localResponder.ts`, a local,
-  deterministic responder — there is no model call site left in the app (Stage 13.5). The
-  model-fed reply and its action-JSON pipeline are gone; a real conversational responder is
-  planned for Stage 14, built on this stage's `comms/` rename.
+- **Comms** (formerly Chat) — real transcript content, not a fictional log: `electron/transcriptReader.ts`
+  pulls the tail of a real session/subagent transcript on request (view mount, explicit refresh, and
+  the app's existing 1s tick while a source is live — never a `state` push), rendered per-channel with
+  a filter box (`transcriptFilter.ts`) and narrated through Stage 12's per-persona voice packs
+  (`narrationFeed.ts`), which gives `interruptionBudget.ts` its first real consumer. Replies still come
+  from `localResponder.ts`, a local, deterministic responder scoped to the AETHER channel — there is
+  no model call site anywhere in the app (Stage 13.5). Transcript content is read and rendered but
+  never enters the store, persistence, or disk — see `docs/privacy-and-data.md`'s render-vs-store
+  amendment, enforced by `noPayloadInStore.test.ts`.
 - **Instrument + Alarm** — the anomaly-detection pipeline above surfaces as warning rings on Grid
   nodes and an amber reactor flicker; the reactor itself doubles as an instrument — model hue,
   cache-hit clarity, and concurrency turbulence are real signals, not decoration.
@@ -151,12 +155,14 @@ other tool in this category has any sound design at all.
   `docs/competitive-gap-analysis-2026-07.md`.
 - **Agent Personality Layer** — a two-pass work/narration split so each fleet agent's voice
   renders runtime-computed severity instead of self-reported tone, with a shared 0–4 severity
-  scale, per-agent voice packs, and frozen phrases for high-confidence events. **Phase 0 (the
-  spine) has shipped** as roadmap Stage 11: schema v5 persists a runtime-computed `severity` per
-  dispatch alongside `exit_state`, `retries`, and `median_ms_at_eval`, and
-  `collector/src/personalitySpine.ts` holds the ported contract. **No voice yet** — Stage 12
-  (voice packs, lazy narration in the viewer, verbosity dial) is designed but unbuilt, and the
-  chat deck is unchanged. Spec in
+  scale, per-agent voice packs, and frozen phrases for high-confidence events. Phase 0 (the spine,
+  Stage 11) and Phase 1 (voice packs and render, Stage 12) have shipped. **Frozen phrases are now
+  reachable in production** (Stage 14, closing Stage 12's own open item): CINDER's `critic_tell`,
+  ASSAY's fatal-exit `no_signal`, and STEWARD's `all_clear` all fire for real, narrated through the
+  Comms deck. Two branches — PILGRIM's `empty_result` and the zero-tool-calls branch of ASSAY's
+  `no_signal` — stay unreachable because the renderer only has tool-call *counts*, not per-call
+  detail; the predicates are implemented and unit-tested, just never fed the data they'd need in
+  production. Spec in
   [`docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md`](docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md).
 
 Packaging, installers, and a team fleet view are deliberately out of scope: this is a personal

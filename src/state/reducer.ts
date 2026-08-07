@@ -10,6 +10,7 @@ import { computeMomentum, computeRateFromUsage } from '../components/reactor/rea
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
+import { narrationForEvent, rankForInterruption, appendNarrationMessage, type NarrationEvent } from '../components/comms/narrationFeed';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
@@ -58,6 +59,23 @@ export type Action =
   | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number };
 
 const THROTTLE_SHARE_CEILING = 0.08;
+
+// Shared by every reducer case that can produce a narration line (Stage 14
+// Task 5): builds the message via narrationForEvent, ranks it against its
+// channel's interruption budget, and returns the updated maps. No-op
+// (returns the inputs unchanged) when narrationForEvent declines to speak.
+function applyNarrationEvent(
+  event: NarrationEvent,
+  eventState: AetherState,
+  narrationMessages: AetherState['narrationMessages'],
+  narrationBudgets: AetherState['narrationBudgets']
+): { narrationMessages: AetherState['narrationMessages']; narrationBudgets: AetherState['narrationBudgets'] } {
+  const message = narrationForEvent(event, eventState);
+  if (!message) return { narrationMessages, narrationBudgets };
+  const ranked = rankForInterruption(message, narrationBudgets, Date.now());
+  const finalMessage = { ...message, interrupts: ranked.interrupts };
+  return { narrationMessages: appendNarrationMessage(narrationMessages, finalMessage), narrationBudgets: ranked.budgets };
+}
 
 // Shared by RESOLVE_APPROVAL (existing, queued approval resolved later) and
 // ADD_APPROVAL's autoResolve path (Phase 2b chat auto-approve, resolved in
@@ -217,8 +235,30 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_ACTIVE_WORK':
       return { ...state, activeWork: action.work };
 
-    case 'SET_ANOMALIES':
-      return { ...state, anomalies: action.anomalies };
+    case 'SET_ANOMALIES': {
+      const prevIds = new Set(state.anomalies.map((a) => `${a.toolUseId}:${a.kind}`));
+      const newAnomalies = action.anomalies.filter((a) => !prevIds.has(`${a.toolUseId}:${a.kind}`));
+      const eventState = { ...state, anomalies: action.anomalies };
+      let narrationMessages = state.narrationMessages;
+      let narrationBudgets = state.narrationBudgets;
+      for (const anomaly of newAnomalies) {
+        const applied = applyNarrationEvent(
+          { kind: 'anomalyDetected', toolUseId: anomaly.toolUseId, anomalyKind: anomaly.kind },
+          eventState,
+          narrationMessages,
+          narrationBudgets
+        );
+        narrationMessages = applied.narrationMessages;
+        narrationBudgets = applied.narrationBudgets;
+      }
+      // Every anomaly-set change is a chance STEWARD's all_clear condition
+      // now holds (e.g. the last anomaly just cleared) -- stewardStateCheck
+      // no-ops unless it actually does.
+      const cleared = applyNarrationEvent({ kind: 'stewardStateCheck' }, eventState, narrationMessages, narrationBudgets);
+      narrationMessages = cleared.narrationMessages;
+      narrationBudgets = cleared.narrationBudgets;
+      return { ...state, anomalies: action.anomalies, narrationMessages, narrationBudgets };
+    }
 
     case 'SET_CACHE_HIT_RATIO':
       return { ...state, cacheHitRatio: action.ratio };
@@ -229,11 +269,38 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_DIAGNOSTICS':
       return { ...state, diagnostics: action.diagnostics };
 
-    case 'SET_PENDING_PERMISSION_REQUEST':
-      return { ...state, pendingPermissionRequest: action.request };
+    case 'SET_PENDING_PERMISSION_REQUEST': {
+      const eventState = { ...state, pendingPermissionRequest: action.request };
+      let narrationMessages = state.narrationMessages;
+      let narrationBudgets = state.narrationBudgets;
+      if (action.request && !state.pendingPermissionRequest) {
+        const applied = applyNarrationEvent({ kind: 'permissionPending' }, eventState, narrationMessages, narrationBudgets);
+        narrationMessages = applied.narrationMessages;
+        narrationBudgets = applied.narrationBudgets;
+      } else if (!action.request && state.pendingPermissionRequest) {
+        const applied = applyNarrationEvent({ kind: 'stewardStateCheck' }, eventState, narrationMessages, narrationBudgets);
+        narrationMessages = applied.narrationMessages;
+        narrationBudgets = applied.narrationBudgets;
+      }
+      return { ...state, pendingPermissionRequest: action.request, narrationMessages, narrationBudgets };
+    }
 
-    case 'SET_PENDING_POST_TOOL_FLAG':
-      return { ...state, pendingPostToolFlag: action.request };
+    case 'SET_PENDING_POST_TOOL_FLAG': {
+      let narrationMessages = state.narrationMessages;
+      let narrationBudgets = state.narrationBudgets;
+      if (action.request && !state.pendingPostToolFlag) {
+        const eventState = { ...state, pendingPostToolFlag: action.request };
+        const applied = applyNarrationEvent(
+          { kind: 'postToolFlag', anomalyKind: action.request.anomalyKind },
+          eventState,
+          narrationMessages,
+          narrationBudgets
+        );
+        narrationMessages = applied.narrationMessages;
+        narrationBudgets = applied.narrationBudgets;
+      }
+      return { ...state, pendingPostToolFlag: action.request, narrationMessages, narrationBudgets };
+    }
 
     case 'SET_OPTIMIZE_FINDINGS':
       return { ...state, optimizeFindings: action.findings };
@@ -279,7 +346,27 @@ export function reducer(state: AetherState, action: Action): AetherState {
         const toEvict = new Set(narrationKeys.slice(0, narrationKeys.length - 100));
         dispatchNarrations = Object.fromEntries(Object.entries(dispatchNarrations).filter(([k]) => !toEvict.has(k)));
       }
-      return { ...state, dispatchNarrations };
+      // Give the completed dispatch a voice-pack line in its Comms channel too
+      // (distinct from `dispatchNarrations` above, the roster card's model-written
+      // line). subagentType isn't carried on this action, so resolve it from
+      // whichever record still has it -- recentCompletedDispatches (freshest) first,
+      // falling back to an already-created dispatch channel stub.
+      const dispatchInfo =
+        state.recentCompletedDispatches.find((d) => d.toolUseId === action.toolUseId) ??
+        state.dispatchChannels.find((d) => d.toolUseId === action.toolUseId);
+      let narrationMessages = state.narrationMessages;
+      let narrationBudgets = state.narrationBudgets;
+      if (dispatchInfo) {
+        const applied = applyNarrationEvent(
+          { kind: 'dispatchCompleted', toolUseId: action.toolUseId, subagentType: dispatchInfo.subagentType, severity: action.severity as 0 | 1 | 2 | 3 | 4 },
+          state,
+          narrationMessages,
+          narrationBudgets
+        );
+        narrationMessages = applied.narrationMessages;
+        narrationBudgets = applied.narrationBudgets;
+      }
+      return { ...state, dispatchNarrations, narrationMessages, narrationBudgets };
     }
 
     case 'CREATE_DISPATCH_CHANNEL': {

@@ -6,9 +6,16 @@ import type { Severity } from './voicePacks';
 
 export type NarrationVerbosity = 'full' | 'terse' | 'silent';
 
+// Severity floor shared with narrationFeed.ts's rankForInterruption -- a
+// message at or above this severity always renders regardless of the
+// verbosity dial, and always interrupts regardless of the channel's
+// budget. Keep both call sites importing this constant so the two floors
+// can never drift apart.
+export const NARRATION_FLOOR_SEVERITY: Severity = 3;
+
 export function applyNarrationVerbosity(narration: string, level: NarrationVerbosity, severity: Severity): string | null {
   if (!narration) return null;
-  if (severity >= 3) return narration; // floor: always renders
+  if (severity >= NARRATION_FLOOR_SEVERITY) return narration; // floor: always renders
   if (level === 'silent') return null;
   return narration;
 }

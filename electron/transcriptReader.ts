@@ -1,0 +1,358 @@
+// Bounded, pull-based transcript read path for the Comms Deck (Stage 14, Task 1).
+//
+// On-disk layout finding (required by the task brief, verified against real
+// transcripts on this machine before writing any code below):
+//
+//   ~/.claude/projects/<projectDirName>/<sessionId>.jsonl        -- the main session
+//   ~/.claude/projects/<projectDirName>/<sessionId>/subagents/
+//       agent-<agentId>.jsonl                                    -- one subagent's own
+//                                                                    conversation
+//       agent-<agentId>.meta.json                                -- { agentType,
+//                                                                    description,
+//                                                                    toolUseId,
+//                                                                    spawnDepth, model }
+//
+// A subagent dispatch's conversation is a SEPARATE, separately-addressable file (not
+// interleaved into the parent transcript, and not merely absent from disk). It is
+// nested under a directory named after the parent session's id, with an isSidechain:
+// true marker on its own lines and a sibling .meta.json describing the dispatch
+// (agentType/description double as a human-readable label). This was confirmed by
+// inspecting this app's own recently-dispatched subagent files under
+// ~/.claude/projects/C--Users-Matt-projects-TokenMonitor/<sessionId>/subagents/ while
+// writing this module -- one of those subagent files is, recursively, the transcript of
+// the very agent that wrote this comment. Per the design doc's Known Limitation #2, this
+// means dispatch channels get their OWN source entry (kind: 'dispatch'), not a filtered
+// window on the parent.
+//
+// This module is deliberately separate from transcriptParser.ts. It consumes
+// parseTranscriptLine's output for the fields that module already extracts (tool uses,
+// tool results, human-prompt text, origin kind) but does NOT widen that parser's
+// contract. TranscriptEvent has no field for assistant response text or a per-line
+// message id -- those are display-only concerns transcriptParser.ts was never asked to
+// carry, and liveAgentTracker.ts / liveAgentsMath.ts (transcriptParser's real consumers)
+// don't need them. Rather than growing TranscriptEvent for a single new caller, this
+// module does one extra, narrowly-scoped JSON.parse of the same already-validated line
+// (parseTranscriptLine returning non-null already proved it's parseable JSON) to pull
+// `uuid` and the raw text content items straight from the source line. Nothing here is
+// written to `TranscriptEvent` or fed back into the parser's contract.
+//
+// Read/store discipline: every function below returns data, it never caches transcript
+// content anywhere persistent. Callers (main.ts's ipcMain.handle registrations) must not
+// push this on a tick or store it -- see the comment at the IPC registration site.
+
+import { promises as fsp } from 'fs';
+import path from 'path';
+import { parseTranscriptLine } from './transcriptParser';
+import { labelForToolUse } from '../src/state/liveAgentsMath';
+
+export interface DisplayMessage {
+  id: string;
+  role: 'human' | 'assistant' | 'system';
+  atMs: number;
+  text: string | null;
+  // Post-hoc fix (final review, findings 1/2): `resultLength` is populated by
+  // readTranscript's correlation pass below, matching this call's
+  // `toolUseId` against a later `tool_result` line's `tool_use_id` in the
+  // same read window. null until (if ever) a matching result is found --
+  // never assume it's set just because the message came from a real
+  // transcript. `toolUseId` is carried for that correlation and for
+  // debugging; it is not otherwise part of the render contract.
+  toolCalls: { name: string; label: string; toolUseId?: string; resultLength: number | null }[];
+  // Raw tool_result blocks parsed off THIS line, before correlation. Once
+  // correlation (below) successfully attaches a result's length onto the
+  // toolCall that produced it, the tool-result-only message that originally
+  // carried it is dropped from the returned list -- see readTranscript.
+  // Results that can't be correlated (matching tool_use line outside the
+  // read window, or truly orphaned) stay on their own message here so the
+  // renderer has something to show instead of losing them silently.
+  toolResults: { resultLength: number; toolUseId?: string }[];
+}
+
+export interface TranscriptSource {
+  id: string;
+  kind: 'session' | 'dispatch';
+  label: string;
+  isLive: boolean;
+  // Set for kind: 'dispatch' sources whose meta.json carries it (Stage 14
+  // Task 3: commsChannels.ts's CommsChannel.transcriptSourceId is a dispatch
+  // channel's toolUseId, since that's the stable key CommsChannel already
+  // carries -- see resolveVoiceRole/RealAgentDispatch. This field is how the
+  // renderer resolves that toolUseId back to the dispatch's real source id
+  // without transcriptReader.ts's own id format (dispatch:<sessionId>:<base>)
+  // leaking into commsChannels.ts). Undefined for kind: 'session', and for a
+  // dispatch whose meta.json is missing or malformed.
+  toolUseId?: string;
+}
+
+const CHUNK_SIZE = 64 * 1024;
+const LIVE_WINDOW_MS = 30_000;
+const NEWLINE_BYTE = 0x0a;
+
+interface LineWithOffset {
+  text: string;
+  startOffset: number;
+}
+
+/**
+ * Reads up to `limit` complete lines from the end of `filePath`, walking
+ * backward in fixed-size chunks so a multi-megabyte transcript never gets
+ * fully loaded into memory. `beforeOffset`, if given, is the byte offset of
+ * an earlier read's oldest line -- passing it back in continues the tail
+ * further toward the start of the file ("load older"). Splitting happens in
+ * Buffer space on the raw 0x0A byte (never a UTF-8 continuation byte), so
+ * decoding to a JS string only happens once per already-complete line --
+ * chunk boundaries can never land mid multi-byte character.
+ */
+async function readTailLines(filePath: string, limit: number, beforeOffset?: number): Promise<LineWithOffset[]> {
+  const stat = await fsp.stat(filePath);
+  let pos = beforeOffset !== undefined ? Math.min(beforeOffset, stat.size) : stat.size;
+  const collected: LineWithOffset[] = [];
+  let pendingTail = Buffer.alloc(0);
+
+  const fd = await fsp.open(filePath, 'r');
+  try {
+    while (pos > 0 && collected.length < limit) {
+      const readSize = Math.min(CHUNK_SIZE, pos);
+      const start = pos - readSize;
+      const buf = Buffer.alloc(readSize);
+      await fd.read(buf, 0, readSize, start);
+      const combined = Buffer.concat([buf, pendingTail]);
+
+      const localLines: LineWithOffset[] = [];
+      let searchEnd = combined.length;
+      let idx: number;
+      while (
+        collected.length + localLines.length < limit &&
+        (idx = combined.lastIndexOf(NEWLINE_BYTE, searchEnd - 1)) !== -1
+      ) {
+        const lineBuf = combined.subarray(idx + 1, searchEnd);
+        if (lineBuf.length > 0) {
+          localLines.unshift({ text: lineBuf.toString('utf8'), startOffset: start + idx + 1 });
+        }
+        searchEnd = idx;
+      }
+
+      pendingTail = combined.subarray(0, searchEnd);
+      collected.unshift(...localLines);
+      pos = start;
+
+      if (pos === 0 && pendingTail.length > 0 && collected.length < limit) {
+        collected.unshift({ text: pendingTail.toString('utf8'), startOffset: 0 });
+        pendingTail = Buffer.alloc(0);
+      }
+    }
+  } finally {
+    await fd.close();
+  }
+
+  return collected.length > limit ? collected.slice(collected.length - limit) : collected;
+}
+
+function toDisplayMessage(line: string, startOffset: number): DisplayMessage | null {
+  const event = parseTranscriptLine(line);
+  if (!event) return null;
+
+  // Safe: parseTranscriptLine already proved this line is valid JSON.
+  let raw: any = {};
+  try {
+    raw = JSON.parse(line.trim());
+  } catch {
+    raw = {};
+  }
+
+  const id: string = typeof raw.uuid === 'string' && raw.uuid ? raw.uuid : `offset-${startOffset}`;
+  const atMs = event.timestamp ? event.timestamp.getTime() : 0;
+
+  let role: DisplayMessage['role'] = 'system';
+  let text: string | null = null;
+
+  if (event.kind === 'assistant') {
+    role = 'assistant';
+    const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
+    const textItem = content.find((item: any) => item && item.type === 'text');
+    text = textItem ? textItem.text : null;
+  } else if (event.kind === 'user') {
+    role = event.isHumanPrompt ? 'human' : 'system';
+    text = event.humanText;
+  }
+
+  const toolCalls = event.toolUses.map((tu) => ({
+    name: tu.name,
+    label: labelForToolUse(tu.name, tu.input),
+    toolUseId: tu.id,
+    resultLength: null as number | null,
+  }));
+  const toolResults = event.toolResults.map((tr) => ({ resultLength: tr.resultLength, toolUseId: tr.toolUseId }));
+
+  return { id, role, atMs, text, toolCalls, toolResults };
+}
+
+export interface TranscriptReadResult {
+  messages: DisplayMessage[];
+  // Byte offset to pass back as `before` on the next call to page further
+  // toward the start of the file ("load older"). null once the file start
+  // has been reached -- there is nothing older to page to.
+  nextBefore: string | null;
+}
+
+/**
+ * Bounded tail read of a single transcript file, in display order (oldest
+ * first). `before` is the byte offset of the oldest LINE from a prior read
+ * (its numeric string form, as returned in that read's `nextBefore`), used
+ * to page further back.
+ */
+export async function readTranscript(
+  filePath: string,
+  opts: { limit: number; before?: string }
+): Promise<TranscriptReadResult> {
+  const beforeOffset = opts.before !== undefined ? Number(opts.before) : undefined;
+  const lines = await readTailLines(filePath, opts.limit, Number.isFinite(beforeOffset) ? beforeOffset : undefined);
+
+  const rawMessages: DisplayMessage[] = [];
+  for (const { text, startOffset } of lines) {
+    const msg = toDisplayMessage(text, startOffset);
+    if (msg) rawMessages.push(msg);
+  }
+
+  // Post-hoc fix (final review, findings 1/2): correlate each tool_use to
+  // its tool_result by `tool_use_id`, across the whole read window --
+  // parseTranscriptLine/toDisplayMessage only ever see ONE line at a time,
+  // so a tool_use on an assistant line and its tool_result on a later user
+  // line can never be paired within a single call to toDisplayMessage. This
+  // is the only place with visibility into the full set of lines from this
+  // read, so it's the only place that can do the pairing.
+  const resultLengthByToolUseId = new Map<string, number>();
+  for (const msg of rawMessages) {
+    for (const tr of msg.toolResults) {
+      if (tr.toolUseId) resultLengthByToolUseId.set(tr.toolUseId, tr.resultLength);
+    }
+  }
+  const attachedToolUseIds = new Set<string>();
+  for (const msg of rawMessages) {
+    for (const tc of msg.toolCalls) {
+      if (tc.toolUseId && resultLengthByToolUseId.has(tc.toolUseId)) {
+        tc.resultLength = resultLengthByToolUseId.get(tc.toolUseId)!;
+        attachedToolUseIds.add(tc.toolUseId);
+      }
+    }
+  }
+
+  // A tool-result-only line (no text, no tool calls of its own) whose every
+  // result got attached to a tool call above now renders through that call's
+  // size chip -- keeping the original line too would just be a blank row
+  // under a bare SYSTEM label. Drop it. A line with at least one result that
+  // couldn't be correlated (its tool_use fell outside this read window) is
+  // kept, so MessageThread still has something to show for it.
+  const messages = rawMessages.filter((msg) => {
+    if (msg.toolCalls.length > 0 || msg.text !== null || msg.toolResults.length === 0) return true;
+    return !msg.toolResults.every((tr) => tr.toolUseId && attachedToolUseIds.has(tr.toolUseId));
+  });
+
+  // The oldest LINE's startOffset (not the oldest MESSAGE's, since a
+  // malformed/filtered line still occupies the byte range paging needs to
+  // skip past) is what the next "load older" call must pass back in as
+  // `before`. Reaching offset 0 means the file start was read, so there is
+  // nothing left to page to.
+  const nextBefore = lines.length > 0 && lines[0].startOffset > 0 ? String(lines[0].startOffset) : null;
+
+  return { messages, nextBefore };
+}
+
+async function isLive(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fsp.stat(filePath);
+    return Date.now() - stat.mtimeMs < LIVE_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+// sourceId components must be plain path segments -- no separators, no `.`/`..`
+// traversal tricks, nothing that could escape the directory they're joined into.
+const SAFE_SEGMENT = /^[^\\/]+$/;
+
+function isSafeSegment(segment: string): boolean {
+  return SAFE_SEGMENT.test(segment) && segment !== '.' && segment !== '..';
+}
+
+/**
+ * Resolves a TranscriptSource id (as returned by listTranscriptSources) back
+ * to an absolute file path. Session ids resolve directly under sessionDir;
+ * dispatch ids are `dispatch:<parentSessionId>:<agentFileBase>` and resolve
+ * under `<sessionDir>/<parentSessionId>/subagents/`.
+ *
+ * `sourceId` arrives over `ipcMain.handle('transcript:read', ...)` straight
+ * from the renderer, so it's untrusted input. Each component is validated as
+ * a plain path segment before path.join is allowed to touch it, and the
+ * final resolved path is checked to still be contained under sessionDir --
+ * path.join alone would happily normalize a `..`-laden sourceId into a path
+ * outside sessionDir, which would let a compromised renderer read arbitrary
+ * files on disk. Throws rather than silently falling back, since a rejected
+ * source should surface as a real error to the caller, not a quiet no-op.
+ */
+export function resolveSourcePath(sessionDir: string, sourceId: string): string {
+  let candidate: string;
+
+  if (sourceId.startsWith('dispatch:')) {
+    const parts = sourceId.split(':');
+    if (parts.length !== 3) throw new Error(`invalid dispatch source id: ${sourceId}`);
+    const [, parentId, agentBase] = parts;
+    if (!isSafeSegment(parentId) || !isSafeSegment(agentBase)) {
+      throw new Error(`invalid dispatch source id: ${sourceId}`);
+    }
+    candidate = path.join(sessionDir, parentId, 'subagents', `${agentBase}.jsonl`);
+  } else {
+    if (!isSafeSegment(sourceId)) throw new Error(`invalid source id: ${sourceId}`);
+    candidate = path.join(sessionDir, `${sourceId}.jsonl`);
+  }
+
+  const resolvedDir = path.resolve(sessionDir);
+  const resolvedCandidate = path.resolve(candidate);
+  if (resolvedCandidate !== resolvedDir && !resolvedCandidate.startsWith(resolvedDir + path.sep)) {
+    throw new Error(`source id resolves outside the session directory: ${sourceId}`);
+  }
+
+  return candidate;
+}
+
+/**
+ * Enumerates the pinned/active session plus any separately-addressable
+ * dispatch transcripts nested under it. Returns [] if there is no pinned
+ * session yet (nothing to read).
+ */
+export async function listTranscriptSources(
+  sessionDir: string,
+  pinnedSessionId: string | null
+): Promise<TranscriptSource[]> {
+  if (!pinnedSessionId) return [];
+
+  const sources: TranscriptSource[] = [];
+  const sessionFile = path.join(sessionDir, `${pinnedSessionId}.jsonl`);
+  sources.push({ id: pinnedSessionId, kind: 'session', label: 'Session', isLive: await isLive(sessionFile) });
+
+  const subagentsDir = path.join(sessionDir, pinnedSessionId, 'subagents');
+  let entries: string[] = [];
+  try {
+    entries = (await fsp.readdir(subagentsDir)).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    entries = [];
+  }
+
+  for (const file of entries) {
+    const base = path.basename(file, '.jsonl');
+    const filePath = path.join(subagentsDir, file);
+    let label = base;
+    let toolUseId: string | undefined;
+    try {
+      const metaRaw = await fsp.readFile(path.join(subagentsDir, `${base}.meta.json`), 'utf8');
+      const meta = JSON.parse(metaRaw);
+      label = meta.description || meta.agentType || base;
+      toolUseId = typeof meta.toolUseId === 'string' ? meta.toolUseId : undefined;
+    } catch {
+      // No meta file, or malformed -- fall back to the file's own basename.
+    }
+    sources.push({ id: `dispatch:${pinnedSessionId}:${base}`, kind: 'dispatch', label, isLive: await isLive(filePath), toolUseId });
+  }
+
+  return sources;
+}

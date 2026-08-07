@@ -16,7 +16,7 @@ function renderRail(props: ComponentProps<typeof ChannelRail>) {
 }
 
 function channel(id: string, name: string): CommsChannel {
-  return { id, name, initials: name.slice(0, 2).toUpperCase(), hue: '#7ef0ff', kind: 'aether', archived: false };
+  return { id, name, initials: name.slice(0, 2).toUpperCase(), hue: '#7ef0ff', kind: 'aether', archived: false, transcriptSourceId: null };
 }
 
 const baseProps = {

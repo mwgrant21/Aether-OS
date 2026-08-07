@@ -11,6 +11,7 @@ import type { DiagnosticsSnapshot } from './collectorStore';
 import type { MemoryRowUI, MemoryTombstoneUI } from './memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
+import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   app: {
@@ -163,6 +164,13 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('presence:recap', listener);
       return () => ipcRenderer.removeListener('presence:recap', listener);
     },
+  },
+  // Pull-only: request/response, never a push channel. See the comment at
+  // this pair's ipcMain.handle registration in main.ts for why.
+  transcript: {
+    sources: (): Promise<TranscriptSource[]> => ipcRenderer.invoke('transcript:sources'),
+    read: (args: { source: string; limit: number; before?: string }): Promise<TranscriptReadResult> =>
+      ipcRenderer.invoke('transcript:read', args),
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

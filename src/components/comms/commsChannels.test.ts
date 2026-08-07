@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AETHER_CHANNEL_ID, deriveChannels, findChannel } from './commsChannels';
+import { AETHER_CHANNEL_ID, SESSION_TRANSCRIPT_SENTINEL, deriveChannels, findChannel } from './commsChannels';
 import { initialState } from '../../state/initialState';
 import { colors } from '../../styles/tokens';
 import type { AetherState } from '../../state/types';
@@ -27,8 +27,29 @@ describe('deriveChannels', () => {
   it('returns only AETHER when there are no active or idle agents', () => {
     const empty: AetherState = { ...initialState, agents: [], idleList: [] };
     expect(deriveChannels(empty)).toEqual([
-      { id: AETHER_CHANNEL_ID, kind: 'aether', name: 'AETHER', initials: 'AE', hue: colors.accentCyanSoft, archived: false },
+      {
+        id: AETHER_CHANNEL_ID,
+        kind: 'aether',
+        name: 'AETHER',
+        initials: 'AE',
+        hue: colors.accentCyanSoft,
+        archived: false,
+        transcriptSourceId: SESSION_TRANSCRIPT_SENTINEL,
+      },
     ]);
+  });
+
+  it('gives dispatch channels their toolUseId as transcriptSourceId, and agent/archived channels null', () => {
+    const withDispatch: AetherState = {
+      ...initialState,
+      dispatchChannels: [
+        { toolUseId: 'tu_3', subagentType: 'general-purpose', description: 'Explore', prompt: '', model: null, startedAt: '2026-07-20T10:00:00.000Z', createdAt: '10:00:00' },
+      ],
+    };
+    const channels = deriveChannels(withDispatch);
+    expect(channels.find((c) => c.id === AETHER_CHANNEL_ID)?.transcriptSourceId).toBe(SESSION_TRANSCRIPT_SENTINEL);
+    expect(channels.find((c) => c.kind === 'dispatch')?.transcriptSourceId).toBe('tu_3');
+    expect(channels.filter((c) => c.kind === 'agent').every((c) => c.transcriptSourceId === null)).toBe(true);
   });
 
   it('includes one dispatch-kind channel per state.dispatchChannels entry', () => {
