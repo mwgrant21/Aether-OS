@@ -159,15 +159,24 @@ function toDisplayMessage(line: string, startOffset: number): DisplayMessage | n
   return { id, role, atMs, text, toolCalls, toolResults };
 }
 
+export interface TranscriptReadResult {
+  messages: DisplayMessage[];
+  // Byte offset to pass back as `before` on the next call to page further
+  // toward the start of the file ("load older"). null once the file start
+  // has been reached -- there is nothing older to page to.
+  nextBefore: string | null;
+}
+
 /**
  * Bounded tail read of a single transcript file, in display order (oldest
- * first). `before` is the byte offset of the oldest message from a prior
- * read (its numeric string form), used to page further back.
+ * first). `before` is the byte offset of the oldest LINE from a prior read
+ * (its numeric string form, as returned in that read's `nextBefore`), used
+ * to page further back.
  */
 export async function readTranscript(
   filePath: string,
   opts: { limit: number; before?: string }
-): Promise<DisplayMessage[]> {
+): Promise<TranscriptReadResult> {
   const beforeOffset = opts.before !== undefined ? Number(opts.before) : undefined;
   const lines = await readTailLines(filePath, opts.limit, Number.isFinite(beforeOffset) ? beforeOffset : undefined);
 
@@ -176,7 +185,15 @@ export async function readTranscript(
     const msg = toDisplayMessage(text, startOffset);
     if (msg) messages.push(msg);
   }
-  return messages;
+
+  // The oldest LINE's startOffset (not the oldest MESSAGE's, since a
+  // malformed/filtered line still occupies the byte range paging needs to
+  // skip past) is what the next "load older" call must pass back in as
+  // `before`. Reaching offset 0 means the file start was read, so there is
+  // nothing left to page to.
+  const nextBefore = lines.length > 0 && lines[0].startOffset > 0 ? String(lines[0].startOffset) : null;
+
+  return { messages, nextBefore };
 }
 
 async function isLive(filePath: string): Promise<boolean> {
@@ -188,18 +205,52 @@ async function isLive(filePath: string): Promise<boolean> {
   }
 }
 
+// sourceId components must be plain path segments -- no separators, no `.`/`..`
+// traversal tricks, nothing that could escape the directory they're joined into.
+const SAFE_SEGMENT = /^[^\\/]+$/;
+
+function isSafeSegment(segment: string): boolean {
+  return SAFE_SEGMENT.test(segment) && segment !== '.' && segment !== '..';
+}
+
 /**
  * Resolves a TranscriptSource id (as returned by listTranscriptSources) back
  * to an absolute file path. Session ids resolve directly under sessionDir;
  * dispatch ids are `dispatch:<parentSessionId>:<agentFileBase>` and resolve
  * under `<sessionDir>/<parentSessionId>/subagents/`.
+ *
+ * `sourceId` arrives over `ipcMain.handle('transcript:read', ...)` straight
+ * from the renderer, so it's untrusted input. Each component is validated as
+ * a plain path segment before path.join is allowed to touch it, and the
+ * final resolved path is checked to still be contained under sessionDir --
+ * path.join alone would happily normalize a `..`-laden sourceId into a path
+ * outside sessionDir, which would let a compromised renderer read arbitrary
+ * files on disk. Throws rather than silently falling back, since a rejected
+ * source should surface as a real error to the caller, not a quiet no-op.
  */
 export function resolveSourcePath(sessionDir: string, sourceId: string): string {
+  let candidate: string;
+
   if (sourceId.startsWith('dispatch:')) {
-    const [, parentId, agentBase] = sourceId.split(':');
-    return path.join(sessionDir, parentId, 'subagents', `${agentBase}.jsonl`);
+    const parts = sourceId.split(':');
+    if (parts.length !== 3) throw new Error(`invalid dispatch source id: ${sourceId}`);
+    const [, parentId, agentBase] = parts;
+    if (!isSafeSegment(parentId) || !isSafeSegment(agentBase)) {
+      throw new Error(`invalid dispatch source id: ${sourceId}`);
+    }
+    candidate = path.join(sessionDir, parentId, 'subagents', `${agentBase}.jsonl`);
+  } else {
+    if (!isSafeSegment(sourceId)) throw new Error(`invalid source id: ${sourceId}`);
+    candidate = path.join(sessionDir, `${sourceId}.jsonl`);
   }
-  return path.join(sessionDir, `${sourceId}.jsonl`);
+
+  const resolvedDir = path.resolve(sessionDir);
+  const resolvedCandidate = path.resolve(candidate);
+  if (resolvedCandidate !== resolvedDir && !resolvedCandidate.startsWith(resolvedDir + path.sep)) {
+    throw new Error(`source id resolves outside the session directory: ${sourceId}`);
+  }
+
+  return candidate;
 }
 
 /**

@@ -10,7 +10,7 @@ import { readUsageEventsSince, readFleetSessions, readDiagnostics, type Collecto
 import { readMemories, readMemoryTombstones } from './memoryStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
-import { listTranscriptSources, readTranscript, resolveSourcePath, type DisplayMessage, type TranscriptSource } from './transcriptReader';
+import { listTranscriptSources, readTranscript, resolveSourcePath } from './transcriptReader';
 import { cwdToProjectDirName } from '../src/state/projectDirName';
 import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
 import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';

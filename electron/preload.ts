@@ -11,7 +11,7 @@ import type { DiagnosticsSnapshot } from './collectorStore';
 import type { MemoryRowUI, MemoryTombstoneUI } from './memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
-import type { DisplayMessage, TranscriptSource } from './transcriptReader';
+import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   app: {
@@ -169,7 +169,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
   // this pair's ipcMain.handle registration in main.ts for why.
   transcript: {
     sources: (): Promise<TranscriptSource[]> => ipcRenderer.invoke('transcript:sources'),
-    read: (args: { source: string; limit: number; before?: string }): Promise<DisplayMessage[]> =>
+    read: (args: { source: string; limit: number; before?: string }): Promise<TranscriptReadResult> =>
       ipcRenderer.invoke('transcript:read', args),
   },
   window: {
