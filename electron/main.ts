@@ -10,6 +10,8 @@ import { readUsageEventsSince, readFleetSessions, readDiagnostics, type Collecto
 import { readMemories, readMemoryTombstones } from './memoryStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
+import { listTranscriptSources, readTranscript, resolveSourcePath, type DisplayMessage, type TranscriptSource } from './transcriptReader';
+import { cwdToProjectDirName } from '../src/state/projectDirName';
 import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
 import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';
 import { createAttachmentsStore } from './attachmentsStore';
@@ -617,6 +619,30 @@ ipcMain.handle('attachments:add', () => attachmentsStore.add());
 ipcMain.handle('attachments:remove', (_event, name: string) => attachmentsStore.remove(name));
 ipcMain.handle('attachments:thumbnail', (_event, name: string) => attachmentsStore.thumbnail(name));
 ipcMain.handle('attachments:open', (_event, name: string) => attachmentsStore.open(name));
+
+// Deliberate deviation from the app's established `useRealAgentsSync.ts` push-on-tick
+// pattern: transcript.read/sources are request/response ipcMain.handle channels, pulled
+// only when the Comms Deck view is mounted or the operator explicitly refreshes/pages
+// older. They are NEVER pushed on the 1s tick and NEVER stashed on `mainWindow`/module
+// state between calls. This is binding per docs/superpowers/specs/2026-08-05-comms-
+// deck-stage14-design.md's "The privacy decision": rendering transcript content is not
+// the same as storing it, and pushing this on a tick is exactly the shape that would
+// tempt a future change into caching payload in the `AetherState` store. If you're
+// tempted to add a `transcript:snapshot` push channel or a `useTranscriptSync` hook,
+// don't -- read that section first.
+const transcriptSessionDir = join(os.homedir(), '.claude', 'projects', cwdToProjectDirName(os.homedir()));
+
+ipcMain.handle('transcript:sources', () =>
+  listTranscriptSources(transcriptSessionDir, liveAgentTracker.getPinnedSessionId())
+);
+
+ipcMain.handle(
+  'transcript:read',
+  (_event, { source, limit, before }: { source: string; limit: number; before?: string }) => {
+    const filePath = resolveSourcePath(transcriptSessionDir, source);
+    return readTranscript(filePath, { limit, before });
+  }
+);
 
 ipcMain.handle('optimize:targets', async () => {
   const globalPath = optimizeGlobalTargetPath();

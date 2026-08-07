@@ -9,6 +9,7 @@ import type { DiagnosticsSnapshot } from '../electron/collectorStore';
 import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from './state/types';
 import type { PermissionDecision, PostToolFlagDecision } from '../electron/permissionServer';
+import type { DisplayMessage, TranscriptSource } from '../electron/transcriptReader';
 
 export {};
 
@@ -84,6 +85,10 @@ declare global {
       };
       presence: {
         onRecap: (callback: (recap: { entries: unknown[]; tokensBurned: number }) => void) => () => void;
+      };
+      transcript: {
+        sources: () => Promise<TranscriptSource[]>;
+        read: (args: { source: string; limit: number; before?: string }) => Promise<DisplayMessage[]>;
       };
       window: {
         minimize: () => void;
