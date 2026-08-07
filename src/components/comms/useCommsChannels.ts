@@ -23,9 +23,12 @@ export interface UseCommsChannelsResult {
 // via useTranscriptSource.ts, owned by CommsView's own useState per the
 // render-not-store rule (see src/state/noPayloadInStore.test.ts). This hook
 // keeps doing exactly what its name says: deriving and tracking channels.
-// `unreadCounts` stays as an always-empty placeholder for narration's
-// interruptionBudget-driven unread badges (design doc §B, out of scope for
-// this task) so ChannelRail's existing prop contract doesn't need touching.
+//
+// Stage 14 (Task 5): `unreadCounts` is no longer a placeholder. It now counts
+// narrationFeed.ts's messages whose interruptionBudget ranking allowed them
+// to interrupt (`NarrationMessage.interrupts`) in every channel other than
+// the one currently open -- narration in the active channel is visible
+// in-thread already, so it never counts as unread against itself.
 // The `dispatch` param is kept in the public signature for a future stage to
 // build on, same as before.
 export function useCommsChannels(state: AetherState, _dispatch: Dispatch<Action>): UseCommsChannelsResult {
@@ -33,11 +36,21 @@ export function useCommsChannels(state: AetherState, _dispatch: Dispatch<Action>
   const [activeChannelId, setActiveChannelId] = useState<string>(AETHER_CHANNEL_ID);
   const activeChannel = findChannel(channels, activeChannelId) ?? channels[0];
 
+  const unreadCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const [channelId, messages] of Object.entries(state.narrationMessages)) {
+      if (channelId === activeChannel.id) continue;
+      const interruptCount = messages.filter((m) => m.interrupts).length;
+      if (interruptCount > 0) counts[channelId] = interruptCount;
+    }
+    return counts;
+  }, [state.narrationMessages, activeChannel.id]);
+
   return {
     channels,
     activeChannel,
     activeChannelId: activeChannel.id,
     setActiveChannelId,
-    unreadCounts: {},
+    unreadCounts,
   };
 }

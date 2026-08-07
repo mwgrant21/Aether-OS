@@ -83,7 +83,11 @@ export function CommsView() {
           <span style={headerNameStyle(colors)}>{chat.activeChannel.name}</span>
           <span style={statusPillStyle(colors, statusLabel)}>{statusLabel}</span>
         </div>
-        <MessageThread channel={chat.activeChannel} messages={visibleMessages} />
+        <MessageThread
+          channel={chat.activeChannel}
+          messages={visibleMessages}
+          narrationMessages={state.narrationMessages[chat.activeChannelId] ?? []}
+        />
         <MessageInput
           value={filterValue}
           onChange={setFilterValue}

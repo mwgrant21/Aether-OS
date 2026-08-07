@@ -1,12 +1,28 @@
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import type { CommsChannel } from './commsChannels';
 import type { DisplayMessage } from './transcriptFilter';
+import type { NarrationMessage } from '../../state/types';
 
 interface MessageThreadProps {
   channel: CommsChannel;
   messages: DisplayMessage[];
+  narrationMessages?: NarrationMessage[];
+}
+
+// Chronological merge of real transcript messages and voice-pack narration
+// lines (Stage 14 Task 5). A discriminated union so MessageRow/NarrationRow
+// can each own their own visual treatment -- narration is never rendered as
+// a chat bubble, per the task-5 brief.
+type ThreadItem = { kind: 'transcript'; message: DisplayMessage } | { kind: 'narration'; message: NarrationMessage };
+
+function mergeChronological(messages: DisplayMessage[], narrationMessages: NarrationMessage[]): ThreadItem[] {
+  const items: ThreadItem[] = [
+    ...messages.map((message): ThreadItem => ({ kind: 'transcript', message })),
+    ...narrationMessages.map((message): ThreadItem => ({ kind: 'narration', message })),
+  ];
+  return items.sort((a, b) => a.message.atMs - b.message.atMs);
 }
 
 // Three visual treatments, per the task-3 brief: a human prompt, assistant
@@ -15,27 +31,44 @@ interface MessageThreadProps {
 // TranscriptToolResult only ever carries resultLength (see
 // electron/transcriptReader.ts's header comment and Known Limitation #1 in
 // the Stage 14 design doc).
-export function MessageThread({ channel, messages }: MessageThreadProps) {
+export function MessageThread({ channel, messages, narrationMessages = [] }: MessageThreadProps) {
   const colors = useColors();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const items = useMemo(() => mergeChronological(messages, narrationMessages), [messages, narrationMessages]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [items.length]);
 
   return (
     <div ref={scrollRef} style={threadStyle}>
-      {!messages.length && (
+      {!items.length && (
         <div style={emptyStyle(colors)}>
           {channel.transcriptSourceId
             ? `No messages match — waiting on ${channel.name} or its filter.`
             : `${channel.name} has no backing transcript to display.`}
         </div>
       )}
-      {messages.map((m) => (
-        <MessageRow key={m.id} message={m} channel={channel} colors={colors} />
-      ))}
+      {items.map((item) =>
+        item.kind === 'transcript' ? (
+          <MessageRow key={item.message.id} message={item.message} channel={channel} colors={colors} />
+        ) : (
+          <NarrationRow key={item.message.id} message={item.message} colors={colors} />
+        )
+      )}
+    </div>
+  );
+}
+
+// Visually distinct from MessageRow: no bubble, no border, just the voice
+// name and the character-styled line -- the task-5 brief is explicit that
+// narration must not read as a chat message.
+function NarrationRow({ message, colors }: { message: NarrationMessage; colors: ColorPalette }) {
+  return (
+    <div style={narrationRowStyle} data-testid="narration-row" data-interrupts={message.interrupts}>
+      <span style={narrationVoiceStyle(colors, message.severity)}>{message.voiceName}</span>
+      <span style={narrationTextStyle(colors)}>{message.text}</span>
     </div>
   );
 }
@@ -105,6 +138,18 @@ function toolDotStyle(colors: ColorPalette): CSSProperties {
 }
 function toolLabelStyle(colors: ColorPalette): CSSProperties {
   return { color: colors.textBody, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+}
+const narrationRowStyle: CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 4px' };
+function narrationVoiceStyle(colors: ColorPalette, severity: number): CSSProperties {
+  return {
+    flex: 'none',
+    font: `700 10px/1 ${fonts.mono}`,
+    letterSpacing: 1.5,
+    color: severity >= 3 ? colors.warn : colors.textMuted,
+  };
+}
+function narrationTextStyle(colors: ColorPalette): CSSProperties {
+  return { font: `400 12px/1.4 ${fonts.ui}`, fontStyle: 'italic', color: colors.textDim };
 }
 function sizeChipStyle(colors: ColorPalette): CSSProperties {
   return {
