@@ -125,6 +125,19 @@ other tool in this category has any sound design at all.
   no model call site anywhere in the app (Stage 13.5). Transcript content is read and rendered but
   never enters the store, persistence, or disk — see `docs/privacy-and-data.md`'s render-vs-store
   amendment, enforced by `noPayloadInStore.test.ts`.
+- **Ledger** — cost forensics for what this machine's Claude Code transcripts actually show: an
+  exact session total broken out by input / output / cache-write / cache-read, a dispatch table
+  sorted worst-offender-first, today/week/month rollups, and the counterfactual saving the prompt
+  cache is earning. Its design is mostly an argument about honesty. Session totals are exact to a
+  pricing table whose verification date is rendered in the footer, so it cannot quietly age into
+  wrong. Per-dispatch figures are *estimates* — the completion event carries one scalar token count
+  with no input/output split — so they are a structurally different type that always renders with a
+  `~` and names its basis on hover, and the gap between the exact total and the sum of the estimates
+  is displayed rather than normalized away. A period the collector wasn't running for renders as an
+  explicit gap, never as `$0.00`; zero and unknown are different answers. **What it deliberately
+  does not claim:** this is what was *observed in this machine's Claude Code transcripts*, not your
+  bill. Spend that never passed through a transcript is invisible here. The Ledger narrows the
+  search; it does not close it.
 - **Instrument + Alarm** — the anomaly-detection pipeline above surfaces as warning rings on Grid
   nodes and an amber reactor flicker; the reactor itself doubles as an instrument — model hue,
   cache-hit clarity, and concurrency turbulence are real signals, not decoration.

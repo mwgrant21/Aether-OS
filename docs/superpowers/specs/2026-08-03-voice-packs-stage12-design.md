@@ -34,7 +34,15 @@ memory — already tracked separately as Layer 2, Stage 13, shipped).
 ## Gaps found in the existing codebase (not previously scoped)
 
 1. **`electron/collectorStore.ts`'s dispatch reader is stale, but it is not
-   on Stage 12's critical path.** It selects
+   on Stage 12's critical path.** ✅ **CLOSED by Stage 15** — see
+   `docs/superpowers/plans/2026-08-05-cost-forensics-stage15.md` Task 2. The
+   reader now selects all seven v5 columns (this list named six; it omitted
+   `session_id`), degrades to null telemetry on a pre-v5 database rather than
+   throwing, and narrows `exit_state`/`severity` at the boundary instead of
+   casting. The Ledger's dispatch table is the consumer that finally needed
+   them. The original text follows unchanged, for the record:
+
+   It selects
    `tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms`
    only — the Stage 11 schema-v5 columns (`agent_id`, `task_kind`,
    `severity`, `median_ms_at_eval`, `exit_state`, `retries`) exist in SQLite
