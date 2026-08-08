@@ -182,6 +182,7 @@ export const initialState: AetherState = {
   fleet: null,
   diagnostics: null,
   ledger: null,
+  projectsSnapshot: null,
   pendingPermissionRequest: null,
   pendingPostToolFlag: null,
   lastNotification: null,

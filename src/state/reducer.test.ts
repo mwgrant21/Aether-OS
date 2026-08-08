@@ -675,6 +675,20 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     expect(reducer(seeded, { type: 'SET_LEDGER', ledger: null }).ledger).toBeNull();
   });
 
+  it('SET_PROJECTS_SNAPSHOT replaces projectsSnapshot wholesale', () => {
+    const snapshot = { roots: [], unscoped: null, computedAtMs: 42 };
+    const next = reducer(initialState, { type: 'SET_PROJECTS_SNAPSHOT', snapshot });
+    expect(next.projectsSnapshot).toEqual(snapshot);
+  });
+
+  it('SET_PROJECTS_SNAPSHOT accepts null so a failed scan clears rather than freezes', () => {
+    const seeded = reducer(initialState, {
+      type: 'SET_PROJECTS_SNAPSHOT',
+      snapshot: { roots: [], unscoped: null, computedAtMs: 1 },
+    });
+    expect(reducer(seeded, { type: 'SET_PROJECTS_SNAPSHOT', snapshot: null }).projectsSnapshot).toBeNull();
+  });
+
   it('SET_STATUSLINE replaces statusline wholesale', () => {
     const snapshot: StatuslineSnapshot = {
       capturedAtMs: 1785200000000,

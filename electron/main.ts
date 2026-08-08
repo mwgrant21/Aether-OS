@@ -21,6 +21,9 @@ import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { buildLedgerSnapshot, type LedgerSnapshot } from '../src/shared/ledgerMath';
+import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
+import { normalizePath, type GitProbe } from '../src/shared/projectIdentity';
+import { createHash } from 'node:crypto';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import {
   createHeadlineThrottle,
@@ -278,6 +281,25 @@ let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
 // minute after launch. The renderer pulls this on mount.
 let cachedLedgerSnapshot: LedgerSnapshot | null = null;
 
+let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
+
+// Memoised for the process lifetime: repo roots do not move, and this is called
+// once per distinct cwd per scan rather than once per event.
+const gitProbeCache = new Map<string, boolean>();
+const gitProbe: GitProbe = (dir) => {
+  const cached = gitProbeCache.get(dir);
+  if (cached !== undefined) return cached;
+  const exists = existsSync(join(dir, '.git'));
+  gitProbeCache.set(dir, exists);
+  return exists;
+};
+
+// Paths must not cross IPC (docs/privacy-and-data.md). Hashing happens here,
+// the only place a path is allowed, rather than in the shared resolver -- which
+// carries no node: import so it can never reach the renderer bundle.
+const projectKey = (repoPath: string): string =>
+  createHash('sha256').update(normalizePath(repoPath)).digest('hex').slice(0, 12);
+
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const now = new Date();
@@ -343,6 +365,15 @@ async function scanAndPushUsage(): Promise<void> {
     Date.now(),
   );
   sendToWindow('ledger:snapshot', cachedLedgerSnapshot);
+
+  cachedProjectsSnapshot = buildProjectsSnapshot(
+    optimizeEvents,
+    gitProbe,
+    projectKey,
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    Date.now(),
+  );
+  sendToWindow('projects:snapshot', cachedProjectsSnapshot);
 }
 
 function scanAndPushFleet(): void {
@@ -754,6 +785,8 @@ ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath
 ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
 
 ipcMain.handle('ledger:snapshot:current', () => cachedLedgerSnapshot);
+
+ipcMain.handle('projects:snapshot:current', () => cachedProjectsSnapshot);
 
 // Explicit user actions only -- never invoked from any automatic path. The
 // renderer names the action; the main process is the only place the script
