@@ -396,6 +396,14 @@ describe('reducer', () => {
     });
   });
 
+  describe('SET_CROSS_ENGINE_CFG', () => {
+    it('replaces crossEngineCfg wholesale', () => {
+      const cfg = { enabled: true, provider: 'codex-chatgpt' as const };
+      const next = reducer(initialState, { type: 'SET_CROSS_ENGINE_CFG', cfg });
+      expect(next.crossEngineCfg).toEqual(cfg);
+    });
+  });
+
   describe('RECORD_DISPATCH_USAGE', () => {
     it('merges one completion into dispatchUsage, keyed by toolUseId', () => {
       const next = reducer(initialState, {

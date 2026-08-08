@@ -44,6 +44,14 @@ import { derivePermissionEditableField } from '../src/shared/permissionEditableF
 import { renderNotificationBadge } from './notificationBadge';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
+import type { DatabaseSync } from 'node:sqlite';
+import { CodexVerifier } from './crossEngine/codexVerifier';
+import { AcpClient } from './crossEngine/acpClient';
+import { isAllowedAuthStatus } from './crossEngine/codexSubscriptionPolicy';
+import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+
+const require = createRequire(import.meta.url);
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -418,6 +426,22 @@ let lastWrittenOwnSessionId: string | null | undefined = undefined;
 // on each dispatch's static description instead of a live work snippet.
 let autoHeadlinesEnabled = true;
 
+// Mirrors autoHeadlinesEnabled's pattern immediately below: a module-level flag
+// pushed from the renderer's persisted `state.crossEngineCfg.enabled` on every
+// mount and every toggle (see CrossEngineVerificationCard.tsx), since main.ts has
+// no visibility into localStorage-persisted renderer state. Defaults false,
+// matching initialState.ts's crossEngineCfg -- no ACP process is spawned until
+// the operator has explicitly opted in.
+let crossEngineFeatureEnabled = false;
+
+// Tracked so crossEngine:cancel can reach the in-flight run's verifier --
+// CodexVerifier is constructed fresh per verifyDispatch call (see below), so
+// there is no module-level singleton to close over otherwise. Only one
+// verification can be active at a time (CodexVerifier.run() itself throws if
+// a second run() is attempted while activeRunId is set), so a single slot
+// is sufficient.
+let activeVerifier: CodexVerifier | null = null;
+
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
@@ -629,6 +653,84 @@ app.on('before-quit', () => {
 
 ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
   autoHeadlinesEnabled = enabled;
+});
+
+ipcMain.on('crossEngine:setEnabled', (_event, enabled: boolean) => {
+  crossEngineFeatureEnabled = enabled;
+});
+
+// Ephemeral, read-only DatabaseSync handle for one cross-engine verification
+// run -- mirrors collectorStore.ts's openReadOnly() rather than keeping a
+// long-lived handle at module scope, since collector.db is written by the
+// separate collector process throughout the app's lifetime.
+function openCollectorDbReadOnly(): DatabaseSync | null {
+  if (!existsSync(collectorDbPath)) return null;
+  try {
+    const sqlite = require('node:sqlite');
+    return new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('crossEngine:status', async (): Promise<VerifierStatus> => {
+  if (!crossEngineFeatureEnabled) return 'disabled';
+  const client = new AcpClient();
+  try {
+    client.connect();
+    return await client.probe();
+  } finally {
+    await client.dispose();
+  }
+});
+
+ipcMain.handle('crossEngine:connectCodexSubscription', async (): Promise<VerifierStatus> => {
+  const client = new AcpClient();
+  try {
+    client.connect();
+    await client.initialize();
+    await client.authenticate();
+    const status = await client.authenticationStatus();
+    if (status === 'unauthenticated') return 'sign-in-required';
+    return isAllowedAuthStatus(status) ? 'ready-subscription' : 'blocked-billing-mode';
+  } catch {
+    return 'error';
+  } finally {
+    await client.dispose();
+  }
+});
+
+ipcMain.handle('crossEngine:verifyDispatch', async (_event, toolUseId: string): Promise<{ runId: string }> => {
+  if (typeof toolUseId !== 'string' || !toolUseId) throw new Error('invalid dispatch id');
+  const db = openCollectorDbReadOnly();
+  if (!db) throw new Error('collector database unavailable');
+  const runId = crypto.randomUUID();
+  const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
+  if (!pinnedSessionId) {
+    db.close();
+    throw new Error('no pinned session available for verification');
+  }
+  // Constructed per-call rather than once at module scope: pinnedSessionId can
+  // change (or start out null, guarded above) over the app's lifetime, and
+  // CodexVerifier bakes it into the constructor rather than reading it fresh
+  // per run() call the way listTranscriptSources' callers above do.
+  const verifier = new CodexVerifier(db, transcriptSessionDir, pinnedSessionId, gitProbe);
+  activeVerifier = verifier;
+  // codexVerifier.ts's run() always resolves to a structured VerificationResultV1
+  // (timeouts and prompt failures included) -- it never rejects -- so there is
+  // no .catch() here; only cleanup (closing the ephemeral db handle and clearing
+  // the active-run slot) runs once the promise settles.
+  verifier
+    .run(runId, { toolUseId }, (e: VerificationEvent) => sendToWindow('crossEngine:update', e))
+    .finally(() => {
+      db.close();
+      if (activeVerifier === verifier) activeVerifier = null;
+    });
+  return { runId };
+});
+
+ipcMain.handle('crossEngine:cancel', async (_event, runId: string): Promise<void> => {
+  await activeVerifier?.cancel(runId);
 });
 
 // app.getVersion() reads Electron's resolved app manifest, which falls back
