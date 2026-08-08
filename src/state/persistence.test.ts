@@ -30,10 +30,9 @@ describe('persistence', () => {
     expect(loaded?.unread).toBe(5);
   });
 
-  it('persists Dashboard state (projects/providers/routeDefault) across reloads', () => {
+  it('persists Dashboard state (providers/routeDefault) across reloads', () => {
     savePersisted({ ...initialState, routeDefault: 'Manual' });
     const loaded = loadPersisted();
-    expect(loaded?.projects).toEqual(initialState.projects);
     expect(loaded?.providers).toEqual(initialState.providers);
     expect(loaded?.routeDefault).toBe('Manual');
   });
@@ -128,7 +127,6 @@ describe('persistence', () => {
       cmdHist: ['status', 'budget'],
       approvals: [{ id: 99, agent: 'Ghost', i: 'GH', hue: '#ffffff', action: 'a', detail: 'd', risk: 'HIGH' }],
       apprSeq: 100,
-      projects: [{ name: 'Ghost Project', status: 'QUEUED', pct: 0, hue: '#ffffff', crew: [] }],
       providers: [{ name: 'Ghost Provider', connected: true }],
       routeDefault: 'GhostRoute',
       operatorName: 'Ghost Operator',
@@ -173,7 +171,6 @@ describe('persistence', () => {
     expect(loaded?.cmdHist).toEqual(['status', 'budget']);
     expect(loaded?.approvals).toEqual(distinctiveState.approvals);
     expect(loaded?.apprSeq).toBe(100);
-    expect(loaded?.projects).toEqual(distinctiveState.projects);
     expect(loaded?.providers).toEqual(distinctiveState.providers);
     expect(loaded?.routeDefault).toBe('GhostRoute');
     expect(loaded?.operatorName).toBe('Ghost Operator');

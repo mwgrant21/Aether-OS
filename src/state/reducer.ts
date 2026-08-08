@@ -2,6 +2,7 @@ import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, 
 import type { NotificationReason } from '../shared/alertSounds';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
+import type { ProjectsSnapshot } from '../shared/projectsSnapshot';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { makeAgent, runCommand } from '../components/terminal/commands';
@@ -22,11 +23,10 @@ export type Action =
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
-  | { type: 'NEW_PROJECT' }
   | { type: 'TICK' }
   | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
   | { type: 'REACTIVATE_AGENT'; name: string }
-  | { type: 'SELECT_PROJECT'; name: string }
+  | { type: 'SELECT_PROJECT'; key: string }
   | { type: 'SELECT_MEMORY'; id: number }
   | { type: 'SET_MEMORIES'; memories: MemoryRow[] }
   | { type: 'SET_MEMORY_TOMBSTONES'; tombstones: MemoryTombstone[] }
@@ -48,6 +48,7 @@ export type Action =
   | { type: 'SET_FLEET'; fleet: FleetSessionRow[] | null }
   | { type: 'SET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot | null }
   | { type: 'SET_LEDGER'; ledger: LedgerSnapshot | null }
+  | { type: 'SET_PROJECTS_SNAPSHOT'; snapshot: ProjectsSnapshot | null }
   | { type: 'SET_PENDING_PERMISSION_REQUEST'; request: PermissionRequestUI | null }
   | { type: 'SET_PENDING_POST_TOOL_FLAG'; request: PostToolFlagRequestUI | null }
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
@@ -149,7 +150,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, selected: action.name };
 
     case 'SELECT_PROJECT':
-      return { ...state, selectedProject: action.name };
+      return { ...state, selectedProject: action.key };
 
     case 'SELECT_MEMORY':
       return { ...state, selectedMemory: String(action.id) };
@@ -273,6 +274,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_LEDGER':
       return { ...state, ledger: action.ledger };
+
+    case 'SET_PROJECTS_SNAPSHOT':
+      return { ...state, projectsSnapshot: action.snapshot };
 
     case 'SET_PENDING_PERMISSION_REQUEST': {
       const eventState = { ...state, pendingPermissionRequest: action.request };
@@ -446,17 +450,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
         ...base,
         cmdHist: [...base.cmdHist, action.raw].slice(-30),
         commandsRun: base.commandsRun + 1,
-      };
-    }
-
-    case 'NEW_PROJECT': {
-      const pool = ['Support Portal', 'Internal Tools', 'Marketing Site'];
-      const taken = new Set(state.projects.map((p) => p.name));
-      const name = pool.find((n) => !taken.has(n)) ?? `Project ${state.projects.length + 1}`;
-      const hues = ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'];
-      return {
-        ...state,
-        projects: [{ name, status: 'QUEUED', pct: 0, hue: hues[state.projects.length % hues.length], crew: [] }, ...state.projects],
       };
     }
 

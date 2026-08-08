@@ -1,17 +1,24 @@
 import type { CSSProperties } from 'react';
 import { useAetherStore } from '../../state/store';
-import { pickSelectedProject } from './projectsMath';
+import { findProjectByKey } from './projectsMath';
 import { ProjectRosterCard } from './ProjectRosterCard';
 import { ProjectDetailCard } from './ProjectDetailCard';
 
 export function ProjectsView() {
-  const { state } = useAetherStore();
-  const selectedProject = pickSelectedProject(state.projects, state.selectedProject);
+  const { state, dispatch } = useAetherStore();
+  const snapshot = state.projectsSnapshot;
+  // A persisted key can name a project that no longer exists, so fall back to
+  // the highest-cost root rather than stranding the panel on nothing.
+  const selected = findProjectByKey(snapshot, state.selectedProject, { fallbackToFirst: true });
 
   return (
     <div style={rootStyle}>
-      <ProjectRosterCard selectedName={selectedProject?.name ?? null} />
-      <ProjectDetailCard project={selectedProject} />
+      <ProjectRosterCard
+        snapshot={snapshot}
+        selectedKey={selected?.key ?? null}
+        onSelect={(key) => dispatch({ type: 'SELECT_PROJECT', key })}
+      />
+      <ProjectDetailCard node={selected} />
     </div>
   );
 }

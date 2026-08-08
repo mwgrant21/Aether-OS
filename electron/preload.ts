@@ -5,6 +5,7 @@ import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../src/shared/optimizeRules';
 import type { LedgerSnapshot } from '../src/shared/ledgerMath';
+import type { ProjectsSnapshot } from '../src/shared/projectsSnapshot';
 import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
@@ -102,6 +103,14 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     // renderer's listener exists, and the interval is 60s -- same startup race
     // the statusline channel already solves this way.
     current: (): Promise<LedgerSnapshot | null> => ipcRenderer.invoke('ledger:snapshot:current'),
+  },
+  projects: {
+    onSnapshot: (callback: (snapshot: ProjectsSnapshot | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: ProjectsSnapshot | null) => callback(snapshot);
+      ipcRenderer.on('projects:snapshot', listener);
+      return () => ipcRenderer.removeListener('projects:snapshot', listener);
+    },
+    current: (): Promise<ProjectsSnapshot | null> => ipcRenderer.invoke('projects:snapshot:current'),
   },
   memory: {
     onSnapshot: (callback: (rows: MemoryRowUI[] | null) => void) => {

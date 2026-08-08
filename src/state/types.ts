@@ -91,6 +91,7 @@ import type { GradeRow } from '../shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
+import type { ProjectsSnapshot } from '../shared/projectsSnapshot';
 import type { PermissionRisk } from '../shared/permissionRisk';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { RateSample } from '../components/reactor/reactorMath';
@@ -164,16 +165,6 @@ export interface FleetSessionRow {
   status: string;
   name: string;
   startedAtMs: number;
-}
-
-export type ProjectStatus = 'BUILDING' | 'REVIEW' | 'QUEUED' | 'SHIPPED';
-
-export interface ProjectStub {
-  name: string;
-  status: ProjectStatus;
-  pct: number;
-  hue: string;
-  crew: string[];
 }
 
 export interface Provider {
@@ -275,7 +266,6 @@ export interface AetherState {
   idleList: IdleAgent[];
   sys: SysMetric[];
   logs: LogEntry[];
-  projects: ProjectStub[];
   memories: MemoryRow[];
   memoryTombstones: MemoryTombstone[];
   memoryScopeFilter: 'all' | 'shared' | string;
@@ -299,6 +289,7 @@ export interface AetherState {
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
   ledger: LedgerSnapshot | null;
+  projectsSnapshot: ProjectsSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;
   lastNotification: { reason: NotificationReason; atMs: number } | null;

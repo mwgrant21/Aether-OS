@@ -29,8 +29,8 @@ describe('reducer', () => {
   });
 
   it('SELECT_PROJECT sets selectedProject', () => {
-    const next = reducer(initialState, { type: 'SELECT_PROJECT', name: 'Mobile Beta' });
-    expect(next.selectedProject).toBe('Mobile Beta');
+    const next = reducer(initialState, { type: 'SELECT_PROJECT', key: 'mobile-beta' });
+    expect(next.selectedProject).toBe('mobile-beta');
   });
 
   it('SELECT_MEMORY sets selectedMemory to the stringified id', () => {
@@ -63,29 +63,6 @@ describe('reducer', () => {
 
     const medResolved = reducer(initialState, { type: 'RESOLVE_APPROVAL', id: 2, approve: true });
     expect(medResolved.memories).toEqual(initialState.memories);
-  });
-
-  it('NEW_PROJECT adds an unused project from the pool, cycling hues', () => {
-    const next = reducer(initialState, { type: 'NEW_PROJECT' });
-    expect(next.projects).toHaveLength(initialState.projects.length + 1);
-    const added = next.projects[0];
-    expect(added.name).toBe('Support Portal');
-    expect(added.status).toBe('QUEUED');
-    expect(added.pct).toBe(0);
-    expect(added.hue).toBe('#9bd0ff');
-  });
-
-  it('NEW_PROJECT falls back to a numbered name once the pool is exhausted', () => {
-    const withAllTaken = {
-      ...initialState,
-      projects: [
-        { name: 'Support Portal', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
-        { name: 'Internal Tools', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
-        { name: 'Marketing Site', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
-      ],
-    };
-    const next = reducer(withAllTaken, { type: 'NEW_PROJECT' });
-    expect(next.projects[0].name).toBe('Project 4');
   });
 
   it('TOGGLE_AGENT_PAUSE flips paused on the named agent only', () => {
@@ -673,6 +650,20 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
       },
     });
     expect(reducer(seeded, { type: 'SET_LEDGER', ledger: null }).ledger).toBeNull();
+  });
+
+  it('SET_PROJECTS_SNAPSHOT replaces projectsSnapshot wholesale', () => {
+    const snapshot = { roots: [], unscoped: null, computedAtMs: 42 };
+    const next = reducer(initialState, { type: 'SET_PROJECTS_SNAPSHOT', snapshot });
+    expect(next.projectsSnapshot).toEqual(snapshot);
+  });
+
+  it('SET_PROJECTS_SNAPSHOT accepts null so a failed scan clears rather than freezes', () => {
+    const seeded = reducer(initialState, {
+      type: 'SET_PROJECTS_SNAPSHOT',
+      snapshot: { roots: [], unscoped: null, computedAtMs: 1 },
+    });
+    expect(reducer(seeded, { type: 'SET_PROJECTS_SNAPSHOT', snapshot: null }).projectsSnapshot).toBeNull();
   });
 
   it('SET_STATUSLINE replaces statusline wholesale', () => {
