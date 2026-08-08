@@ -29,13 +29,21 @@ export function LedgerView() {
   const rows = buildDispatchRows(state);
 
   // The residual is only meaningful when both sides cover the same window.
-  // The exact side is today's rollup; the estimated side is today's dispatches,
-  // scoped with the same time zone and clock main bucketed with. When today has
-  // no observed data at all there is nothing to reconcile against, and the row
-  // is omitted rather than reconciling against an assumed zero.
-  const todaysRows = ledger
-    ? rows.filter((r) => isSameLocalDay(r.startedAt, ledger.timeZone, ledger.computedAtMs))
-    : [];
+  // The exact side is today's rollup, built (bucketByDay) from each assistant
+  // event's OWN timestamp -- not from any dispatch's startedAt. A dispatch
+  // that starts before local midnight and finishes after it therefore has
+  // events landing in both calendar days' exact totals, even though its
+  // *estimate* is one row. Filtering solely on startedAt would drop that
+  // row entirely from "today" while some of its exact usage still counted
+  // toward today's rollup (or the reverse), misrepresenting the
+  // reconciliation. Testing "spans today" -- startedAt OR endedAt falls on
+  // today -- instead of "starts today" keeps the row in the comparison
+  // whenever any of its usage could have landed in today's exact total.
+  // This still isn't exact (a spanning dispatch's single estimate isn't
+  // split proportionally across the two days), but it is the accurate
+  // inclusion test, and the residual caveat text below already tells the
+  // operator these are approximate, tracked-dispatch figures.
+  const todaysRows = selectTodaysRows(rows, ledger);
   const todaysEstimates: EstimatedCost[] = todaysRows.map((r) => r.estimate);
   const reconciliation =
     ledger && ledger.rollups.today !== null ? reconcile(ledger.rollups.today, todaysEstimates) : null;
@@ -136,9 +144,20 @@ export function buildDispatchRows(state: {
       durationMs: usage?.durationMs ?? 0,
     };
     const t = telemetry.get(d.toolUseId);
+    // Derived, not persisted: startedAt + the completed dispatch's own
+    // duration. Falls back to startedAt (an instant, not a span) when
+    // durationMs or startedAt itself is unavailable/unparsable, so a
+    // dispatch missing usage still participates in the "starts today"
+    // half of the spans-today test rather than being silently dropped.
+    const startedMs = new Date(d.startedAt).getTime();
+    const endedAt =
+      !Number.isNaN(startedMs) && completed.durationMs > 0
+        ? new Date(startedMs + completed.durationMs).toISOString()
+        : d.startedAt;
     return {
       toolUseId: d.toolUseId,
       startedAt: d.startedAt,
+      endedAt,
       description: d.description,
       subagentType: d.subagentType,
       durationMs: completed.durationMs,
@@ -148,6 +167,28 @@ export function buildDispatchRows(state: {
       retries: t?.retries ?? null,
     };
   });
+}
+
+/**
+ * Which dispatch rows count toward "today" for the reconciliation strip.
+ *
+ * Exported for testing: a dispatch that starts before local midnight and
+ * finishes after it (or vice versa) must not be silently excluded from --
+ * or silently fully included in -- "today" while the exact rollup it is
+ * compared against is built from per-event timestamps that may straddle the
+ * boundary differently. See the comment at the call site for the full
+ * reasoning.
+ */
+export function selectTodaysRows(
+  rows: DispatchCostRow[],
+  ledger: { timeZone: string; computedAtMs: number } | null,
+): DispatchCostRow[] {
+  if (!ledger) return [];
+  return rows.filter(
+    (r) =>
+      isSameLocalDay(r.startedAt, ledger.timeZone, ledger.computedAtMs) ||
+      isSameLocalDay(r.endedAt, ledger.timeZone, ledger.computedAtMs),
+  );
 }
 
 // Mirrors the slice(0, 20) cap in reducer.ts's SET_REAL_AGENTS case.

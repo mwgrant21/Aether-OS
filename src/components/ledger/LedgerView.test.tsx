@@ -6,7 +6,8 @@ import { RollupCard } from './RollupCard';
 import { SessionCostCard } from './SessionCostCard';
 import { CacheImpactCard } from './CacheImpactCard';
 import { PricingBasisFooter } from './PricingBasisFooter';
-import { buildDispatchRows } from './LedgerView';
+import { buildDispatchRows, selectTodaysRows } from './LedgerView';
+import type { DispatchCostRow } from './DispatchCostTable';
 import { PRICING_VERIFIED_AT } from '../../shared/modelPricing';
 
 // useColors() reads the theme from the store, so every themed component needs
@@ -156,5 +157,63 @@ describe('buildDispatchRows', () => {
     expect(r.retries).toBeNull();
     // The cost estimate does not depend on telemetry, so it still lands.
     expect(r.estimate.usdApprox).toBeCloseTo(21, 6);
+  });
+
+  // Finding 3 (day-spanning dispatch misclassification): the exact "today"
+  // rollup is built from per-event timestamps, which for a dispatch that
+  // straddles local midnight can land partly in today's exact total even
+  // though the dispatch's single startedAt is yesterday. buildDispatchRows
+  // must compute an endedAt (startedAt + durationMs) so selectTodaysRows can
+  // catch that case.
+  it('computes endedAt as startedAt + durationMs', () => {
+    const [r] = buildDispatchRows({
+      ...base,
+      recentCompletedDispatches: [{ ...base.recentCompletedDispatches[0], startedAt: '2026-08-07T23:58:00.000Z' }],
+      dispatchUsage: { tu_1: { tokens: 1000, toolUses: 1, durationMs: 5 * 60 * 1000 } },
+    });
+    expect(r.endedAt).toBe('2026-08-08T00:03:00.000Z');
+  });
+});
+
+describe('selectTodaysRows', () => {
+  const ledger = { timeZone: 'UTC', computedAtMs: new Date('2026-08-08T01:00:00.000Z').getTime() };
+
+  function row(over: Partial<DispatchCostRow>): DispatchCostRow {
+    return {
+      toolUseId: 'tu',
+      startedAt: '2026-08-08T00:30:00.000Z',
+      endedAt: '2026-08-08T00:35:00.000Z',
+      description: 'd',
+      subagentType: 'general-purpose',
+      durationMs: 300000,
+      toolUses: 1,
+      estimate: { usdApprox: 1, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+      exitState: null,
+      retries: null,
+      ...over,
+    };
+  }
+
+  it('returns nothing when there is no ledger snapshot', () => {
+    expect(selectTodaysRows([row({})], null)).toEqual([]);
+  });
+
+  it('includes a dispatch that both starts and ends today', () => {
+    expect(selectTodaysRows([row({})], ledger)).toHaveLength(1);
+  });
+
+  it('includes a dispatch that starts yesterday but ends today (spans midnight)', () => {
+    const r = row({ startedAt: '2026-08-07T23:58:00.000Z', endedAt: '2026-08-08T00:03:00.000Z' });
+    expect(selectTodaysRows([r], ledger)).toEqual([r]);
+  });
+
+  it('includes a dispatch that starts today but ends tomorrow (spans midnight)', () => {
+    const r = row({ startedAt: '2026-08-08T23:58:00.000Z', endedAt: '2026-08-09T00:03:00.000Z' });
+    expect(selectTodaysRows([r], ledger)).toEqual([r]);
+  });
+
+  it('excludes a dispatch that neither starts nor ends today', () => {
+    const r = row({ startedAt: '2026-08-06T12:00:00.000Z', endedAt: '2026-08-06T12:05:00.000Z' });
+    expect(selectTodaysRows([r], ledger)).toEqual([]);
   });
 });
