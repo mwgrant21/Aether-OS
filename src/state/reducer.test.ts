@@ -65,29 +65,6 @@ describe('reducer', () => {
     expect(medResolved.memories).toEqual(initialState.memories);
   });
 
-  it('NEW_PROJECT adds an unused project from the pool, cycling hues', () => {
-    const next = reducer(initialState, { type: 'NEW_PROJECT' });
-    expect(next.projects).toHaveLength(initialState.projects.length + 1);
-    const added = next.projects[0];
-    expect(added.name).toBe('Support Portal');
-    expect(added.status).toBe('QUEUED');
-    expect(added.pct).toBe(0);
-    expect(added.hue).toBe('#9bd0ff');
-  });
-
-  it('NEW_PROJECT falls back to a numbered name once the pool is exhausted', () => {
-    const withAllTaken = {
-      ...initialState,
-      projects: [
-        { name: 'Support Portal', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
-        { name: 'Internal Tools', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
-        { name: 'Marketing Site', status: 'BUILDING' as const, pct: 10, hue: '#fff', crew: [] },
-      ],
-    };
-    const next = reducer(withAllTaken, { type: 'NEW_PROJECT' });
-    expect(next.projects[0].name).toBe('Project 4');
-  });
-
   it('TOGGLE_AGENT_PAUSE flips paused on the named agent only', () => {
     const next = reducer(initialState, { type: 'TOGGLE_AGENT_PAUSE', name: 'Code Builder' });
     expect(next.agents.find((a) => a.name === 'Code Builder')?.paused).toBe(true);

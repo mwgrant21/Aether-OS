@@ -140,12 +140,6 @@ export const initialState: AetherState = {
     { label: 'DISK', val: 31, hist: [30, 31, 30, 32, 31, 30, 31, 31] },
   ],
   logs: [],
-  projects: [
-    { name: 'CLI Companion', status: 'BUILDING', pct: 62, hue: '#7ef0ff', crew: ['Code Builder', 'UI Designer'] },
-    { name: 'Mobile Beta', status: 'REVIEW', pct: 88, hue: '#8ab6ff', crew: ['Test Runner'] },
-    { name: 'Analytics Pipeline', status: 'QUEUED', pct: 0, hue: '#5fffe0', crew: ['Database Agent'] },
-    { name: 'Docs Portal', status: 'SHIPPED', pct: 100, hue: '#7fd8ef', crew: ['Doc Writer'] },
-  ],
   memories: [],
   memoryTombstones: [],
   memoryScopeFilter: 'all',

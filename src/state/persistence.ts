@@ -69,7 +69,6 @@ export function savePersisted(state: AetherState): void {
       cmdHist: state.cmdHist,
       approvals: state.approvals,
       apprSeq: state.apprSeq,
-      projects: state.projects,
       providers: state.providers,
       routeDefault: state.routeDefault,
       operatorName: state.operatorName,

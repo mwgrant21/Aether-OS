@@ -122,9 +122,6 @@ export function ReactorStatusCard() {
         <Button onClick={() => dispatch({ type: 'RUN_COMMAND', raw: 'spawn' })} style={primaryActionStyle}>
           ⊕ SPAWN AGENT
         </Button>
-        <Button onClick={() => dispatch({ type: 'NEW_PROJECT' })} style={secondaryActionStyle}>
-          ⊕ NEW PROJECT
-        </Button>
         <Button
           onClick={() => {
             dispatch({ type: 'RUN_COMMAND', raw: 'sweep' });

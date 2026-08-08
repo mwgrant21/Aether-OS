@@ -127,8 +127,9 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
     }
 
     case 'projects': {
-      if (!state.projects.length) out.push(line('  no projects tracked yet', DIM));
-      state.projects.forEach((p) => out.push(line(`  ${p.status.padEnd(9)}${p.name} — ${p.pct}%`, p.status === 'BUILDING' ? PROMPT : BODY)));
+      const roots = state.projectsSnapshot?.roots ?? [];
+      if (!roots.length) out.push(line('  no projects tracked yet', DIM));
+      roots.forEach((p) => out.push(line(`  $${p.ledger.total.usd.toFixed(2).padEnd(9)}${p.name}`, PROMPT)));
       return { kind: 'append', lines: out };
     }
 

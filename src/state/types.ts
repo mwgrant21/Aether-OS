@@ -167,16 +167,6 @@ export interface FleetSessionRow {
   startedAtMs: number;
 }
 
-export type ProjectStatus = 'BUILDING' | 'REVIEW' | 'QUEUED' | 'SHIPPED';
-
-export interface ProjectStub {
-  name: string;
-  status: ProjectStatus;
-  pct: number;
-  hue: string;
-  crew: string[];
-}
-
 export interface Provider {
   name: string;
   connected: boolean;
@@ -276,7 +266,6 @@ export interface AetherState {
   idleList: IdleAgent[];
   sys: SysMetric[];
   logs: LogEntry[];
-  projects: ProjectStub[];
   memories: MemoryRow[];
   memoryTombstones: MemoryTombstone[];
   memoryScopeFilter: 'all' | 'shared' | string;
