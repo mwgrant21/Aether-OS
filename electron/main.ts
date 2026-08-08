@@ -22,7 +22,8 @@ import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { buildLedgerSnapshot, type LedgerSnapshot } from '../src/shared/ledgerMath';
 import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
-import { normalizePath, type GitProbe } from '../src/shared/projectIdentity';
+import { normalizePath } from '../src/shared/projectIdentity';
+import { createScopedGitProbe } from './gitProbeCache';
 import { createHash } from 'node:crypto';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
 import {
@@ -283,16 +284,14 @@ let cachedLedgerSnapshot: LedgerSnapshot | null = null;
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 
-// Memoised for the process lifetime: repo roots do not move, and this is called
-// once per distinct cwd per scan rather than once per event.
-const gitProbeCache = new Map<string, boolean>();
-const gitProbe: GitProbe = (dir) => {
-  const cached = gitProbeCache.get(dir);
-  if (cached !== undefined) return cached;
-  const exists = existsSync(join(dir, '.git'));
-  gitProbeCache.set(dir, exists);
-  return exists;
-};
+// Memoised for a single scan cycle only: reset() is called at the start of
+// every scanAndPushUsage() call so a directory that becomes a git repo
+// between scans is picked up on the next scan, rather than a stale `false`
+// sticking for the whole process lifetime. Within one scan it still avoids
+// repeated existsSync calls for the same distinct cwd.
+const { probe: gitProbe, reset: resetGitProbeCache } = createScopedGitProbe((dir) =>
+  existsSync(join(dir, '.git')),
+);
 
 // Paths must not cross IPC (docs/privacy-and-data.md). Hashing happens here,
 // the only place a path is allowed, rather than in the shared resolver -- which
@@ -303,6 +302,8 @@ const projectKey = (repoPath: string): string =>
 async function scanAndPushUsage(): Promise<void> {
   if (!mainWindow) return;
   const now = new Date();
+  // Fresh cache per scan cycle -- see gitProbe comment above.
+  resetGitProbeCache();
 
   // Dashboard tiles: prefer the collector's incrementally-tailed usage_events
   // store; only fall back to a full re-scan of every project's transcripts

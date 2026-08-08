@@ -3,15 +3,21 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { usdPrecise } from '../ledger/format';
+import { Button } from '../shared/Button';
 
 export function ProjectsDigest() {
   const colors = useColors();
-  const { state } = useAetherStore();
+  const { state, dispatch } = useAetherStore();
   const top = state.projectsSnapshot?.roots.slice(0, 3) ?? [];
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>PROJECTS</div>
+      <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={titleStyle(colors)}>PROJECTS</div>
+        <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Projects' })} style={viewAllStyle(colors)}>
+          VIEW ALL →
+        </Button>
+      </div>
       {top.length === 0 ? (
         <div style={emptyStyle(colors)}>No projects observed yet.</div>
       ) : (
@@ -41,4 +47,7 @@ function nameStyle(colors: ColorPalette): CSSProperties {
 }
 function costStyle(colors: ColorPalette): CSSProperties {
   return { flex: 'none', font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
+}
+function viewAllStyle(colors: ColorPalette): CSSProperties {
+  return { cursor: 'pointer', font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
 }
