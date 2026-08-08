@@ -135,7 +135,7 @@ describe('CodexVerifier.run', () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
-    const raw = { schemaVersion: 1, verdict: 'supported', confidence: 0.8, summary: 'matches', findings: [], tests: [], limitations: [] };
+    const raw = { schemaVersion: 1, verdict: 'supported', confidence: 0.8, summary: 'matches', findings: [{ severity: 'info', claim: 'did the thing', evidence: 'saw it in the diff', file: null, line: null }], tests: [], limitations: [] };
     respondTo(child, {}); // initialize
     respondTo(child, {}); // authenticate
     respondTo(child, { type: 'chat-gpt' }); // authentication/status
@@ -215,6 +215,46 @@ describe('CodexVerifier.run', () => {
     expect(result.verdict).toBe('inconclusive');
     expect(events.some((e) => e.kind === 'error' && e.code === 'VERIFICATION_TIMEOUT')).toBe(true);
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors cancellation requested while evidence is still being resolved, before any client connects', async () => {
+    // resolveDispatchEvidence never resolves until we say so -- cancel()
+    // must land and be honored without spawnAcpProcess/client.connect()
+    // ever having been reached.
+    let resolveEvidence!: (r: EvidenceResult) => void;
+    vi.mocked(resolveDispatchEvidence).mockReturnValue(new Promise((res) => { resolveEvidence = res; }));
+
+    const runPromise = verifier.run('run-9', { toolUseId: 'tu1' }, (e) => events.push(e));
+    await verifier.cancel('run-9');
+    resolveEvidence(okEvidence());
+
+    const result = await runPromise;
+    expect(result.verdict).toBe('inconclusive');
+    expect(events.some((e) => e.kind === 'cancelled' && e.runId === 'run-9')).toBe(true);
+    expect(spawnAcpProcess).not.toHaveBeenCalled();
+  });
+
+  it('honors cancellation requested while the snapshot is being built, before authentication', async () => {
+    vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
+    let resolveSnapshot!: (s: VerificationSnapshot) => void;
+    vi.mocked(buildVerificationSnapshot).mockReturnValue(new Promise((res) => { resolveSnapshot = res; }));
+
+    const runPromise = verifier.run('run-10', { toolUseId: 'tu1' }, (e) => events.push(e));
+    // Wait for run() to have actually entered buildVerificationSnapshot()
+    // before cancelling -- otherwise cancel() can win the race and be
+    // observed at the earlier (evidence) checkpoint instead of this one.
+    await vi.waitFor(() => expect(buildVerificationSnapshot).toHaveBeenCalled());
+    await verifier.cancel('run-10');
+    resolveSnapshot({ snapshotDir: 'C:/tmp/snap2', dispose } as VerificationSnapshot);
+
+    const result = await runPromise;
+    expect(result.verdict).toBe('inconclusive');
+    expect(events.some((e) => e.kind === 'cancelled' && e.runId === 'run-10')).toBe(true);
+    // dispose() is idempotent by design (see snapshotBuilder.ts) -- run()'s
+    // finally block always disposes too, so this can be 1 or 2 calls
+    // depending on timing; what matters is that it happened at all.
+    expect(dispose).toHaveBeenCalled();
+    expect(spawnAcpProcess).not.toHaveBeenCalled();
   });
 
   it('rejects a second concurrent run while one is active', async () => {

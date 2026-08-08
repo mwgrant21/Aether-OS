@@ -25,6 +25,10 @@ export type CrossEngineRunState =
   | { status: 'error'; runId: string; code: string; message: string }
   | { status: 'cancelled'; runId: string };
 
+/** runId is empty when the failure happens before main ever assigns one
+ *  (e.g. the global run-guard rejection in `start()` below). */
+const START_REJECTED_RUN_ID = '';
+
 export function useCrossEngineSync() {
   const [state, setState] = useState<CrossEngineRunState>({ status: 'idle' });
   // The runId this hook instance is currently tracking -- events for any
@@ -60,9 +64,21 @@ export function useCrossEngineSync() {
   const start = useCallback(async (toolUseId: string): Promise<void> => {
     const crossEngine = window.aetherElectron?.crossEngine;
     if (!crossEngine) return;
-    const { runId } = await crossEngine.verifyDispatch(toolUseId);
-    runIdRef.current = runId;
-    setState({ status: 'running', runId, phase: 'preparing-evidence' });
+    try {
+      const { runId } = await crossEngine.verifyDispatch(toolUseId);
+      runIdRef.current = runId;
+      setState({ status: 'running', runId, phase: 'preparing-evidence' });
+    } catch (err) {
+      // Most commonly main's global run-guard rejecting because another
+      // verification is already in progress -- surface it as a real error
+      // state instead of letting it become an unhandled rejection.
+      setState({
+        status: 'error',
+        runId: START_REJECTED_RUN_ID,
+        code: 'START_REJECTED',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
   }, []);
 
   const cancel = useCallback((): void => {

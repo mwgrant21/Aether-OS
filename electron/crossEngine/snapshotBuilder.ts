@@ -5,7 +5,7 @@
 // touch. See the Task 0 reconciliation note under docs/superpowers/specs/
 // (2026-08-07, cross-engine verification).
 
-import { mkdtemp, rm, mkdir, copyFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, copyFile, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve as resolvePath, sep } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -32,6 +32,19 @@ function assertContained(projectRoot: string, relPath: string): string {
   return abs;
 }
 
+/** True if `path` itself is a symlink. lstat (not stat) so the link is
+ *  inspected rather than followed -- a symlinked touched path could point
+ *  anywhere on disk, and copyFile/rm below would otherwise silently follow
+ *  it outside the project root / snapshot dir. Missing path -> not a
+ *  symlink (the deletion-representation path below handles absence). */
+async function isSymlink(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 export async function buildVerificationSnapshot(evidence: DispatchEvidence): Promise<VerificationSnapshot> {
   const snapshotDir = await mkdtemp(join(tmpdir(), 'aether-codex-verify-'));
 
@@ -52,12 +65,21 @@ export async function buildVerificationSnapshot(evidence: DispatchEvidence): Pro
     for (const relPath of evidence.touchedFiles) {
       const srcAbs = assertContained(evidence.projectRoot, relPath);
       const destAbs = assertContained(snapshotDir, relPath);
+      if (await isSymlink(srcAbs)) {
+        throw new Error(`touched path is a symlink, refusing to copy: ${relPath}`);
+      }
       await mkdir(dirname(destAbs), { recursive: true });
       try {
         await copyFile(srcAbs, destAbs);
       } catch {
         // File deleted since the dispatch touched it: represent the
         // deletion by removing it from the snapshot if the baseline had it.
+        // Guard against a symlink planted at destAbs by the baseline archive
+        // extraction too -- rm(force) would otherwise follow it out of the
+        // snapshot dir.
+        if (await isSymlink(destAbs)) {
+          throw new Error(`snapshot path is a symlink, refusing to remove: ${relPath}`);
+        }
         await rm(destAbs, { force: true });
       }
     }

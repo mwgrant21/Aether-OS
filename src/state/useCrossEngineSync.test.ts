@@ -130,6 +130,22 @@ describe('useCrossEngineSync', () => {
     expect(result.current.state).toEqual({ status: 'idle' });
   });
 
+  it('start() sets an error state instead of an unhandled rejection when verifyDispatch rejects (e.g. another run is already active)', async () => {
+    verifyDispatchMock.mockRejectedValue(new Error('a verification run is already in progress'));
+    const { result } = renderHook(() => useCrossEngineSync());
+
+    await act(async () => {
+      await result.current.start('tu_1');
+    });
+
+    expect(result.current.state).toEqual({
+      status: 'error',
+      runId: '',
+      code: 'START_REJECTED',
+      message: 'a verification run is already in progress',
+    });
+  });
+
   it('unsubscribes on unmount', () => {
     const { unmount } = renderHook(() => useCrossEngineSync());
     unmount();

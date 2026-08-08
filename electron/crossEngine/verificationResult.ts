@@ -40,5 +40,13 @@ export function parseVerificationResult(raw: unknown): VerificationResultV1 {
     : [];
   const limitations = Array.isArray(obj.limitations) ? obj.limitations.filter((l): l is string => typeof l === 'string') : [];
 
-  return { schemaVersion: 1, verdict: obj.verdict as VerdictKind, confidence, summary, findings, tests, limitations };
+  const verdict = obj.verdict as VerdictKind;
+  if (verdict !== 'inconclusive') {
+    const hasWellFormedFinding = findings.some((f) => f.claim.trim() !== '' && f.evidence.trim() !== '');
+    if (summary.trim() === '' || !hasWellFormedFinding) {
+      return inconclusive('Codex returned a supported/contradicted verdict without supporting evidence.');
+    }
+  }
+
+  return { schemaVersion: 1, verdict, confidence, summary, findings, tests, limitations };
 }

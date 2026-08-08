@@ -1,7 +1,7 @@
 // electron/crossEngine/acpProcess.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
-import { buildCodexChildEnv, resolveCodexHome } from './acpProcess';
+import { buildCodexChildEnv, resolveCodexHome, spawnAcpProcess } from './acpProcess';
 
 const BLOCKED = [
   'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORG_ID',
@@ -51,5 +51,26 @@ describe('resolveCodexHome', () => {
     const dir = resolveCodexHome();
     expect(() => resolveCodexHome()).not.toThrow();
     expect(existsSync(dir)).toBe(true);
+  });
+});
+
+describe('spawnAcpProcess', () => {
+  // Regression test for Finding 1: this module runs inside the Electron main
+  // ESM bundle (package.json "type": "module"), where a bare `require` is
+  // undefined. resolveAdapterExecutable() must use the createRequire(import.
+  // meta.url) pattern (matching main.ts/collectorStore.ts/memoryStore.ts)
+  // rather than a bare `require.resolve` call, or every real adapter launch
+  // throws "require is not defined" before spawning Codex.
+  let child: ReturnType<typeof spawnAcpProcess> | null = null;
+  afterEach(() => {
+    child?.kill();
+    child = null;
+  });
+
+  it('resolves the adapter executable and spawns without a ReferenceError for require', () => {
+    expect(() => {
+      child = spawnAcpProcess();
+    }).not.toThrow();
+    expect(child).not.toBeNull();
   });
 });

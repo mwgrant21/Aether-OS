@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, readFile, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, access, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -81,6 +81,29 @@ describe('buildVerificationSnapshot', () => {
     await expect(
       buildVerificationSnapshot(evidenceFor(repoRoot, ['../../etc/passwd']))
     ).rejects.toThrow(/escapes project root/);
+  });
+
+  it('rejects a touched path that is a symlink, rather than following it out of the project root', async () => {
+    const repoRoot = await makeGitRepo();
+    const outsideDir = await mkdtemp(join(tmpdir(), 'aether-snapshot-outside-'));
+    cleanups.push(() => rm(outsideDir, { recursive: true, force: true }));
+    await writeFile(join(outsideDir, 'secret.txt'), 'do not leak\n', 'utf8');
+
+    const linkPath = join(repoRoot, 'link.txt');
+    try {
+      await symlink(join(outsideDir, 'secret.txt'), linkPath, 'file');
+    } catch (err) {
+      // Creating filesystem symlinks on Windows can require an elevated
+      // token or Developer Mode -- skip rather than fail the suite when the
+      // sandbox doesn't permit it, since the assertion under test is the
+      // application logic, not the OS's symlink permission model.
+      if ((err as NodeJS.ErrnoException).code === 'EPERM') return;
+      throw err;
+    }
+
+    await expect(
+      buildVerificationSnapshot(evidenceFor(repoRoot, ['link.txt']))
+    ).rejects.toThrow(/symlink/);
   });
 
   it('dispose removes the snapshot directory and is idempotent', async () => {
