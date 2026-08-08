@@ -102,6 +102,9 @@ other tool in this category has any sound design at all.
 
 ## What's built
 
+- **Projects** — real projects derived from transcript events' `cwd` values, with cost per project,
+  worktrees nested under their parent repo, and an `unscoped` bucket for work in directories
+  without a git context.
 - **Terminal** — a real Claude Code CLI session on node-pty + xterm, replacing the original
   scripted simulation. The reactor core lives in the sidebar with a live TOK/MIN readout, its
   pulse and overload glow driven by real burn rate and real dispatch concurrency.

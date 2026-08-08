@@ -53,7 +53,8 @@ src/
                  modelPricing.ts (the verified rate table + costForEvent /
                  costBreakdownForEvent), ledgerMath.ts (Stage 15 cost aggregation:
                  sessionLedger, estimateDispatchCost, reconcile, bucketByDay,
-                 cacheImpact, buildLedgerSnapshot).
+                 cacheImpact, buildLedgerSnapshot), projectIdentity.ts (Stage 16
+                 project resolver), projectsSnapshot.ts (Stage 16 tree construction).
   state/         The single useReducer store — no external state library.
                  store.tsx (AetherStoreProvider/useAetherStore), reducer.ts,
                  types.ts (AetherState shape), initialState.ts, tick.ts (the
@@ -121,6 +122,16 @@ docs/superpowers/
   never dispatches into the store, because transcript *content* is exactly the
   payload `docs/privacy-and-data.md`'s "store the signal, not the payload" rule
   exists to keep out; see that doc's Stage 14 amendment for the full reasoning.
+- **Project identity (Stage 16, binding)**: `src/shared/projectIdentity.ts`
+  resolves project identity from the path string **before any filesystem probe**.
+  Rule 1 (worktree-by-path-shape, pure string work) must precede Rule 2
+  (nearest ancestor with `.git`), and Rule 1 must not touch the filesystem,
+  because history references worktrees that no longer exist — a filesystem-only
+  resolver would silently drop every event from deleted checkouts and shrink
+  historical attribution. Deriving worktree identity from the path keeps deleted
+  checkouts attributable. **No absolute path crosses IPC** — the resolver runs in
+  `main.ts`; only derived identity (`key`, `name`, `worktree`) reaches the
+  renderer via `projects:snapshot`.
 - **Cost figures (Stage 15, binding)**: exact and estimated dollar amounts are
   **distinct types and must stay that way**. `ExactCost` (`usd`) comes from a
   full input/output/cache token split and is exact to the pricing table;
