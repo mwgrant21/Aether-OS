@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 const REQUIRED_OS_VARS = [
@@ -11,7 +12,12 @@ const REQUIRED_OS_VARS = [
 /** Dedicated Codex home: isolates Aether from any globally configured
  *  OpenAI API-key login, custom model providers, or unrelated MCP servers. */
 export function resolveCodexHome(): string {
-  return join(homedir(), '.aether-os', 'codex-home');
+  const dir = join(homedir(), '.aether-os', 'codex-home');
+  // The adapter process expects CODEX_HOME to already exist -- nothing else
+  // in this module ever creates it, so a first-run canary attempt would fail
+  // opaquely deep inside the spawned adapter otherwise.
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 /** Never starts from process.env and removes keys -- builds an allowlist

@@ -1,5 +1,6 @@
 // electron/crossEngine/acpProcess.test.ts
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'node:fs';
 import { buildCodexChildEnv, resolveCodexHome } from './acpProcess';
 
 const BLOCKED = [
@@ -37,5 +38,18 @@ describe('buildCodexChildEnv', () => {
 describe('resolveCodexHome', () => {
   it('returns a path under ~/.aether-os/codex-home', () => {
     expect(resolveCodexHome().replace(/\\/g, '/')).toMatch(/\.aether-os\/codex-home$/);
+  });
+
+  // I6: a missing CODEX_HOME directory would otherwise break the first real
+  // canary attempt opaquely deep inside the spawned adapter process.
+  it('creates the directory if it does not already exist', () => {
+    const dir = resolveCodexHome();
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('does not throw when the directory already exists (idempotent)', () => {
+    const dir = resolveCodexHome();
+    expect(() => resolveCodexHome()).not.toThrow();
+    expect(existsSync(dir)).toBe(true);
   });
 });

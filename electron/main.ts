@@ -49,6 +49,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { CodexVerifier } from './crossEngine/codexVerifier';
 import { AcpClient } from './crossEngine/acpClient';
 import { isAllowedAuthStatus } from './crossEngine/codexSubscriptionPolicy';
+import { assertCrossEngineFeatureEnabled, assertNoActiveVerificationRun } from './crossEngine/verifyDispatchGuard';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
 
 const require = createRequire(import.meta.url);
@@ -442,6 +443,14 @@ let crossEngineFeatureEnabled = false;
 // is sufficient.
 let activeVerifier: CodexVerifier | null = null;
 
+// CodexVerifier.run()'s own activeRunId guard is an INSTANCE field, but
+// verifyDispatch constructs a fresh CodexVerifier per IPC call -- so that
+// guard never fires across separate calls. This module-level id is the real
+// "only one run at a time" guard: set before dispatching a run, cleared once
+// that run's promise settles (success or the .catch() path below), and
+// checked at the top of verifyDispatch before anything is spawned.
+let activeVerifierRunId: string | null = null;
+
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
@@ -649,6 +658,14 @@ app.on('before-quit', () => {
     stopPermissionServer();
     stopPermissionServer = null;
   }
+  // If a cross-engine verification run is active, cancel it so its ACP
+  // adapter process and snapshot temp directory are cleaned up via the
+  // verifier's existing cancel path, rather than being abandoned on quit.
+  if (activeVerifier && activeVerifierRunId) {
+    activeVerifier.cancel(activeVerifierRunId).catch((err) => {
+      console.error('crossEngine cancel-on-quit failed:', err);
+    });
+  }
 });
 
 ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
@@ -679,12 +696,22 @@ ipcMain.handle('crossEngine:status', async (): Promise<VerifierStatus> => {
   try {
     client.connect();
     return await client.probe();
+  } catch (err) {
+    // resolveAdapterExecutable() can throw synchronously (adapter package not
+    // resolvable) before probe() ever gets a chance to return its own
+    // 'not-installed'/'version-unsupported' statuses -- without this catch
+    // that throw rejects the whole IPC call instead of resolving to a status,
+    // which CrossEngineVerificationCard.tsx's bare .then(setStatus) has no
+    // handler for.
+    console.error('crossEngine:status failed:', err);
+    return 'not-installed';
   } finally {
     await client.dispose();
   }
 });
 
 ipcMain.handle('crossEngine:connectCodexSubscription', async (): Promise<VerifierStatus> => {
+  assertCrossEngineFeatureEnabled(crossEngineFeatureEnabled);
   const client = new AcpClient();
   try {
     client.connect();
@@ -701,6 +728,8 @@ ipcMain.handle('crossEngine:connectCodexSubscription', async (): Promise<Verifie
 });
 
 ipcMain.handle('crossEngine:verifyDispatch', async (_event, toolUseId: string): Promise<{ runId: string }> => {
+  assertCrossEngineFeatureEnabled(crossEngineFeatureEnabled);
+  assertNoActiveVerificationRun(activeVerifierRunId);
   if (typeof toolUseId !== 'string' || !toolUseId) throw new Error('invalid dispatch id');
   const db = openCollectorDbReadOnly();
   if (!db) throw new Error('collector database unavailable');
@@ -716,6 +745,7 @@ ipcMain.handle('crossEngine:verifyDispatch', async (_event, toolUseId: string): 
   // per run() call the way listTranscriptSources' callers above do.
   const verifier = new CodexVerifier(db, transcriptSessionDir, pinnedSessionId, gitProbe);
   activeVerifier = verifier;
+  activeVerifierRunId = runId;
   // run()'s own internal failure taxonomy (evidence-incomplete, billing-blocked,
   // timeout, prompt-invalid) is wrapped by run()'s try/finally and always resolves
   // to a structured VerificationResultV1. But a throw from resolveDispatchEvidence
@@ -723,20 +753,25 @@ ipcMain.handle('crossEngine:verifyDispatch', async (_event, toolUseId: string): 
   // error, or resolveProject/gitProbe throwing) propagates past run()'s try -- so
   // this .catch() is required to avoid an unhandled promise rejection in the main
   // process. On catch, emit the same event shape codexVerifier.ts uses internally
-  // so the renderer sees consistent feedback regardless of failure origin.
+  // so the renderer sees consistent feedback regardless of failure origin. The
+  // message is a fixed, generic string -- the real error (which can embed
+  // absolute paths from snapshotBuilder.ts or execFileAsync) is logged
+  // server-side only, never sent across IPC.
   verifier
     .run(runId, { toolUseId }, (e: VerificationEvent) => sendToWindow('crossEngine:update', e))
     .catch((err: unknown) => {
+      console.error('crossEngine verifyDispatch failed before it could start:', err);
       sendToWindow('crossEngine:update', {
         kind: 'error',
         runId,
         code: 'RESULT_INVALID',
-        message: String(err),
+        message: 'Verification failed before it could start; see main process logs for details',
       } as VerificationEvent);
     })
     .finally(() => {
       db.close();
       if (activeVerifier === verifier) activeVerifier = null;
+      if (activeVerifierRunId === runId) activeVerifierRunId = null;
     });
   return { runId };
 });
