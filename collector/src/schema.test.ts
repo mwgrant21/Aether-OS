@@ -60,7 +60,7 @@ describe('schema', () => {
   it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -116,7 +116,7 @@ describe('schema', () => {
   it('migrate also creates fleet_sessions, and bumps schema_meta to version 5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -179,7 +179,7 @@ describe('schema', () => {
   it('creates tool_calls, dispatches, anomalies, and daily_anomaly_rollups tables at v5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     db.exec(`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms)
              VALUES ('tu_1', 'Read', 'src/foo.ts', 1000, 2000)`);
@@ -215,7 +215,7 @@ describe('schema', () => {
   it('v5 migrate creates dispatches with all seven new telemetry columns', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     // Query the full column info for the dispatches table
     const columns: any[] = db
@@ -300,7 +300,7 @@ describe('schema', () => {
 
     // Now migrate to v5
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     // Verify the rows still exist with original data
     const rows: any[] = db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all();
@@ -332,11 +332,11 @@ describe('schema', () => {
   it('v5 migrate is idempotent -- calling it twice does not attempt to re-add columns', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     // Calling migrate again should not throw and should not modify anything
     expect(() => migrate(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(5);
+    expect(getSchemaVersion(db)).toBe(6);
 
     const columns: any[] = db.prepare("PRAGMA table_info(dispatches)").all();
     // Count should be exactly the original 6 + 7 new = 13 columns

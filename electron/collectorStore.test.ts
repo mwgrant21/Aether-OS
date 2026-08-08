@@ -205,13 +205,21 @@ const DISPATCHES_V4 =
 const DISPATCHES_V5 =
   'CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL, duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL, agent_id TEXT, task_kind TEXT, session_id TEXT, retries INTEGER NOT NULL DEFAULT 0, exit_state TEXT NOT NULL DEFAULT \'ok\', severity INTEGER, median_ms_at_eval INTEGER);';
 
+// Column definition mirrors the v6 ALTER TABLE block in
+// collector/src/schema.ts: a v5 database genuinely lacks source_file_rel, so
+// building it in for the pre-v6 test would make that test vacuous.
+const TOOL_CALLS_V5 =
+  'CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_use_id TEXT NOT NULL, tool_name TEXT NOT NULL, file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL);';
+const TOOL_CALLS_V6 =
+  'CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_use_id TEXT NOT NULL, tool_name TEXT NOT NULL, file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL, source_file_rel TEXT);';
+
 function tempDbForDiagnostics(schemaVersion = 4, transcriptLastScanMs: number | null = Date.now()): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collectorstore-diagnostics-'));
   const dbPath = join(dir, 'test.db');
   const db = new DatabaseSync(dbPath);
   db.exec(`
     CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_use_id TEXT NOT NULL, tool_name TEXT NOT NULL, file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL);
+    ${schemaVersion >= 6 ? TOOL_CALLS_V6 : TOOL_CALLS_V5}
     ${schemaVersion >= 5 ? DISPATCHES_V5 : DISPATCHES_V4}
     CREATE TABLE anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, tool_use_id TEXT NOT NULL, detail TEXT NOT NULL, detected_at_ms INTEGER NOT NULL);
   `);
@@ -381,5 +389,43 @@ describe('readDiagnostics dispatch telemetry (schema v5)', () => {
     // The defaults applied, so these are real values rather than absences.
     expect(row.retries).toBe(0);
     expect(row.exitState).toBe('ok');
+  });
+});
+
+// Schema v6 (collector/src/schema.ts) adds tool_calls.source_file_rel, the
+// dispatch-to-file correlation column from the reconciliation note.
+describe('readDiagnostics tool call source (schema v6)', () => {
+  it('reads source_file_rel from a v6 database', () => {
+    const dbPath = tempDbForDiagnostics(6);
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms, source_file_rel)
+       VALUES ('tu_1', 'Edit', 'src/foo.ts', 1000, 2000, 'proj/sess-1/subagents/agent-x.jsonl')`,
+    );
+    db.close();
+
+    const row = readDiagnostics(dbPath, 0)!.toolCalls[0];
+    expect(row.sourceFileRel).toBe('proj/sess-1/subagents/agent-x.jsonl');
+  });
+
+  // The degraded path. A v5 database physically lacks source_file_rel, so
+  // the reader must choose a narrower SELECT rather than error and drop the
+  // whole snapshot.
+  it('returns null for every row without erroring on a pre-v6 database', () => {
+    const dbPath = tempDbForDiagnostics(5);
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms)
+       VALUES ('tu_1', 'Edit', 'src/foo.ts', 1000, 2000)`,
+    );
+    db.close();
+
+    expect(() => readDiagnostics(dbPath, 0)).not.toThrow();
+    const snapshot = readDiagnostics(dbPath, 0);
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.toolCalls).toHaveLength(1);
+    expect(snapshot!.toolCalls[0].sourceFileRel).toBeNull();
+    // Base fields still read normally.
+    expect(snapshot!.toolCalls[0].toolUseId).toBe('tu_1');
   });
 });

@@ -30,7 +30,7 @@ describe('ingestToolCallsAndAnomalies', () => {
       events.push(resultEvent(`tu_${i}`, 1050 + i * 100));
     }
 
-    const result = ingestToolCallsAndAnomalies(db, history, events, 2000);
+    const result = ingestToolCallsAndAnomalies(db, history, events, 2000, 'test.jsonl');
     history = result.history;
 
     expect(result.toolCallsIngested).toBe(3);
@@ -56,7 +56,7 @@ describe('ingestToolCallsAndAnomalies', () => {
       resultEvent('tu_0', 1050),
     ];
 
-    const result = ingestToolCallsAndAnomalies(db, history, events, 2000);
+    const result = ingestToolCallsAndAnomalies(db, history, events, 2000, 'test.jsonl');
     expect(result.toolCallsIngested).toBe(1);
 
     const rows = db.prepare('SELECT file_path_rel FROM tool_calls').all() as { file_path_rel: string | null }[];
@@ -88,7 +88,7 @@ describe('ingestToolCallsAndAnomalies', () => {
       resultEvent('tu_500', 5050),
     ];
 
-    const result = ingestToolCallsAndAnomalies(db, priorHistory, events, 6000);
+    const result = ingestToolCallsAndAnomalies(db, priorHistory, events, 6000, 'test.jsonl');
 
     expect(result.history.events).toHaveLength(500);
     expect(result.history.events[result.history.events.length - 1].toolUseId).toBe('tu_500');
@@ -115,7 +115,7 @@ describe('ingestToolCallsAndAnomalies', () => {
       events.push(resultEvent(`tu_${i}`, 1050 + i * 100));
     }
 
-    const result = ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000);
+    const result = ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000, 'test.jsonl');
     expect(result.anomaliesIngested).toBe(1);
 
     const rows = db.prepare('SELECT file_path_rel FROM tool_calls').all() as { file_path_rel: string | null }[];
@@ -136,7 +136,7 @@ describe('ingestToolCallsAndAnomalies', () => {
     const abs = process.platform === 'win32' ? String.raw`C:\Users\Matt\secret.ts` : '/home/matt/secret.ts';
 
     const events: TranscriptEvent[] = [readEvent('tu_0', 'Read', abs, 1000), resultEvent('tu_0', 1050)];
-    ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000);
+    ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000, 'test.jsonl');
 
     const rows = db.prepare('SELECT file_path_rel FROM tool_calls').all() as { file_path_rel: string | null }[];
     expect(rows[0].file_path_rel).toBeNull();
@@ -152,15 +152,29 @@ describe('ingestToolCallsAndAnomalies', () => {
       events.push(resultEvent(`tu_${i}`, 1050 + i * 100));
     }
 
-    const first = ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000);
+    const first = ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000, 'test.jsonl');
     expect(first.anomaliesIngested).toBe(1);
 
     // Second tick: no new transcript events, but the same closures are still
     // inside the 5-minute window, so the detectors fire again.
-    const second = ingestToolCallsAndAnomalies(db, first.history, [], 3000);
+    const second = ingestToolCallsAndAnomalies(db, first.history, [], 3000, 'test.jsonl');
     expect(second.anomaliesIngested).toBe(0);
 
     const rows = db.prepare('SELECT id FROM anomalies').all();
     expect(rows).toHaveLength(1);
+  });
+
+  it('records the source file a tool call was parsed from', () => {
+    const db = openDatabase(':memory:');
+    migrate(db);
+
+    const events: TranscriptEvent[] = [
+      readEvent('tu_0', 'Edit', 'src/foo.ts', 1000),
+      resultEvent('tu_0', 1050),
+    ];
+
+    ingestToolCallsAndAnomalies(db, createEmptyHistory(), events, 2000, 'proj/session-id/subagents/agent-abc.jsonl');
+    const row = db.prepare('SELECT source_file_rel FROM tool_calls LIMIT 1').get() as { source_file_rel: string };
+    expect(row.source_file_rel).toBe('proj/session-id/subagents/agent-abc.jsonl');
   });
 });
