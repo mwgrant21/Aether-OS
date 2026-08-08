@@ -30,10 +30,14 @@ export default defineConfig(() => {
         // `.worktrees/**` never matched -- the stale
         // `.claude/worktrees/aether-packages-core-task4` on this machine was
         // contributing 121 test files and 3 phantom failures to every local
-        // run. Nothing tracked in this repo lives under a directory of either
-        // name, so these globs cannot swallow real source.
+        // run. Nothing tracked in this repo lives under a directory named
+        // `.worktrees`, so that glob cannot swallow real source -- but
+        // `worktrees` (no leading dot) is a plain word an ordinary source
+        // directory could legitimately use (e.g. `src/worktrees/foo.test.ts`),
+        // so that exclusion is scoped to Claude Code's specific nesting under
+        // `.claude/` rather than matching the bare word at any depth.
         '**/.worktrees/**',
-        '**/worktrees/**',
+        '**/.claude/worktrees/**',
       ],
     },
   };
