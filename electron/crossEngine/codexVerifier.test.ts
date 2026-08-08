@@ -161,13 +161,13 @@ describe('CodexVerifier.run', () => {
     // No responder queued for session/prompt -- it never resolves.
 
     const runPromise = verifier.run('run-5', { toolUseId: 'tu1' }, (e) => events.push(e));
-    runPromise.catch(() => {}); // avoid an unhandled-rejection warning before the assertion below attaches
     await vi.advanceTimersByTimeAsync(5 * 60_000 + 1000);
 
-    // CodexVerifier does not catch the race's timeout into an inconclusive
-    // result -- it propagates, same as any other prompt failure. Cleanup
-    // still runs via the `finally` block.
-    await expect(runPromise).rejects.toThrow('VERIFICATION_TIMEOUT');
+    // CodexVerifier catches the race's timeout and converts it into a
+    // structured inconclusive result, same shape as the other failure paths.
+    const result = await runPromise;
+    expect(result.verdict).toBe('inconclusive');
+    expect(events.some((e) => e.kind === 'error' && e.code === 'VERIFICATION_TIMEOUT')).toBe(true);
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -186,7 +186,11 @@ describe('CodexVerifier.run', () => {
     await vi.waitFor(() => expect(child._responders.length).toBe(0));
     await verifier.cancel('run-6');
 
-    await expect(runPromise).rejects.toThrow();
+    // cancel() disposes the client, which rejects the outstanding prompt
+    // call; that rejection is now caught and converted into a structured
+    // inconclusive result rather than propagating.
+    const result = await runPromise;
+    expect(result.verdict).toBe('inconclusive');
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
@@ -205,10 +209,11 @@ describe('CodexVerifier.run', () => {
     // session/prompt is never answered -- simulates the child having crashed.
 
     const runPromise = verifier.run('run-7', { toolUseId: 'tu1' }, (e) => events.push(e));
-    runPromise.catch(() => {});
     await vi.advanceTimersByTimeAsync(5 * 60_000 + 1000);
 
-    await expect(runPromise).rejects.toThrow('VERIFICATION_TIMEOUT');
+    const result = await runPromise;
+    expect(result.verdict).toBe('inconclusive');
+    expect(events.some((e) => e.kind === 'error' && e.code === 'VERIFICATION_TIMEOUT')).toBe(true);
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 

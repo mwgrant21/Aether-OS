@@ -54,7 +54,18 @@ export class CodexVerifier {
 
       onEvent({ kind: 'status', runId, phase: 'verifying' });
       const prompt = buildVerificationPrompt(evidenceResult.evidence);
-      const raw = await this.promptWithTimeout(client, snapshot.snapshotDir, prompt, RUN_TIMEOUT_MS);
+      let raw: unknown;
+      try {
+        raw = await this.promptWithTimeout(client, snapshot.snapshotDir, prompt, RUN_TIMEOUT_MS);
+      } catch (err) {
+        const isTimeout = err instanceof Error && err.message === 'VERIFICATION_TIMEOUT';
+        const code = isTimeout ? 'VERIFICATION_TIMEOUT' : 'RESULT_INVALID';
+        const message = isTimeout
+          ? `Codex verification did not complete within ${RUN_TIMEOUT_MS / 60_000} minutes; the run was cancelled.`
+          : `Codex verification prompt failed: ${err instanceof Error ? err.message : String(err)}`;
+        onEvent({ kind: 'error', runId, code, message });
+        return { schemaVersion: 1, verdict: 'inconclusive', confidence: 0, summary: message, findings: [], tests: [], limitations: [message] };
+      }
       const result = parseVerificationResult(raw);
       onEvent({ kind: 'result', runId, result });
       return result;
