@@ -129,4 +129,14 @@ describe('DispatchCostTable', () => {
     render(<DispatchCostTable rows={[]} />);
     expect(screen.getByText(/no completed dispatches/i)).toBeTruthy();
   });
+
+  it('mounts a VerifyWithCodexButton for a completed (ok) dispatch', () => {
+    render(<DispatchCostTable rows={[row({ toolUseId: 'tu_verify', exitState: 'ok' })]} />);
+    expect(screen.getByText('VERIFY WITH CODEX')).toBeTruthy();
+  });
+
+  it('does not mount a VerifyWithCodexButton for a non-completed dispatch', () => {
+    render(<DispatchCostTable rows={[row({ toolUseId: 'tu_fatal', exitState: 'fatal' })]} />);
+    expect(screen.queryByText('VERIFY WITH CODEX')).toBeNull();
+  });
 });
