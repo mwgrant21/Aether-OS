@@ -122,7 +122,7 @@ export function scanTranscriptsOnce(
       }
 
       const priorHistory = historyByFile.get(relativePath) ?? createEmptyHistory();
-      const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs);
+      const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
       historyByFile.set(relativePath, anomalyResult.history);
       toolCallsIngested += anomalyResult.toolCallsIngested;
       anomaliesIngested += anomalyResult.anomaliesIngested;
@@ -192,6 +192,39 @@ export function scanTranscriptsOnce(
 
       filesScanned += 1;
       recordOffset(db, relativePath, newOffset, nowMs);
+
+      // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
+      // dispatch's own tool calls live in a separate file this loop
+      // otherwise never visits. See the reconciliation note §1.
+      const sessionBase = file.replace(/\.jsonl$/, '');
+      const subagentsDir = join(dirPath, sessionBase, 'subagents');
+      let subagentFiles: string[];
+      try {
+        subagentFiles = readdirSync(subagentsDir).filter((f) => f.endsWith('.jsonl'));
+      } catch {
+        subagentFiles = [];
+      }
+      for (const subFile of subagentFiles) {
+        const subFilePath = join(subagentsDir, subFile);
+        const subRelativePath = join(dirName, sessionBase, 'subagents', subFile);
+        const subOffset = getLastOffset(db, subRelativePath);
+        let subLines: string[];
+        let subNewOffset: number;
+        try {
+          const subResult = readNewLinesSync(subFilePath, subOffset);
+          subLines = subResult.lines;
+          subNewOffset = subResult.newOffset;
+        } catch {
+          continue;
+        }
+        const subParsedEvents = subLines.map((l) => parseTranscriptLine(l)).filter((e): e is NonNullable<typeof e> => e !== null);
+        const subPriorHistory = historyByFile.get(subRelativePath) ?? createEmptyHistory();
+        const subAnomalyResult = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
+        historyByFile.set(subRelativePath, subAnomalyResult.history);
+        toolCallsIngested += subAnomalyResult.toolCallsIngested;
+        anomaliesIngested += subAnomalyResult.anomaliesIngested;
+        recordOffset(db, subRelativePath, subNewOffset, nowMs);
+      }
     }
   }
 

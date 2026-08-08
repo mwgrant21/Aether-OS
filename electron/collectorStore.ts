@@ -29,6 +29,13 @@ const MIN_SCHEMA_VERSION_FOR_DIAGNOSTICS = 4;
 // the Ledger entirely rather than seeing a degraded one.
 const MIN_SCHEMA_VERSION_FOR_DISPATCH_TELEMETRY = 5;
 
+// Schema v6 (collector/src/schema.ts) ALTERs tool_calls to add
+// source_file_rel. Same "column doesn't exist yet" hazard as
+// MIN_SCHEMA_VERSION_FOR_DISPATCH_TELEMETRY above: a v5 database's tool_calls
+// rows lack the column entirely, so it is selected by version rather than
+// asked for and hoped.
+const MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE = 6;
+
 /**
  * A persisted dispatch as the viewer sees it.
  *
@@ -65,7 +72,19 @@ export interface DispatchRow {
 }
 
 export interface DiagnosticsSnapshot {
-  toolCalls: { toolUseId: string; toolName: string; filePathRel: string | null; startedAtMs: number; closedAtMs: number }[];
+  toolCalls: {
+    toolUseId: string;
+    toolName: string;
+    filePathRel: string | null;
+    startedAtMs: number;
+    closedAtMs: number;
+    // source_file_rel deliberately does NOT appear here -- it embeds Claude's
+    // flattened-absolute-path project directory name, and paths must not
+    // cross IPC (docs/privacy-and-data.md). It's read from SQLite (below) and
+    // used main-side only, by dispatchEvidence.ts's own direct query -- never
+    // mapped into this IPC-facing shape. See collectorStore.test.ts for the
+    // SQLite-level coverage of the column itself.
+  }[];
   dispatches: DispatchRow[];
   anomalies: { kind: string; toolUseId: string; detail: string; detectedAtMs: number }[];
 }
@@ -191,9 +210,17 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
     const lastScanMs = heartbeatMs(db, 'transcript_last_scan_ms');
     if (lastScanMs === null || Date.now() - lastScanMs > DIAGNOSTICS_HEARTBEAT_STALE_MS) return null;
 
+    // Pre-v6 databases lack source_file_rel entirely, so the column list is
+    // selected by schema version rather than asked for and hoped -- same
+    // pattern as hasDispatchTelemetry below.
+    const hasToolCallSource = version >= MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE;
+    const toolCallColumns = hasToolCallSource
+      ? 'tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms, source_file_rel'
+      : 'tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms';
+
     const toolCallRows = db
-      .prepare('SELECT tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms FROM tool_calls WHERE closed_at_ms >= ?')
-      .all(sinceMs) as { tool_use_id: string; tool_name: string; file_path_rel: string | null; started_at_ms: number; closed_at_ms: number }[];
+      .prepare(`SELECT ${toolCallColumns} FROM tool_calls WHERE closed_at_ms >= ?`)
+      .all(sinceMs) as { tool_use_id: string; tool_name: string; file_path_rel: string | null; started_at_ms: number; closed_at_ms: number; source_file_rel?: string | null }[];
 
     // Pre-v5 databases lack the telemetry columns entirely, so the column list
     // is selected by schema version rather than asking for them and hoping.
@@ -211,7 +238,13 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
       .all(sinceMs) as { kind: string; tool_use_id: string; detail: string; detected_at_ms: number }[];
 
     return {
-      toolCalls: toolCallRows.map((r) => ({ toolUseId: r.tool_use_id, toolName: r.tool_name, filePathRel: r.file_path_rel, startedAtMs: r.started_at_ms, closedAtMs: r.closed_at_ms })),
+      toolCalls: toolCallRows.map((r) => ({
+        toolUseId: r.tool_use_id,
+        toolName: r.tool_name,
+        filePathRel: r.file_path_rel,
+        startedAtMs: r.started_at_ms,
+        closedAtMs: r.closed_at_ms,
+      })),
       dispatches: dispatchRows.map(
         (r): DispatchRow => ({
           toolUseId: r.tool_use_id as string,

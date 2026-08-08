@@ -44,6 +44,15 @@ import { derivePermissionEditableField } from '../src/shared/permissionEditableF
 import { renderNotificationBadge } from './notificationBadge';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
+import type { DatabaseSync } from 'node:sqlite';
+import { CodexVerifier } from './crossEngine/codexVerifier';
+import { AcpClient } from './crossEngine/acpClient';
+import { isAllowedAuthStatus } from './crossEngine/codexSubscriptionPolicy';
+import { assertCrossEngineFeatureEnabled, assertNoActiveVerificationRun } from './crossEngine/verifyDispatchGuard';
+import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+
+const require = createRequire(import.meta.url);
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -418,6 +427,30 @@ let lastWrittenOwnSessionId: string | null | undefined = undefined;
 // on each dispatch's static description instead of a live work snippet.
 let autoHeadlinesEnabled = true;
 
+// Mirrors autoHeadlinesEnabled's pattern immediately below: a module-level flag
+// pushed from the renderer's persisted `state.crossEngineCfg.enabled` on every
+// mount and every toggle (see CrossEngineVerificationCard.tsx), since main.ts has
+// no visibility into localStorage-persisted renderer state. Defaults false,
+// matching initialState.ts's crossEngineCfg -- no ACP process is spawned until
+// the operator has explicitly opted in.
+let crossEngineFeatureEnabled = false;
+
+// Tracked so crossEngine:cancel can reach the in-flight run's verifier --
+// CodexVerifier is constructed fresh per verifyDispatch call (see below), so
+// there is no module-level singleton to close over otherwise. Only one
+// verification can be active at a time (CodexVerifier.run() itself throws if
+// a second run() is attempted while activeRunId is set), so a single slot
+// is sufficient.
+let activeVerifier: CodexVerifier | null = null;
+
+// CodexVerifier.run()'s own activeRunId guard is an INSTANCE field, but
+// verifyDispatch constructs a fresh CodexVerifier per IPC call -- so that
+// guard never fires across separate calls. This module-level id is the real
+// "only one run at a time" guard: set before dispatching a run, cleared once
+// that run's promise settles (success or the .catch() path below), and
+// checked at the top of verifyDispatch before anything is spawned.
+let activeVerifierRunId: string | null = null;
+
 async function tickAndPushAgents(): Promise<void> {
   if (!mainWindow || agentTickInFlight) return;
   agentTickInFlight = true;
@@ -625,10 +658,126 @@ app.on('before-quit', () => {
     stopPermissionServer();
     stopPermissionServer = null;
   }
+  // If a cross-engine verification run is active, cancel it so its ACP
+  // adapter process and snapshot temp directory are cleaned up via the
+  // verifier's existing cancel path, rather than being abandoned on quit.
+  if (activeVerifier && activeVerifierRunId) {
+    activeVerifier.cancel(activeVerifierRunId).catch((err) => {
+      console.error('crossEngine cancel-on-quit failed:', err);
+    });
+  }
 });
 
 ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
   autoHeadlinesEnabled = enabled;
+});
+
+ipcMain.on('crossEngine:setEnabled', (_event, enabled: boolean) => {
+  crossEngineFeatureEnabled = enabled;
+});
+
+// Ephemeral, read-only DatabaseSync handle for one cross-engine verification
+// run -- mirrors collectorStore.ts's openReadOnly() rather than keeping a
+// long-lived handle at module scope, since collector.db is written by the
+// separate collector process throughout the app's lifetime.
+function openCollectorDbReadOnly(): DatabaseSync | null {
+  if (!existsSync(collectorDbPath)) return null;
+  try {
+    const sqlite = require('node:sqlite');
+    return new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('crossEngine:status', async (): Promise<VerifierStatus> => {
+  if (!crossEngineFeatureEnabled) return 'disabled';
+  const client = new AcpClient();
+  try {
+    client.connect();
+    return await client.probe();
+  } catch (err) {
+    // resolveAdapterExecutable() can throw synchronously (adapter package not
+    // resolvable) before probe() ever gets a chance to return its own
+    // 'not-installed'/'version-unsupported' statuses -- without this catch
+    // that throw rejects the whole IPC call instead of resolving to a status,
+    // which CrossEngineVerificationCard.tsx's bare .then(setStatus) has no
+    // handler for.
+    console.error('crossEngine:status failed:', err);
+    return 'not-installed';
+  } finally {
+    await client.dispose();
+  }
+});
+
+ipcMain.handle('crossEngine:connectCodexSubscription', async (): Promise<VerifierStatus> => {
+  assertCrossEngineFeatureEnabled(crossEngineFeatureEnabled);
+  const client = new AcpClient();
+  try {
+    client.connect();
+    await client.initialize();
+    await client.authenticate();
+    const status = await client.authenticationStatus();
+    if (status === 'unauthenticated') return 'sign-in-required';
+    return isAllowedAuthStatus(status) ? 'ready-subscription' : 'blocked-billing-mode';
+  } catch {
+    return 'error';
+  } finally {
+    await client.dispose();
+  }
+});
+
+ipcMain.handle('crossEngine:verifyDispatch', async (_event, toolUseId: string): Promise<{ runId: string }> => {
+  assertCrossEngineFeatureEnabled(crossEngineFeatureEnabled);
+  assertNoActiveVerificationRun(activeVerifierRunId);
+  if (typeof toolUseId !== 'string' || !toolUseId) throw new Error('invalid dispatch id');
+  const db = openCollectorDbReadOnly();
+  if (!db) throw new Error('collector database unavailable');
+  const runId = crypto.randomUUID();
+  const pinnedSessionId = liveAgentTracker.getPinnedSessionId();
+  if (!pinnedSessionId) {
+    db.close();
+    throw new Error('no pinned session available for verification');
+  }
+  // Constructed per-call rather than once at module scope: pinnedSessionId can
+  // change (or start out null, guarded above) over the app's lifetime, and
+  // CodexVerifier bakes it into the constructor rather than reading it fresh
+  // per run() call the way listTranscriptSources' callers above do.
+  const verifier = new CodexVerifier(db, transcriptSessionDir, pinnedSessionId, gitProbe);
+  activeVerifier = verifier;
+  activeVerifierRunId = runId;
+  // run()'s own internal failure taxonomy (evidence-incomplete, billing-blocked,
+  // timeout, prompt-invalid) is wrapped by run()'s try/finally and always resolves
+  // to a structured VerificationResultV1. But a throw from resolveDispatchEvidence
+  // or buildVerificationSnapshot before that wrapped section starts (e.g. a DB read
+  // error, or resolveProject/gitProbe throwing) propagates past run()'s try -- so
+  // this .catch() is required to avoid an unhandled promise rejection in the main
+  // process. On catch, emit the same event shape codexVerifier.ts uses internally
+  // so the renderer sees consistent feedback regardless of failure origin. The
+  // message is a fixed, generic string -- the real error (which can embed
+  // absolute paths from snapshotBuilder.ts or execFileAsync) is logged
+  // server-side only, never sent across IPC.
+  verifier
+    .run(runId, { toolUseId }, (e: VerificationEvent) => sendToWindow('crossEngine:update', e))
+    .catch((err: unknown) => {
+      console.error('crossEngine verifyDispatch failed before it could start:', err);
+      sendToWindow('crossEngine:update', {
+        kind: 'error',
+        runId,
+        code: 'RESULT_INVALID',
+        message: 'Verification failed before it could start; see main process logs for details',
+      } as VerificationEvent);
+    })
+    .finally(() => {
+      db.close();
+      if (activeVerifier === verifier) activeVerifier = null;
+      if (activeVerifierRunId === runId) activeVerifierRunId = null;
+    });
+  return { runId };
+});
+
+ipcMain.handle('crossEngine:cancel', async (_event, runId: string): Promise<void> => {
+  await activeVerifier?.cancel(runId);
 });
 
 // app.getVersion() reads Electron's resolved app manifest, which falls back

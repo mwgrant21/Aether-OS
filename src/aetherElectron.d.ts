@@ -12,6 +12,7 @@ import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from './state/types';
 import type { PermissionDecision, PostToolFlagDecision } from '../electron/permissionServer';
 import type { TranscriptReadResult, TranscriptSource } from '../electron/transcriptReader';
+import type { VerifierStatus, VerificationEvent } from './shared/crossEngineTypes';
 
 export {};
 
@@ -99,6 +100,14 @@ declare global {
       transcript: {
         sources: () => Promise<TranscriptSource[]>;
         read: (args: { source: string; limit: number; before?: string }) => Promise<TranscriptReadResult>;
+      };
+      crossEngine: {
+        status: () => Promise<VerifierStatus>;
+        connectCodexSubscription: () => Promise<VerifierStatus>;
+        verifyDispatch: (toolUseId: string) => Promise<{ runId: string }>;
+        cancel: (runId: string) => Promise<void>;
+        setEnabled: (enabled: boolean) => void;
+        onUpdate: (callback: (event: VerificationEvent) => void) => () => void;
       };
       window: {
         minimize: () => void;

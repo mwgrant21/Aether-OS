@@ -298,6 +298,7 @@ export interface AetherState {
   dispatchNarrations: Record<string, { narration: string; severity: number }>;
   narrationMessages: Record<string, NarrationMessage[]>;
   narrationBudgets: Record<string, InterruptionBudgetState>;
+  crossEngineCfg: { enabled: boolean; provider: 'codex-chatgpt' };
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

@@ -59,7 +59,8 @@ export type Action =
   | { type: 'RECAP_RECEIVED'; recap: RecapPayload }
   | { type: 'DISMISS_RECAP' }
   | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string }
-  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number };
+  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number }
+  | { type: 'SET_CROSS_ENGINE_CFG'; cfg: { enabled: boolean; provider: 'codex-chatgpt' } };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -166,6 +167,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'TOGGLE_MEMORY_TOMBSTONE_VIEW':
       return { ...state, memoryShowTombstones: !state.memoryShowTombstones };
+
+    case 'SET_CROSS_ENGINE_CFG':
+      return { ...state, crossEngineCfg: action.cfg };
 
     case 'SET_OP_MODE':
       return {

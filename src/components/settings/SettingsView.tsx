@@ -5,6 +5,7 @@ import { BudgetAlertsCard } from './BudgetAlertsCard';
 import { OperatorCard } from './OperatorCard';
 import { NarrationVerbosityCard } from './NarrationVerbosityCard';
 import { StatuslineCard } from './StatuslineCard';
+import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 
 export function SettingsView() {
   return (
@@ -15,6 +16,7 @@ export function SettingsView() {
         <NarrationVerbosityCard />
         <BudgetAlertsCard />
         <StatuslineCard />
+        <CrossEngineVerificationCard />
       </div>
       <AppearanceCard />
     </div>

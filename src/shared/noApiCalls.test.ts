@@ -10,8 +10,8 @@
 // Reuses the ROOTS / SKIP_DIR_NAMES / walk() / allSourceFiles() scaffolding
 // verbatim from modelPolicyEnforcement.test.ts -- proven, deliberate reuse.
 import { describe, it, expect } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
+import fs, { readFileSync } from 'node:fs';
+import path, { resolve } from 'node:path';
 
 // collector-go/ is a pure Go module (cmd/, internal/, go.mod) with no JS/TS
 // anywhere in it -- out of scope for this JS/TS-source guard by construction,
@@ -51,6 +51,18 @@ function allSourceFiles(): string[] {
     if (fs.existsSync(root)) walk(root, out);
   }
   return out;
+}
+
+// Minimal regex-over-source-tree helper for the cross-engine boundary tests
+// below. Reuses allSourceFiles() rather than re-walking the tree.
+function grepSourceFor(pattern: RegExp): string[] {
+  const offenders: string[] = [];
+  for (const file of allSourceFiles()) {
+    const rel = path.normalize(path.relative('.', file));
+    const text = fs.readFileSync(file, 'utf8');
+    if (pattern.test(text)) offenders.push(rel);
+  }
+  return offenders;
 }
 
 describe('no API calls', () => {
@@ -130,5 +142,47 @@ describe('no API calls', () => {
       if (MODEL_ID_SHAPE.test(text)) offenders.push(rel);
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('cross-engine Codex boundary', () => {
+  it('the general OpenAI API SDK is not a dependency', () => {
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'));
+    expect(pkg.dependencies?.openai).toBeUndefined();
+    expect(pkg.devDependencies?.openai).toBeUndefined();
+  });
+
+  it('no source file calls the OpenAI or Anthropic HTTP APIs directly', () => {
+    const hits = grepSourceFor(/api\.openai\.com|api\.anthropic\.com/);
+    expect(hits).toEqual([]);
+  });
+
+  it('only the reviewed ACP process module references the Codex adapter executable', () => {
+    const hits = grepSourceFor(/codex-acp/).filter((f) => {
+      const posix = f.replace(/\\/g, '/'); // path.normalize() yields backslashes on Windows
+      return !posix.includes('electron/crossEngine/acpProcess.ts') && !posix.includes('.test.ts') && !posix.includes('docs/');
+    });
+    expect(hits).toEqual([]);
+  });
+
+  // Blocked-billing-variable removal (acpProcess.ts's child-environment builder)
+  // and the chat-gpt-only authentication gate (codexVerifier.ts, checked immediately
+  // before every verification turn, not only at connect time) are already covered by
+  // acpProcess.test.ts and codexVerifier.test.ts respectively -- not duplicated here.
+  //
+  // What is NOT covered elsewhere: that persistence.ts's persisted-fields whitelist
+  // exposes only the opt-in config, never a raw verification payload
+  // (VerificationResultV1's findings/summary/etc content). That's a source-tree
+  // boundary check, which is this file's job.
+  it('persistence.ts persists only crossEngineCfg (the opt-in flag), never a raw verification result', () => {
+    const persistenceSrc = readFileSync(resolve(__dirname, '../state/persistence.ts'), 'utf8');
+    const sliceMatch = persistenceSrc.match(/const slice: Partial<AetherState> = \{([\s\S]*?)\};/);
+    expect(sliceMatch).not.toBeNull();
+    const sliceBody = sliceMatch![1];
+    const crossEngineKeys = [...sliceBody.matchAll(/^\s*(\w*[Cc]rossEngine\w*)\s*:/gm)].map((m) => m[1]);
+    expect(crossEngineKeys).toEqual(['crossEngineCfg']);
+    // Belt-and-suspenders: the persisted slice must never reference the result type
+    // or its fields (verdict/findings/summary/tests) by name.
+    expect(sliceBody).not.toMatch(/VerificationResultV1|verificationResult|lastVerification/);
   });
 });

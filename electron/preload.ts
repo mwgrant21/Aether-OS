@@ -14,6 +14,7 @@ import type { MemoryRowUI, MemoryTombstoneUI } from './memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
+import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   app: {
@@ -192,6 +193,18 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     sources: (): Promise<TranscriptSource[]> => ipcRenderer.invoke('transcript:sources'),
     read: (args: { source: string; limit: number; before?: string }): Promise<TranscriptReadResult> =>
       ipcRenderer.invoke('transcript:read', args),
+  },
+  crossEngine: {
+    status: (): Promise<VerifierStatus> => ipcRenderer.invoke('crossEngine:status'),
+    connectCodexSubscription: (): Promise<VerifierStatus> => ipcRenderer.invoke('crossEngine:connectCodexSubscription'),
+    verifyDispatch: (toolUseId: string): Promise<{ runId: string }> => ipcRenderer.invoke('crossEngine:verifyDispatch', toolUseId),
+    cancel: (runId: string): Promise<void> => ipcRenderer.invoke('crossEngine:cancel', runId),
+    setEnabled: (enabled: boolean) => ipcRenderer.send('crossEngine:setEnabled', enabled),
+    onUpdate: (callback: (event: VerificationEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: VerificationEvent) => callback(event);
+      ipcRenderer.on('crossEngine:update', listener);
+      return () => ipcRenderer.removeListener('crossEngine:update', listener);
+    },
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
