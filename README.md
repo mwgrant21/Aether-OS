@@ -56,10 +56,10 @@ budget-driven alarm tiers.
 can false-positive on legitimately slow tools. The fix is planned — see
 `docs/diagnostic-thesis-plan.md`.
 
-### No model call site, enforced by a test
+### No model call site for Aether's own features, enforced by a test — with one named exception
 
-As of Stage 13.5 (2026-08-05), Aether OS contains no model call site of any kind: the
-`@anthropic-ai/sdk` dependency is gone from `package.json`, every chat-model call path
+As of Stage 13.5 (2026-08-05), Aether OS contains no model call site of any kind for its own
+features: the `@anthropic-ai/sdk` dependency is gone from `package.json`, every chat-model call path
 (`chatCore.ts`, `claudeClient.ts`, `systemPrompt.ts`, the Vite chat proxy) is deleted, and `.env`
 key loading is gone too. `src/shared/noApiCalls.test.ts` fails the build if the SDK reappears, if
 any source file references `api.anthropic.com`, or if a `messages.create(` call site reappears —
@@ -71,6 +71,15 @@ path where data used to leave the machine. That design and its tests are retired
 model call path they scoped — there's no longer a boundary to enforce because there's no longer a
 path across it. Comms (formerly Chat) now answers every message through `localResponder.ts`, a
 local, deterministic responder with no network request.
+
+**One named, default-off, opt-in exception, shipped 2026-08-07:** cross-engine Codex verification
+lets the operator manually ask OpenAI's Codex (over the Agent Client Protocol) whether a specific
+Claude dispatch's claimed work is actually supported by its artifacts. It is off by default, requires
+clicking through an explicit disclosure to enable, sends only the selected dispatch's scoped
+snapshot and prompt, authenticates only through the operator's own ChatGPT account (OpenAI API keys
+and custom gateways are structurally blocked, not just discouraged), and persists no raw
+prompt/diff/response — see `docs/privacy-and-data.md` §9 for the full boundary and
+`docs/superpowers/plans/2026-08-07-codex-acp-cross-engine-verification.md` for the implementation.
 
 ### The bug that green tests couldn't see
 

@@ -164,4 +164,25 @@ describe('cross-engine Codex boundary', () => {
     });
     expect(hits).toEqual([]);
   });
+
+  // Blocked-billing-variable removal (acpProcess.ts's child-environment builder)
+  // and the chat-gpt-only authentication gate (codexVerifier.ts, checked immediately
+  // before every verification turn, not only at connect time) are already covered by
+  // acpProcess.test.ts and codexVerifier.test.ts respectively -- not duplicated here.
+  //
+  // What is NOT covered elsewhere: that persistence.ts's persisted-fields whitelist
+  // exposes only the opt-in config, never a raw verification payload
+  // (VerificationResultV1's findings/summary/etc content). That's a source-tree
+  // boundary check, which is this file's job.
+  it('persistence.ts persists only crossEngineCfg (the opt-in flag), never a raw verification result', () => {
+    const persistenceSrc = readFileSync(resolve(__dirname, '../state/persistence.ts'), 'utf8');
+    const sliceMatch = persistenceSrc.match(/const slice: Partial<AetherState> = \{([\s\S]*?)\};/);
+    expect(sliceMatch).not.toBeNull();
+    const sliceBody = sliceMatch![1];
+    const crossEngineKeys = [...sliceBody.matchAll(/^\s*(\w*[Cc]rossEngine\w*)\s*:/gm)].map((m) => m[1]);
+    expect(crossEngineKeys).toEqual(['crossEngineCfg']);
+    // Belt-and-suspenders: the persisted slice must never reference the result type
+    // or its fields (verdict/findings/summary/tests) by name.
+    expect(sliceBody).not.toMatch(/VerificationResultV1|verificationResult|lastVerification/);
+  });
 });

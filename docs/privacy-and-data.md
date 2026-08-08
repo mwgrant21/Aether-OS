@@ -19,13 +19,16 @@ only, reachable only from this machine, with no port exposed externally and no t
 surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
-**Nothing leaves this machine. There is no exception.** As of Stage 13.5 (`docs/roadmap.md` §3.5),
-there is no model call site anywhere in this codebase: the `@anthropic-ai/sdk` dependency is gone,
+**Nothing leaves this machine, with exactly one named, default-off, opt-in exception.** As of
+Stage 13.5 (`docs/roadmap.md` §3.5), there is no model call site anywhere in this codebase for
+Aether's own features: the `@anthropic-ai/sdk` dependency is gone,
 `chatCore.ts`/`claudeClient.ts`/`systemPrompt.ts`/`chatProxyPlugin.ts` and the `chat:*` IPC pair are
 deleted, and `.env` key loading (`electron/loadDotEnv.ts`) is gone too — the app cannot read a key
 from disk even if one exists. `Comms` (the renamed Chat tab) answers only through
-`localResponder.ts`, a local, deterministic responder. No feature in this app makes a network
-request, now or on the roadmap.
+`localResponder.ts`, a local, deterministic responder, with no network request. **Cross-engine
+Codex verification (§10) is the sole exception** — an explicit, default-off, opt-in feature that
+sends a scoped snapshot to a second vendor's agent, never automatic and never enabled by any other
+feature in this app.
 
 This claim is about Aether's own code and holds no API key — it does not extend to the embedded
 terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`),
@@ -227,7 +230,57 @@ its equivalent) has to be rebuilt from scratch, not assumed to still be standing
 
 ---
 
-## 9. Correction to fix in `CLAUDE.md`
+## 9. Cross-engine Codex verification — the one named outbound exception
+
+Shipped 2026-08-07 — see `docs/superpowers/plans/2026-08-07-codex-acp-cross-engine-verification.md`.
+This is the only feature in Aether OS that sends anything to a second vendor. It exists to let the
+operator ask a different model family (OpenAI's Codex, via the Agent Client Protocol) whether a
+Claude dispatch's claimed work is actually supported by its artifacts — see
+`docs/ideas/cross-engine-verification.md` for the rationale (dissimilar redundancy).
+
+**Default off, explicit opt-in, every time.** `state.crossEngineCfg.enabled` defaults to `false`
+(`src/state/initialState.ts`). Turning it on in Settings → the Cross-Engine Verification card shows
+a disclosure the operator must read and click through (`I UNDERSTAND, ENABLE` in
+`CrossEngineVerificationCard.tsx`) before the toggle takes effect — there is no one-click enable.
+The disclosure text, verbatim:
+
+> Sends the selected verification snapshot to OpenAI Codex. Uses your ChatGPT Codex allowance.
+> OpenAI API billing is disabled. OpenAI API keys and custom gateways are blocked. No automatic
+> fallback.
+
+**What is sent, and how it's scoped.** A verification run is always manual — the operator clicks
+"Verify with Codex" on a specific dispatch row in the Ledger's `DispatchCostTable`
+(`VerifyWithCodexButton.tsx`). `electron/crossEngine/codexVerifier.ts` then resolves that one
+dispatch's evidence, builds a read-only file-system snapshot of only the touched files at the
+commit under test (`snapshotBuilder.ts`, a `git archive`-style copy, not the live working tree),
+and formats a verification prompt from that evidence (`verificationPrompt.ts`). Only that scoped
+snapshot and prompt are sent — never the fleet roster, approval queue, other dispatches, or
+anything outside the one dispatch under review.
+
+**Billing boundary, enforced structurally, not by convention.** The Codex adapter is driven over
+the real ACP wire protocol (`session/new` → `session/prompt` → `session/update`, see
+`electron/crossEngine/acpClient.ts`) through the official `codex-acp` executable, spawned with a
+child environment that strips every OpenAI API-key/billing variable
+(`electron/crossEngine/acpProcess.ts`, asserted by `acpProcess.test.ts`). Before every single
+verification turn — not only at initial connect — `codexVerifier.ts` calls
+`authentication/status` and refuses to run unless the status is exactly `chat-gpt`
+(`isAllowedAuthStatus`, `codexSubscriptionPolicy.ts`); any other status, including
+`unauthenticated`, a malformed response, or a timeout, fails closed. There is no code path, UI
+control, or configuration key by which an OpenAI API key or a custom gateway URL can be supplied —
+`src/shared/noApiCalls.test.ts`'s "cross-engine Codex boundary" suite fails the build if one
+appears.
+
+**Nothing raw is persisted.** `src/state/persistence.ts`'s persisted-fields whitelist carries only
+`crossEngineCfg` (the opt-in boolean and connection state) — never a `VerificationResultV1`
+payload. Findings, summaries, the prompt, the snapshot, and the raw Codex response live only in
+Electron main-process memory and in-flight IPC events (`crossEngine:update`) for the duration of
+one run; none of it reaches `localStorage`, the collector's SQLite schema, or disk. Disabling the
+feature (`crossEngine:setEnabled(false)`) terminates the ACP adapter process and drops that
+in-memory state — there is nothing left to clean up beyond that.
+
+---
+
+## 10. Correction to fix in `CLAUDE.md`
 
 The current project memory states:
 
