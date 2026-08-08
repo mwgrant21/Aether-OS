@@ -158,9 +158,10 @@ describe('cross-engine Codex boundary', () => {
   });
 
   it('only the reviewed ACP process module references the Codex adapter executable', () => {
-    const hits = grepSourceFor(/codex-acp/).filter(
-      (f) => !f.includes('electron/crossEngine/acpProcess.ts') && !f.includes('.test.ts') && !f.includes('docs/')
-    );
+    const hits = grepSourceFor(/codex-acp/).filter((f) => {
+      const posix = f.replace(/\\/g, '/'); // path.normalize() yields backslashes on Windows
+      return !posix.includes('electron/crossEngine/acpProcess.ts') && !posix.includes('.test.ts') && !posix.includes('docs/');
+    });
     expect(hits).toEqual([]);
   });
 });
