@@ -251,9 +251,10 @@ The disclosure text, verbatim:
 **What is sent, and how it's scoped.** A verification run is always manual — the operator clicks
 "Verify with Codex" on a specific dispatch row in the Ledger's `DispatchCostTable`
 (`VerifyWithCodexButton.tsx`). `electron/crossEngine/codexVerifier.ts` then resolves that one
-dispatch's evidence, builds a read-only file-system snapshot of only the touched files at the
-commit under test (`snapshotBuilder.ts`, a `git archive`-style copy, not the live working tree),
-and formats a verification prompt from that evidence (`verificationPrompt.ts`). Only that scoped
+dispatch's evidence, builds a read-only file-system snapshot (`snapshotBuilder.ts`) containing the
+full committed repository tree at the commit under test (a `git archive HEAD`-style copy, not the
+live working tree) overlaid with the current content of that dispatch's approved touched files, and
+formats a verification prompt from that evidence (`verificationPrompt.ts`). Only that scoped
 snapshot and prompt are sent — never the fleet roster, approval queue, other dispatches, or
 anything outside the one dispatch under review.
 
@@ -274,9 +275,11 @@ appears.
 `crossEngineCfg` (the opt-in boolean and connection state) — never a `VerificationResultV1`
 payload. Findings, summaries, the prompt, the snapshot, and the raw Codex response live only in
 Electron main-process memory and in-flight IPC events (`crossEngine:update`) for the duration of
-one run; none of it reaches `localStorage`, the collector's SQLite schema, or disk. Disabling the
-feature (`crossEngine:setEnabled(false)`) terminates the ACP adapter process and drops that
-in-memory state — there is nothing left to clean up beyond that.
+one run; none of it reaches `localStorage`, the collector's SQLite schema, or disk. There is no
+long-lived adapter process to terminate — each verification run spawns and disposes its own ACP
+client (`electron/crossEngine/acpProcess.ts`, `acpClient.ts`). Disabling the feature
+(`crossEngine:setEnabled(false)`) prevents any new run from starting; a run already in flight when
+the toggle is switched off completes normally and is cleaned up the same way every run always is.
 
 ---
 

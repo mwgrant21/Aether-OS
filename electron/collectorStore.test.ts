@@ -395,23 +395,34 @@ describe('readDiagnostics dispatch telemetry (schema v5)', () => {
 // Schema v6 (collector/src/schema.ts) adds tool_calls.source_file_rel, the
 // dispatch-to-file correlation column from the reconciliation note.
 describe('readDiagnostics tool call source (schema v6)', () => {
-  it('reads source_file_rel from a v6 database', () => {
+  // I4: source_file_rel embeds Claude's flattened-absolute-path project
+  // directory name and must not cross IPC (docs/privacy-and-data.md). It must
+  // stay queryable in SQLite directly (dispatchEvidence.ts's own query does
+  // exactly that) while never appearing on the object readDiagnostics returns
+  // for the diagnostics:snapshot IPC channel.
+  it('does not expose source_file_rel on the IPC-facing toolCalls shape, though it remains queryable in SQLite', () => {
     const dbPath = tempDbForDiagnostics(6);
     const db = new DatabaseSync(dbPath);
     db.exec(
       `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms, source_file_rel)
        VALUES ('tu_1', 'Edit', 'src/foo.ts', 1000, 2000, 'proj/sess-1/subagents/agent-x.jsonl')`,
     );
+
+    const directRow = db
+      .prepare('SELECT source_file_rel FROM tool_calls WHERE tool_use_id = ?')
+      .get('tu_1') as { source_file_rel: string };
+    expect(directRow.source_file_rel).toBe('proj/sess-1/subagents/agent-x.jsonl');
     db.close();
 
-    const row = readDiagnostics(dbPath, 0)!.toolCalls[0];
-    expect(row.sourceFileRel).toBe('proj/sess-1/subagents/agent-x.jsonl');
+    const row = readDiagnostics(dbPath, 0)!.toolCalls[0] as Record<string, unknown>;
+    expect(row).not.toHaveProperty('sourceFileRel');
+    expect(row.toolUseId).toBe('tu_1');
   });
 
   // The degraded path. A v5 database physically lacks source_file_rel, so
   // the reader must choose a narrower SELECT rather than error and drop the
   // whole snapshot.
-  it('returns null for every row without erroring on a pre-v6 database', () => {
+  it('does not throw on a pre-v6 database lacking the column at all', () => {
     const dbPath = tempDbForDiagnostics(5);
     const db = new DatabaseSync(dbPath);
     db.exec(
@@ -424,7 +435,6 @@ describe('readDiagnostics tool call source (schema v6)', () => {
     const snapshot = readDiagnostics(dbPath, 0);
     expect(snapshot).not.toBeNull();
     expect(snapshot!.toolCalls).toHaveLength(1);
-    expect(snapshot!.toolCalls[0].sourceFileRel).toBeNull();
     // Base fields still read normally.
     expect(snapshot!.toolCalls[0].toolUseId).toBe('tu_1');
   });

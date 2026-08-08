@@ -78,10 +78,12 @@ export interface DiagnosticsSnapshot {
     filePathRel: string | null;
     startedAtMs: number;
     closedAtMs: number;
-    // null both when the row predates schema 6 and when the column value
-    // itself is NULL -- same "not available" collapse this file already
-    // uses for the pre-v5 dispatch telemetry columns.
-    sourceFileRel: string | null;
+    // source_file_rel deliberately does NOT appear here -- it embeds Claude's
+    // flattened-absolute-path project directory name, and paths must not
+    // cross IPC (docs/privacy-and-data.md). It's read from SQLite (below) and
+    // used main-side only, by dispatchEvidence.ts's own direct query -- never
+    // mapped into this IPC-facing shape. See collectorStore.test.ts for the
+    // SQLite-level coverage of the column itself.
   }[];
   dispatches: DispatchRow[];
   anomalies: { kind: string; toolUseId: string; detail: string; detectedAtMs: number }[];
@@ -242,7 +244,6 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
         filePathRel: r.file_path_rel,
         startedAtMs: r.started_at_ms,
         closedAtMs: r.closed_at_ms,
-        sourceFileRel: asNullableString(r.source_file_rel),
       })),
       dispatches: dispatchRows.map(
         (r): DispatchRow => ({

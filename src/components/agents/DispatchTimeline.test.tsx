@@ -37,7 +37,7 @@ describe('DispatchTimeline', () => {
     render(
       <DispatchTimeline
         diagnostics={{
-          toolCalls: [{ toolUseId: 'tu_1', toolName: 'Read', filePathRel: 'src/deep/nested/foo.ts', startedAtMs: 1000, closedAtMs: 2000, sourceFileRel: null }],
+          toolCalls: [{ toolUseId: 'tu_1', toolName: 'Read', filePathRel: 'src/deep/nested/foo.ts', startedAtMs: 1000, closedAtMs: 2000 }],
           dispatches: [],
           anomalies: [],
         }}

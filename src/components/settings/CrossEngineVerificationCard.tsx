@@ -28,7 +28,7 @@ export function CrossEngineVerificationCard() {
       setStatus('disabled');
       return;
     }
-    window.aetherElectron?.crossEngine?.status().then(setStatus);
+    window.aetherElectron?.crossEngine?.status().then(setStatus).catch(() => setStatus('error'));
   }, [enabled]);
 
   const toggle = () => {

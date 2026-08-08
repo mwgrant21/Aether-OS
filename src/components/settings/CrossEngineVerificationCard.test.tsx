@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen, fireEvent } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { AetherStoreProvider } from '../../state/store';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
+});
 
 describe('CrossEngineVerificationCard', () => {
   it('defaults to disabled', () => {
@@ -61,5 +64,28 @@ describe('CrossEngineVerificationCard', () => {
 
     expect(screen.queryByLabelText(/api key/i)).toBeNull();
     expect(document.querySelector('input')).toBeNull();
+  });
+
+  // I6: a rejected status() promise (e.g. resolveAdapterExecutable() throwing
+  // synchronously in main) must not become a silent unhandled rejection --
+  // the card must surface some status rather than hanging on the old value.
+  it('does not leave an unhandled rejection when status() rejects', async () => {
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockRejectedValue(new Error('adapter not resolvable')),
+        setEnabled: vi.fn(),
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+
+    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
+
+    await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
   });
 });
