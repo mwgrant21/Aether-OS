@@ -716,12 +716,24 @@ ipcMain.handle('crossEngine:verifyDispatch', async (_event, toolUseId: string): 
   // per run() call the way listTranscriptSources' callers above do.
   const verifier = new CodexVerifier(db, transcriptSessionDir, pinnedSessionId, gitProbe);
   activeVerifier = verifier;
-  // codexVerifier.ts's run() always resolves to a structured VerificationResultV1
-  // (timeouts and prompt failures included) -- it never rejects -- so there is
-  // no .catch() here; only cleanup (closing the ephemeral db handle and clearing
-  // the active-run slot) runs once the promise settles.
+  // run()'s own internal failure taxonomy (evidence-incomplete, billing-blocked,
+  // timeout, prompt-invalid) is wrapped by run()'s try/finally and always resolves
+  // to a structured VerificationResultV1. But a throw from resolveDispatchEvidence
+  // or buildVerificationSnapshot before that wrapped section starts (e.g. a DB read
+  // error, or resolveProject/gitProbe throwing) propagates past run()'s try -- so
+  // this .catch() is required to avoid an unhandled promise rejection in the main
+  // process. On catch, emit the same event shape codexVerifier.ts uses internally
+  // so the renderer sees consistent feedback regardless of failure origin.
   verifier
     .run(runId, { toolUseId }, (e: VerificationEvent) => sendToWindow('crossEngine:update', e))
+    .catch((err: unknown) => {
+      sendToWindow('crossEngine:update', {
+        kind: 'error',
+        runId,
+        code: 'RESULT_INVALID',
+        message: String(err),
+      } as VerificationEvent);
+    })
     .finally(() => {
       db.close();
       if (activeVerifier === verifier) activeVerifier = null;

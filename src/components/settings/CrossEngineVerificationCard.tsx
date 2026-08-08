@@ -6,7 +6,7 @@ import { useAetherStore } from '../../state/store';
 import type { VerifierStatus } from '../../shared/crossEngineTypes';
 
 const DISCLOSURE =
-  'Sends the selected verification snapshot to OpenAI Codex. Uses your ChatGPT Codex allowance. OpenAI API keys and custom gateways are blocked. No automatic fallback.';
+  'Sends the selected verification snapshot to OpenAI Codex. Uses your ChatGPT Codex allowance. OpenAI API billing is disabled. OpenAI API keys and custom gateways are blocked. No automatic fallback.';
 
 export function CrossEngineVerificationCard() {
   const colors = useColors();
