@@ -2,8 +2,22 @@ import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
-import { STATUS_COLOR, computeLiveProjectPct } from '../projects/projectsMath';
 import { Button } from '../shared/Button';
+import type { ProjectStatus, ProjectStub } from '../../state/types';
+
+// Seed-data helpers for the fictional ProjectStub roster shown on the
+// dashboard digest. Not part of the real ProjectsSnapshot model in
+// projectsMath.ts, so they live here rather than being reintroduced there.
+const STATUS_COLOR: Record<ProjectStatus, string> = {
+  BUILDING: '#7ef0ff',
+  REVIEW: '#f5c66b',
+  QUEUED: '#5f8a97',
+  SHIPPED: '#3be0a0',
+};
+
+function computeLiveProjectPct(project: ProjectStub, used: number): number {
+  return project.status === 'BUILDING' ? Math.min(99, Math.round(project.pct + (used - 24391) / 30000)) : project.pct;
+}
 
 export function ProjectsDigest() {
   const colors = useColors();

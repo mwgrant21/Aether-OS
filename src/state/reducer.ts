@@ -27,7 +27,7 @@ export type Action =
   | { type: 'TICK' }
   | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
   | { type: 'REACTIVATE_AGENT'; name: string }
-  | { type: 'SELECT_PROJECT'; name: string }
+  | { type: 'SELECT_PROJECT'; key: string }
   | { type: 'SELECT_MEMORY'; id: number }
   | { type: 'SET_MEMORIES'; memories: MemoryRow[] }
   | { type: 'SET_MEMORY_TOMBSTONES'; tombstones: MemoryTombstone[] }
@@ -151,7 +151,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, selected: action.name };
 
     case 'SELECT_PROJECT':
-      return { ...state, selectedProject: action.name };
+      return { ...state, selectedProject: action.key };
 
     case 'SELECT_MEMORY':
       return { ...state, selectedMemory: String(action.id) };

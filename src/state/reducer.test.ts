@@ -29,8 +29,8 @@ describe('reducer', () => {
   });
 
   it('SELECT_PROJECT sets selectedProject', () => {
-    const next = reducer(initialState, { type: 'SELECT_PROJECT', name: 'Mobile Beta' });
-    expect(next.selectedProject).toBe('Mobile Beta');
+    const next = reducer(initialState, { type: 'SELECT_PROJECT', key: 'mobile-beta' });
+    expect(next.selectedProject).toBe('mobile-beta');
   });
 
   it('SELECT_MEMORY sets selectedMemory to the stringified id', () => {
