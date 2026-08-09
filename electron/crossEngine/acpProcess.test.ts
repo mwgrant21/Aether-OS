@@ -33,6 +33,17 @@ describe('buildCodexChildEnv', () => {
     const child = buildCodexChildEnv(osEnv, 'C:/fake/codex-home');
     expect(child.CODEX_HOME).toBe('C:/fake/codex-home');
   });
+
+  // Without this, spawning process.execPath (electron.exe inside the real
+  // app, not node.exe) against the adapter's .js entry point launches
+  // Electron itself instead of running the script as plain Node -- the
+  // adapter appears to start and exit instantly with no output, only when
+  // driven from the real running app (every terminal-based smoke test uses
+  // plain node.exe, where this flag is a harmless no-op).
+  it('sets ELECTRON_RUN_AS_NODE so process.execPath runs the script as plain Node under Electron', () => {
+    const child = buildCodexChildEnv({} as NodeJS.ProcessEnv, 'C:/fake/codex-home');
+    expect(child.ELECTRON_RUN_AS_NODE).toBe('1');
+  });
 });
 
 describe('resolveCodexHome', () => {

@@ -32,6 +32,15 @@ export function buildCodexChildEnv(osEnv: NodeJS.ProcessEnv, codexHome: string):
     if (osEnv[key] !== undefined) child[key] = osEnv[key];
   }
   child.CODEX_HOME = codexHome;
+  // spawnAcpProcess() below spawns process.execPath. Under a plain Node
+  // process (every test, every prior manual smoke test) that's node.exe, so
+  // this has no effect. Under Electron's own main process -- the only real
+  // caller -- process.execPath is electron.exe, and spawning it against a
+  // .js script path without this flag launches Electron itself rather than
+  // running the script as plain Node, which is why the adapter appeared to
+  // "flash a console window and exit instantly" only when driven from the
+  // real running app, never from a terminal. Harmless outside Electron.
+  child.ELECTRON_RUN_AS_NODE = '1';
   return child;
 }
 
