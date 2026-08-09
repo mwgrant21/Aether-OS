@@ -25,6 +25,17 @@ export function UplinksView() {
   const { enabled } = state.crossEngineCfg;
   const [codexStatus, setCodexStatus] = useState<VerifierStatus>('disabled');
 
+  // Push the persisted preference to main on every mount and on every toggle,
+  // same as CrossEngineVerificationCard.tsx -- main.ts's crossEngineFeatureEnabled
+  // flag is in-memory only and always starts false on launch, so whichever
+  // surface (Settings or Uplinks) mounts first must sync it. Without this,
+  // an operator who enabled cross-engine verification in a prior session and
+  // navigates straight to Uplinks in a fresh session sees a stale 'disabled'
+  // status from main while this view's own `enabled` check still thinks it's on.
+  useEffect(() => {
+    window.aetherElectron?.crossEngine?.setEnabled(enabled);
+  }, [enabled]);
+
   useEffect(() => {
     if (!enabled) {
       setCodexStatus('disabled');
@@ -39,8 +50,15 @@ export function UplinksView() {
   const codexOnline = codexStatus === 'ready-subscription';
 
   const connectCodex = async () => {
-    const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
-    if (result) setCodexStatus(result);
+    try {
+      const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
+      if (result) setCodexStatus(result);
+    } catch {
+      // Defense in depth: even with setEnabled synced above, any other
+      // failure down this call chain (e.g. main's assertCrossEngineFeatureEnabled
+      // guard throwing) must not surface as an unhandled promise rejection.
+      setCodexStatus('error');
+    }
   };
 
   return (

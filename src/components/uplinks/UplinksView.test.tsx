@@ -60,6 +60,7 @@ describe('UplinksView', () => {
       crossEngine: {
         status: vi.fn().mockResolvedValue('ready-subscription'),
         connectCodexSubscription: vi.fn().mockResolvedValue('ready-subscription'),
+        setEnabled: vi.fn(),
       },
     };
 
@@ -83,6 +84,7 @@ describe('UplinksView', () => {
       crossEngine: {
         status: vi.fn().mockResolvedValue('sign-in-required'),
         connectCodexSubscription,
+        setEnabled: vi.fn(),
       },
     };
 
@@ -96,6 +98,53 @@ describe('UplinksView', () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(connectCodexSubscription).toHaveBeenCalledTimes(1));
+  });
+
+  it('pushes crossEngine.setEnabled(true) on mount when crossEngineCfg.enabled is true', async () => {
+    const setEnabled = vi.fn();
+    localStorage.setItem('aetheros-v1', JSON.stringify({ crossEngineCfg: { enabled: true, provider: 'codex-chatgpt' } }));
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockResolvedValue('sign-in-required'),
+        connectCodexSubscription: vi.fn().mockResolvedValue('ready-subscription'),
+        setEnabled,
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <UplinksView />
+      </AetherStoreProvider>,
+    );
+
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(true));
+  });
+
+  it('does not leave an unhandled rejection when connectCodexSubscription() rejects, and surfaces an error state', async () => {
+    const connectCodexSubscription = vi.fn().mockRejectedValue(new Error('cross-engine feature not enabled'));
+    localStorage.setItem('aetheros-v1', JSON.stringify({ crossEngineCfg: { enabled: true, provider: 'codex-chatgpt' } }));
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockResolvedValue('sign-in-required'),
+        connectCodexSubscription,
+        setEnabled: vi.fn(),
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <UplinksView />
+      </AetherStoreProvider>,
+    );
+
+    const button = await screen.findByText('CONNECT');
+    fireEvent.click(button);
+
+    await waitFor(() => expect(connectCodexSubscription).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const row = screen.getByText('OpenAI/Codex').closest('div');
+      expect(row?.textContent).toContain('OFFLINE');
+    });
   });
 
   it('never renders a Local Ollama row', () => {
