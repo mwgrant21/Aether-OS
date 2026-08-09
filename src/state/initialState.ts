@@ -185,4 +185,5 @@ export const initialState: AetherState = {
   dispatchNarrations: {},
   narrationMessages: {},
   narrationBudgets: {},
+  crossEngineCfg: { enabled: false, provider: 'codex-chatgpt' },
 };

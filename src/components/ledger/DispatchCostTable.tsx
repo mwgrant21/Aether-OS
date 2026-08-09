@@ -5,6 +5,7 @@ import { Button } from '../shared/Button';
 import type { EstimatedCost } from '../../shared/ledgerMath';
 import type { ExitState } from '../../../collector/src/personalitySpine';
 import { approxUsd, tokens as fmtTokens, duration as fmtDuration, ESTIMATE_BASIS_TOOLTIP } from './format';
+import { VerifyWithCodexButton } from '../agents/VerifyWithCodexButton';
 
 export interface DispatchCostRow {
   toolUseId: string;
@@ -109,6 +110,19 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
                     any run that was really Opus. */}
                 {row.estimate.tierSource === 'defaulted' && <span style={assumedStyle(colors)}>?</span>}
               </span>
+              {row.exitState === 'ok' && (
+                <span role="cell" style={colVerify}>
+                  <VerifyWithCodexButton
+                    toolUseId={row.toolUseId}
+                    // No signal in this renderer for "does this dispatch have
+                    // exact file-touch correlation" -- the IPC handler /
+                    // CodexVerifier already enforce evidence sufficiency
+                    // server-side and return EVIDENCE_INCOMPLETE if missing,
+                    // so this is only a UX nicety, not a real gate.
+                    evidenceSufficient={true}
+                  />
+                </span>
+              )}
             </div>
           );
         })}
@@ -176,6 +190,7 @@ const bodyRowStyle = (c: ColorPalette, troubled: boolean): CSSProperties => ({
 const colDesc: CSSProperties = { flex: 1, minWidth: 0 };
 const colType: CSSProperties = { width: 120, flexShrink: 0 };
 const colNum: CSSProperties = { width: 82, flexShrink: 0, textAlign: 'right' };
+const colVerify: CSSProperties = { flexShrink: 0, marginLeft: 4 };
 
 const cellStyle = (c: ColorPalette): CSSProperties => ({
   font: `400 12px/1.4 ${fonts.mono}`,

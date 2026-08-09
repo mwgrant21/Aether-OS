@@ -1,6 +1,12 @@
 # Idea: Cross-Engine Verification
 
-**Status:** parked. Not scheduled, not committed to. Feasibility explored 2026-07-27.
+**Status:** implemented — see
+`docs/superpowers/plans/2026-08-07-codex-acp-cross-engine-verification.md`. Shipped 2026-08-07 as
+the ACP client this doc argued for, not a bespoke Codex integration. The shipped version is
+**subscription-only ChatGPT billing** — the operator authenticates through their own ChatGPT
+account, OpenAI API keys and custom gateways are structurally blocked — which resolves the "second
+subscription, real cost" obstacle named below: it's the operator's existing Codex allowance, not a
+new API bill.
 **Earliest sensible start:** after Stage 5 (`docs/roadmap.md`). It is Stage 5's natural extension,
 not a parallel track.
 

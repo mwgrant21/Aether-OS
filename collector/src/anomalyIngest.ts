@@ -59,6 +59,7 @@ export function ingestToolCallsAndAnomalies(
   history: ToolCallHistory,
   events: TranscriptEvent[],
   nowMs: number,
+  sourceFileRel: string,
 ): { history: ToolCallHistory; toolCallsIngested: number; anomaliesIngested: number } {
   const newHistory = updateHistory(history, events, nowMs);
   // Diff by toolUseId membership rather than array index/length: once
@@ -71,7 +72,7 @@ export function ingestToolCallsAndAnomalies(
   const newlyClosed = newHistory.events.filter((e) => !priorToolUseIds.has(e.toolUseId));
 
   const insertToolCall = db.prepare(
-    `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms, source_file_rel) VALUES (?, ?, ?, ?, ?, ?)`
   );
   for (const call of newlyClosed) {
     // call.filePath is already project-relative-or-null by construction:
@@ -79,7 +80,7 @@ export function ingestToolCallsAndAnomalies(
     // it enters the history, so no per-call-site sanitization is needed here
     // (and, critically, none can be forgotten in the anomaly `detail`
     // builders either). See toProjectRelative's doc comment.
-    insertToolCall.run(call.toolUseId, call.toolName, call.filePath, call.startedAt, call.closedAt);
+    insertToolCall.run(call.toolUseId, call.toolName, call.filePath, call.startedAt, call.closedAt, sourceFileRel);
   }
 
   const recentWindow = newHistory.events.filter((e) => e.closedAt >= nowMs - 300000);
