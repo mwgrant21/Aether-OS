@@ -45,8 +45,12 @@ export function CrossEngineVerificationCard() {
   };
 
   const connect = async () => {
-    const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
-    if (result) setStatus(result);
+    try {
+      const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
+      if (result) setStatus(result);
+    } catch {
+      setStatus('error');
+    }
   };
 
   return (

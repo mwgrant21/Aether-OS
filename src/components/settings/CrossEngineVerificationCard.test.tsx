@@ -88,4 +88,32 @@ describe('CrossEngineVerificationCard', () => {
 
     await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
   });
+
+  // Same class of gap as the status() case above, on the other IPC call this
+  // card makes: a rejected connectCodexSubscription() (e.g. the adapter
+  // crashing mid-handshake) must not become a silent unhandled rejection --
+  // clicking CONNECT CHATGPT must always leave a visible status behind.
+  it('does not leave an unhandled rejection when connectCodexSubscription() rejects', async () => {
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockResolvedValue('sign-in-required'),
+        connectCodexSubscription: vi.fn().mockRejectedValue(new Error('adapter crashed')),
+        setEnabled: vi.fn(),
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+
+    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
+    await waitFor(() => expect(screen.getByText('SIGN-IN-REQUIRED')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('CONNECT CHATGPT'));
+
+    await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
+  });
 });
