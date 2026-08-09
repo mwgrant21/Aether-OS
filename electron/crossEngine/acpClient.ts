@@ -70,6 +70,12 @@ export class AcpClient {
 
   connect(child: ChildProcessWithoutNullStreams = spawnAcpProcess()): void {
     this.child = child;
+    // A fresh connection means a fresh handshake -- a cached authMethods
+    // from a prior connect() (this instance reused after dispose(), which
+    // doesn't happen on any current call path, but shouldn't be trusted if
+    // it ever does) would otherwise let initialize() skip the real handshake
+    // and reuse a dead connection's auth-method list.
+    this.authMethods = null;
     child.stdout.on('data', (chunk: Buffer) => this.onData(chunk));
   }
 
@@ -184,8 +190,11 @@ export class AcpClient {
    *  any other methodId.
    *
    *  This is the ONLY call in this client that can open a browser window, so
-   *  it must never be reached from a passive status path -- see `probe()`. */
-  async authenticate(): Promise<void> {
+   *  it must never be reached from a passive status path -- see `probe()`.
+   *  Private, not just conventionally sole-called: `ensureChatGptAuthenticated()`
+   *  is the only path that may trigger a login, and it alone runs the
+   *  `offersChatGptAuthMethod` pre-check before calling this. */
+  private async authenticate(): Promise<void> {
     await this.call('authenticate', { methodId: CHAT_GPT_AUTH_METHOD_ID }, AUTH_TIMEOUT_MS);
   }
 
