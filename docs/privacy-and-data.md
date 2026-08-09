@@ -39,6 +39,13 @@ influence it beyond scrubbing `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHRO
 environment the terminal shell inherits, so a key exported for other tools on the operator's
 machine cannot be picked up by the session Aether starts.
 
+**The same carve-out, additionally gated, now covers a second terminal.** A Codex terminal
+(`electron/codexPtyManager.ts`) — a second, independent, real interactive `codex` CLI session —
+exists alongside the Claude terminal. Unlike the Claude terminal, it does not auto-launch: it only
+spawns when the operator has both (a) opted in via `codexTerminalCfg.enabled`, default `false`, and
+(b) navigated to the Codex sidebar view — the same lazy, mount-triggered mechanism the Claude
+terminal already uses, not an unconditional app-boot launch. See §11 for the full boundary.
+
 **No telemetry. Ever.** Not opt-out, not anonymous, not aggregate. Worth stating explicitly because
 it is a live differentiator: `agent-flow`, one of the two comparable agent-trace visualizers,
 ships anonymous telemetry **enabled by default**.
@@ -299,3 +306,49 @@ Stage 0.5 makes the statement true. Until it lands, the line should read *"read 
 (Vite dev-server plugin today; moving to the Electron main process in Stage 0.5)"* — an accurate
 description of a broken state beats an aspirational one, which is this project's stated standard
 everywhere else.
+
+---
+
+## 11. Codex terminal — a second interactive session, same open-ended access as Claude's
+
+Shipped 2026-08-09 — see `docs/superpowers/plans/2026-08-09-codex-terminal-view.md`. This is not a
+new instance of §9's outbound-data exception — it does not send a scoped snapshot to anything.
+It is a second interactive terminal, in the same category §1 already carves out for the Claude
+terminal: a real, live `codex` CLI session with the same open-ended file-system and command access
+the Claude terminal already has, running under the operator's own Codex/ChatGPT credentials, exactly
+like running `codex` in any other terminal window. Aether does not scope, filter, or inspect what
+happens inside that session any more than it does for the Claude terminal.
+
+**Default off, gated behind its own toggle.** `state.codexTerminalCfg.enabled` defaults to `false`
+(`src/state/initialState.ts`), folded into the same Cross-Engine Verification settings card as §9's
+verifier toggle (`CrossEngineVerificationCard.tsx`) rather than a separate card. There is no
+disclosure click-through for this toggle — unlike §9's verifier, this feature never sends anything
+anywhere on Aether's behalf, so the disclosure language that governs an automatic outbound send does
+not apply here.
+
+**Mount-triggered spawn, not an app-boot launch.** Enabling the toggle alone does not start a
+session. `CodexTerminalView` checks `state.codexTerminalCfg.enabled` before rendering
+`<PtyCodexTerminal />` at all; when disabled it renders an explanatory message instead and
+`getOrCreateHost()` — the function that actually calls `codexPty.start()` — never runs. The real
+`codex` pty is created only the first time the operator, with the toggle already on, navigates to
+the Codex sidebar view — the same lazy, mount-triggered mechanism the existing Claude terminal
+already uses (`PtyTerminal.tsx`), not an unconditional launch at every app start regardless of
+navigation.
+
+**Shares the verifier's `CODEX_HOME` isolation and env-stripping.** `electron/codexPtyManager.ts`'s
+`spawnCodexPty()` calls the same `resolveCodexHome()` (`electron/crossEngine/acpProcess.ts`) §9's
+verifier uses, so the terminal session and the verifier read and write the same dedicated,
+isolated Codex home directory — never the operator's global `~/.codex`. Before spawning, `buildCodexPtyEnv`
+strips `OPENAI_API_KEY` and `CODEX_API_KEY` from the environment the shell inherits (mirroring
+`ptyManager.ts`'s `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` scrubbing for the
+Claude terminal), so a key exported for other tools on the operator's machine cannot be silently
+picked up by the session Aether starts.
+
+**Named limitation, not glossed over: env-stripping cannot police what the operator types.** This is
+a real, live, interactive terminal. Stripping the inherited environment closes exactly one path — a
+key silently carried in from the shell — and nothing more. It does not and cannot stop the operator
+from typing `codex login --api-key ...` (or pasting a key into any other prompt the `codex` CLI
+offers) by hand inside the live session once it is running. This is not a gap specific to this
+feature; it is the same category of limitation the Claude terminal's own environment-scrubbing
+already has and already documents above — an interactive shell is, by construction, a surface Aether
+cannot fully police from the outside.
