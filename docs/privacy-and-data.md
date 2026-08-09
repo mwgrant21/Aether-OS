@@ -41,10 +41,10 @@ machine cannot be picked up by the session Aether starts.
 
 **The same carve-out, additionally gated, now covers a second terminal.** A Codex terminal
 (`electron/codexPtyManager.ts`) — a second, independent, real interactive `codex` CLI session —
-exists alongside the Claude terminal. Unlike the Claude terminal, it does not auto-launch: it only
-spawns when the operator has both (a) opted in via `codexTerminalCfg.enabled`, default `false`, and
-(b) navigated to the Codex sidebar view — the same lazy, mount-triggered mechanism the Claude
-terminal already uses, not an unconditional app-boot launch. See §11 for the full boundary.
+exists alongside the Claude terminal. It uses the same lazy, mount-triggered spawn mechanism the
+Claude terminal already uses — neither one launches unconditionally at app boot — but the Codex
+terminal adds an extra gate the Claude terminal doesn't have: it only spawns once the operator has
+also opted in via `codexTerminalCfg.enabled`, default `false`. See §11 for the full boundary.
 
 **No telemetry. Ever.** Not opt-out, not anonymous, not aggregate. Worth stating explicitly because
 it is a live differentiator: `agent-flow`, one of the two comparable agent-trace visualizers,
