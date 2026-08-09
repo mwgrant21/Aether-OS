@@ -15,25 +15,24 @@ import { OptimizeView } from './components/optimize/OptimizeView';
 
 export interface ViewDef {
   id: string;
-  inTopBar: boolean;
   inSidebar: boolean;
   component: ComponentType | null;
 }
 
 export const VIEWS: ViewDef[] = [
-  { id: 'Dashboard', inTopBar: false, inSidebar: true, component: DashboardView },
-  { id: 'Terminal', inTopBar: true, inSidebar: true, component: TerminalView },
-  { id: 'Comms', inTopBar: true, inSidebar: false, component: CommsView },
-  { id: 'Agents', inTopBar: true, inSidebar: true, component: AgentsView },
-  { id: 'Grid', inTopBar: true, inSidebar: true, component: GridView },
-  { id: 'Projects', inTopBar: true, inSidebar: true, component: ProjectsView },
-  { id: 'Memory', inTopBar: true, inSidebar: true, component: MemoryView },
-  { id: 'Analytics', inTopBar: true, inSidebar: true, component: AnalyticsView },
-  { id: 'Ledger', inTopBar: true, inSidebar: true, component: LedgerView },
-  { id: 'Attachments', inTopBar: true, inSidebar: false, component: FilesView },
-  { id: 'Optimize', inTopBar: true, inSidebar: true, component: OptimizeView },
-  { id: 'Uplinks', inTopBar: false, inSidebar: true, component: UplinksView },
-  { id: 'Settings', inTopBar: false, inSidebar: true, component: SettingsView },
+  { id: 'Dashboard', inSidebar: true, component: DashboardView },
+  { id: 'Terminal', inSidebar: true, component: TerminalView },
+  { id: 'Comms', inSidebar: true, component: CommsView },
+  { id: 'Agents', inSidebar: true, component: AgentsView },
+  { id: 'Grid', inSidebar: true, component: GridView },
+  { id: 'Projects', inSidebar: true, component: ProjectsView },
+  { id: 'Memory', inSidebar: true, component: MemoryView },
+  { id: 'Analytics', inSidebar: true, component: AnalyticsView },
+  { id: 'Ledger', inSidebar: true, component: LedgerView },
+  { id: 'Attachments', inSidebar: true, component: FilesView },
+  { id: 'Optimize', inSidebar: true, component: OptimizeView },
+  { id: 'Uplinks', inSidebar: true, component: UplinksView },
+  { id: 'Settings', inSidebar: true, component: SettingsView },
 ];
 
 export function getViewComponent(id: string): ComponentType | null {
