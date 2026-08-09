@@ -2,16 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { buildCodexPtyEnv } from './codexPtyManager';
 
 // Mirrors ptyManager.test.ts's guard, for the Codex terminal's own launch path.
+// Mirrors acpProcess.test.ts's BLOCKED list -- the verifier already enumerates
+// the real billing/auth-bypass vector list for `codex`; the terminal must
+// strip the same set.
+const BLOCKED = [
+  'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORG_ID',
+  'OPENAI_PROJECT_ID', 'MODEL_PROVIDER', 'DEFAULT_AUTH_REQUEST', 'CODEX_CONFIG', 'CODEX_PATH',
+];
+
 describe('buildCodexPtyEnv', () => {
-  it('strips OPENAI_API_KEY and CODEX_API_KEY', () => {
-    const source = {
-      OPENAI_API_KEY: 'sk-openai-secret',
-      CODEX_API_KEY: 'codex-secret',
-      PATH: '/usr/bin',
-    };
+  it('strips the full billing/auth-bypass vector list', () => {
+    const source: Record<string, string> = { PATH: '/usr/bin' };
+    for (const key of BLOCKED) source[key] = 'leaked-value';
+
     const env = buildCodexPtyEnv(source, 'C:/fake/codex-home');
-    expect(env.OPENAI_API_KEY).toBeUndefined();
-    expect(env.CODEX_API_KEY).toBeUndefined();
+    for (const key of BLOCKED) expect(env[key]).toBeUndefined();
     expect(env.PATH).toBe('/usr/bin');
   });
 

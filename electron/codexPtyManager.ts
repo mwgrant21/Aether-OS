@@ -12,11 +12,28 @@ const CODEX_LAUNCH_COMMAND = 'codex\r';
 // path, the same category of protection ptyManager.ts's buildPtyEnv already
 // gives Claude's terminal, and the same limitation it already documents:
 // this reduces risk, it does not eliminate manual entry.
-const API_KEY_ENV_VARS = ['OPENAI_API_KEY', 'CODEX_API_KEY'] as const;
+//
+// Mirrors the real billing/auth-bypass vector list electron/crossEngine/
+// acpProcess.ts's buildCodexChildEnv already enumerates for the one-shot
+// verifier (see acpProcess.test.ts's BLOCKED list) -- kept a denylist here
+// rather than that function's allowlist, because an interactive shell needs
+// the operator's real environment (their own PATH, editors, etc.), unlike
+// the verifier's fully-synthesized child env.
+const BILLING_AUTH_ENV_VARS = [
+  'OPENAI_API_KEY',
+  'CODEX_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_ORG_ID',
+  'OPENAI_PROJECT_ID',
+  'MODEL_PROVIDER',
+  'DEFAULT_AUTH_REQUEST',
+  'CODEX_CONFIG',
+  'CODEX_PATH',
+] as const;
 
 export function buildCodexPtyEnv(source: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
   const env = { ...source };
-  for (const key of API_KEY_ENV_VARS) delete env[key];
+  for (const key of BILLING_AUTH_ENV_VARS) delete env[key];
   // Dedicated, isolated home shared with the cross-engine verifier -- never
   // the operator's global ~/.codex. See electron/crossEngine/acpProcess.ts.
   env.CODEX_HOME = codexHome;

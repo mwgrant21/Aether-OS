@@ -45,6 +45,39 @@ describe('UplinksView', () => {
     expect(row?.textContent).toContain('ONLINE');
   });
 
+  it('renders Codex Terminal as OFFLINE by default (codexTerminalAlive defaults false)', () => {
+    // No Codex pty is started until the Codex sidebar view mounts, so a
+    // launch that lands on Uplinks has no Codex terminal to report either --
+    // same reasoning as the Aether Core row above, independent signal.
+    render(
+      <AetherStoreProvider>
+        <UplinksView />
+      </AetherStoreProvider>,
+    );
+    const row = screen.getByText('Codex Terminal').closest('div');
+    expect(row?.textContent).toContain('OFFLINE');
+  });
+
+  it('renders Codex Terminal as ONLINE when codexTerminalAlive is true, independent of OpenAI/Codex', () => {
+    // Seed the persisted-state merge store.tsx performs on mount, same
+    // mechanism the Aether Core test above uses -- codexTerminalAlive is
+    // excluded from persistence but this mirrors what a real
+    // codexPty:alive push via useCodexTerminalAliveSync/
+    // SET_CODEX_TERMINAL_ALIVE does to state.
+    localStorage.setItem('aetheros-v1', JSON.stringify({ codexTerminalAlive: true }));
+    render(
+      <AetherStoreProvider>
+        <UplinksView />
+      </AetherStoreProvider>,
+    );
+    const codexTerminalRow = screen.getByText('Codex Terminal').closest('div');
+    expect(codexTerminalRow?.textContent).toContain('ONLINE');
+    // The verifier connection row must stay independent -- it was never
+    // enabled here, so it must still read OFFLINE.
+    const verifierRow = screen.getByText('OpenAI/Codex').closest('div');
+    expect(verifierRow?.textContent).toContain('OFFLINE');
+  });
+
   it('renders OpenAI/Codex as OFFLINE with an explanatory disabled button when cross-engine is not enabled', () => {
     render(
       <AetherStoreProvider>

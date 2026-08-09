@@ -31,8 +31,9 @@ sends a scoped snapshot to a second vendor's agent, never automatic and never en
 feature in this app.
 
 This claim is about Aether's own code and holds no API key — it does not extend to the embedded
-terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`),
-which sends prompts to Anthropic on every turn under the user's own credentials, exactly like
+terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`)
+whenever the Terminal view is mounted, which sends prompts to Anthropic on every turn under the
+user's own credentials, exactly like
 running `claude` in any other terminal window. That traffic is the user's Claude Code usage, not
 something Aether initiates, proxies, or can see — Aether has no visibility into it and no path to
 influence it beyond scrubbing `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` from the
@@ -335,14 +336,24 @@ the Codex sidebar view — the same lazy, mount-triggered mechanism the existing
 already uses (`PtyTerminal.tsx`), not an unconditional launch at every app start regardless of
 navigation.
 
+**Turning the toggle off hides the view and blocks future spawns, but does not kill an
+already-running session.** Disabling `codexTerminalCfg.enabled` makes `CodexTerminalView` render its
+disabled message again and prevents any new `codexPty:start` call, but `main.ts`'s
+`codexPtyLifecycle` keeps whatever `codex` pty is already running alive until the app quits (or the
+operator exits `codex` inside that session themselves) — re-enabling the toggle reattaches to it
+rather than spawning a second one. This is accepted current behavior, not a bug, but it is worth
+stating plainly rather than letting the toggle's label imply the session is actually stopped.
+
 **Shares the verifier's `CODEX_HOME` isolation and env-stripping.** `electron/codexPtyManager.ts`'s
 `spawnCodexPty()` calls the same `resolveCodexHome()` (`electron/crossEngine/acpProcess.ts`) §9's
 verifier uses, so the terminal session and the verifier read and write the same dedicated,
 isolated Codex home directory — never the operator's global `~/.codex`. Before spawning, `buildCodexPtyEnv`
-strips `OPENAI_API_KEY` and `CODEX_API_KEY` from the environment the shell inherits (mirroring
-`ptyManager.ts`'s `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` scrubbing for the
-Claude terminal), so a key exported for other tools on the operator's machine cannot be silently
-picked up by the session Aether starts.
+strips the same billing/auth-bypass vector list `acpProcess.ts`'s verifier already enumerates for
+`codex` — `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`,
+`MODEL_PROVIDER`, `DEFAULT_AUTH_REQUEST`, `CODEX_CONFIG`, `CODEX_PATH` — from the environment the
+shell inherits (mirroring `ptyManager.ts`'s `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/
+`ANTHROPIC_BASE_URL` scrubbing for the Claude terminal), so a key exported for other tools on the
+operator's machine cannot be silently picked up by the session Aether starts.
 
 **Named limitation, not glossed over: env-stripping cannot police what the operator types.** This is
 a real, live, interactive terminal. Stripping the inherited environment closes exactly one path — a

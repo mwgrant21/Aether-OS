@@ -121,7 +121,9 @@ export function CrossEngineVerificationCard() {
         <p style={hintStyle(colors)}>
           A real, interactive Codex session with the same file/command access Claude's terminal already has.
           Uses the same ChatGPT connection as verification above. Typing an API key into the session
-          yourself is not something this app can prevent.
+          yourself is not something this app can prevent. Disabling this hides the terminal and stops
+          new sessions from spawning, but does not end an already-running session — quit the app or
+          exit codex inside the session to actually stop it.
         </p>
       </div>
     </div>

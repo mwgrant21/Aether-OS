@@ -7,18 +7,24 @@ import type { VerifierStatus } from '../../shared/crossEngineTypes';
 
 // Uplinks used to render 3 hardcoded fake "providers" you could toggle
 // on/off, plus a "DEFAULT RUNTIME" picker implying Aether routes work
-// between providers. Neither was real: this app only observes its own
-// embedded terminal and (via Cross-Engine Verification, see
-// CrossEngineVerificationCard.tsx) can manually trigger one Codex
+// between providers. Neither was real: this app now observes two independent
+// embedded terminals (Claude and, since the Codex terminal view shipped,
+// Codex too) and, via Cross-Engine Verification (see
+// CrossEngineVerificationCard.tsx), can manually trigger one Codex
 // verification -- there is no runtime-routing concept to default. This view
-// now renders exactly two rows, both backed by real state:
-//   - Aether Core: the embedded terminal's pty liveness (state.terminalAlive,
-//     kept live by useTerminalAliveSync). Not a toggle -- you can't
-//     "connect"/"disconnect" your own terminal, only observe whether it's
-//     still running.
+// now renders exactly three rows, all backed by real state:
+//   - Aether Core: the embedded Claude terminal's pty liveness
+//     (state.terminalAlive, kept live by useTerminalAliveSync). Not a
+//     toggle -- you can't "connect"/"disconnect" your own terminal, only
+//     observe whether it's still running.
+//   - Codex Terminal: the independent Codex terminal pty's own liveness
+//     (state.codexTerminalAlive, kept live by useCodexTerminalAliveSync) --
+//     a separate signal from the row below, never merged with it, because
+//     the Codex terminal pty and the cross-engine verifier's connection are
+//     two structurally different things that happen to share a vendor.
 //   - OpenAI/Codex: the same crossEngine connection CrossEngineVerificationCard
 //     drives (window.aetherElectron.crossEngine), so both surfaces always
-//     agree -- there is exactly one Codex connection, not two.
+//     agree -- there is exactly one Codex verifier connection, not two.
 export function UplinksView() {
   const colors = useColors();
   const { state } = useAetherStore();
@@ -77,6 +83,14 @@ export function UplinksView() {
           <span style={dotStyle(colors, state.terminalAlive)} />
           <span style={nameStyle(colors)}>Aether Core</span>
           <span style={badgeStyle(colors, state.terminalAlive)}>{state.terminalAlive ? 'ONLINE' : 'OFFLINE'}</span>
+        </div>
+
+        <div style={rowStyle(colors, state.codexTerminalAlive)}>
+          <span style={dotStyle(colors, state.codexTerminalAlive)} />
+          <span style={nameStyle(colors)}>Codex Terminal</span>
+          <span style={badgeStyle(colors, state.codexTerminalAlive)}>
+            {state.codexTerminalAlive ? 'ONLINE' : 'OFFLINE'}
+          </span>
         </div>
 
         <div style={rowStyle(colors, codexOnline)}>

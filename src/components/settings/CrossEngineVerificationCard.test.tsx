@@ -174,6 +174,11 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
     const codexSection = screen.getByText('CODEX TERMINAL').closest('div')!;
-    expect(within(codexSection.parentElement!).getByText('ENABLE')).toBeTruthy();
+    const codexRow = codexSection.parentElement!;
+    expect(within(codexRow).getByText('ENABLE')).toBeTruthy();
+
+    fireEvent.click(within(codexRow).getByText('ENABLE'));
+
+    expect(within(codexRow).getByText('DISABLE')).toBeTruthy();
   });
 });
