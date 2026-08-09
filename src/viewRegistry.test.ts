@@ -11,7 +11,7 @@ describe('viewRegistry', () => {
     const topBarIds = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
     const sidebarIds = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
     expect(topBarIds).toEqual(['Terminal', 'Comms', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Ledger', 'Attachments', 'Optimize']);
-    expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Ledger', 'Optimize', 'Uplinks', 'Settings']);
+    expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Codex', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Ledger', 'Optimize', 'Uplinks', 'Settings']);
   });
 
   it('getViewComponent returns null for ids with no built component', () => {
@@ -64,5 +64,9 @@ describe('viewRegistry', () => {
 
   it('getViewComponent resolves Optimize now that it is built', () => {
     expect(getViewComponent('Optimize')).not.toBeNull();
+  });
+
+  it('getViewComponent resolves Codex now that it is built', () => {
+    expect(getViewComponent('Codex')).not.toBeNull();
   });
 });

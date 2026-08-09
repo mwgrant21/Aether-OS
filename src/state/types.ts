@@ -304,6 +304,12 @@ export interface AetherState {
   narrationMessages: Record<string, NarrationMessage[]>;
   narrationBudgets: Record<string, InterruptionBudgetState>;
   crossEngineCfg: { enabled: boolean; provider: 'codex-chatgpt' };
+  // User-intent config for the independent Codex terminal (Task 4's
+  // CodexTerminalView/PtyCodexTerminal) -- default-off. Unlike
+  // codexTerminalAlive above (a live signal recomputed every launch and
+  // excluded from persistence), this is a deliberate operator choice and
+  // must persist across restarts, same as crossEngineCfg.
+  codexTerminalCfg: { enabled: boolean };
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

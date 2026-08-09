@@ -430,6 +430,12 @@ describe('reducer', () => {
     });
   });
 
+  it('SET_CODEX_TERMINAL_CFG replaces codexTerminalCfg wholesale', () => {
+    const cfg = { enabled: true };
+    const next = reducer(initialState, { type: 'SET_CODEX_TERMINAL_CFG', cfg });
+    expect(next.codexTerminalCfg).toEqual(cfg);
+  });
+
   describe('RECORD_DISPATCH_USAGE', () => {
     it('merges one completion into dispatchUsage, keyed by toolUseId', () => {
       const next = reducer(initialState, {

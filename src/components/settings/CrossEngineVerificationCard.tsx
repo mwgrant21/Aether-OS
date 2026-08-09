@@ -107,6 +107,23 @@ export function CrossEngineVerificationCard() {
           <p style={hintStyle(colors)}>{DISCLOSURE}</p>
         </>
       )}
+
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${colors.chipBorder}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={titleStyle(colors)}>CODEX TERMINAL</div>
+          <Button
+            onClick={() => dispatch({ type: 'SET_CODEX_TERMINAL_CFG', cfg: { enabled: !state.codexTerminalCfg.enabled } })}
+            style={toggleStyle(colors, state.codexTerminalCfg.enabled)}
+          >
+            {state.codexTerminalCfg.enabled ? 'DISABLE' : 'ENABLE'}
+          </Button>
+        </div>
+        <p style={hintStyle(colors)}>
+          A real, interactive Codex session with the same file/command access Claude's terminal already has.
+          Uses the same ChatGPT connection as verification above. Typing an API key into the session
+          yourself is not something this app can prevent.
+        </p>
+      </div>
     </div>
   );
 }

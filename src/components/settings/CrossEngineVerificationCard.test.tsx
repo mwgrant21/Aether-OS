@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { AetherStoreProvider } from '../../state/store';
 
@@ -8,6 +8,14 @@ afterEach(() => {
   delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
 });
 
+// The card now renders two independent ENABLE/DISABLE toggles (cross-engine
+// verification, and -- added below -- the Codex terminal). Both default to
+// showing "ENABLE" text, so every existing test below must scope its query
+// to the cross-engine row specifically rather than a bare screen.getByText.
+function crossEngineRow() {
+  return screen.getByText('CROSS-ENGINE VERIFICATION').closest('div')!.parentElement!;
+}
+
 describe('CrossEngineVerificationCard', () => {
   it('defaults to disabled', () => {
     render(
@@ -15,7 +23,7 @@ describe('CrossEngineVerificationCard', () => {
         <CrossEngineVerificationCard />
       </AetherStoreProvider>,
     );
-    expect(screen.getByText('ENABLE')).toBeTruthy();
+    expect(within(crossEngineRow()).getByText('ENABLE')).toBeTruthy();
     expect(screen.queryByText('SUBSCRIPTION ONLY')).toBeNull();
   });
 
@@ -26,12 +34,12 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
 
     // Disclosure shown, but not yet enabled.
     expect(screen.getByText('I UNDERSTAND, ENABLE')).toBeTruthy();
     expect(screen.queryByText('SUBSCRIPTION ONLY')).toBeNull();
-    expect(screen.getByText('ENABLE')).toBeTruthy();
+    expect(within(crossEngineRow()).getByText('ENABLE')).toBeTruthy();
 
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
@@ -46,7 +54,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
     expect(screen.getByText('SUBSCRIPTION ONLY')).toBeTruthy();
@@ -59,7 +67,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
     expect(screen.queryByLabelText(/api key/i)).toBeNull();
@@ -83,7 +91,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
     await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
@@ -108,7 +116,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
     await waitFor(() => expect(screen.getByText('SIGN-IN-REQUIRED')).toBeTruthy());
 
@@ -140,7 +148,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
     await waitFor(() => expect(screen.getByText('SIGN-IN-REQUIRED')).toBeTruthy());
 
@@ -157,5 +165,15 @@ describe('CrossEngineVerificationCard', () => {
 
     await waitFor(() => expect(screen.getByText('READY-SUBSCRIPTION')).toBeTruthy());
     expect(screen.getByText('RECONNECT')).toBeTruthy();
+  });
+
+  it('Codex terminal toggle defaults off and flips SET_CODEX_TERMINAL_CFG on click', () => {
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+    const codexSection = screen.getByText('CODEX TERMINAL').closest('div')!;
+    expect(within(codexSection.parentElement!).getByText('ENABLE')).toBeTruthy();
   });
 });
