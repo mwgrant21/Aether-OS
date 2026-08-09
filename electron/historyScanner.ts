@@ -40,11 +40,18 @@ export async function scanAllProjects(projectsRoot: string): Promise<TranscriptE
       // exactly the dispatch workloads Cost Forensics exists to analyze.
       const sessionId = file.slice(0, -'.jsonl'.length);
       const subagentsDir = path.join(dirPath, sessionId, 'subagents');
+      // Matches the ENOENT-only suppression convention already used for
+      // projectsRoot's own readdir above: a missing subagents dir is the
+      // expected, common case (most sessions dispatch no subagents), but any
+      // other error (EACCES, EMFILE, transient I/O) must propagate rather
+      // than be silently swallowed -- that is exactly the undercount bug
+      // this file's whole-branch review already fixed via a different path.
       let subagentFiles: string[];
       try {
         subagentFiles = await fsp.readdir(subagentsDir);
-      } catch {
-        continue; // no subagents dir for this session -- not an error
+      } catch (err: any) {
+        if (err.code === 'ENOENT') continue;
+        throw err;
       }
       for (const subFile of subagentFiles) {
         if (!subFile.endsWith('.jsonl')) continue;

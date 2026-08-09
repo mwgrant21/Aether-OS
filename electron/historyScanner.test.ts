@@ -80,4 +80,34 @@ describe('scanAllProjects', () => {
     const events = await scanAllProjects(root);
     expect(events).toHaveLength(2);
   });
+
+  // Finding: the subagents-dir readdir caught ALL errors, not just ENOENT
+  // (no subagents dir -- the expected, common case). A non-ENOENT error
+  // (EACCES, transient I/O) must not be silently swallowed, or this
+  // recreates the exact undercount bug the subagent-scan fix above exists
+  // to prevent -- just via a different, non-obvious failure path.
+  it('still silently skips a session with no subagents dir (ENOENT)', async () => {
+    const root = await makeTmpProjectsRoot();
+    const projectDir = path.join(root, 'my-project');
+    await fsp.mkdir(projectDir, { recursive: true });
+    await fsp.writeFile(path.join(projectDir, 'session-1.jsonl'), assistantLine('session-1', 100) + '\n');
+
+    // No <projectDir>/session-1/subagents directory created at all.
+    await expect(scanAllProjects(root)).resolves.toHaveLength(1);
+  });
+
+  it('does not swallow a non-ENOENT error reading a subagents dir', async () => {
+    const root = await makeTmpProjectsRoot();
+    const projectDir = path.join(root, 'my-project');
+    const sessionDir = path.join(projectDir, 'session-1');
+    await fsp.mkdir(sessionDir, { recursive: true });
+    await fsp.writeFile(path.join(projectDir, 'session-1.jsonl'), assistantLine('session-1', 100) + '\n');
+
+    // Create "subagents" as a FILE, not a directory, so fsp.readdir on it
+    // fails with ENOTDIR rather than ENOENT -- a stand-in for any real
+    // non-ENOENT failure (e.g. EACCES) that must propagate, not vanish.
+    await fsp.writeFile(path.join(sessionDir, 'subagents'), 'not a directory');
+
+    await expect(scanAllProjects(root)).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
 });

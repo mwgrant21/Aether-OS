@@ -216,4 +216,14 @@ describe('selectTodaysRows', () => {
     const r = row({ startedAt: '2026-08-06T12:00:00.000Z', endedAt: '2026-08-06T12:05:00.000Z' });
     expect(selectTodaysRows([r], ledger)).toEqual([]);
   });
+
+  // Finding: a dispatch spanning MORE than 24h -- starting before today and
+  // not ending until after today -- has neither endpoint on today, so the
+  // old "startedAt OR endedAt is today" check wrongly excluded it even
+  // though its interval fully contains today. Interval overlap against
+  // today's local-day bounds must catch this.
+  it('includes a dispatch that fully contains today (starts before, ends after)', () => {
+    const r = row({ startedAt: '2026-08-06T12:00:00.000Z', endedAt: '2026-08-09T12:00:00.000Z' });
+    expect(selectTodaysRows([r], ledger)).toEqual([r]);
+  });
 });
