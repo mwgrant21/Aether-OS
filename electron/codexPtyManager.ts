@@ -45,30 +45,35 @@ export function buildCodexPtyEnv(source: NodeJS.ProcessEnv, codexHome: string): 
 // inherited environment -- if that profile re-exports a blocked var (e.g.
 // `export OPENAI_API_KEY=...` in ~/.bashrc), it silently restores exactly
 // what the strip above removed, before `codex` is ever written to the PTY.
-// Suppressing profile-loading closes that path. An unrecognized $SHELL (not
-// bash/zsh, e.g. fish) is spawned with no suppression flag rather than
-// guessing one -- best effort, not a regression from the prior behavior.
-export function resolveShellInvocation(
-  platform: NodeJS.Platform,
-  shellEnv: string | undefined,
-): { shell: string; args: string[] } {
-  if (platform === 'win32') return { shell: 'powershell.exe', args: ['-NoProfile'] };
-  const shell = shellEnv || 'bash';
-  const shellName = shell.split(/[\\/]/).pop() ?? shell;
-  if (shellName === 'bash') return { shell, args: ['--norc', '--noprofile'] };
-  if (shellName === 'zsh') return { shell, args: ['-f'] };
-  return { shell, args: [] };
+//
+// An earlier version of this fix suppressed profile loading outright
+// (--norc/-NoProfile/-f), but that also suppresses the PATH setup (nvm,
+// pyenv, Homebrew, ~/.local/bin) many operators rely on for `codex` itself
+// to be discoverable -- trading a real availability regression for the fix.
+// Instead: let the profile run normally, then explicitly unset the blocked
+// vars in the live shell session immediately before the launch command --
+// this closes the re-export path without touching anything else the
+// profile sets up. Matches CODEX_LAUNCH_COMMAND's own trick of writing
+// input to the pty immediately after spawn: the shell reads its rc files
+// from disk, not from stdin, so queued writes are unaffected by profile
+// execution and simply wait until the shell is ready to read them.
+export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly string[]): string {
+  if (platform === 'win32') {
+    return vars.map((v) => `Remove-Item Env:\\${v} -ErrorAction SilentlyContinue`).join('; ') + '\r';
+  }
+  return `unset ${vars.join(' ')}\r`;
 }
 
 export function spawnCodexPty(cols = 100, rows = 30) {
-  const { shell, args } = resolveShellInvocation(process.platform, process.env.SHELL);
-  const ptyProcess = pty.spawn(shell, args, {
+  const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
+  const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-color',
     cols,
     rows,
     cwd: os.homedir(),
     env: buildCodexPtyEnv(process.env, resolveCodexHome()),
   });
+  ptyProcess.write(buildUnsetCommand(process.platform, BILLING_AUTH_ENV_VARS));
   ptyProcess.write(CODEX_LAUNCH_COMMAND);
   return ptyProcess;
 }

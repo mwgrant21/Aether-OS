@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCodexPtyEnv, resolveShellInvocation } from './codexPtyManager';
+import { buildCodexPtyEnv, buildUnsetCommand } from './codexPtyManager';
 
 // Mirrors ptyManager.test.ts's guard, for the Codex terminal's own launch path.
 // Mirrors acpProcess.test.ts's BLOCKED list -- the verifier already enumerates
@@ -35,40 +35,20 @@ describe('buildCodexPtyEnv', () => {
 
 // Guards against a shell profile (~/.bashrc, ~/.zshrc, $PROFILE) re-exporting
 // a var buildCodexPtyEnv() already stripped, before `codex` is written to the
-// PTY -- see PR #17 review comment on this file.
-describe('resolveShellInvocation', () => {
-  it('suppresses PowerShell profile loading on win32', () => {
-    expect(resolveShellInvocation('win32', undefined)).toEqual({
-      shell: 'powershell.exe',
-      args: ['-NoProfile'],
-    });
+// PTY -- without suppressing profile loading itself (that would also break
+// PATH setup, e.g. nvm/pyenv/Homebrew, that many operators rely on for
+// `codex` to be discoverable at all). See PR #17 review comments on this file.
+describe('buildUnsetCommand', () => {
+  it('builds a PowerShell Remove-Item command for each var on win32', () => {
+    expect(buildUnsetCommand('win32', ['OPENAI_API_KEY', 'CODEX_API_KEY'])).toBe(
+      'Remove-Item Env:\\OPENAI_API_KEY -ErrorAction SilentlyContinue; ' +
+        'Remove-Item Env:\\CODEX_API_KEY -ErrorAction SilentlyContinue\r',
+    );
   });
 
-  it('suppresses bash rc/profile loading', () => {
-    expect(resolveShellInvocation('linux', '/bin/bash')).toEqual({
-      shell: '/bin/bash',
-      args: ['--norc', '--noprofile'],
-    });
-  });
-
-  it('suppresses zsh rc loading', () => {
-    expect(resolveShellInvocation('darwin', '/bin/zsh')).toEqual({
-      shell: '/bin/zsh',
-      args: ['-f'],
-    });
-  });
-
-  it('defaults to bash with rc/profile suppressed when $SHELL is unset', () => {
-    expect(resolveShellInvocation('linux', undefined)).toEqual({
-      shell: 'bash',
-      args: ['--norc', '--noprofile'],
-    });
-  });
-
-  it('passes an unrecognized shell through with no suppression flag', () => {
-    expect(resolveShellInvocation('linux', '/usr/bin/fish')).toEqual({
-      shell: '/usr/bin/fish',
-      args: [],
-    });
+  it('builds a POSIX unset command for non-win32 platforms', () => {
+    expect(buildUnsetCommand('linux', ['OPENAI_API_KEY', 'CODEX_API_KEY'])).toBe(
+      'unset OPENAI_API_KEY CODEX_API_KEY\r',
+    );
   });
 });
