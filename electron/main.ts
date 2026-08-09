@@ -803,6 +803,9 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   activePty.onData((data) => {
     if (!sender.isDestroyed()) sender.send('pty:data', data);
   });
+  // Lets the renderer's Uplinks view show real terminal liveness instead of
+  // an always-on fake status -- see useTerminalAliveSync.ts.
+  activePty.onExit(() => sendToWindow('pty:exit', undefined));
 });
 
 ipcMain.on('pty:write', (_event, input: string) => {

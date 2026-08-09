@@ -144,12 +144,7 @@ export const initialState: AetherState = {
   memoryTombstones: [],
   memoryScopeFilter: 'all',
   memoryShowTombstones: false,
-  providers: [
-    { name: 'Aether Core', connected: true },
-    { name: 'OpenAI/Codex', connected: false },
-    { name: 'Local Ollama', connected: false },
-  ],
-  routeDefault: 'Auto',
+  terminalAlive: true,
   operatorName: 'Operator',
   realUsage: {
     weeklyTokens: [0, 0, 0, 0, 0, 0, 0],

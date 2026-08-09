@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('pty:data', listener);
       return () => ipcRenderer.removeListener('pty:data', listener);
     },
+    onExit: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('pty:exit', listener);
+      return () => ipcRenderer.removeListener('pty:exit', listener);
+    },
   },
   usage: {
     onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => {

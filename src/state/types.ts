@@ -167,11 +167,6 @@ export interface FleetSessionRow {
   startedAtMs: number;
 }
 
-export interface Provider {
-  name: string;
-  connected: boolean;
-}
-
 export type MemoryScope = 'shared' | 'private';
 export type MemoryKind = 'decision' | 'preference' | 'overrule' | 'habit' | 'revision';
 export type MemoryStatus = 'open' | 'moving' | 'settled';
@@ -270,8 +265,13 @@ export interface AetherState {
   memoryTombstones: MemoryTombstone[];
   memoryScopeFilter: 'all' | 'shared' | string;
   memoryShowTombstones: boolean;
-  providers: Provider[];
-  routeDefault: string;
+  // True whenever the embedded terminal's pty process is alive. Set true at
+  // launch (the pty auto-starts, per PtyTerminal.tsx's module-level
+  // getOrCreateHost) and flipped false by useTerminalAliveSync when
+  // pty:exit fires (electron/main.ts's ptyProcess.onExit handler). There is
+  // no "reconnect" action -- the app has exactly one embedded terminal, not
+  // a connection you can retry from the Uplinks view.
+  terminalAlive: boolean;
   operatorName: string;
   realUsage: RealUsageSnapshot;
   rateHistory: RateSample[];

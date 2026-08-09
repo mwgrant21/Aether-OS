@@ -13,6 +13,7 @@ import { useStatuslineSync } from './state/useStatuslineSync';
 import { useFleetSync } from './state/useFleetSync';
 import { useDiagnosticsSync } from './state/useDiagnosticsSync';
 import { useLedgerSync } from './state/useLedgerSync';
+import { useTerminalAliveSync } from './state/useTerminalAliveSync';
 import { useProjectsSync } from './state/useProjectsSync';
 import { useMemorySync } from './state/useMemorySync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
@@ -40,6 +41,7 @@ export default function App() {
         <FleetSync />
         <DiagnosticsSync />
         <LedgerSync />
+        <TerminalAliveSync />
         <ProjectsSync />
         <MemorySync />
         <PermissionRequestSync />
@@ -95,6 +97,11 @@ function DiagnosticsSync() {
 
 function LedgerSync() {
   useLedgerSync();
+  return null;
+}
+
+function TerminalAliveSync() {
+  useTerminalAliveSync();
   return null;
 }
 

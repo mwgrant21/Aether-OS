@@ -33,8 +33,7 @@ export type Action =
   | { type: 'SET_MEMORY_SCOPE_FILTER'; filter: string }
   | { type: 'TOGGLE_MEMORY_TOMBSTONE_VIEW' }
   | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
-  | { type: 'TOGGLE_PROVIDER_CONNECTION'; name: string }
-  | { type: 'SET_ROUTE_DEFAULT'; value: string }
+  | { type: 'SET_TERMINAL_ALIVE'; alive: boolean }
   | { type: 'SET_OPERATOR_NAME'; name: string }
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
   | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
@@ -182,14 +181,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'UPDATE_CFG':
       return { ...state, cfg: { ...state.cfg, ...action.patch } };
 
-    case 'TOGGLE_PROVIDER_CONNECTION':
-      return {
-        ...state,
-        providers: state.providers.map((p) => (p.name === action.name ? { ...p, connected: !p.connected } : p)),
-      };
-
-    case 'SET_ROUTE_DEFAULT':
-      return { ...state, routeDefault: action.value };
+    case 'SET_TERMINAL_ALIVE':
+      return { ...state, terminalAlive: action.alive };
 
     case 'SET_OPERATOR_NAME':
       return { ...state, operatorName: action.name };
