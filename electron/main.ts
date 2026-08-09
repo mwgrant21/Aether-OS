@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
+import { spawnCodexPty } from './codexPtyManager';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
@@ -826,6 +827,29 @@ ipcMain.on('pty:write', (_event, input: string) => {
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   ptyLifecycle.resize(cols, rows);
+});
+
+// Fully independent from the Claude pty's ptyLifecycle above: separate
+// instance, separate channels, never shares state.
+const codexPtyLifecycle = new PtyLifecycle();
+
+ipcMain.handle('codexPty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
+  const sender = event.sender;
+  codexPtyLifecycle.start(() => spawnCodexPty(cols, rows), {
+    onData: (data) => {
+      if (!sender.isDestroyed()) sender.send('codexPty:data', data);
+    },
+    onAlive: () => sendToWindow('codexPty:alive', undefined),
+    onExit: () => sendToWindow('codexPty:exit', undefined),
+  });
+});
+
+ipcMain.on('codexPty:write', (_event, input: string) => {
+  codexPtyLifecycle.write(input);
+});
+
+ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
+  codexPtyLifecycle.resize(cols, rows);
 });
 
 ipcMain.handle('attachments:list', () => attachmentsStore.list());

@@ -30,6 +30,14 @@ declare global {
         onAlive: (callback: () => void) => () => void;
         onExit: (callback: () => void) => () => void;
       };
+      codexPty: {
+        start: (opts: { cols: number; rows: number }) => Promise<void>;
+        write: (input: string) => void;
+        resize: (cols: number, rows: number) => void;
+        onData: (callback: (data: string) => void) => () => void;
+        onAlive: (callback: () => void) => () => void;
+        onExit: (callback: () => void) => () => void;
+      };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;
       };

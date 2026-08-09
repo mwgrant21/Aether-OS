@@ -40,6 +40,26 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('pty:exit', listener);
     },
   },
+  codexPty: {
+    start: (opts: { cols: number; rows: number }) => ipcRenderer.invoke('codexPty:start', opts),
+    write: (input: string) => ipcRenderer.send('codexPty:write', input),
+    resize: (cols: number, rows: number) => ipcRenderer.send('codexPty:resize', { cols, rows }),
+    onData: (callback: (data: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
+      ipcRenderer.on('codexPty:data', listener);
+      return () => ipcRenderer.removeListener('codexPty:data', listener);
+    },
+    onAlive: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('codexPty:alive', listener);
+      return () => ipcRenderer.removeListener('codexPty:alive', listener);
+    },
+    onExit: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('codexPty:exit', listener);
+      return () => ipcRenderer.removeListener('codexPty:exit', listener);
+    },
+  },
   usage: {
     onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, snapshot: RealUsageSnapshot) => callback(snapshot);
