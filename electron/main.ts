@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
+import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
@@ -48,7 +49,6 @@ import { createRequire } from 'node:module';
 import type { DatabaseSync } from 'node:sqlite';
 import { CodexVerifier } from './crossEngine/codexVerifier';
 import { AcpClient } from './crossEngine/acpClient';
-import { isAllowedAuthStatus } from './crossEngine/codexSubscriptionPolicy';
 import { assertCrossEngineFeatureEnabled, assertNoActiveVerificationRun } from './crossEngine/verifyDispatchGuard';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
 
@@ -715,11 +715,19 @@ ipcMain.handle('crossEngine:connectCodexSubscription', async (): Promise<Verifie
   const client = new AcpClient();
   try {
     client.connect();
-    await client.initialize();
-    await client.authenticate();
-    const status = await client.authenticationStatus();
-    if (status === 'unauthenticated') return 'sign-in-required';
-    return isAllowedAuthStatus(status) ? 'ready-subscription' : 'blocked-billing-mode';
+    // The ONLY place Aether may trigger a real Codex login. This is reached
+    // exclusively from the operator clicking CONNECT CHATGPT, never from
+    // crossEngine:status above, which is passive by construction. The call can
+    // legitimately block for minutes while a browser OAuth flow is completed by
+    // hand -- AcpClient gives `authenticate` a 5-minute timeout to match, and
+    // ipcMain.handle imposes no timeout of its own, so the renderer's await
+    // simply stays pending. Both call sites render a CONNECTING... state for
+    // the duration so the operator knows to finish the login in the browser.
+    if (await client.ensureChatGptAuthenticated()) return 'ready-subscription';
+    // Failed: re-derive the precise reason from the passive probe rather than
+    // reporting a generic error (no second login attempt -- probe never
+    // authenticates).
+    return await client.probe();
   } catch {
     return 'error';
   } finally {
@@ -790,30 +798,34 @@ ipcMain.handle('app:getVersion', () => {
   return pkg.version as string;
 });
 
-let activePty: ReturnType<typeof spawnPty> | null = null;
+// Holds the single active pty and the superseded-exit rule -- see
+// ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
+// without loading main.ts (and node-pty) in the test environment.
+const ptyLifecycle = new PtyLifecycle();
 
 ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
-  if (activePty) {
-    activePty.kill();
-    activePty = null;
-  }
-  activePty = spawnPty(cols, rows);
-  liveAgentTracker.notifyPtySpawned(Date.now());
   const sender = event.sender;
-  activePty.onData((data) => {
-    if (!sender.isDestroyed()) sender.send('pty:data', data);
+  ptyLifecycle.start(() => spawnPty(cols, rows), {
+    onData: (data) => {
+      if (!sender.isDestroyed()) sender.send('pty:data', data);
+    },
+    // Lets the renderer's Uplinks view show real terminal liveness instead of
+    // an always-on fake status -- see useTerminalAliveSync.ts. terminalAlive
+    // starts false (no pty is started until the Terminal tab is actually
+    // visited, and never at all outside Electron), so this is the event that
+    // turns it on; pty:exit turns it back off.
+    onAlive: () => sendToWindow('pty:alive', undefined),
+    onExit: () => sendToWindow('pty:exit', undefined),
   });
-  // Lets the renderer's Uplinks view show real terminal liveness instead of
-  // an always-on fake status -- see useTerminalAliveSync.ts.
-  activePty.onExit(() => sendToWindow('pty:exit', undefined));
+  liveAgentTracker.notifyPtySpawned(Date.now());
 });
 
 ipcMain.on('pty:write', (_event, input: string) => {
-  activePty?.write(input);
+  ptyLifecycle.write(input);
 });
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
-  activePty?.resize(cols, rows);
+  ptyLifecycle.resize(cols, rows);
 });
 
 ipcMain.handle('attachments:list', () => attachmentsStore.list());

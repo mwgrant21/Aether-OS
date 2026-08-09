@@ -24,6 +24,7 @@ export function UplinksView() {
   const { state } = useAetherStore();
   const { enabled } = state.crossEngineCfg;
   const [codexStatus, setCodexStatus] = useState<VerifierStatus>('disabled');
+  const [connecting, setConnecting] = useState(false);
 
   // Push the persisted preference to main on every mount and on every toggle,
   // same as CrossEngineVerificationCard.tsx -- main.ts's crossEngineFeatureEnabled
@@ -49,7 +50,12 @@ export function UplinksView() {
 
   const codexOnline = codexStatus === 'ready-subscription';
 
+  // Mirrors CrossEngineVerificationCard.tsx: this is the real ChatGPT login and
+  // can block for minutes on a browser OAuth flow, so the button has to show
+  // that something is in flight rather than looking dead.
   const connectCodex = async () => {
+    if (connecting) return;
+    setConnecting(true);
     try {
       const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
       if (result) setCodexStatus(result);
@@ -58,6 +64,8 @@ export function UplinksView() {
       // failure down this call chain (e.g. main's assertCrossEngineFeatureEnabled
       // guard throwing) must not surface as an unhandled promise rejection.
       setCodexStatus('error');
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -76,8 +84,8 @@ export function UplinksView() {
           <span style={nameStyle(colors)}>OpenAI/Codex</span>
           <span style={badgeStyle(colors, codexOnline)}>{codexOnline ? 'ONLINE' : 'OFFLINE'}</span>
           {enabled ? (
-            <Button onClick={connectCodex} style={toggleButtonStyle(colors, codexOnline)}>
-              {codexOnline ? 'RECONNECT' : 'CONNECT'}
+            <Button onClick={connectCodex} disabled={connecting} style={toggleButtonStyle(colors, codexOnline)}>
+              {connecting ? 'CONNECTING...' : codexOnline ? 'RECONNECT' : 'CONNECT'}
             </Button>
           ) : (
             <Button

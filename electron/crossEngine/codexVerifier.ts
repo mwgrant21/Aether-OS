@@ -5,7 +5,7 @@ import { buildVerificationSnapshot } from './snapshotBuilder';
 import { buildVerificationPrompt } from './verificationPrompt';
 import { parseVerificationResult } from './verificationResult';
 import { AcpClient } from './acpClient';
-import { isAllowedAuthStatus } from './codexSubscriptionPolicy';
+import { isAllowedAuthStatus, offersChatGptAuthMethod } from './codexSubscriptionPolicy';
 import type { VerificationRequest, VerificationResultV1, VerificationEvent } from '../../src/shared/crossEngineTypes';
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
@@ -57,14 +57,24 @@ export class CodexVerifier {
       dispose = snapshot.dispose;
       if (this.cancelled) return await cancelledResult();
 
+      // Binding requirement: authentication is re-verified for real immediately
+      // before every prompt, never read from a cached flag. `authentication/status`
+      // is a live read of the adapter's account state (see acpClient.ts), so this
+      // catches an operator who logged out or switched to an API-key/gateway
+      // login since the last check. It deliberately does NOT send `authenticate`:
+      // that is the browser-popup path, and a verification run must never open a
+      // login window on its own. If we are not already signed in with ChatGPT,
+      // the run fails closed here and the operator connects explicitly instead.
       onEvent({ kind: 'status', runId, phase: 'checking-auth' });
       client.connect();
-      await client.initialize();
-      await client.authenticate();
-      const status = await client.authenticationStatus();
+      const authMethods = await client.initialize();
+      const offersChatGpt = offersChatGptAuthMethod(authMethods);
+      const status = offersChatGpt ? await client.authenticationStatus() : 'unknown';
       if (this.cancelled) return await cancelledResult();
-      if (!isAllowedAuthStatus(status)) {
-        const message = `Codex authentication is not subscription-only (status: ${status}); refusing to run.`;
+      if (!offersChatGpt || !isAllowedAuthStatus(status)) {
+        const message = offersChatGpt
+          ? `Codex authentication is not subscription-only (status: ${status}); refusing to run.`
+          : 'Codex did not offer ChatGPT subscription authentication; refusing to run.';
         onEvent({ kind: 'error', runId, code: 'BILLING_MODE_BLOCKED', message });
         return { schemaVersion: 1, verdict: 'inconclusive', confidence: 0, summary: message, findings: [], tests: [], limitations: [message] };
       }

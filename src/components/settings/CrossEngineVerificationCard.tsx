@@ -14,6 +14,7 @@ export function CrossEngineVerificationCard() {
   const { enabled } = state.crossEngineCfg;
   const [status, setStatus] = useState<VerifierStatus>('disabled');
   const [confirming, setConfirming] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   // Push the persisted preference to main on every mount (covers app restart,
   // where main.ts always starts with its own default until told otherwise)
@@ -44,12 +45,21 @@ export function CrossEngineVerificationCard() {
     dispatch({ type: 'SET_CROSS_ENGINE_CFG', cfg: { enabled: true, provider: 'codex-chatgpt' } });
   };
 
+  // connectCodexSubscription() is the one call here that can block for
+  // minutes: it is the real ChatGPT login, and if the operator isn't already
+  // signed in the adapter opens a browser and nothing resolves until the OAuth
+  // flow finishes. Without a pending state the button looks inert and the
+  // operator has no cue that a browser window is waiting on them.
   const connect = async () => {
+    if (connecting) return; // a second login attempt while one is outstanding
+    setConnecting(true);
     try {
       const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
       if (result) setStatus(result);
     } catch {
       setStatus('error');
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -90,9 +100,10 @@ export function CrossEngineVerificationCard() {
             <div style={labelStyle(colors)}>STATUS</div>
             <div style={valueStyle(colors)}>{status.toUpperCase()}</div>
           </div>
-          <Button onClick={connect} style={{ ...toggleStyle(colors, false), marginTop: 10 }}>
-            {status === 'ready-subscription' ? 'RECONNECT' : 'CONNECT CHATGPT'}
+          <Button onClick={connect} disabled={connecting} style={{ ...toggleStyle(colors, false), marginTop: 10 }}>
+            {connecting ? 'CONNECTING...' : status === 'ready-subscription' ? 'RECONNECT' : 'CONNECT CHATGPT'}
           </Button>
+          {connecting && <p style={hintStyle(colors)}>Complete the ChatGPT sign-in in your browser. This can take a minute.</p>}
           <p style={hintStyle(colors)}>{DISCLOSURE}</p>
         </>
       )}

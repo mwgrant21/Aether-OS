@@ -21,11 +21,24 @@ import { buildVerificationSnapshot } from './snapshotBuilder';
 import { spawnAcpProcess } from './acpProcess';
 import { CodexVerifier } from './codexVerifier';
 
+type AcpRequest = { id: number; method: string; params?: unknown };
+
 type FakeChild = {
   stdout: PassThrough;
   stdin: PassThrough;
   kill: () => void;
-  _responders: Array<(req: { id: number; method: string }) => void>;
+  _responders: Array<(req: AcpRequest) => void>;
+  received: AcpRequest[];
+};
+
+/** The real Codex ACP adapter (v1.1.14) InitializeResponse shape,
+ *  captured from a live handshake -- see acpClient.test.ts. */
+const REAL_INITIALIZE_RESULT = {
+  protocolVersion: 1,
+  authMethods: [
+    { id: 'api-key', name: 'API Key' },
+    { id: 'chat-gpt', name: 'ChatGPT' },
+  ],
 };
 
 function fakeChild(): FakeChild {
@@ -36,10 +49,12 @@ function fakeChild(): FakeChild {
   emitter.stdin = stdin;
   emitter.kill = vi.fn();
   emitter._responders = [];
+  emitter.received = [];
   stdin.on('data', (data: Buffer) => {
     for (const line of data.toString('utf8').split('\n')) {
       if (!line.trim()) continue;
-      const req = JSON.parse(line) as { id: number; method: string };
+      const req = JSON.parse(line) as AcpRequest;
+      emitter.received.push(req);
       const responder = emitter._responders.shift();
       if (responder) responder(req);
     }
@@ -103,8 +118,7 @@ describe('CodexVerifier.run', () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
-    respondTo(child, {}); // initialize
-    respondTo(child, {}); // authenticate
+    respondTo(child, REAL_INITIALIZE_RESULT); // initialize
     respondTo(child, { type: 'api-key' }); // authentication/status
 
     const result = await verifier.run('run-2', { toolUseId: 'tu1' }, (e) => events.push(e));
@@ -121,8 +135,7 @@ describe('CodexVerifier.run', () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
-    respondTo(child, {});
-    respondTo(child, {});
+    respondTo(child, REAL_INITIALIZE_RESULT);
     respondTo(child, { type: 'api-key' });
 
     const result = await verifier.run('run-3', { toolUseId: 'tu1' }, (e) => events.push(e));
@@ -131,13 +144,75 @@ describe('CodexVerifier.run', () => {
     expect(events.some((e) => e.kind === 'error' && e.code === 'BILLING_MODE_BLOCKED')).toBe(true);
   });
 
+  it('fails the run closed when the pre-prompt recheck finds no active login, without ever prompting', async () => {
+    // The recheck runs immediately before the prompt on EVERY run. If the
+    // operator signed out since the last status view, the run must stop here.
+    vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
+    const child = fakeChild();
+    vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
+    respondTo(child, REAL_INITIALIZE_RESULT);
+    respondTo(child, { type: 'unauthenticated' });
+
+    const result = await verifier.run('run-11', { toolUseId: 'tu1' }, (e) => events.push(e));
+
+    expect(result.verdict).toBe('inconclusive');
+    expect(events.some((e) => e.kind === 'error' && e.code === 'BILLING_MODE_BLOCKED')).toBe(true);
+    const methods = child.received.map((r) => r.method);
+    expect(methods).not.toContain('session/new');
+    expect(methods).not.toContain('session/prompt');
+  });
+
+  it('fails the run closed when chat-gpt is not an offered auth method, without querying status or prompting', async () => {
+    vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
+    const child = fakeChild();
+    vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
+    respondTo(child, { protocolVersion: 1, authMethods: [{ id: 'api-key', name: 'API Key' }] });
+
+    const result = await verifier.run('run-12', { toolUseId: 'tu1' }, (e) => events.push(e));
+
+    expect(result.verdict).toBe('inconclusive');
+    expect(events.some((e) => e.kind === 'error' && e.code === 'BILLING_MODE_BLOCKED')).toBe(true);
+    expect(child.received.map((r) => r.method)).toEqual(['initialize']);
+  });
+
+  it('never sends authenticate during a run -- a verification must not open a browser login', async () => {
+    vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
+    const child = fakeChild();
+    vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
+    const raw = { schemaVersion: 1, verdict: 'supported', confidence: 0.8, summary: 'matches', findings: [], tests: [], limitations: [] };
+    respondTo(child, REAL_INITIALIZE_RESULT);
+    respondTo(child, { type: 'chat-gpt' });
+    respondTo(child, { sessionId: 'sess-auth' });
+    respondToPromptWithMessage(child, 'sess-auth', JSON.stringify(raw));
+
+    await verifier.run('run-13', { toolUseId: 'tu1' }, (e) => events.push(e));
+
+    expect(child.received.map((r) => r.method)).toEqual([
+      'initialize',
+      'authentication/status',
+      'session/new',
+      'session/prompt',
+    ]);
+  });
+
+  it('sends the required protocolVersion on the run initialize', async () => {
+    vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
+    const child = fakeChild();
+    vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
+    respondTo(child, REAL_INITIALIZE_RESULT);
+    respondTo(child, { type: 'unauthenticated' });
+
+    await verifier.run('run-14', { toolUseId: 'tu1' }, (e) => events.push(e));
+
+    expect(child.received[0].params).toEqual({ protocolVersion: 1 });
+  });
+
   it('returns a validated result on a well-formed Codex response', async () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
     const raw = { schemaVersion: 1, verdict: 'supported', confidence: 0.8, summary: 'matches', findings: [{ severity: 'info', claim: 'did the thing', evidence: 'saw it in the diff', file: null, line: null }], tests: [], limitations: [] };
-    respondTo(child, {}); // initialize
-    respondTo(child, {}); // authenticate
+    respondTo(child, REAL_INITIALIZE_RESULT); // initialize
     respondTo(child, { type: 'chat-gpt' }); // authentication/status
     respondTo(child, { sessionId: 'sess-1' }); // session/new
     respondToPromptWithMessage(child, 'sess-1', JSON.stringify(raw)); // session/prompt
@@ -154,8 +229,7 @@ describe('CodexVerifier.run', () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
-    respondTo(child, {});
-    respondTo(child, {});
+    respondTo(child, REAL_INITIALIZE_RESULT);
     respondTo(child, { type: 'chat-gpt' });
     respondTo(child, { sessionId: 'sess-2' }); // session/new
     // No responder queued for session/prompt -- it never resolves.
@@ -175,8 +249,7 @@ describe('CodexVerifier.run', () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
-    respondTo(child, {});
-    respondTo(child, {});
+    respondTo(child, REAL_INITIALIZE_RESULT);
     respondTo(child, { type: 'chat-gpt' });
     respondTo(child, { sessionId: 'sess-3' });
     // No responder for session/prompt -- cancel() disposes the client while
@@ -202,8 +275,7 @@ describe('CodexVerifier.run', () => {
     vi.mocked(resolveDispatchEvidence).mockResolvedValue(okEvidence());
     const child = fakeChild();
     vi.mocked(spawnAcpProcess).mockReturnValue(child as never);
-    respondTo(child, {});
-    respondTo(child, {});
+    respondTo(child, REAL_INITIALIZE_RESULT);
     respondTo(child, { type: 'chat-gpt' });
     respondTo(child, { sessionId: 'sess-4' });
     // session/prompt is never answered -- simulates the child having crashed.

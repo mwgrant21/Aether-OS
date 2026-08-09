@@ -116,4 +116,46 @@ describe('CrossEngineVerificationCard', () => {
 
     await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
   });
+
+  // connectCodexSubscription() is the real ChatGPT login: if the operator is
+  // not already signed in, main.ts's handler blocks until a browser OAuth flow
+  // completes, which is human-scale time. The button must say so rather than
+  // looking inert, and must not queue a second login on a double click.
+  it('shows a pending state while the ChatGPT login is outstanding', async () => {
+    let resolveConnect!: (s: string) => void;
+    const connectCodexSubscription = vi.fn(
+      () => new Promise<string>((res) => { resolveConnect = res; }),
+    );
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockResolvedValue('sign-in-required'),
+        connectCodexSubscription,
+        setEnabled: vi.fn(),
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+
+    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
+    await waitFor(() => expect(screen.getByText('SIGN-IN-REQUIRED')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('CONNECT CHATGPT'));
+
+    await waitFor(() => expect(screen.getByText('CONNECTING...')).toBeTruthy());
+    expect(screen.getByText(/Complete the ChatGPT sign-in in your browser/)).toBeTruthy();
+
+    // A second click while the login is outstanding must not start another one.
+    fireEvent.click(screen.getByText('CONNECTING...'));
+    expect(connectCodexSubscription).toHaveBeenCalledTimes(1);
+
+    resolveConnect('ready-subscription');
+
+    await waitFor(() => expect(screen.getByText('READY-SUBSCRIPTION')).toBeTruthy());
+    expect(screen.getByText('RECONNECT')).toBeTruthy();
+  });
 });
