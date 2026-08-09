@@ -144,7 +144,12 @@ export const initialState: AetherState = {
   memoryTombstones: [],
   memoryScopeFilter: 'all',
   memoryShowTombstones: false,
-  terminalAlive: true,
+  // False until main.ts actually pushes `pty:alive`. No pty exists at launch:
+  // PtyTerminal.tsx spawns one only when the Terminal tab mounts, so a launch
+  // restoring any other persisted activeTab -- or a renderer running outside
+  // Electron -- has no terminal at all. Defaulting true made Uplinks and the
+  // dashboard report ONLINE indefinitely in exactly those cases.
+  terminalAlive: false,
   operatorName: 'Operator',
   realUsage: {
     weeklyTokens: [0, 0, 0, 0, 0, 0, 0],

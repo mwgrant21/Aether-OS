@@ -27,6 +27,7 @@ declare global {
         write: (input: string) => void;
         resize: (cols: number, rows: number) => void;
         onData: (callback: (data: string) => void) => () => void;
+        onAlive: (callback: () => void) => () => void;
         onExit: (callback: () => void) => () => void;
       };
       usage: {

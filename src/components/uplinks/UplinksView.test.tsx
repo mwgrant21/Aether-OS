@@ -14,7 +14,10 @@ afterEach(() => {
 });
 
 describe('UplinksView', () => {
-  it('renders Aether Core as ONLINE by default (terminalAlive defaults true)', () => {
+  it('renders Aether Core as OFFLINE by default (terminalAlive defaults false)', () => {
+    // No pty is started until the Terminal tab mounts, so a launch that lands
+    // on Uplinks has no terminal to report. It stays OFFLINE until main
+    // actually pushes pty:alive.
     render(
       <AetherStoreProvider>
         <UplinksView />
@@ -24,22 +27,22 @@ describe('UplinksView', () => {
     // Two rows exist; scope to the row containing "Aether Core" to avoid
     // matching the OpenAI/Codex row's own badge.
     const row = screen.getByText('Aether Core').closest('div');
-    expect(row?.textContent).toContain('ONLINE');
+    expect(row?.textContent).toContain('OFFLINE');
   });
 
-  it('renders Aether Core as OFFLINE when terminalAlive is false', () => {
+  it('renders Aether Core as ONLINE when terminalAlive is true', () => {
     // Seed the persisted-state merge store.tsx performs on mount -- the same
-    // mechanism a real pty:exit event feeds via useTerminalAliveSync/
+    // mechanism a real pty:alive event feeds via useTerminalAliveSync/
     // SET_TERMINAL_ALIVE, just pre-seeded here since terminalAlive itself is
     // deliberately excluded from persistence (see PERSISTENCE_EXCLUSIONS).
-    localStorage.setItem('aetheros-v1', JSON.stringify({ terminalAlive: false }));
+    localStorage.setItem('aetheros-v1', JSON.stringify({ terminalAlive: true }));
     render(
       <AetherStoreProvider>
         <UplinksView />
       </AetherStoreProvider>,
     );
     const row = screen.getByText('Aether Core').closest('div');
-    expect(row?.textContent).toContain('OFFLINE');
+    expect(row?.textContent).toContain('ONLINE');
   });
 
   it('renders OpenAI/Codex as OFFLINE with an explanatory disabled button when cross-engine is not enabled', () => {

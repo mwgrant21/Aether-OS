@@ -100,12 +100,22 @@ describe('reducer', () => {
     expect(next.cfg.alarm).toBe(initialState.cfg.alarm);
   });
 
-  it('terminalAlive defaults true in initialState', () => {
-    expect(initialState.terminalAlive).toBe(true);
+  // Nothing spawns a pty at launch -- PtyTerminal.tsx only does so when the
+  // Terminal tab actually mounts -- so the honest default is "no terminal".
+  // Defaulting true previously made Uplinks/Dashboard report ONLINE forever on
+  // any launch that restored a different tab, or outside Electron entirely.
+  it('terminalAlive defaults false in initialState', () => {
+    expect(initialState.terminalAlive).toBe(false);
   });
 
-  it('SET_TERMINAL_ALIVE flips terminalAlive to false', () => {
-    const next = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: false });
+  it('SET_TERMINAL_ALIVE flips terminalAlive to true (the pty:alive push)', () => {
+    const next = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(next.terminalAlive).toBe(true);
+  });
+
+  it('SET_TERMINAL_ALIVE flips terminalAlive to false (the pty:exit push)', () => {
+    const alive = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    const next = reducer(alive, { type: 'SET_TERMINAL_ALIVE', alive: false });
     expect(next.terminalAlive).toBe(false);
   });
 
