@@ -21,9 +21,29 @@ export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return env;
 }
 
+// A login/interactive shell sources the operator's own profile (~/.bashrc,
+// ~/.zshrc, $PROFILE) after buildPtyEnv() has already sanitized the
+// inherited environment -- if that profile re-exports a blocked var (e.g.
+// `export ANTHROPIC_API_KEY=...` in ~/.bashrc), it silently restores exactly
+// what the strip above removed, before `claude` is ever written to the PTY.
+// Suppressing profile-loading closes that path. An unrecognized $SHELL (not
+// bash/zsh, e.g. fish) is spawned with no suppression flag rather than
+// guessing one -- best effort, not a regression from the prior behavior.
+export function resolveShellInvocation(
+  platform: NodeJS.Platform,
+  shellEnv: string | undefined,
+): { shell: string; args: string[] } {
+  if (platform === 'win32') return { shell: 'powershell.exe', args: ['-NoProfile'] };
+  const shell = shellEnv || 'bash';
+  const shellName = shell.split(/[\\/]/).pop() ?? shell;
+  if (shellName === 'bash') return { shell, args: ['--norc', '--noprofile'] };
+  if (shellName === 'zsh') return { shell, args: ['-f'] };
+  return { shell, args: [] };
+}
+
 export function spawnPty(cols = 100, rows = 30) {
-  const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
-  const ptyProcess = pty.spawn(shell, [], {
+  const { shell, args } = resolveShellInvocation(process.platform, process.env.SHELL);
+  const ptyProcess = pty.spawn(shell, args, {
     name: 'xterm-color',
     cols,
     rows,
