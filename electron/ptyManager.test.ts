@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPtyEnv, resolveShellInvocation } from './ptyManager';
+import { buildPtyEnv, buildUnsetCommand } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -26,40 +26,21 @@ describe('buildPtyEnv', () => {
 });
 
 // Guards against a shell profile (~/.bashrc, ~/.zshrc, $PROFILE) re-exporting
-// a var buildPtyEnv() already stripped, before `claude` is written to the PTY.
-describe('resolveShellInvocation', () => {
-  it('suppresses PowerShell profile loading on win32', () => {
-    expect(resolveShellInvocation('win32', undefined)).toEqual({
-      shell: 'powershell.exe',
-      args: ['-NoProfile'],
-    });
+// a var buildPtyEnv() already stripped, before `claude` is written to the PTY
+// -- without suppressing profile loading itself (that would also break PATH
+// setup, e.g. nvm/pyenv/Homebrew, that many operators rely on for `claude`
+// to be discoverable at all).
+describe('buildUnsetCommand', () => {
+  it('builds a PowerShell Remove-Item command for each var on win32', () => {
+    expect(buildUnsetCommand('win32', ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'])).toBe(
+      'Remove-Item Env:\\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue; ' +
+        'Remove-Item Env:\\ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue\r',
+    );
   });
 
-  it('suppresses bash rc/profile loading', () => {
-    expect(resolveShellInvocation('linux', '/bin/bash')).toEqual({
-      shell: '/bin/bash',
-      args: ['--norc', '--noprofile'],
-    });
-  });
-
-  it('suppresses zsh rc loading', () => {
-    expect(resolveShellInvocation('darwin', '/bin/zsh')).toEqual({
-      shell: '/bin/zsh',
-      args: ['-f'],
-    });
-  });
-
-  it('defaults to bash with rc/profile suppressed when $SHELL is unset', () => {
-    expect(resolveShellInvocation('linux', undefined)).toEqual({
-      shell: 'bash',
-      args: ['--norc', '--noprofile'],
-    });
-  });
-
-  it('passes an unrecognized shell through with no suppression flag', () => {
-    expect(resolveShellInvocation('linux', '/usr/bin/fish')).toEqual({
-      shell: '/usr/bin/fish',
-      args: [],
-    });
+  it('builds a POSIX unset command for non-win32 platforms', () => {
+    expect(buildUnsetCommand('linux', ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'])).toBe(
+      'unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL\r',
+    );
   });
 });
