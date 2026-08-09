@@ -272,6 +272,11 @@ export interface AetherState {
   // no "reconnect" action -- the app has exactly one embedded terminal, not
   // a connection you can retry from the Uplinks view.
   terminalAlive: boolean;
+  // Same pattern as terminalAlive, but for the independent Codex pty
+  // (electron/codexPtyManager.ts). No pty exists at launch -- driven
+  // entirely by useCodexTerminalAliveSync's codexPty:alive/codexPty:exit
+  // event handling once the Codex terminal view mounts.
+  codexTerminalAlive: boolean;
   operatorName: string;
   realUsage: RealUsageSnapshot;
   rateHistory: RateSample[];

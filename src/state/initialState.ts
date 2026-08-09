@@ -150,6 +150,9 @@ export const initialState: AetherState = {
   // Electron -- has no terminal at all. Defaulting true made Uplinks and the
   // dashboard report ONLINE indefinitely in exactly those cases.
   terminalAlive: false,
+  // Same reasoning as terminalAlive: nothing spawns the Codex pty until the
+  // Codex terminal view actually mounts.
+  codexTerminalAlive: false,
   operatorName: 'Operator',
   realUsage: {
     weeklyTokens: [0, 0, 0, 0, 0, 0, 0],

@@ -46,6 +46,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   memories: 'a live collector-sourced snapshot read from memory.db on every poll (SET_MEMORIES); same reasoning as realAgents/realUsage -- a persisted value would show stale memory rows as current until the next real snapshot arrives',
   memoryTombstones: 'a live collector-sourced snapshot read from memory.db on every poll (SET_MEMORY_TOMBSTONES); same reasoning as memories',
   terminalAlive: "recomputed live -- starts false at every launch (no pty exists until the Terminal tab mounts) and is driven only by this session's own pty:alive/pty:exit events via useTerminalAliveSync; a persisted value would report a previous session's terminal state as this session's, same reasoning as ledger/projectsSnapshot",
+  codexTerminalAlive: "recomputed live -- starts false at every launch (no pty exists until the Codex view mounts) and is driven only by this session's own codexPty:alive/codexPty:exit events via useCodexTerminalAliveSync, same reasoning as terminalAlive",
 };
 
 export function loadPersisted(): Partial<AetherState> | null {

@@ -126,6 +126,24 @@ describe('reducer', () => {
     expect(next.operatorName).toBe(initialState.operatorName);
   });
 
+  it('SET_CODEX_TERMINAL_ALIVE flips codexTerminalAlive to true (the codexPty:alive push)', () => {
+    const next = reducer(initialState, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true });
+    expect(next.codexTerminalAlive).toBe(true);
+  });
+
+  it('SET_CODEX_TERMINAL_ALIVE flips codexTerminalAlive to false (the codexPty:exit push)', () => {
+    const alive = reducer(initialState, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true });
+    const next = reducer(alive, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: false });
+    expect(next.codexTerminalAlive).toBe(false);
+  });
+
+  it("SET_CODEX_TERMINAL_ALIVE leaves terminalAlive (the Claude pty's own flag) untouched", () => {
+    const withClaudeAlive = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    const next = reducer(withClaudeAlive, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true });
+    expect(next.terminalAlive).toBe(true);
+    expect(next.codexTerminalAlive).toBe(true);
+  });
+
   it('SET_OPERATOR_NAME sets operatorName verbatim, leaving other state untouched', () => {
     const next = reducer(initialState, { type: 'SET_OPERATOR_NAME', name: 'Matt' });
     expect(next.operatorName).toBe('Matt');

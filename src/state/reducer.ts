@@ -34,6 +34,7 @@ export type Action =
   | { type: 'TOGGLE_MEMORY_TOMBSTONE_VIEW' }
   | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
   | { type: 'SET_TERMINAL_ALIVE'; alive: boolean }
+  | { type: 'SET_CODEX_TERMINAL_ALIVE'; alive: boolean }
   | { type: 'SET_OPERATOR_NAME'; name: string }
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
   | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
@@ -183,6 +184,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_TERMINAL_ALIVE':
       return { ...state, terminalAlive: action.alive };
+
+    case 'SET_CODEX_TERMINAL_ALIVE':
+      return { ...state, codexTerminalAlive: action.alive };
 
     case 'SET_OPERATOR_NAME':
       return { ...state, operatorName: action.name };
