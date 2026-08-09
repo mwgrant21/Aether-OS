@@ -11,6 +11,13 @@ export interface DispatchCostRow {
   toolUseId: string;
   /** ISO timestamp the dispatch opened; used to scope rows to a day. */
   startedAt: string;
+  /**
+   * ISO timestamp the dispatch is estimated to have finished (startedAt +
+   * durationMs, or startedAt itself when duration is unavailable). Used
+   * alongside startedAt so a dispatch spanning local midnight is scoped to
+   * "today" if either end of it falls today.
+   */
+  endedAt: string;
   description: string;
   subagentType: string;
   durationMs: number;

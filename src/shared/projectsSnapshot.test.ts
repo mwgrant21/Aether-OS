@@ -34,12 +34,12 @@ describe('buildProjectsSnapshot', () => {
 
   it('groups events under their repo', () => {
     const s = buildProjectsSnapshot([ev(AETHER, M), ev(TOKEN, M / 2)], probe, keyOf, 'UTC', NOW);
-    expect(s.roots.map((r) => r.name)).toEqual(['Aether-OS', 'TokenMonitorV2']);
+    expect(s.roots.map((r) => r.name)).toEqual(['aether-os', 'tokenmonitorv2']);
   });
 
   it('sorts roots by cost descending', () => {
     const s = buildProjectsSnapshot([ev(AETHER, M / 4), ev(TOKEN, M)], probe, keyOf, 'UTC', NOW);
-    expect(s.roots.map((r) => r.name)).toEqual(['TokenMonitorV2', 'Aether-OS']);
+    expect(s.roots.map((r) => r.name)).toEqual(['tokenmonitorv2', 'aether-os']);
   });
 
   it('nests a worktree under its parent and includes it in the parent total', () => {
@@ -47,7 +47,7 @@ describe('buildProjectsSnapshot', () => {
     const s = buildProjectsSnapshot([ev(AETHER, M), ev(wt, M)], probe, keyOf, 'UTC', NOW);
     expect(s.roots).toHaveLength(1);
     const root = s.roots[0];
-    expect(root.name).toBe('Aether-OS');
+    expect(root.name).toBe('aether-os');
     // 2M output tokens at the sonnet $15/Mtok rate.
     expect(root.ledger.total.usd).toBeCloseTo(30, 6);
     expect(root.children.map((c) => c.worktree)).toEqual([null, 'statusline-feed']);

@@ -25,14 +25,14 @@ const ledger = (usd: number) =>
 const snapshot: ProjectsSnapshot = {
   roots: [
     {
-      key: 'aether', name: 'Aether-OS', worktree: null, ledger: ledger(184.2),
+      key: 'aether', name: 'aether-os', worktree: null, ledger: ledger(184.2),
       children: [
-        { key: 'aether-main', name: 'Aether-OS', worktree: null, ledger: ledger(31.05) },
-        { key: 'aether-wt', name: 'Aether-OS', worktree: 'statusline-feed', ledger: ledger(153.15) },
+        { key: 'aether-main', name: 'aether-os', worktree: null, ledger: ledger(31.05) },
+        { key: 'aether-wt', name: 'aether-os', worktree: 'statusline-feed', ledger: ledger(153.15) },
       ],
     },
-    { key: 'tmv2', name: 'TokenMonitorV2', worktree: null, ledger: ledger(96.4), children: [
-      { key: 'tmv2-main', name: 'TokenMonitorV2', worktree: null, ledger: ledger(96.4) },
+    { key: 'tmv2', name: 'tokenmonitorv2', worktree: null, ledger: ledger(96.4), children: [
+      { key: 'tmv2-main', name: 'tokenmonitorv2', worktree: null, ledger: ledger(96.4) },
     ] },
   ],
   unscoped: ledger(44.9),
@@ -42,7 +42,7 @@ const snapshot: ProjectsSnapshot = {
 describe('ProjectRosterCard', () => {
   it('lists roots with their combined cost', () => {
     render(<ProjectRosterCard snapshot={snapshot} selectedKey={null} onSelect={() => {}} />);
-    expect(screen.getByText('Aether-OS')).toBeTruthy();
+    expect(screen.getByText('aether-os')).toBeTruthy();
     expect(screen.getByText('$184.20')).toBeTruthy();
     expect(screen.getByText('$96.40')).toBeTruthy();
   });
@@ -50,14 +50,14 @@ describe('ProjectRosterCard', () => {
   it('hides worktree children until the root is expanded', () => {
     render(<ProjectRosterCard snapshot={snapshot} selectedKey={null} onSelect={() => {}} />);
     expect(screen.queryByText('statusline-feed')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /expand Aether-OS/i }));
+    fireEvent.click(screen.getByRole('button', { name: /expand aether-os/i }));
     expect(screen.getByText('statusline-feed')).toBeTruthy();
     expect(screen.getByText('main')).toBeTruthy();
   });
 
   it('offers no disclosure control for a repo with only its own checkout', () => {
     render(<ProjectRosterCard snapshot={snapshot} selectedKey={null} onSelect={() => {}} />);
-    expect(screen.queryByRole('button', { name: /expand TokenMonitorV2/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /expand tokenmonitorv2/i })).toBeNull();
   });
 
   it('renders the unscoped bucket, and does not call it a project', () => {
@@ -74,12 +74,24 @@ describe('ProjectRosterCard', () => {
   it('reports the clicked key', () => {
     const onSelect = vi.fn();
     render(<ProjectRosterCard snapshot={snapshot} selectedKey={null} onSelect={onSelect} />);
-    fireEvent.click(screen.getByText('TokenMonitorV2'));
+    fireEvent.click(screen.getByText('tokenmonitorv2'));
     expect(onSelect).toHaveBeenCalledWith('tmv2');
   });
 
   it('says so plainly when no projects have been observed', () => {
     render(<ProjectRosterCard snapshot={{ roots: [], unscoped: null, computedAtMs: 0 }} selectedKey={null} onSelect={() => {}} />);
     expect(screen.getByText(/no projects observed/i)).toBeTruthy();
+  });
+
+  it('renders the unscoped row instead of the empty state when roots is empty but unscoped activity exists', () => {
+    render(<ProjectRosterCard snapshot={{ roots: [], unscoped: ledger(44.9), computedAtMs: 0 }} selectedKey={null} onSelect={() => {}} />);
+    expect(screen.queryByText(/no projects observed/i)).toBeNull();
+    expect(screen.getByText(/unscoped/i)).toBeTruthy();
+    expect(screen.getByText('$44.90')).toBeTruthy();
+  });
+
+  it('still shows the empty state when both roots and unscoped are empty/null', () => {
+    render(<ProjectRosterCard snapshot={{ roots: [], unscoped: null, computedAtMs: 0 }} selectedKey={null} onSelect={() => {}} />);
+    expect(screen.getByText(/no projects observed yet/i)).toBeTruthy();
   });
 });

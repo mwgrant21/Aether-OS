@@ -11,8 +11,18 @@ const NO_REPOS: GitProbe = () => false;
 
 describe('normalizePath', () => {
   it('lowercases the drive letter, forward-slashes, and strips a trailing separator', () => {
-    expect(normalizePath('C:\\Users\\IT\\Desktop\\Aether-OS\\')).toBe('c:/Users/IT/Desktop/Aether-OS');
-    expect(normalizePath('c:/Users/IT/Desktop/Aether-OS')).toBe('c:/Users/IT/Desktop/Aether-OS');
+    expect(normalizePath('C:\\Users\\IT\\Desktop\\Aether-OS\\')).toBe('c:/users/it/desktop/aether-os');
+    expect(normalizePath('c:/Users/IT/Desktop/Aether-OS')).toBe('c:/users/it/desktop/aether-os');
+  });
+
+  it('lowercases the entire Windows-style path, not just the drive letter', () => {
+    const a = normalizePath('C:\\Users\\IT\\Desktop\\Aether-OS');
+    const b = normalizePath('c:\\USERS\\it\\DESKTOP\\aether-os');
+    expect(a).toBe(b);
+  });
+
+  it('preserves casing for POSIX-style paths', () => {
+    expect(normalizePath('/Users/IT/Desktop/Aether-OS/')).toBe('/Users/IT/Desktop/Aether-OS');
   });
 });
 
@@ -22,7 +32,7 @@ describe('resolveProject', () => {
   it('resolves a repo root to itself with no worktree', () => {
     expect(resolveProject(AETHER, probeFor([AETHER]))).toEqual({
       repoPath: normalizePath(AETHER),
-      repoName: 'Aether-OS',
+      repoName: 'aether-os',
       worktree: null,
     });
   });
@@ -30,7 +40,7 @@ describe('resolveProject', () => {
   it('rolls a subdirectory up to its repo root', () => {
     const sub = 'C:\\Users\\IT\\Desktop\\TokenMonitorV2\\src\\renderer';
     const repo = 'C:\\Users\\IT\\Desktop\\TokenMonitorV2';
-    expect(resolveProject(sub, probeFor([repo]))?.repoName).toBe('TokenMonitorV2');
+    expect(resolveProject(sub, probeFor([repo]))?.repoName).toBe('tokenmonitorv2');
   });
 
   // Rule 1 must not consult the filesystem: this worktree no longer exists.
@@ -38,7 +48,7 @@ describe('resolveProject', () => {
     const wt = 'C:\\Users\\IT\\Desktop\\Aether-OS\\.claude\\worktrees\\statusline-feed';
     expect(resolveProject(wt, NO_REPOS)).toEqual({
       repoPath: normalizePath(AETHER),
-      repoName: 'Aether-OS',
+      repoName: 'aether-os',
       worktree: 'statusline-feed',
     });
   });
@@ -52,7 +62,7 @@ describe('resolveProject', () => {
     const deep = 'C:\\Users\\IT\\Desktop\\Aether-OS\\.claude\\worktrees\\wt1\\src\\state';
     const r = resolveProject(deep, NO_REPOS);
     expect(r?.worktree).toBe('wt1');
-    expect(r?.repoName).toBe('Aether-OS');
+    expect(r?.repoName).toBe('aether-os');
   });
 
   // The stray C:\Users\IT\Desktop\.git on this machine must not capture repos
@@ -60,12 +70,12 @@ describe('resolveProject', () => {
   it('prefers the innermost repo when a stray repo exists above it', () => {
     const repo = 'C:\\Users\\IT\\Desktop\\Aether-OS';
     const stray = 'C:\\Users\\IT\\Desktop';
-    expect(resolveProject(repo, probeFor([repo, stray]))?.repoName).toBe('Aether-OS');
+    expect(resolveProject(repo, probeFor([repo, stray]))?.repoName).toBe('aether-os');
   });
 
   it('falls back to the stray repo only for a path that is not itself a repo', () => {
     const loose = 'C:\\Users\\IT\\Desktop\\loose-folder';
-    expect(resolveProject(loose, probeFor(['C:\\Users\\IT\\Desktop']))?.repoName).toBe('Desktop');
+    expect(resolveProject(loose, probeFor(['C:\\Users\\IT\\Desktop']))?.repoName).toBe('desktop');
   });
 
   it('returns null for a path with no repo ancestor', () => {

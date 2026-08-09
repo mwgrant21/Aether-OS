@@ -17,7 +17,7 @@ export function ProjectRosterCard({
   const colors = useColors();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  if (!snapshot || snapshot.roots.length === 0) {
+  if (!snapshot || (snapshot.roots.length === 0 && !snapshot.unscoped)) {
     return (
       <div style={cardStyle(colors)}>
         <div style={titleStyle(colors)}>PROJECTS</div>
