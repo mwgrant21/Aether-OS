@@ -7,11 +7,24 @@ describe('viewRegistry', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('matches the current app\'s top-bar tabs and sidebar nav exactly', () => {
-    const topBarIds = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
+  it('matches the current app\'s sidebar nav exactly -- navigation lives only in the sidebar now, no top-bar tab strip', () => {
     const sidebarIds = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
-    expect(topBarIds).toEqual(['Terminal', 'Comms', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Ledger', 'Attachments', 'Optimize']);
-    expect(sidebarIds).toEqual(['Dashboard', 'Terminal', 'Codex', 'Agents', 'Grid', 'Projects', 'Memory', 'Analytics', 'Ledger', 'Optimize', 'Uplinks', 'Settings']);
+    expect(sidebarIds).toEqual([
+      'Dashboard',
+      'Terminal',
+      'Codex',
+      'Comms',
+      'Agents',
+      'Grid',
+      'Projects',
+      'Memory',
+      'Analytics',
+      'Ledger',
+      'Attachments',
+      'Optimize',
+      'Uplinks',
+      'Settings',
+    ]);
   });
 
   it('getViewComponent returns null for ids with no built component', () => {
