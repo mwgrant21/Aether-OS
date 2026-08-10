@@ -1,0 +1,15 @@
+{
+  "_comment": "Cross-collector parity golden. BOTH collector/ (Node) and collector-go/ scan corpus/ and must produce exactly these figures. Paths use forward slashes; each suite normalises its platform separator before comparing. See test-fixtures/collector-parity/README.md.",
+  "usageEvents": 2,
+  "usageTokenTotals": {
+    "input": 7100,
+    "output": 910,
+    "cacheCreation": 25,
+    "cacheRead": 4
+  },
+  "toolCalls": 2,
+  "transcriptFiles": [
+    "my-project/sess-1.jsonl",
+    "my-project/sess-1/subagents/agent-x.jsonl"
+  ]
+}
