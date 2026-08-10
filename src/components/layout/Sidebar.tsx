@@ -9,6 +9,7 @@ import { short } from '../../utils/format';
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
+const IDLE_PULSE_IDS = new Set(['Terminal', 'Codex']);
 
 export function Sidebar() {
   const colors = useColors();
@@ -19,10 +20,12 @@ export function Sidebar() {
       <div data-testid="sidebar-nav" style={sidebarNavStyle}>
         {SIDEBAR_IDS.map((label) => {
           const on = label === state.activeTab;
+          const idleFlag = label === 'Terminal' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
+          const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && !on;
           return (
             <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
               <span style={navDotWrapStyle(on)}>
-                <span style={navDotStyle(colors, on)} />
+                <span style={navDotStyle(colors, on, showIdlePulse)} data-idle-pulse={showIdlePulse ? 'true' : undefined} />
               </span>
               <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
             </Button>
@@ -113,8 +116,14 @@ function navDotWrapStyle(on: boolean): CSSProperties {
     flex: 'none',
   };
 }
-function navDotStyle(colors: ColorPalette, on: boolean): CSSProperties {
-  return { width: 7, height: 7, borderRadius: 2, background: on ? colors.accentCyan : '#3d6572' };
+function navDotStyle(colors: ColorPalette, on: boolean, idlePulse = false): CSSProperties {
+  return {
+    width: 7,
+    height: 7,
+    borderRadius: 2,
+    background: idlePulse ? '#ffb020' : on ? colors.accentCyan : '#3d6572',
+    animation: idlePulse ? 'idlePulse 1.6s ease-in-out infinite' : undefined,
+  };
 }
 const recentRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 8, cursor: 'pointer' };
 function recentAvatarStyle(ring: string): CSSProperties {
