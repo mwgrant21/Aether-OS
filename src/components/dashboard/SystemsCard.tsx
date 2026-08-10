@@ -8,11 +8,14 @@ export function SystemsCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
   const rows = [
-    { k: 'Uplinks online', v: `${state.providers.filter((pv) => pv.connected).length} / ${state.providers.length}`, c: colors.success },
+    // Uplinks was the fake-providers view before uplinks-real-status; the
+    // only real, session-scoped uplink this dashboard card can summarize
+    // without its own IPC polling is the embedded terminal's pty liveness
+    // (Codex connect status is polled/owned by UplinksView/CrossEngineVerificationCard).
+    { k: 'Terminal', v: state.terminalAlive ? 'ONLINE' : 'OFFLINE', c: state.terminalAlive ? colors.success : colors.textMuted },
     { k: 'Memory engrams', v: String(state.memories.length), c: '#8ab6ff' },
     { k: 'Pending approvals', v: String(state.approvals.length), c: state.approvals.length ? colors.warn : colors.success },
     { k: 'Idle agents', v: String(state.idleList.length), c: colors.textSecondary },
-    { k: 'Default runtime', v: state.routeDefault.toUpperCase(), c: colors.accentCyan },
     { k: 'Sound', v: state.cfg.sound ? 'ON' : 'OFF', c: state.cfg.sound ? colors.success : colors.textMuted },
   ];
 

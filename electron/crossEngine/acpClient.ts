@@ -1,7 +1,39 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawnAcpProcess } from './acpProcess';
-import { isAllowedAuthStatus } from './codexSubscriptionPolicy';
+import { CHAT_GPT_AUTH_METHOD_ID, isAllowedAuthStatus, offersChatGptAuthMethod } from './codexSubscriptionPolicy';
 import type { CodexAuthStatus, VerifierStatus } from '../../src/shared/crossEngineTypes';
+
+/** The ACP protocol version this client speaks. `InitializeRequest.protocolVersion`
+ *  is a REQUIRED number with no default -- see @agentclientprotocol/sdk's
+ *  dist/schema/types.gen.d.ts:4098-4102 and its zod parser
+ *  dist/schema/zod.gen.js:2292 (`protocolVersion: zProtocolVersion`, not
+ *  `.optional()`/`.default()`). The value 1 is the SDK's own exported
+ *  `PROTOCOL_VERSION` constant (dist/schema/index.d.ts:51, re-exported from
+ *  dist/acp.d.ts:5); it is duplicated here as a literal rather than imported
+ *  so the Electron main bundle doesn't pull the SDK's ESM entry and its `zod`
+ *  peer dependency in for a single integer.
+ *
+ *  Not a guess: a live handshake against the real
+ *  Codex ACP adapter (v1.1.14) confirmed that
+ *  `initialize {}` is answered with
+ *  `-32602 Invalid params ... protocolVersion: expected number, received undefined`
+ *  and the adapter then exits, while `initialize { protocolVersion: 1 }`
+ *  returns a full InitializeResponse. That rejection is the root cause of the
+ *  adapter window flashing open and closing again with no connection. */
+const PROTOCOL_VERSION = 1;
+
+/** `authenticate` is also the real login path: if the operator is not already
+ *  signed in, the adapter opens a browser for the OAuth flow and the call does
+ *  not resolve until a human finishes it (`authenticateWithChatGpt()`,
+ *  adapter dist/index.js:26337-26349). The default 15s call timeout is far
+ *  too short for that, so this one call gets the same 5-minute budget as
+ *  codexVerifier.ts's RUN_TIMEOUT_MS. */
+const AUTH_TIMEOUT_MS = 5 * 60_000;
+
+/** Minimal shape of the entries in `InitializeResponse.authMethods`
+ *  (`AuthMethod`, types.gen.d.ts). Only `id` is ever read, so the full SDK
+ *  type surface is deliberately not imported. */
+export interface AcpAuthMethod { id: string }
 
 interface JsonRpcRequest { jsonrpc: '2.0'; id: number; method: string; params?: unknown }
 /** A raw incoming line can be a response to one of our requests (has `id`,
@@ -32,9 +64,18 @@ export class AcpClient {
    *  notifications stream in, so `prompt()` can read back the final message
    *  once the `session/prompt` response (stop reason) arrives. */
   private agentMessageBuffers = new Map<string, string>();
+  /** Auth methods from this connection's one successful `initialize`. Doubles
+   *  as the "handshake already done" flag -- see `initialize()`. */
+  private authMethods: AcpAuthMethod[] | null = null;
 
   connect(child: ChildProcessWithoutNullStreams = spawnAcpProcess()): void {
     this.child = child;
+    // A fresh connection means a fresh handshake -- a cached authMethods
+    // from a prior connect() (this instance reused after dispose(), which
+    // doesn't happen on any current call path, but shouldn't be trusted if
+    // it ever does) would otherwise let initialize() skip the real handshake
+    // and reuse a dead connection's auth-method list.
+    this.authMethods = null;
     child.stdout.on('data', (chunk: Buffer) => this.onData(chunk));
   }
 
@@ -117,16 +158,57 @@ export class AcpClient {
     });
   }
 
-  async initialize(): Promise<void> {
-    await this.call('initialize', {});
+  /** Performs the ACP handshake and returns the auth methods the agent
+   *  advertises (`InitializeResponse.authMethods`, types.gen.d.ts:1435).
+   *  Callers use that list to confirm ChatGPT subscription auth is actually
+   *  on offer before any `authenticate` request is built. A response with no
+   *  `authMethods` at all yields an empty array, which fails closed through
+   *  `offersChatGptAuthMethod`.
+   *
+   *  Idempotent per connection, and it has to be: `initialize` is a one-shot
+   *  handshake, and the real adapter answers a SECOND one on the same stdio
+   *  connection with `-32603 Internal error {"details":"Already initialized"}`
+   *  (verified live) while leaving the connection otherwise usable. Callers
+   *  that legitimately compose -- e.g. main.ts running
+   *  `ensureChatGptAuthenticated()` and then `probe()` on one client -- would
+   *  otherwise turn that second handshake into a spurious 'error' status. */
+  async initialize(): Promise<AcpAuthMethod[]> {
+    if (this.authMethods) return this.authMethods;
+    const result = (await this.call('initialize', { protocolVersion: PROTOCOL_VERSION })) as { authMethods?: unknown } | undefined;
+    const methods = result?.authMethods;
+    // Cached only on success -- a failed handshake leaves this null so the
+    // next call genuinely retries rather than reporting a phantom empty list.
+    this.authMethods = Array.isArray(methods) ? (methods as AcpAuthMethod[]) : [];
+    return this.authMethods;
   }
 
-  /** Only ever sends methodId: 'chat-gpt' -- api-key/gateway methods the
-   *  adapter advertises are never selected, even if offered. */
-  async authenticate(): Promise<void> {
-    await this.call('authenticate', { methodId: 'chat-gpt' });
+  /** Only ever sends methodId: 'chat-gpt' -- the api-key/gateway methods the
+   *  adapter advertises are never selected, even though the real adapter
+   *  offers `api-key` unconditionally. The request object is built from the
+   *  `CHAT_GPT_AUTH_METHOD_ID` literal, never from a variable derived from
+   *  the advertised list, so there is structurally no code path that can send
+   *  any other methodId.
+   *
+   *  This is the ONLY call in this client that can open a browser window, so
+   *  it must never be reached from a passive status path -- see `probe()`.
+   *  Private, not just conventionally sole-called: `ensureChatGptAuthenticated()`
+   *  is the only path that may trigger a login, and it alone runs the
+   *  `offersChatGptAuthMethod` pre-check before calling this. */
+  private async authenticate(): Promise<void> {
+    await this.call('authenticate', { methodId: CHAT_GPT_AUTH_METHOD_ID }, AUTH_TIMEOUT_MS);
   }
 
+  /** Passive, read-only query of the live account state -- it never opens a
+   *  browser and never mutates login state.
+   *
+   *  `authentication/status` is absent from the ACP spec's `AGENT_METHODS`
+   *  because it is a Codex-specific ACP *extension* method; the real adapter
+   *  registers it under exactly that JSON-RPC method name
+   *  (adapter dist/index.js:31697 `.onRequest("authentication/status", ...)`)
+   *  and answers it from `getAuthenticationStatus()` (index.js:26399), which
+   *  only reads config and calls `accountRead({ refreshToken: false })`
+   *  (index.js:26528). Verified live against the real adapter: it responds
+   *  `{"type":"unauthenticated"}` on a fresh CODEX_HOME with no login. */
   async authenticationStatus(): Promise<CodexAuthStatus> {
     try {
       const result = (await this.call('authentication/status')) as { type?: string };
@@ -135,6 +217,32 @@ export class AcpClient {
       return 'unknown';
     } catch {
       return 'unknown'; // any failure to prove status is treated as unknown -- fails closed downstream
+    }
+  }
+
+  /** The full, real check behind the operator's explicit CONNECT CHATGPT
+   *  action, and the only method here that may trigger a login/browser popup.
+   *  It must never be called from a passive status path.
+   *
+   *  Order matters and is fail-closed at every step:
+   *   1. `initialize` -- if `chat-gpt` is not among the advertised methods,
+   *      return false WITHOUT sending `authenticate` at all. There is no
+   *      fallback to `api-key` or `gateway`.
+   *   2. If `authentication/status` already reports `chat-gpt`, we are done --
+   *      no `authenticate` call, so no needless browser window.
+   *   3. Otherwise send `authenticate` (long timeout, a human may be
+   *      completing an OAuth flow) and then re-read the real status rather
+   *      than trusting the call's empty `AuthenticateResponse` as proof.
+   *  Any rejection or timeout resolves to false. */
+  async ensureChatGptAuthenticated(): Promise<boolean> {
+    try {
+      const authMethods = await this.initialize();
+      if (!offersChatGptAuthMethod(authMethods)) return false;
+      if (isAllowedAuthStatus(await this.authenticationStatus())) return true;
+      await this.authenticate();
+      return isAllowedAuthStatus(await this.authenticationStatus());
+    } catch {
+      return false;
     }
   }
 
@@ -176,9 +284,19 @@ export class AcpClient {
     }
   }
 
+  /** Passive status check. Sends only `initialize` and `authentication/status`
+   *  -- never `authenticate` -- so mounting a settings card or the Uplinks
+   *  view can never pop a browser window as a side effect of merely being
+   *  looked at. Both calls are read-only against the adapter.
+   *
+   *  Unlike a cached "we authenticated earlier this process" flag, this
+   *  reports the adapter's live account state, so it stays correct if the
+   *  operator logs out elsewhere. Anything that isn't provably `chat-gpt`
+   *  fails closed to a non-ready status. */
   async probe(): Promise<VerifierStatus> {
     try {
-      await this.initialize();
+      const authMethods = await this.initialize();
+      if (!offersChatGptAuthMethod(authMethods)) return 'blocked-billing-mode';
       const status = await this.authenticationStatus();
       if (status === 'unauthenticated') return 'sign-in-required';
       if (isAllowedAuthStatus(status)) return 'ready-subscription';
@@ -192,6 +310,7 @@ export class AcpClient {
     for (const [, p] of this.pending) p.reject(new Error('client disposed'));
     this.pending.clear();
     this.agentMessageBuffers.clear();
+    this.authMethods = null; // a future connect() gets a fresh handshake
     if (this.child) {
       this.child.stdin.end();
       this.child.kill();

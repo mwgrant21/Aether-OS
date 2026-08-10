@@ -167,11 +167,6 @@ export interface FleetSessionRow {
   startedAtMs: number;
 }
 
-export interface Provider {
-  name: string;
-  connected: boolean;
-}
-
 export type MemoryScope = 'shared' | 'private';
 export type MemoryKind = 'decision' | 'preference' | 'overrule' | 'habit' | 'revision';
 export type MemoryStatus = 'open' | 'moving' | 'settled';
@@ -270,8 +265,27 @@ export interface AetherState {
   memoryTombstones: MemoryTombstone[];
   memoryScopeFilter: 'all' | 'shared' | string;
   memoryShowTombstones: boolean;
-  providers: Provider[];
-  routeDefault: string;
+  // True whenever the embedded terminal's pty process is alive. Set true at
+  // launch (the pty auto-starts, per PtyTerminal.tsx's module-level
+  // getOrCreateHost) and flipped false by useTerminalAliveSync when
+  // pty:exit fires (electron/main.ts's ptyProcess.onExit handler). There is
+  // no "reconnect" action -- the app has exactly one embedded terminal, not
+  // a connection you can retry from the Uplinks view.
+  terminalAlive: boolean;
+  // Same pattern as terminalAlive, but for the independent Codex pty
+  // (electron/codexPtyManager.ts). No pty exists at launch -- driven
+  // entirely by useCodexTerminalAliveSync's codexPty:alive/codexPty:exit
+  // event handling once the Codex terminal view mounts.
+  codexTerminalAlive: boolean;
+  // True whenever the embedded terminal's pty has produced no output for
+  // IDLE_THRESHOLD_MS (useTerminalIdleSync.ts) -- an activity-silence proxy
+  // for "probably awaiting input", not a literal one (a silent long-running
+  // command also reads as idle). Drives the sidebar's pulsing nav-dot when
+  // this tab isn't the active one (see Sidebar.tsx). Independent of
+  // terminalAlive: a dead pty is never idle in this sense, it's just dead.
+  terminalIdle: boolean;
+  // Same pattern as terminalIdle, but for the independent Codex pty.
+  codexTerminalIdle: boolean;
   operatorName: string;
   realUsage: RealUsageSnapshot;
   rateHistory: RateSample[];
@@ -299,6 +313,12 @@ export interface AetherState {
   narrationMessages: Record<string, NarrationMessage[]>;
   narrationBudgets: Record<string, InterruptionBudgetState>;
   crossEngineCfg: { enabled: boolean; provider: 'codex-chatgpt' };
+  // User-intent config for the independent Codex terminal (Task 4's
+  // CodexTerminalView/PtyCodexTerminal) -- default-off. Unlike
+  // codexTerminalAlive above (a live signal recomputed every launch and
+  // excluded from persistence), this is a deliberate operator choice and
+  // must persist across restarts, same as crossEngineCfg.
+  codexTerminalCfg: { enabled: boolean };
 }
 
 export type CommandResult = { kind: 'append'; lines: TermLine[]; patch?: Partial<AetherState> };

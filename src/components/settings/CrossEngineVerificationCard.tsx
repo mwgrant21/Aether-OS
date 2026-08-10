@@ -14,6 +14,7 @@ export function CrossEngineVerificationCard() {
   const { enabled } = state.crossEngineCfg;
   const [status, setStatus] = useState<VerifierStatus>('disabled');
   const [confirming, setConfirming] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   // Push the persisted preference to main on every mount (covers app restart,
   // where main.ts always starts with its own default until told otherwise)
@@ -44,9 +45,22 @@ export function CrossEngineVerificationCard() {
     dispatch({ type: 'SET_CROSS_ENGINE_CFG', cfg: { enabled: true, provider: 'codex-chatgpt' } });
   };
 
+  // connectCodexSubscription() is the one call here that can block for
+  // minutes: it is the real ChatGPT login, and if the operator isn't already
+  // signed in the adapter opens a browser and nothing resolves until the OAuth
+  // flow finishes. Without a pending state the button looks inert and the
+  // operator has no cue that a browser window is waiting on them.
   const connect = async () => {
-    const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
-    if (result) setStatus(result);
+    if (connecting) return; // a second login attempt while one is outstanding
+    setConnecting(true);
+    try {
+      const result = await window.aetherElectron?.crossEngine?.connectCodexSubscription();
+      if (result) setStatus(result);
+    } catch {
+      setStatus('error');
+    } finally {
+      setConnecting(false);
+    }
   };
 
   return (
@@ -86,12 +100,32 @@ export function CrossEngineVerificationCard() {
             <div style={labelStyle(colors)}>STATUS</div>
             <div style={valueStyle(colors)}>{status.toUpperCase()}</div>
           </div>
-          <Button onClick={connect} style={{ ...toggleStyle(colors, false), marginTop: 10 }}>
-            {status === 'ready-subscription' ? 'RECONNECT' : 'CONNECT CHATGPT'}
+          <Button onClick={connect} disabled={connecting} style={{ ...toggleStyle(colors, false), marginTop: 10 }}>
+            {connecting ? 'CONNECTING...' : status === 'ready-subscription' ? 'RECONNECT' : 'CONNECT CHATGPT'}
           </Button>
+          {connecting && <p style={hintStyle(colors)}>Complete the ChatGPT sign-in in your browser. This can take a minute.</p>}
           <p style={hintStyle(colors)}>{DISCLOSURE}</p>
         </>
       )}
+
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${colors.chipBorder}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={titleStyle(colors)}>CODEX TERMINAL</div>
+          <Button
+            onClick={() => dispatch({ type: 'SET_CODEX_TERMINAL_CFG', cfg: { enabled: !state.codexTerminalCfg.enabled } })}
+            style={toggleStyle(colors, state.codexTerminalCfg.enabled)}
+          >
+            {state.codexTerminalCfg.enabled ? 'DISABLE' : 'ENABLE'}
+          </Button>
+        </div>
+        <p style={hintStyle(colors)}>
+          A real, interactive Codex session with the same file/command access Claude's terminal already has.
+          Uses the same ChatGPT connection as verification above. Typing an API key into the session
+          yourself is not something this app can prevent. Disabling this hides the terminal and stops
+          new sessions from spawning, but does not end an already-running session — quit the app or
+          exit codex inside the session to actually stop it.
+        </p>
+      </div>
     </div>
   );
 }

@@ -81,6 +81,21 @@ and custom gateways are structurally blocked, not just discouraged), and persist
 prompt/diff/response — see `docs/privacy-and-data.md` §9 for the full boundary and
 `docs/superpowers/plans/2026-08-07-codex-acp-cross-engine-verification.md` for the implementation.
 
+**A second, independent surface, shipped 2026-08-09 — not a new outbound-data exception:**
+a Codex terminal (`electron/codexPtyManager.ts`) is a real, live `codex` CLI session alongside the
+existing Claude terminal, carrying the same open-ended file/command access the Claude terminal
+already has — it belongs in the same category as that terminal's own carve-out
+(`docs/privacy-and-data.md` §1), not in the category above. It is off by default
+(`codexTerminalCfg.enabled`, folded into the same Cross-Engine Verification settings card) and only
+spawns once the operator has both enabled it and navigated to the Codex sidebar view — the same
+lazy, mount-triggered pattern the Claude terminal already uses, not an unconditional app-boot
+launch. It shares the verifier's dedicated `CODEX_HOME` and strips `OPENAI_API_KEY`/`CODEX_API_KEY`
+from the inherited shell environment (`buildCodexPtyEnv`); like the Claude terminal's own
+`ANTHROPIC_API_KEY` scrubbing, this closes the silent-inheritance path only — it cannot stop the
+operator from typing an API key by hand inside the live session. See `docs/privacy-and-data.md`
+§11 for the full boundary and `docs/superpowers/plans/2026-08-09-codex-terminal-view.md` for the
+implementation.
+
 ### The bug that green tests couldn't see
 
 `usageTokens()` was ported from TokenMonitor summing all four raw usage fields. It reported

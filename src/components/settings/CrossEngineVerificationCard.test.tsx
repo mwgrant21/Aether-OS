@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { AetherStoreProvider } from '../../state/store';
 
@@ -8,6 +8,14 @@ afterEach(() => {
   delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
 });
 
+// The card now renders two independent ENABLE/DISABLE toggles (cross-engine
+// verification, and -- added below -- the Codex terminal). Both default to
+// showing "ENABLE" text, so every existing test below must scope its query
+// to the cross-engine row specifically rather than a bare screen.getByText.
+function crossEngineRow() {
+  return screen.getByText('CROSS-ENGINE VERIFICATION').closest('div')!.parentElement!;
+}
+
 describe('CrossEngineVerificationCard', () => {
   it('defaults to disabled', () => {
     render(
@@ -15,7 +23,7 @@ describe('CrossEngineVerificationCard', () => {
         <CrossEngineVerificationCard />
       </AetherStoreProvider>,
     );
-    expect(screen.getByText('ENABLE')).toBeTruthy();
+    expect(within(crossEngineRow()).getByText('ENABLE')).toBeTruthy();
     expect(screen.queryByText('SUBSCRIPTION ONLY')).toBeNull();
   });
 
@@ -26,12 +34,12 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
 
     // Disclosure shown, but not yet enabled.
     expect(screen.getByText('I UNDERSTAND, ENABLE')).toBeTruthy();
     expect(screen.queryByText('SUBSCRIPTION ONLY')).toBeNull();
-    expect(screen.getByText('ENABLE')).toBeTruthy();
+    expect(within(crossEngineRow()).getByText('ENABLE')).toBeTruthy();
 
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
@@ -46,7 +54,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
     expect(screen.getByText('SUBSCRIPTION ONLY')).toBeTruthy();
@@ -59,7 +67,7 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
     expect(screen.queryByLabelText(/api key/i)).toBeNull();
@@ -83,9 +91,94 @@ describe('CrossEngineVerificationCard', () => {
       </AetherStoreProvider>,
     );
 
-    fireEvent.click(screen.getByText('ENABLE'));
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
 
     await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
+  });
+
+  // Same class of gap as the status() case above, on the other IPC call this
+  // card makes: a rejected connectCodexSubscription() (e.g. the adapter
+  // crashing mid-handshake) must not become a silent unhandled rejection --
+  // clicking CONNECT CHATGPT must always leave a visible status behind.
+  it('does not leave an unhandled rejection when connectCodexSubscription() rejects', async () => {
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockResolvedValue('sign-in-required'),
+        connectCodexSubscription: vi.fn().mockRejectedValue(new Error('adapter crashed')),
+        setEnabled: vi.fn(),
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
+    fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
+    await waitFor(() => expect(screen.getByText('SIGN-IN-REQUIRED')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('CONNECT CHATGPT'));
+
+    await waitFor(() => expect(screen.getByText('ERROR')).toBeTruthy());
+  });
+
+  // connectCodexSubscription() is the real ChatGPT login: if the operator is
+  // not already signed in, main.ts's handler blocks until a browser OAuth flow
+  // completes, which is human-scale time. The button must say so rather than
+  // looking inert, and must not queue a second login on a double click.
+  it('shows a pending state while the ChatGPT login is outstanding', async () => {
+    let resolveConnect!: (s: string) => void;
+    const connectCodexSubscription = vi.fn(
+      () => new Promise<string>((res) => { resolveConnect = res; }),
+    );
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      crossEngine: {
+        status: vi.fn().mockResolvedValue('sign-in-required'),
+        connectCodexSubscription,
+        setEnabled: vi.fn(),
+      },
+    };
+
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+
+    fireEvent.click(within(crossEngineRow()).getByText('ENABLE'));
+    fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
+    await waitFor(() => expect(screen.getByText('SIGN-IN-REQUIRED')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('CONNECT CHATGPT'));
+
+    await waitFor(() => expect(screen.getByText('CONNECTING...')).toBeTruthy());
+    expect(screen.getByText(/Complete the ChatGPT sign-in in your browser/)).toBeTruthy();
+
+    // A second click while the login is outstanding must not start another one.
+    fireEvent.click(screen.getByText('CONNECTING...'));
+    expect(connectCodexSubscription).toHaveBeenCalledTimes(1);
+
+    resolveConnect('ready-subscription');
+
+    await waitFor(() => expect(screen.getByText('READY-SUBSCRIPTION')).toBeTruthy());
+    expect(screen.getByText('RECONNECT')).toBeTruthy();
+  });
+
+  it('Codex terminal toggle defaults off and flips SET_CODEX_TERMINAL_CFG on click', () => {
+    render(
+      <AetherStoreProvider>
+        <CrossEngineVerificationCard />
+      </AetherStoreProvider>,
+    );
+    const codexSection = screen.getByText('CODEX TERMINAL').closest('div')!;
+    const codexRow = codexSection.parentElement!;
+    expect(within(codexRow).getByText('ENABLE')).toBeTruthy();
+
+    fireEvent.click(within(codexRow).getByText('ENABLE'));
+
+    expect(within(codexRow).getByText('DISABLE')).toBeTruthy();
   });
 });

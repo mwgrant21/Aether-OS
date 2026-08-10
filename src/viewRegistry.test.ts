@@ -12,6 +12,7 @@ describe('viewRegistry', () => {
     expect(sidebarIds).toEqual([
       'Dashboard',
       'Terminal',
+      'Codex',
       'Comms',
       'Agents',
       'Grid',
@@ -76,5 +77,9 @@ describe('viewRegistry', () => {
 
   it('getViewComponent resolves Optimize now that it is built', () => {
     expect(getViewComponent('Optimize')).not.toBeNull();
+  });
+
+  it('getViewComponent resolves Codex now that it is built', () => {
+    expect(getViewComponent('Codex')).not.toBeNull();
   });
 });

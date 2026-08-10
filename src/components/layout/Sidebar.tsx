@@ -9,6 +9,7 @@ import { short } from '../../utils/format';
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
+const IDLE_PULSE_IDS = new Set(['Terminal', 'Codex']);
 
 export function Sidebar() {
   const colors = useColors();
@@ -19,10 +20,18 @@ export function Sidebar() {
       <div data-testid="sidebar-nav" style={sidebarNavStyle}>
         {SIDEBAR_IDS.map((label) => {
           const on = label === state.activeTab;
+          const idleFlag = label === 'Terminal' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
+          // Gate on liveness too: a pty that exited only clears its pending idle
+          // timer (see useTerminalIdleSync.ts's onExit handler), it never forces
+          // idle back to false, so without this an exited pty's dot would keep
+          // pulsing forever. terminalAlive/codexTerminalAlive disambiguate "quiet"
+          // from "dead".
+          const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
+          const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
           return (
             <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
               <span style={navDotWrapStyle(on)}>
-                <span style={navDotStyle(colors, on)} />
+                <span style={navDotStyle(colors, on, showIdlePulse)} data-idle-pulse={showIdlePulse ? 'true' : undefined} />
               </span>
               <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
             </Button>
@@ -113,8 +122,18 @@ function navDotWrapStyle(on: boolean): CSSProperties {
     flex: 'none',
   };
 }
-function navDotStyle(colors: ColorPalette, on: boolean): CSSProperties {
-  return { width: 7, height: 7, borderRadius: 2, background: on ? colors.accentCyan : '#3d6572' };
+// Under prefers-reduced-motion: reduce, global.css's `*` rule collapses the
+// idlePulse animation's duration to near-zero -- the dot still turns amber,
+// it just stops visibly pulsing. That static-amber degradation is accepted
+// behavior, not a bug.
+function navDotStyle(colors: ColorPalette, on: boolean, idlePulse = false): CSSProperties {
+  return {
+    width: 7,
+    height: 7,
+    borderRadius: 2,
+    background: idlePulse ? '#ffb020' : on ? colors.accentCyan : '#3d6572',
+    animation: idlePulse ? 'idlePulse 1.6s ease-in-out infinite' : undefined,
+  };
 }
 const recentRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 8, cursor: 'pointer' };
 function recentAvatarStyle(ring: string): CSSProperties {
