@@ -20,6 +20,46 @@ import (
 // internal/schema/parity_test.go.
 const SchemaVersion = 7
 
+// tableColumns returns the columns physically present on a table, regardless
+// of what schema_meta claims. Migrations are driven off THIS, not off the
+// recorded version.
+//
+// A database can be physically ahead of its recorded version: this collector
+// used to stamp the version back to 4 on a v6/v7 database (issue #31), which
+// made the version-gated ALTERs re-run against existing columns and throw
+// `duplicate column name`. That threw at the Node collector's index.ts:49,
+// unguarded, so an affected machine could not be rescued by upgrading either
+// collector. Checking the column set heals that state rather than merely
+// refusing to create more of it.
+func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = true
+	}
+	return out, rows.Err()
+}
+
+func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
+	cols, err := tableColumns(db, table)
+	if err != nil {
+		return err
+	}
+	if cols[column] {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + ddl)
+	return err
+}
+
 // OpenDatabase opens (creating if necessary) the SQLite database at dbPath,
 // creating the parent directory first. Matches schema.ts:14's
 // mkdirSync(dirname(dbPath), { recursive: true }).
@@ -150,18 +190,20 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
-	// v5: dispatches telemetry columns.
+	// v5: dispatches telemetry columns. Column-driven, not version-gated --
+	// see tableColumns above. Safe on a database physically ahead of its
+	// recorded version.
 	if current < 5 {
-		for _, stmt := range []string{
-			`ALTER TABLE dispatches ADD COLUMN agent_id TEXT`,
-			`ALTER TABLE dispatches ADD COLUMN task_kind TEXT`,
-			`ALTER TABLE dispatches ADD COLUMN session_id TEXT`,
-			`ALTER TABLE dispatches ADD COLUMN retries INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE dispatches ADD COLUMN exit_state TEXT NOT NULL DEFAULT 'ok'`,
-			`ALTER TABLE dispatches ADD COLUMN severity INTEGER`,
-			`ALTER TABLE dispatches ADD COLUMN median_ms_at_eval INTEGER`,
+		for _, c := range [][2]string{
+			{"agent_id", "agent_id TEXT"},
+			{"task_kind", "task_kind TEXT"},
+			{"session_id", "session_id TEXT"},
+			{"retries", "retries INTEGER NOT NULL DEFAULT 0"},
+			{"exit_state", "exit_state TEXT NOT NULL DEFAULT 'ok'"},
+			{"severity", "severity INTEGER"},
+			{"median_ms_at_eval", "median_ms_at_eval INTEGER"},
 		} {
-			if _, err := db.Exec(stmt); err != nil {
+			if err := addColumnIfMissing(db, "dispatches", c[0], c[1]); err != nil {
 				return err
 			}
 		}
@@ -173,7 +215,7 @@ func Migrate(db *sql.DB) error {
 	// that is issue #32 -- but the column must exist so the two collectors
 	// agree on shape.
 	if current < 6 {
-		if _, err := db.Exec(`ALTER TABLE tool_calls ADD COLUMN source_file_rel TEXT`); err != nil {
+		if err := addColumnIfMissing(db, "tool_calls", "source_file_rel", "source_file_rel TEXT"); err != nil {
 			return err
 		}
 	}

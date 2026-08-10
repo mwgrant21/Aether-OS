@@ -119,3 +119,36 @@ func TestMigrateIsIdempotentAcrossRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrateHealsAnAlreadyDowngradedDatabase(t *testing.T) {
+	// The state the pre-#31 Go collector left behind: physically at v6/v7,
+	// recorded as 4. Version-gated ALTERs then re-ran against existing
+	// columns and threw `duplicate column name`, so an affected machine could
+	// not be rescued by upgrading. #31's guard stopped new occurrences but
+	// healed nothing already broken.
+	db := freshDB(t)
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE schema_meta SET value = '4' WHERE key = 'version'`); err != nil {
+		t.Fatalf("simulate downgrade: %v", err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate on an already-downgraded database: %v", err)
+	}
+
+	got, err := GetSchemaVersion(db)
+	if err != nil {
+		t.Fatalf("GetSchemaVersion: %v", err)
+	}
+	if got != SchemaVersion {
+		t.Errorf("recorded version = %d, want %d after healing", got, SchemaVersion)
+	}
+	cols := columns(t, db, "dispatches")
+	for _, c := range v5DispatchColumns {
+		if !cols[c] {
+			t.Errorf("dispatches lost v5 column %q while healing", c)
+		}
+	}
+}
