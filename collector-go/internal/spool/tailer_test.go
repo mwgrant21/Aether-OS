@@ -108,9 +108,12 @@ func TestStartSpoolTailer_PollsAndIngestsThenStopStopsFurtherPolling(t *testing.
 	writeSpoolFile(t, spoolDir, "s1.jsonl", string(line)+"\n")
 
 	stop := StartSpoolTailer(db, spoolDir, 20*time.Millisecond)
-	deadline := time.Now().Add(2 * time.Second)
+	// 5s, and a 25ms poll rather than 10ms: this reader shares the SQLite
+	// file with the tailer's writer, and polling too hard starves it. The 2s
+	// deadline here is the one that expired on master at 52d558f1 (issue #34).
+	deadline := time.Now().Add(5 * time.Second)
 	for eventCount(t, db) == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 	}
 	if got := eventCount(t, db); got != 1 {
 		t.Fatalf("expected 1 event ingested via poll, got %d", got)

@@ -35,6 +35,40 @@ func mkTempDir(t *testing.T, pattern string) string {
 // inspection connection) -- it does not touch internal/schema's
 // OpenDatabase (Task 1, already reviewed/merged) or change any production
 // behavior.
+// eventuallyCountAt is eventuallyCount for the case where the observer would
+// otherwise hold a connection open across the wait.
+//
+// The collector writes to the same SQLite file, and a long-lived reader
+// polling it starves that writer -- the row never lands and the poll fails at
+// its deadline. Opening and closing per attempt leaves the writer clear
+// windows between polls. This is the shape to use whenever the thing being
+// awaited is a write by another process/goroutine to the same database.
+func eventuallyCountAt(t *testing.T, dbPath, table string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	got := -1
+	for {
+		func() {
+			db, err := schema.OpenDatabase(dbPath)
+			if err != nil {
+				return
+			}
+			defer db.Close()
+			var n int
+			if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err == nil {
+				got = n
+			}
+		}()
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s count = %d, want %d (waited 5s)", table, got, want)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
 func openForInspection(t *testing.T, dbPath string) *sql.DB {
 	t.Helper()
 	db, err := schema.OpenDatabase(dbPath)
@@ -46,6 +80,59 @@ func openForInspection(t *testing.T, dbPath string) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+// pollInterval is deliberately not a tight spin. Polling the same SQLite file
+// every few milliseconds keeps a reader on it almost continuously and starves
+// the collector's writer, so the row under test never lands and the poll fails
+// at its deadline -- found the hard way while fixing issue #34. An aggressive
+// poll is not a free replacement for a sleep when the poller shares a database
+// with the thing it is waiting for.
+const pollInterval = 25 * time.Millisecond
+
+// eventuallyCount polls until table reaches want, or fails after a generous
+// deadline.
+//
+// Replaces `time.Sleep(150ms); assertCount(...)`. A fixed sleep budgets for a
+// loaded CI runner it cannot see: 150ms is three 50ms ticks on an idle
+// machine and not guaranteed on a shared one, which is why this package's
+// spool assertions failed intermittently in CI while passing 20/20 locally
+// (issue #34). Polling is also FASTER in the common case -- it returns on the
+// first tick rather than always waiting out the sleep. Raising the sleep
+// would only trade flake rate for a slower suite and leave the race intact.
+func eventuallyCount(t *testing.T, db *sql.DB, table string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var got int
+	for {
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s count = %d, want %d (waited 5s)", table, got, want)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// eventually polls an arbitrary condition to the same deadline. Used where the
+// thing being awaited is not a row count -- a file appearing, a log line being
+// written, a loop having ticked at least once.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if cond() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out after 5s waiting for %s", what)
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 func assertCount(t *testing.T, db *sql.DB, table string, want int) {
@@ -99,14 +186,16 @@ func TestStartCollector_PicksUpPreexistingSpoolFileAndDBFileExists(t *testing.T)
 	}
 	defer stop()
 
-	time.Sleep(150 * time.Millisecond) // let the first spool-tail tick fire
-
-	if _, statErr := os.Stat(dbPath); statErr != nil {
-		t.Fatalf("expected db file to exist at %s: %v", dbPath, statErr)
-	}
+	eventually(t, "the database file to be created", func() bool {
+		_, statErr := os.Stat(dbPath)
+		return statErr == nil
+	})
 
 	db := openForInspection(t, dbPath)
-	assertCount(t, db, "events", 1)
+	// The pre-existing spool file is ingested on the first tail tick, which
+	// is a separate wait from the database file appearing -- the fixed sleep
+	// this replaced happened to cover both.
+	eventuallyCount(t, db, "events", 1)
 }
 
 // TestStartCollector_OpensMigratesAndStartsAllFourLoops proves starting the
@@ -183,8 +272,7 @@ func TestStartCollector_OpensMigratesAndStartsAllFourLoops(t *testing.T) {
 	// Compaction loop: wait for at least one 30ms tick, then confirm the
 	// stale events row was rolled up and deleted -- the only way this
 	// happens is if the compact loop actually ran.
-	time.Sleep(150 * time.Millisecond)
-	assertCount(t, db, "events", 0)
+	eventuallyCount(t, db, "events", 0)
 	var rollupCount int
 	if err := db.QueryRow("SELECT event_count FROM daily_rollups WHERE hook_event_name = 'Stop'").Scan(&rollupCount); err != nil {
 		t.Fatalf("expected a daily_rollups row for the compacted Stop event: %v", err)
@@ -197,8 +285,7 @@ func TestStartCollector_OpensMigratesAndStartsAllFourLoops(t *testing.T) {
 	// picked up on the next 50ms tick.
 	payload, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "s2"})
 	os.WriteFile(filepath.Join(spoolDir, "s2.jsonl"), append(payload, '\n'), 0644)
-	time.Sleep(150 * time.Millisecond)
-	assertCount(t, db, "events", 1)
+	eventuallyCount(t, db, "events", 1)
 }
 
 // TestStartCollector_StopHaltsAllLoopsAndClosesDB proves the returned stop
@@ -229,7 +316,16 @@ func TestStartCollector_StopHaltsAllLoopsAndClosesDB(t *testing.T) {
 		t.Fatalf("StartCollector: %v", err)
 	}
 
-	time.Sleep(60 * time.Millisecond) // let loops actually start ticking
+	// Wait for evidence a loop actually ran before stopping. A fixed sleep
+	// here could stop the collector before it ever ticked, which would make
+	// the "nothing more is ingested after stop" assertion below vacuous --
+	// it would pass against a collector that never started.
+	inspect := openForInspection(t, dbPath)
+	eventually(t, "the transcript-scan loop to stamp its heartbeat", func() bool {
+		var v string
+		return inspect.QueryRow("SELECT value FROM schema_meta WHERE key = 'transcript_last_scan_ms'").Scan(&v) == nil
+	})
+	inspect.Close()
 	stop()
 
 	// A fresh connection to the same db file must open and migrate cleanly
@@ -284,10 +380,8 @@ func TestStartCollector_FleetPollFailureDoesNotCrashOtherLoops(t *testing.T) {
 	// Spool tail must keep working despite fleet poll erroring on every tick.
 	payload, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "s1"})
 	os.WriteFile(filepath.Join(spoolDir, "s1.jsonl"), append(payload, '\n'), 0644)
-	time.Sleep(150 * time.Millisecond)
-
+	eventuallyCountAt(t, dbPath, "events", 1)
 	db := openForInspection(t, dbPath)
-	assertCount(t, db, "events", 1)
 
 	// Fleet heartbeat must still be stamped every cycle even though the poll
 	// itself fails -- see PollAndUpsertFleet's doc comment (matches
