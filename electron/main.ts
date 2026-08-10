@@ -9,6 +9,8 @@ import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
+import { chooseUsageSource } from './collectorFreshness';
+import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
 import { readMemories, readMemoryTombstones } from './memoryStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
@@ -317,9 +319,17 @@ async function scanAndPushUsage(): Promise<void> {
 
   // Dashboard tiles: prefer the collector's incrementally-tailed usage_events
   // store; only fall back to a full re-scan of every project's transcripts
-  // when the collector hasn't run yet, isn't installed, or its schema
-  // predates this stage -- Aether OS must stay fully usable either way
-  // (docs/roadmap.md SS4.6).
+  // when the collector hasn't run yet, isn't installed, its schema predates
+  // this stage, or IT HAS STOPPED WRITING -- Aether OS must stay fully usable
+  // either way (docs/roadmap.md SS4.6).
+  //
+  // That last case is not visible to a null check: readUsageEventsSince
+  // returns null only for an absent DB or an old schema, so a collector that
+  // died still hands back every row it wrote before dying. On this machine
+  // that meant 5,324 in-window rows whose newest was 11 days old, which
+  // computeUsedThisMonth correctly summed to 0 for the current month while
+  // the Ledger -- built from the unconditional scan below -- read $889.44.
+  // Two surfaces, one scan pass, contradictory numbers. See issue #19.
   const sinceMs = now.getTime() - 31 * 24 * 60 * 60 * 1000; // covers computeUsedThisMonth's widest window with margin
   const collectorEvents = readUsageEventsSince(collectorDbPath, sinceMs);
 
@@ -332,8 +342,12 @@ async function scanAndPushUsage(): Promise<void> {
   // against the collector path. Don't add one without widening
   // CollectorUsageEvent and readUsageEventsSince's SELECT first.
   const projectsRoot = join(os.homedir(), '.claude', 'projects');
+  const usageSource = chooseUsageSource(
+    collectorEvents,
+    await findNewestTranscriptMtimeMs(projectsRoot),
+  );
   const usageEvents: TranscriptEvent[] =
-    collectorEvents !== null
+    usageSource === 'collector'
       ? (collectorEvents as unknown as TranscriptEvent[])
       : await scanAllProjects(projectsRoot);
 

@@ -17,6 +17,28 @@ async function findActiveSessionFileInDir(dirPath: string): Promise<{ file: stri
   return best;
 }
 
+/**
+ * Newest transcript mtime across every project, or null when there are no
+ * transcripts at all. Used to tell a collector that has STOPPED writing from
+ * one that is merely idle because nothing is being written -- see
+ * collectorFreshness.ts.
+ */
+export async function findNewestTranscriptMtimeMs(projectsRoot: string): Promise<number | null> {
+  let projectDirs;
+  try {
+    projectDirs = await fsp.readdir(projectsRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  let newest: number | null = null;
+  for (const dirEntry of projectDirs) {
+    if (!dirEntry.isDirectory()) continue;
+    const candidate = await findActiveSessionFileInDir(path.join(projectsRoot, dirEntry.name));
+    if (candidate && (newest === null || candidate.mtimeMs > newest)) newest = candidate.mtimeMs;
+  }
+  return newest;
+}
+
 export async function findMostRecentSessionFile(projectsRoot: string): Promise<string | null> {
   let projectDirs;
   try {
