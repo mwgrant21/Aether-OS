@@ -60,6 +60,59 @@ function clearsExtractionBar(durationMs: number, toolUses: number): boolean {
   return durationMs >= 60_000 || toolUses >= 5;
 }
 
+/**
+ * One-time backfill of nested subagent usage, for databases written before
+ * the nested loop ingested it (schema < 7 -- see schema.ts's v7 block).
+ *
+ * Those databases already hold each subagent file's offset at EOF, so the
+ * scan replays nothing and their historical spend would stay missing
+ * forever.
+ *
+ * Inserts usage_events ONLY, and deliberately does NOT rewind offsets or
+ * re-run tool-call ingestion. usage_events and tool_calls are both plain
+ * INSERTs with no unique constraint -- double counting is prevented by
+ * offset tracking, not by idempotency -- so rewinding a nested file to
+ * replay it would fix the usage undercount by duplicating every tool_calls
+ * row already ingested from it.
+ *
+ * Runs at most once: the pending flag is cleared afterwards, in the same
+ * transaction as the inserts, so a crash mid-backfill retries rather than
+ * half-applying.
+ */
+export function backfillSubagentUsage(db: DatabaseSync, projectsRoot: string): number {
+  const flag = db
+    .prepare("SELECT value FROM schema_meta WHERE key = 'subagent_usage_backfill_pending'")
+    .get() as { value: string } | undefined;
+  if (!flag || flag.value !== '1') return 0;
+
+  const rows = db
+    .prepare("SELECT file_path FROM transcript_files WHERE file_path LIKE '%subagents%'")
+    .all() as { file_path: string }[];
+
+  let ingested = 0;
+  db.exec('BEGIN');
+  try {
+    for (const row of rows) {
+      let lines: string[];
+      try {
+        lines = readNewLinesSync(join(projectsRoot, row.file_path), 0).lines;
+      } catch {
+        continue; // a file removed since it was scanned has nothing to backfill
+      }
+      for (const line of lines) {
+        const event = parseTranscriptLine(line);
+        if (event && ingestUsageEvent(db, event)) ingested += 1;
+      }
+    }
+    db.prepare("UPDATE schema_meta SET value = '0' WHERE key = 'subagent_usage_backfill_pending'").run();
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return ingested;
+}
+
 export function scanTranscriptsOnce(
   db: DatabaseSync,
   projectsRoot: string,
@@ -71,6 +124,11 @@ export function scanTranscriptsOnce(
   // alive, not that it succeeded (see stampTranscriptScanHeartbeat), so the
   // unreadable-projects-root early return below must not skip it.
   stampTranscriptScanHeartbeat(db, nowMs);
+
+  // Upgrade path: replay nested subagent usage that pre-fix databases
+  // recorded an offset for but never ingested. No-op after the first run,
+  // and never flagged at all on a fresh database.
+  backfillSubagentUsage(db, projectsRoot);
 
   let projectDirs: string[];
   try {
@@ -218,6 +276,18 @@ export function scanTranscriptsOnce(
           continue;
         }
         const subParsedEvents = subLines.map((l) => parseTranscriptLine(l)).filter((e): e is NonNullable<typeof e> => e !== null);
+
+        // A dispatched subagent's assistant turns carry their own token usage,
+        // and this loop previously ingested only tool calls and anomalies from
+        // them -- so every dispatch's own spend was missing from usage_events,
+        // exactly the workload Cost Forensics exists to measure. Mirrors the
+        // top-level loop above; ingestUsageEvent is idempotent per event, so a
+        // re-scan of an already-recorded turn does not double count.
+        // See issue #25.
+        for (const event of subParsedEvents) {
+          if (ingestUsageEvent(db, event)) eventsIngested += 1;
+        }
+
         const subPriorHistory = historyByFile.get(subRelativePath) ?? createEmptyHistory();
         const subAnomalyResult = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
         historyByFile.set(subRelativePath, subAnomalyResult.history);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
@@ -314,6 +314,47 @@ describe('scanTranscriptsOnce', () => {
     db.close();
   });
 
+  it('ingests a nested subagent transcript\'s own token usage into usage_events', () => {
+    // The nested loop already ingested tool calls and anomalies but never
+    // called ingestUsageEvent, so every dispatch's own token spend was
+    // missing from the store -- exactly the workload Cost Forensics exists
+    // to measure. The pre-existing nested test asserted tool calls only,
+    // which is why this went unnoticed. See issue #25.
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-subusage-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+
+    const usageLine = (ts: string, input: number, output: number) =>
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'sess-1',
+        timestamp: ts,
+        message: {
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: input, output_tokens: output, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      });
+
+    writeFileSync(join(projDir, 'sess-1.jsonl'), usageLine('2026-07-08T09:00:00Z', 100, 10) + '\n', 'utf8');
+
+    const subagentsDir = join(projDir, 'sess-1', 'subagents');
+    mkdirSync(subagentsDir, { recursive: true });
+    writeFileSync(join(subagentsDir, 'agent-x.jsonl'), usageLine('2026-07-08T09:00:02Z', 7000, 900) + '\n', 'utf8');
+
+    const db = freshDb();
+    const result = scanTranscriptsOnce(db, projectsRoot, 1000, new Map());
+
+    // Both the parent turn and the subagent's turn are usage events.
+    expect(result.eventsIngested).toBe(2);
+
+    const totals = db
+      .prepare('SELECT SUM(input_tokens) AS input, SUM(output_tokens) AS output FROM usage_events')
+      .get() as { input: number; output: number };
+    expect(totals.input).toBe(7100);
+    expect(totals.output).toBe(910);
+  });
+
   // Liveness heartbeat for the diagnostics reader (electron/collectorStore.ts's
   // readDiagnostics), mirroring the fleet poll's fleet_last_poll_ms.
   it('stamps the transcript-scan heartbeat even when the projects root is unreadable', () => {
@@ -444,5 +485,102 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
     const db = freshDb();
     expect(() => scanTranscriptsOnce(db, projectsRoot, 2000, new Map())).not.toThrow();
     db.close();
+  });
+
+});
+
+describe('subagent usage backfill (upgrade path)', () => {
+  it('backfills usage for nested files already scanned at EOF, without duplicating their tool calls', () => {
+    // A database written by a pre-#25 collector already recorded each nested
+    // file's offset at EOF and its tool calls, but never its usage. Without a
+    // backfill, ingestUsageEvent sees no new bytes and the historical
+    // subagent spend stays missing forever. Codex review of PR #28.
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-backfill-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(join(projDir, 'sess-1', 'subagents'), { recursive: true });
+
+    const line = (ts: string, input: number, output: number) =>
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'sess-1',
+        timestamp: ts,
+        message: {
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'x' }],
+          usage: { input_tokens: input, output_tokens: output, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      });
+
+    writeFileSync(join(projDir, 'sess-1.jsonl'), line('2026-07-08T09:00:00Z', 100, 10) + '\n', 'utf8');
+    const subPath = join(projDir, 'sess-1', 'subagents', 'agent-x.jsonl');
+    writeFileSync(subPath, line('2026-07-08T09:00:02Z', 7000, 900) + '\n', 'utf8');
+
+    const db = freshDb();
+
+    // Simulate the pre-fix state: both files fully scanned (offsets at EOF),
+    // but no usage row was ever written for the nested one.
+    const subRel = join('my-project', 'sess-1', 'subagents', 'agent-x.jsonl');
+    const topRel = join('my-project', 'sess-1.jsonl');
+    const size = (p: string) => statSync(p).size;
+    for (const [rel, abs] of [[topRel, join(projDir, 'sess-1.jsonl')], [subRel, subPath]] as const) {
+      db.prepare('INSERT INTO transcript_files (file_path, last_offset, last_scanned_ms) VALUES (?, ?, ?)').run(rel, size(abs), 1);
+    }
+    // Only the top-level file's usage was ingested by the old collector.
+    db.prepare(
+      'INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(Date.parse('2026-07-08T09:00:00Z'), 'claude-sonnet-4-6', 100, 10, 0, 0);
+    // Its nested tool call, however, WAS ingested -- this is what a naive
+    // offset reset would duplicate.
+    db.prepare(
+      'INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms, source_file_rel) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('tu_sub', 'Edit', 'src/sub.ts', 1, 2, subRel);
+
+    // Roll the recorded version back to before the backfill migration, then
+    // re-migrate as an upgrading process would.
+    db.prepare("UPDATE schema_meta SET value = '6' WHERE key = 'version'").run();
+    migrate(db);
+
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map());
+
+    const usage = db.prepare('SELECT COUNT(*) AS n, SUM(input_tokens) AS input FROM usage_events').get() as { n: number; input: number };
+    expect(usage.n).toBe(2);
+    expect(usage.input).toBe(7100);
+
+    // The nested tool call must NOT be duplicated by the backfill.
+    const toolCalls = db.prepare('SELECT COUNT(*) AS n FROM tool_calls').get() as { n: number };
+    expect(toolCalls.n).toBe(1);
+
+    // Offsets are left alone -- the backfill reads content, it does not rewind.
+    const off = db.prepare('SELECT last_offset FROM transcript_files WHERE file_path = ?').get(subRel) as { last_offset: number };
+    expect(off.last_offset).toBe(size(subPath));
+  });
+
+  it('does not backfill twice across consecutive scans', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-backfill-once-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(join(projDir, 'sess-1', 'subagents'), { recursive: true });
+    const subPath = join(projDir, 'sess-1', 'subagents', 'agent-x.jsonl');
+    writeFileSync(
+      subPath,
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'sess-1',
+        timestamp: '2026-07-08T09:00:02Z',
+        message: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 500, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+      }) + '\n',
+      'utf8',
+    );
+
+    const db = freshDb();
+    const subRel = join('my-project', 'sess-1', 'subagents', 'agent-x.jsonl');
+    db.prepare('INSERT INTO transcript_files (file_path, last_offset, last_scanned_ms) VALUES (?, ?, ?)').run(subRel, statSync(subPath).size, 1);
+    db.prepare("UPDATE schema_meta SET value = '6' WHERE key = 'version'").run();
+    migrate(db);
+
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map());
+    scanTranscriptsOnce(db, projectsRoot, 3000, new Map());
+
+    const usage = db.prepare('SELECT COUNT(*) AS n FROM usage_events').get() as { n: number };
+    expect(usage.n).toBe(1);
   });
 });

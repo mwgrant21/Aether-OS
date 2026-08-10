@@ -60,7 +60,7 @@ describe('schema', () => {
   it('migrate also creates usage_events and transcript_files, and bumps schema_meta to version 5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -116,7 +116,7 @@ describe('schema', () => {
   it('migrate also creates fleet_sessions, and bumps schema_meta to version 5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -179,7 +179,7 @@ describe('schema', () => {
   it('creates tool_calls, dispatches, anomalies, and daily_anomaly_rollups tables at v5', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     db.exec(`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms)
              VALUES ('tu_1', 'Read', 'src/foo.ts', 1000, 2000)`);
@@ -215,7 +215,7 @@ describe('schema', () => {
   it('v5 migrate creates dispatches with all seven new telemetry columns', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     // Query the full column info for the dispatches table
     const columns: any[] = db
@@ -300,7 +300,7 @@ describe('schema', () => {
 
     // Now migrate to v5
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     // Verify the rows still exist with original data
     const rows: any[] = db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all();
@@ -332,11 +332,11 @@ describe('schema', () => {
   it('v5 migrate is idempotent -- calling it twice does not attempt to re-add columns', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     // Calling migrate again should not throw and should not modify anything
     expect(() => migrate(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(6);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     const columns: any[] = db.prepare("PRAGMA table_info(dispatches)").all();
     // Count should be exactly the original 6 + 7 new = 13 columns
@@ -365,5 +365,16 @@ describe('schema', () => {
     expect(row.median_ms_at_eval).toBe(4500);
 
     db.close();
+  });
+});
+
+describe('schema version pin', () => {
+  it('SCHEMA_VERSION is 7 -- bumping it must be deliberate', () => {
+    // Every other version assertion in this file now compares against
+    // SCHEMA_VERSION, so a bump does not break seven call sites. This one
+    // test pins the literal, so the bump is still a conscious edit in exactly
+    // one place rather than something that rides along unnoticed.
+    // Bumping it means adding the matching migration block in schema.ts.
+    expect(SCHEMA_VERSION).toBe(7);
   });
 });
