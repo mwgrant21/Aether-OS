@@ -54,7 +54,7 @@ func recordOffset(db *sql.DB, filePath string, offset int64, nowMs int64) error 
 // (not in internal/anomaly) purely to break the import cycle described in
 // this file's top doc comment: internal/collector supplies a closure that
 // adapts anomaly.IngestToolCallsAndAnomalies to this signature.
-type AnomalyIngestFunc func(db *sql.DB, history *ToolCallHistory, events []Event, nowMs int64) (*ToolCallHistory, error)
+type AnomalyIngestFunc func(db *sql.DB, history *ToolCallHistory, events []Event, nowMs int64, sourceFileRel string) (*ToolCallHistory, error)
 
 // ScanTranscriptsOnce mirrors transcriptScan.ts's scanTranscriptsOnce.
 // toolCallHistoryByFile is keyed by the same project-relative path stored in
@@ -130,7 +130,7 @@ func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallH
 			}
 			var newHistory *ToolCallHistory
 			if ingestAnomalies != nil {
-				newHistory, err = ingestAnomalies(db, priorHistory, parsedEvents, nowMs)
+				newHistory, err = ingestAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath)
 				if err != nil {
 					return err
 				}
@@ -219,7 +219,7 @@ func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallH
 				}
 				var subNewHistory *ToolCallHistory
 				if ingestAnomalies != nil {
-					subNewHistory, err = ingestAnomalies(db, subPriorHistory, subParsedEvents, nowMs)
+					subNewHistory, err = ingestAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath)
 					if err != nil {
 						return err
 					}

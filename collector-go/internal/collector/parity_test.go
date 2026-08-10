@@ -33,12 +33,13 @@ type parityTokenTotals struct {
 }
 
 type parityGolden struct {
-	UsageEvents      int64               `json:"usageEvents"`
-	UsageTokenTotals parityTokenTotals   `json:"usageTokenTotals"`
-	ToolCalls        int64               `json:"toolCalls"`
-	TranscriptFiles  []string            `json:"transcriptFiles"`
-	SchemaVersion    int                 `json:"schemaVersion"`
-	Columns          map[string][]string `json:"columns"`
+	UsageEvents         int64               `json:"usageEvents"`
+	UsageTokenTotals    parityTokenTotals   `json:"usageTokenTotals"`
+	ToolCalls           int64               `json:"toolCalls"`
+	TranscriptFiles     []string            `json:"transcriptFiles"`
+	SchemaVersion       int                 `json:"schemaVersion"`
+	ToolCallSourceFiles map[string]string   `json:"toolCallSourceFiles"`
+	Columns             map[string][]string `json:"columns"`
 }
 
 func fixtureDir(t *testing.T) string {
@@ -140,6 +141,32 @@ func TestCrossCollectorParity(t *testing.T) {
 				t.Errorf("%s columns = %v, golden = %v", table, gotCols, want)
 				break
 			}
+		}
+	}
+
+	// Per-tool-call source correlation. Row counts alone could not see that
+	// this collector left source_file_rel NULL for every row -- issue #32.
+	srcRows, err := db.Query(`SELECT tool_use_id, source_file_rel FROM tool_calls`)
+	if err != nil {
+		t.Fatalf("query tool_calls sources: %v", err)
+	}
+	gotSources := map[string]string{}
+	for srcRows.Next() {
+		var id string
+		var src sql.NullString
+		if err := srcRows.Scan(&id, &src); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if !src.Valid {
+			gotSources[id] = "<NULL>"
+			continue
+		}
+		gotSources[id] = strings.ReplaceAll(src.String, string(filepath.Separator), "/")
+	}
+	srcRows.Close()
+	for id, want := range golden.ToolCallSourceFiles {
+		if gotSources[id] != want {
+			t.Errorf("tool_calls[%s].source_file_rel = %q, golden = %q", id, gotSources[id], want)
 		}
 	}
 

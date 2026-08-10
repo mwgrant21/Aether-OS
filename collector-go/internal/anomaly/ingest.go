@@ -143,7 +143,13 @@ type IngestResult struct {
 // comment in toolcallhistory.go), runs the three anomaly detectors over the
 // trailing 5-minute window, and persists any freshly detected anomalies via
 // INSERT OR IGNORE so repeat detections across scan ticks collapse to one row.
-func IngestToolCallsAndAnomalies(db *sql.DB, history *transcript.ToolCallHistory, events []transcript.Event, nowMs int64) (*IngestResult, error) {
+// sourceFileRel is the project-relative transcript path the events came from
+// (never absolute -- docs/privacy-and-data.md SS5). It is persisted on each
+// tool_calls row so resolveDispatchEvidence can correlate a dispatch to the
+// exact file its tool calls were observed in. Mirrors anomalyIngest.ts's
+// fifth parameter; before issue #32 this collector had no such parameter and
+// left the column NULL for EVERY tool call, top-level and nested alike.
+func IngestToolCallsAndAnomalies(db *sql.DB, history *transcript.ToolCallHistory, events []transcript.Event, nowMs int64, sourceFileRel string) (*IngestResult, error) {
 	newHistory := transcript.UpdateHistory(history, events, nowMs)
 
 	priorToolUseIDs := make(map[string]bool, len(history.Events))
@@ -158,7 +164,7 @@ func IngestToolCallsAndAnomalies(db *sql.DB, history *transcript.ToolCallHistory
 	}
 
 	insertToolCall, err := db.Prepare(
-		`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO tool_calls (tool_use_id, tool_name, file_path_rel, started_at_ms, closed_at_ms, source_file_rel) VALUES (?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		return nil, err
@@ -171,7 +177,7 @@ func IngestToolCallsAndAnomalies(db *sql.DB, history *transcript.ToolCallHistory
 		// own cwd the moment it enters the history, so no per-call-site
 		// sanitization is needed here (and none can be forgotten in the
 		// anomaly detail builders either).
-		if _, err := insertToolCall.Exec(call.ToolUseID, call.ToolName, call.FilePath, call.StartedAt, call.ClosedAt); err != nil {
+		if _, err := insertToolCall.Exec(call.ToolUseID, call.ToolName, call.FilePath, call.StartedAt, call.ClosedAt, sourceFileRel); err != nil {
 			return nil, err
 		}
 	}
