@@ -314,6 +314,47 @@ describe('scanTranscriptsOnce', () => {
     db.close();
   });
 
+  it('ingests a nested subagent transcript\'s own token usage into usage_events', () => {
+    // The nested loop already ingested tool calls and anomalies but never
+    // called ingestUsageEvent, so every dispatch's own token spend was
+    // missing from the store -- exactly the workload Cost Forensics exists
+    // to measure. The pre-existing nested test asserted tool calls only,
+    // which is why this went unnoticed. See issue #25.
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-subusage-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+
+    const usageLine = (ts: string, input: number, output: number) =>
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'sess-1',
+        timestamp: ts,
+        message: {
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: input, output_tokens: output, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      });
+
+    writeFileSync(join(projDir, 'sess-1.jsonl'), usageLine('2026-07-08T09:00:00Z', 100, 10) + '\n', 'utf8');
+
+    const subagentsDir = join(projDir, 'sess-1', 'subagents');
+    mkdirSync(subagentsDir, { recursive: true });
+    writeFileSync(join(subagentsDir, 'agent-x.jsonl'), usageLine('2026-07-08T09:00:02Z', 7000, 900) + '\n', 'utf8');
+
+    const db = freshDb();
+    const result = scanTranscriptsOnce(db, projectsRoot, 1000, new Map());
+
+    // Both the parent turn and the subagent's turn are usage events.
+    expect(result.eventsIngested).toBe(2);
+
+    const totals = db
+      .prepare('SELECT SUM(input_tokens) AS input, SUM(output_tokens) AS output FROM usage_events')
+      .get() as { input: number; output: number };
+    expect(totals.input).toBe(7100);
+    expect(totals.output).toBe(910);
+  });
+
   // Liveness heartbeat for the diagnostics reader (electron/collectorStore.ts's
   // readDiagnostics), mirroring the fleet poll's fleet_last_poll_ms.
   it('stamps the transcript-scan heartbeat even when the projects root is unreadable', () => {
@@ -445,4 +486,5 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
     expect(() => scanTranscriptsOnce(db, projectsRoot, 2000, new Map())).not.toThrow();
     db.close();
   });
+
 });

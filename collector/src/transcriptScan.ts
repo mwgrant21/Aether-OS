@@ -218,6 +218,18 @@ export function scanTranscriptsOnce(
           continue;
         }
         const subParsedEvents = subLines.map((l) => parseTranscriptLine(l)).filter((e): e is NonNullable<typeof e> => e !== null);
+
+        // A dispatched subagent's assistant turns carry their own token usage,
+        // and this loop previously ingested only tool calls and anomalies from
+        // them -- so every dispatch's own spend was missing from usage_events,
+        // exactly the workload Cost Forensics exists to measure. Mirrors the
+        // top-level loop above; ingestUsageEvent is idempotent per event, so a
+        // re-scan of an already-recorded turn does not double count.
+        // See issue #25.
+        for (const event of subParsedEvents) {
+          if (ingestUsageEvent(db, event)) eventsIngested += 1;
+        }
+
         const subPriorHistory = historyByFile.get(subRelativePath) ?? createEmptyHistory();
         const subAnomalyResult = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
         historyByFile.set(subRelativePath, subAnomalyResult.history);
