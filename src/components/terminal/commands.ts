@@ -1,5 +1,18 @@
 import type { Agent, AetherState, CommandResult, TermLine, ThemeName, RendererMode } from '../../state/types';
 import { fmt, fmtEta } from '../../utils/format';
+import { deriveContextWindowCard } from '../layout/contextWindowCard';
+
+/**
+ * Real context-window figures from the statusline payload. Previously this
+ * line rendered a real token count against a hardcoded `/ 125,000` while the
+ * machine's actual window was 200,000 -- see issue #20.
+ */
+function formatContextLine(state: AetherState): string {
+  const ctx = deriveContextWindowCard(state.statusline);
+  if (!ctx.available) return 'no reading yet';
+  const used = fmt(ctx.usedTokens as number);
+  return ctx.windowSize === null ? used : `${used} / ${fmt(ctx.windowSize)}`;
+}
 
 const PROMPT = '#7fd8ef';
 const BODY = '#9fc4d1';
@@ -74,7 +87,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         line(`◇ Reactor nominal — ${state.realAgents.length} agents drawing power`, GOOD),
         line(`  burn rate    ${fmt(state.rate)} tok/min`),
         line(`  session use  ${fmt(state.used)} tokens`),
-        line(`  context      ${fmt(state.ctxUsed)} / 125,000`),
+        line(`  context      ${formatContextLine(state)}`),
       );
       return { kind: 'append', lines: out };
     }

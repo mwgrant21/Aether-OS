@@ -5,6 +5,7 @@ import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { fmt } from '../../utils/format';
 import { computeTopCommands } from '../analytics/analyticsMath';
+import { deriveContextWindowCard } from './contextWindowCard';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 type UsageRange = 'live' | 'daily' | 'weekly';
@@ -36,12 +37,14 @@ export function BottomMetricsRow() {
   const bars = active.values.map((v, i) => ({ d: active.bucket(i), h: Math.round(20 + (v / maxBar) * 52) }));
   const rangeTotal = fmt(active.values.reduce((sum, v) => sum + v, 0));
 
-  const ctxTotal = 125000;
-  const ctxPct = Math.round((state.ctxUsed / ctxTotal) * 100);
+  // Real Claude Code statusline data -- the same source ReactorStatusCard's
+  // CONTEXT tile reads. See contextWindowCard.ts for why the window size,
+  // the input-only token sum and the per-part breakdown all come from the
+  // payload rather than from constants and ratios (issue #20).
+  const ctx = deriveContextWindowCard(state.statusline);
   const circ = 2 * Math.PI * 42;
-  const ctxDash = `${((circ * ctxPct) / 100).toFixed(1)} ${circ.toFixed(1)}`;
-  const inTok = Math.round(state.ctxUsed * 0.58);
-  const outTok = Math.round(state.ctxUsed * 0.42);
+  const ctxDash = `${((circ * ctx.ringPct) / 100).toFixed(1)} ${circ.toFixed(1)}`;
+  const PART_COLORS = [colors.accentCyanDeep, colors.warn, colors.success];
 
   const session = [
     { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
@@ -112,23 +115,29 @@ export function BottomMetricsRow() {
             </svg>
             <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
               <div>
-                <div style={{ font: `700 22px/1 ${fonts.mono}`, color: colors.textPrimary }}>{ctxPct}%</div>
+                <div style={{ font: `700 22px/1 ${fonts.mono}`, color: colors.textPrimary }}>
+                  {ctx.available ? `${ctx.stale ? '~' : ''}${Math.round(ctx.pct as number)}%` : '--'}
+                </div>
                 <div style={{ font: `400 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, marginTop: 3 }}>USED</div>
               </div>
             </div>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ font: `700 14px/1 ${fonts.mono}`, color: colors.textBody }}>{fmt(state.ctxUsed)}</div>
-            <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>/ 125,000 tokens</div>
+            <div style={{ font: `700 14px/1 ${fonts.mono}`, color: colors.textBody }}>
+              {ctx.available ? fmt(ctx.usedTokens as number) : 'No reading yet'}
+            </div>
+            <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>
+              {ctx.available
+                ? `${ctx.windowSize !== null ? `/ ${fmt(ctx.windowSize)} tokens` : 'window size unreported'}${ctx.stale ? ' · stale' : ''}`
+                : 'awaiting the first statusline reading'}
+            </div>
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
-              <div style={legendRowStyle(colors)}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.accentCyanDeep }} />
-                Input <span style={{ marginLeft: 'auto', color: colors.textMuted }}>{fmt(inTok)}</span>
-              </div>
-              <div style={legendRowStyle(colors)}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.success }} />
-                Output <span style={{ marginLeft: 'auto', color: colors.textMuted }}>{fmt(outTok)}</span>
-              </div>
+              {ctx.parts.map((part, i) => (
+                <div key={part.label} style={legendRowStyle(colors)}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: PART_COLORS[i % PART_COLORS.length] }} />
+                  {part.label} <span style={{ marginLeft: 'auto', color: colors.textMuted }}>{fmt(part.value)}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
