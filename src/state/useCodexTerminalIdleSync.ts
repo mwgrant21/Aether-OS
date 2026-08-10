@@ -2,7 +2,11 @@ import { useEffect } from 'react';
 import { useAetherStore } from './store';
 import { IDLE_THRESHOLD_MS } from './useTerminalIdleSync';
 
-/** Mirrors useTerminalIdleSync.ts exactly, for the independent Codex pty. */
+/** Mirrors useTerminalIdleSync.ts exactly, for the independent Codex pty.
+ *  Registers its own onData listener alongside PtyCodexTerminal.tsx's own --
+ *  safe because markActive provably cannot throw (a pure dispatch plus
+ *  clearTimeout/setTimeout), not merely because multiple listeners are
+ *  supported. */
 export function useCodexTerminalIdleSync() {
   const { dispatch } = useAetherStore();
 

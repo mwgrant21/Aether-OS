@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useCodexTerminalIdleSync } from './useCodexTerminalIdleSync';
+import { IDLE_THRESHOLD_MS } from './useTerminalIdleSync';
 import { AetherStoreProvider, useAetherStore } from './store';
 import type { ReactNode } from 'react';
-
-const IDLE_THRESHOLD_MS = 3000;
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AetherStoreProvider>{children}</AetherStoreProvider>;
@@ -37,7 +36,7 @@ describe('useCodexTerminalIdleSync', () => {
     delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
   });
 
-  it('does nothing when window.aetherElectron.pty is absent', () => {
+  it('does nothing when window.aetherElectron.codexPty is absent', () => {
     (window as unknown as { aetherElectron: unknown }).aetherElectron = {};
     const { result } = renderHook(
       () => {
@@ -49,7 +48,7 @@ describe('useCodexTerminalIdleSync', () => {
     expect(result.current).toBe(false);
   });
 
-  it('marks terminalIdle=true after IDLE_THRESHOLD_MS of no data', () => {
+  it('marks codexTerminalIdle=true after IDLE_THRESHOLD_MS of no data', () => {
     const { result } = renderHook(
       () => {
         useCodexTerminalIdleSync();
@@ -67,7 +66,7 @@ describe('useCodexTerminalIdleSync', () => {
     expect(result.current).toBe(true);
   });
 
-  it('resets to terminalIdle=false when new data arrives, then re-idles after another silent window', () => {
+  it('resets to codexTerminalIdle=false when new data arrives, then re-idles after another silent window', () => {
     const { result } = renderHook(
       () => {
         useCodexTerminalIdleSync();

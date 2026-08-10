@@ -180,6 +180,24 @@ describe('reducer', () => {
     expect(next.terminalIdle).toBe(true);
   });
 
+  it('SET_TERMINAL_IDLE with the same value as current is a no-op (referential equality, avoids re-render on every pty data event)', () => {
+    const idle = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_TERMINAL_IDLE', idle: true });
+    expect(next).toBe(idle);
+
+    const stillFalse = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: false });
+    expect(stillFalse).toBe(initialState);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE with the same value as current is a no-op (referential equality, avoids re-render on every pty data event)', () => {
+    const idle = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    expect(next).toBe(idle);
+
+    const stillFalse = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: false });
+    expect(stillFalse).toBe(initialState);
+  });
+
   it('SET_OPERATOR_NAME sets operatorName verbatim, leaving other state untouched', () => {
     const next = reducer(initialState, { type: 'SET_OPERATOR_NAME', name: 'Matt' });
     expect(next.operatorName).toBe('Matt');

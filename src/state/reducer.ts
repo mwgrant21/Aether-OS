@@ -195,10 +195,10 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, codexTerminalAlive: action.alive };
 
     case 'SET_TERMINAL_IDLE':
-      return { ...state, terminalIdle: action.idle };
+      return state.terminalIdle === action.idle ? state : { ...state, terminalIdle: action.idle };
 
     case 'SET_CODEX_TERMINAL_IDLE':
-      return { ...state, codexTerminalIdle: action.idle };
+      return state.codexTerminalIdle === action.idle ? state : { ...state, codexTerminalIdle: action.idle };
 
     case 'SET_OPERATOR_NAME':
       return { ...state, operatorName: action.name };

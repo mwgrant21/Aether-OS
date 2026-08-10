@@ -21,7 +21,13 @@ export function Sidebar() {
         {SIDEBAR_IDS.map((label) => {
           const on = label === state.activeTab;
           const idleFlag = label === 'Terminal' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
-          const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && !on;
+          // Gate on liveness too: a pty that exited only clears its pending idle
+          // timer (see useTerminalIdleSync.ts's onExit handler), it never forces
+          // idle back to false, so without this an exited pty's dot would keep
+          // pulsing forever. terminalAlive/codexTerminalAlive disambiguate "quiet"
+          // from "dead".
+          const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
+          const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
           return (
             <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
               <span style={navDotWrapStyle(on)}>
@@ -116,6 +122,10 @@ function navDotWrapStyle(on: boolean): CSSProperties {
     flex: 'none',
   };
 }
+// Under prefers-reduced-motion: reduce, global.css's `*` rule collapses the
+// idlePulse animation's duration to near-zero -- the dot still turns amber,
+// it just stops visibly pulsing. That static-amber degradation is accepted
+// behavior, not a bug.
 function navDotStyle(colors: ColorPalette, on: boolean, idlePulse = false): CSSProperties {
   return {
     width: 7,

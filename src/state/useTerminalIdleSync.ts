@@ -10,9 +10,12 @@ export const IDLE_THRESHOLD_MS = 3000;
 /** Mirrors useTerminalAliveSync.ts's subscribe-on-mount/unsubscribe-on-unmount
  *  shape, but derives state.terminalIdle from the pty:data stream instead of
  *  pty:alive/pty:exit. Registers its own independent onData listener
- *  alongside PtyTerminal.tsx's -- electron/preload.ts's ipcRenderer.on-based
- *  registration supports multiple concurrent listeners, so this never
- *  interferes with the terminal's own data-to-xterm wiring. */
+ *  alongside PtyTerminal.tsx's, which is registered later (this hook mounts
+ *  at app startup). That ordering would matter if markActive could throw --
+ *  Node's EventEmitter.emit has no try/catch around each listener, so an
+ *  earlier throw would abort a later listener for that emission -- but
+ *  markActive is a pure dispatch on a switch-case reducer plus
+ *  clearTimeout/setTimeout, so it provably cannot throw. */
 export function useTerminalIdleSync() {
   const { dispatch } = useAetherStore();
 

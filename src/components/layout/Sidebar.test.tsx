@@ -48,9 +48,10 @@ describe('Sidebar idle indicator', () => {
     expect(screen.getByText('Codex').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 
-  it('shows an idle pulse on Terminal when terminalIdle=true and Terminal is not the active tab', () => {
+  it('shows an idle pulse on Terminal when terminalIdle=true, terminalAlive=true, and Terminal is not the active tab', () => {
     renderSidebar([
       { type: 'SET_ACTIVE_TAB', tab: 'Dashboard' },
+      { type: 'SET_TERMINAL_ALIVE', alive: true },
       { type: 'SET_TERMINAL_IDLE', idle: true },
     ]);
     expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).not.toBeNull();
@@ -59,6 +60,7 @@ describe('Sidebar idle indicator', () => {
   it('does not show an idle pulse on Terminal when it IS the active tab, even if idle', () => {
     renderSidebar([
       { type: 'SET_ACTIVE_TAB', tab: 'Terminal' },
+      { type: 'SET_TERMINAL_ALIVE', alive: true },
       { type: 'SET_TERMINAL_IDLE', idle: true },
     ]);
     expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
@@ -67,6 +69,7 @@ describe('Sidebar idle indicator', () => {
   it('shows an idle pulse on Codex independently of Terminal\'s idle state', () => {
     renderSidebar([
       { type: 'SET_ACTIVE_TAB', tab: 'Dashboard' },
+      { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true },
       { type: 'SET_CODEX_TERMINAL_IDLE', idle: true },
     ]);
     expect(screen.getByText('Codex').closest('button')?.querySelector('[data-idle-pulse="true"]')).not.toBeNull();
@@ -76,5 +79,25 @@ describe('Sidebar idle indicator', () => {
   it('never shows an idle pulse on a sidebar item outside the Terminal/Codex scope', () => {
     renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Grid' }]);
     expect(screen.getByText('Dashboard').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
+  });
+
+  it('does not show an idle pulse on Terminal when idle=true but the pty is dead (terminalAlive=false)', () => {
+    renderSidebar([
+      { type: 'SET_ACTIVE_TAB', tab: 'Dashboard' },
+      { type: 'SET_TERMINAL_ALIVE', alive: true },
+      { type: 'SET_TERMINAL_IDLE', idle: true },
+      { type: 'SET_TERMINAL_ALIVE', alive: false },
+    ]);
+    expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
+  });
+
+  it('does not show an idle pulse on Codex when idle=true but the pty is dead (codexTerminalAlive=false)', () => {
+    renderSidebar([
+      { type: 'SET_ACTIVE_TAB', tab: 'Dashboard' },
+      { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true },
+      { type: 'SET_CODEX_TERMINAL_IDLE', idle: true },
+      { type: 'SET_CODEX_TERMINAL_ALIVE', alive: false },
+    ]);
+    expect(screen.getByText('Codex').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 });

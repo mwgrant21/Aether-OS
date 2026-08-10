@@ -1,10 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useTerminalIdleSync } from './useTerminalIdleSync';
+import { useTerminalIdleSync, IDLE_THRESHOLD_MS } from './useTerminalIdleSync';
 import { AetherStoreProvider, useAetherStore } from './store';
 import type { ReactNode } from 'react';
-
-const IDLE_THRESHOLD_MS = 3000;
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AetherStoreProvider>{children}</AetherStoreProvider>;
