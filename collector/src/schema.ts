@@ -15,6 +15,28 @@ export function openDatabase(dbPath: string): DatabaseSync {
   return new sqlite.DatabaseSync(dbPath);
 }
 
+/**
+ * Columns physically present on a table, regardless of what schema_meta
+ * claims. Migrations are driven off THIS, not off the recorded version.
+ *
+ * A database can be physically ahead of its recorded version -- the Go
+ * collector used to stamp the version back to 4 on a v6/v7 database (issue
+ * #31), which made the version-gated ALTERs below re-run against columns that
+ * already existed and throw `duplicate column name`. That threw at
+ * index.ts:49, unguarded, so an affected machine could not be rescued by
+ * upgrading either collector. Checking the column set heals that state
+ * instead of merely refusing to create more of it.
+ */
+function tableColumns(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[];
+  return new Set(rows.map((r) => r.name));
+}
+
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, ddl: string): void {
+  if (tableColumns(db, table).has(column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
 export function migrate(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -117,16 +139,16 @@ export function migrate(db: DatabaseSync): void {
   // v5 migration: add telemetry columns to dispatches table
   // Only run this migration when upgrading from schema version < 5
   const currentVersion = getSchemaVersion(db);
+  // Column-driven, not version-gated -- see tableColumns above. Safe to run
+  // on a database that is physically ahead of its recorded version.
   if (currentVersion < 5) {
-    db.exec(`
-      ALTER TABLE dispatches ADD COLUMN agent_id TEXT;
-      ALTER TABLE dispatches ADD COLUMN task_kind TEXT;
-      ALTER TABLE dispatches ADD COLUMN session_id TEXT;
-      ALTER TABLE dispatches ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;
-      ALTER TABLE dispatches ADD COLUMN exit_state TEXT NOT NULL DEFAULT 'ok';
-      ALTER TABLE dispatches ADD COLUMN severity INTEGER;
-      ALTER TABLE dispatches ADD COLUMN median_ms_at_eval INTEGER;
-    `);
+    addColumnIfMissing(db, 'dispatches', 'agent_id', 'agent_id TEXT');
+    addColumnIfMissing(db, 'dispatches', 'task_kind', 'task_kind TEXT');
+    addColumnIfMissing(db, 'dispatches', 'session_id', 'session_id TEXT');
+    addColumnIfMissing(db, 'dispatches', 'retries', 'retries INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'dispatches', 'exit_state', "exit_state TEXT NOT NULL DEFAULT 'ok'");
+    addColumnIfMissing(db, 'dispatches', 'severity', 'severity INTEGER');
+    addColumnIfMissing(db, 'dispatches', 'median_ms_at_eval', 'median_ms_at_eval INTEGER');
   }
 
   // v6 migration: add the source-file correlation column. Populated going
@@ -135,7 +157,7 @@ export function migrate(db: DatabaseSync): void {
   // of a dispatch". See the Task 0 reconciliation note under
   // docs/superpowers/specs/ (2026-08-07, cross-engine verification).
   if (currentVersion < 6) {
-    db.exec(`ALTER TABLE tool_calls ADD COLUMN source_file_rel TEXT;`);
+    addColumnIfMissing(db, 'tool_calls', 'source_file_rel', 'source_file_rel TEXT');
   }
 
   // v7 migration: flag a one-time backfill of nested subagent usage.

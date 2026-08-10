@@ -378,3 +378,27 @@ describe('schema version pin', () => {
     expect(SCHEMA_VERSION).toBe(7);
   });
 });
+
+describe('healing an already-downgraded database', () => {
+  it('migrates a database whose columns exist but whose recorded version was stamped back to 4', () => {
+    // The state the old Go collector left behind (issue #31): physically at
+    // v6/v7, recorded as 4. Both collectors then re-ran the v5 ALTERs against
+    // existing columns and threw, so upgrading could not rescue an affected
+    // machine -- #31's guard stopped NEW occurrences but healed nothing.
+    const dir = mkdtempSync(join(tmpdir(), 'aether-heal-'));
+    const db = openDatabase(join(dir, 'h.db'));
+    migrate(db);
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
+
+    db.prepare("UPDATE schema_meta SET value = '4' WHERE key = 'version'").run();
+
+    expect(() => migrate(db)).not.toThrow();
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
+
+    // The columns must still be there exactly once.
+    const cols = (db.prepare("SELECT name FROM pragma_table_info('dispatches')").all() as { name: string }[]).map((r) => r.name);
+    expect(cols.filter((c) => c === 'agent_id')).toHaveLength(1);
+    expect(cols).toContain('median_ms_at_eval');
+    db.close();
+  });
+});
