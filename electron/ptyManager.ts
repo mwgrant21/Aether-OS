@@ -21,6 +21,30 @@ export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return env;
 }
 
+// A login/interactive shell sources the operator's own profile (~/.bashrc,
+// ~/.zshrc, $PROFILE) after buildPtyEnv() has already sanitized the
+// inherited environment -- if that profile re-exports a blocked var (e.g.
+// `export ANTHROPIC_API_KEY=...` in ~/.bashrc), it silently restores exactly
+// what the strip above removed, before `claude` is ever written to the PTY.
+//
+// An earlier version of this fix suppressed profile loading outright
+// (--norc/-NoProfile/-f), but that also suppresses the PATH setup (nvm,
+// pyenv, Homebrew, ~/.local/bin) many operators rely on for `claude` itself
+// to be discoverable -- trading a real availability regression for the fix.
+// Instead: let the profile run normally, then explicitly unset the blocked
+// vars in the live shell session immediately before the launch command --
+// this closes the re-export path without touching anything else the
+// profile sets up. Matches CLAUDE_LAUNCH_COMMAND's own trick of writing
+// input to the pty immediately after spawn: the shell reads its rc files
+// from disk, not from stdin, so queued writes are unaffected by profile
+// execution and simply wait until the shell is ready to read them.
+export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly string[]): string {
+  if (platform === 'win32') {
+    return vars.map((v) => `Remove-Item Env:\\${v} -ErrorAction SilentlyContinue`).join('; ') + '\r';
+  }
+  return `unset ${vars.join(' ')}\r`;
+}
+
 export function spawnPty(cols = 100, rows = 30) {
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
   const ptyProcess = pty.spawn(shell, [], {
@@ -30,6 +54,7 @@ export function spawnPty(cols = 100, rows = 30) {
     cwd: os.homedir(),
     env: buildPtyEnv(),
   });
+  ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));
   ptyProcess.write(CLAUDE_LAUNCH_COMMAND);
   return ptyProcess;
 }
