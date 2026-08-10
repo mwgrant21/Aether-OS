@@ -155,6 +155,83 @@ func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallH
 			if err := recordOffset(db, relativePath, newOffset, nowMs); err != nil {
 				return err
 			}
+
+			// Nested subagent transcripts, mirroring transcriptScan.ts:200-227.
+			// A dispatched subagent's own turns live in
+			//   <dirPath>/<sessionBase>/subagents/agent-<id>.jsonl
+			// and carry their own token usage and tool calls. This collector
+			// previously had no subagents/ handling at all, so it missed that
+			// entire path -- usage, tool calls and anomalies alike -- while
+			// the Node collector read it. See issue #29 and the parity harness
+			// in test-fixtures/collector-parity/.
+			//
+			// IngestDispatchEvent is deliberately NOT called here, matching the
+			// Node nested loop: a dispatch completion appears in the PARENT
+			// transcript as a task-notification, never in the subagent's own
+			// file. Sharing one helper between the two loops would wrongly add
+			// dispatch ingestion to nested files.
+			//
+			// relativePath must be keyed exactly as the Node collector keys it
+			// -- both write the same transcript_files table, so a file keyed
+			// two ways is scanned twice and its usage double counted.
+			sessionBase := strings.TrimSuffix(file, ".jsonl")
+			subDirPath := filepath.Join(dirPath, sessionBase, "subagents")
+			subFiles, err := os.ReadDir(subDirPath)
+			if err != nil {
+				// No subagents directory is the expected, common case (most
+				// sessions dispatch nothing).
+				continue
+			}
+
+			for _, sf := range subFiles {
+				if sf.IsDir() || !strings.HasSuffix(sf.Name(), ".jsonl") {
+					continue
+				}
+				subFilePath := filepath.Join(subDirPath, sf.Name())
+				subRelativePath := filepath.Join(dirName, sessionBase, "subagents", sf.Name())
+
+				subOffset, err := getLastOffset(db, subRelativePath)
+				if err != nil {
+					return err
+				}
+
+				subLines, subNewOffset, err := ReadNewLines(subFilePath, subOffset)
+				if err != nil {
+					continue
+				}
+
+				subParsedEvents := make([]Event, 0, len(subLines))
+				for _, l := range subLines {
+					if e := ParseTranscriptLine(l); e != nil {
+						subParsedEvents = append(subParsedEvents, *e)
+					}
+				}
+
+				for i := range subParsedEvents {
+					if _, err := IngestUsageEvent(db, &subParsedEvents[i]); err != nil {
+						return err
+					}
+				}
+
+				subPriorHistory := toolCallHistoryByFile[subRelativePath]
+				if subPriorHistory == nil {
+					subPriorHistory = CreateEmptyHistory()
+				}
+				var subNewHistory *ToolCallHistory
+				if ingestAnomalies != nil {
+					subNewHistory, err = ingestAnomalies(db, subPriorHistory, subParsedEvents, nowMs)
+					if err != nil {
+						return err
+					}
+				} else {
+					subNewHistory = UpdateHistory(subPriorHistory, subParsedEvents, nowMs)
+				}
+				toolCallHistoryByFile[subRelativePath] = subNewHistory
+
+				if err := recordOffset(db, subRelativePath, subNewOffset, nowMs); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
