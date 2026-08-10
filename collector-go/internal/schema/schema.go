@@ -15,8 +15,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SchemaVersion mirrors schema.ts's SCHEMA_VERSION.
-const SchemaVersion = 4
+// SchemaVersion mirrors schema.ts's SCHEMA_VERSION. Both collectors write
+// the SAME database, so these MUST move together -- see issue #31 and
+// internal/schema/parity_test.go.
+const SchemaVersion = 7
 
 // OpenDatabase opens (creating if necessary) the SQLite database at dbPath,
 // creating the parent directory first. Matches schema.ts:14's
@@ -141,7 +143,73 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
-	_, err := db.Exec(
+	// Conditional migrations, mirroring schema.ts's v5/v6/v7 blocks. Read the
+	// recorded version once, before applying any of them.
+	current, err := GetSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+
+	// v5: dispatches telemetry columns.
+	if current < 5 {
+		for _, stmt := range []string{
+			`ALTER TABLE dispatches ADD COLUMN agent_id TEXT`,
+			`ALTER TABLE dispatches ADD COLUMN task_kind TEXT`,
+			`ALTER TABLE dispatches ADD COLUMN session_id TEXT`,
+			`ALTER TABLE dispatches ADD COLUMN retries INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE dispatches ADD COLUMN exit_state TEXT NOT NULL DEFAULT 'ok'`,
+			`ALTER TABLE dispatches ADD COLUMN severity INTEGER`,
+			`ALTER TABLE dispatches ADD COLUMN median_ms_at_eval INTEGER`,
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				return err
+			}
+		}
+	}
+
+	// v6: the source-file correlation column. Rows written under schema < 6
+	// keep it NULL, which readers must treat as "predates exact correlation",
+	// not "not part of a dispatch". This collector does not yet POPULATE it --
+	// that is issue #32 -- but the column must exist so the two collectors
+	// agree on shape.
+	if current < 6 {
+		if _, err := db.Exec(`ALTER TABLE tool_calls ADD COLUMN source_file_rel TEXT`); err != nil {
+			return err
+		}
+	}
+
+	// v7: flag the one-time nested-subagent usage backfill, and only when
+	// nested rows already exist -- a fresh database has none, so a database
+	// created by a post-fix collector can never be double counted by a later
+	// backfill. Mirrors schema.ts's v7 block; the backfill itself runs in the
+	// Node collector at scan time.
+	if current < 7 {
+		var nested int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM transcript_files WHERE file_path LIKE '%subagents%'`).Scan(&nested); err != nil {
+			return err
+		}
+		if nested > 0 {
+			if _, err := db.Exec(
+				`INSERT INTO schema_meta (key, value) VALUES ('subagent_usage_backfill_pending', '1')
+				 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	// NEVER lower the recorded version. This collector shares its database
+	// with collector/ (Node), which has been ahead before. Stamping
+	// unconditionally rewrote a newer database's version downwards, after
+	// which the newer collector re-applied migrations whose columns already
+	// existed and threw on a duplicate column -- unguarded at its own
+	// startup. See issue #31. A database newer than this binary understands
+	// is left exactly as found.
+	if current >= SchemaVersion {
+		return nil
+	}
+
+	_, err = db.Exec(
 		`INSERT INTO schema_meta (key, value) VALUES ('version', ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		SchemaVersion,

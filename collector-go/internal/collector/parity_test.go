@@ -33,10 +33,12 @@ type parityTokenTotals struct {
 }
 
 type parityGolden struct {
-	UsageEvents      int64             `json:"usageEvents"`
-	UsageTokenTotals parityTokenTotals `json:"usageTokenTotals"`
-	ToolCalls        int64             `json:"toolCalls"`
-	TranscriptFiles  []string          `json:"transcriptFiles"`
+	UsageEvents      int64               `json:"usageEvents"`
+	UsageTokenTotals parityTokenTotals   `json:"usageTokenTotals"`
+	ToolCalls        int64               `json:"toolCalls"`
+	TranscriptFiles  []string            `json:"transcriptFiles"`
+	SchemaVersion    int                 `json:"schemaVersion"`
+	Columns          map[string][]string `json:"columns"`
 }
 
 func fixtureDir(t *testing.T) string {
@@ -113,6 +115,34 @@ func TestCrossCollectorParity(t *testing.T) {
 		t.Errorf("tool_calls rows = %d, golden = %d", toolCalls, golden.ToolCalls)
 	}
 
+	// Schema shape. The two collectors migrate the same database, so their
+	// schemas must not drift -- issue #31, where this collector sat on
+	// version 4 while Node was on 7 and stamped a newer database back down,
+	// making Node's next migrate throw on a duplicate column.
+	var recorded int
+	if err := db.QueryRow(`SELECT value FROM schema_meta WHERE key = 'version'`).Scan(&recorded); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if recorded != golden.SchemaVersion {
+		t.Errorf("schema version = %d, golden = %d", recorded, golden.SchemaVersion)
+	}
+
+	for table, wantCols := range golden.Columns {
+		gotCols := queryColumns(t, db, table)
+		want := append([]string(nil), wantCols...)
+		sort.Strings(want)
+		if len(gotCols) != len(want) {
+			t.Errorf("%s columns = %v, golden = %v", table, gotCols, want)
+			continue
+		}
+		for i := range gotCols {
+			if gotCols[i] != want[i] {
+				t.Errorf("%s columns = %v, golden = %v", table, gotCols, want)
+				break
+			}
+		}
+	}
+
 	// The load-bearing assertion: both collectors write to the same database,
 	// so a file keyed two different ways is scanned twice and double counted.
 	// The golden stores forward slashes; normalise this platform's separator.
@@ -146,6 +176,25 @@ func queryTranscriptFiles(t *testing.T, db *sql.DB) []string {
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows: %v", err)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func queryColumns(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatalf("pragma_table_info(%s): %v", table, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, n)
 	}
 	sort.Strings(out)
 	return out
