@@ -52,6 +52,19 @@ describe('cross-collector parity', () => {
       .sort();
     expect(files).toEqual([...expected.transcriptFiles].sort());
 
+    // Schema shape. The two collectors migrate the same database, so their
+    // schemas must not drift -- issue #31, where Go sat on version 4 while
+    // Node was on 7 and stamped a newer database back down.
+    const version = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as { value: string };
+    expect(Number(version.value)).toBe(expected.schemaVersion);
+
+    for (const [table, cols] of Object.entries(expected.columns as Record<string, string[]>)) {
+      const actual = (db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[])
+        .map((r) => r.name)
+        .sort();
+      expect(actual).toEqual([...cols].sort());
+    }
+
     db.close();
   });
 });

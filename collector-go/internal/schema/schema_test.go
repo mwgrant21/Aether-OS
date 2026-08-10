@@ -72,9 +72,10 @@ func TestGetSchemaVersionAfterMigrate(t *testing.T) {
 	if v != SchemaVersion {
 		t.Errorf("expected version %d, got %d", SchemaVersion, v)
 	}
-	if v != 4 {
-		t.Errorf("expected version 4, got %d", v)
-	}
+	// The literal is pinned deliberately in exactly one place --
+	// TestSchemaVersionMatchesNode in parity_test.go -- so a bump does not
+	// break unrelated assertions. Asserting SchemaVersion above is the check
+	// that belongs here.
 }
 
 func TestGetSchemaVersionNoRowReturnsZero(t *testing.T) {
