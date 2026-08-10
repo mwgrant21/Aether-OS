@@ -12,20 +12,25 @@ import (
 // IngestUsageEvent mirrors usageIngest.ts's ingestUsageEvent. Returns
 // (false, nil) for any event that is not an assistant event with usage and a
 // timestamp -- no error, just a no-op, matching the TS boolean-return shape.
-func IngestUsageEvent(db *sql.DB, event *Event) (bool, error) {
+// sourceFileRel is the project-relative transcript this turn was read from
+// (never absolute -- docs/privacy-and-data.md SS5). See schema.go's v8 block
+// for why attribution exists: without it, "has this file already been
+// counted?" is unanswerable.
+func IngestUsageEvent(db *sql.DB, event *Event, sourceFileRel string) (bool, error) {
 	if event.Kind != "assistant" || event.Usage == nil || event.Timestamp == nil {
 		return false, nil
 	}
 
 	_, err := db.Exec(
-		`INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_file_rel)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		event.Timestamp.UnixMilli(),
 		event.Model,
 		event.Usage.InputTokens,
 		event.Usage.OutputTokens,
 		event.Usage.CacheCreationInputTokens,
 		event.Usage.CacheReadInputTokens,
+		sourceFileRel,
 	)
 	if err != nil {
 		return false, err

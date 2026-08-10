@@ -39,6 +39,7 @@ type parityGolden struct {
 	TranscriptFiles     []string            `json:"transcriptFiles"`
 	SchemaVersion       int                 `json:"schemaVersion"`
 	ToolCallSourceFiles map[string]string   `json:"toolCallSourceFiles"`
+	UsageSourceFiles    []string            `json:"usageSourceFiles"`
 	Columns             map[string][]string `json:"columns"`
 }
 
@@ -167,6 +168,40 @@ func TestCrossCollectorParity(t *testing.T) {
 	for id, want := range golden.ToolCallSourceFiles {
 		if gotSources[id] != want {
 			t.Errorf("tool_calls[%s].source_file_rel = %q, golden = %q", id, gotSources[id], want)
+		}
+	}
+
+	// Usage attribution (v8). Without it, "has this file already been counted?"
+	// cannot be answered, which is what made the old nested-usage backfill
+	// unsafe on any pre-v8 database.
+	usageRows, err := db.Query(`SELECT DISTINCT source_file_rel FROM usage_events`)
+	if err != nil {
+		t.Fatalf("query usage sources: %v", err)
+	}
+	var gotUsage []string
+	for usageRows.Next() {
+		var src sql.NullString
+		if err := usageRows.Scan(&src); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if !src.Valid {
+			gotUsage = append(gotUsage, "<NULL>")
+			continue
+		}
+		gotUsage = append(gotUsage, strings.ReplaceAll(src.String, string(filepath.Separator), "/"))
+	}
+	usageRows.Close()
+	sort.Strings(gotUsage)
+	wantUsage := append([]string(nil), golden.UsageSourceFiles...)
+	sort.Strings(wantUsage)
+	if len(gotUsage) != len(wantUsage) {
+		t.Errorf("usage source files = %v, golden = %v", gotUsage, wantUsage)
+	} else {
+		for i := range gotUsage {
+			if gotUsage[i] != wantUsage[i] {
+				t.Errorf("usage source files = %v, golden = %v", gotUsage, wantUsage)
+				break
+			}
 		}
 	}
 

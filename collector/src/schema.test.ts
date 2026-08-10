@@ -369,13 +369,13 @@ describe('schema', () => {
 });
 
 describe('schema version pin', () => {
-  it('SCHEMA_VERSION is 7 -- bumping it must be deliberate', () => {
+  it('SCHEMA_VERSION is 8 -- bumping it must be deliberate', () => {
     // Every other version assertion in this file now compares against
     // SCHEMA_VERSION, so a bump does not break seven call sites. This one
     // test pins the literal, so the bump is still a conscious edit in exactly
     // one place rather than something that rides along unnoticed.
     // Bumping it means adding the matching migration block in schema.ts.
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
   });
 });
 

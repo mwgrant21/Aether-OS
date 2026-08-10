@@ -3,19 +3,27 @@ import type { TranscriptEvent } from './transcriptParser.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { computeSeverity } from './personalitySpine.js';
 
-export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent): boolean {
+/**
+ * sourceFileRel is the project-relative transcript this turn was read from
+ * (never absolute -- docs/privacy-and-data.md SS5). Persisting it is what makes
+ * any future reconciliation of usage against a specific file possible; without
+ * it, "has this file already been counted?" is unanswerable, which is exactly
+ * what made the v7 backfill unsafe. See schema.ts's v8 block.
+ */
+export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent, sourceFileRel: string): boolean {
   if (event.kind !== 'assistant' || event.usage === null || event.timestamp === null) return false;
 
   db.prepare(
-    `INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_file_rel)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.timestamp.getTime(),
     event.model,
     event.usage.inputTokens,
     event.usage.outputTokens,
     event.usage.cacheCreationInputTokens,
-    event.usage.cacheReadInputTokens
+    event.usage.cacheReadInputTokens,
+    sourceFileRel
   );
   return true;
 }

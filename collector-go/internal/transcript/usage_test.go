@@ -95,7 +95,7 @@ func itoa(n int) string {
 
 func TestIngestUsageEvent_InsertsForAssistantWithUsage(t *testing.T) {
 	db := freshUsageDB(t)
-	inserted, err := IngestUsageEvent(db, assistantUsageEvent(nil))
+	inserted, err := IngestUsageEvent(db, assistantUsageEvent(nil), "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("IngestUsageEvent: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestIngestUsageEvent_InsertsForAssistantWithUsage(t *testing.T) {
 
 func TestIngestUsageEvent_SkipsUserKind(t *testing.T) {
 	db := freshUsageDB(t)
-	inserted, err := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Kind = "user" }))
+	inserted, err := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Kind = "user" }), "my-project/sess-1.jsonl")
 	if err != nil || inserted {
 		t.Fatalf("expected inserted=false, err=nil, got inserted=%v err=%v", inserted, err)
 	}
@@ -128,7 +128,7 @@ func TestIngestUsageEvent_SkipsUserKind(t *testing.T) {
 
 func TestIngestUsageEvent_SkipsNilUsage(t *testing.T) {
 	db := freshUsageDB(t)
-	inserted, _ := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Usage = nil }))
+	inserted, _ := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Usage = nil }), "my-project/sess-1.jsonl")
 	if inserted {
 		t.Fatalf("expected inserted=false")
 	}
@@ -136,7 +136,7 @@ func TestIngestUsageEvent_SkipsNilUsage(t *testing.T) {
 
 func TestIngestUsageEvent_SkipsNilTimestamp(t *testing.T) {
 	db := freshUsageDB(t)
-	inserted, _ := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Timestamp = nil }))
+	inserted, _ := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Timestamp = nil }), "my-project/sess-1.jsonl")
 	if inserted {
 		t.Fatalf("expected inserted=false")
 	}
@@ -144,7 +144,7 @@ func TestIngestUsageEvent_SkipsNilTimestamp(t *testing.T) {
 
 func TestIngestUsageEvent_NilModelStoredAsSQLNull(t *testing.T) {
 	db := freshUsageDB(t)
-	IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Model = nil }))
+	IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Model = nil }), "my-project/sess-1.jsonl")
 	var model sql.NullString
 	if err := db.QueryRow("SELECT model FROM usage_events").Scan(&model); err != nil {
 		t.Fatalf("query: %v", err)

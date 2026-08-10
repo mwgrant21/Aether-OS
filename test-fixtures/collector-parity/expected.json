@@ -1,5 +1,5 @@
 {
-  "_comment": "Cross-collector parity golden. BOTH collector/ (Node) and collector-go/ scan corpus/ and must produce exactly these figures. Paths use forward slashes; each suite normalises its platform separator before comparing. See test-fixtures/collector-parity/README.md. schemaVersion and columns were added after issue #31: the two collectors' schemas had silently diverged (Go on 4, Node on 7), and Go's unconditional version stamp rewrote a Node-migrated database downwards, which made Node's next migrate throw on a duplicate column. toolCallSourceFiles was added for issue #32: row counts alone could not see that the Go collector left source_file_rel NULL for every tool call, so downstream resolveDispatchEvidence reported no file-touch correlation.",
+  "_comment": "Cross-collector parity golden. BOTH collector/ (Node) and collector-go/ scan corpus/ and must produce exactly these figures. Paths use forward slashes; each suite normalises its platform separator before comparing. See test-fixtures/collector-parity/README.md. schemaVersion and columns were added after issue #31: the two collectors' schemas had silently diverged (Go on 4, Node on 7), and Go's unconditional version stamp rewrote a Node-migrated database downwards, which made Node's next migrate throw on a duplicate column. toolCallSourceFiles was added for issue #32: row counts alone could not see that the Go collector left source_file_rel NULL for every tool call, so downstream resolveDispatchEvidence reported no file-touch correlation. usageSourceFiles was added at v8: usage_events now records which transcript each turn came from, which is what makes 'has this file already been counted?' answerable at all.",
   "usageEvents": 2,
   "usageTokenTotals": {
     "input": 7100,
@@ -12,7 +12,7 @@
     "my-project/sess-1.jsonl",
     "my-project/sess-1/subagents/agent-x.jsonl"
   ],
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "columns": {
     "dispatches": [
       "agent_id",
@@ -37,10 +37,24 @@
       "started_at_ms",
       "tool_name",
       "tool_use_id"
+    ],
+    "usage_events": [
+      "cache_creation_input_tokens",
+      "cache_read_input_tokens",
+      "id",
+      "input_tokens",
+      "model",
+      "occurred_at_ms",
+      "output_tokens",
+      "source_file_rel"
     ]
   },
   "toolCallSourceFiles": {
     "tu_sub": "my-project/sess-1/subagents/agent-x.jsonl",
     "tu_top": "my-project/sess-1.jsonl"
-  }
+  },
+  "usageSourceFiles": [
+    "my-project/sess-1.jsonl",
+    "my-project/sess-1/subagents/agent-x.jsonl"
+  ]
 }

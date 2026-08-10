@@ -49,8 +49,8 @@ var v5DispatchColumns = []string{
 func TestSchemaVersionMatchesNode(t *testing.T) {
 	// Node's SCHEMA_VERSION. Both collectors write the SAME database, so a
 	// mismatch here is not cosmetic -- see TestMigrateNeverLowersRecordedVersion.
-	if SchemaVersion != 7 {
-		t.Errorf("SchemaVersion = %d, want 7 to match collector/src/schema.ts", SchemaVersion)
+	if SchemaVersion != 8 {
+		t.Errorf("SchemaVersion = %d, want 8 to match collector/src/schema.ts", SchemaVersion)
 	}
 }
 
