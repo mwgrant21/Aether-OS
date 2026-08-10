@@ -47,8 +47,8 @@ type Options struct {
 // which is exactly why scan.go could not call anomaly directly (that would
 // be a transcript -> anomaly -> transcript import cycle, since anomaly
 // already depends on transcript's types) -- see scan.go's top doc comment.
-func ingestAnomalies(db *sql.DB, history *transcript.ToolCallHistory, events []transcript.Event, nowMs int64) (*transcript.ToolCallHistory, error) {
-	result, err := anomaly.IngestToolCallsAndAnomalies(db, history, events, nowMs)
+func ingestAnomalies(db *sql.DB, history *transcript.ToolCallHistory, events []transcript.Event, nowMs int64, sourceFileRel string) (*transcript.ToolCallHistory, error) {
+	result, err := anomaly.IngestToolCallsAndAnomalies(db, history, events, nowMs, sourceFileRel)
 	if err != nil {
 		return nil, err
 	}

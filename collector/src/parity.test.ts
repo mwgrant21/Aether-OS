@@ -65,6 +65,14 @@ describe('cross-collector parity', () => {
       expect(actual).toEqual([...cols].sort());
     }
 
+    // Per-tool-call source correlation. Row counts alone could not see that
+    // one collector left source_file_rel NULL for every row -- issue #32.
+    const sources = Object.fromEntries(
+      (db.prepare('SELECT tool_use_id, source_file_rel FROM tool_calls').all() as { tool_use_id: string; source_file_rel: string | null }[])
+        .map((r) => [r.tool_use_id, r.source_file_rel === null ? null : r.source_file_rel.split(sep).join('/')]),
+    );
+    expect(sources).toEqual(expected.toolCallSourceFiles);
+
     db.close();
   });
 });

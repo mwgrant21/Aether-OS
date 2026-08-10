@@ -289,15 +289,25 @@ func TestScanTranscriptsOnce_UsesInjectedAnomalyIngestFuncWhenProvided(t *testin
 
 	var gotEvents int
 	var gotPriorHistory *ToolCallHistory
+	var gotSourceFileRel string
 	sentinelHistory := CreateEmptyHistory()
-	stub := func(db *sql.DB, history *ToolCallHistory, events []Event, nowMs int64) (*ToolCallHistory, error) {
+	stub := func(db *sql.DB, history *ToolCallHistory, events []Event, nowMs int64, sourceFileRel string) (*ToolCallHistory, error) {
 		gotPriorHistory = history
 		gotEvents = len(events)
+		gotSourceFileRel = sourceFileRel
 		return sentinelHistory, nil
 	}
 
 	if err := ScanTranscriptsOnce(db, projectsRoot, 1000, historyByFile, stub); err != nil {
 		t.Fatalf("ScanTranscriptsOnce: %v", err)
+	}
+
+	// The source-relative path must reach the ingester -- without it every
+	// tool_calls row lands with source_file_rel NULL and downstream dispatch
+	// evidence reports no file-touch correlation (issue #32). It must be the
+	// PROJECT-relative path, never absolute (docs/privacy-and-data.md SS5).
+	if want := filepath.Join("my-project", "session.jsonl"); gotSourceFileRel != want {
+		t.Errorf("sourceFileRel = %q, want %q", gotSourceFileRel, want)
 	}
 	if gotEvents != 1 {
 		t.Fatalf("injected func saw %d events, want 1", gotEvents)

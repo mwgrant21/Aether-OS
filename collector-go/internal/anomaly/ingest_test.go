@@ -57,7 +57,7 @@ func TestIngest_PersistsClosedToolCallsAndFlagsReReadLoopOnThirdRead(t *testing.
 		events = append(events, resultEvent(id, int64(1050+i*100)))
 	}
 
-	result, err := IngestToolCallsAndAnomalies(db, history, events, 2000)
+	result, err := IngestToolCallsAndAnomalies(db, history, events, 2000, "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("IngestToolCallsAndAnomalies: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestIngest_NullsTraversalRelativePath(t *testing.T) {
 		resultEvent("tu_0", 1050),
 	}
 
-	result, err := IngestToolCallsAndAnomalies(db, history, events, 2000)
+	result, err := IngestToolCallsAndAnomalies(db, history, events, 2000, "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("IngestToolCallsAndAnomalies: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestIngest_NewlyClosedDiffedByToolUseIdNotArrayIndex(t *testing.T) {
 		resultEvent("tu_500", 5050),
 	}
 
-	result, err := IngestToolCallsAndAnomalies(db, priorHistory, events, 6000)
+	result, err := IngestToolCallsAndAnomalies(db, priorHistory, events, 6000, "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("IngestToolCallsAndAnomalies: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestIngest_RelativizesAbsoluteFilePathAgainstCwd(t *testing.T) {
 		events = append(events, resultEvent(id, int64(1050+i*100)))
 	}
 
-	result, err := IngestToolCallsAndAnomalies(db, transcript.CreateEmptyHistory(), events, 2000)
+	result, err := IngestToolCallsAndAnomalies(db, transcript.CreateEmptyHistory(), events, 2000, "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("IngestToolCallsAndAnomalies: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestIngest_NullsAbsoluteFilePathWithNoCwd(t *testing.T) {
 		resultEvent("tu_0", 1050),
 	}
 
-	if _, err := IngestToolCallsAndAnomalies(db, transcript.CreateEmptyHistory(), events, 2000); err != nil {
+	if _, err := IngestToolCallsAndAnomalies(db, transcript.CreateEmptyHistory(), events, 2000, "my-project/sess-1.jsonl"); err != nil {
 		t.Fatalf("IngestToolCallsAndAnomalies: %v", err)
 	}
 
@@ -295,7 +295,7 @@ func TestIngest_DoesNotReinsertSameAnomalyOnSecondScanTick(t *testing.T) {
 		events = append(events, resultEvent(id, int64(1050+i*100)))
 	}
 
-	first, err := IngestToolCallsAndAnomalies(db, transcript.CreateEmptyHistory(), events, 2000)
+	first, err := IngestToolCallsAndAnomalies(db, transcript.CreateEmptyHistory(), events, 2000, "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("first IngestToolCallsAndAnomalies: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestIngest_DoesNotReinsertSameAnomalyOnSecondScanTick(t *testing.T) {
 
 	// Second tick: no new transcript events, but the same closures are still
 	// inside the 5-minute window, so the detectors fire again.
-	second, err := IngestToolCallsAndAnomalies(db, first.History, []transcript.Event{}, 3000)
+	second, err := IngestToolCallsAndAnomalies(db, first.History, []transcript.Event{}, 3000, "my-project/sess-1.jsonl")
 	if err != nil {
 		t.Fatalf("second IngestToolCallsAndAnomalies: %v", err)
 	}
