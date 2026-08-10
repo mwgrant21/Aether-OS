@@ -89,3 +89,48 @@ describe('runCommand', () => {
     expect(nextAutoName(initialState)).toBe('Image Gen');
   });
 });
+
+describe('status context line', () => {
+  const withStatusline = (capturedAtMs: number) => ({
+    ...initialState,
+    statusline: {
+      capturedAtMs,
+      sessionId: null,
+      modelId: null,
+      modelDisplayName: null,
+      fiveHour: null,
+      sevenDay: null,
+      contextUsedPercentage: 55,
+      contextWindowSize: 200_000,
+      contextUsage: {
+        inputTokens: 1_000,
+        outputTokens: 200,
+        cacheCreationInputTokens: 50,
+        cacheReadInputTokens: 20,
+      },
+      totalCostUsd: null,
+      currentDir: null,
+      projectDir: null,
+    },
+  });
+
+  const contextLine = (state: typeof initialState) => {
+    const result = runCommand(state, 'status');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    return result.lines.map((l) => l.t).find((t) => t.includes('context')) ?? '';
+  };
+
+  it('marks a stale reading rather than printing it as current', () => {
+    // The footer card annotates the same data with `~` and `stale`. A
+    // days-old snapshot printed here without qualification reads as a live
+    // measurement -- see the Codex review of PR #26.
+    const line = contextLine(withStatusline(Date.now() - 14 * 24 * 60 * 60 * 1000));
+    expect(line).toContain('stale');
+  });
+
+  it('does not mark a fresh reading as stale', () => {
+    const line = contextLine(withStatusline(Date.now()));
+    expect(line).not.toContain('stale');
+    expect(line).toContain('1,070');
+  });
+});
