@@ -322,6 +322,51 @@ export function isSameLocalDay(iso: string, timeZone: string, nowMs: number): bo
   return localDayKey(d, timeZone) === localDayKey(new Date(nowMs), timeZone);
 }
 
+/**
+ * The [startMs, endMs] instants (inclusive) covering the local calendar day
+ * containing `nowMs` in `timeZone`.
+ *
+ * Exported so the view can test interval OVERLAP against today rather than
+ * "does either endpoint land on today" -- a dispatch that starts before local
+ * midnight and doesn't end until after the FOLLOWING local midnight has
+ * neither endpoint on today, but its interval still fully contains today and
+ * must not be excluded from the reconciliation.
+ *
+ * No IANA-aware date library is available here, so the boundary is found by
+ * bisection rather than computed algebraically: search around `nowMs` for the
+ * ms instants where `localDayKey` flips away from today's key. This is exact
+ * to within the 1000ms bisection tolerance, which is far finer than anything
+ * a dispatch span needs.
+ */
+export function localDayBoundsMs(timeZone: string, nowMs: number): { startMs: number; endMs: number } {
+  const todayKey = localDayKey(new Date(nowMs), timeZone);
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  // startMs: the earliest instant, searching back up to 2 days, still keyed
+  // today. lo stays keyed before today, hi stays keyed today.
+  let lo = nowMs - 2 * dayMs;
+  let hi = nowMs;
+  while (hi - lo > 1000) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localDayKey(new Date(mid), timeZone) === todayKey) hi = mid;
+    else lo = mid;
+  }
+  const startMs = hi;
+
+  // endMs: the latest instant, searching forward up to 2 days, still keyed
+  // today. lo stays keyed today, hi stays keyed after today.
+  let lo2 = nowMs;
+  let hi2 = nowMs + 2 * dayMs;
+  while (hi2 - lo2 > 1000) {
+    const mid = Math.floor((lo2 + hi2) / 2);
+    if (localDayKey(new Date(mid), timeZone) === todayKey) lo2 = mid;
+    else hi2 = mid;
+  }
+  const endMs = lo2;
+
+  return { startMs, endMs };
+}
+
 // Intl.DateTimeFormat construction is among the most expensive calls in the
 // Intl surface, and localDayKey runs once per assistant event. main.ts feeds
 // bucketByDay every transcript event on the machine, on the main thread, every

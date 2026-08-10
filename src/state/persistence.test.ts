@@ -9,6 +9,7 @@ import type { AetherState } from './types';
 // three separate times in this project's history --
 //   - `state.selected` (the selected-agent field) was missing from the whitelist
 //   - `projects`/`providers`/`routeDefault` (the Uplinks/Dashboard fields) were missing
+//     (providers/routeDefault were later removed entirely -- see uplinks-real-status)
 //   - `memSeq` was missing while `memories` was present, so a reload reset the id
 //     counter but not the memories array, and the next memory created collided on id
 //     (duplicate React keys, two memories toggling pinned together, wrong memory
@@ -30,11 +31,10 @@ describe('persistence', () => {
     expect(loaded?.unread).toBe(5);
   });
 
-  it('persists Dashboard state (providers/routeDefault) across reloads', () => {
-    savePersisted({ ...initialState, routeDefault: 'Manual' });
+  it('does not persist terminalAlive (recomputed live from the current session\'s pty state)', () => {
+    savePersisted({ ...initialState, terminalAlive: false });
     const loaded = loadPersisted();
-    expect(loaded?.providers).toEqual(initialState.providers);
-    expect(loaded?.routeDefault).toBe('Manual');
+    expect(loaded?.terminalAlive).toBeUndefined();
   });
 
   it('persists the selected agent across reloads', () => {
@@ -127,8 +127,6 @@ describe('persistence', () => {
       cmdHist: ['status', 'budget'],
       approvals: [{ id: 99, agent: 'Ghost', i: 'GH', hue: '#ffffff', action: 'a', detail: 'd', risk: 'HIGH' }],
       apprSeq: 100,
-      providers: [{ name: 'Ghost Provider', connected: true }],
-      routeDefault: 'GhostRoute',
       operatorName: 'Ghost Operator',
       selected: 'Ghost Agent',
       selectedProject: 'Ghost Project',
@@ -171,8 +169,6 @@ describe('persistence', () => {
     expect(loaded?.cmdHist).toEqual(['status', 'budget']);
     expect(loaded?.approvals).toEqual(distinctiveState.approvals);
     expect(loaded?.apprSeq).toBe(100);
-    expect(loaded?.providers).toEqual(distinctiveState.providers);
-    expect(loaded?.routeDefault).toBe('GhostRoute');
     expect(loaded?.operatorName).toBe('Ghost Operator');
     expect(loaded?.selected).toBe('Ghost Agent');
     expect(loaded?.selectedProject).toBe('Ghost Project');

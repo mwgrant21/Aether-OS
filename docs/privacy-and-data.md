@@ -19,22 +19,33 @@ only, reachable only from this machine, with no port exposed externally and no t
 surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
-**Nothing leaves this machine. There is no exception.** As of Stage 13.5 (`docs/roadmap.md` §3.5),
-there is no model call site anywhere in this codebase: the `@anthropic-ai/sdk` dependency is gone,
+**Nothing leaves this machine, with exactly one named, default-off, opt-in exception.** As of
+Stage 13.5 (`docs/roadmap.md` §3.5), there is no model call site anywhere in this codebase for
+Aether's own features: the `@anthropic-ai/sdk` dependency is gone,
 `chatCore.ts`/`claudeClient.ts`/`systemPrompt.ts`/`chatProxyPlugin.ts` and the `chat:*` IPC pair are
 deleted, and `.env` key loading (`electron/loadDotEnv.ts`) is gone too — the app cannot read a key
 from disk even if one exists. `Comms` (the renamed Chat tab) answers only through
-`localResponder.ts`, a local, deterministic responder. No feature in this app makes a network
-request, now or on the roadmap.
+`localResponder.ts`, a local, deterministic responder, with no network request. **Cross-engine
+Codex verification (§10) is the sole exception** — an explicit, default-off, opt-in feature that
+sends a scoped snapshot to a second vendor's agent, never automatic and never enabled by any other
+feature in this app.
 
 This claim is about Aether's own code and holds no API key — it does not extend to the embedded
-terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`),
-which sends prompts to Anthropic on every turn under the user's own credentials, exactly like
+terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`)
+whenever the Terminal view is mounted, which sends prompts to Anthropic on every turn under the
+user's own credentials, exactly like
 running `claude` in any other terminal window. That traffic is the user's Claude Code usage, not
 something Aether initiates, proxies, or can see — Aether has no visibility into it and no path to
 influence it beyond scrubbing `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` from the
 environment the terminal shell inherits, so a key exported for other tools on the operator's
 machine cannot be picked up by the session Aether starts.
+
+**The same carve-out, additionally gated, now covers a second terminal.** A Codex terminal
+(`electron/codexPtyManager.ts`) — a second, independent, real interactive `codex` CLI session —
+exists alongside the Claude terminal. It uses the same lazy, mount-triggered spawn mechanism the
+Claude terminal already uses — neither one launches unconditionally at app boot — but the Codex
+terminal adds an extra gate the Claude terminal doesn't have: it only spawns once the operator has
+also opted in via `codexTerminalCfg.enabled`, default `false`. See §11 for the full boundary.
 
 **No telemetry. Ever.** Not opt-out, not anonymous, not aggregate. Worth stating explicitly because
 it is a live differentiator: `agent-flow`, one of the two comparable agent-trace visualizers,
@@ -227,7 +238,60 @@ its equivalent) has to be rebuilt from scratch, not assumed to still be standing
 
 ---
 
-## 9. Correction to fix in `CLAUDE.md`
+## 9. Cross-engine Codex verification — the one named outbound exception
+
+Shipped 2026-08-07 — see `docs/superpowers/plans/2026-08-07-codex-acp-cross-engine-verification.md`.
+This is the only feature in Aether OS that sends anything to a second vendor. It exists to let the
+operator ask a different model family (OpenAI's Codex, via the Agent Client Protocol) whether a
+Claude dispatch's claimed work is actually supported by its artifacts — see
+`docs/ideas/cross-engine-verification.md` for the rationale (dissimilar redundancy).
+
+**Default off, explicit opt-in, every time.** `state.crossEngineCfg.enabled` defaults to `false`
+(`src/state/initialState.ts`). Turning it on in Settings → the Cross-Engine Verification card shows
+a disclosure the operator must read and click through (`I UNDERSTAND, ENABLE` in
+`CrossEngineVerificationCard.tsx`) before the toggle takes effect — there is no one-click enable.
+The disclosure text, verbatim:
+
+> Sends the selected verification snapshot to OpenAI Codex. Uses your ChatGPT Codex allowance.
+> OpenAI API billing is disabled. OpenAI API keys and custom gateways are blocked. No automatic
+> fallback.
+
+**What is sent, and how it's scoped.** A verification run is always manual — the operator clicks
+"Verify with Codex" on a specific dispatch row in the Ledger's `DispatchCostTable`
+(`VerifyWithCodexButton.tsx`). `electron/crossEngine/codexVerifier.ts` then resolves that one
+dispatch's evidence, builds a read-only file-system snapshot (`snapshotBuilder.ts`) containing the
+full committed repository tree at the commit under test (a `git archive HEAD`-style copy, not the
+live working tree) overlaid with the current content of that dispatch's approved touched files, and
+formats a verification prompt from that evidence (`verificationPrompt.ts`). Only that scoped
+snapshot and prompt are sent — never the fleet roster, approval queue, other dispatches, or
+anything outside the one dispatch under review.
+
+**Billing boundary, enforced structurally, not by convention.** The Codex adapter is driven over
+the real ACP wire protocol (`session/new` → `session/prompt` → `session/update`, see
+`electron/crossEngine/acpClient.ts`) through the official `codex-acp` executable, spawned with a
+child environment that strips every OpenAI API-key/billing variable
+(`electron/crossEngine/acpProcess.ts`, asserted by `acpProcess.test.ts`). Before every single
+verification turn — not only at initial connect — `codexVerifier.ts` calls
+`authentication/status` and refuses to run unless the status is exactly `chat-gpt`
+(`isAllowedAuthStatus`, `codexSubscriptionPolicy.ts`); any other status, including
+`unauthenticated`, a malformed response, or a timeout, fails closed. There is no code path, UI
+control, or configuration key by which an OpenAI API key or a custom gateway URL can be supplied —
+`src/shared/noApiCalls.test.ts`'s "cross-engine Codex boundary" suite fails the build if one
+appears.
+
+**Nothing raw is persisted.** `src/state/persistence.ts`'s persisted-fields whitelist carries only
+`crossEngineCfg` (the opt-in boolean and connection state) — never a `VerificationResultV1`
+payload. Findings, summaries, the prompt, the snapshot, and the raw Codex response live only in
+Electron main-process memory and in-flight IPC events (`crossEngine:update`) for the duration of
+one run; none of it reaches `localStorage`, the collector's SQLite schema, or disk. There is no
+long-lived adapter process to terminate — each verification run spawns and disposes its own ACP
+client (`electron/crossEngine/acpProcess.ts`, `acpClient.ts`). Disabling the feature
+(`crossEngine:setEnabled(false)`) prevents any new run from starting; a run already in flight when
+the toggle is switched off completes normally and is cleaned up the same way every run always is.
+
+---
+
+## 10. Correction to fix in `CLAUDE.md`
 
 The current project memory states:
 
@@ -243,3 +307,59 @@ Stage 0.5 makes the statement true. Until it lands, the line should read *"read 
 (Vite dev-server plugin today; moving to the Electron main process in Stage 0.5)"* — an accurate
 description of a broken state beats an aspirational one, which is this project's stated standard
 everywhere else.
+
+---
+
+## 11. Codex terminal — a second interactive session, same open-ended access as Claude's
+
+Shipped 2026-08-09 — see `docs/superpowers/plans/2026-08-09-codex-terminal-view.md`. This is not a
+new instance of §9's outbound-data exception — it does not send a scoped snapshot to anything.
+It is a second interactive terminal, in the same category §1 already carves out for the Claude
+terminal: a real, live `codex` CLI session with the same open-ended file-system and command access
+the Claude terminal already has, running under the operator's own Codex/ChatGPT credentials, exactly
+like running `codex` in any other terminal window. Aether does not scope, filter, or inspect what
+happens inside that session any more than it does for the Claude terminal.
+
+**Default off, gated behind its own toggle.** `state.codexTerminalCfg.enabled` defaults to `false`
+(`src/state/initialState.ts`), folded into the same Cross-Engine Verification settings card as §9's
+verifier toggle (`CrossEngineVerificationCard.tsx`) rather than a separate card. There is no
+disclosure click-through for this toggle — unlike §9's verifier, this feature never sends anything
+anywhere on Aether's behalf, so the disclosure language that governs an automatic outbound send does
+not apply here.
+
+**Mount-triggered spawn, not an app-boot launch.** Enabling the toggle alone does not start a
+session. `CodexTerminalView` checks `state.codexTerminalCfg.enabled` before rendering
+`<PtyCodexTerminal />` at all; when disabled it renders an explanatory message instead and
+`getOrCreateHost()` — the function that actually calls `codexPty.start()` — never runs. The real
+`codex` pty is created only the first time the operator, with the toggle already on, navigates to
+the Codex sidebar view — the same lazy, mount-triggered mechanism the existing Claude terminal
+already uses (`PtyTerminal.tsx`), not an unconditional launch at every app start regardless of
+navigation.
+
+**Turning the toggle off hides the view and blocks future spawns, but does not kill an
+already-running session.** Disabling `codexTerminalCfg.enabled` makes `CodexTerminalView` render its
+disabled message again and prevents any new `codexPty:start` call, but `main.ts`'s
+`codexPtyLifecycle` keeps whatever `codex` pty is already running alive until the app quits (or the
+operator exits `codex` inside that session themselves) — re-enabling the toggle reattaches to it
+rather than spawning a second one. This is accepted current behavior, not a bug, but it is worth
+stating plainly rather than letting the toggle's label imply the session is actually stopped.
+
+**Shares the verifier's `CODEX_HOME` isolation and env-stripping.** `electron/codexPtyManager.ts`'s
+`spawnCodexPty()` calls the same `resolveCodexHome()` (`electron/crossEngine/acpProcess.ts`) §9's
+verifier uses, so the terminal session and the verifier read and write the same dedicated,
+isolated Codex home directory — never the operator's global `~/.codex`. Before spawning, `buildCodexPtyEnv`
+strips the same billing/auth-bypass vector list `acpProcess.ts`'s verifier already enumerates for
+`codex` — `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`,
+`MODEL_PROVIDER`, `DEFAULT_AUTH_REQUEST`, `CODEX_CONFIG`, `CODEX_PATH` — from the environment the
+shell inherits (mirroring `ptyManager.ts`'s `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/
+`ANTHROPIC_BASE_URL` scrubbing for the Claude terminal), so a key exported for other tools on the
+operator's machine cannot be silently picked up by the session Aether starts.
+
+**Named limitation, not glossed over: env-stripping cannot police what the operator types.** This is
+a real, live, interactive terminal. Stripping the inherited environment closes exactly one path — a
+key silently carried in from the shell — and nothing more. It does not and cannot stop the operator
+from typing `codex login --api-key ...` (or pasting a key into any other prompt the `codex` CLI
+offers) by hand inside the live session once it is running. This is not a gap specific to this
+feature; it is the same category of limitation the Claude terminal's own environment-scrubbing
+already has and already documents above — an interactive shell is, by construction, a surface Aether
+cannot fully police from the outside.

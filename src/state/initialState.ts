@@ -144,12 +144,17 @@ export const initialState: AetherState = {
   memoryTombstones: [],
   memoryScopeFilter: 'all',
   memoryShowTombstones: false,
-  providers: [
-    { name: 'Aether Core', connected: true },
-    { name: 'OpenAI/Codex', connected: false },
-    { name: 'Local Ollama', connected: false },
-  ],
-  routeDefault: 'Auto',
+  // False until main.ts actually pushes `pty:alive`. No pty exists at launch:
+  // PtyTerminal.tsx spawns one only when the Terminal tab mounts, so a launch
+  // restoring any other persisted activeTab -- or a renderer running outside
+  // Electron -- has no terminal at all. Defaulting true made Uplinks and the
+  // dashboard report ONLINE indefinitely in exactly those cases.
+  terminalAlive: false,
+  // Same reasoning as terminalAlive: nothing spawns the Codex pty until the
+  // Codex terminal view actually mounts.
+  codexTerminalAlive: false,
+  terminalIdle: false,
+  codexTerminalIdle: false,
   operatorName: 'Operator',
   realUsage: {
     weeklyTokens: [0, 0, 0, 0, 0, 0, 0],
@@ -185,4 +190,6 @@ export const initialState: AetherState = {
   dispatchNarrations: {},
   narrationMessages: {},
   narrationBudgets: {},
+  crossEngineCfg: { enabled: false, provider: 'codex-chatgpt' },
+  codexTerminalCfg: { enabled: false },
 };

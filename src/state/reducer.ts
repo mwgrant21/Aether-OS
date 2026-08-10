@@ -33,8 +33,10 @@ export type Action =
   | { type: 'SET_MEMORY_SCOPE_FILTER'; filter: string }
   | { type: 'TOGGLE_MEMORY_TOMBSTONE_VIEW' }
   | { type: 'UPDATE_CFG'; patch: Partial<Cfg> }
-  | { type: 'TOGGLE_PROVIDER_CONNECTION'; name: string }
-  | { type: 'SET_ROUTE_DEFAULT'; value: string }
+  | { type: 'SET_TERMINAL_ALIVE'; alive: boolean }
+  | { type: 'SET_CODEX_TERMINAL_ALIVE'; alive: boolean }
+  | { type: 'SET_TERMINAL_IDLE'; idle: boolean }
+  | { type: 'SET_CODEX_TERMINAL_IDLE'; idle: boolean }
   | { type: 'SET_OPERATOR_NAME'; name: string }
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
   | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
@@ -59,7 +61,9 @@ export type Action =
   | { type: 'RECAP_RECEIVED'; recap: RecapPayload }
   | { type: 'DISMISS_RECAP' }
   | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string }
-  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number };
+  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number }
+  | { type: 'SET_CROSS_ENGINE_CFG'; cfg: { enabled: boolean; provider: 'codex-chatgpt' } }
+  | { type: 'SET_CODEX_TERMINAL_CFG'; cfg: { enabled: boolean } };
 
 const THROTTLE_SHARE_CEILING = 0.08;
 
@@ -167,6 +171,12 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'TOGGLE_MEMORY_TOMBSTONE_VIEW':
       return { ...state, memoryShowTombstones: !state.memoryShowTombstones };
 
+    case 'SET_CROSS_ENGINE_CFG':
+      return { ...state, crossEngineCfg: action.cfg };
+
+    case 'SET_CODEX_TERMINAL_CFG':
+      return { ...state, codexTerminalCfg: action.cfg };
+
     case 'SET_OP_MODE':
       return {
         ...state,
@@ -178,14 +188,17 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'UPDATE_CFG':
       return { ...state, cfg: { ...state.cfg, ...action.patch } };
 
-    case 'TOGGLE_PROVIDER_CONNECTION':
-      return {
-        ...state,
-        providers: state.providers.map((p) => (p.name === action.name ? { ...p, connected: !p.connected } : p)),
-      };
+    case 'SET_TERMINAL_ALIVE':
+      return { ...state, terminalAlive: action.alive };
 
-    case 'SET_ROUTE_DEFAULT':
-      return { ...state, routeDefault: action.value };
+    case 'SET_CODEX_TERMINAL_ALIVE':
+      return { ...state, codexTerminalAlive: action.alive };
+
+    case 'SET_TERMINAL_IDLE':
+      return state.terminalIdle === action.idle ? state : { ...state, terminalIdle: action.idle };
+
+    case 'SET_CODEX_TERMINAL_IDLE':
+      return state.codexTerminalIdle === action.idle ? state : { ...state, codexTerminalIdle: action.idle };
 
     case 'SET_OPERATOR_NAME':
       return { ...state, operatorName: action.name };

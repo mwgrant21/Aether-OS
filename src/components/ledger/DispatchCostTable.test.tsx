@@ -23,6 +23,7 @@ function row(over: Partial<DispatchCostRow> & { usdApprox?: number } = {}): Disp
   return {
     toolUseId: 'tu_1',
     startedAt: new Date('2026-08-07T12:00:00Z').toISOString(),
+    endedAt: new Date('2026-08-07T12:00:00Z').toISOString(),
     description: 'a dispatch',
     subagentType: 'general-purpose',
     durationMs: 1000,
@@ -128,5 +129,15 @@ describe('DispatchCostTable', () => {
   it('renders an explicit empty state rather than a blank card', () => {
     render(<DispatchCostTable rows={[]} />);
     expect(screen.getByText(/no completed dispatches/i)).toBeTruthy();
+  });
+
+  it('mounts a VerifyWithCodexButton for a completed (ok) dispatch', () => {
+    render(<DispatchCostTable rows={[row({ toolUseId: 'tu_verify', exitState: 'ok' })]} />);
+    expect(screen.getByText('VERIFY WITH CODEX')).toBeTruthy();
+  });
+
+  it('does not mount a VerifyWithCodexButton for a non-completed dispatch', () => {
+    render(<DispatchCostTable rows={[row({ toolUseId: 'tu_fatal', exitState: 'fatal' })]} />);
+    expect(screen.queryByText('VERIFY WITH CODEX')).toBeNull();
   });
 });

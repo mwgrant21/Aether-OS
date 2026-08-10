@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -127,6 +127,15 @@ export function migrate(db: DatabaseSync): void {
       ALTER TABLE dispatches ADD COLUMN severity INTEGER;
       ALTER TABLE dispatches ADD COLUMN median_ms_at_eval INTEGER;
     `);
+  }
+
+  // v6 migration: add the source-file correlation column. Populated going
+  // forward only -- rows ingested under schema < 6 keep source_file_rel NULL,
+  // which readers must treat as "predates exact correlation", not "not part
+  // of a dispatch". See the Task 0 reconciliation note under
+  // docs/superpowers/specs/ (2026-08-07, cross-engine verification).
+  if (currentVersion < 6) {
+    db.exec(`ALTER TABLE tool_calls ADD COLUMN source_file_rel TEXT;`);
   }
 
   db.prepare(

@@ -251,6 +251,69 @@ describe('scanTranscriptsOnce', () => {
     db.close();
   });
 
+  it('also scans a session subagents/*.jsonl file, ingesting tool calls with source_file_rel set to the subagent path', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+
+    // Top-level session file: one closed Read tool call.
+    const sessionLines = [
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'sess-1',
+        timestamp: '2026-07-08T09:00:00Z',
+        message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id: 'tu_top', name: 'Read', input: { file_path: 'src/top.ts' } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        sessionId: 'sess-1',
+        timestamp: '2026-07-08T09:00:01Z',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu_top', content: 'ok' }] },
+      }),
+    ];
+    writeFileSync(join(projDir, 'sess-1.jsonl'), sessionLines.join('\n') + '\n', 'utf8');
+
+    // Subagent dispatch transcript nested under sess-1/subagents/.
+    const subagentsDir = join(projDir, 'sess-1', 'subagents');
+    mkdirSync(subagentsDir, { recursive: true });
+    const subLines = [
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'sess-1',
+        timestamp: '2026-07-08T09:00:02Z',
+        message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id: 'tu_sub', name: 'Edit', input: { file_path: 'src/sub.ts' } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        sessionId: 'sess-1',
+        timestamp: '2026-07-08T09:00:03Z',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu_sub', content: 'ok' }] },
+      }),
+    ];
+    writeFileSync(join(subagentsDir, 'agent-x.jsonl'), subLines.join('\n') + '\n', 'utf8');
+
+    const db = freshDb();
+    const result = scanTranscriptsOnce(db, projectsRoot, 1000, new Map());
+
+    // Both the top-level session tool call and the subagent's own tool call
+    // are ingested.
+    expect(result.toolCallsIngested).toBe(2);
+
+    const subRows = db
+      .prepare('SELECT tool_use_id, file_path_rel FROM tool_calls WHERE source_file_rel = ?')
+      .all(join('my-project', 'sess-1', 'subagents', 'agent-x.jsonl')) as { tool_use_id: string; file_path_rel: string }[];
+    expect(subRows).toHaveLength(1);
+    expect(subRows[0].tool_use_id).toBe('tu_sub');
+
+    const topRows = db
+      .prepare('SELECT tool_use_id FROM tool_calls WHERE source_file_rel = ?')
+      .all(join('my-project', 'sess-1.jsonl')) as { tool_use_id: string }[];
+    expect(topRows).toHaveLength(1);
+    expect(topRows[0].tool_use_id).toBe('tu_top');
+
+    db.close();
+  });
+
   // Liveness heartbeat for the diagnostics reader (electron/collectorStore.ts's
   // readDiagnostics), mirroring the fleet poll's fleet_last_poll_ms.
   it('stamps the transcript-scan heartbeat even when the projects root is unreadable', () => {

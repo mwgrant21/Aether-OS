@@ -19,13 +19,15 @@ export interface ProjectRef {
 export type GitProbe = (dir: string) => boolean;
 
 /**
- * Lowercase the drive letter, forward-slash the separators, drop a trailing
- * separator. Without this, `C:\...\Aether-OS` and `c:/.../aether-os/` become
- * two different projects.
+ * Forward-slash the separators and drop a trailing separator. For
+ * Windows-style paths (leading drive letter), lowercase the entire path --
+ * Windows filesystems are case-insensitive, so `C:\...\Aether-OS` and
+ * `c:/.../aether-os/` must resolve to one project. POSIX-style paths (no
+ * drive letter) are left case-sensitive, matching typical POSIX filesystems.
  */
 export function normalizePath(p: string): string {
   const slashed = p.replace(/\\/g, '/').replace(/\/+$/, '');
-  return slashed.replace(/^([a-zA-Z]):/, (_m, drive: string) => `${drive.toLowerCase()}:`);
+  return /^[a-zA-Z]:/.test(slashed) ? slashed.toLowerCase() : slashed;
 }
 
 // Matches `/.claude/worktrees/<name>` or `/.worktrees/<name>`, capturing the

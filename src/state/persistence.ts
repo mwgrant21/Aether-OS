@@ -45,6 +45,10 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   narrationBudgets: "interruptionBudget.ts's per-channel InterruptionBudgetState (last-volunteered timestamp); rehydrating it would apply a stale cooldown window computed against a previous session's clock, incorrectly suppressing or allowing the next channel's unread-badge interrupt",
   memories: 'a live collector-sourced snapshot read from memory.db on every poll (SET_MEMORIES); same reasoning as realAgents/realUsage -- a persisted value would show stale memory rows as current until the next real snapshot arrives',
   memoryTombstones: 'a live collector-sourced snapshot read from memory.db on every poll (SET_MEMORY_TOMBSTONES); same reasoning as memories',
+  terminalAlive: "recomputed live -- starts false at every launch (no pty exists until the Terminal tab mounts) and is driven only by this session's own pty:alive/pty:exit events via useTerminalAliveSync; a persisted value would report a previous session's terminal state as this session's, same reasoning as ledger/projectsSnapshot",
+  codexTerminalAlive: "recomputed live -- starts false at every launch (no pty exists until the Codex view mounts) and is driven only by this session's own codexPty:alive/codexPty:exit events via useCodexTerminalAliveSync, same reasoning as terminalAlive",
+  terminalIdle: "recomputed live -- derived from this session's own pty:data stream via useTerminalIdleSync (3s of silence = idle); a persisted value would show a stale idle/active state from a previous session with no pty behind it",
+  codexTerminalIdle: "recomputed live -- derived from this session's own codexPty:data stream via useCodexTerminalIdleSync, same reasoning as terminalIdle",
 };
 
 export function loadPersisted(): Partial<AetherState> | null {
@@ -69,8 +73,6 @@ export function savePersisted(state: AetherState): void {
       cmdHist: state.cmdHist,
       approvals: state.approvals,
       apprSeq: state.apprSeq,
-      providers: state.providers,
-      routeDefault: state.routeDefault,
       operatorName: state.operatorName,
       selected: state.selected,
       selectedProject: state.selectedProject,
@@ -80,6 +82,8 @@ export function savePersisted(state: AetherState): void {
       recentCompletedDispatches: state.recentCompletedDispatches,
       dispatchChannels: state.dispatchChannels,
       dispatchUsage: state.dispatchUsage,
+      crossEngineCfg: state.crossEngineCfg,
+      codexTerminalCfg: state.codexTerminalCfg,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slice));
   } catch {

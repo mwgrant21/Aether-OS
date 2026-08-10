@@ -2,7 +2,6 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
-import { VIEWS } from '../../viewRegistry';
 import { resolveOperatorName } from '../../utils/format';
 import { maximizeGlyph, maximizeLabel } from './windowControls';
 import { useColors } from '../shared/useColors';
@@ -11,7 +10,6 @@ import { Button } from '../shared/Button';
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
 
-const TOP_BAR_IDS = VIEWS.filter((v) => v.inTopBar).map((v) => v.id);
 const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
   { key: 'PLAN', label: '◇ PLAN', tip: 'Brainstorm & plan — throttled burn, everything queued for approval' },
   { key: 'EDITS', label: '✎ EDITS', tip: 'Accept edits — agents work, risky actions queue for approval' },
@@ -35,28 +33,13 @@ export function TopBar() {
         </div>
       </div>
 
-      {/*
-        minWidth: 0 overrides the flexbox default (a flex:1 item's min-width
-        defaults to its content's natural width, not 0), which otherwise lets
-        this row refuse to shrink below the sum of every tab's width -- once
-        that sum plus the fixed-width groups on either side (logo, op-mode
-        buttons, notification/approval icons, the operator chip, window
-        controls) exceeds the window's actual width, the row overflows and
-        pushes WindowControls (Close, the last element) off the visible
-        edge, however wide the window is. overflowX: 'auto' makes that the
-        graceful-degradation path -- the tab strip scrolls internally --
-        instead of the whole TopBar overflowing the window.
-      */}
-      <div style={{ flex: 1, display: 'flex', gap: 4, minWidth: 0, overflowX: 'auto' }}>
-        {TOP_BAR_IDS.map((label) => {
-          const on = label === state.activeTab;
-          return (
-            <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={tabStyle(colors, on)}>
-              {label}
-            </Button>
-          );
-        })}
-      </div>
+      {/* Navigation lives solely in the left sidebar now -- this used to also
+          carry a duplicate horizontal tab strip, which additionally had a
+          standing bug where the gaps between tabs inherited the root's drag
+          region and fought the strip's own internal scroll. flex: 1 here
+          just pushes the op-mode/approval/notification/operator/window
+          controls to the right, matching the original layout's spacing. */}
+      <div style={{ flex: 1 }} />
 
       <div style={opModeGroupStyle}>
         {OP_MODES.map((om) => {
@@ -195,20 +178,6 @@ const logoDotStyle: CSSProperties = {
 };
 function logoTextStyle(colors: ColorPalette): CSSProperties {
   return { font: `700 20px/1 ${fonts.ui}`, letterSpacing: 5, color: colors.textPrimary };
-}
-function tabStyle(colors: ColorPalette, on: boolean): AppRegionStyle {
-  return {
-    padding: '8px 15px',
-    borderRadius: 8,
-    font: `600 13px/1 ${fonts.ui}`,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    cursor: 'pointer',
-    color: on ? colors.textPrimary : colors.textMuted,
-    background: on ? 'rgba(23,184,216,.14)' : colors.panelInset,
-    border: on ? '1px solid rgba(95,220,255,.35)' : `1px solid ${colors.chipBorder}`,
-    WebkitAppRegion: 'no-drag',
-  };
 }
 const opModeGroupStyle: CSSProperties = {
   flex: 'none',

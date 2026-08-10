@@ -2,7 +2,12 @@ import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
-import { estimateDispatchCost, reconcile, isSameLocalDay, type EstimatedCost } from '../../shared/ledgerMath';
+import {
+  estimateDispatchCost,
+  reconcile,
+  localDayBoundsMs,
+  type EstimatedCost,
+} from '../../shared/ledgerMath';
 import type { CompletedDispatchUsage } from '../../state/liveAgentsMath';
 import { SessionCostCard } from './SessionCostCard';
 import { RollupCard } from './RollupCard';
@@ -29,13 +34,25 @@ export function LedgerView() {
   const rows = buildDispatchRows(state);
 
   // The residual is only meaningful when both sides cover the same window.
-  // The exact side is today's rollup; the estimated side is today's dispatches,
-  // scoped with the same time zone and clock main bucketed with. When today has
-  // no observed data at all there is nothing to reconcile against, and the row
-  // is omitted rather than reconciling against an assumed zero.
-  const todaysRows = ledger
-    ? rows.filter((r) => isSameLocalDay(r.startedAt, ledger.timeZone, ledger.computedAtMs))
-    : [];
+  // The exact side is today's rollup, built (bucketByDay) from each assistant
+  // event's OWN timestamp -- not from any dispatch's startedAt. A dispatch
+  // that starts before local midnight and finishes after it therefore has
+  // events landing in both calendar days' exact totals, even though its
+  // *estimate* is one row. Filtering solely on startedAt would drop that
+  // row entirely from "today" while some of its exact usage still counted
+  // toward today's rollup (or the reverse), misrepresenting the
+  // reconciliation. Testing INTERVAL OVERLAP against today's local-day
+  // boundaries -- rather than "startedAt OR endedAt falls on today" -- keeps
+  // the row in the comparison whenever any of its usage could have landed in
+  // today's exact total, including a dispatch that starts before local
+  // midnight and doesn't finish until after the FOLLOWING local midnight:
+  // neither endpoint is "today", but the interval still fully contains it.
+  // Checking only the two endpoints missed that case. This still isn't exact
+  // (a spanning dispatch's single estimate isn't split proportionally across
+  // the days it touches), but it is the accurate inclusion test, and the
+  // residual caveat text below already tells the operator these are
+  // approximate, tracked-dispatch figures.
+  const todaysRows = selectTodaysRows(rows, ledger);
   const todaysEstimates: EstimatedCost[] = todaysRows.map((r) => r.estimate);
   const reconciliation =
     ledger && ledger.rollups.today !== null ? reconcile(ledger.rollups.today, todaysEstimates) : null;
@@ -136,9 +153,20 @@ export function buildDispatchRows(state: {
       durationMs: usage?.durationMs ?? 0,
     };
     const t = telemetry.get(d.toolUseId);
+    // Derived, not persisted: startedAt + the completed dispatch's own
+    // duration. Falls back to startedAt (an instant, not a span) when
+    // durationMs or startedAt itself is unavailable/unparsable, so a
+    // dispatch missing usage still participates in the "starts today"
+    // half of the spans-today test rather than being silently dropped.
+    const startedMs = new Date(d.startedAt).getTime();
+    const endedAt =
+      !Number.isNaN(startedMs) && completed.durationMs > 0
+        ? new Date(startedMs + completed.durationMs).toISOString()
+        : d.startedAt;
     return {
       toolUseId: d.toolUseId,
       startedAt: d.startedAt,
+      endedAt,
       description: d.description,
       subagentType: d.subagentType,
       durationMs: completed.durationMs,
@@ -147,6 +175,33 @@ export function buildDispatchRows(state: {
       exitState: (t?.exitState ?? null) as DispatchCostRow['exitState'],
       retries: t?.retries ?? null,
     };
+  });
+}
+
+/**
+ * Which dispatch rows count toward "today" for the reconciliation strip.
+ *
+ * Exported for testing: a dispatch that starts before local midnight and
+ * finishes after it (or vice versa) must not be silently excluded from --
+ * or silently fully included in -- "today" while the exact rollup it is
+ * compared against is built from per-event timestamps that may straddle the
+ * boundary differently. Uses interval overlap against today's local-day
+ * bounds rather than checking only the two endpoints, so a dispatch that
+ * spans the ENTIRE day (starts before today, ends after today) is still
+ * caught -- neither of its endpoints is "today" in that case. See the
+ * comment at the call site for the full reasoning.
+ */
+export function selectTodaysRows(
+  rows: DispatchCostRow[],
+  ledger: { timeZone: string; computedAtMs: number } | null,
+): DispatchCostRow[] {
+  if (!ledger) return [];
+  const { startMs, endMs } = localDayBoundsMs(ledger.timeZone, ledger.computedAtMs);
+  return rows.filter((r) => {
+    const startedMs = new Date(r.startedAt).getTime();
+    const endedMs = new Date(r.endedAt).getTime();
+    if (Number.isNaN(startedMs) || Number.isNaN(endedMs)) return false;
+    return startedMs <= endMs && endedMs >= startMs;
   });
 }
 

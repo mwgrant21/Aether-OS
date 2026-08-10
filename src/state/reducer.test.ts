@@ -100,28 +100,108 @@ describe('reducer', () => {
     expect(next.cfg.alarm).toBe(initialState.cfg.alarm);
   });
 
-  it('TOGGLE_PROVIDER_CONNECTION flips the named provider\'s connected state only', () => {
-    const next = reducer(initialState, { type: 'TOGGLE_PROVIDER_CONNECTION', name: 'OpenAI/Codex' });
-    expect(next.providers.find((p) => p.name === 'OpenAI/Codex')?.connected).toBe(true);
-    expect(next.providers.find((p) => p.name === 'Aether Core')?.connected).toBe(true);
-    expect(next.providers.find((p) => p.name === 'Local Ollama')?.connected).toBe(false);
+  // Nothing spawns a pty at launch -- PtyTerminal.tsx only does so when the
+  // Terminal tab actually mounts -- so the honest default is "no terminal".
+  // Defaulting true previously made Uplinks/Dashboard report ONLINE forever on
+  // any launch that restored a different tab, or outside Electron entirely.
+  it('terminalAlive defaults false in initialState', () => {
+    expect(initialState.terminalAlive).toBe(false);
   });
 
-  it('TOGGLE_PROVIDER_CONNECTION on an unrecognized name is a no-op', () => {
-    const next = reducer(initialState, { type: 'TOGGLE_PROVIDER_CONNECTION', name: 'Nobody' });
-    expect(next.providers).toEqual(initialState.providers);
+  it('SET_TERMINAL_ALIVE flips terminalAlive to true (the pty:alive push)', () => {
+    const next = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(next.terminalAlive).toBe(true);
   });
 
-  it('SET_ROUTE_DEFAULT sets routeDefault, leaving providers unchanged', () => {
-    const next = reducer(initialState, { type: 'SET_ROUTE_DEFAULT', value: 'Local Ollama' });
-    expect(next.routeDefault).toBe('Local Ollama');
-    expect(next.providers).toEqual(initialState.providers);
+  it('SET_TERMINAL_ALIVE flips terminalAlive to false (the pty:exit push)', () => {
+    const alive = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    const next = reducer(alive, { type: 'SET_TERMINAL_ALIVE', alive: false });
+    expect(next.terminalAlive).toBe(false);
+  });
+
+  it('SET_TERMINAL_ALIVE can flip terminalAlive back to true, leaving other state untouched', () => {
+    const dead = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: false });
+    const next = reducer(dead, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(next.terminalAlive).toBe(true);
+    expect(next.operatorName).toBe(initialState.operatorName);
+  });
+
+  it('SET_CODEX_TERMINAL_ALIVE flips codexTerminalAlive to true (the codexPty:alive push)', () => {
+    const next = reducer(initialState, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true });
+    expect(next.codexTerminalAlive).toBe(true);
+  });
+
+  it('SET_CODEX_TERMINAL_ALIVE flips codexTerminalAlive to false (the codexPty:exit push)', () => {
+    const alive = reducer(initialState, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true });
+    const next = reducer(alive, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: false });
+    expect(next.codexTerminalAlive).toBe(false);
+  });
+
+  it("SET_CODEX_TERMINAL_ALIVE leaves terminalAlive (the Claude pty's own flag) untouched", () => {
+    const withClaudeAlive = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    const next = reducer(withClaudeAlive, { type: 'SET_CODEX_TERMINAL_ALIVE', alive: true });
+    expect(next.terminalAlive).toBe(true);
+    expect(next.codexTerminalAlive).toBe(true);
+  });
+
+  it('SET_TERMINAL_IDLE flips terminalIdle to true (no new pty output for the threshold window)', () => {
+    const next = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    expect(next.terminalIdle).toBe(true);
+  });
+
+  it('SET_TERMINAL_IDLE flips terminalIdle to false (new pty output arrived)', () => {
+    const idle = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_TERMINAL_IDLE', idle: false });
+    expect(next.terminalIdle).toBe(false);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE flips codexTerminalIdle to true', () => {
+    const next = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    expect(next.codexTerminalIdle).toBe(true);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE flips codexTerminalIdle to false', () => {
+    const idle = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_CODEX_TERMINAL_IDLE', idle: false });
+    expect(next.codexTerminalIdle).toBe(false);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE leaves terminalIdle (the Claude terminal\'s own flag) untouched', () => {
+    const claudeIdle = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    const next = reducer(claudeIdle, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    expect(next.terminalIdle).toBe(true);
+    expect(next.codexTerminalIdle).toBe(true);
+  });
+
+  it('SET_TERMINAL_IDLE leaves codexTerminalIdle untouched', () => {
+    const codexIdle = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    const next = reducer(codexIdle, { type: 'SET_TERMINAL_IDLE', idle: true });
+    expect(next.codexTerminalIdle).toBe(true);
+    expect(next.terminalIdle).toBe(true);
+  });
+
+  it('SET_TERMINAL_IDLE with the same value as current is a no-op (referential equality, avoids re-render on every pty data event)', () => {
+    const idle = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_TERMINAL_IDLE', idle: true });
+    expect(next).toBe(idle);
+
+    const stillFalse = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: false });
+    expect(stillFalse).toBe(initialState);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE with the same value as current is a no-op (referential equality, avoids re-render on every pty data event)', () => {
+    const idle = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    expect(next).toBe(idle);
+
+    const stillFalse = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: false });
+    expect(stillFalse).toBe(initialState);
   });
 
   it('SET_OPERATOR_NAME sets operatorName verbatim, leaving other state untouched', () => {
     const next = reducer(initialState, { type: 'SET_OPERATOR_NAME', name: 'Matt' });
     expect(next.operatorName).toBe('Matt');
-    expect(next.routeDefault).toBe(initialState.routeDefault);
+    expect(next.terminalAlive).toBe(initialState.terminalAlive);
   });
 
   it('SET_OPERATOR_NAME accepts an empty string without trimming at the reducer layer', () => {
@@ -394,6 +474,20 @@ describe('reducer', () => {
       expect(next.dispatchHeadlines['old_1']).toBeDefined();
       expect(next.dispatchHeadlines['new_1']).toBe('newest');
     });
+  });
+
+  describe('SET_CROSS_ENGINE_CFG', () => {
+    it('replaces crossEngineCfg wholesale', () => {
+      const cfg = { enabled: true, provider: 'codex-chatgpt' as const };
+      const next = reducer(initialState, { type: 'SET_CROSS_ENGINE_CFG', cfg });
+      expect(next.crossEngineCfg).toEqual(cfg);
+    });
+  });
+
+  it('SET_CODEX_TERMINAL_CFG replaces codexTerminalCfg wholesale', () => {
+    const cfg = { enabled: true };
+    const next = reducer(initialState, { type: 'SET_CODEX_TERMINAL_CFG', cfg });
+    expect(next.codexTerminalCfg).toEqual(cfg);
   });
 
   describe('RECORD_DISPATCH_USAGE', () => {
