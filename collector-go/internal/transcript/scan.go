@@ -119,7 +119,7 @@ func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallH
 			}
 
 			for i := range parsedEvents {
-				if _, err := IngestUsageEvent(db, &parsedEvents[i]); err != nil {
+				if _, err := IngestUsageEvent(db, &parsedEvents[i], relativePath); err != nil {
 					return err
 				}
 			}
@@ -208,7 +208,7 @@ func ScanTranscriptsOnce(db *sql.DB, projectsRoot string, nowMs int64, toolCallH
 				}
 
 				for i := range subParsedEvents {
-					if _, err := IngestUsageEvent(db, &subParsedEvents[i]); err != nil {
+					if _, err := IngestUsageEvent(db, &subParsedEvents[i], subRelativePath); err != nil {
 						return err
 					}
 				}

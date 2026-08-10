@@ -18,7 +18,7 @@ import (
 // SchemaVersion mirrors schema.ts's SCHEMA_VERSION. Both collectors write
 // the SAME database, so these MUST move together -- see issue #31 and
 // internal/schema/parity_test.go.
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 // tableColumns returns the columns physically present on a table, regardless
 // of what schema_meta claims. Migrations are driven off THIS, not off the
@@ -220,23 +220,27 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
-	// v7: flag the one-time nested-subagent usage backfill, and only when
-	// nested rows already exist -- a fresh database has none, so a database
-	// created by a post-fix collector can never be double counted by a later
-	// backfill. Mirrors schema.ts's v7 block; the backfill itself runs in the
-	// Node collector at scan time.
-	if current < 7 {
-		var nested int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM transcript_files WHERE file_path LIKE '%subagents%'`).Scan(&nested); err != nil {
+	// v8: attribute each usage event to the transcript it came from, mirroring
+	// tool_calls.source_file_rel. Rows written before v8 keep it NULL, which
+	// readers must treat as "predates attribution", never as "unattached".
+	//
+	// This REPLACES the v7 one-time nested-usage backfill, which is
+	// deliberately gone. That backfill decided whether history was missing by
+	// asking only whether a nested offset existed -- and a nested offset looks
+	// identical whether written by a legacy Node collector (usage never
+	// ingested) or by a usage-aware Go collector (usage already ingested).
+	// Replaying the second case double counts real spend, and no pre-v8
+	// database carries the attribution needed to tell them apart. Guessing was
+	// the defect; the flag is cleared rather than acted on.
+	if current < 8 {
+		if err := addColumnIfMissing(db, "usage_events", "source_file_rel", "source_file_rel TEXT"); err != nil {
 			return err
 		}
-		if nested > 0 {
-			if _, err := db.Exec(
-				`INSERT INTO schema_meta (key, value) VALUES ('subagent_usage_backfill_pending', '1')
-				 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-			); err != nil {
-				return err
-			}
+		if _, err := db.Exec(
+			`INSERT INTO schema_meta (key, value) VALUES ('subagent_usage_backfill_pending', '0')
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		); err != nil {
+			return err
 		}
 	}
 

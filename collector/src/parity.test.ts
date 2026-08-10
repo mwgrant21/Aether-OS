@@ -73,6 +73,14 @@ describe('cross-collector parity', () => {
     );
     expect(sources).toEqual(expected.toolCallSourceFiles);
 
+    // Usage attribution (v8). Without it, "has this file already been
+    // counted?" cannot be answered, which is what made the old nested-usage
+    // backfill unsafe on any pre-v8 database.
+    const usageSources = (db.prepare('SELECT DISTINCT source_file_rel FROM usage_events ORDER BY source_file_rel').all() as { source_file_rel: string | null }[])
+      .map((r) => (r.source_file_rel === null ? '<NULL>' : r.source_file_rel.split(sep).join('/')))
+      .sort();
+    expect(usageSources).toEqual([...expected.usageSourceFiles].sort());
+
     db.close();
   });
 });

@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -160,34 +160,24 @@ export function migrate(db: DatabaseSync): void {
     addColumnIfMissing(db, 'tool_calls', 'source_file_rel', 'source_file_rel TEXT');
   }
 
-  // v7 migration: flag a one-time backfill of nested subagent usage.
+  // v8 migration: attribute each usage event to the transcript it came from,
+  // mirroring tool_calls.source_file_rel. Rows written before v8 keep it NULL,
+  // which readers must treat as "predates attribution", never as "unattached".
   //
-  // Databases written before the nested loop ingested usage already hold each
-  // subagent file's offset at EOF, so the fix alone replays nothing and their
-  // historical spend stays missing forever. The backfill itself runs at scan
-  // time (this function has no projects root to read files from) and inserts
-  // usage_events ONLY.
-  //
-  // It deliberately does NOT rewind offsets. usage_events and tool_calls are
-  // both plain INSERTs with no unique constraint -- only anomalies uses
-  // INSERT OR IGNORE -- so double counting is prevented by offset tracking,
-  // not by idempotency. Rewinding to replay a nested file would correct the
-  // usage undercount by duplicating every tool_calls row already ingested
-  // from it.
-  //
-  // Flagged only when nested rows actually exist: a fresh database has none,
-  // so it is never marked, and a database created by a post-fix collector
-  // therefore cannot be double counted by a later backfill.
-  if (currentVersion < 7) {
-    const nested = db
-      .prepare(`SELECT COUNT(*) AS n FROM transcript_files WHERE file_path LIKE '%subagents%'`)
-      .get() as { n: number };
-    if (nested.n > 0) {
-      db.prepare(
-        `INSERT INTO schema_meta (key, value) VALUES ('subagent_usage_backfill_pending', '1')
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run();
-    }
+  // This REPLACES the v7 one-time nested-usage backfill, which is deliberately
+  // gone. That backfill decided whether history was missing by asking only
+  // whether a nested offset existed -- and a nested offset looks identical
+  // whether it was written by a legacy Node collector (usage never ingested)
+  // or by a usage-aware Go collector (usage already ingested). Replaying the
+  // second case double counts real spend, and no pre-v8 database carries the
+  // attribution needed to tell them apart. Guessing was the defect; the flag
+  // is cleared rather than acted on.
+  if (currentVersion < 8) {
+    addColumnIfMissing(db, 'usage_events', 'source_file_rel', 'source_file_rel TEXT');
+    db.prepare(
+      `INSERT INTO schema_meta (key, value) VALUES ('subagent_usage_backfill_pending', '0')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).run();
   }
 
   db.prepare(

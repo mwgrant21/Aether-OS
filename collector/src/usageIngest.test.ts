@@ -64,7 +64,7 @@ function completionEvent(
 describe('ingestUsageEvent', () => {
   it('inserts a row for an assistant event with usage and returns true', () => {
     const db = freshDb();
-    const inserted = ingestUsageEvent(db, assistantEvent());
+    const inserted = ingestUsageEvent(db, assistantEvent(), 'my-project/sess-1.jsonl');
     expect(inserted).toBe(true);
     const row: any = db.prepare('SELECT * FROM usage_events').get();
     expect(row.model).toBe('claude-sonnet-4-6');
@@ -75,7 +75,7 @@ describe('ingestUsageEvent', () => {
 
   it('skips a user-kind event and returns false', () => {
     const db = freshDb();
-    const inserted = ingestUsageEvent(db, assistantEvent({ kind: 'user' }));
+    const inserted = ingestUsageEvent(db, assistantEvent({ kind: 'user' }), 'my-project/sess-1.jsonl');
     expect(inserted).toBe(false);
     const count: any = db.prepare('SELECT COUNT(*) as c FROM usage_events').get();
     expect(count.c).toBe(0);
@@ -84,21 +84,21 @@ describe('ingestUsageEvent', () => {
 
   it('skips an assistant event with null usage and returns false', () => {
     const db = freshDb();
-    const inserted = ingestUsageEvent(db, assistantEvent({ usage: null }));
+    const inserted = ingestUsageEvent(db, assistantEvent({ usage: null }), 'my-project/sess-1.jsonl');
     expect(inserted).toBe(false);
     db.close();
   });
 
   it('skips an event with a null timestamp and returns false', () => {
     const db = freshDb();
-    const inserted = ingestUsageEvent(db, assistantEvent({ timestamp: null }));
+    const inserted = ingestUsageEvent(db, assistantEvent({ timestamp: null }), 'my-project/sess-1.jsonl');
     expect(inserted).toBe(false);
     db.close();
   });
 
   it('stores a null model as SQL NULL, not the string "null"', () => {
     const db = freshDb();
-    ingestUsageEvent(db, assistantEvent({ model: null }));
+    ingestUsageEvent(db, assistantEvent({ model: null }), 'my-project/sess-1.jsonl');
     const row: any = db.prepare('SELECT model FROM usage_events').get();
     expect(row.model).toBeNull();
     db.close();
