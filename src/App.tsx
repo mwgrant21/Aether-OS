@@ -15,6 +15,8 @@ import { useDiagnosticsSync } from './state/useDiagnosticsSync';
 import { useLedgerSync } from './state/useLedgerSync';
 import { useTerminalAliveSync } from './state/useTerminalAliveSync';
 import { useCodexTerminalAliveSync } from './state/useCodexTerminalAliveSync';
+import { useTerminalIdleSync } from './state/useTerminalIdleSync';
+import { useCodexTerminalIdleSync } from './state/useCodexTerminalIdleSync';
 import { useProjectsSync } from './state/useProjectsSync';
 import { useMemorySync } from './state/useMemorySync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
@@ -44,6 +46,8 @@ export default function App() {
         <LedgerSync />
         <TerminalAliveSync />
         <CodexTerminalAliveSync />
+        <TerminalIdleSync />
+        <CodexTerminalIdleSync />
         <ProjectsSync />
         <MemorySync />
         <PermissionRequestSync />
@@ -109,6 +113,16 @@ function TerminalAliveSync() {
 
 function CodexTerminalAliveSync() {
   useCodexTerminalAliveSync();
+  return null;
+}
+
+function TerminalIdleSync() {
+  useTerminalIdleSync();
+  return null;
+}
+
+function CodexTerminalIdleSync() {
+  useCodexTerminalIdleSync();
   return null;
 }
 
