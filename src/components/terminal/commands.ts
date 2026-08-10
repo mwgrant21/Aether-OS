@@ -6,12 +6,19 @@ import { deriveContextWindowCard } from '../layout/contextWindowCard';
  * Real context-window figures from the statusline payload. Previously this
  * line rendered a real token count against a hardcoded `/ 125,000` while the
  * machine's actual window was 200,000 -- see issue #20.
+ *
+ * Carries the staleness marker through. The statusline file can hold a
+ * snapshot from a previous run -- 14 days old on the dev machine -- and a
+ * days-old token count printed bare reads as a live measurement. Uses the
+ * same `~` prefix and `stale` wording the footer's CONTEXT WINDOW card uses,
+ * so one feed is not described two different ways.
  */
 function formatContextLine(state: AetherState): string {
   const ctx = deriveContextWindowCard(state.statusline);
   if (!ctx.available) return 'no reading yet';
   const used = fmt(ctx.usedTokens as number);
-  return ctx.windowSize === null ? used : `${used} / ${fmt(ctx.windowSize)}`;
+  const figure = ctx.windowSize === null ? used : `${used} / ${fmt(ctx.windowSize)}`;
+  return ctx.stale ? `~${figure} · stale` : figure;
 }
 
 const PROMPT = '#7fd8ef';
