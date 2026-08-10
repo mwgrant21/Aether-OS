@@ -144,6 +144,42 @@ describe('reducer', () => {
     expect(next.codexTerminalAlive).toBe(true);
   });
 
+  it('SET_TERMINAL_IDLE flips terminalIdle to true (no new pty output for the threshold window)', () => {
+    const next = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    expect(next.terminalIdle).toBe(true);
+  });
+
+  it('SET_TERMINAL_IDLE flips terminalIdle to false (new pty output arrived)', () => {
+    const idle = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_TERMINAL_IDLE', idle: false });
+    expect(next.terminalIdle).toBe(false);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE flips codexTerminalIdle to true', () => {
+    const next = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    expect(next.codexTerminalIdle).toBe(true);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE flips codexTerminalIdle to false', () => {
+    const idle = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    const next = reducer(idle, { type: 'SET_CODEX_TERMINAL_IDLE', idle: false });
+    expect(next.codexTerminalIdle).toBe(false);
+  });
+
+  it('SET_CODEX_TERMINAL_IDLE leaves terminalIdle (the Claude terminal\'s own flag) untouched', () => {
+    const claudeIdle = reducer(initialState, { type: 'SET_TERMINAL_IDLE', idle: true });
+    const next = reducer(claudeIdle, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    expect(next.terminalIdle).toBe(true);
+    expect(next.codexTerminalIdle).toBe(true);
+  });
+
+  it('SET_TERMINAL_IDLE leaves codexTerminalIdle untouched', () => {
+    const codexIdle = reducer(initialState, { type: 'SET_CODEX_TERMINAL_IDLE', idle: true });
+    const next = reducer(codexIdle, { type: 'SET_TERMINAL_IDLE', idle: true });
+    expect(next.codexTerminalIdle).toBe(true);
+    expect(next.terminalIdle).toBe(true);
+  });
+
   it('SET_OPERATOR_NAME sets operatorName verbatim, leaving other state untouched', () => {
     const next = reducer(initialState, { type: 'SET_OPERATOR_NAME', name: 'Matt' });
     expect(next.operatorName).toBe('Matt');

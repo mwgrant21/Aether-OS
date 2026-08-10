@@ -153,6 +153,8 @@ export const initialState: AetherState = {
   // Same reasoning as terminalAlive: nothing spawns the Codex pty until the
   // Codex terminal view actually mounts.
   codexTerminalAlive: false,
+  terminalIdle: false,
+  codexTerminalIdle: false,
   operatorName: 'Operator',
   realUsage: {
     weeklyTokens: [0, 0, 0, 0, 0, 0, 0],

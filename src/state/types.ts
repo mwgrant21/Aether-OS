@@ -277,6 +277,15 @@ export interface AetherState {
   // entirely by useCodexTerminalAliveSync's codexPty:alive/codexPty:exit
   // event handling once the Codex terminal view mounts.
   codexTerminalAlive: boolean;
+  // True whenever the embedded terminal's pty has produced no output for
+  // IDLE_THRESHOLD_MS (useTerminalIdleSync.ts) -- an activity-silence proxy
+  // for "probably awaiting input", not a literal one (a silent long-running
+  // command also reads as idle). Drives the sidebar's pulsing nav-dot when
+  // this tab isn't the active one (see Sidebar.tsx). Independent of
+  // terminalAlive: a dead pty is never idle in this sense, it's just dead.
+  terminalIdle: boolean;
+  // Same pattern as terminalIdle, but for the independent Codex pty.
+  codexTerminalIdle: boolean;
   operatorName: string;
   realUsage: RealUsageSnapshot;
   rateHistory: RateSample[];
