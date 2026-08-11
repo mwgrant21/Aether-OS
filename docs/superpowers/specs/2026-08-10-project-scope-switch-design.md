@@ -95,9 +95,19 @@ larger payload per node. No change to when or how often it's pushed.
   scope. One selection, one meaning, everywhere it's read.
 - **`LedgerView`**: when `selectedProject` resolves to a node in `state.projectsSnapshot` (checked
   against both `roots` and each root's `children`), render that node's `.ledger` instead of the
-  global `state.ledger`. Falls back to the global view when `selectedProject` is `null` or its key
-  isn't found in the current snapshot (deleted project since selection — the same edge case Stage
-  16 already handles for its own detail panel).
+  global `state.ledger` for `SessionCostCard`/`RollupCard`/`CacheImpactCard`. Falls back to the
+  global view when `selectedProject` is `null` or its key isn't found in the current snapshot
+  (deleted project since selection — the same edge case Stage 16 already handles for its own detail
+  panel).
+  **`DispatchCostTable` and the reconciliation strip are suppressed while scoped**, not
+  re-filtered. Both are built from `state.recentCompletedDispatches` / `state.dispatchUsage` /
+  `state.diagnostics` — Aether's-own-live-terminal-session dispatch tracking, with no
+  `cwd`/project field anywhere in that data (same limitation as Analytics, found while writing the
+  implementation plan and confirmed against `liveAgentsMath.ts`'s `RealAgentDispatch`/
+  `CompletedDispatchUsage` shapes). Left unscoped, the reconciliation strip would compare a
+  correctly-scoped `ledger.rollups.today` against Aether's-own-session `todaysEstimates` — an
+  actively misleading residual, not just an irrelevant one. A short note explains the suppression
+  in place of the table. The global (no-scope) view is unchanged — both render as they do today.
 - **`OptimizeView`**: same lookup, rendering the resolved node's `.optimize.findings` /
   `.optimize.summary` / `.optimize.breakdown` instead of `state.optimizeFindings` /
   `state.optimizeSummary` / `state.optimizeBreakdown`. Same fallback rule.
@@ -138,8 +148,9 @@ manual.
   `selectedProject` null (global), resolves to a root, resolves to a child, and the stale-key
   fallback (selected key no longer present in the current snapshot).
 - **Component tests**: `LedgerView`/`OptimizeView` render the scoped node's numbers when a valid
-  scope is active, and the global numbers otherwise. TopBar pill renders/hides correctly and its
-  clear action dispatches the deselect.
+  scope is active, and the global numbers otherwise. `LedgerView` additionally: `DispatchCostTable`
+  and the reconciliation strip are absent while scoped and present when unscoped. TopBar pill
+  renders/hides correctly and its clear action dispatches the deselect.
 - **Visual judgement manual**, per this project's established practice — the TopBar pill's live
   rendering has not been seen in a running window.
 
@@ -155,6 +166,10 @@ manual.
    behaves for the global view — not a new inconsistency, just one that now surfaces per-project too.
 3. **Deleted-project scope silently falls back to global**, not an explicit "this project no longer
    exists" message — same convention Stage 16 already established for its own detail panel.
+4. **`LedgerView`'s dispatch-level detail (`DispatchCostTable`, the reconciliation strip) is
+   unavailable while scoped**, for the same reason Analytics is entirely out of scope: it comes
+   from Aether's-own-live-session dispatch tracking, which carries no project attribution. Only the
+   snapshot-derived cards (`SessionCostCard`/`RollupCard`/`CacheImpactCard`) are genuinely scoped.
 
 ## Out of scope
 
