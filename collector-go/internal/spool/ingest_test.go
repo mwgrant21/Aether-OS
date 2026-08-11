@@ -24,20 +24,19 @@ func freshDB(t *testing.T) *sql.DB {
 		t.Fatalf("migrate: %v", err)
 	}
 	// Tailer tests read this handle while the tailer's own goroutine writes to
-	// the same file, so a read can land while the writer holds the lock. With
-	// no busy_timeout that surfaces as an immediate
-	// `database is locked (5) (SQLITE_BUSY)` rather than a wait -- the latent
-	// cause of the spool flake in issue #34.
+	// the same file, so a read can land while the writer holds the lock.
+	// schema.OpenDatabase sets busy_timeout on every connection it opens, so
+	// that surfaces as a bounded wait rather than an immediate
+	// `database is locked (5) (SQLITE_BUSY)` -- the latent cause of the spool
+	// flake in issue #34.
 	//
-	// SetMaxOpenConns(1) is required for the pragma to mean anything: a
-	// PRAGMA applies to the CONNECTION that ran it, and database/sql hands
-	// later queries whichever pooled connection is free -- one that never saw
-	// it. Setting the pragma alone leaves the flake in place, which is exactly
-	// what happened on the first attempt at this fix.
+	// SetMaxOpenConns(1) is still required for the pragma to keep meaning
+	// anything beyond the connection OpenDatabase itself used: a PRAGMA
+	// applies to the CONNECTION that ran it, and database/sql would otherwise
+	// hand later queries whichever pooled connection is free -- one that
+	// never saw it. Capping the pool to one guarantees every caller reuses
+	// the same, already-configured connection.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		t.Fatalf("set busy_timeout: %v", err)
-	}
 	t.Cleanup(func() { db.Close() })
 	return db
 }

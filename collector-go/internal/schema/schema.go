@@ -71,6 +71,17 @@ func OpenDatabase(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// modernc.org/sqlite's default busy_timeout is 0: a writer that finds the
+	// file locked by another connection (a concurrent collector process, a
+	// reader on the Electron side, or -- in tests -- a second *sql.DB opened
+	// against the same file) gets an immediate SQLITE_BUSY instead of
+	// retrying. Every OpenDatabase caller shares one file with other
+	// processes/handles by design, so this is set here rather than left to
+	// each caller to remember.
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
 }
 

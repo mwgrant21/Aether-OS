@@ -27,14 +27,10 @@ func mkTempDir(t *testing.T, pattern string) string {
 
 // openForInspection opens a second, independent connection to a database
 // file that a running StartCollector may still hold open and be actively
-// writing to. modernc.org/sqlite's default busy_timeout is 0 (fail
-// immediately with SQLITE_BUSY on any lock contention rather than retry), so
-// a plain schema.OpenDatabase here is flaky under the concurrent
-// spool-tail/transcript-scan/fleet-poll goroutines these tests exercise.
-// This is a test-only mitigation (a busy_timeout PRAGMA on the test's own
-// inspection connection) -- it does not touch internal/schema's
-// OpenDatabase (Task 1, already reviewed/merged) or change any production
-// behavior.
+// writing to. schema.OpenDatabase itself now sets busy_timeout on every
+// connection it opens (production and test alike), so lock contention with
+// the concurrent spool-tail/transcript-scan/fleet-poll goroutines these
+// tests exercise retries instead of failing immediately.
 // eventuallyCountAt is eventuallyCount for the case where the observer would
 // otherwise hold a connection open across the wait.
 //
@@ -74,9 +70,6 @@ func openForInspection(t *testing.T, dbPath string) *sql.DB {
 	db, err := schema.OpenDatabase(dbPath)
 	if err != nil {
 		t.Fatalf("OpenDatabase: %v", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		t.Fatalf("set busy_timeout: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db

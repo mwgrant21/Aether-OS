@@ -58,10 +58,25 @@ type anomalyRollupKey struct {
 // cycle (see the "deletes stale drift_log rows even when there are zero
 // stale events rows this cycle" regression case ported into this package's
 // test file).
+//
+// The whole cycle runs inside one transaction. Without that, a failure
+// between the daily_rollups upsert and the events delete (e.g. a concurrent
+// writer causing SQLITE_BUSY on the delete) would leave the rollup row
+// incremented while the source rows survive -- the next successful cycle
+// re-reads those same rows and double-counts them, which is a real spend/cost
+// corruption, not just a flaky test. A transaction makes the claimed
+// idempotency actually hold: either the whole cycle lands, or none of it
+// does, and the next tick retries cleanly from the same starting state.
 func Compact(db *sql.DB, nowMs int64) (CompactResult, error) {
 	cutoffMs := nowMs - RetentionWindowMs
 
-	rows, err := db.Query(
+	tx, err := db.Begin()
+	if err != nil {
+		return CompactResult{}, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit has succeeded
+
+	rows, err := tx.Query(
 		`SELECT hook_event_name, tool_name, occurred_at_ms FROM events WHERE occurred_at_ms < ?`,
 		cutoffMs,
 	)
@@ -108,7 +123,7 @@ func Compact(db *sql.DB, nowMs int64) (CompactResult, error) {
 			groupCounts[key]++
 		}
 
-		upsert, err := db.Prepare(
+		upsert, err := tx.Prepare(
 			`INSERT INTO daily_rollups (day, hook_event_name, tool_name, event_count) VALUES (?, ?, ?, ?)
 			 ON CONFLICT(day, hook_event_name, tool_name) DO UPDATE SET event_count = event_count + excluded.event_count`,
 		)
@@ -123,7 +138,7 @@ func Compact(db *sql.DB, nowMs int64) (CompactResult, error) {
 		}
 		upsert.Close()
 
-		if _, err := db.Exec(`DELETE FROM events WHERE occurred_at_ms < ?`, cutoffMs); err != nil {
+		if _, err := tx.Exec(`DELETE FROM events WHERE occurred_at_ms < ?`, cutoffMs); err != nil {
 			return CompactResult{}, err
 		}
 
@@ -140,11 +155,11 @@ func Compact(db *sql.DB, nowMs int64) (CompactResult, error) {
 	// above): a sustained fleet-poll failure (fleet.PollFleet) writes one
 	// drift_log row per failed 15s poll cycle, so a cycle can have zero stale
 	// `events` rows and still have plenty of stale drift_log rows to clear.
-	if _, err := db.Exec(`DELETE FROM drift_log WHERE detected_at_ms < ?`, cutoffMs); err != nil {
+	if _, err := tx.Exec(`DELETE FROM drift_log WHERE detected_at_ms < ?`, cutoffMs); err != nil {
 		return CompactResult{}, err
 	}
 
-	anomRows, err := db.Query(
+	anomRows, err := tx.Query(
 		`SELECT kind, detected_at_ms FROM anomalies WHERE detected_at_ms < ?`,
 		cutoffMs,
 	)
@@ -177,7 +192,7 @@ func Compact(db *sql.DB, nowMs int64) (CompactResult, error) {
 			anomalyCounts[key]++
 		}
 
-		upsertAnomaly, err := db.Prepare(
+		upsertAnomaly, err := tx.Prepare(
 			`INSERT INTO daily_anomaly_rollups (day, kind, anomaly_count) VALUES (?, ?, ?)
 			 ON CONFLICT(day, kind) DO UPDATE SET anomaly_count = anomaly_count + excluded.anomaly_count`,
 		)
@@ -192,17 +207,21 @@ func Compact(db *sql.DB, nowMs int64) (CompactResult, error) {
 		}
 		upsertAnomaly.Close()
 
-		if _, err := db.Exec(`DELETE FROM anomalies WHERE detected_at_ms < ?`, cutoffMs); err != nil {
+		if _, err := tx.Exec(`DELETE FROM anomalies WHERE detected_at_ms < ?`, cutoffMs); err != nil {
 			return CompactResult{}, err
 		}
 	}
 
 	// tool_calls/dispatches: unconditional deletion, no rollup -- these are a
 	// recent-activity view, not an audit log worth aggregating.
-	if _, err := db.Exec(`DELETE FROM tool_calls WHERE closed_at_ms < ?`, cutoffMs); err != nil {
+	if _, err := tx.Exec(`DELETE FROM tool_calls WHERE closed_at_ms < ?`, cutoffMs); err != nil {
 		return CompactResult{}, err
 	}
-	if _, err := db.Exec(`DELETE FROM dispatches WHERE ended_at_ms < ?`, cutoffMs); err != nil {
+	if _, err := tx.Exec(`DELETE FROM dispatches WHERE ended_at_ms < ?`, cutoffMs); err != nil {
+		return CompactResult{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return CompactResult{}, err
 	}
 
