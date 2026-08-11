@@ -2,6 +2,17 @@
 import type { TranscriptEvent } from '../../electron/transcriptParser';
 import { buildLedgerSnapshot, type LedgerSnapshot } from './ledgerMath';
 import { resolveProject, type GitProbe } from './projectIdentity';
+import { evaluateOptimizeRulesWithRecurrence, summarizeOptimize, type OptimizeFinding, type OptimizeSummary } from './optimizeRules';
+import { computeCacheHitRate } from './cacheHitRate';
+import { gradeBreakdown, type GradeRow } from './optimizeGrade';
+
+const DEFAULT_OPTIMIZE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // mirrors main.ts's WEEK_MS
+
+export interface ProjectOptimizeSnapshot {
+  findings: (OptimizeFinding & { recurring?: true; appliedAtMs?: number })[];
+  summary: OptimizeSummary;
+  breakdown: GradeRow[];
+}
 
 export interface ProjectNode {
   /** Opaque and stable. Never a path -- see docs/privacy-and-data.md. */
@@ -10,6 +21,7 @@ export interface ProjectNode {
   name: string;
   worktree: string | null;
   ledger: LedgerSnapshot;
+  optimize: ProjectOptimizeSnapshot;
 }
 
 export interface ProjectRoot extends ProjectNode {
@@ -29,13 +41,28 @@ export interface ProjectsSnapshot {
   computedAtMs: number;
 }
 
+function buildOptimizeSnapshot(
+  events: TranscriptEvent[],
+  windowMs: number,
+  appliedState: Record<string, number>,
+): ProjectOptimizeSnapshot {
+  const findings = evaluateOptimizeRulesWithRecurrence(events, windowMs, appliedState);
+  const summary = summarizeOptimize(findings);
+  const cacheHitRate = computeCacheHitRate(events);
+  const breakdown = gradeBreakdown({ findings, cacheHitRate });
+  return { findings, summary, breakdown };
+}
+
 export function buildProjectsSnapshot(
   events: TranscriptEvent[],
   probe: GitProbe,
   keyOf: (repoPath: string) => string,
   timeZone: string,
   nowMs: number,
+  optimizeOptions?: { windowMs: number; appliedState: Record<string, number> },
 ): ProjectsSnapshot {
+  const windowMs = optimizeOptions?.windowMs ?? DEFAULT_OPTIMIZE_WINDOW_MS;
+  const appliedState = optimizeOptions?.appliedState ?? {};
   // repoPath -> worktree name (or '' for the repo's own checkout) -> events
   const byRepo = new Map<string, Map<string, TranscriptEvent[]>>();
   const repoNames = new Map<string, string>();
@@ -81,6 +108,7 @@ export function buildProjectsSnapshot(
         name,
         worktree: slot === '' ? null : slot,
         ledger: buildLedgerSnapshot(slotEvents, timeZone, nowMs),
+        optimize: buildOptimizeSnapshot(slotEvents, windowMs, appliedState),
       });
     }
 
@@ -97,6 +125,7 @@ export function buildProjectsSnapshot(
       name,
       worktree: null,
       ledger: buildLedgerSnapshot(allEvents, timeZone, nowMs),
+      optimize: buildOptimizeSnapshot(allEvents, windowMs, appliedState),
       children,
     });
   }

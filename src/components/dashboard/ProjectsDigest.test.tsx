@@ -34,9 +34,15 @@ const EMPTY_LEDGER = {
   total: { usd: 1.23 },
 } as ProjectsSnapshot['roots'][number]['ledger'];
 
+const EMPTY_OPTIMIZE = {
+  findings: [],
+  summary: { totalPerWeek: 0, grade: 'A' as const },
+  breakdown: [],
+};
+
 const SNAPSHOT: ProjectsSnapshot = {
   roots: [
-    { key: 'r1', name: 'aether-os', worktree: null, ledger: EMPTY_LEDGER, children: [] },
+    { key: 'r1', name: 'aether-os', worktree: null, ledger: EMPTY_LEDGER, optimize: EMPTY_OPTIMIZE, children: [] },
   ],
   unscoped: null,
   computedAtMs: Date.now(),
