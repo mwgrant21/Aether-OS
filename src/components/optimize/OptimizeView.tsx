@@ -4,11 +4,30 @@ import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { Button } from '../shared/Button';
 import { appliedSummary } from '../../shared/optimizeGrade';
-import type { OptimizeFinding } from '../../shared/optimizeRules';
+import type { OptimizeFinding, OptimizeSummary } from '../../shared/optimizeRules';
+import type { GradeRow } from '../../shared/optimizeGrade';
+import { findProjectByKey } from '../projects/projectsMath';
+import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 
 type Target = { path: string; exists: boolean };
 type Targets = { global: Target; project: Target | null };
 type ApplyResult = { ok: boolean; added?: boolean; alreadyPresent?: boolean; targetPath?: string; backupPath?: string | null; error?: string };
+
+export function resolveOptimizeViewData(state: {
+  selectedProject: string | null;
+  projectsSnapshot: ProjectsSnapshot | null;
+  optimizeFindings: OptimizeFinding[];
+  optimizeSummary: OptimizeSummary;
+  optimizeBreakdown: GradeRow[];
+}): {
+  findings: (OptimizeFinding & { recurring?: true; appliedAtMs?: number })[];
+  summary: OptimizeSummary;
+  breakdown: GradeRow[];
+} {
+  const scoped = findProjectByKey(state.projectsSnapshot, state.selectedProject);
+  if (scoped) return { findings: scoped.optimize.findings, summary: scoped.optimize.summary, breakdown: scoped.optimize.breakdown };
+  return { findings: state.optimizeFindings, summary: state.optimizeSummary, breakdown: state.optimizeBreakdown };
+}
 
 export function OptimizeView() {
   const colors = useColors();
@@ -17,8 +36,7 @@ export function OptimizeView() {
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
   const [pickerFor, setPickerFor] = useState<string | null>(null);
 
-  const findings = state.optimizeFindings;
-  const summary = state.optimizeSummary;
+  const { findings, summary, breakdown } = resolveOptimizeViewData(state);
   const appliedFindings: (OptimizeFinding & { applied?: boolean })[] = findings.map((f) => ({
     ...f,
     applied: appliedIds.has(f.id),
@@ -41,7 +59,7 @@ export function OptimizeView() {
 
       {breakdownOpen && (
         <div style={breakdownPanelStyle(colors)}>
-          {state.optimizeBreakdown.map((row) => (
+          {breakdown.map((row) => (
             <div key={row.key} style={breakdownRowStyle}>
               <span style={statusGlyphStyle(colors, row.status)}>●</span>
               <div style={{ flex: 1, minWidth: 0 }}>
