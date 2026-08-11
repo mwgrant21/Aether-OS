@@ -397,6 +397,7 @@ async function scanAndPushUsage(): Promise<void> {
     projectKey,
     Intl.DateTimeFormat().resolvedOptions().timeZone,
     Date.now(),
+    { windowMs: WEEK_MS, appliedState },
   );
   sendToWindow('projects:snapshot', cachedProjectsSnapshot);
 }
