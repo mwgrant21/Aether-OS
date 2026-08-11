@@ -319,12 +319,19 @@ func TestStartCollector_StopHaltsAllLoopsAndClosesDB(t *testing.T) {
 	// Wait for evidence a loop actually ran before stopping. A fixed sleep
 	// here could stop the collector before it ever ticked, which would make
 	// the "nothing more is ingested after stop" assertion below vacuous --
-	// it would pass against a collector that never started.
+	// it would pass against a collector that never started. The
+	// transcript-scan heartbeat is stamped synchronously inside
+	// StartCollector before it returns, so waiting on its mere existence
+	// proves nothing about the async loops and passes on the very first
+	// check. A spool file can only be ingested by the 20ms spool-tail
+	// goroutine's own tick, so waiting for its ingestion is evidence that
+	// loop genuinely ran asynchronously.
 	inspect := openForInspection(t, dbPath)
-	eventually(t, "the transcript-scan loop to stamp its heartbeat", func() bool {
-		var v string
-		return inspect.QueryRow("SELECT value FROM schema_meta WHERE key = 'transcript_last_scan_ms'").Scan(&v) == nil
-	})
+	payload, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "before-stop"})
+	if err := os.WriteFile(filepath.Join(spoolDir, "before-stop.jsonl"), append(payload, '\n'), 0644); err != nil {
+		t.Fatalf("write spool file: %v", err)
+	}
+	eventuallyCount(t, inspect, "events", 1)
 	inspect.Close()
 	stop()
 
@@ -340,11 +347,12 @@ func TestStartCollector_StopHaltsAllLoopsAndClosesDB(t *testing.T) {
 		t.Fatalf("Migrate after stop: %v", err)
 	}
 
-	// Spool file written after stop must never be ingested.
-	payload, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "after-stop"})
+	// Spool file written after stop must never be ingested -- the count
+	// stays at the one event ingested before stop.
+	payload, _ = json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "after-stop"})
 	os.WriteFile(filepath.Join(spoolDir, "late.jsonl"), append(payload, '\n'), 0644)
 	time.Sleep(80 * time.Millisecond)
-	assertCount(t, db, "events", 0)
+	assertCount(t, db, "events", 1)
 }
 
 // TestStartCollector_FleetPollFailureDoesNotCrashOtherLoops matches
