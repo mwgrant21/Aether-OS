@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { resolveScopePillLabel } from './TopBar';
+import { resolveScopePillLabel, scopePillStyle } from './TopBar';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
+import { colors } from '../../styles/tokens';
 
 describe('resolveScopePillLabel', () => {
   const snapshot: ProjectsSnapshot = {
@@ -31,7 +32,7 @@ describe('resolveScopePillLabel', () => {
   });
 
   it('returns the project name when a child (worktree) is selected', () => {
-    expect(resolveScopePillLabel({ selectedProject: 'aether#wt', projectsSnapshot: snapshot })).toBe('aether-os');
+    expect(resolveScopePillLabel({ selectedProject: 'aether#wt', projectsSnapshot: snapshot })).toBe('aether-os · statusline-feed');
   });
 
   it('returns null when the selected key is no longer in the snapshot', () => {
@@ -40,5 +41,12 @@ describe('resolveScopePillLabel', () => {
 
   it('returns null when there is no snapshot yet', () => {
     expect(resolveScopePillLabel({ selectedProject: 'aether', projectsSnapshot: null })).toBeNull();
+  });
+});
+
+describe('scopePillStyle', () => {
+  it('marks the pill as non-draggable so Electron treats clicks on it as clicks, not window-drag', () => {
+    const style = scopePillStyle(colors);
+    expect(style.WebkitAppRegion).toBe('no-drag');
   });
 });

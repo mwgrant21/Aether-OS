@@ -149,7 +149,7 @@ function FindingCard({
                   </Button>
                   {targets.project ? (
                     <Button onClick={() => apply('project')} style={targetOptionStyle(colors)}>
-                      Project — {targets.project.path}
+                      Project (most recent activity) — {targets.project.path}
                     </Button>
                   ) : (
                     <div style={emptyStyle(colors)}>no active project detected</div>

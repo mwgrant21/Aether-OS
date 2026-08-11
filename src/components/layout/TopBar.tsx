@@ -23,7 +23,8 @@ export function resolveScopePillLabel(state: {
   projectsSnapshot: ProjectsSnapshot | null;
 }): string | null {
   const scoped = findProjectByKey(state.projectsSnapshot, state.selectedProject);
-  return scoped?.name ?? null;
+  if (!scoped) return null;
+  return scoped.worktree ? `${scoped.name} · ${scoped.worktree}` : scoped.name;
 }
 
 export function TopBar() {
@@ -239,7 +240,7 @@ const iconButtonStyle: AppRegionStyle = {
   font: `700 14px/1 ${fonts.mono}`,
   WebkitAppRegion: 'no-drag',
 };
-function scopePillStyle(colors: ColorPalette): CSSProperties {
+export function scopePillStyle(colors: ColorPalette): AppRegionStyle {
   return {
     flex: 'none',
     marginRight: 10,
@@ -249,6 +250,7 @@ function scopePillStyle(colors: ColorPalette): CSSProperties {
     background: colors.panelInset,
     font: `600 11px/1 ${fonts.ui}`,
     color: colors.accentCyanSoft,
+    WebkitAppRegion: 'no-drag',
   };
 }
 function apprBadgeStyle(colors: ColorPalette): CSSProperties {
