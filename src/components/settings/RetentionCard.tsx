@@ -50,7 +50,13 @@ export function RetentionCard() {
 
       {status && !status.exists && <div style={hintStyle(colors)}>No collector data yet.</div>}
 
-      {status && status.exists && (
+      {status && status.exists && !status.readable && (
+        <div style={{ ...hintStyle(colors), color: colors.danger }}>
+          Store present but could not be read.
+        </div>
+      )}
+
+      {status && status.exists && status.readable && (
         <>
           <div style={rowStyle(colors)}>
             <div style={labelStyle(colors)}>STORE SIZE</div>
@@ -68,7 +74,10 @@ export function RetentionCard() {
           </div>
 
           <Button
-            onClick={() => setConfirming(true)}
+            onClick={() => {
+              setErrorMsg(null);
+              setConfirming(true);
+            }}
             disabled={busy}
             style={{ ...toggleStyle(colors, false), marginTop: 12 }}
           >
@@ -98,7 +107,7 @@ export function RetentionCard() {
             </div>
           )}
 
-          {errorMsg && <p style={{ ...hintStyle(colors), color: colors.textSecondary }}>{errorMsg}</p>}
+          {errorMsg && <p style={{ ...hintStyle(colors), color: colors.danger }}>{errorMsg}</p>}
         </>
       )}
     </div>

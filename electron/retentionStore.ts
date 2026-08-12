@@ -18,6 +18,14 @@ export interface RetentionRowCounts {
 
 export interface RetentionStatus {
   exists: boolean;
+  // False only when exists:true and the file could not be read (corruption,
+  // permissions, mid-write lock, etc). A missing file is exists:false,
+  // readable:true -- "readable" only speaks to files that are actually there.
+  // Callers must not render exists:false and (exists:true, readable:false)
+  // the same way: one means "no data yet," the other means "there is data
+  // here but we can't currently show it to you," and conflating them
+  // overclaims the retention card's visibility guarantee.
+  readable: boolean;
   fileSizeBytes: number;
   oldestRetainedAtMs: number | null;
   rowCounts: RetentionRowCounts;
@@ -28,13 +36,15 @@ export interface PurgeResult {
   error?: string;
 }
 
-function openReadOnly(dbPath: string): DatabaseSync | null {
-  if (!existsSync(dbPath)) return null;
+// Distinguishes "no file at this path" from "file is there but couldn't be
+// opened" -- the caller needs both, not just a collapsed null.
+function openReadOnly(dbPath: string): DatabaseSync | 'missing' | 'unreadable' {
+  if (!existsSync(dbPath)) return 'missing';
   try {
     const sqlite = require('node:sqlite');
     return new sqlite.DatabaseSync(dbPath, { readOnly: true });
   } catch {
-    return null;
+    return 'unreadable';
   }
 }
 
@@ -52,6 +62,7 @@ function minOf(db: DatabaseSync, table: string, column: string): number | null {
 
 const EMPTY_STATUS: RetentionStatus = {
   exists: false,
+  readable: true,
   fileSizeBytes: 0,
   oldestRetainedAtMs: null,
   rowCounts: {
@@ -67,9 +78,15 @@ const EMPTY_STATUS: RetentionStatus = {
   },
 };
 
+// Same zeroed shape as EMPTY_STATUS, but exists:true -- the file is there,
+// it just couldn't be read. See RetentionStatus.readable for why this must
+// stay distinguishable from EMPTY_STATUS at the call site.
+const UNREADABLE_STATUS: RetentionStatus = { ...EMPTY_STATUS, exists: true, readable: false };
+
 export function readRetentionStatus(dbPath: string): RetentionStatus {
   const db = openReadOnly(dbPath);
-  if (!db) return EMPTY_STATUS;
+  if (db === 'missing') return EMPTY_STATUS;
+  if (db === 'unreadable') return UNREADABLE_STATUS;
 
   try {
     const fileSizeBytes = statSync(dbPath).size;
@@ -99,9 +116,11 @@ export function readRetentionStatus(dbPath: string): RetentionStatus {
 
     const oldestRetainedAtMs = candidates.length > 0 ? Math.min(...candidates) : null;
 
-    return { exists: true, fileSizeBytes, oldestRetainedAtMs, rowCounts };
+    return { exists: true, readable: true, fileSizeBytes, oldestRetainedAtMs, rowCounts };
   } catch {
-    return EMPTY_STATUS;
+    // File opened but reading it (statSync, a table missing/corrupt mid-schema,
+    // etc) blew up -- same "exists but unreadable" case as a failed open above.
+    return UNREADABLE_STATUS;
   } finally {
     db.close();
   }

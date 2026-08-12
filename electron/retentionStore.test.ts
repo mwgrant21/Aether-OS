@@ -34,6 +34,7 @@ describe('readRetentionStatus', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aether-retention-'));
     const status = readRetentionStatus(join(dir, 'missing.db'));
     expect(status.exists).toBe(false);
+    expect(status.readable).toBe(true);
     expect(status.fileSizeBytes).toBe(0);
     expect(status.oldestRetainedAtMs).toBeNull();
     expect(status.rowCounts.events).toBe(0);
@@ -55,6 +56,7 @@ describe('readRetentionStatus', () => {
 
     const status = readRetentionStatus(dbPath);
     expect(status.exists).toBe(true);
+    expect(status.readable).toBe(true);
     expect(status.rowCounts.events).toBe(1);
     expect(status.rowCounts.usageEvents).toBe(1);
     expect(status.rowCounts.dispatches).toBe(1);
@@ -93,6 +95,24 @@ describe('readRetentionStatus', () => {
     const dbPath = join(dir, 'test.db');
     require('fs').writeFileSync(dbPath, 'not a real sqlite file');
     expect(() => readRetentionStatus(dbPath)).not.toThrow();
+  });
+
+  // Finding 1 regression: a corrupt/unreadable file must be distinguishable
+  // from a genuinely-missing one, since "no data yet" and "there is data
+  // here but we can't read it" are not the same claim to make on a privacy
+  // card. exists:true + readable:false is the signal the caller renders on.
+  it('reports exists:true, readable:false for a corrupt database file, distinct from a missing one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-corrupt-'));
+    const dbPath = join(dir, 'test.db');
+    require('fs').writeFileSync(dbPath, 'not a real sqlite file');
+
+    const status = readRetentionStatus(dbPath);
+    expect(status.exists).toBe(true);
+    expect(status.readable).toBe(false);
+
+    const missingStatus = readRetentionStatus(join(dir, 'does-not-exist.db'));
+    expect(missingStatus.exists).toBe(false);
+    expect(missingStatus.readable).toBe(true);
   });
 });
 
