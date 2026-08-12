@@ -32,7 +32,7 @@ export function CostGuardCard() {
       </div>
 
       <p style={hintStyle(colors)}>
-        `@anthropic-ai/sdk` was removed from this app and its model-calling code paths deleted in
+        @anthropic-ai/{`sdk`} was removed from this app and its model-calling code paths deleted in
         Stage 13.5 — there is no key-reachable path left for Aether to call the Anthropic API on
         your behalf. Cross-engine verification (above) is the one real network exception, and it
         only ever runs when you enable it.
