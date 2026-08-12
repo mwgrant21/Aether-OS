@@ -23,6 +23,11 @@ export interface RetentionStatus {
   rowCounts: RetentionRowCounts;
 }
 
+export interface PurgeResult {
+  ok: boolean;
+  error?: string;
+}
+
 function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
@@ -99,5 +104,56 @@ export function readRetentionStatus(dbPath: string): RetentionStatus {
     return EMPTY_STATUS;
   } finally {
     db.close();
+  }
+}
+
+// Order doesn't matter -- no foreign keys are declared in schema.ts, so
+// there's no delete-order constraint between these tables.
+const PURGE_TABLES = [
+  'events',
+  'daily_rollups',
+  'drift_log',
+  'usage_events',
+  'fleet_sessions',
+  'tool_calls',
+  'dispatches',
+  'anomalies',
+  'daily_anomaly_rollups',
+] as const;
+
+export function purgeCollectedData(dbPath: string): PurgeResult {
+  if (!existsSync(dbPath)) return { ok: true };
+
+  let db: DatabaseSync | null = null;
+  try {
+    const sqlite = require('node:sqlite');
+    // A second, separate writable connection -- collectorStore.ts/main.ts's
+    // read-only handles are untouched. busy_timeout is set explicitly here
+    // because schema.ts's openDatabase() (the Node collector's own
+    // connection) never sets one on collector.db, unlike memory.db and the
+    // Go backend -- without this, a purge landing mid-collector-write would
+    // fail immediately instead of retrying.
+    db = new sqlite.DatabaseSync(dbPath);
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec('BEGIN');
+    for (const table of PURGE_TABLES) {
+      db.exec(`DELETE FROM ${table}`);
+    }
+    db.exec('COMMIT');
+    // Outside the transaction -- SQLite does not allow VACUUM inside one.
+    // Without this, DELETE alone leaves the on-disk file the same size, so
+    // the "current size" readout would not visibly change right after the
+    // one action that's supposed to prove it works.
+    db.exec('VACUUM');
+    return { ok: true };
+  } catch (err) {
+    try {
+      db?.exec('ROLLBACK');
+    } catch {
+      // No transaction was open (e.g. BEGIN itself failed) -- nothing to roll back.
+    }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    db?.close();
   }
 }

@@ -3,7 +3,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
-import { readRetentionStatus } from './retentionStore.js';
+import { readRetentionStatus, purgeCollectedData } from './retentionStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -93,5 +93,115 @@ describe('readRetentionStatus', () => {
     const dbPath = join(dir, 'test.db');
     require('fs').writeFileSync(dbPath, 'not a real sqlite file');
     expect(() => readRetentionStatus(dbPath)).not.toThrow();
+  });
+});
+
+describe('purgeCollectedData', () => {
+  it('deletes every row in every data table', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare(
+      'INSERT INTO events (hook_event_name, session_id, had_tool_input, had_tool_response, occurred_at_ms) VALUES (?, ?, ?, ?, ?)'
+    ).run('PreToolUse', 's1', 1, 0, 1000);
+    db.prepare('INSERT INTO daily_rollups (day, hook_event_name, tool_name, event_count) VALUES (?, ?, ?, ?)').run(
+      '2026-08-11', 'PreToolUse', '', 5
+    );
+    db.prepare('INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms) VALUES (?, ?, ?, ?, ?, ?)').run(
+      't1', 100, 1, 500, 1000, 1500
+    );
+    db.prepare('INSERT INTO anomalies (kind, tool_use_id, detail, detected_at_ms) VALUES (?, ?, ?, ?)').run('slow', 't1', '{}', 1200);
+
+    // Precondition: confirm the seed actually landed before asserting the purge cleared it.
+    const before = readRetentionStatus(dbPath);
+    expect(before.rowCounts.events).toBe(1);
+    expect(before.rowCounts.dailyRollups).toBe(1);
+    expect(before.rowCounts.dispatches).toBe(1);
+    expect(before.rowCounts.anomalies).toBe(1);
+    db.close();
+
+    const result = purgeCollectedData(dbPath);
+    expect(result.ok).toBe(true);
+
+    const after = readRetentionStatus(dbPath);
+    expect(after.rowCounts.events).toBe(0);
+    expect(after.rowCounts.dailyRollups).toBe(0);
+    expect(after.rowCounts.dispatches).toBe(0);
+    expect(after.rowCounts.anomalies).toBe(0);
+  });
+
+  // The load-bearing regression test named in the design spec: wiping
+  // transcript_files alongside the data tables would reset every scan
+  // cursor to "unread," and the collector's very next scan tick would
+  // replay full transcript history and silently re-populate everything
+  // this test just confirmed was deleted.
+  it('preserves transcript_files rows exactly, unchanged', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare('INSERT INTO transcript_files (file_path, last_offset, last_scanned_ms) VALUES (?, ?, ?)').run(
+      '/home/user/.claude/projects/foo/session1.jsonl', 48213, 9999
+    );
+    db.close();
+
+    purgeCollectedData(dbPath);
+
+    const db2 = new DatabaseSync(dbPath, { readOnly: true });
+    const row = db2.prepare('SELECT last_offset, last_scanned_ms FROM transcript_files WHERE file_path = ?').get(
+      '/home/user/.claude/projects/foo/session1.jsonl'
+    ) as { last_offset: number; last_scanned_ms: number };
+    db2.close();
+    expect(row.last_offset).toBe(48213);
+    expect(row.last_scanned_ms).toBe(9999);
+  });
+
+  it('preserves schema_meta rows exactly, unchanged', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('version', '6')").run();
+    db.close();
+
+    purgeCollectedData(dbPath);
+
+    const db2 = new DatabaseSync(dbPath, { readOnly: true });
+    const row = db2.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as { value: string };
+    db2.close();
+    expect(row.value).toBe('6');
+  });
+
+  it('never opens or modifies a separate memory.db file in the same directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath } = seedCollectorDb(dir, 'collector.db');
+    const memDbPath = join(dir, 'memory.db');
+    const memDb = new DatabaseSync(memDbPath);
+    memDb.exec('CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL)');
+    memDb.prepare('INSERT INTO memories (content) VALUES (?)').run('a real memory decision');
+    memDb.close();
+
+    purgeCollectedData(dbPath);
+
+    const memDb2 = new DatabaseSync(memDbPath, { readOnly: true });
+    const row = memDb2.prepare('SELECT COUNT(*) as c FROM memories').get() as { c: number };
+    memDb2.close();
+    expect(row.c).toBe(1);
+  });
+
+  it('reduces the on-disk file size after deleting rows (VACUUM actually ran)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    const insert = db.prepare(
+      'INSERT INTO events (hook_event_name, session_id, had_tool_input, had_tool_response, occurred_at_ms) VALUES (?, ?, ?, ?, ?)'
+    );
+    for (let i = 0; i < 500; i++) insert.run('PreToolUse', `s${i}`, 1, 0, i);
+    db.close();
+
+    const before = readRetentionStatus(dbPath).fileSizeBytes;
+    purgeCollectedData(dbPath);
+    const after = readRetentionStatus(dbPath).fileSizeBytes;
+    expect(after).toBeLessThan(before);
+  });
+
+  it('is a no-op that returns ok:true when the db file does not exist', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const result = purgeCollectedData(join(dir, 'missing.db'));
+    expect(result.ok).toBe(true);
   });
 });
