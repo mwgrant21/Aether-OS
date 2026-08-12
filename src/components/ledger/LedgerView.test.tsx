@@ -6,9 +6,10 @@ import { RollupCard } from './RollupCard';
 import { SessionCostCard } from './SessionCostCard';
 import { CacheImpactCard } from './CacheImpactCard';
 import { PricingBasisFooter } from './PricingBasisFooter';
-import { buildDispatchRows, selectTodaysRows } from './LedgerView';
+import { buildDispatchRows, selectTodaysRows, resolveLedgerViewData } from './LedgerView';
 import type { DispatchCostRow } from './DispatchCostTable';
 import { PRICING_VERIFIED_AT } from '../../shared/modelPricing';
+import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 
 // useColors() reads the theme from the store, so every themed component needs
 // the provider -- the established convention in this repo's component tests.
@@ -225,5 +226,46 @@ describe('selectTodaysRows', () => {
   it('includes a dispatch that fully contains today (starts before, ends after)', () => {
     const r = row({ startedAt: '2026-08-06T12:00:00.000Z', endedAt: '2026-08-09T12:00:00.000Z' });
     expect(selectTodaysRows([r], ledger)).toEqual([r]);
+  });
+});
+
+describe('resolveLedgerViewData', () => {
+  const globalLedger = { total: { usd: 10, breakdown: { input: 10, output: 0, cacheCreation: 0, cacheRead: 0 } } } as any;
+  const scopedLedger = { total: { usd: 3, breakdown: { input: 3, output: 0, cacheCreation: 0, cacheRead: 0 } } } as any;
+  const snapshot: ProjectsSnapshot = {
+    roots: [
+      {
+        key: 'aether', name: 'aether-os', worktree: null,
+        ledger: scopedLedger,
+        optimize: { findings: [], summary: { totalPerWeek: 0, grade: 'A' as const }, breakdown: [] },
+        children: [],
+      },
+    ],
+    unscoped: null,
+    computedAtMs: 0,
+  };
+
+  it('returns the global ledger and shows dispatch detail when nothing is selected', () => {
+    const result = resolveLedgerViewData({ selectedProject: null, projectsSnapshot: snapshot, ledger: globalLedger });
+    expect(result.ledger).toBe(globalLedger);
+    expect(result.showDispatchDetail).toBe(true);
+  });
+
+  it('returns the scoped project\'s ledger and hides dispatch detail when a valid project is selected', () => {
+    const result = resolveLedgerViewData({ selectedProject: 'aether', projectsSnapshot: snapshot, ledger: globalLedger });
+    expect(result.ledger).toBe(scopedLedger);
+    expect(result.showDispatchDetail).toBe(false);
+  });
+
+  it('falls back to the global ledger when the selected key is no longer in the snapshot', () => {
+    const result = resolveLedgerViewData({ selectedProject: 'deleted-project', projectsSnapshot: snapshot, ledger: globalLedger });
+    expect(result.ledger).toBe(globalLedger);
+    expect(result.showDispatchDetail).toBe(true);
+  });
+
+  it('falls back to the global ledger when there is no snapshot yet', () => {
+    const result = resolveLedgerViewData({ selectedProject: 'aether', projectsSnapshot: null, ledger: globalLedger });
+    expect(result.ledger).toBe(globalLedger);
+    expect(result.showDispatchDetail).toBe(true);
   });
 });

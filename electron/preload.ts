@@ -10,6 +10,7 @@ import type { GradeRow } from '../src/shared/optimizeGrade';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import type { StatuslineInstallState } from './statuslineInstaller';
 import type { DiagnosticsSnapshot } from './collectorStore';
+import type { RetentionStatus, PurgeResult } from './retentionStore';
 import type { MemoryRowUI, MemoryTombstoneUI } from './memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
@@ -235,6 +236,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('crossEngine:update', listener);
       return () => ipcRenderer.removeListener('crossEngine:update', listener);
     },
+  },
+  retention: {
+    status: (): Promise<RetentionStatus> => ipcRenderer.invoke('retention:status'),
+    purge: (): Promise<PurgeResult> => ipcRenderer.invoke('retention:purge'),
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

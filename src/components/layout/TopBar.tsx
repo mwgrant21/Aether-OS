@@ -6,6 +6,8 @@ import { resolveOperatorName } from '../../utils/format';
 import { maximizeGlyph, maximizeLabel } from './windowControls';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
+import { findProjectByKey } from '../projects/projectsMath';
+import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
@@ -16,6 +18,15 @@ const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
   { key: 'AUTO', label: '⚡ AUTO', tip: 'Full auto — low/med actions auto-approved, max burn' },
 ];
 
+export function resolveScopePillLabel(state: {
+  selectedProject: string | null;
+  projectsSnapshot: ProjectsSnapshot | null;
+}): string | null {
+  const scoped = findProjectByKey(state.projectsSnapshot, state.selectedProject);
+  if (!scoped) return null;
+  return scoped.worktree ? `${scoped.name} · ${scoped.worktree}` : scoped.name;
+}
+
 export function TopBar() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
@@ -23,6 +34,7 @@ export function TopBar() {
   const hasPending = pendingCount > 0;
   const apprBtnC = hasPending ? colors.warn : colors.accentCyanSoft;
   const apprBtnBorder = hasPending ? 'rgba(245,198,107,.5)' : 'rgba(80,190,220,.25)';
+  const scopeLabel = resolveScopePillLabel(state);
 
   return (
     <div style={rootStyle(colors)}>
@@ -40,6 +52,16 @@ export function TopBar() {
           just pushes the op-mode/approval/notification/operator/window
           controls to the right, matching the original layout's spacing. */}
       <div style={{ flex: 1 }} />
+
+      {scopeLabel && (
+        <Button
+          title="Clear project scope"
+          onClick={() => dispatch({ type: 'SELECT_PROJECT', key: null })}
+          style={scopePillStyle(colors)}
+        >
+          Scoped: {scopeLabel} ×
+        </Button>
+      )}
 
       <div style={opModeGroupStyle}>
         {OP_MODES.map((om) => {
@@ -218,6 +240,19 @@ const iconButtonStyle: AppRegionStyle = {
   font: `700 14px/1 ${fonts.mono}`,
   WebkitAppRegion: 'no-drag',
 };
+export function scopePillStyle(colors: ColorPalette): AppRegionStyle {
+  return {
+    flex: 'none',
+    marginRight: 10,
+    padding: '6px 12px',
+    borderRadius: 8,
+    border: `1px solid ${colors.chipBorder}`,
+    background: colors.panelInset,
+    font: `600 11px/1 ${fonts.ui}`,
+    color: colors.accentCyanSoft,
+    WebkitAppRegion: 'no-drag',
+  };
+}
 function apprBadgeStyle(colors: ColorPalette): CSSProperties {
   return {
     position: 'absolute',

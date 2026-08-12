@@ -9,6 +9,7 @@ import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
+import { readRetentionStatus, purgeCollectedData } from './retentionStore';
 import { chooseUsageSource } from './collectorFreshness';
 import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
 import { readMemories, readMemoryTombstones } from './memoryStore';
@@ -397,6 +398,7 @@ async function scanAndPushUsage(): Promise<void> {
     projectKey,
     Intl.DateTimeFormat().resolvedOptions().timeZone,
     Date.now(),
+    { windowMs: WEEK_MS, appliedState },
   );
   sendToWindow('projects:snapshot', cachedProjectsSnapshot);
 }
@@ -705,6 +707,9 @@ function openCollectorDbReadOnly(): DatabaseSync | null {
     return null;
   }
 }
+
+ipcMain.handle('retention:status', () => readRetentionStatus(collectorDbPath));
+ipcMain.handle('retention:purge', () => purgeCollectedData(collectorDbPath));
 
 ipcMain.handle('crossEngine:status', async (): Promise<VerifierStatus> => {
   if (!crossEngineFeatureEnabled) return 'disabled';

@@ -33,6 +33,12 @@ describe('reducer', () => {
     expect(next.selectedProject).toBe('mobile-beta');
   });
 
+  it('SELECT_PROJECT with a null key clears selectedProject', () => {
+    const withSelection = reducer(initialState, { type: 'SELECT_PROJECT', key: 'mobile-beta' });
+    const cleared = reducer(withSelection, { type: 'SELECT_PROJECT', key: null });
+    expect(cleared.selectedProject).toBeNull();
+  });
+
   it('SELECT_MEMORY sets selectedMemory to the stringified id', () => {
     const next = reducer(initialState, { type: 'SELECT_MEMORY', id: 2 });
     expect(next.selectedMemory).toBe('2');

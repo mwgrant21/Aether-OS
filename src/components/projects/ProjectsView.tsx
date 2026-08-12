@@ -15,7 +15,7 @@ export function ProjectsView() {
     <div style={rootStyle}>
       <ProjectRosterCard
         snapshot={snapshot}
-        selectedKey={selected?.key ?? null}
+        selectedKey={state.selectedProject}
         onSelect={(key) => dispatch({ type: 'SELECT_PROJECT', key })}
       />
       <ProjectDetailCard node={selected} />

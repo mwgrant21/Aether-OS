@@ -89,4 +89,50 @@ describe('buildProjectsSnapshot', () => {
     expect(s.roots).toHaveLength(1);
     expect(s.roots[0].ledger.total.usd).toBe(0);
   });
+
+  it('computes optimize findings per project from that project\'s own events, not the global set', () => {
+    // 200 assistant turns on opus with tiny (<300 tok) output each trips the
+    // opus-on-trivial-turns rule (see optimizeRules.ts's threshold). Only
+    // AETHER's events get this shape; TOKEN's stay small and healthy.
+    const trivialOpusEvents: TranscriptEvent[] = Array.from({ length: 200 }, () => ({
+      kind: 'assistant' as const,
+      sessionId: 's',
+      timestamp: new Date(NOW),
+      cwd: AETHER,
+      model: 'claude-opus-4-8',
+      usage: { inputTokens: 0, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+      toolUses: [],
+      toolResults: [],
+      isHumanPrompt: false,
+      humanText: null,
+      originKind: null,
+    }));
+    const s = buildProjectsSnapshot(
+      [...trivialOpusEvents, ev(TOKEN, M)],
+      probe,
+      keyOf,
+      'UTC',
+      NOW,
+      { windowMs: 7 * 24 * 60 * 60 * 1000, appliedState: {} },
+    );
+    const aether = s.roots.find((r) => r.name === 'aether-os')!;
+    const token = s.roots.find((r) => r.name === 'tokenmonitorv2')!;
+    const aetherFindingIds = aether.optimize.findings.map((f) => f.id);
+    expect(aetherFindingIds).toContain('opus-on-trivial-turns');
+    expect(token.optimize.findings.map((f) => f.id)).not.toContain('opus-on-trivial-turns');
+  });
+
+  it('a project with no rule violations has an empty findings array, not an absent field', () => {
+    const s = buildProjectsSnapshot([ev(AETHER, M)], probe, keyOf, 'UTC', NOW);
+    expect(s.roots[0].optimize.findings).toEqual([]);
+    expect(s.roots[0].optimize.summary.grade).toBe('A');
+  });
+
+  it('defaults windowMs/appliedState when optimizeOptions is omitted, matching main.ts\'s WEEK_MS', () => {
+    // No optimizeOptions passed -- existing callers (and the 9 tests above this
+    // one) must keep working unchanged.
+    const s = buildProjectsSnapshot([ev(AETHER, M)], probe, keyOf, 'UTC', NOW);
+    expect(s.roots[0].optimize).toBeDefined();
+    expect(Array.isArray(s.roots[0].optimize.findings)).toBe(true);
+  });
 });

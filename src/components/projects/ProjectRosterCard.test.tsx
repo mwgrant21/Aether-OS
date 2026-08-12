@@ -22,17 +22,23 @@ const ledger = (usd: number) =>
     computedAtMs: 0,
   });
 
+const optimize = {
+  findings: [],
+  summary: { totalPerWeek: 0, grade: 'A' as const },
+  breakdown: [],
+};
+
 const snapshot: ProjectsSnapshot = {
   roots: [
     {
-      key: 'aether', name: 'aether-os', worktree: null, ledger: ledger(184.2),
+      key: 'aether', name: 'aether-os', worktree: null, ledger: ledger(184.2), optimize,
       children: [
-        { key: 'aether-main', name: 'aether-os', worktree: null, ledger: ledger(31.05) },
-        { key: 'aether-wt', name: 'aether-os', worktree: 'statusline-feed', ledger: ledger(153.15) },
+        { key: 'aether-main', name: 'aether-os', worktree: null, ledger: ledger(31.05), optimize },
+        { key: 'aether-wt', name: 'aether-os', worktree: 'statusline-feed', ledger: ledger(153.15), optimize },
       ],
     },
-    { key: 'tmv2', name: 'tokenmonitorv2', worktree: null, ledger: ledger(96.4), children: [
-      { key: 'tmv2-main', name: 'tokenmonitorv2', worktree: null, ledger: ledger(96.4) },
+    { key: 'tmv2', name: 'tokenmonitorv2', worktree: null, ledger: ledger(96.4), optimize, children: [
+      { key: 'tmv2-main', name: 'tokenmonitorv2', worktree: null, ledger: ledger(96.4), optimize },
     ] },
   ],
   unscoped: ledger(44.9),

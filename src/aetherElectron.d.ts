@@ -6,6 +6,7 @@ import type { OptimizeFinding, OptimizeSummary } from './shared/optimizeRules';
 import type { GradeRow } from './shared/optimizeGrade';
 import type { StatuslineSnapshot } from './shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../electron/collectorStore';
+import type { RetentionStatus, PurgeResult } from '../electron/retentionStore';
 import type { LedgerSnapshot } from './shared/ledgerMath';
 import type { ProjectsSnapshot } from './shared/projectsSnapshot';
 import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
@@ -118,6 +119,10 @@ declare global {
         cancel: (runId: string) => Promise<void>;
         setEnabled: (enabled: boolean) => void;
         onUpdate: (callback: (event: VerificationEvent) => void) => () => void;
+      };
+      retention: {
+        status: () => Promise<RetentionStatus>;
+        purge: () => Promise<PurgeResult>;
       };
       window: {
         minimize: () => void;

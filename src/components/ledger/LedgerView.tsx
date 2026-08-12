@@ -7,8 +7,11 @@ import {
   reconcile,
   localDayBoundsMs,
   type EstimatedCost,
+  type LedgerSnapshot,
 } from '../../shared/ledgerMath';
 import type { CompletedDispatchUsage } from '../../state/liveAgentsMath';
+import { findProjectByKey } from '../projects/projectsMath';
+import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { SessionCostCard } from './SessionCostCard';
 import { RollupCard } from './RollupCard';
 import { CacheImpactCard } from './CacheImpactCard';
@@ -29,7 +32,7 @@ import { usd, approxUsd, ESTIMATE_BASIS_TOOLTIP } from './format';
 export function LedgerView() {
   const colors = useColors();
   const { state } = useAetherStore();
-  const ledger = state.ledger;
+  const { ledger, showDispatchDetail } = resolveLedgerViewData(state);
 
   const rows = buildDispatchRows(state);
 
@@ -85,9 +88,9 @@ export function LedgerView() {
 
           <RollupCard rollups={ledger.rollups} />
 
-          <DispatchCostTable rows={rows} />
+          {showDispatchDetail && <DispatchCostTable rows={rows} />}
 
-          {reconciliation !== null && (
+          {showDispatchDetail && reconciliation !== null && (
             <div style={residualStyle(colors)} title={ESTIMATE_BASIS_TOOLTIP}>
               Today: {todaysRows.length} tracked dispatch{todaysRows.length === 1 ? '' : 'es'} account for{' '}
               {approxUsd(reconciliation.attributedUsdApprox)} of the {usd(reconciliation.sessionUsd)} observed;{' '}
@@ -116,11 +119,39 @@ export function LedgerView() {
             </span>
           </div>
 
+          {!showDispatchDetail && (
+            <div style={residualCaveatStyle(colors)}>
+              Dispatch-level detail is only available for the unscoped view — Aether's live
+              dispatch tracking follows this session, not any specific project.
+            </div>
+          )}
+
           <PricingBasisFooter />
         </>
       )}
     </div>
   );
+}
+
+/**
+ * Resolves which ledger to render and whether the dispatch-level detail
+ * (DispatchCostTable, the reconciliation strip) is safe to show.
+ *
+ * Dispatch detail is Aether's-own-live-session tracking (recentCompletedDispatches
+ * / dispatchUsage / diagnostics) -- it carries no project attribution, so
+ * showing it next to a SCOPED ledger.rollups.today would compare a
+ * project-scoped exact total against unscoped dispatch estimates, producing
+ * a misleading residual. It is suppressed whenever a scope is active, not
+ * re-filtered -- there is nothing in that data to filter on.
+ */
+export function resolveLedgerViewData(state: {
+  selectedProject: string | null;
+  projectsSnapshot: ProjectsSnapshot | null;
+  ledger: LedgerSnapshot | null;
+}): { ledger: LedgerSnapshot | null; showDispatchDetail: boolean } {
+  const scoped = findProjectByKey(state.projectsSnapshot, state.selectedProject);
+  if (scoped) return { ledger: scoped.ledger, showDispatchDetail: false };
+  return { ledger: state.ledger, showDispatchDetail: true };
 }
 
 /**

@@ -26,7 +26,7 @@ export type Action =
   | { type: 'TICK' }
   | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
   | { type: 'REACTIVATE_AGENT'; name: string }
-  | { type: 'SELECT_PROJECT'; key: string }
+  | { type: 'SELECT_PROJECT'; key: string | null }
   | { type: 'SELECT_MEMORY'; id: number }
   | { type: 'SET_MEMORIES'; memories: MemoryRow[] }
   | { type: 'SET_MEMORY_TOMBSTONES'; tombstones: MemoryTombstone[] }
