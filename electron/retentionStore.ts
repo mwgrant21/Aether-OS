@@ -60,6 +60,20 @@ function minOf(db: DatabaseSync, table: string, column: string): number | null {
   return row.m;
 }
 
+// Rollup tables are keyed by a UTC day string ('YYYY-MM-DD', written by
+// collector-go's dayKeyUtc), not a row timestamp. MIN() over TEXT is a
+// lexicographic compare, which for zero-padded ISO dates is also chronological.
+// Midnight UTC is the earliest instant that day can represent, so it is the
+// correct lower bound for "oldest retained".
+function minDayMsOf(db: DatabaseSync, table: string): number | null {
+  const row = db.prepare(`SELECT MIN(day) as m FROM ${table}`).get() as { m: string | null };
+  if (row.m === null) return null;
+  const ms = Date.parse(`${row.m}T00:00:00Z`);
+  // A malformed day string would yield NaN and silently poison Math.min, which
+  // is exactly the kind of quiet wrongness this readout must not have.
+  return Number.isFinite(ms) ? ms : null;
+}
+
 const EMPTY_STATUS: RetentionStatus = {
   exists: false,
   readable: true,
@@ -102,16 +116,35 @@ export function readRetentionStatus(dbPath: string): RetentionStatus {
       fleetSessions: countRows(db, 'fleet_sessions'),
     };
 
-    // Oldest live row across every RAW table -- rollup tables (daily_rollups,
-    // daily_anomaly_rollups) are keyed by day string, not a row timestamp,
-    // and are already represented by these tables' own oldest row before
-    // compaction ages it out.
+    // Oldest live row across EVERY retained table, raw and aggregate alike.
+    //
+    // Raw tables alone are not enough, and the earlier "rollups are already
+    // represented by these tables' own oldest row before compaction ages it
+    // out" reasoning carried its own refutation in that final clause. Once
+    // collector-go's retention.Compact runs, the raw rows ARE aged out while
+    // daily_rollups / daily_anomaly_rollups survive by design --
+    // docs/privacy-and-data.md: "Aggregates survive, event rows age out." A
+    // raw-only reading therefore jumps forward, or reports null, while older
+    // aggregates sit on disk and are counted in rowCounts. Understating the
+    // age of retained data in the privacy readout is the one thing this
+    // number must never do; it is the same honesty constraint the Ledger
+    // applies when it renders a missing period as a gap rather than $0.00.
+    //
+    // drift_log and fleet_sessions are included for a second reason: both are
+    // timestamped and both are already counted in rowCounts, so omitting them
+    // made this function internally inconsistent. fleet_sessions matters most
+    // -- retention.Compact has no `DELETE FROM fleet_sessions` at all, so its
+    // rows are never aged out and can be the genuinely oldest data in the store.
     const candidates = [
       minOf(db, 'events', 'occurred_at_ms'),
       minOf(db, 'usage_events', 'occurred_at_ms'),
       minOf(db, 'dispatches', 'started_at_ms'),
       minOf(db, 'tool_calls', 'started_at_ms'),
       minOf(db, 'anomalies', 'detected_at_ms'),
+      minOf(db, 'drift_log', 'detected_at_ms'),
+      minOf(db, 'fleet_sessions', 'started_at_ms'),
+      minDayMsOf(db, 'daily_rollups'),
+      minDayMsOf(db, 'daily_anomaly_rollups'),
     ].filter((v): v is number => v !== null);
 
     const oldestRetainedAtMs = candidates.length > 0 ? Math.min(...candidates) : null;

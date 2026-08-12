@@ -80,7 +80,7 @@ describe('readRetentionStatus', () => {
     expect(status.oldestRetainedAtMs).toBe(2000);
   });
 
-  it('returns oldestRetainedAtMs:null when every raw table is empty', () => {
+  it('returns oldestRetainedAtMs:null when every retained table is empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aether-retention-'));
     const { dbPath, db } = seedCollectorDb(dir);
     db.close();
@@ -88,6 +88,73 @@ describe('readRetentionStatus', () => {
     const status = readRetentionStatus(dbPath);
     expect(status.exists).toBe(true);
     expect(status.oldestRetainedAtMs).toBeNull();
+  });
+
+  // This is the POST-COMPACTION steady state, not an edge case. collector-go's
+  // retention.Compact rolls events into daily_rollups and then deletes the raw
+  // rows, and docs/privacy-and-data.md states the model plainly: "Aggregates
+  // survive, event rows age out." So a store that has been running longer than
+  // the retention window normally looks exactly like this.
+  it('derives oldestRetainedAtMs from rollup days when raw rows have been compacted away', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    // A rollup for an old day survives compaction...
+    db.prepare('INSERT INTO daily_rollups (day, hook_event_name, tool_name, event_count) VALUES (?, ?, ?, ?)')
+      .run('2026-01-05', 'PreToolUse', '', 42);
+    // ...while the only surviving RAW row is far newer.
+    const newer = Date.parse('2026-06-01T00:00:00Z');
+    db.prepare(
+      'INSERT INTO events (hook_event_name, session_id, had_tool_input, had_tool_response, occurred_at_ms) VALUES (?, ?, ?, ?, ?)'
+    ).run('PreToolUse', 's1', 1, 0, newer);
+    db.close();
+
+    const status = readRetentionStatus(dbPath);
+    expect(status.oldestRetainedAtMs).toBe(Date.parse('2026-01-05T00:00:00Z'));
+  });
+
+  it('reports a rollup day even when every raw table is empty', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare('INSERT INTO daily_anomaly_rollups (day, kind, anomaly_count) VALUES (?, ?, ?)')
+      .run('2025-11-20', 'slow', 3);
+    db.close();
+
+    const status = readRetentionStatus(dbPath);
+    // null here would claim the store holds nothing older than "now" while a
+    // 2025 aggregate is still on disk and still counted in rowCounts.
+    expect(status.oldestRetainedAtMs).toBe(Date.parse('2025-11-20T00:00:00Z'));
+  });
+
+  // drift_log and fleet_sessions are both timestamped and both counted in
+  // rowCounts, so excluding them from the oldest-row readout made the same
+  // function internally inconsistent.
+  it('includes drift_log in oldestRetainedAtMs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare('INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)').run(1500, 'x');
+    db.prepare(
+      'INSERT INTO events (hook_event_name, session_id, had_tool_input, had_tool_response, occurred_at_ms) VALUES (?, ?, ?, ?, ?)'
+    ).run('PreToolUse', 's1', 1, 0, 9000);
+    db.close();
+
+    expect(readRetentionStatus(dbPath).oldestRetainedAtMs).toBe(1500);
+  });
+
+  // fleet_sessions is never deleted by Compact at all - there is no
+  // `DELETE FROM fleet_sessions` in retention.go - so it can hold the genuinely
+  // oldest rows in the whole store.
+  it('includes fleet_sessions in oldestRetainedAtMs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare(
+      'INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run('s-old', 1, 'p', 'k', 'idle', 'n', 800, 900);
+    db.prepare(
+      'INSERT INTO events (hook_event_name, session_id, had_tool_input, had_tool_response, occurred_at_ms) VALUES (?, ?, ?, ?, ?)'
+    ).run('PreToolUse', 's1', 1, 0, 9000);
+    db.close();
+
+    expect(readRetentionStatus(dbPath).oldestRetainedAtMs).toBe(800);
   });
 
   it('never throws against a malformed/corrupt database file', () => {
