@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor } from 'electron';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -89,6 +89,34 @@ app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+  }
+});
+
+// Issue #22 diagnostics, app-level half (per-window half is in createWindow).
+// The stated hypothesis is that a Windows session lock tears down the GPU
+// process's context and the renderer never recovers, painting white while the
+// main process stays healthy. That is unverified precisely because nothing was
+// recording either signal when it happened.
+//
+// Lock/unlock timestamps plus GPU-process death are what make the next
+// occurrence decidable: a white screen shortly after 'unlock-screen', with a
+// GPU 'child-process-gone' in between, confirms it; the same white screen with
+// neither logged rules it out and points elsewhere. Cheap, always-on, and it
+// costs nothing when nothing goes wrong.
+app.on('child-process-gone', (_event, details) => {
+  console.error(
+    `[diag] child-process-gone type=${details.type} reason=${details.reason} ` +
+      `exitCode=${details.exitCode} at=${new Date().toISOString()}`
+  );
+});
+
+// Subscribed inside whenReady: powerMonitor is safe to import at module scope
+// but throws if its methods are touched before the app is ready.
+app.whenReady().then(() => {
+  for (const evt of ['lock-screen', 'unlock-screen', 'suspend', 'resume'] as const) {
+    powerMonitor.on(evt, () => {
+      console.error(`[diag] powerMonitor ${evt} at=${new Date().toISOString()}`);
+    });
   }
 });
 
@@ -187,9 +215,34 @@ function createWindow(): void {
   });
 
   win.webContents.on('render-process-gone', (_event, details) => {
-    console.error('Renderer process gone:', details.reason);
+    console.error(
+      `[diag] render-process-gone reason=${details.reason} exitCode=${details.exitCode} at=${new Date().toISOString()}`
+    );
     if (mainWindow === win) mainWindow = null;
     if (!isQuitting) createWindow();
+  });
+
+  // Issue #22 diagnostics. The reported symptom is a window that goes fully
+  // white while the main process stays healthy -- and `render-process-gone`
+  // above CANNOT observe that: it fires when the renderer dies, whereas the
+  // report describes a renderer that is alive and simply painting nothing.
+  // That is precisely why the first occurrence produced a clean exit code, no
+  // stack trace, and no usable evidence once the window was closed.
+  //
+  // These handlers do not fix anything. They exist so the NEXT occurrence is
+  // diagnosable instead of lost: 'unresponsive' catches a hung renderer, and
+  // the lock/unlock and GPU-process signals wired at app level below give the
+  // timeline needed to confirm or kill the session-lock/GPU-context-loss
+  // hypothesis. If a white screen recurs and none of these fired, that is
+  // itself informative -- it rules out all three.
+  win.on('unresponsive', () => {
+    console.error(`[diag] window unresponsive at=${new Date().toISOString()}`);
+  });
+  win.on('responsive', () => {
+    console.error(`[diag] window responsive again at=${new Date().toISOString()}`);
+  });
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error(`[diag] did-fail-load code=${code} desc=${desc} url=${url} at=${new Date().toISOString()}`);
   });
 
   win.webContents.on('before-input-event', (_event, input) => {
