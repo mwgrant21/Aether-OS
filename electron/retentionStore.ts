@@ -133,7 +133,7 @@ export function purgeCollectedData(dbPath: string): PurgeResult {
     // connection) never sets one on collector.db, unlike memory.db and the
     // Go backend -- without this, a purge landing mid-collector-write would
     // fail immediately instead of retrying.
-    db = new sqlite.DatabaseSync(dbPath);
+    db = new sqlite.DatabaseSync(dbPath) as DatabaseSync;
     db.exec('PRAGMA busy_timeout = 5000');
 
     // Transaction: BEGIN/DELETE/COMMIT. If any step fails, roll back and report error.
