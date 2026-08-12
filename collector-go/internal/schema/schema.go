@@ -67,19 +67,25 @@ func OpenDatabase(dbPath string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, err
-	}
 	// modernc.org/sqlite's default busy_timeout is 0: a writer that finds the
 	// file locked by another connection (a concurrent collector process, a
 	// reader on the Electron side, or -- in tests -- a second *sql.DB opened
 	// against the same file) gets an immediate SQLITE_BUSY instead of
 	// retrying. Every OpenDatabase caller shares one file with other
-	// processes/handles by design, so this is set here rather than left to
-	// each caller to remember.
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+	// processes/handles by design.
+	//
+	// This MUST be a DSN parameter, not a post-open `db.Exec("PRAGMA ...")`.
+	// A PRAGMA applies only to the connection that ran it, and database/sql
+	// hands later queries whichever pooled connection is free -- one that
+	// never saw it. The previous Exec form therefore protected exactly one
+	// connection, and only looked correct here because the single production
+	// caller also sets SetMaxOpenConns(1) for its own unrelated reason (see
+	// collector.go: restoring the TS original's serialized-access model).
+	// Any second caller, or any future pool > 1, silently got busy_timeout=0.
+	// A DSN pragma is applied by the driver as each connection is opened, so
+	// it holds for every connection in the pool regardless of caller.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
 		return nil, err
 	}
 	return db, nil
