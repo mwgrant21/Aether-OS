@@ -253,4 +253,19 @@ describe('purgeCollectedData', () => {
       sqlite.DatabaseSync = OriginalConstructor;
     }
   });
+
+  // Regression test: connection-open or PRAGMA setup failures must return { ok: false, error }
+  // not throw. This is the contract of purgeCollectedData — always returns PurgeResult.
+  it('returns ok:false with error message when database file is corrupted (connection-open fails)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const dbPath = join(dir, 'corrupt.db');
+    // Write garbage to create a corrupted file
+    require('fs').writeFileSync(dbPath, 'not a real sqlite database file');
+
+    // Should return error, not throw
+    const result = purgeCollectedData(dbPath);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+    expect(result.error).toMatch(/file.*not.*database|corrupt|malformed/i);
+  });
 });

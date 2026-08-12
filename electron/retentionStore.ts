@@ -164,6 +164,11 @@ export function purgeCollectedData(dbPath: string): PurgeResult {
     }
 
     return { ok: true };
+  } catch (err) {
+    // Catch connection-open, PRAGMA setup, or any other pre-COMMIT failures.
+    // This does NOT catch transaction errors (inner try/catch returns) or VACUUM
+    // errors (own try/catch swallows), only pre-COMMIT setup failures.
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
     db?.close();
   }
