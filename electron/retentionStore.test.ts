@@ -204,4 +204,53 @@ describe('purgeCollectedData', () => {
     const result = purgeCollectedData(join(dir, 'missing.db'));
     expect(result.ok).toBe(true);
   });
+
+  // Regression test: VACUUM failure after COMMIT succeeds must not be reported as purge failure,
+  // since the data deletion is already permanent at that point.
+  it('returns ok:true and preserves data deletion even if VACUUM fails after COMMIT', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath, db } = seedCollectorDb(dir);
+    db.prepare(
+      'INSERT INTO events (hook_event_name, session_id, had_tool_input, had_tool_response, occurred_at_ms) VALUES (?, ?, ?, ?, ?)'
+    ).run('PreToolUse', 's1', 1, 0, 1000);
+    db.close();
+
+    // Wrap DatabaseSync to simulate VACUUM failure after COMMIT succeeds
+    const OriginalDatabaseSync = DatabaseSync;
+    let commitSucceeded = false;
+    class MockDatabaseSync extends OriginalDatabaseSync {
+      exec(sql: string) {
+        const trimmed = sql.trim().toUpperCase();
+        if (trimmed === 'COMMIT') {
+          commitSucceeded = true;
+          // Let COMMIT succeed
+          super.exec(sql);
+        } else if (trimmed === 'VACUUM' && commitSucceeded) {
+          // Simulate transient SQLITE_BUSY after COMMIT
+          throw new Error('database is locked');
+        } else {
+          // All other commands pass through
+          super.exec(sql);
+        }
+      }
+    }
+
+    // Temporarily replace the require cache
+    const sqlite = require('node:sqlite');
+    const OriginalConstructor = sqlite.DatabaseSync;
+    sqlite.DatabaseSync = MockDatabaseSync;
+
+    try {
+      const result = purgeCollectedData(dbPath);
+      // Even though VACUUM threw, purge should succeed because COMMIT already succeeded
+      expect(result.ok).toBe(true);
+      expect(commitSucceeded).toBe(true);
+
+      // Verify data is actually gone
+      const after = readRetentionStatus(dbPath);
+      expect(after.rowCounts.events).toBe(0);
+    } finally {
+      sqlite.DatabaseSync = OriginalConstructor;
+    }
+  });
 });

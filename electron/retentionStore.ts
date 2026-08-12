@@ -135,24 +135,35 @@ export function purgeCollectedData(dbPath: string): PurgeResult {
     // fail immediately instead of retrying.
     db = new sqlite.DatabaseSync(dbPath);
     db.exec('PRAGMA busy_timeout = 5000');
-    db.exec('BEGIN');
-    for (const table of PURGE_TABLES) {
-      db.exec(`DELETE FROM ${table}`);
-    }
-    db.exec('COMMIT');
-    // Outside the transaction -- SQLite does not allow VACUUM inside one.
-    // Without this, DELETE alone leaves the on-disk file the same size, so
-    // the "current size" readout would not visibly change right after the
-    // one action that's supposed to prove it works.
-    db.exec('VACUUM');
-    return { ok: true };
-  } catch (err) {
+
+    // Transaction: BEGIN/DELETE/COMMIT. If any step fails, roll back and report error.
+    // Once COMMIT succeeds, the data deletion is permanent.
     try {
-      db?.exec('ROLLBACK');
-    } catch {
-      // No transaction was open (e.g. BEGIN itself failed) -- nothing to roll back.
+      db.exec('BEGIN');
+      for (const table of PURGE_TABLES) {
+        db.exec(`DELETE FROM ${table}`);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // No transaction was open (e.g. BEGIN itself failed) -- nothing to roll back.
+      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+
+    // VACUUM is disk-reclamation housekeeping after deletion succeeded. If it fails
+    // (e.g., transient SQLITE_BUSY), the purge already succeeded and the data is
+    // already gone -- swallow the error and return ok:true. Do not conflate VACUUM
+    // housekeeping failure with purge failure.
+    try {
+      db.exec('VACUUM');
+    } catch {
+      // VACUUM failure after successful COMMIT is not purge failure.
+    }
+
+    return { ok: true };
   } finally {
     db?.close();
   }
