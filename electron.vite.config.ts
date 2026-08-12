@@ -22,6 +22,19 @@ export default defineConfig({
   },
   renderer: {
     root: '.',
+    server: {
+      watch: {
+        // `dist/` and `out/` are build output and are gitignored, but the dev
+        // server watches them anyway by default -- so running a build while a
+        // dev window is open triggers a full page reload of the running app,
+        // for a file nobody edited. Issue #22 recorded a reload at 10:38:32
+        // with no project file changed in that window; this is the mechanism
+        // that makes such a reload possible. Not proven to be that incident's
+        // trigger -- the decisive renderer state was lost -- but it is a real
+        // latent trigger regardless, and cheap to remove.
+        ignored: ['**/dist/**', '**/out/**'],
+      },
+    },
     build: {
       rollupOptions: {
         input: resolve(__dirname, 'index.html'),
