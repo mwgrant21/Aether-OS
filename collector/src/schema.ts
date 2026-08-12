@@ -12,7 +12,21 @@ export function openDatabase(dbPath: string): DatabaseSync {
   // issues with node:sqlite; the type import above is compile-time only.
   const sqlite = require('node:sqlite');
   mkdirSync(dirname(dbPath), { recursive: true });
-  return new sqlite.DatabaseSync(dbPath);
+  const db = new sqlite.DatabaseSync(dbPath);
+  // Issue #41. Without this, node:sqlite's default busy_timeout of 0 means any
+  // write landing while another handle holds the lock fails immediately with
+  // SQLITE_BUSY instead of waiting. collector.db is shared by design -- the Go
+  // collector writes it, Aether OS opens it read-only for the dashboard, and
+  // retentionStore.ts opens a second writable handle to purge.
+  //
+  // A post-open PRAGMA is correct HERE, unlike the Go side: node:sqlite hands
+  // back a single connection with no pool behind it, so the pragma cannot be
+  // bypassed by a later connection that never saw it.
+  //
+  // memoryStore.ts already did this for memory.db; collector.db was the
+  // remaining gap, so the two stores behaved differently under contention.
+  db.exec('PRAGMA busy_timeout = 5000');
+  return db;
 }
 
 /**

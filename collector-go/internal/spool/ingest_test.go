@@ -30,12 +30,18 @@ func freshDB(t *testing.T) *sql.DB {
 	// `database is locked (5) (SQLITE_BUSY)` -- the latent cause of the spool
 	// flake in issue #34.
 	//
-	// SetMaxOpenConns(1) is still required for the pragma to keep meaning
-	// anything beyond the connection OpenDatabase itself used: a PRAGMA
-	// applies to the CONNECTION that ran it, and database/sql would otherwise
-	// hand later queries whichever pooled connection is free -- one that
-	// never saw it. Capping the pool to one guarantees every caller reuses
-	// the same, already-configured connection.
+	// SetMaxOpenConns(1) is NO LONGER what makes the pragma effective. It used
+	// to be: OpenDatabase set the timeout with a post-open `db.Exec`, which
+	// applies only to the connection that ran it, so capping the pool to one
+	// was what stopped database/sql handing out an unconfigured connection.
+	// Issue #41 moved the pragma into the DSN, so the driver now applies it as
+	// each connection is opened and it holds for the whole pool.
+	//
+	// It is kept here because these tests mirror production, where
+	// collector.go sets it for a separate and still-valid reason: serializing
+	// database access to restore the model the single-threaded TS original had
+	// implicitly. Removing it here would stop the tests exercising the shape
+	// production actually runs.
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	return db

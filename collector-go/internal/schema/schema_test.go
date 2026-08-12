@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 )
@@ -211,5 +213,58 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 	if v != SchemaVersion {
 		t.Errorf("expected version %d after idempotent migrate, got %d", SchemaVersion, v)
+	}
+}
+
+// Regression for issue #41. The point is NOT that busy_timeout is set at all --
+// the previous `db.Exec("PRAGMA busy_timeout = 5000")` did set it, on exactly
+// one connection. database/sql pools connections and hands later queries
+// whichever is free, so a post-open PRAGMA leaves every other connection at the
+// driver default of 0. This test holds SEVERAL connections open simultaneously
+// and asserts each one carries the timeout, which only a DSN pragma can do.
+//
+// It fails against the Exec form: the first connection reports 5000 and the
+// rest report 0.
+func TestOpenDatabaseAppliesBusyTimeoutToEveryPooledConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pool.db")
+	db, err := OpenDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDatabase: %v", err)
+	}
+	defer db.Close()
+
+	// Deliberately NOT calling SetMaxOpenConns(1). Production sets it for an
+	// unrelated reason (serialized-access model, see collector.go), and this
+	// helper must be correct for callers that do not.
+	const want = 5000
+	const conns = 4
+
+	ctx := context.Background()
+	held := make([]*sql.Conn, 0, conns)
+	defer func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}()
+
+	// Hold every connection open at once, so the pool is forced to create
+	// distinct physical connections rather than handing back the same one.
+	for i := 0; i < conns; i++ {
+		c, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("conn %d: %v", i, err)
+		}
+		held = append(held, c)
+	}
+
+	for i, c := range held {
+		var got int
+		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&got); err != nil {
+			t.Fatalf("conn %d: read busy_timeout: %v", i, err)
+		}
+		if got != want {
+			t.Errorf("conn %d: busy_timeout = %d, want %d "+
+				"(a post-open PRAGMA protects only the connection that ran it)", i, got, want)
+		}
 	}
 }

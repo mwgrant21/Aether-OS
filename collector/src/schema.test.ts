@@ -10,6 +10,23 @@ function tempDbPath(): string {
 }
 
 describe('schema', () => {
+  // Issue #41. collector.db is shared by design (Go collector writes it, Aether
+  // OS reads it, retentionStore opens a second writable handle to purge), and
+  // node:sqlite defaults busy_timeout to 0 -- so a write landing during a read
+  // failed immediately instead of waiting. memory.db already had this;
+  // collector.db did not, so the two stores behaved differently under
+  // contention. Fails against the previous implementation, which returned the
+  // handle with no PRAGMA at all.
+  it('openDatabase sets a non-zero busy_timeout on collector.db', () => {
+    const db = openDatabase(tempDbPath());
+    try {
+      const row = db.prepare('PRAGMA busy_timeout').get() as { timeout: number };
+      expect(row.timeout).toBe(5000);
+    } finally {
+      db.close();
+    }
+  });
+
   it('creates all expected tables and the version row on first migrate', () => {
     const db = openDatabase(tempDbPath());
     migrate(db);
