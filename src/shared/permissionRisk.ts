@@ -1,5 +1,7 @@
 export type PermissionRisk = 'LOW' | 'MED' | 'HIGH';
 
+export type PermissionAutoAllowLevel = 'NONE' | 'LOW' | 'LOW_MED';
+
 const HIGH_RISK_BASH_PATTERN = /\brm\b|\bsudo\b|\|\s*(ba|z|)sh\b|\bcurl\b.*\|\s*(ba|z|)sh\b/i;
 const LOW_RISK_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 const MED_RISK_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);

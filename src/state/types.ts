@@ -92,7 +92,7 @@ import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
 import type { ProjectsSnapshot } from '../shared/projectsSnapshot';
-import type { PermissionRisk } from '../shared/permissionRisk';
+import type { PermissionRisk, PermissionAutoAllowLevel } from '../shared/permissionRisk';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { RateSample } from '../components/reactor/reactorMath';
 import type { NarrationVerbosity } from '../shared/narrationVerbosity';
@@ -228,6 +228,7 @@ export interface Cfg {
   capM: number;
   alarm: number;
   autoThrottle: boolean;
+  permissionAutoAllow: PermissionAutoAllowLevel;
   sound: boolean;
   autoCreateDispatchChannels: boolean;
   densityLevel: 'normal' | 'verbose' | 'summary';

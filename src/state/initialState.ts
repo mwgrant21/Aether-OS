@@ -52,6 +52,7 @@ export const initialState: AetherState = {
     capM: 2.0,
     alarm: 120,
     autoThrottle: true,
+    permissionAutoAllow: 'LOW_MED',
     sound: false,
     autoCreateDispatchChannels: false,
     densityLevel: 'normal',
