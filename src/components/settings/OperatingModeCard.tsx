@@ -51,6 +51,26 @@ export function OperatingModeCard() {
         work, computed locally with no API call and no cost. Turn off to keep the roster on
         each dispatch's static description instead.
       </div>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={labelStyle(colors)}>PERMISSION AUTO-ALLOW</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['NONE', 'LOW', 'LOW_MED'] as const).map((level) => (
+            <Button
+              key={level}
+              onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { permissionAutoAllow: level } })}
+              style={toggleStyle(colors, state.cfg.permissionAutoAllow === level)}
+            >
+              {level === 'LOW_MED' ? 'LOW+MED' : level}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <div style={hintStyle(colors)}>
+        Real permission requests at or below this risk level are allowed automatically, with no
+        prompt. Requests above it (destructive Bash at NONE/LOW/LOW_MED, or everything at NONE)
+        still require a manual Approve/Deny.
+      </div>
     </div>
   );
 }
