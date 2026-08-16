@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runCommand, THEME_NAMES, RENDERER_WORDS, nextAutoName } from './commands';
 import { initialState } from '../../state/initialState';
 
@@ -64,29 +64,56 @@ describe('runCommand', () => {
     expect(result.patch?.cfg?.renderer).toBe('classic');
   });
 
-  it('approve on a HIGH risk request raises the rate by 9000; deny does not, and says "denied" not "denyd"', () => {
-    const approve = runCommand(initialState, 'approve 1');
-    if (approve.kind !== 'append') throw new Error('unreachable');
-    expect(approve.patch?.rate).toBe(initialState.rate + 9000);
-    expect(approve.patch?.approvals?.map((a) => a.id)).toEqual([2]);
-
-    const deny = runCommand(initialState, 'deny 2');
-    if (deny.kind !== 'append') throw new Error('unreachable');
-    expect(deny.patch?.rate).toBe(initialState.rate);
-    expect(deny.lines[1].t).toContain('denied');
-    expect(deny.lines[1].t).not.toContain('denyd');
-  });
-
-  it('approve/deny on an out-of-range index reports an error', () => {
-    const result = runCommand(initialState, 'approve 99');
-    if (result.kind !== 'append') throw new Error('unreachable');
-    expect(result.lines[1].t).toContain('no request [99]');
-  });
-
   it('exports THEME_NAMES, RENDERER_WORDS, and nextAutoName for reuse by the chat action executor', () => {
     expect(THEME_NAMES).toContain('violet');
     expect(RENDERER_WORDS).toContain('volumetric');
     expect(nextAutoName(initialState)).toBe('Image Gen');
+  });
+});
+
+describe('approvals/approve/deny against real pending requests', () => {
+  const permissionRequest = { requestId: 'r1', toolName: 'Write', toolInput: { file_path: 'x.ts' }, risk: 'MED' as const, editableField: null };
+  const flagRequest = { requestId: 'f1', toolUseId: 't1', toolName: 'Bash', anomalyKind: 'stalledPermission' as const, detail: 'ran 90s' };
+
+  it('approvals lists both real pending requests when present', () => {
+    const state = { ...initialState, pendingPermissionRequest: permissionRequest, pendingPostToolFlag: flagRequest };
+    const result = runCommand(state, 'approvals');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines.some((l) => l.t.includes('Write'))).toBe(true);
+    expect(result.lines.some((l) => l.t.includes('Bash'))).toBe(true);
+  });
+
+  it('approvals reports queue clear when nothing is pending', () => {
+    const result = runCommand(initialState, 'approvals');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines.some((l) => l.t.includes('queue clear'))).toBe(true);
+  });
+
+  it('approve 1 resolves the real permission request via IPC when it is first in the list', () => {
+    const respond = vi.fn();
+    (window as any).aetherElectron = { permission: { respond }, postToolFlag: { respond: vi.fn() } };
+    const state = { ...initialState, pendingPermissionRequest: permissionRequest };
+    const result = runCommand(state, 'approve 1');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(respond).toHaveBeenCalledWith('r1', { behavior: 'allow', updatedInput: permissionRequest.toolInput });
+  });
+
+  it('deny 1 resolves the real permission request as denied via IPC', () => {
+    const respond = vi.fn();
+    (window as any).aetherElectron = { permission: { respond }, postToolFlag: { respond: vi.fn() } };
+    const state = { ...initialState, pendingPermissionRequest: permissionRequest };
+    const result = runCommand(state, 'deny 1');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(respond).toHaveBeenCalledWith('r1', { behavior: 'deny', reason: 'denied via Terminal' });
+  });
+
+  it('approve on an out-of-range index reports an error and calls no IPC', () => {
+    const respond = vi.fn();
+    (window as any).aetherElectron = { permission: { respond }, postToolFlag: { respond: vi.fn() } };
+    const result = runCommand(initialState, 'approve 1');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines.some((l) => l.t.includes('no request'))).toBe(true);
+    expect(respond).not.toHaveBeenCalled();
   });
 });
 

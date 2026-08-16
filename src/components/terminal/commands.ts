@@ -193,33 +193,45 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
     }
 
     case 'approvals': {
-      if (!state.approvals.length) out.push(line('  queue clear', DIM));
-      state.approvals.forEach((a, i) =>
-        out.push(line(`  [${i + 1}] ${a.risk.padEnd(5)}${a.action} — ${a.agent}`, a.risk === 'HIGH' ? BAD : a.risk === 'MED' ? '#f5c66b' : BODY)),
-      );
+      type PendingEntry = { kind: 'permission'; req: NonNullable<AetherState['pendingPermissionRequest']> } | { kind: 'flag'; req: NonNullable<AetherState['pendingPostToolFlag']> };
+      const pending: PendingEntry[] = [
+        state.pendingPermissionRequest ? { kind: 'permission', req: state.pendingPermissionRequest } : null,
+        state.pendingPostToolFlag ? { kind: 'flag', req: state.pendingPostToolFlag } : null,
+      ].filter((x): x is PendingEntry => x !== null);
+      if (!pending.length) out.push(line('  queue clear', DIM));
+      pending.forEach((p, i) => {
+        const risk = p.kind === 'permission' ? p.req.risk : null;
+        out.push(line(`  [${i + 1}] ${(risk ?? 'REVIEW').padEnd(5)}${p.req.toolName} — ${p.kind === 'permission' ? 'permission request' : 'post-tool flag'}`, risk === 'HIGH' ? BAD : '#f5c66b'));
+      });
       return { kind: 'append', lines: out };
     }
 
     case 'approve':
     case 'deny': {
       const n = parseInt(args[0], 10);
-      const req = state.approvals[n - 1];
+      const pending = [
+        state.pendingPermissionRequest && { kind: 'permission' as const, req: state.pendingPermissionRequest },
+        state.pendingPostToolFlag && { kind: 'flag' as const, req: state.pendingPostToolFlag },
+      ].filter((x): x is { kind: 'permission' | 'flag'; req: any } => Boolean(x));
+      const target = pending[n - 1];
       const approve = cmd.toLowerCase() === 'approve';
-      if (!req) {
+      if (!target) {
         out.push(line(`✗ no request [${args[0]}] — run 'approvals'`, BAD));
         return { kind: 'append', lines: out };
       }
-      // Deviation from source: the original built this message via `cmd.toLowerCase() + 'd'`,
-      // which produces "denyd" for the deny path. This port says "denied" correctly.
-      out.push(line(`✓ ${approve ? 'approved' : 'denied'}: ${req.action}`, approve ? GOOD : BAD));
-      return {
-        kind: 'append',
-        lines: out,
-        patch: {
-          approvals: state.approvals.filter((a) => a.id !== req.id),
-          rate: approve && req.risk === 'HIGH' ? Math.min(168000, state.rate + 9000) : state.rate,
-        },
-      };
+      out.push(line(`✓ ${approve ? 'approved' : 'denied'}: ${target.req.toolName}`, approve ? GOOD : BAD));
+      if (target.kind === 'permission') {
+        window.aetherElectron?.permission.respond(
+          target.req.requestId,
+          approve ? { behavior: 'allow', updatedInput: target.req.toolInput } : { behavior: 'deny', reason: 'denied via Terminal' }
+        );
+      } else {
+        window.aetherElectron?.postToolFlag.respond(
+          target.req.requestId,
+          approve ? { block: false } : { block: true, reason: 'denied via Terminal' }
+        );
+      }
+      return { kind: 'append', lines: out };
     }
 
     default:
