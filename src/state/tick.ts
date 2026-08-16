@@ -1,17 +1,7 @@
 import type { AetherState, AlarmLevel } from './types';
 import { nowShort } from '../utils/format';
 
-const APPROVAL_POOL = [
-  { action: 'Install dependency: chart.js@5', detail: 'adds 42KB to bundle · 3 transitive deps', risk: 'LOW' as const },
-  { action: 'Force-push rebase to feature branch', detail: 'rewrites 4 commits on origin', risk: 'MED' as const },
-  { action: 'Purge CDN cache (all routes)', detail: 'cold cache for ~2 min after purge', risk: 'MED' as const },
-  { action: 'Call external pricing API', detail: 'sends anonymized usage rows offsite', risk: 'HIGH' as const },
-  { action: 'Raise burn ceiling by 20K/min', detail: 'temporary boost to finish mission faster', risk: 'HIGH' as const },
-  { action: 'Delete stale branch cleanup/old-ui', detail: 'last commit 34 days ago', risk: 'LOW' as const },
-];
-
 export function computeTick(state: AetherState): Partial<AetherState> {
-  const mode = state.cfg.opMode;
   let effectiveRate = state.rate;
   if (state.cfg.autoThrottle) effectiveRate = Math.min(effectiveRate, state.cfg.alarm * 1000 * 0.8);
 
@@ -50,21 +40,5 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     unread += 1;
   }
 
-  let approvals = state.approvals;
-  let apprSeq = state.apprSeq;
-  if (agents.length && approvals.length < 3 && Math.random() < (mode === 'PLAN' ? 0.09 : 0.035)) {
-    const req = APPROVAL_POOL[Math.floor(Math.random() * APPROVAL_POOL.length)];
-    const ag = agents[Math.floor(Math.random() * agents.length)];
-    if (mode === 'AUTO' && req.risk !== 'HIGH') {
-      notifs = [{ t: nowShort(), m: `Auto-approved: ${req.action} (${ag.name})`, c: '#3be0a0' }, ...notifs].slice(0, 12);
-      unread += 1;
-    } else {
-      approvals = approvals.concat({ id: apprSeq, agent: ag.name, i: ag.i, hue: ag.hue, ...req });
-      apprSeq += 1;
-      notifs = [{ t: nowShort(), m: `${ag.name} requests approval: ${req.action}`, c: '#f5c66b' }, ...notifs].slice(0, 12);
-      unread += 1;
-    }
-  }
-
-  return { used, weekRaw, agents, sys, alarmLevel: level, notifs, unread, approvals, apprSeq };
+  return { used, weekRaw, agents, sys, alarmLevel: level, notifs, unread };
 }

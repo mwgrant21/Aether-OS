@@ -32,7 +32,6 @@ describe('computeTick', () => {
     const result = computeTick(state);
     expect(result.used).toBeCloseTo(state.used + (84000 / 60) * 0.9 * 0.05, 5);
     expect(result.alarmLevel).toBe('ok');
-    expect(result.approvals).toEqual(state.approvals);
   });
 
   function statuslineWith(fiveHourPct: number | null, sevenDayPct: number | null) {
@@ -92,16 +91,6 @@ describe('computeTick', () => {
     expect(paused.pct).toBe(40);
     expect(paused.hist).toEqual([10, 20]);
     expect(active.hist).not.toEqual([10, 20]);
-  });
-
-  it('never grows the approvals queue past 3 pending requests', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.01);
-    const state = {
-      ...initialState,
-      approvals: [...initialState.approvals, { id: 99, agent: 'X', i: 'X', hue: '#fff', action: 'a', detail: 'b', risk: 'LOW' as const }],
-    };
-    const result = computeTick(state);
-    expect(result.approvals!.length).toBeLessThanOrEqual(3);
   });
 
   it('does not touch memories at all (decay was retired -- see Memory Layer 2 Phase D; memories are a live collector-sourced snapshot now, not locally ticked)', () => {
