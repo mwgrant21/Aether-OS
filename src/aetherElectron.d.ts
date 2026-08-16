@@ -12,6 +12,7 @@ import type { ProjectsSnapshot } from './shared/projectsSnapshot';
 import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from './state/types';
 import type { PermissionDecision, PostToolFlagDecision } from '../electron/permissionServer';
+import type { PermissionAutoAllowLevel } from './shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from '../electron/transcriptReader';
 import type { VerifierStatus, VerificationEvent } from './shared/crossEngineTypes';
 
@@ -100,6 +101,7 @@ declare global {
       permission: {
         onRequest: (callback: (request: PermissionRequestUI) => void) => () => void;
         respond: (requestId: string, decision: PermissionDecision) => Promise<void>;
+        setAutoAllow: (level: PermissionAutoAllowLevel) => void;
       };
       postToolFlag: {
         onRequest: (callback: (request: PostToolFlagRequestUI) => void) => () => void;

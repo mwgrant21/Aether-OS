@@ -20,6 +20,7 @@ import { useCodexTerminalIdleSync } from './state/useCodexTerminalIdleSync';
 import { useProjectsSync } from './state/useProjectsSync';
 import { useMemorySync } from './state/useMemorySync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
+import { usePermissionAutoAllowSync } from './state/usePermissionAutoAllowSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
 import { PermissionCardStack } from './components/agents/PermissionCardStack';
 import { RecapBanner } from './components/dashboard/RecapBanner';
@@ -51,6 +52,7 @@ export default function App() {
         <ProjectsSync />
         <MemorySync />
         <PermissionRequestSync />
+        <PermissionAutoAllowSync />
         <PostToolFlagSync />
         <RecapBannerMount />
         <ActiveView />
@@ -138,6 +140,11 @@ function MemorySync() {
 
 function PermissionRequestSync() {
   usePermissionRequestSync();
+  return null;
+}
+
+function PermissionAutoAllowSync() {
+  usePermissionAutoAllowSync();
   return null;
 }
 
