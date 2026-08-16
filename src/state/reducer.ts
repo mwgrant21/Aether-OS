@@ -295,21 +295,29 @@ export function reducer(state: AetherState, action: Action): AetherState {
       const eventState = { ...state, pendingPermissionRequest: action.request };
       let narrationMessages = state.narrationMessages;
       let narrationBudgets = state.narrationBudgets;
+      let notifs = state.notifs;
+      let unread = state.unread;
       if (action.request && !state.pendingPermissionRequest) {
         const applied = applyNarrationEvent({ kind: 'permissionPending' }, eventState, narrationMessages, narrationBudgets);
         narrationMessages = applied.narrationMessages;
         narrationBudgets = applied.narrationBudgets;
+        notifs = [{ t: nowShort(), m: `Permission requested: ${action.request.toolName} (${action.request.risk})`, c: '#f5c66b' }, ...notifs].slice(0, 12);
+        unread += 1;
       } else if (!action.request && state.pendingPermissionRequest) {
         const applied = applyNarrationEvent({ kind: 'stewardStateCheck' }, eventState, narrationMessages, narrationBudgets);
         narrationMessages = applied.narrationMessages;
         narrationBudgets = applied.narrationBudgets;
+        notifs = [{ t: nowShort(), m: `Permission request resolved: ${state.pendingPermissionRequest.toolName}`, c: '#3be0a0' }, ...notifs].slice(0, 12);
+        unread += 1;
       }
-      return { ...state, pendingPermissionRequest: action.request, narrationMessages, narrationBudgets };
+      return { ...state, pendingPermissionRequest: action.request, narrationMessages, narrationBudgets, notifs, unread };
     }
 
     case 'SET_PENDING_POST_TOOL_FLAG': {
       let narrationMessages = state.narrationMessages;
       let narrationBudgets = state.narrationBudgets;
+      let notifs = state.notifs;
+      let unread = state.unread;
       if (action.request && !state.pendingPostToolFlag) {
         const eventState = { ...state, pendingPostToolFlag: action.request };
         const applied = applyNarrationEvent(
@@ -320,8 +328,13 @@ export function reducer(state: AetherState, action: Action): AetherState {
         );
         narrationMessages = applied.narrationMessages;
         narrationBudgets = applied.narrationBudgets;
+        notifs = [{ t: nowShort(), m: `Flagged for review: ${action.request.toolName} (${action.request.anomalyKind})`, c: '#f5c66b' }, ...notifs].slice(0, 12);
+        unread += 1;
+      } else if (!action.request && state.pendingPostToolFlag) {
+        notifs = [{ t: nowShort(), m: `Flag review resolved: ${state.pendingPostToolFlag.toolName}`, c: '#3be0a0' }, ...notifs].slice(0, 12);
+        unread += 1;
       }
-      return { ...state, pendingPostToolFlag: action.request, narrationMessages, narrationBudgets };
+      return { ...state, pendingPostToolFlag: action.request, narrationMessages, narrationBudgets, notifs, unread };
     }
 
     case 'SET_OPTIMIZE_FINDINGS':

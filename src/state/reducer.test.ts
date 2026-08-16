@@ -797,3 +797,26 @@ describe('reducer — ADD_APPROVAL autoResolve atomicity (closes the chat AUTO-m
     expect(next.optimizeBreakdown).toEqual(rows);
   });
 });
+
+describe('reducer — real notifications for permission/flag lifecycle', () => {
+  it('SET_PENDING_PERMISSION_REQUEST pushes a notif when a request newly arrives', () => {
+    const request = { requestId: 'r1', toolName: 'Write', toolInput: {}, risk: 'MED' as const, editableField: null };
+    const next = reducer(initialState, { type: 'SET_PENDING_PERMISSION_REQUEST', request });
+    expect(next.notifs[0].m).toContain('Write');
+    expect(next.unread).toBe(initialState.unread + 1);
+  });
+
+  it('SET_PENDING_PERMISSION_REQUEST pushes a notif when a request clears (null)', () => {
+    const request = { requestId: 'r1', toolName: 'Write', toolInput: {}, risk: 'MED' as const, editableField: null };
+    const withPending = { ...initialState, pendingPermissionRequest: request };
+    const next = reducer(withPending, { type: 'SET_PENDING_PERMISSION_REQUEST', request: null });
+    expect(next.notifs[0].m.toLowerCase()).toContain('resolved');
+  });
+
+  it('SET_PENDING_POST_TOOL_FLAG pushes a notif when a flag newly arrives', () => {
+    const request = { requestId: 'f1', toolUseId: 't1', toolName: 'Bash', anomalyKind: 'stalledPermission' as const, detail: 'ran 90s' };
+    const next = reducer(initialState, { type: 'SET_PENDING_POST_TOOL_FLAG', request });
+    expect(next.notifs[0].m).toContain('Bash');
+    expect(next.unread).toBe(initialState.unread + 1);
+  });
+});
