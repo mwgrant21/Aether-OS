@@ -1,4 +1,4 @@
-import type { Approval, AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
+import type { AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
@@ -18,8 +18,6 @@ export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
-  | { type: 'RESOLVE_APPROVAL'; id: number; approve: boolean }
-  | { type: 'ADD_APPROVAL'; approval: Omit<Approval, 'id'>; autoResolve?: boolean }
   | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
@@ -65,8 +63,6 @@ export type Action =
   | { type: 'SET_CROSS_ENGINE_CFG'; cfg: { enabled: boolean; provider: 'codex-chatgpt' } }
   | { type: 'SET_CODEX_TERMINAL_CFG'; cfg: { enabled: boolean } };
 
-const THROTTLE_SHARE_CEILING = 0.08;
-
 // Shared by every reducer case that can produce a narration line (Stage 14
 // Task 5): builds the message via narrationForEvent, ranks it against its
 // channel's interruption budget, and returns the updated maps. No-op
@@ -82,61 +78,6 @@ function applyNarrationEvent(
   const ranked = rankForInterruption(message, narrationBudgets, Date.now());
   const finalMessage = { ...message, interrupts: ranked.interrupts };
   return { narrationMessages: appendNarrationMessage(narrationMessages, finalMessage), narrationBudgets: ranked.budgets };
-}
-
-// Shared by RESOLVE_APPROVAL (existing, queued approval resolved later) and
-// ADD_APPROVAL's autoResolve path (Phase 2b chat auto-approve, resolved in
-// the same dispatch it's created in -- see ADD_APPROVAL below). Applying the
-// verb-specific mutation, the HIGH-risk legacy shorthand, and the notif/log
-// push all in one place means there is exactly one implementation of "what
-// resolving an approval does", so the two callers can never drift out of
-// sync with each other.
-//
-// `req` need not be present in `state.approvals` when this is called -- the
-// `approvals.filter` below is a harmless no-op in that case (ADD_APPROVAL's
-// autoResolve path never adds the approval to the queue in the first place).
-function applyApprovalResolution(state: AetherState, req: Approval, approve: boolean): AetherState {
-  const ok = approve;
-
-  // Phase 2b: verb-specific execution, mirroring the identical AetherState
-  // mutation Terminal's own spawn/kill would produce (or, for throttle, a
-  // new minimal Agent.share cap) -- applied only on approval, and only for
-  // approvals Phase 2b itself created (req.verb set). Every pre-existing
-  // (seed + tick.ts) approval has no verb and is completely unaffected.
-  let agents = state.agents;
-  let idleList = state.idleList;
-  let rate = state.rate;
-  if (ok && req.verb === 'spawn' && req.targetAgentName) {
-    agents = [...agents, makeAgent(req.targetAgentName)];
-    rate = Math.min(168000, rate + 18000); // identical to Terminal's spawn
-  } else if (ok && req.verb === 'kill' && req.targetAgentName) {
-    const hit = agents.find((a) => a.name === req.targetAgentName);
-    if (hit) {
-      agents = agents.filter((a) => a.name !== hit.name);
-      idleList = [...idleList, { name: hit.name, last: 'just now' }];
-    }
-    // no rate change -- identical to Terminal's kill
-  } else if (ok && req.verb === 'throttle' && req.targetAgentName) {
-    agents = agents.map((a) => (a.name === req.targetAgentName ? { ...a, share: Math.min(a.share, THROTTLE_SHARE_CEILING) } : a));
-  } else if (ok && req.risk === 'HIGH') {
-    // Pre-existing generic shorthand -- only applies to no-verb approvals,
-    // since a verb-carrying approval's own specific mutation above (or
-    // deliberate lack of one, for kill/throttle) is the real effect now;
-    // applying both would double up or contradict it.
-    rate = Math.min(168000, rate + 9000);
-  }
-
-  return {
-    ...state,
-    agents,
-    idleList,
-    rate,
-    approvals: state.approvals.filter((a) => a.id !== req.id),
-    notifs: [
-      { t: nowShort(), m: `${ok ? 'Approved: ' : 'Denied: '}${req.action} (${req.agent})`, c: ok ? '#3be0a0' : '#ff9d9d' },
-      ...state.notifs,
-    ].slice(0, 12),
-  };
 }
 
 export function reducer(state: AetherState, action: Action): AetherState {
@@ -458,30 +399,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SELECT_REAL_AGENT':
       return { ...state, selectedRealAgent: action.toolUseId };
-
-    case 'ADD_APPROVAL': {
-      const newApproval: Approval = { ...action.approval, id: state.apprSeq };
-      const bumped = { ...state, apprSeq: state.apprSeq + 1 };
-      if (action.autoResolve) {
-        // Atomic auto-approve: the approval is never added to state.approvals
-        // at all (not even transiently) -- it goes straight into
-        // applyApprovalResolution against `bumped`, so there is no window
-        // between "id assigned" and "resolved" for a concurrent dispatch
-        // (e.g. tick.ts's own apprSeq-bumping approval generation) to shift
-        // apprSeq and cause a caller-predicted id to resolve the wrong
-        // approval. See useChatChannels.ts's risky-verb path, which used to
-        // predict this id across two dispatches -- that race is why this
-        // exists.
-        return applyApprovalResolution(bumped, newApproval, true);
-      }
-      return { ...bumped, approvals: [...state.approvals, newApproval] };
-    }
-
-    case 'RESOLVE_APPROVAL': {
-      const req = state.approvals.find((a) => a.id === action.id);
-      if (!req) return state;
-      return applyApprovalResolution(state, req, action.approve);
-    }
 
     case 'RUN_COMMAND': {
       const result = runCommand(state, action.raw);

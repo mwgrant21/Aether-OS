@@ -19,27 +19,6 @@ export const initialState: AetherState = {
   notifOpen: false,
   alarmLevel: 'ok',
   apprOpen: false,
-  approvals: [
-    {
-      id: 1,
-      agent: 'Code Builder',
-      i: 'CB',
-      hue: '#7ef0ff',
-      action: 'Deploy build #214 to production',
-      detail: 'vercel · main → prod · 12 files changed',
-      risk: 'HIGH',
-    },
-    {
-      id: 2,
-      agent: 'Database Agent',
-      i: 'DB',
-      hue: '#5fffe0',
-      action: 'Run schema migration 0043',
-      detail: 'adds index on usage_events · est 40s lock',
-      risk: 'MED',
-    },
-  ],
-  apprSeq: 3,
   cfg: {
     opMode: 'EDITS',
     renderer: 'classic',

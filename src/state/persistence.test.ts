@@ -125,8 +125,6 @@ describe('persistence', () => {
       notifs: [{ t: '10:00', m: 'test notif', c: '#ffffff' }],
       unread: 7,
       cmdHist: ['status', 'budget'],
-      approvals: [{ id: 99, agent: 'Ghost', i: 'GH', hue: '#ffffff', action: 'a', detail: 'd', risk: 'HIGH' }],
-      apprSeq: 100,
       operatorName: 'Ghost Operator',
       selected: 'Ghost Agent',
       selectedProject: 'Ghost Project',
@@ -167,8 +165,6 @@ describe('persistence', () => {
     expect(loaded?.notifs).toEqual(distinctiveState.notifs);
     expect(loaded?.unread).toBe(7);
     expect(loaded?.cmdHist).toEqual(['status', 'budget']);
-    expect(loaded?.approvals).toEqual(distinctiveState.approvals);
-    expect(loaded?.apprSeq).toBe(100);
     expect(loaded?.operatorName).toBe('Ghost Operator');
     expect(loaded?.selected).toBe('Ghost Agent');
     expect(loaded?.selectedProject).toBe('Ghost Project');
