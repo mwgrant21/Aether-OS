@@ -14,6 +14,7 @@ import type { RetentionStatus, PurgeResult } from './retentionStore';
 import type { MemoryRowUI, MemoryTombstoneUI } from './memoryStore';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from '../src/state/types';
 import type { PermissionDecision, PostToolFlagDecision } from './permissionServer';
+import type { PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
 
@@ -202,6 +203,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('permission:request', listener);
     },
     respond: (requestId: string, decision: PermissionDecision): Promise<void> => ipcRenderer.invoke('permission:respond', { requestId, decision }),
+    setAutoAllow: (level: PermissionAutoAllowLevel) => ipcRenderer.send('permission:setAutoAllow', level),
   },
   postToolFlag: {
     onRequest: (callback: (request: PostToolFlagRequestUI) => void) => {

@@ -45,7 +45,7 @@ import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
-import { classifyPermissionRisk } from '../src/shared/permissionRisk';
+import { classifyPermissionRisk, shouldAutoAllow, type PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
 import { renderNotificationBadge } from './notificationBadge';
 import net from 'node:net';
@@ -498,6 +498,13 @@ let lastWrittenOwnSessionId: string | null | undefined = undefined;
 // on each dispatch's static description instead of a live work snippet.
 let autoHeadlinesEnabled = true;
 
+// Configured via Settings (renderer) and pushed down through the
+// permission:setAutoAllow IPC handler below. Tool-permission requests whose
+// classifyPermissionRisk() result is at/below this threshold skip the
+// renderer prompt entirely in onPermissionRequest. Defaults to 'LOW_MED',
+// matching initialState.ts's Cfg.permissionAutoAllow default.
+let permissionAutoAllowThreshold: PermissionAutoAllowLevel = 'LOW_MED';
+
 // Mirrors autoHeadlinesEnabled's pattern immediately below: a module-level flag
 // pushed from the renderer's persisted `state.crossEngineCfg.enabled` on every
 // mount and every toggle (see CrossEngineVerificationCard.tsx), since main.ts has
@@ -627,6 +634,10 @@ app.whenReady().then(async () => {
     port: portAvailable ? desiredPort : 0,
     timeoutMs: 120000,
     onPermissionRequest: async (req: { toolName: string; toolInput: unknown }): Promise<PermissionDecision> => {
+      const risk = classifyPermissionRisk(req.toolName, req.toolInput);
+      if (shouldAutoAllow(risk, permissionAutoAllowThreshold)) {
+        return { behavior: 'allow' };
+      }
       // Bridges the permission server's request to the renderer and back.
       // This resolution map lives here (not in permissionServer.ts) because
       // it's specifically about the renderer round-trip, not the HTTP server
@@ -634,7 +645,6 @@ app.whenReady().then(async () => {
       // "no decision in time" case around this call.
       if (!mainWindow) return { behavior: 'deny', reason: 'no window available to prompt for permission' };
       const requestId = crypto.randomUUID();
-      const risk = classifyPermissionRisk(req.toolName, req.toolInput);
       const editableField = derivePermissionEditableField(req.toolName, req.toolInput);
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
@@ -741,6 +751,10 @@ app.on('before-quit', () => {
 
 ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
   autoHeadlinesEnabled = enabled;
+});
+
+ipcMain.on('permission:setAutoAllow', (_event, level: PermissionAutoAllowLevel) => {
+  permissionAutoAllowThreshold = level;
 });
 
 ipcMain.on('crossEngine:setEnabled', (_event, enabled: boolean) => {
