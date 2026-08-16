@@ -851,4 +851,13 @@ describe('reducer — real notifications for anomalies and completed dispatches'
     expect(next.notifs[0].m).toBe(next.logs[next.logs.length - 1].m);
     expect(next.unread).toBe(initialState.unread + 1);
   });
+
+  describe('reducer — real notification for hook notification reason', () => {
+    it('SET_LAST_NOTIFICATION pushes a notif in addition to setting lastNotification', () => {
+      const next = reducer(initialState, { type: 'SET_LAST_NOTIFICATION', reason: 'permission_prompt' });
+      expect(next.lastNotification?.reason).toBe('permission_prompt');
+      expect(next.notifs[0].m).toContain('permission_prompt');
+      expect(next.unread).toBe(initialState.unread + 1);
+    });
+  });
 });

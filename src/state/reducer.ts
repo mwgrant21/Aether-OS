@@ -354,7 +354,12 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, statusline: action.snapshot };
 
     case 'SET_LAST_NOTIFICATION':
-      return { ...state, lastNotification: { reason: action.reason, atMs: Date.now() } };
+      return {
+        ...state,
+        lastNotification: { reason: action.reason, atMs: Date.now() },
+        notifs: [{ t: nowShort(), m: `Notification: ${action.reason}`, c: '#7fd8ef' }, ...state.notifs].slice(0, 12),
+        unread: state.unread + 1,
+      };
 
     case 'RECAP_RECEIVED':
       return { ...state, recap: action.recap };
