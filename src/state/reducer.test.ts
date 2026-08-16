@@ -811,6 +811,15 @@ describe('reducer — real notifications for permission/flag lifecycle', () => {
     const withPending = { ...initialState, pendingPermissionRequest: request };
     const next = reducer(withPending, { type: 'SET_PENDING_PERMISSION_REQUEST', request: null });
     expect(next.notifs[0].m.toLowerCase()).toContain('resolved');
+    expect(next.unread).toBe(withPending.unread + 1);
+  });
+
+  it('SET_PENDING_POST_TOOL_FLAG pushes a notif when a flag resolves (null)', () => {
+    const request = { requestId: 'f1', toolUseId: 't1', toolName: 'Bash', anomalyKind: 'stalledPermission' as const, detail: 'ran 90s' };
+    const withPending = { ...initialState, pendingPostToolFlag: request };
+    const next = reducer(withPending, { type: 'SET_PENDING_POST_TOOL_FLAG', request: null });
+    expect(next.notifs[0].m.toLowerCase()).toContain('resolved');
+    expect(next.unread).toBe(withPending.unread + 1);
   });
 
   it('SET_PENDING_POST_TOOL_FLAG pushes a notif when a flag newly arrives', () => {
