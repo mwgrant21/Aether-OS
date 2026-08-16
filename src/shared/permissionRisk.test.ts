@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyPermissionRisk } from './permissionRisk';
+import { classifyPermissionRisk, shouldAutoAllow } from './permissionRisk';
 
 describe('classifyPermissionRisk', () => {
   it('classifies Read/Grep/Glob as LOW', () => {
@@ -37,5 +37,25 @@ describe('classifyPermissionRisk', () => {
     expect(classifyPermissionRisk('Bash', undefined)).toBe('MED');
     expect(classifyPermissionRisk('Bash', null)).toBe('MED');
     expect(classifyPermissionRisk('Bash', 'not an object')).toBe('MED');
+  });
+});
+
+describe('shouldAutoAllow', () => {
+  it('NONE threshold never auto-allows, regardless of risk', () => {
+    expect(shouldAutoAllow('LOW', 'NONE')).toBe(false);
+    expect(shouldAutoAllow('MED', 'NONE')).toBe(false);
+    expect(shouldAutoAllow('HIGH', 'NONE')).toBe(false);
+  });
+
+  it('LOW threshold auto-allows only LOW risk', () => {
+    expect(shouldAutoAllow('LOW', 'LOW')).toBe(true);
+    expect(shouldAutoAllow('MED', 'LOW')).toBe(false);
+    expect(shouldAutoAllow('HIGH', 'LOW')).toBe(false);
+  });
+
+  it('LOW_MED threshold auto-allows LOW and MED, never HIGH', () => {
+    expect(shouldAutoAllow('LOW', 'LOW_MED')).toBe(true);
+    expect(shouldAutoAllow('MED', 'LOW_MED')).toBe(true);
+    expect(shouldAutoAllow('HIGH', 'LOW_MED')).toBe(false);
   });
 });

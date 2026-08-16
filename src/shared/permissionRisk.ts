@@ -21,3 +21,9 @@ export function classifyPermissionRisk(toolName: string, toolInput: unknown): Pe
   if (MED_RISK_TOOLS.has(toolName)) return 'MED';
   return 'MED';
 }
+
+export function shouldAutoAllow(risk: PermissionRisk, threshold: PermissionAutoAllowLevel): boolean {
+  if (threshold === 'NONE') return false;
+  if (threshold === 'LOW') return risk === 'LOW';
+  return risk === 'LOW' || risk === 'MED';
+}
