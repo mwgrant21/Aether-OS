@@ -24,7 +24,7 @@ describe('localResponder — AETHER channel', () => {
   it('reports a nominal reactor status with the pending approval count', () => {
     const reply = localResponder(aether, 'give me a status report', initialState);
     expect(reply).toContain('Reactor status: nominal');
-    expect(reply).toContain('2 pending authorizations');
+    expect(reply).toContain('0 pending authorizations');
   });
 
   it('reports a critical reactor status when the alarm level is crit', () => {

@@ -12,6 +12,7 @@ import { fmt, fmtEta } from '../../utils/format';
 function aetherReply(text: string, state: AetherState): string {
   const t = text.toLowerCase();
   const agentCount = state.agents.length;
+  const pendingCount = (state.pendingPermissionRequest ? 1 : 0) + (state.pendingPostToolFlag ? 1 : 0);
 
   if (/budget|spend|\bcap\b|cost/.test(t)) {
     const remaining = Math.max(0, state.cfg.capM * 1e6 - state.used);
@@ -22,15 +23,15 @@ function aetherReply(text: string, state: AetherState): string {
   }
   if (/alarm|alert|health|status/.test(t)) {
     const label = state.alarmLevel === 'crit' ? 'critical' : state.alarmLevel === 'warn' ? 'elevated' : 'nominal';
-    return `Reactor status: ${label}. ${agentCount} agent${agentCount === 1 ? '' : 's'} active, ${state.approvals.length} pending authorization${state.approvals.length === 1 ? '' : 's'}.`;
+    return `Reactor status: ${label}. ${agentCount} agent${agentCount === 1 ? '' : 's'} active, ${pendingCount} pending authorization${pendingCount === 1 ? '' : 's'}.`;
   }
   if (/agent|team|roster|\bwho\b/.test(t)) {
     if (!agentCount) return 'No agents are active right now. Spawn one from Terminal, Dashboard, or Agents to get started.';
     return `${agentCount} active: ${state.agents.map((a) => a.name).join(', ')}.`;
   }
   if (/approv|pending|queue/.test(t)) {
-    return state.approvals.length
-      ? `${state.approvals.length} request${state.approvals.length === 1 ? '' : 's'} pending authorization — check the queue.`
+    return pendingCount
+      ? `${pendingCount} request${pendingCount === 1 ? '' : 's'} pending authorization — check the queue.`
       : 'Approval queue is clear.';
   }
   if (/\b(hi|hello|hey)\b/.test(t)) {
