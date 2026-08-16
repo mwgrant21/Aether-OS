@@ -829,3 +829,26 @@ describe('reducer — real notifications for permission/flag lifecycle', () => {
     expect(next.unread).toBe(initialState.unread + 1);
   });
 });
+
+describe('reducer — real notifications for anomalies and completed dispatches', () => {
+  it('SET_ANOMALIES pushes a notif for each newly-appeared anomaly', () => {
+    const anomaly = { toolUseId: 't1', kind: 'stalledPermission' as const, detail: 'ran 90s' };
+    const next = reducer(initialState, { type: 'SET_ANOMALIES', anomalies: [anomaly] });
+    expect(next.notifs[0].m).toContain('stalledPermission');
+    expect(next.unread).toBe(initialState.unread + 1);
+  });
+
+  it('SET_ANOMALIES does not re-notify for an anomaly already present', () => {
+    const anomaly = { toolUseId: 't1', kind: 'stalledPermission' as const, detail: 'ran 90s' };
+    const withAnomaly = { ...initialState, anomalies: [anomaly] };
+    const next = reducer(withAnomaly, { type: 'SET_ANOMALIES', anomalies: [anomaly] });
+    expect(next.unread).toBe(withAnomaly.unread);
+  });
+
+  it('RECORD_DISPATCH_USAGE pushes a notif reusing the same summary logs already builds', () => {
+    const completed = [{ toolUseId: 't1', subagentType: 'general-purpose', description: 'test dispatch', startedAt: new Date(0).toISOString(), prompt: 'do the thing', model: 'claude-sonnet-5', tokens: 5000, toolUses: 3, durationMs: 12000 }];
+    const next = reducer(initialState, { type: 'RECORD_DISPATCH_USAGE', completed });
+    expect(next.notifs[0].m).toBe(next.logs[next.logs.length - 1].m);
+    expect(next.unread).toBe(initialState.unread + 1);
+  });
+});

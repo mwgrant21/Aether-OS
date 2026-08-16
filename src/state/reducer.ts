@@ -257,6 +257,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
       const eventState = { ...state, anomalies: action.anomalies };
       let narrationMessages = state.narrationMessages;
       let narrationBudgets = state.narrationBudgets;
+      let notifs = state.notifs;
+      let unread = state.unread;
       for (const anomaly of newAnomalies) {
         const applied = applyNarrationEvent(
           { kind: 'anomalyDetected', toolUseId: anomaly.toolUseId, anomalyKind: anomaly.kind },
@@ -266,6 +268,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
         );
         narrationMessages = applied.narrationMessages;
         narrationBudgets = applied.narrationBudgets;
+        notifs = [{ t: nowShort(), m: `Anomaly detected: ${anomaly.kind} — ${anomaly.detail}`, c: '#ff9d9d' }, ...notifs].slice(0, 12);
+        unread += 1;
       }
       // Every anomaly-set change is a chance STEWARD's all_clear condition
       // now holds (e.g. the last anomaly just cleared) -- stewardStateCheck
@@ -273,7 +277,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
       const cleared = applyNarrationEvent({ kind: 'stewardStateCheck' }, eventState, narrationMessages, narrationBudgets);
       narrationMessages = cleared.narrationMessages;
       narrationBudgets = cleared.narrationBudgets;
-      return { ...state, anomalies: action.anomalies, narrationMessages, narrationBudgets };
+      return { ...state, anomalies: action.anomalies, narrationMessages, narrationBudgets, notifs, unread };
     }
 
     case 'SET_CACHE_HIT_RATIO':
@@ -427,9 +431,14 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'RECORD_DISPATCH_USAGE': {
       let dispatchUsage = state.dispatchUsage;
       let logs = state.logs;
+      let notifs = state.notifs;
+      let unread = state.unread;
       for (const c of action.completed) {
         dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
-        logs = logs.concat({ t: nowLong(), m: `${c.subagentType}: ${short(c.tokens)} tok · ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} · ${fmtElapsed(c.durationMs)}`, c: '#3be0a0' }).slice(-14);
+        const summary = `${c.subagentType}: ${short(c.tokens)} tok · ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} · ${fmtElapsed(c.durationMs)}`;
+        logs = logs.concat({ t: nowLong(), m: summary, c: '#3be0a0' }).slice(-14);
+        notifs = [{ t: nowShort(), m: summary, c: '#3be0a0' }, ...notifs].slice(0, 12);
+        unread += 1;
       }
       const keys = Object.keys(dispatchUsage);
       if (keys.length > 100) {
@@ -439,7 +448,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
         const toEvict = new Set(keys.slice(0, keys.length - 100));
         dispatchUsage = Object.fromEntries(Object.entries(dispatchUsage).filter(([k]) => !toEvict.has(k)));
       }
-      return { ...state, dispatchUsage, logs };
+      return { ...state, dispatchUsage, logs, notifs, unread };
     }
 
     case 'SELECT_REAL_AGENT':
