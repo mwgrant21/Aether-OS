@@ -30,7 +30,11 @@ export function resolveScopePillLabel(state: {
 export function TopBar() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
-  const pendingCount = state.approvals.length;
+  const pendingReal = [
+    state.pendingPermissionRequest && { kind: 'permission' as const, req: state.pendingPermissionRequest },
+    state.pendingPostToolFlag && { kind: 'flag' as const, req: state.pendingPostToolFlag },
+  ].filter((x): x is { kind: 'permission' | 'flag'; req: any } => Boolean(x));
+  const pendingCount = pendingReal.length;
   const hasPending = pendingCount > 0;
   const apprBtnC = hasPending ? colors.warn : colors.accentCyanSoft;
   const apprBtnBorder = hasPending ? 'rgba(245,198,107,.5)' : 'rgba(80,190,220,.25)';
@@ -85,28 +89,41 @@ export function TopBar() {
         {hasPending && <span style={apprBadgeStyle(colors)}>{pendingCount}</span>}
         {state.apprOpen && (
           <div style={apprPanelStyle(colors)}>
-            <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — agents awaiting authorization</div>
-            {state.approvals.map((ap) => (
-              <div key={ap.id} style={apprRowStyle}>
+            <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — real pending requests</div>
+            {pendingReal.map((p) => (
+              <div key={p.req.requestId} style={apprRowStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={apprAvatarStyle(ap.hue)}>{ap.i}</span>
-                  <span style={apprActionStyle(colors)}>{ap.action}</span>
-                  <span style={riskBadgeStyle(colors, ap.risk)}>{ap.risk}</span>
+                  <span style={apprActionStyle(colors)}>{p.req.toolName}</span>
+                  {p.kind === 'permission' && <span style={riskBadgeStyle(colors, p.req.risk)}>{p.req.risk}</span>}
                 </div>
                 <div style={apprDetailStyle(colors)}>
-                  {ap.agent} · {ap.detail}
+                  {p.kind === 'permission' ? 'Permission request' : `Flagged: ${p.req.anomalyKind}`}
                 </div>
                 <div style={{ display: 'flex', gap: 7 }}>
-                  <Button onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: true })} style={approveBtnStyle(colors)}>
+                  <Button
+                    onClick={() =>
+                      p.kind === 'permission'
+                        ? window.aetherElectron?.permission.respond(p.req.requestId, { behavior: 'allow', updatedInput: p.req.toolInput })
+                        : window.aetherElectron?.postToolFlag.respond(p.req.requestId, { block: false })
+                    }
+                    style={approveBtnStyle(colors)}
+                  >
                     APPROVE
                   </Button>
-                  <Button onClick={() => dispatch({ type: 'RESOLVE_APPROVAL', id: ap.id, approve: false })} style={denyBtnStyle(colors)}>
+                  <Button
+                    onClick={() =>
+                      p.kind === 'permission'
+                        ? window.aetherElectron?.permission.respond(p.req.requestId, { behavior: 'deny', reason: 'denied via approvals queue' })
+                        : window.aetherElectron?.postToolFlag.respond(p.req.requestId, { block: true, reason: 'denied via approvals queue' })
+                    }
+                    style={denyBtnStyle(colors)}
+                  >
                     DENY
                   </Button>
                 </div>
               </div>
             ))}
-            {!state.approvals.length && <div style={emptyStateStyle(colors)}>queue clear — no agents awaiting authorization</div>}
+            {!pendingReal.length && <div style={emptyStateStyle(colors)}>queue clear — no requests awaiting authorization</div>}
           </div>
         )}
       </div>
@@ -335,20 +352,6 @@ const apprRowStyle: CSSProperties = {
   flexDirection: 'column',
   gap: 6,
 };
-function apprAvatarStyle(hue: string): CSSProperties {
-  return {
-    width: 22,
-    height: 22,
-    flex: 'none',
-    borderRadius: 6,
-    background: 'repeating-linear-gradient(45deg,#0e3340 0 4px,#123f4e 4px 8px)',
-    border: `1px solid ${hue}`,
-    display: 'grid',
-    placeItems: 'center',
-    font: `700 9px/1 ${fonts.mono}`,
-    color: hue,
-  };
-}
 function apprActionStyle(colors: ColorPalette): CSSProperties {
   return { flex: 1, font: `600 12px/1.3 ${fonts.ui}`, color: colors.textPrimary };
 }
