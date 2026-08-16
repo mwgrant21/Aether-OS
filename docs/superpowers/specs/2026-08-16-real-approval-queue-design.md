@@ -48,6 +48,57 @@ surfaces ignore entirely:
 - Not changing how `state.logs` (Terminal/analytics log) is populated.
 - Not building a history/audit view of past approvals — out of scope.
 
+## Addendum (post-approval, pre-plan): full removal, not just re-pointing TopBar
+
+A prior stage (Stage 6, Task 8 — see the `Approval` interface's comment block
+in `types.ts`) deliberately kept `state.approvals`/`tick.ts`'s spawn generator
+as intentional "reactor simulation" flavor, specifically because
+`commands.ts` has real Terminal commands (`approvals`, `approve <n>`,
+`deny <n>`) built on top of it. Re-investigated and confirmed during
+plan-writing: **none of `commands.ts`'s command set is reachable from any
+live UI element today.** The only `RUN_COMMAND` dispatch sites in the app are
+`AppearanceCard.tsx` (`theme <x>`, `renderer <x>`, `thememode <x>`) and
+`ReactorStatusCard.tsx` (`spawn`, `sweep`) — fixed strings, none of them
+`approvals`/`approve`/`deny`. Those three commands are exercised only by
+`commands.test.ts`, not by any user-reachable path. This changes the
+disposition: keeping them is not preserving a live feature, it's preserving
+dead code that happens to have unit tests.
+
+Decision (user-confirmed): remove `Approval`/`state.approvals`/`apprSeq`
+entirely and migrate `commands.ts`'s three commands to operate on the real
+`pendingPermissionRequest`/`pendingPostToolFlag` state instead of inventing a
+parallel real queue for them.
+
+### Additional changes this adds to the design
+
+- **`types.ts`**: delete the `Approval` interface and its comment block;
+  remove `approvals`/`apprSeq` from `AetherState`.
+- **`initialState.ts`**: remove the seeded `approvals`/`apprSeq` fields.
+- **`reducer.ts`**: delete `ADD_APPROVAL`/`RESOLVE_APPROVAL` action types and
+  cases, and the `applyApprovalResolution` helper. `TOGGLE_APPROVALS` and
+  `apprOpen` stay (TopBar's dropdown open/close is still real UI state) — only
+  what's rendered inside it changes.
+- **`tick.ts`**: the `APPROVAL_POOL` spawn block is deleted outright (not just
+  its notif push) — there is no more `state.approvals` for it to spawn into.
+- **`persistence.ts`**: remove `approvals`/`apprSeq` from the persisted slice
+  in `savePersisted`.
+- **`commands.ts`**: rewrite `approvals` (list), `approve <n>`, `deny <n>` to
+  read `[state.pendingPermissionRequest, state.pendingPostToolFlag].filter(Boolean)`
+  as an indexed list, and resolve by calling
+  `window.aetherElectron.permission.respond(...)` /
+  `window.aetherElectron.postToolFlag.respond(...)` directly — the same
+  fire-and-forget IPC call `PermissionRequestCard.tsx` already makes. This
+  makes `runCommand` impure for exactly these two commands (previously a pure
+  function of `state`); no other command changes. Drop the HIGH-risk
+  `rate` bump on approve — that was flavor tied to the fictional system, not
+  meaningful for a real permission grant.
+- **`commands.test.ts`**: existing approve/deny/approvals tests
+  (`commands.test.ts:67-81`) must be rewritten against
+  `pendingPermissionRequest`/`pendingPostToolFlag` fixtures and a mocked
+  `window.aetherElectron`.
+- **`SystemsCard.tsx:17`**: `Pending approvals` tile switches from
+  `state.approvals.length` to the same real pending-request count TopBar uses.
+
 ## Design
 
 ### 1. Auto-allow threshold (new setting)
