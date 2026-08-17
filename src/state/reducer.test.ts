@@ -699,17 +699,30 @@ describe('reducer — real notifications for permission/flag lifecycle', () => {
 });
 
 describe('reducer — real notifications for anomalies and completed dispatches', () => {
-  it('SET_ANOMALIES pushes a notif for each newly-appeared anomaly', () => {
+  // A single detector trip already surfaces as a post-tool flag review
+  // ("Flagged for review: X"), so SET_ANOMALIES must NOT add a second bell
+  // entry for the same event -- see the comment in reducer.ts's SET_ANOMALIES.
+  it('SET_ANOMALIES pushes no notif for a newly-appeared anomaly', () => {
     const anomaly = { toolUseId: 't1', kind: 'stalledPermission' as const, detail: 'ran 90s' };
     const next = reducer(initialState, { type: 'SET_ANOMALIES', anomalies: [anomaly] });
-    expect(next.notifs[0].m).toContain('stalledPermission');
-    expect(next.unread).toBe(initialState.unread + 1);
+    expect(next.anomalies).toEqual([anomaly]);
+    expect(next.notifs).toEqual(initialState.notifs);
+    expect(next.unread).toBe(initialState.unread);
+  });
+
+  it('SET_ANOMALIES still narrates a newly-appeared anomaly', () => {
+    const anomaly = { toolUseId: 't1', kind: 'stalledPermission' as const, detail: 'ran 90s' };
+    const next = reducer(initialState, { type: 'SET_ANOMALIES', anomalies: [anomaly] });
+    // narrationMessages is a Record<channelId, NarrationMessage[]> -- the
+    // anomaly narration still runs even though the bell notif no longer does.
+    expect(next.narrationMessages).not.toEqual(initialState.narrationMessages);
   });
 
   it('SET_ANOMALIES does not re-notify for an anomaly already present', () => {
     const anomaly = { toolUseId: 't1', kind: 'stalledPermission' as const, detail: 'ran 90s' };
     const withAnomaly = { ...initialState, anomalies: [anomaly] };
     const next = reducer(withAnomaly, { type: 'SET_ANOMALIES', anomalies: [anomaly] });
+    expect(next.notifs).toEqual(withAnomaly.notifs);
     expect(next.unread).toBe(withAnomaly.unread);
   });
 
@@ -721,10 +734,25 @@ describe('reducer — real notifications for anomalies and completed dispatches'
   });
 
   describe('reducer — real notification for hook notification reason', () => {
-    it('SET_LAST_NOTIFICATION pushes a notif in addition to setting lastNotification', () => {
+    it('SET_LAST_NOTIFICATION sets lastNotification but pushes no notif for permission_prompt', () => {
+      // SET_PENDING_PERMISSION_REQUEST already pushes the more specific
+      // "Permission requested: <tool>" for exactly this event.
       const next = reducer(initialState, { type: 'SET_LAST_NOTIFICATION', reason: 'permission_prompt' });
       expect(next.lastNotification?.reason).toBe('permission_prompt');
-      expect(next.notifs[0].m).toContain('permission_prompt');
+      expect(next.notifs).toEqual(initialState.notifs);
+      expect(next.unread).toBe(initialState.unread);
+    });
+
+    it('SET_LAST_NOTIFICATION pushes a human-readable notif for other reasons', () => {
+      const next = reducer(initialState, { type: 'SET_LAST_NOTIFICATION', reason: 'agent_needs_input' });
+      expect(next.lastNotification?.reason).toBe('agent_needs_input');
+      expect(next.notifs[0].m).toBe('Agent needs input');
+      expect(next.unread).toBe(initialState.unread + 1);
+    });
+
+    it('SET_LAST_NOTIFICATION humanises an unmapped reason rather than leaking the raw value', () => {
+      const next = reducer(initialState, { type: 'SET_LAST_NOTIFICATION', reason: 'some_new_reason' });
+      expect(next.notifs[0].m).toBe('Some new reason');
       expect(next.unread).toBe(initialState.unread + 1);
     });
   });

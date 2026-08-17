@@ -80,6 +80,24 @@ function applyNarrationEvent(
   return { narrationMessages: appendNarrationMessage(narrationMessages, finalMessage), narrationBudgets: ranked.budgets };
 }
 
+// NotificationReason is an open union ('agent_needs_input' | 'agent_completed'
+// | 'permission_prompt' | string -- see shared/alertSounds.ts), so this maps
+// the named reasons to display copy and humanises anything the hook sends that
+// we don't have a label for, rather than leaking a raw snake_case enum value
+// into the notification bell.
+const NOTIFICATION_REASON_LABELS: Record<string, string> = {
+  agent_needs_input: 'Agent needs input',
+  agent_completed: 'Agent completed',
+  permission_prompt: 'Permission requested',
+};
+
+function notificationReasonLabel(reason: NotificationReason): string {
+  const known = NOTIFICATION_REASON_LABELS[reason];
+  if (known) return known;
+  const words = reason.replace(/[_-]+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Notification';
+}
+
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
     case 'SET_ACTIVE_TAB':
@@ -198,8 +216,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
       const eventState = { ...state, anomalies: action.anomalies };
       let narrationMessages = state.narrationMessages;
       let narrationBudgets = state.narrationBudgets;
-      let notifs = state.notifs;
-      let unread = state.unread;
       for (const anomaly of newAnomalies) {
         const applied = applyNarrationEvent(
           { kind: 'anomalyDetected', toolUseId: anomaly.toolUseId, anomalyKind: anomaly.kind },
@@ -209,16 +225,23 @@ export function reducer(state: AetherState, action: Action): AetherState {
         );
         narrationMessages = applied.narrationMessages;
         narrationBudgets = applied.narrationBudgets;
-        notifs = [{ t: nowShort(), m: `Anomaly detected: ${anomaly.kind} — ${anomaly.detail}`, c: '#ff9d9d' }, ...notifs].slice(0, 12);
-        unread += 1;
       }
+      // Deliberately no bell notif here. Every Anomaly carries a toolUseId, and
+      // main.ts's onPostToolUse raises a post-tool flag review off that same
+      // detector trip -- so pushing one here too would make a single detection
+      // produce two (or three, counting the flag's resolve) bell entries, which
+      // is exactly the notification noise this feature exists to remove.
+      // Anomalies stay visible via narration, AgentRosterCard, GridView and the
+      // reactor's anomaly flicker; the actionable one arrives as
+      // SET_PENDING_POST_TOOL_FLAG's "Flagged for review" notif.
+      //
       // Every anomaly-set change is a chance STEWARD's all_clear condition
       // now holds (e.g. the last anomaly just cleared) -- stewardStateCheck
       // no-ops unless it actually does.
       const cleared = applyNarrationEvent({ kind: 'stewardStateCheck' }, eventState, narrationMessages, narrationBudgets);
       narrationMessages = cleared.narrationMessages;
       narrationBudgets = cleared.narrationBudgets;
-      return { ...state, anomalies: action.anomalies, narrationMessages, narrationBudgets, notifs, unread };
+      return { ...state, anomalies: action.anomalies, narrationMessages, narrationBudgets };
     }
 
     case 'SET_CACHE_HIT_RATIO':
@@ -294,13 +317,21 @@ export function reducer(state: AetherState, action: Action): AetherState {
     case 'SET_STATUSLINE':
       return { ...state, statusline: action.snapshot };
 
-    case 'SET_LAST_NOTIFICATION':
+    case 'SET_LAST_NOTIFICATION': {
+      const lastNotification = { reason: action.reason, atMs: Date.now() };
+      // 'permission_prompt' is the one reason that is always accompanied by a
+      // SET_PENDING_PERMISSION_REQUEST arrival ("Permission requested: X"),
+      // which says the same thing with the tool name attached -- so only
+      // lastNotification (used for the sound cue) updates here, no second bell
+      // entry for the same event.
+      if (action.reason === 'permission_prompt') return { ...state, lastNotification };
       return {
         ...state,
-        lastNotification: { reason: action.reason, atMs: Date.now() },
-        notifs: [{ t: nowShort(), m: `Notification: ${action.reason}`, c: '#7fd8ef' }, ...state.notifs].slice(0, 12),
+        lastNotification,
+        notifs: [{ t: nowShort(), m: notificationReasonLabel(action.reason), c: '#7fd8ef' }, ...state.notifs].slice(0, 12),
         unread: state.unread + 1,
       };
+    }
 
     case 'RECAP_RECEIVED':
       return { ...state, recap: action.recap };
