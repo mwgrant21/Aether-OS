@@ -16,44 +16,46 @@ export function Sidebar() {
   const { state, dispatch } = useAetherStore();
   return (
     <div style={rootStyle(colors)}>
-      <div style={sectionLabelStyle(colors)}>NAVIGATION</div>
-      <div data-testid="sidebar-nav" style={sidebarNavStyle}>
-        {SIDEBAR_IDS.map((label) => {
-          const on = label === state.activeTab;
-          const idleFlag = label === 'Terminal' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
-          // Gate on liveness too: a pty that exited only clears its pending idle
-          // timer (see useTerminalIdleSync.ts's onExit handler), it never forces
-          // idle back to false, so without this an exited pty's dot would keep
-          // pulsing forever. terminalAlive/codexTerminalAlive disambiguate "quiet"
-          // from "dead".
-          const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
-          const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
-          return (
-            <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
-              <span style={navDotWrapStyle(on)}>
-                <span style={navDotStyle(colors, on, showIdlePulse)} data-idle-pulse={showIdlePulse ? 'true' : undefined} />
-              </span>
-              <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
-            </Button>
-          );
-        })}
-      </div>
+      <div style={scrollableNavStyle}>
+        <div style={sectionLabelStyle(colors)}>NAVIGATION</div>
+        <div data-testid="sidebar-nav" style={sidebarNavStyle}>
+          {SIDEBAR_IDS.map((label) => {
+            const on = label === state.activeTab;
+            const idleFlag = label === 'Terminal' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
+            // Gate on liveness too: a pty that exited only clears its pending idle
+            // timer (see useTerminalIdleSync.ts's onExit handler), it never forces
+            // idle back to false, so without this an exited pty's dot would keep
+            // pulsing forever. terminalAlive/codexTerminalAlive disambiguate "quiet"
+            // from "dead".
+            const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
+            const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
+            return (
+              <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
+                <span style={navDotWrapStyle(on)}>
+                  <span style={navDotStyle(colors, on, showIdlePulse)} data-idle-pulse={showIdlePulse ? 'true' : undefined} />
+                </span>
+                <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
+              </Button>
+            );
+          })}
+        </div>
 
-      <div style={{ ...sectionLabelStyle(colors), marginTop: 14 }}>RECENT AGENTS</div>
-      {state.agents.slice(0, 4).map((a) => (
-        <Button
-          key={a.name}
-          onClick={() => {
-            dispatch({ type: 'SELECT_AGENT', name: a.name });
-            dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
-          }}
-          style={recentRowStyle}
-        >
-          <span style={recentAvatarStyle(a.hue)}>{a.i}</span>
-          <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{a.name}</span>
-        </Button>
-      ))}
-      {!state.agents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
+        <div style={{ ...sectionLabelStyle(colors), marginTop: 14 }}>RECENT AGENTS</div>
+        {state.agents.slice(0, 4).map((a) => (
+          <Button
+            key={a.name}
+            onClick={() => {
+              dispatch({ type: 'SELECT_AGENT', name: a.name });
+              dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
+            }}
+            style={recentRowStyle}
+          >
+            <span style={recentAvatarStyle(a.hue)}>{a.i}</span>
+            <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{a.name}</span>
+          </Button>
+        ))}
+        {!state.agents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
+      </div>
 
       <div style={reactorMiniWrapStyle}>
         <div style={reactorMiniScaleStyle}>
@@ -90,9 +92,20 @@ function rootStyle(colors: ColorPalette): CSSProperties {
     display: 'flex',
     flexDirection: 'column',
     gap: 5,
-    overflow: 'auto',
+    minHeight: 0,
+    overflow: 'hidden',
   };
 }
+// Nav + recent agents scroll internally so the reactor widget below always
+// stays visible instead of being pushed off the bottom of the sidebar.
+const scrollableNavStyle: CSSProperties = {
+  flex: '1 1 auto',
+  minHeight: 0,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 5,
+};
 const sidebarNavStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 };
 function sectionLabelStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
@@ -150,6 +163,7 @@ function recentAvatarStyle(ring: string): CSSProperties {
   };
 }
 const reactorMiniWrapStyle: CSSProperties = {
+  flex: 'none',
   marginTop: 10,
   padding: '10px 0',
   borderRadius: 12,
