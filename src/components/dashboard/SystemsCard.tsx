@@ -7,6 +7,7 @@ import { Button } from '../shared/Button';
 export function SystemsCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
+  const pendingApprovalsCount = (state.pendingPermissionRequest ? 1 : 0) + (state.pendingPostToolFlag ? 1 : 0);
   const rows = [
     // Uplinks was the fake-providers view before uplinks-real-status; the
     // only real, session-scoped uplink this dashboard card can summarize
@@ -14,7 +15,7 @@ export function SystemsCard() {
     // (Codex connect status is polled/owned by UplinksView/CrossEngineVerificationCard).
     { k: 'Terminal', v: state.terminalAlive ? 'ONLINE' : 'OFFLINE', c: state.terminalAlive ? colors.success : colors.textMuted },
     { k: 'Memory engrams', v: String(state.memories.length), c: '#8ab6ff' },
-    { k: 'Pending approvals', v: String(state.approvals.length), c: state.approvals.length ? colors.warn : colors.success },
+    { k: 'Pending approvals', v: String(pendingApprovalsCount), c: pendingApprovalsCount ? colors.warn : colors.success },
     { k: 'Idle agents', v: String(state.idleList.length), c: colors.textSecondary },
     { k: 'Sound', v: state.cfg.sound ? 'ON' : 'OFF', c: state.cfg.sound ? colors.success : colors.textMuted },
   ];
