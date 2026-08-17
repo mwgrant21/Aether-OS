@@ -197,8 +197,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     uninstall: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:uninstall'),
   },
   permission: {
-    onRequest: (callback: (request: PermissionRequestUI) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, request: PermissionRequestUI) => callback(request);
+    // `null` is a real payload on this channel, not an absence: main sends it
+    // from the permission:respond handler to tell the renderer the pending
+    // request has been answered and should be cleared.
+    onRequest: (callback: (request: PermissionRequestUI | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: PermissionRequestUI | null) => callback(request);
       ipcRenderer.on('permission:request', listener);
       return () => ipcRenderer.removeListener('permission:request', listener);
     },
@@ -206,8 +209,9 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     setAutoAllow: (level: PermissionAutoAllowLevel) => ipcRenderer.send('permission:setAutoAllow', level),
   },
   postToolFlag: {
-    onRequest: (callback: (request: PostToolFlagRequestUI) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, request: PostToolFlagRequestUI) => callback(request);
+    // `null` clears the pending flag -- see permission.onRequest above.
+    onRequest: (callback: (request: PostToolFlagRequestUI | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: PostToolFlagRequestUI | null) => callback(request);
       ipcRenderer.on('postToolFlag:request', listener);
       return () => ipcRenderer.removeListener('postToolFlag:request', listener);
     },

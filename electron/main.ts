@@ -501,9 +501,18 @@ let autoHeadlinesEnabled = true;
 // Configured via Settings (renderer) and pushed down through the
 // permission:setAutoAllow IPC handler below. Tool-permission requests whose
 // classifyPermissionRisk() result is at/below this threshold skip the
-// renderer prompt entirely in onPermissionRequest. Defaults to 'LOW_MED',
-// matching initialState.ts's Cfg.permissionAutoAllow default.
-let permissionAutoAllowThreshold: PermissionAutoAllowLevel = 'LOW_MED';
+// renderer prompt entirely in onPermissionRequest.
+//
+// Deliberately initialised to 'NONE' (never auto-allow) rather than to
+// initialState.ts's 'LOW_MED' default: main starts before the renderer's
+// usePermissionAutoAllowSync effect has pushed the user's real, persisted
+// setting, and a Claude Code session already running when Aether launches can
+// fire a permission request inside that window. Starting at the most
+// restrictive value makes that window fail CLOSED (everything prompts until
+// the renderer confirms the real threshold -- including confirming 'LOW_MED'
+// when that genuinely is the user's choice) instead of silently auto-allowing
+// MED-risk work against an explicit 'NONE'/'LOW' setting.
+let permissionAutoAllowThreshold: PermissionAutoAllowLevel = 'NONE';
 
 // Mirrors autoHeadlinesEnabled's pattern immediately below: a module-level flag
 // pushed from the renderer's persisted `state.crossEngineCfg.enabled` on every
@@ -993,6 +1002,12 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
   if (!resolve) return; // already timed out / resolved / duplicate response
   pendingPermissionResolvers.delete(requestId);
   resolve(decision);
+  // The renderer only ever learns a request EXISTS from this channel, so it
+  // also has to learn from it that the request is done -- otherwise
+  // state.pendingPermissionRequest stays non-null forever and every surface
+  // reading it (TopBar badge, SystemsCard tile, Terminal `approvals`,
+  // localResponder's pending count) sticks at >=1 for the rest of the session.
+  sendToWindow('permission:request', null);
 });
 
 ipcMain.handle('postToolFlag:respond', (_event, { requestId, decision }: { requestId: string; decision: PostToolFlagDecision }) => {
@@ -1000,6 +1015,9 @@ ipcMain.handle('postToolFlag:respond', (_event, { requestId, decision }: { reque
   if (!resolve) return; // already timed out / resolved / duplicate response
   pendingPostToolFlagResolvers.delete(requestId);
   resolve(decision);
+  // Same reasoning as permission:respond above -- clear the renderer's pending
+  // flag so the queue/badge/tile actually empty out after a review.
+  sendToWindow('postToolFlag:request', null);
 });
 
 ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { findingId: string; target: 'global' | 'project' }) => {

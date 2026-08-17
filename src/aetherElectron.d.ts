@@ -99,12 +99,14 @@ declare global {
         uninstall: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
       };
       permission: {
-        onRequest: (callback: (request: PermissionRequestUI) => void) => () => void;
+        // `null` means "the pending request was answered, clear it" -- main
+        // pushes it from the permission:respond handler.
+        onRequest: (callback: (request: PermissionRequestUI | null) => void) => () => void;
         respond: (requestId: string, decision: PermissionDecision) => Promise<void>;
         setAutoAllow: (level: PermissionAutoAllowLevel) => void;
       };
       postToolFlag: {
-        onRequest: (callback: (request: PostToolFlagRequestUI) => void) => () => void;
+        onRequest: (callback: (request: PostToolFlagRequestUI | null) => void) => () => void;
         respond: (requestId: string, decision: PostToolFlagDecision) => Promise<void>;
       };
       presence: {
