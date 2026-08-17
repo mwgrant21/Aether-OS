@@ -84,7 +84,10 @@ function applyNarrationEvent(
 // | 'permission_prompt' | string -- see shared/alertSounds.ts), so this maps
 // the named reasons to display copy and humanises anything the hook sends that
 // we don't have a label for, rather than leaking a raw snake_case enum value
-// into the notification bell.
+// into the notification bell. Note SET_LAST_NOTIFICATION suppresses the bell
+// entry for 'permission_prompt' outright (SET_PENDING_PERMISSION_REQUEST covers
+// it with the tool name attached), so that entry is kept here for completeness
+// of the mapping rather than because this path renders it today.
 const NOTIFICATION_REASON_LABELS: Record<string, string> = {
   agent_needs_input: 'Agent needs input',
   agent_completed: 'Agent completed',
