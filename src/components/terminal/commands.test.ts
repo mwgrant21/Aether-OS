@@ -83,6 +83,26 @@ describe('approvals/approve/deny against real pending requests', () => {
     expect(result.lines.some((l) => l.t.includes('Bash'))).toBe(true);
   });
 
+  it('approvals colors risk 3-way: HIGH red, MED amber, LOW green', () => {
+    const colorFor = (risk: 'HIGH' | 'MED' | 'LOW') => {
+      const state = { ...initialState, pendingPermissionRequest: { ...permissionRequest, risk } };
+      const result = runCommand(state, 'approvals');
+      if (result.kind !== 'append') throw new Error('unreachable');
+      return result.lines.find((l) => l.t.includes('Write'))?.c;
+    };
+    expect(colorFor('HIGH')).toBe('#ff9d9d');
+    expect(colorFor('MED')).toBe('#f5c66b');
+    expect(colorFor('LOW')).toBe('#3be0a0');
+    expect(colorFor('LOW')).not.toBe(colorFor('MED'));
+  });
+
+  it('approvals colors a post-tool flag (no risk) as the amber REVIEW entry', () => {
+    const state = { ...initialState, pendingPostToolFlag: flagRequest };
+    const result = runCommand(state, 'approvals');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines.find((l) => l.t.includes('Bash'))?.c).toBe('#f5c66b');
+  });
+
   it('approvals reports queue clear when nothing is pending', () => {
     const result = runCommand(initialState, 'approvals');
     if (result.kind !== 'append') throw new Error('unreachable');

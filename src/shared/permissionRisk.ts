@@ -25,5 +25,10 @@ export function classifyPermissionRisk(toolName: string, toolInput: unknown): Pe
 export function shouldAutoAllow(risk: PermissionRisk, threshold: PermissionAutoAllowLevel): boolean {
   if (threshold === 'NONE') return false;
   if (threshold === 'LOW') return risk === 'LOW';
-  return risk === 'LOW' || risk === 'MED';
+  if (threshold === 'LOW_MED') return risk === 'LOW' || risk === 'MED';
+  // Every PermissionAutoAllowLevel member is handled above, so this is only
+  // reachable via a corrupted/stale persisted value or a future member added
+  // without updating this function. Fail CLOSED (prompt) rather than falling
+  // through to the most permissive behaviour.
+  return false;
 }

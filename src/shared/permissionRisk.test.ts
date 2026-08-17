@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyPermissionRisk, shouldAutoAllow } from './permissionRisk';
+import { classifyPermissionRisk, shouldAutoAllow, type PermissionAutoAllowLevel } from './permissionRisk';
 
 describe('classifyPermissionRisk', () => {
   it('classifies Read/Grep/Glob as LOW', () => {
@@ -57,5 +57,12 @@ describe('shouldAutoAllow', () => {
     expect(shouldAutoAllow('LOW', 'LOW_MED')).toBe(true);
     expect(shouldAutoAllow('MED', 'LOW_MED')).toBe(true);
     expect(shouldAutoAllow('HIGH', 'LOW_MED')).toBe(false);
+  });
+
+  it('fails closed on an unrecognized threshold (corrupted persisted value)', () => {
+    const bogus = 'ALL' as unknown as PermissionAutoAllowLevel;
+    expect(shouldAutoAllow('LOW', bogus)).toBe(false);
+    expect(shouldAutoAllow('MED', bogus)).toBe(false);
+    expect(shouldAutoAllow('HIGH', bogus)).toBe(false);
   });
 });

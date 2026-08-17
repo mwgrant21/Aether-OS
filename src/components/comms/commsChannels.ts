@@ -22,7 +22,7 @@ export interface CommsChannel {
   // transcript: SESSION_TRANSCRIPT_SENTINEL for AETHER, the dispatch's
   // toolUseId for a dispatch channel, or null for a channel with no backing
   // transcript at all -- both the fictional/simulated `state.agents` roster
-  // (see the Approval-vs-RealAgentDispatch disambiguation in state/types.ts)
+  // (as opposed to `state.realAgents`, which holds real Claude Code dispatches)
   // and its archived (idleList) counterparts are simulation-only and were
   // never a real Claude session or dispatch, so they get null regardless of
   // archived state.

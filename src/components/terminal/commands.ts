@@ -201,7 +201,10 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
       if (!pending.length) out.push(line('  queue clear', DIM));
       pending.forEach((p, i) => {
         const risk = p.kind === 'permission' ? p.req.risk : null;
-        out.push(line(`  [${i + 1}] ${(risk ?? 'REVIEW').padEnd(5)}${p.req.toolName} — ${p.kind === 'permission' ? 'permission request' : 'post-tool flag'}`, risk === 'HIGH' ? BAD : '#f5c66b'));
+        // Same 3-way scheme TopBar's riskBadgeStyle uses (danger/warn/success);
+        // a post-tool flag has no risk at all and renders as the amber REVIEW.
+        const riskColor = risk === 'HIGH' ? BAD : risk === 'LOW' ? GOOD : '#f5c66b';
+        out.push(line(`  [${i + 1}] ${(risk ?? 'REVIEW').padEnd(5)}${p.req.toolName} — ${p.kind === 'permission' ? 'permission request' : 'post-tool flag'}`, riskColor));
       });
       return { kind: 'append', lines: out };
     }
