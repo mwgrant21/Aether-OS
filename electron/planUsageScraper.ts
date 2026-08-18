@@ -33,7 +33,20 @@ export function createPlanUsageScraper(now: () => number = Date.now) {
       if (model) {
         const pct = Number(model[1]);
         if (Number.isFinite(pct) && pct >= 0 && pct <= 100) {
-          snapshot = { tier: 'max', weekModel: { pct }, capturedAtMs: now() };
+          // Only stamp a NEW capturedAtMs when the value itself actually
+          // changed. A busy terminal (session hooks, unrelated repaints,
+          // cursor moves) re-triggers ingest() far more often than the
+          // /usage pane's own numbers change, and runPlanUsageSync's
+          // quiescence detection is keyed on capturedAtMs staying put for
+          // 2s -- if this re-stamped on every matching re-scan regardless
+          // of value, quiescence could never be reached against a chatty
+          // pty, and the sync would spin until the 10s deadline on every
+          // single call. Re-stamping only on a real value change makes
+          // "the number stopped moving" and "capturedAtMs stopped moving"
+          // the same fact again.
+          if (snapshot === null || snapshot.weekModel === null || snapshot.weekModel.pct !== pct) {
+            snapshot = { tier: 'max', weekModel: { pct }, capturedAtMs: now() };
+          }
         }
       }
     } catch {

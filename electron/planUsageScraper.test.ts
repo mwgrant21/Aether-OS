@@ -42,6 +42,21 @@ describe('createPlanUsageScraper', () => {
     expect(scraper.hasSeenUsagePane()).toBe(true);
   });
 
+  it('does not bump capturedAtMs when re-ingesting the same pct value (quiescence signal)', () => {
+    let now = 1000;
+    const scraper = createPlanUsageScraper(() => now);
+    scraper.ingest('Current week (Claude Opus 4) 52%used Resets 1:19am (America/Denver)');
+    expect(scraper.getSnapshot()?.capturedAtMs).toBe(1000);
+
+    now = 2000;
+    scraper.ingest('Current week (Claude Opus 4) 52%used Resets 1:19am (America/Denver)');
+    expect(scraper.getSnapshot()?.capturedAtMs).toBe(1000);
+
+    now = 3000;
+    scraper.ingest('Current week (Claude Opus 4) 61%used Resets 1:19am (America/Denver)');
+    expect(scraper.getSnapshot()).toEqual({ tier: 'max', weekModel: { pct: 61 }, capturedAtMs: 3000 });
+  });
+
   it('reset() clears the buffer, the snapshot, and hasSeenUsagePane()', () => {
     const scraper = createPlanUsageScraper(() => 1000);
     scraper.ingest('Current session 46%used\nCurrent week (Claude Opus 4) 52%used Resets 1:19am (America/Denver)\n');
