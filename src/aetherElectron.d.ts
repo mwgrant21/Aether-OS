@@ -1,4 +1,4 @@
-import type { RealUsageSnapshot, FleetSessionRow } from './state/types';
+import type { RealUsageSnapshot, FleetSessionRow, PlanUsageSyncResult } from './state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from './state/liveAgentsMath';
 import type { AttachmentInfo } from './components/files/attachmentsMath';
 import type { Anomaly } from './shared/anomalyDetectors';
@@ -31,6 +31,9 @@ declare global {
         onData: (callback: (data: string) => void) => () => void;
         onAlive: (callback: () => void) => () => void;
         onExit: (callback: () => void) => () => void;
+      };
+      plan: {
+        sync: () => Promise<PlanUsageSyncResult>;
       };
       codexPty: {
         start: (opts: { cols: number; rows: number }) => Promise<void>;

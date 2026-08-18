@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RealUsageSnapshot, FleetSessionRow } from '../src/state/types';
+import type { RealUsageSnapshot, FleetSessionRow, PlanUsageSyncResult } from '../src/state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
 import type { Anomaly } from '../src/shared/anomalyDetectors';
@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('pty:exit', listener);
       return () => ipcRenderer.removeListener('pty:exit', listener);
     },
+  },
+  plan: {
+    sync: (): Promise<PlanUsageSyncResult> => ipcRenderer.invoke('plan:sync'),
   },
   codexPty: {
     start: (opts: { cols: number; rows: number }) => ipcRenderer.invoke('codexPty:start', opts),
