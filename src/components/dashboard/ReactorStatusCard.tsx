@@ -119,8 +119,8 @@ export function ReactorStatusCard() {
       </div>
 
       <div style={{ marginTop: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingTop: 14 }}>
-        <Button onClick={() => dispatch({ type: 'RUN_COMMAND', raw: 'spawn' })} style={primaryActionStyle}>
-          ⊕ SPAWN AGENT
+        <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })} style={primaryActionStyle}>
+          ⊕ OPEN TERMINAL
         </Button>
         <Button
           onClick={() => {
@@ -130,9 +130,6 @@ export function ReactorStatusCard() {
           style={secondaryActionStyle}
         >
           MEMORY SWEEP
-        </Button>
-        <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })} style={secondaryActionStyle}>
-          OPEN TERMINAL
         </Button>
         {/* Mission Composer modal is out of scope for this plan — button renders for visual
             fidelity but is intentionally not wired (see Global Constraints #1). */}

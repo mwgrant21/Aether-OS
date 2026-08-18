@@ -50,7 +50,7 @@ export function BottomMetricsRow() {
     { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
     { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
     { k: 'Commands run', v: fmt(state.commandsRun) },
-    { k: 'Agents active', v: String(state.agents.length) },
+    { k: 'Agents active', v: String(state.realAgents.length) },
     { k: 'Tokens used', v: fmt(state.realUsage.usedThisMonth) },
   ];
 

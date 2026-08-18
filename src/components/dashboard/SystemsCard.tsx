@@ -16,7 +16,6 @@ export function SystemsCard() {
     { k: 'Terminal', v: state.terminalAlive ? 'ONLINE' : 'OFFLINE', c: state.terminalAlive ? colors.success : colors.textMuted },
     { k: 'Memory engrams', v: String(state.memories.length), c: '#8ab6ff' },
     { k: 'Pending approvals', v: String(pendingApprovalsCount), c: pendingApprovalsCount ? colors.warn : colors.success },
-    { k: 'Idle agents', v: String(state.idleList.length), c: colors.textSecondary },
     { k: 'Sound', v: state.cfg.sound ? 'ON' : 'OFF', c: state.cfg.sound ? colors.success : colors.textMuted },
   ];
 

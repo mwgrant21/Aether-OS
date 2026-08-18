@@ -13,10 +13,10 @@ export interface UseCommsChannelsResult {
 
 // Owns the one piece of view-local, non-AetherState state this plan
 // establishes as its own concept: which chat channel is currently open. This
-// is deliberately NOT `state.selected`/`SELECT_AGENT` (that's "which agent is
-// selected" for Grid/Agents) — Chat's "which channel is open" is a different
-// axis entirely and would be wrong to conflate just because both happen to
-// name an agent. See Global Constraints.
+// is deliberately NOT `state.selectedRealAgent`/`SELECT_REAL_AGENT` (that's
+// "which agent is selected" for Grid/Agents) — Chat's "which channel is open"
+// is a different axis entirely and would be wrong to conflate just because
+// both happen to name an agent. See Global Constraints.
 //
 // Stage 14 (Task 3): the send/typing/per-channel ChatMessage history this
 // hook used to own is gone — the thread now renders real transcript messages
@@ -51,7 +51,7 @@ export interface UseCommsChannelsResult {
 // scoped, see persistence.ts) -- it isn't even a candidate since it never
 // enters AetherState in the first place.
 export function useCommsChannels(state: AetherState, _dispatch: Dispatch<Action>): UseCommsChannelsResult {
-  const channels = useMemo(() => deriveChannels(state), [state.agents, state.idleList, state.dispatchChannels]);
+  const channels = useMemo(() => deriveChannels(state), [state.dispatchChannels]);
   const [activeChannelId, setActiveChannelId] = useState<string>(AETHER_CHANNEL_ID);
   const activeChannel = findChannel(channels, activeChannelId) ?? channels[0];
 

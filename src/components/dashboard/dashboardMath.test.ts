@@ -33,7 +33,10 @@ describe('computeDashKpis', () => {
     expect(kpis[1].v).toBe('98.8%');
     expect(kpis[1].s).toBe('of 2.0M cap');
     expect(kpis[2].k).toBe('DEPLETION ETA');
-    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: '63%', s: '78.4K / 125K' });
+    // 200,000 is the real Claude Code context window (see dashboardMath.ts's
+    // CONTEXT_WINDOW comment / commands.ts issue #20) -- 78432 / 200000 = 39%,
+    // not the old hardcoded-125K math's 63%.
+    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: '39%', s: '78.4K / 200K' });
   });
 
   it('clamps budget-left at 0% instead of going negative', () => {

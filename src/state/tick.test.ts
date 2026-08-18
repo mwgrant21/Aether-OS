@@ -28,7 +28,7 @@ describe('computeTick', () => {
 
   it('is fully deterministic with Math.random pinned to 0.5', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const state = { ...initialState, rate: 84000, agents: [], cfg: { ...initialState.cfg, opMode: 'EDITS' as const, autoThrottle: true, alarm: 120 } };
+    const state = { ...initialState, rate: 84000, cfg: { ...initialState.cfg, opMode: 'EDITS' as const, autoThrottle: true, alarm: 120 } };
     const result = computeTick(state);
     expect(result.used).toBeCloseTo(state.used + (84000 / 60) * 0.9 * 0.05, 5);
     expect(result.alarmLevel).toBe('ok');
@@ -52,19 +52,19 @@ describe('computeTick', () => {
   }
 
   it('alarmLevel stays ok when statusline is null (no rate-limit data yet)', () => {
-    const state = { ...initialState, agents: [], statusline: null };
+    const state = { ...initialState, statusline: null };
     const result = computeTick(state);
     expect(result.alarmLevel).toBe('ok');
   });
 
   it('alarmLevel flips to warn at 75% rate-limit usage', () => {
-    const state = { ...initialState, agents: [], statusline: statuslineWith(80, 10) };
+    const state = { ...initialState, statusline: statuslineWith(80, 10) };
     const result = computeTick(state);
     expect(result.alarmLevel).toBe('warn');
   });
 
   it('flips alarmLevel to crit and fires a notification when rate-limit usage crosses 90%', () => {
-    const state = { ...initialState, agents: [], statusline: statuslineWith(95, 10) };
+    const state = { ...initialState, statusline: statuslineWith(95, 10) };
     const result = computeTick(state);
     expect(result.alarmLevel).toBe('crit');
     expect(result.notifs).toHaveLength(1);
@@ -73,24 +73,9 @@ describe('computeTick', () => {
   });
 
   it('uses the higher of fiveHour/sevenDay usedPercentage', () => {
-    const state = { ...initialState, agents: [], statusline: statuslineWith(20, 95) };
+    const state = { ...initialState, statusline: statuslineWith(20, 95) };
     const result = computeTick(state);
     expect(result.alarmLevel).toBe('crit');
-  });
-
-  it('freezes both pct and hist for a paused agent, leaving unpaused agents unaffected', () => {
-    const state = {
-      ...initialState,
-      agents: [
-        { ...initialState.agents[0], paused: true, pct: 40, hist: [10, 20] },
-        { ...initialState.agents[1], paused: false, pct: 40, hist: [10, 20] },
-      ],
-    };
-    const result = computeTick(state);
-    const [paused, active] = result.agents!;
-    expect(paused.pct).toBe(40);
-    expect(paused.hist).toEqual([10, 20]);
-    expect(active.hist).not.toEqual([10, 20]);
   });
 
   it('does not touch memories at all (decay was retired -- see Memory Layer 2 Phase D; memories are a live collector-sourced snapshot now, not locally ticked)', () => {

@@ -22,11 +22,6 @@ describe('reducer', () => {
     expect(next.apprOpen).toBe(true);
   });
 
-  it('SELECT_AGENT sets selected', () => {
-    const next = reducer(initialState, { type: 'SELECT_AGENT', name: 'Code Builder' });
-    expect(next.selected).toBe('Code Builder');
-  });
-
   it('SELECT_PROJECT sets selectedProject', () => {
     const next = reducer(initialState, { type: 'SELECT_PROJECT', key: 'mobile-beta' });
     expect(next.selectedProject).toBe('mobile-beta');
@@ -41,32 +36,6 @@ describe('reducer', () => {
   it('SELECT_MEMORY sets selectedMemory to the stringified id', () => {
     const next = reducer(initialState, { type: 'SELECT_MEMORY', id: 2 });
     expect(next.selectedMemory).toBe('2');
-  });
-
-  it('TOGGLE_AGENT_PAUSE flips paused on the named agent only', () => {
-    const next = reducer(initialState, { type: 'TOGGLE_AGENT_PAUSE', name: 'Code Builder' });
-    expect(next.agents.find((a) => a.name === 'Code Builder')?.paused).toBe(true);
-    expect(next.agents.find((a) => a.name === 'UI Designer')?.paused).toBeUndefined();
-    const restored = reducer(next, { type: 'TOGGLE_AGENT_PAUSE', name: 'Code Builder' });
-    expect(restored.agents.find((a) => a.name === 'Code Builder')?.paused).toBe(false);
-  });
-
-  it('TOGGLE_AGENT_PAUSE on an unknown name is a no-op', () => {
-    const next = reducer(initialState, { type: 'TOGGLE_AGENT_PAUSE', name: 'Nobody' });
-    expect(next.agents).toEqual(initialState.agents);
-  });
-
-  it('REACTIVATE_AGENT moves an idle agent into the active roster, selects it, and raises the burn rate (mirrors spawn)', () => {
-    const next = reducer(initialState, { type: 'REACTIVATE_AGENT', name: 'Web Scraper' });
-    expect(next.idleList.map((i) => i.name)).toEqual(['Doc Helper']);
-    expect(next.agents.map((a) => a.name)).toContain('Web Scraper');
-    expect(next.selected).toBe('Web Scraper');
-    expect(next.rate).toBe(Math.min(168000, initialState.rate + 18000));
-  });
-
-  it('REACTIVATE_AGENT on a name not in idleList is a no-op', () => {
-    const next = reducer(initialState, { type: 'REACTIVATE_AGENT', name: 'Nobody' });
-    expect(next).toBe(initialState);
   });
 
   it('UPDATE_CFG merges a partial patch into cfg, leaving other cfg fields untouched', () => {

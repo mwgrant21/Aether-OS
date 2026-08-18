@@ -7,20 +7,6 @@ export function computeTick(state: AetherState): Partial<AetherState> {
 
   const used = state.used + (effectiveRate / 60) * 0.9 * 0.05;
 
-  const weekRaw = state.weekRaw.slice();
-  weekRaw[6] = Math.min(72, weekRaw[6] + Math.random() * 0.35);
-
-  const agents = state.agents.map((a) => ({
-    ...a,
-    pct: a.paused ? a.pct : Math.min(99, a.pct + (Math.random() - 0.3) * 1.5),
-    hist: a.paused ? a.hist : a.hist.slice(-15).concat(effectiveRate * a.share * (0.85 + Math.random() * 0.3)),
-  }));
-
-  const sys = state.sys.map((m) => {
-    const val = Math.max(6, Math.min(96, m.val + (Math.random() - 0.5) * 5));
-    return { ...m, val, hist: m.hist.slice(1).concat(val) };
-  });
-
   const pressure = state.statusline
     ? Math.max(state.statusline.fiveHour?.usedPercentage ?? 0, state.statusline.sevenDay?.usedPercentage ?? 0)
     : 0;
@@ -40,5 +26,5 @@ export function computeTick(state: AetherState): Partial<AetherState> {
     unread += 1;
   }
 
-  return { used, weekRaw, agents, sys, alarmLevel: level, notifs, unread };
+  return { used, alarmLevel: level, notifs, unread };
 }

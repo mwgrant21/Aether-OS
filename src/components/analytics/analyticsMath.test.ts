@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeRealAgentBreakdown, computeTopCommands, computeSysMetricStats, computeLogFrequency, computeCompletedDispatchBurn } from './analyticsMath';
+import { computeRealAgentBreakdown, computeTopCommands, computeLogFrequency, computeCompletedDispatchBurn } from './analyticsMath';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 describe('computeTopCommands', () => {
@@ -23,19 +23,6 @@ describe('computeTopCommands', () => {
 
   it('returns an empty array for no command history', () => {
     expect(computeTopCommands([])).toEqual([]);
-  });
-});
-
-describe('computeSysMetricStats', () => {
-  it('computes min/max/avg over each metric\'s history, one row per input metric', () => {
-    const rows = computeSysMetricStats([
-      { label: 'CPU', val: 23, hist: [10, 20, 30] },
-      { label: 'MEM', val: 41, hist: [40, 40, 40] },
-    ]);
-    expect(rows).toEqual([
-      { label: 'CPU', val: 23, hist: [10, 20, 30], min: 10, max: 30, avg: 20 },
-      { label: 'MEM', val: 41, hist: [40, 40, 40], min: 40, max: 40, avg: 40 },
-    ]);
   });
 });
 

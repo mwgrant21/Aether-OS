@@ -1,4 +1,4 @@
-import type { LogEntry, SysMetric } from '../../state/types';
+import type { LogEntry } from '../../state/types';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 export interface CommandFrequency {
@@ -17,26 +17,6 @@ export function computeTopCommands(cmdHist: string[], limit = 5): CommandFrequen
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, limit)
     .map(([name, count]) => ({ name, count }));
-}
-
-export interface SysMetricStats {
-  label: string;
-  val: number;
-  hist: number[];
-  min: number;
-  max: number;
-  avg: number;
-}
-
-export function computeSysMetricStats(sys: SysMetric[]): SysMetricStats[] {
-  return sys.map((m) => ({
-    label: m.label,
-    val: m.val,
-    hist: m.hist,
-    min: Math.min(...m.hist),
-    max: Math.max(...m.hist),
-    avg: m.hist.reduce((sum, v) => sum + v, 0) / m.hist.length,
-  }));
 }
 
 export interface LogFrequencyRow {

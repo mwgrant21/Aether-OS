@@ -37,12 +37,6 @@ describe('persistence', () => {
     expect(loaded?.terminalAlive).toBeUndefined();
   });
 
-  it('persists the selected agent across reloads', () => {
-    savePersisted({ ...initialState, selected: 'Database Agent' });
-    const loaded = loadPersisted();
-    expect(loaded?.selected).toBe('Database Agent');
-  });
-
   it('persists the selected project across reloads', () => {
     savePersisted({ ...initialState, selectedProject: 'Mobile Beta' });
     const loaded = loadPersisted();
@@ -120,13 +114,10 @@ describe('persistence', () => {
       ...initialState,
       cfg: { ...initialState.cfg, opMode: 'AUTO', glow: 55 },
       activeTab: 'Grid',
-      agents: [{ ...initialState.agents[0], pct: 77 }],
-      idleList: [{ name: 'Ghost Agent', last: '3h ago' }],
       notifs: [{ t: '10:00', m: 'test notif', c: '#ffffff' }],
       unread: 7,
       cmdHist: ['status', 'budget'],
       operatorName: 'Ghost Operator',
-      selected: 'Ghost Agent',
       selectedProject: 'Ghost Project',
       selectedMemory: '999',
       memoryScopeFilter: 'general-purpose',
@@ -160,13 +151,10 @@ describe('persistence', () => {
 
     expect(loaded?.cfg).toEqual(distinctiveState.cfg);
     expect(loaded?.activeTab).toBe('Grid');
-    expect(loaded?.agents).toEqual(distinctiveState.agents);
-    expect(loaded?.idleList).toEqual(distinctiveState.idleList);
     expect(loaded?.notifs).toEqual(distinctiveState.notifs);
     expect(loaded?.unread).toBe(7);
     expect(loaded?.cmdHist).toEqual(['status', 'budget']);
     expect(loaded?.operatorName).toBe('Ghost Operator');
-    expect(loaded?.selected).toBe('Ghost Agent');
     expect(loaded?.selectedProject).toBe('Ghost Project');
     expect(loaded?.selectedMemory).toBe('999');
     expect(loaded?.memoryScopeFilter).toBe('general-purpose');

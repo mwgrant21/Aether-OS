@@ -41,20 +41,20 @@ export function Sidebar() {
         </div>
 
         <div style={{ ...sectionLabelStyle(colors), marginTop: 14 }}>RECENT AGENTS</div>
-        {state.agents.slice(0, 4).map((a) => (
+        {state.realAgents.slice(0, 4).map((a) => (
           <Button
-            key={a.name}
+            key={a.toolUseId}
             onClick={() => {
-              dispatch({ type: 'SELECT_AGENT', name: a.name });
+              dispatch({ type: 'SELECT_REAL_AGENT', toolUseId: a.toolUseId });
               dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
             }}
             style={recentRowStyle}
           >
-            <span style={recentAvatarStyle(a.hue)}>{a.i}</span>
-            <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{a.name}</span>
+            <span style={recentAvatarStyle(colors.accentCyanSoft)}>{a.subagentType.slice(0, 2).toUpperCase()}</span>
+            <span style={{ font: `500 13px/1 ${fonts.ui}`, letterSpacing: 0.5, color: colors.textSecondary }}>{a.subagentType}</span>
           </Button>
         ))}
-        {!state.agents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
+        {!state.realAgents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
       </div>
 
       <div style={reactorMiniWrapStyle}>

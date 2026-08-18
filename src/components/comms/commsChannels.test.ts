@@ -10,22 +10,8 @@ describe('deriveChannels', () => {
     expect(channels[0]).toMatchObject({ id: AETHER_CHANNEL_ID, kind: 'aether', archived: false });
   });
 
-  it('adds one unarchived channel per active agent, in roster order', () => {
-    const channels = deriveChannels(initialState);
-    const agentChannels = channels.filter((c) => c.kind === 'agent' && !c.archived);
-    expect(agentChannels.map((c) => c.id)).toEqual(initialState.agents.map((a) => a.name));
-    expect(agentChannels.every((c) => c.hue !== colors.textMuted)).toBe(true);
-  });
-
-  it('adds one archived, muted-hue channel per idle agent', () => {
-    const channels = deriveChannels(initialState);
-    const archivedChannels = channels.filter((c) => c.archived);
-    expect(archivedChannels.map((c) => c.id)).toEqual(initialState.idleList.map((i) => i.name));
-    expect(archivedChannels.every((c) => c.hue === colors.textMuted)).toBe(true);
-  });
-
-  it('returns only AETHER when there are no active or idle agents', () => {
-    const empty: AetherState = { ...initialState, agents: [], idleList: [] };
+  it('returns only AETHER when there are no dispatch channels', () => {
+    const empty: AetherState = { ...initialState, dispatchChannels: [] };
     expect(deriveChannels(empty)).toEqual([
       {
         id: AETHER_CHANNEL_ID,
@@ -39,7 +25,7 @@ describe('deriveChannels', () => {
     ]);
   });
 
-  it('gives dispatch channels their toolUseId as transcriptSourceId, and agent/archived channels null', () => {
+  it('gives dispatch channels their toolUseId as transcriptSourceId', () => {
     const withDispatch: AetherState = {
       ...initialState,
       dispatchChannels: [
@@ -49,7 +35,6 @@ describe('deriveChannels', () => {
     const channels = deriveChannels(withDispatch);
     expect(channels.find((c) => c.id === AETHER_CHANNEL_ID)?.transcriptSourceId).toBe(SESSION_TRANSCRIPT_SENTINEL);
     expect(channels.find((c) => c.kind === 'dispatch')?.transcriptSourceId).toBe('tu_3');
-    expect(channels.filter((c) => c.kind === 'agent').every((c) => c.transcriptSourceId === null)).toBe(true);
   });
 
   it('includes one dispatch-kind channel per state.dispatchChannels entry', () => {
@@ -86,7 +71,7 @@ describe('deriveChannels', () => {
 
 describe('findChannel', () => {
   it('finds a channel by id', () => {
-    expect(findChannel(deriveChannels(initialState), 'Code Builder')?.name).toBe('Code Builder');
+    expect(findChannel(deriveChannels(initialState), AETHER_CHANNEL_ID)?.name).toBe('AETHER');
   });
 
   it('returns null for an unknown id', () => {

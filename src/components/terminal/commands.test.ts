@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runCommand, THEME_NAMES, RENDERER_WORDS, nextAutoName } from './commands';
+import { runCommand, THEME_NAMES, RENDERER_WORDS } from './commands';
 import { initialState } from '../../state/initialState';
+import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 
 describe('runCommand', () => {
   it('help lists every documented command', () => {
@@ -8,7 +9,7 @@ describe('runCommand', () => {
     expect(result.kind).toBe('append');
     if (result.kind !== 'append') throw new Error('unreachable');
     const text = result.lines.map((l) => l.t).join('\n');
-    ['status', 'agents', 'spawn <name>', 'kill <name>', 'budget', 'projects', 'approvals', 'approve <n>', 'deny <n>', 'theme <name>', 'renderer <mode>'].forEach(
+    ['status', 'agents', 'budget', 'projects', 'approvals', 'approve <n>', 'deny <n>', 'theme <name>', 'renderer <mode>'].forEach(
       (cmd) => expect(text).toContain(cmd),
     );
   });
@@ -20,32 +21,24 @@ describe('runCommand', () => {
     expect(result.patch).toBeUndefined();
   });
 
-  it('spawn <name> adds a named agent and raises the burn rate by 18000', () => {
-    const result = runCommand(initialState, 'spawn Sentinel');
+  it('agents lists real agent dispatches, not a simulated roster', () => {
+    const dispatch: RealAgentDispatch = {
+      toolUseId: 'tu_1',
+      subagentType: 'general-purpose',
+      description: 'Explore the repo',
+      startedAt: new Date().toISOString(),
+      prompt: '',
+      model: null,
+    };
+    const result = runCommand({ ...initialState, realAgents: [dispatch] }, 'agents');
     if (result.kind !== 'append') throw new Error('unreachable');
-    expect(result.patch?.agents).toHaveLength(initialState.agents.length + 1);
-    expect(result.patch?.agents?.at(-1)?.name).toBe('Sentinel');
-    expect(result.patch?.rate).toBe(initialState.rate + 18000);
+    expect(result.lines.some((l) => l.t.includes('general-purpose') && l.t.includes('Explore the repo'))).toBe(true);
   });
 
-  it('spawn with no name picks the first unused name from the auto pool', () => {
-    const result = runCommand(initialState, 'spawn');
+  it('agents reports no active agents when realAgents is empty', () => {
+    const result = runCommand(initialState, 'agents');
     if (result.kind !== 'append') throw new Error('unreachable');
-    expect(result.patch?.agents?.at(-1)?.name).toBe('Image Gen');
-  });
-
-  it('kill removes a matching agent case-insensitively and moves it to idleList', () => {
-    const result = runCommand(initialState, 'kill code builder');
-    if (result.kind !== 'append') throw new Error('unreachable');
-    expect(result.patch?.agents?.map((a) => a.name)).not.toContain('Code Builder');
-    expect(result.patch?.idleList?.at(-1)).toEqual({ name: 'Code Builder', last: 'just now' });
-  });
-
-  it('kill on an unknown agent reports an error with no patch', () => {
-    const result = runCommand(initialState, 'kill nobody');
-    if (result.kind !== 'append') throw new Error('unreachable');
-    expect(result.lines[1].t).toContain('no agent named "nobody"');
-    expect(result.patch).toBeUndefined();
+    expect(result.lines.some((l) => l.t.includes('no active agents'))).toBe(true);
   });
 
   it('theme accepts only the six known names', () => {
@@ -64,10 +57,9 @@ describe('runCommand', () => {
     expect(result.patch?.cfg?.renderer).toBe('classic');
   });
 
-  it('exports THEME_NAMES, RENDERER_WORDS, and nextAutoName for reuse by the chat action executor', () => {
+  it('exports THEME_NAMES and RENDERER_WORDS for reuse by the chat action executor', () => {
     expect(THEME_NAMES).toContain('violet');
     expect(RENDERER_WORDS).toContain('volumetric');
-    expect(nextAutoName(initialState)).toBe('Image Gen');
   });
 });
 

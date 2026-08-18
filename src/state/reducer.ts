@@ -5,7 +5,7 @@ import type { LedgerSnapshot } from '../shared/ledgerMath';
 import type { ProjectsSnapshot } from '../shared/projectsSnapshot';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
 import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
-import { makeAgent, runCommand } from '../components/terminal/commands';
+import { runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
 import { computeMomentum, computeRateFromUsage } from '../components/reactor/reactorMath';
@@ -18,12 +18,9 @@ export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
-  | { type: 'SELECT_AGENT'; name: string }
   | { type: 'SET_OP_MODE'; mode: OpMode }
   | { type: 'RUN_COMMAND'; raw: string }
   | { type: 'TICK' }
-  | { type: 'TOGGLE_AGENT_PAUSE'; name: string }
-  | { type: 'REACTIVATE_AGENT'; name: string }
   | { type: 'SELECT_PROJECT'; key: string | null }
   | { type: 'SELECT_MEMORY'; id: number }
   | { type: 'SET_MEMORIES'; memories: MemoryRow[] }
@@ -111,9 +108,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'TOGGLE_NOTIFS':
       return { ...state, notifOpen: !state.notifOpen, unread: 0 };
-
-    case 'SELECT_AGENT':
-      return { ...state, selected: action.name };
 
     case 'SELECT_PROJECT':
       return { ...state, selectedProject: action.key };
@@ -446,24 +440,6 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'TICK':
       return { ...state, ...computeTick(state) };
-
-    case 'TOGGLE_AGENT_PAUSE':
-      return {
-        ...state,
-        agents: state.agents.map((a) => (a.name === action.name ? { ...a, paused: !a.paused } : a)),
-      };
-
-    case 'REACTIVATE_AGENT': {
-      const hit = state.idleList.find((i) => i.name === action.name);
-      if (!hit) return state;
-      return {
-        ...state,
-        idleList: state.idleList.filter((i) => i.name !== action.name),
-        agents: [...state.agents, makeAgent(hit.name)],
-        selected: hit.name,
-        rate: Math.min(168000, state.rate + 18000),
-      };
-    }
 
     default:
       return state;

@@ -11,7 +11,7 @@ import { fmt, fmtEta } from '../../utils/format';
 // usable, never throw, and never return an empty string.
 function aetherReply(text: string, state: AetherState): string {
   const t = text.toLowerCase();
-  const agentCount = state.agents.length;
+  const agentCount = state.realAgents.length;
   const pendingCount = (state.pendingPermissionRequest ? 1 : 0) + (state.pendingPostToolFlag ? 1 : 0);
 
   if (/budget|spend|\bcap\b|cost/.test(t)) {
@@ -26,8 +26,8 @@ function aetherReply(text: string, state: AetherState): string {
     return `Reactor status: ${label}. ${agentCount} agent${agentCount === 1 ? '' : 's'} active, ${pendingCount} pending authorization${pendingCount === 1 ? '' : 's'}.`;
   }
   if (/agent|team|roster|\bwho\b/.test(t)) {
-    if (!agentCount) return 'No agents are active right now. Spawn one from Terminal, Dashboard, or Agents to get started.';
-    return `${agentCount} active: ${state.agents.map((a) => a.name).join(', ')}.`;
+    if (!agentCount) return 'No agents are active right now.';
+    return `${agentCount} active: ${state.realAgents.map((a) => a.subagentType).join(', ')}.`;
   }
   if (/approv|pending|queue/.test(t)) {
     return pendingCount
@@ -43,36 +43,10 @@ function aetherReply(text: string, state: AetherState): string {
   return `Acknowledged: "${text.trim().slice(0, 60)}". Ask about burn rate, budget, roster, or approvals for a live readout.`;
 }
 
-function agentReply(channel: CommsChannel, text: string, state: AetherState): string {
-  const agent = state.agents.find((a) => a.name === channel.name);
-  if (!agent) {
-    return `${channel.name} is offline — this channel is archived. Reactivate the agent from the Agents view to resume the conversation.`;
-  }
-  const t = text.toLowerCase();
-  if (/status|how|progress|going/.test(t)) {
-    return `${Math.round(agent.pct)}% through "${agent.task}", ETA ${agent.eta}.`;
-  }
-  if (/file|touch|working on/.test(t)) {
-    if (!agent.files.length) return `No files touched yet — still ${agent.task.toLowerCase()}.`;
-    return `Touched ${agent.files.length} file${agent.files.length === 1 ? '' : 's'}: ${agent.files.map((f) => f.n).join(', ')}.`;
-  }
-  if (/task|doing|job|mission/.test(t)) {
-    return `Current task: "${agent.task}" — ${Math.round(agent.pct)}% complete.`;
-  }
-  if (/pause|stop|hold/.test(t)) {
-    return agent.paused
-      ? "I'm paused — resume me from the Agents view when you're ready."
-      : 'Still running. Pause me from the Agents view if you need me to hold.';
-  }
-  if (/\b(hi|hello|hey)\b/.test(t)) {
-    return `${agent.name} here — ${Math.round(agent.pct)}% through "${agent.task}".`;
-  }
-  if (/thanks|thank you/.test(t)) {
-    return 'On it.';
-  }
-  return `Noted: "${text.trim().slice(0, 60)}". Currently ${Math.round(agent.pct)}% through "${agent.task}".`;
-}
-
-export function localResponder(channel: CommsChannel, text: string, state: AetherState): string {
-  return channel.kind === 'aether' ? aetherReply(text, state) : agentReply(channel, text, state);
+// Only ever invoked for the AETHER channel -- see MessageInput.tsx/CommsView.tsx's
+// "What happens to localResponder" decision. The `channel` param is kept in the
+// signature for that call site's shape, not because any other channel kind
+// reaches this function.
+export function localResponder(_channel: CommsChannel, text: string, state: AetherState): string {
+  return aetherReply(text, state);
 }

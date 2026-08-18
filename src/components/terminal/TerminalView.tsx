@@ -1,7 +1,6 @@
 import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
-import { SystemOverviewCard } from './SystemOverviewCard';
 import { ActiveAgentsCard } from './ActiveAgentsCard';
 import { LiveOutputCard } from './LiveOutputCard';
 import { PtyTerminal } from './PtyTerminal';
@@ -25,7 +24,6 @@ export function TerminalView() {
       </div>
 
       <div style={railStyle}>
-        <SystemOverviewCard />
         <ActiveAgentsCard />
         <LiveOutputCard />
       </div>

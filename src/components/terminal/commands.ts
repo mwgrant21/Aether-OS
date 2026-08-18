@@ -1,5 +1,5 @@
-import type { Agent, AetherState, CommandResult, TermLine, ThemeName, RendererMode } from '../../state/types';
-import { fmt, fmtEta } from '../../utils/format';
+import type { AetherState, CommandResult, TermLine, ThemeName, RendererMode } from '../../state/types';
+import { fmt, fmtEta, fmtElapsed } from '../../utils/format';
 import { deriveContextWindowCard } from '../layout/contextWindowCard';
 
 /**
@@ -31,36 +31,6 @@ function line(t: string, c: string = BODY): TermLine {
   return { t, c };
 }
 
-const AGENT_HUES = ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'];
-
-export function makeAgent(name: string): Agent {
-  return {
-    i: name
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase(),
-    name,
-    task: 'Initializing…',
-    pct: 0,
-    hue: AGENT_HUES[Math.floor(Math.random() * AGENT_HUES.length)],
-    eta: 'calc…',
-    share: 0.12 + Math.random() * 0.1,
-    hist: [],
-    files: [
-      { s: '›', n: 'booting runtime…', c: '#4e7c8b' },
-      { s: '·', n: 'awaiting mission', c: '#4e7c8b' },
-    ],
-  };
-}
-
-export function nextAutoName(state: AetherState): string {
-  const pool = ['Image Gen', 'Sentry', 'Doc Writer', 'Optimizer', 'Auditor'];
-  const taken = new Set([...state.agents.map((a) => a.name), ...state.idleList.map((x) => x.name)]);
-  return pool.find((n) => !taken.has(n)) || `Auxiliary ${state.agents.length + 1}`;
-}
-
 export const THEME_NAMES: ThemeName[] = ['cyan', 'blue', 'teal', 'violet', 'amber', 'red'];
 export const RENDERER_WORDS = ['nebula', 'volumetric', 'warp', 'storm'] as const;
 
@@ -75,8 +45,6 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
         line('Available commands:', DIM),
         line('  status              reactor & session summary'),
         line('  agents              list active agents'),
-        line('  spawn <name>        spawn a new agent'),
-        line('  kill <name>         terminate an agent'),
         line('  budget              token budget & burn'),
         line('  projects            list projects'),
         line('  approvals           list pending authorizations'),
@@ -100,40 +68,11 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
     }
 
     case 'agents': {
-      if (!state.agents.length) out.push(line('  no active agents', DIM));
-      state.agents.forEach((a) =>
-        out.push(line(`  ${a.i}  ${a.name.padEnd(16)}${Math.round(a.pct)}%  ${a.paused ? 'paused' : 'active'}`, a.paused ? '#f5c66b' : BODY)),
+      if (!state.realAgents.length) out.push(line('  no active agents', DIM));
+      state.realAgents.forEach((a) =>
+        out.push(line(`  ${a.subagentType.padEnd(20)}${fmtElapsed(Date.now() - new Date(a.startedAt).getTime())}  ${a.description}`)),
       );
       return { kind: 'append', lines: out };
-    }
-
-    case 'spawn': {
-      const requested = args.join(' ');
-      const agent = makeAgent(requested || nextAutoName(state));
-      out.push(line(`✓ ${agent.name} spawned — reactor load increased`, GOOD));
-      return {
-        kind: 'append',
-        lines: out,
-        patch: { agents: [...state.agents, agent], rate: Math.min(168000, state.rate + 18000) },
-      };
-    }
-
-    case 'kill': {
-      const name = args.join(' ');
-      const hit = state.agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
-      if (!hit) {
-        out.push(line(`✗ no agent named "${name}"`, BAD));
-        return { kind: 'append', lines: out };
-      }
-      out.push(line(`✓ ${hit.name} terminated — returned to idle pool`, GOOD));
-      return {
-        kind: 'append',
-        lines: out,
-        patch: {
-          agents: state.agents.filter((a) => a.name !== hit.name),
-          idleList: [...state.idleList, { name: hit.name, last: 'just now' }],
-        },
-      };
     }
 
     case 'budget': {

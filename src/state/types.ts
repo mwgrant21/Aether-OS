@@ -1,33 +1,3 @@
-export interface AgentFile {
-  s: string;
-  n: string;
-  c: string;
-}
-
-export interface Agent {
-  i: string;
-  name: string;
-  task: string;
-  pct: number;
-  hue: string;
-  eta: string;
-  share: number;
-  hist: number[];
-  files: AgentFile[];
-  paused?: boolean;
-}
-
-export interface IdleAgent {
-  name: string;
-  last: string;
-}
-
-export interface SysMetric {
-  label: string;
-  val: number;
-  hist: number[];
-}
-
 export interface Notif {
   t: string;
   m: string;
@@ -200,11 +170,9 @@ export interface AetherState {
   rate: number;
   momentum: number;
   ctxUsed: number;
-  weekRaw: number[];
   commandsRun: number;
   sessionStartedAt: string;
   activeTab: string;
-  selected: string | null;
   selectedProject: string | null;
   selectedMemory: string | null;
   selectedRealAgent: string | null;
@@ -215,9 +183,6 @@ export interface AetherState {
   alarmLevel: AlarmLevel;
   apprOpen: boolean;
   cfg: Cfg;
-  agents: Agent[];
-  idleList: IdleAgent[];
-  sys: SysMetric[];
   logs: LogEntry[];
   memories: MemoryRow[];
   memoryTombstones: MemoryTombstone[];
