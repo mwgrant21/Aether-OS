@@ -15,6 +15,20 @@ export interface TermLine {
   c: string;
 }
 
+export interface PlanUsageTier {
+  tier: 'pro' | 'max';
+  weekModel: { pct: number } | null;
+  capturedAtMs: number;
+}
+
+export interface PlanUsageSyncResult {
+  ok: boolean;
+  tier?: 'pro' | 'max';
+  weekModel?: { pct: number } | null;
+  capturedAtMs?: number;
+  error?: string;
+}
+
 import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
@@ -223,6 +237,7 @@ export interface AetherState {
   optimizeSummary: OptimizeSummary;
   optimizeBreakdown: GradeRow[];
   statusline: StatuslineSnapshot | null;
+  planUsageTier: PlanUsageTier | null;
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
   ledger: LedgerSnapshot | null;

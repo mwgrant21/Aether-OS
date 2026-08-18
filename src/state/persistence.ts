@@ -77,6 +77,7 @@ export function savePersisted(state: AetherState): void {
       dispatchUsage: state.dispatchUsage,
       crossEngineCfg: state.crossEngineCfg,
       codexTerminalCfg: state.codexTerminalCfg,
+      planUsageTier: state.planUsageTier,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slice));
   } catch {

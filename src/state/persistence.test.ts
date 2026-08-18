@@ -63,6 +63,12 @@ describe('persistence', () => {
     expect(loaded?.operatorName).toBe('Matt');
   });
 
+  it('persists planUsageTier across reloads', () => {
+    savePersisted({ ...initialState, planUsageTier: { tier: 'max', weekModel: { pct: 52 }, capturedAtMs: 1700000000000 } });
+    const loaded = loadPersisted();
+    expect(loaded?.planUsageTier).toEqual({ tier: 'max', weekModel: { pct: 52 }, capturedAtMs: 1700000000000 });
+  });
+
   it('does not persist logs', () => {
     savePersisted({ ...initialState, logs: [{ t: '10:00:00', m: 'test', c: '#7fd8ef' }] });
     const loaded = loadPersisted();
