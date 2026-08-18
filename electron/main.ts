@@ -5,6 +5,7 @@ import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
+import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty } from './codexPtyManager';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
@@ -930,6 +931,18 @@ ipcMain.on('pty:write', (_event, input: string) => {
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   ptyLifecycle.resize(cols, rows);
+});
+
+ipcMain.handle('plan:sync', async () => {
+  if (!ptyLifecycle.current) return { ok: false, error: 'no terminal' };
+  return runPlanUsageSync({
+    write: (input) => ptyLifecycle.write(input),
+    getSnapshot: () => planUsageScraper.getSnapshot(),
+    hasSeenUsagePane: () => planUsageScraper.hasSeenUsagePane(),
+    reset: () => planUsageScraper.reset(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+  });
 });
 
 // Fully independent from the Claude pty's ptyLifecycle above: separate
