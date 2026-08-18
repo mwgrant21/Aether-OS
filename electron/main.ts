@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
+import { createPlanUsageScraper } from './planUsageScraper';
 import { spawnCodexPty } from './codexPtyManager';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
@@ -900,11 +901,14 @@ ipcMain.handle('app:getVersion', () => {
 // without loading main.ts (and node-pty) in the test environment.
 const ptyLifecycle = new PtyLifecycle();
 
+const planUsageScraper = createPlanUsageScraper();
+
 ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
   ptyLifecycle.start(() => spawnPty(cols, rows), {
     onData: (data) => {
       if (!sender.isDestroyed()) sender.send('pty:data', data);
+      planUsageScraper.ingest(data);
     },
     // Lets the renderer's Uplinks view show real terminal liveness instead of
     // an always-on fake status -- see useTerminalAliveSync.ts. terminalAlive
@@ -912,7 +916,10 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
     // visited, and never at all outside Electron), so this is the event that
     // turns it on; pty:exit turns it back off.
     onAlive: () => sendToWindow('pty:alive', undefined),
-    onExit: () => sendToWindow('pty:exit', undefined),
+    onExit: () => {
+      sendToWindow('pty:exit', undefined);
+      planUsageScraper.reset(); // a new pty means a fresh /usage read next time
+    },
   });
   liveAgentTracker.notifyPtySpawned(Date.now());
 });
