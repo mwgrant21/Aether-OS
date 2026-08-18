@@ -3,6 +3,7 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { ActiveAgentsCard } from './ActiveAgentsCard';
 import { LiveOutputCard } from './LiveOutputCard';
+import { PlanUsageCard } from './PlanUsageCard';
 import { PtyTerminal } from './PtyTerminal';
 
 export function TerminalView() {
@@ -24,6 +25,7 @@ export function TerminalView() {
       </div>
 
       <div style={railStyle}>
+        <PlanUsageCard />
         <ActiveAgentsCard />
         <LiveOutputCard />
       </div>
