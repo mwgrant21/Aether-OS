@@ -1,8 +1,3 @@
-import { expect, afterEach } from 'vitest';
-import * as matchers from '@testing-library/jest-dom/matchers';
-
-expect.extend(matchers);
-
 // Node 22+ (including the Node 25 toolchain this repo targets) defines a global
 // `localStorage`/`sessionStorage` that is inert unless the process is started with
 // `--localstorage-file`. Vitest's jsdom environment only copies keys onto `globalThis`

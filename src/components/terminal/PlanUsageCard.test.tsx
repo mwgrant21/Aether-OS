@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
@@ -59,7 +59,7 @@ describe('PlanUsageCard', () => {
 
   it('disables the Sync button when the Terminal pty is not alive', () => {
     renderWithState({ terminalAlive: false });
-    expect(screen.getByText('Sync').closest('button')).toBeDisabled();
+    expect(screen.getByText('Sync').closest('button')?.disabled).toBe(true);
   });
 
   it('clicking Sync calls window.aetherElectron.plan.sync() and dispatches the result on success', async () => {
