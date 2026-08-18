@@ -1,4 +1,4 @@
-import type { AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
+import type { AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PlanUsageTier, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
 import type { NotificationReason } from '../shared/alertSounds';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
@@ -36,6 +36,7 @@ export type Action =
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
   | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
   | { type: 'SELECT_REAL_AGENT'; toolUseId: string }
+  | { type: 'SET_PLAN_USAGE_TIER'; snapshot: PlanUsageTier }
   | { type: 'CREATE_DISPATCH_CHANNEL'; toolUseId: string }
   | { type: 'REMOVE_DISPATCH_CHANNEL'; toolUseId: string }
   | { type: 'RECORD_DISPATCH_USAGE'; completed: CompletedDispatchUsage[] }
@@ -427,6 +428,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SELECT_REAL_AGENT':
       return { ...state, selectedRealAgent: action.toolUseId };
+
+    case 'SET_PLAN_USAGE_TIER':
+      return { ...state, planUsageTier: action.snapshot };
 
     case 'RUN_COMMAND': {
       const result = runCommand(state, action.raw);

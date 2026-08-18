@@ -725,4 +725,23 @@ describe('reducer — real notifications for anomalies and completed dispatches'
       expect(next.unread).toBe(initialState.unread + 1);
     });
   });
+
+  describe('SET_PLAN_USAGE_TIER', () => {
+    it('replaces state.planUsageTier with the given snapshot', () => {
+      const next = reducer(initialState, {
+        type: 'SET_PLAN_USAGE_TIER',
+        snapshot: { tier: 'max', weekModel: { pct: 52 }, capturedAtMs: 1700000000000 },
+      });
+      expect(next.planUsageTier).toEqual({ tier: 'max', weekModel: { pct: 52 }, capturedAtMs: 1700000000000 });
+    });
+
+    it('touches nothing else in state', () => {
+      const next = reducer(initialState, {
+        type: 'SET_PLAN_USAGE_TIER',
+        snapshot: { tier: 'pro', weekModel: null, capturedAtMs: 1700000000000 },
+      });
+      expect(next.rate).toBe(initialState.rate);
+      expect(next.statusline).toBe(initialState.statusline);
+    });
+  });
 });
