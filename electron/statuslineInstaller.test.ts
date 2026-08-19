@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   detectInstallStatus,
+  extractChainedCommand,
   installStatusline,
   readInstallState,
   statuslineSettingsPatch,
@@ -17,6 +18,41 @@ describe('statuslineSettingsPatch', () => {
     const patch = statuslineSettingsPatch(SCRIPT_PATH);
     expect(patch.statusLine.type).toBe('command');
     expect(patch.statusLine.command).toContain(SCRIPT_PATH);
+  });
+
+  it('embeds no --chain argument when chainCommand is omitted or null', () => {
+    expect(statuslineSettingsPatch(SCRIPT_PATH).statusLine.command).not.toContain('--chain');
+    expect(statuslineSettingsPatch(SCRIPT_PATH, null).statusLine.command).not.toContain('--chain');
+  });
+
+  it('embeds chainCommand as a base64 --chain argument, round-trippable via extractChainedCommand', () => {
+    const foreignCommand = 'powershell -File "C:\\has spaces\\script.ps1" -Arg "quoted value"';
+    const patch = statuslineSettingsPatch(SCRIPT_PATH, foreignCommand);
+    expect(patch.statusLine.command).toContain(SCRIPT_PATH);
+    expect(patch.statusLine.command).toContain('--chain ');
+    expect(extractChainedCommand(patch.statusLine.command)).toBe(foreignCommand);
+  });
+});
+
+describe('extractChainedCommand', () => {
+  it('returns null for a plain (unchained) command', () => {
+    expect(extractChainedCommand(`node "${SCRIPT_PATH}"`)).toBeNull();
+  });
+
+  it('returns null for null input', () => {
+    expect(extractChainedCommand(null)).toBeNull();
+  });
+
+  it('returns null for a malformed --chain argument (not valid base64-decodable content)', () => {
+    // Buffer.from(..., 'base64') never throws on arbitrary text -- it just
+    // decodes best-effort. An empty decode result is what must map to null.
+    expect(extractChainedCommand(`node "${SCRIPT_PATH}" --chain`)).toBeNull();
+  });
+
+  it('decodes a real --chain argument back to the original command', () => {
+    const original = 'npx claude-powerline';
+    const command = `node "${SCRIPT_PATH}" --chain ${Buffer.from(original, 'utf8').toString('base64')}`;
+    expect(extractChainedCommand(command)).toBe(original);
   });
 });
 
@@ -164,7 +200,7 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
   ])('aborts uninstallStatusline on valid but non-object JSON (%s), leaving the file untouched', async (_label, original) => {
     writeFileSync(settingsPath, original, 'utf8');
 
-    const result = await uninstallStatusline(settingsPath);
+    const result = await uninstallStatusline(settingsPath, SCRIPT_PATH);
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
 
@@ -172,7 +208,7 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
     expect(afterBytes).toBe(original);
   });
 
-  it('installStatusline overwrites an installed-other statusLine, backing up the original other-tool config', async () => {
+  it('installStatusline chains an installed-other statusLine rather than discarding it, backing up the original config', async () => {
     const original = {
       sentinel: 'keep-me',
       statusLine: { type: 'command', command: 'npx claude-powerline' },
@@ -187,6 +223,9 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
     const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(written.statusLine.command).toContain(SCRIPT_PATH);
     expect(written.sentinel).toBe('keep-me');
+    // The foreign command isn't lost -- it's embedded as a --chain argument,
+    // decodable back to the exact original string.
+    expect(extractChainedCommand(written.statusLine.command)).toBe('npx claude-powerline');
 
     const backupRaw = readFileSync(result.backupPath!, 'utf8');
     expect(backupRaw).toBe(originalRaw);
@@ -195,11 +234,24 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
     rmSync(result.backupPath!, { force: true });
   });
 
-  it('uninstall removes only the statusLine key', async () => {
-    const original = { sentinel: 'keep-me', statusLine: { type: 'command', command: 'node x.mjs' } };
+  it('re-installing over an existing Aether chain carries the chain forward unchanged', async () => {
+    const chained = `node "${SCRIPT_PATH}" --chain ${Buffer.from('npx claude-powerline', 'utf8').toString('base64')}`;
+    writeFileSync(settingsPath, JSON.stringify({ statusLine: { type: 'command', command: chained } }), 'utf8');
+
+    const result = await installStatusline(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(extractChainedCommand(written.statusLine.command)).toBe('npx claude-powerline');
+
+    rmSync(result.backupPath!, { force: true });
+  });
+
+  it('uninstall with no chain removes only the statusLine key', async () => {
+    const original = { sentinel: 'keep-me', statusLine: { type: 'command', command: `node "${SCRIPT_PATH}"` } };
     writeFileSync(settingsPath, JSON.stringify(original, null, 2), 'utf8');
 
-    const result = await uninstallStatusline(settingsPath);
+    const result = await uninstallStatusline(settingsPath, SCRIPT_PATH);
     expect(result.ok).toBe(true);
     expect(result.backupPath).toBeTruthy();
 
@@ -210,11 +262,27 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
     rmSync(result.backupPath!, { force: true });
   });
 
+  it('uninstall with a chain restores the chained command instead of deleting statusLine', async () => {
+    const chained = `node "${SCRIPT_PATH}" --chain ${Buffer.from('npx claude-powerline', 'utf8').toString('base64')}`;
+    const original = { sentinel: 'keep-me', statusLine: { type: 'command', command: chained } };
+    writeFileSync(settingsPath, JSON.stringify(original, null, 2), 'utf8');
+
+    const result = await uninstallStatusline(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    expect(result.backupPath).toBeTruthy();
+
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.statusLine).toEqual({ type: 'command', command: 'npx claude-powerline' });
+    expect(written.sentinel).toBe('keep-me');
+
+    rmSync(result.backupPath!, { force: true });
+  });
+
   it('uninstall on a file with no statusLine succeeds as a no-op (no backup written)', async () => {
     const original = { sentinel: 'keep-me' };
     writeFileSync(settingsPath, JSON.stringify(original, null, 2), 'utf8');
 
-    const result = await uninstallStatusline(settingsPath);
+    const result = await uninstallStatusline(settingsPath, SCRIPT_PATH);
     expect(result.ok).toBe(true);
     expect(result.backupPath).toBeNull();
 
@@ -223,7 +291,7 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
   });
 
   it('uninstall on a missing file succeeds as a no-op', async () => {
-    const result = await uninstallStatusline(settingsPath);
+    const result = await uninstallStatusline(settingsPath, SCRIPT_PATH);
     expect(result.ok).toBe(true);
     expect(result.backupPath).toBeNull();
   });
@@ -232,7 +300,7 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
     const original = '{ broken';
     writeFileSync(settingsPath, original, 'utf8');
 
-    const result = await uninstallStatusline(settingsPath);
+    const result = await uninstallStatusline(settingsPath, SCRIPT_PATH);
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
 

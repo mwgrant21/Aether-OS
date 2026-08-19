@@ -15,9 +15,44 @@ export interface StatuslineInstallState {
  * The patch merged into settings.json. `command` invokes the script directly
  * with `node` -- quoted so paths containing spaces (very common on Windows,
  * e.g. "C:\Users\Jane Doe\...") survive Claude Code's shell invocation.
+ *
+ * When `chainCommand` is given (there was already a statusLine command
+ * configured -- another tool, or a prior Aether install's own chain), it is
+ * base64-encoded into a `--chain` argument rather than embedded as literal
+ * text: the chained command is itself an arbitrary shell command that may
+ * contain its own quotes (e.g. `powershell ... -File "C:\...\script.ps1"`),
+ * and nesting those inside settings.json's own command string would be a
+ * quoting hazard. Base64 sidesteps that entirely -- see
+ * scripts/aether-statusline.mjs's `parseChainArg` for the decode side.
  */
-export function statuslineSettingsPatch(scriptPath: string): { statusLine: { type: 'command'; command: string } } {
-  return { statusLine: { type: 'command', command: `node "${scriptPath}"` } };
+export function statuslineSettingsPatch(
+  scriptPath: string,
+  chainCommand?: string | null
+): { statusLine: { type: 'command'; command: string } } {
+  const base = `node "${scriptPath}"`;
+  const command = chainCommand
+    ? `${base} --chain ${Buffer.from(chainCommand, 'utf8').toString('base64')}`
+    : base;
+  return { statusLine: { type: 'command', command } };
+}
+
+/**
+ * Pulls the previously-chained command back out of one of Aether's own
+ * installed commands (`node "<script>" --chain <base64>`), or null if the
+ * given command isn't ours / carries no chain. Used by installStatusline (to
+ * carry a chain forward across a re-install) and uninstallStatusline (to
+ * restore the chained tool instead of deleting statusLine outright).
+ */
+export function extractChainedCommand(command: string | null): string | null {
+  if (!command) return null;
+  const m = /--chain\s+(\S+)/.exec(command);
+  if (!m) return null;
+  try {
+    const decoded = Buffer.from(m[1], 'base64').toString('utf8');
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -170,7 +205,16 @@ export async function installStatusline(
       backupPath = await writeBackup(settingsPath, raw);
     }
 
-    const patch = statuslineSettingsPatch(scriptPath);
+    // Chain rather than clobber: a foreign command (installed-other) is
+    // preserved as the thing we chain to, so its output keeps rendering
+    // through Aether's wrapper. A prior Aether install's own chain is
+    // carried forward unchanged across a re-install rather than being
+    // silently dropped back to no-chain.
+    const { status, existingCommand } = detectInstallStatus(parsed, scriptPath);
+    const chainCommand =
+      status === 'installed-other' ? existingCommand : status === 'installed' ? extractChainedCommand(existingCommand) : null;
+
+    const patch = statuslineSettingsPatch(scriptPath, chainCommand);
     const merged = { ...parsed, ...patch };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
     await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
@@ -181,7 +225,8 @@ export async function installStatusline(
 }
 
 export async function uninstallStatusline(
-  settingsPath: string
+  settingsPath: string,
+  scriptPath: string
 ): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> {
   const existingResult = await readExistingSettings(settingsPath);
   if (!existingResult.ok) {
@@ -196,7 +241,17 @@ export async function uninstallStatusline(
 
   try {
     const backupPath = await writeBackup(settingsPath, raw);
-    delete parsed.statusLine;
+    const { existingCommand } = detectInstallStatus(parsed, scriptPath);
+    const chained = extractChainedCommand(existingCommand);
+    if (chained) {
+      // Restore the tool Aether was chained through, rather than deleting
+      // statusLine outright -- the whole point of chaining instead of
+      // replacing is that uninstalling Aether must not also silently kill
+      // whatever other statusLine command the user had running before.
+      (parsed as Record<string, unknown>).statusLine = { type: 'command', command: chained };
+    } else {
+      delete parsed.statusLine;
+    }
     await writeSettingsAtomically(settingsPath, JSON.stringify(parsed, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {

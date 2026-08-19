@@ -6,10 +6,12 @@ import { parseStatuslinePayload, type StatuslineSnapshot } from '../src/shared/s
  * `fs.watch` is explicitly avoided here: on Windows it does not reliably
  * report the atomic write-then-renameSync pattern Task 3's script uses to
  * persist the payload (write to `.tmp`, then `renameSync` over the target).
- * A ~2s poll interval is frequent enough for an event-driven feed that is
- * itself debounced at 300ms on the writer's side.
+ * A ~10s poll interval is plenty for Session/Week bars that change over
+ * minutes-to-hours, not seconds -- and it halves the extra process-spawn
+ * overhead the statusline chaining feature (see aether-statusline.mjs's
+ * runChainedCommand) adds on every render this file's writer reacts to.
  */
-const WATCH_INTERVAL_MS = 2000;
+const WATCH_INTERVAL_MS = 10000;
 
 /**
  * Reads and parses the statusline payload file. Never throws: a missing

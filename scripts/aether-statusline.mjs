@@ -11,20 +11,22 @@
 // problem in one stage (e.g. the file write) cannot prevent the fallback stdout line
 // from being printed.
 //
-// Node builtins only (node:fs, node:path, node:os, node:process) — no imports from
-// src/ or electron/, and no npm dependencies. This file is executed by Claude Code
-// from an arbitrary working directory with no relationship to this repo's module
-// resolution, so a relative import would fail at runtime in a way no test here would
-// catch.
+// Node builtins only (node:fs, node:path, node:os, node:child_process, node:process)
+// — no imports from src/ or electron/, and no npm dependencies. This file is
+// executed by Claude Code from an arbitrary working directory with no relationship
+// to this repo's module resolution, so a relative import would fail at runtime in a
+// way no test here would catch.
 
 import { readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
 const FALLBACK_LINE = 'Aether OS';
 const MAX_LINE_LENGTH = 60;
 const MIDDLE_DOT = '·';
+const CHAIN_TIMEOUT_MS = 5000;
 
 /** Reads all of stdin synchronously. Returns '' on any failure (closed stdin, no
  *  input piped, read error) rather than throwing. */
@@ -125,6 +127,47 @@ function persistSnapshot(payload) {
   }
 }
 
+/** Decodes the `--chain <base64>` CLI argument installStatusline embeds when
+ *  another statusLine command was already configured (see
+ *  statuslineInstaller.ts's statuslineSettingsPatch). Returns null when
+ *  absent or undecodable -- never throws. */
+function parseChainArg(argv) {
+  const idx = argv.indexOf('--chain');
+  if (idx === -1 || idx + 1 >= argv.length) {
+    return null;
+  }
+  try {
+    const decoded = Buffer.from(argv[idx + 1], 'base64').toString('utf8');
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Runs whatever statusLine command was configured before this script was
+ *  installed, feeding it the exact same stdin Claude Code gave us, and
+ *  returns its trimmed stdout -- or null on any failure (non-zero exit,
+ *  spawn error, timeout, empty output). Bounded by CHAIN_TIMEOUT_MS so a
+ *  hung chained command can never hang the user's statusline render; never
+ *  throws, matching this script's hard contract. */
+function runChainedCommand(command, rawStdin) {
+  try {
+    const result = spawnSync(command, {
+      input: rawStdin,
+      shell: true,
+      encoding: 'utf8',
+      timeout: CHAIN_TIMEOUT_MS,
+    });
+    if (result.error || result.status !== 0) {
+      return null;
+    }
+    const out = typeof result.stdout === 'string' ? result.stdout.trim() : '';
+    return out.length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
 function main() {
   const raw = readStdin();
   const payload = parsePayload(raw);
@@ -135,6 +178,20 @@ function main() {
   }
 
   persistSnapshot(payload);
+
+  const chainCommand = parseChainArg(process.argv.slice(2));
+  if (chainCommand) {
+    const chainedLine = runChainedCommand(chainCommand, raw);
+    if (chainedLine !== null) {
+      // Print the chained tool's own line verbatim -- Aether's payload
+      // capture above already happened as a side effect, invisible to what
+      // the user sees in their terminal.
+      process.stdout.write(`${chainedLine}\n`);
+      return;
+    }
+    // Chained command failed, timed out, or printed nothing -- fall through
+    // to Aether's own line so the statusline never goes blank.
+  }
 
   const line = buildStatusLine(payload);
   process.stdout.write(`${line}\n`);

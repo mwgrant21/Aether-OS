@@ -112,18 +112,20 @@ export function StatuslineCard() {
             {state.status === 'installed-other' && (
               <div style={{ position: 'relative' }}>
                 <Button onClick={() => setReplacePickerOpen((v) => !v)} style={actionBtnStyle(colors)} disabled={busy}>
-                  Replace
+                  Chain
                 </Button>
                 {replacePickerOpen && (
                   <div style={confirmPanelStyle(colors)}>
                     <div style={confirmTextStyle(colors)}>
-                      This overwrites the existing statusLine command shown above. A timestamped backup of settings.json
-                      is written first — uninstalling later will not automatically restore this command, only the
-                      backup file will have it.
+                      This wraps the existing statusLine command shown above rather than replacing it — Aether runs it
+                      first and prints its output unchanged, so your terminal's status line keeps showing exactly what
+                      it does today; Aether just also captures rate-limit/context data as a side effect. A timestamped
+                      backup of settings.json is written first, and uninstalling later restores this exact command
+                      automatically.
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <Button onClick={runInstall} style={confirmYesStyle(colors)} disabled={busy}>
-                        Confirm replace
+                        Confirm chain
                       </Button>
                       <Button onClick={() => setReplacePickerOpen(false)} style={confirmNoStyle(colors)} disabled={busy}>
                         Cancel
@@ -142,9 +144,9 @@ export function StatuslineCard() {
                 {uninstallConfirmOpen && (
                   <div style={confirmPanelStyle(colors)}>
                     <div style={confirmTextStyle(colors)}>
-                      This removes the statusLine command from settings.json (a timestamped backup is written first). If
-                      this was installed via Replace, whatever command was there before is <strong>not</strong> restored
-                      automatically — recover it from that earlier backup file if you need it back.
+                      This removes Aether from settings.json (a timestamped backup is written first). If this was
+                      installed via Chain, the command it was chained through is restored automatically; if it was a
+                      fresh install with nothing to chain, the statusLine key is removed entirely.
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <Button onClick={runUninstall} style={confirmYesStyle(colors)} disabled={busy}>

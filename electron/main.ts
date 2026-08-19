@@ -1120,7 +1120,7 @@ ipcMain.handle('statusline:install', () => {
 });
 
 ipcMain.handle('statusline:uninstall', async () => {
-  const result = await uninstallStatusline(statuslineSettingsPath);
+  const result = await uninstallStatusline(statuslineSettingsPath, statuslineScriptPath);
   if (result.ok) {
     cachedStatuslineSnapshot = null;
     await fsp.rm(statuslinePayloadPath, { force: true });
