@@ -9,6 +9,13 @@
 //
 // npm install recreates node_modules and drops the ACE, so this runs on postinstall.
 // Chrome ships with this ACE on its own install directory for the same reason.
+//
+// Electron 42 stopped downloading its binary during its own postinstall -- dist/ is
+// now fetched on first run instead. That would leave this script with nothing to
+// grant at install time and no second chance before the app launches, so package.json
+// chains `install-electron && node scripts/grant-appcontainer-acl.js`. Do not drop
+// the `install-electron` half: without it this script silently skips and the very
+// first launch after a fresh install dies with exit_code=-1073741515.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
