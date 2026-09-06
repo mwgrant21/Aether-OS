@@ -161,10 +161,13 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private readonly threads = new Set<string>();
-  /** threadId -> turnId of the turn currently in flight. Populated from the
-   *  first notification carrying a turnId, because turn/start does not
-   *  resolve until the turn is over -- so the id needed to interrupt it can
-   *  only come from the stream. */
+  /** threadId -> turnId of the turn currently in flight, and the id cancel()
+   *  interrupts. Populated ONLY from turn/start's accepted turn -- never from
+   *  a notification, which can belong to a previous turn still finishing.
+   *  (The original comment here claimed the id could only come from the
+   *  stream, because turn/start was believed not to resolve until the turn was
+   *  over. That was backwards: turn/start resolves on acceptance and carries
+   *  the id.) */
   private readonly activeTurn = new Map<string, string>();
   private readonly interrupted = new Set<string>();
   private serverVersion: string | null = null;
@@ -296,7 +299,13 @@ export class CodexAppServerAdapter implements ProviderAdapter {
 
   private onNotification(method: string, params: unknown): void {
     const p = (params ?? {}) as TurnScopedParams;
-    if (p.threadId && p.turnId) this.activeTurn.set(p.threadId, p.turnId);
+    // activeTurn is NOT set from notifications. It used to be, unconditionally
+    // and before the accepted-id gate below, which meant a late notification
+    // from a previous turn could overwrite it with that turn's id -- and
+    // cancel(), which reads activeTurn, would then interrupt the OLD turn
+    // while the accepted one kept running. The id is now retained from
+    // turn/start's accepted turn only (see sendTurn), which is the single
+    // authoritative source and cannot be poisoned by a stale notification.
     if (!this.streamListener || !this.streamThreadId || p.threadId !== this.streamThreadId) return;
     const sessionId = this.streamThreadId;
 

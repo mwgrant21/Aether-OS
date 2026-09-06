@@ -518,6 +518,44 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
+  it('a stale notification cannot redirect cancel() to a previous turn', async () => {
+    // The hazard the previous round's fix created: activeTurn was written
+    // from any notification carrying a turnId, so a late one from turn 1
+    // arriving during turn 2 made cancel() interrupt turn 1 instead.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = 'turn-' + turnNo;
+        if (turnNo === 2) {
+          setTimeout(() => {
+            push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i0', delta: 'STALE' });
+          }, 20);
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+
+    const turn = adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 400 }, () => {});
+    await new Promise((r) => setTimeout(r, 60)); // let the stale delta land
+    await adapter.cancel(sessionId);
+    await turn;
+
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt).toBeTruthy();
+    // Must interrupt the turn actually running, not the one that leaked in.
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-2');
+    await adapter.dispose();
+  });
+
   it('can interrupt a turn acknowledged before any notification arrived', async () => {
     // cancel() reads activeTurn; if turn/start answered first and only the
     // waiter knew the id, the interrupt was silently never sent.
