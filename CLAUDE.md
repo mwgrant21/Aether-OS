@@ -147,7 +147,7 @@ docs/superpowers/
   binding: a cost bucket with no observed data is `null`, never `0` — see
   `RollupCard`, where "no data" and "$0.00" are deliberately different
   renderings, and `bucketByDay`, whose return type forces the distinction.
-- **Model calls**: no model call site exists anywhere in this repo. The
+- **Model calls**: no model call site is reachable from the running app. (Two provider adapters can spawn a CLI — `acpProcess.ts` the Codex ACP adapter, and `providers/claudeHeadlessCli.ts` `claude -p` — but only Codex verification is wired to IPC/UI; the Claude adapter is constructed by nothing outside tests. See `docs/privacy-and-data.md` §9 and §12 before changing that.) The
   `@anthropic-ai/sdk` dependency is gone from `package.json`; `chatCore.ts`,
   `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC
   pair, `.env` key loading (`electron/loadDotEnv.ts`), and the `modelPolicy.ts`

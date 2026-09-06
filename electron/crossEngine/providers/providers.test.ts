@@ -8,14 +8,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 
 import { ProviderError, type ProviderEvent } from './contract';
 import { FakeProvider } from './fakeProvider';
 import { runProviderConformance } from './providerConformance';
 import { LegacyCodexAcpAdapter } from './legacyCodexAcp';
 import { CodexAppServerAdapter } from './codexAppServer';
-import { ClaudeAgentSdkAdapter } from './claudeAgentSdk';
+import { ClaudeHeadlessCliAdapter } from './claudeHeadlessCli';
 import { AcpClient } from '../acpClient';
 
 // ---------------------------------------------------------------------------
@@ -163,6 +163,74 @@ function makeAppServerAdapter(): CodexAppServerAdapter {
   return new CodexAppServerAdapter(() => fake.child);
 }
 
+
+// ---------------------------------------------------------------------------
+// claude -p fake. Emits the exact stream-json line vocabulary a real run
+// produced (system/init, stream_event/content_block_delta, user tool_result,
+// result), so the adapter is tested against observed output rather than an
+// invented shape.
+// ---------------------------------------------------------------------------
+
+interface ClaudeFake {
+  spawnTurn: (args: string[], cwd: string) => ChildProcess;
+  /** Every argv the adapter spawned, so a test can assert the read-only flag
+   *  set actually reaches the CLI. */
+  calls: Array<{ args: string[]; cwd: string }>;
+}
+
+function claudeCliFake(opts: { deltas?: string[]; denyPermission?: boolean; omitResult?: boolean } = {}): ClaudeFake {
+  const calls: Array<{ args: string[]; cwd: string }> = [];
+  const spawnTurn = (args: string[], cwd: string): ChildProcess => {
+    calls.push({ args, cwd });
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const child = new EventEmitter() as unknown as ChildProcess & { stdout: PassThrough; stdin: PassThrough };
+    child.stdout = stdout;
+    child.stdin = stdin;
+    (child as unknown as { kill: () => void }).kill = vi.fn();
+
+    const sid = 'claude-sess-abc';
+    const line = (o: unknown) => stdout.write(JSON.stringify(o) + '\n');
+    queueMicrotask(() => {
+      line({ type: 'system', subtype: 'init', session_id: sid, cwd, tools: ['Read', 'Grep', 'Glob'], mcp_servers: [] });
+      for (const d of opts.deltas ?? ['hello ', 'world']) {
+        line({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: d } },
+          session_id: sid,
+        });
+      }
+      if (opts.denyPermission) {
+        line({
+          type: 'user',
+          message: {
+            content: [
+              { type: 'tool_result', tool_use_id: 'tu_1', is_error: true, content: 'Permission for this tool use was denied.' },
+            ],
+          },
+          session_id: sid,
+        });
+      }
+      if (!opts.omitResult) {
+        line({
+          type: 'result',
+          subtype: 'success',
+          session_id: sid,
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 9, cache_creation_input_tokens: 3 },
+        });
+      }
+      child.emit('close', 0);
+    });
+    return child;
+  };
+  return { spawnTurn, calls };
+}
+
+function makeClaudeAdapter(): ClaudeHeadlessCliAdapter {
+  return new ClaudeHeadlessCliAdapter(claudeCliFake().spawnTurn);
+}
+
 // ---------------------------------------------------------------------------
 // The shared contract, run against every adapter
 // ---------------------------------------------------------------------------
@@ -170,15 +238,7 @@ function makeAppServerAdapter(): CodexAppServerAdapter {
 runProviderConformance({ name: 'FakeProvider', create: () => new FakeProvider({ chunks: ['hel', 'lo'] }) });
 runProviderConformance({ name: 'LegacyCodexAcpAdapter', create: makeLegacyAdapter });
 runProviderConformance({ name: 'CodexAppServerAdapter', create: makeAppServerAdapter });
-// The Claude stub cannot connect, so only the pre-connect half of the contract
-// applies -- which is exactly the half that must already be right for the real
-// implementation to drop in later.
-runProviderConformance({
-  name: 'ClaudeAgentSdkAdapter (stub)',
-  create: () => new ClaudeAgentSdkAdapter(),
-  skipTurns: true,
-  connectable: false,
-});
+runProviderConformance({ name: 'ClaudeHeadlessCliAdapter', create: makeClaudeAdapter });
 
 // ---------------------------------------------------------------------------
 // Adapter-specific behaviour the shared contract cannot express
@@ -313,23 +373,92 @@ describe('CodexAppServerAdapter', () => {
   });
 });
 
-describe('ClaudeAgentSdkAdapter', () => {
-  it('fails loudly with NOT_IMPLEMENTED instead of silently degrading', async () => {
-    const adapter = new ClaudeAgentSdkAdapter();
-    let caught: unknown;
-    try {
-      await adapter.connect();
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderError);
-    expect((caught as ProviderError).code).toBe('NOT_IMPLEMENTED');
+describe('ClaudeHeadlessCliAdapter', () => {
+  it('passes the full fail-closed read-only flag set on every turn', async () => {
+    const fake = claudeCliFake();
+    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'review this' }, () => {});
+
+    const args = fake.calls[0].args;
+    // --restricted alone is NOT read-only: a measured run left Write, Edit,
+    // NotebookEdit and Skill available. Each flag carries part of the
+    // guarantee, so each is asserted individually rather than as one blob.
+    expect(args).toContain('--restricted');
+    expect(args).toContain('--strict-mcp-config');
+    expect(args).toContain('--disable-slash-commands');
+    // Fail-closed allowlist, not a denylist -- a denylist would admit any
+    // newly added tool by default.
+    expect(args).toContain('--allowedTools');
+    expect(args).toContain('Read');
+    expect(args).not.toContain('--disallowedTools');
+    // Anything that would prompt is denied automatically.
+    expect(args.join(' ')).toContain('--permission-prompts none');
+    expect(args).not.toContain('bypassPermissions');
+    expect(fake.calls[0].cwd).toBe('C:/tmp/snapshot');
+    await adapter.dispose();
   });
 
-  it('still declares the capability set its implementation will have', () => {
-    const caps = new ClaudeAgentSdkAdapter().capabilities();
-    expect(caps.streamingEvents).toBe(true);
-    expect(caps.cancellation).toBe(true);
+  it('learns the CLI session id and resumes it on the next turn', async () => {
+    const fake = claudeCliFake();
+    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    await adapter.sendTurn({ sessionId, text: 'first' }, () => {});
+    expect(fake.calls[0].args).not.toContain('--resume');
+
+    await adapter.sendTurn({ sessionId, text: 'second' }, () => {});
+    expect(fake.calls[1].args).toContain('--resume');
+    expect(fake.calls[1].args).toContain('claude-sess-abc');
+    await adapter.dispose();
+  });
+
+  it('reports provider usage from the result line', async () => {
+    const adapter = makeClaudeAdapter();
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 7, cachedInputTokens: 9 });
+    expect(result.stopReason).toBe('completed');
+    expect(result.text).toBe('hello world');
+    await adapter.dispose();
+  });
+
+  it('surfaces a denied tool as a permission-request event', async () => {
+    const fake = claudeCliFake({ denyPermission: true });
+    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const events: ProviderEvent[] = [];
+    await adapter.sendTurn({ sessionId, text: 'write a file' }, (e) => events.push(e));
+
+    const denials = events.filter((e) => e.kind === 'permission-request');
+    expect(denials).toHaveLength(1);
+    expect(denials[0]).toMatchObject({ decision: 'denied' });
+    await adapter.dispose();
+  });
+
+  it('treats a turn that produced no result line as an error, not a completion', async () => {
+    const fake = claudeCliFake({ omitResult: true });
+    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.stopReason).toBe('error');
+    await adapter.dispose();
+  });
+
+  it('does not shell out merely to report health', async () => {
+    const fake = claudeCliFake();
+    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn);
+    await adapter.connect();
+    await adapter.health();
+    // A health probe that spent tokens would make looking at a status card
+    // cost money -- the same rule AcpClient.probe() follows.
+    expect(fake.calls).toHaveLength(0);
+    await adapter.dispose();
   });
 });
 

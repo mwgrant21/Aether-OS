@@ -97,7 +97,7 @@ function defaultSpawn(): ChildProcessWithoutNullStreams {
 }
 
 export class CodexAppServerAdapter implements ProviderAdapter {
-  readonly id = 'codex-app-server' as const;
+  readonly id = 'codexAppServer' as const;
 
   private child: ChildProcessWithoutNullStreams | null = null;
   private buffer = '';

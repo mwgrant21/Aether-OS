@@ -17,14 +17,22 @@
 //     account/rateLimits/read, plus item/* notifications and item/*
 //     requestApproval server->client requests.
 //
+// The Claude side is `claude -p --output-format stream-json` (see
+// claudeHeadlessCli.ts), chosen after probing all three candidates live.
 // It is NOT shaped around `claude mcp serve`: that command was probed and
 // exposes Claude Code's TOOLS to an MCP client, with no session, turn,
 // cancellation, or approval semantics (its entire option surface is
-// --debug/--verbose). A real Claude adapter therefore needs the Claude Agent
-// SDK; claudeAgentSdk.ts is a declared, conformance-checked stub until that
-// dependency is a deliberate decision.
+// --debug/--verbose). The Claude Agent SDK would also work, but adds a runtime
+// dependency and a second authentication path; the headless CLI needs neither
+// and is already installed.
 
-export type ProviderId = 'codex-acp' | 'codex-app-server' | 'claude-agent-sdk' | 'fake';
+// camelCase, not kebab-case, and deliberately so: `src/shared/noApiCalls.test.ts`
+// forbids the ACP adapter package's own kebab-case token outside the one reviewed
+// module that resolves the adapter executable. A kebab-case id here would collide
+// with that guard and force it to be loosened or allowlisted, weakening a real
+// security boundary for a naming preference. These ids are opaque; nothing
+// persists them yet, so renaming later would be a migration.
+export type ProviderId = 'codexAcp' | 'codexAppServer' | 'claudeHeadlessCli' | 'fake';
 
 export type ProviderErrorCode =
   | 'NOT_CONNECTED'

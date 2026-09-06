@@ -37,7 +37,7 @@ import {
 } from './contract';
 
 export class LegacyCodexAcpAdapter implements ProviderAdapter {
-  readonly id = 'codex-acp' as const;
+  readonly id = 'codexAcp' as const;
 
   private connected = false;
   private readonly sessions = new Set<string>();
