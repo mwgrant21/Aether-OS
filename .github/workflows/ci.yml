@@ -30,3 +30,49 @@ jobs:
           go-version: '1.26'
       - run: go build ./... && go vet ./... && go test ./...
         working-directory: collector-go
+
+  # Windows is the platform this app actually runs on, and the one carrying
+  # every failure mode Linux CI structurally cannot see: Electron/AppContainer
+  # ACL setup, node-pty prebuilds, Windows path and shell semantics, the
+  # Electron binary install sequence, and archive-tool differences.
+  #
+  # This lane is not decoration and must never be marked continue-on-error.
+  # It has already earned its place: `snapshotBuilder.ts` passed
+  # GNU-only `tar --force-local`, which System32's bsdtar rejects outright
+  # ("Option --force-local is not supported", exit 1). Every Linux job was
+  # green while cross-engine snapshot creation was broken on the target
+  # platform. Reverting that fix turns this job's 6 snapshotBuilder tests red.
+  #
+  # A single Node version, deliberately: the point is platform coverage, not a
+  # second version matrix. 24.x matches the newest entry in the Linux matrix so
+  # a failure here is attributable to the OS rather than to the runtime.
+  #
+  # No credentials are present and none are needed. The cross-engine provider
+  # suite runs entirely against the fake stdio providers in
+  # electron/crossEngine/providers/, so protocol, lifecycle, cancellation and
+  # permission-denial behaviour are all exercised without a Codex or Claude
+  # login. Do not add secrets to this job.
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      # postinstall runs `install-electron && node scripts/grant-appcontainer-acl.js`.
+      # The ACL script is safe unelevated: it exits 0 when electron/dist is
+      # absent and catches icacls failures with a warning rather than failing
+      # the install (see that script's own comments).
+      - run: npm ci
+
+      - run: npm test
+      - run: npm run build
+      - run: npm run electron:build
+
+      # electron-vite exits 0 on a partially-populated out/, which presents at
+      # runtime as a blank window rather than an error -- so assert the trees
+      # and the native/binary dependencies explicitly.
+      - name: Verify Electron artifacts and native modules
+        run: node scripts/verify-electron-artifacts.mjs

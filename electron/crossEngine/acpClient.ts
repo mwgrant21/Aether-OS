@@ -68,6 +68,19 @@ export class AcpClient {
    *  as the "handshake already done" flag -- see `initialize()`. */
   private authMethods: AcpAuthMethod[] | null = null;
 
+  /** Optional observer for streamed turn activity. Null by default, so the
+   *  existing one-shot verification path (codexVerifier.ts) is completely
+   *  unaffected -- it still only reads the accumulated final message. The
+   *  provider-neutral adapter (providers/legacyCodexAcp.ts) sets this to
+   *  translate ACP session/update notifications into ProviderEvents.
+   *
+   *  'permission-denied' is reported here rather than only being answered
+   *  silently, so a deliberation trace can show that the agent asked for a
+   *  write/exec permission and was refused. */
+  onStreamEvent:
+    | ((e: { sessionId: string; kind: 'message' | 'reasoning' | 'tool' | 'permission-denied'; text: string }) => void)
+    | null = null;
+
   connect(child: ChildProcessWithoutNullStreams = spawnAcpProcess()): void {
     this.child = child;
     // A fresh connection means a fresh handshake -- a cached authMethods
@@ -93,7 +106,7 @@ export class AcpClient {
         continue; // malformed line -- never crash the client on it
       }
       if (typeof msg.id === 'number' && typeof msg.method === 'string') {
-        this.handleIncomingRequest(msg.id, msg.method);
+        this.handleIncomingRequest(msg.id, msg.method, msg.params);
         continue;
       }
       if (typeof msg.id === 'number') {
@@ -116,11 +129,17 @@ export class AcpClient {
    *  so any write/exec permission the agent asks for is refused rather than
    *  granted. Any other incoming method gets a JSON-RPC "method not found"
    *  error so the agent's request always completes instead of hanging. */
-  private handleIncomingRequest(id: number, method: string): void {
+  private handleIncomingRequest(id: number, method: string, params?: unknown): void {
     if (!this.child) return;
     if (method === 'session/request_permission') {
       const res = { jsonrpc: '2.0', id, result: { outcome: { outcome: 'cancelled' } } };
       this.child.stdin.write(JSON.stringify(res) + '\n');
+      // Answered first, observed second: the denial must reach the agent even
+      // if an observer throws.
+      const sid = typeof (params as { sessionId?: unknown } | undefined)?.sessionId === 'string'
+        ? (params as { sessionId: string }).sessionId
+        : '';
+      this.onStreamEvent?.({ sessionId: sid, kind: 'permission-denied', text: method });
       return;
     }
     const res = { jsonrpc: '2.0', id, error: { code: -32601, message: `method not supported: ${method}` } };
@@ -135,9 +154,28 @@ export class AcpClient {
     if (method !== 'session/update') return;
     const p = params as SessionUpdateParams | undefined;
     if (!p?.sessionId || !p.update) return;
-    if (p.update.sessionUpdate === 'agent_message_chunk' && p.update.content?.type === 'text' && typeof p.update.content.text === 'string') {
+    const kindOf = p.update.sessionUpdate;
+    const text = typeof p.update.content?.text === 'string' && p.update.content.type === 'text'
+      ? p.update.content.text
+      : null;
+    if (kindOf === 'agent_message_chunk' && text !== null) {
       const existing = this.agentMessageBuffers.get(p.sessionId) ?? '';
-      this.agentMessageBuffers.set(p.sessionId, existing + p.update.content.text);
+      this.agentMessageBuffers.set(p.sessionId, existing + text);
+      // Buffer first, observe second: prompt()'s accumulated result must be
+      // correct even if an observer throws.
+      this.onStreamEvent?.({ sessionId: p.sessionId, kind: 'message', text });
+      return;
+    }
+    // Thought and tool-call updates are deliberately NOT accumulated into
+    // agentMessageBuffers -- prompt()'s contract is the agent's final
+    // message only, and folding reasoning into it would silently corrupt
+    // every existing verification result. They are observable, nothing more.
+    if (kindOf === 'agent_thought_chunk' && text !== null) {
+      this.onStreamEvent?.({ sessionId: p.sessionId, kind: 'reasoning', text });
+      return;
+    }
+    if (kindOf === 'tool_call' || kindOf === 'tool_call_update') {
+      this.onStreamEvent?.({ sessionId: p.sessionId, kind: 'tool', text: text ?? kindOf });
     }
   }
 
@@ -268,19 +306,45 @@ export class AcpClient {
    *  inconclusive rather than a parse error blowing up the run.
    *  "Read-only" is enforced separately, by `handleIncomingRequest` denying
    *  every `session/request_permission` the agent sends during the turn. */
-  async prompt(params: { cwd: string; text: string }): Promise<unknown> {
-    const sessionId = await this.newSession(params.cwd);
+  /** Prompts into an ALREADY-CREATED session and returns the raw accumulated
+   *  text plus the turn's stop reason, without parsing. Extracted from
+   *  prompt() so the provider-neutral adapter can own session lifetime
+   *  (open once, take several turns) instead of being forced into one
+   *  session per turn. prompt() below is unchanged in behaviour and now
+   *  delegates here, so every existing caller is unaffected. */
+  async promptSessionRaw(sessionId: string, text: string, timeoutMs = 5 * 60_000): Promise<{ text: string; stopReason: string | null }> {
     this.agentMessageBuffers.set(sessionId, '');
     try {
-      await this.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: params.text }] }, 5 * 60_000);
-      const text = this.agentMessageBuffers.get(sessionId) ?? '';
-      try {
-        return JSON.parse(text);
-      } catch {
-        return text;
-      }
+      const res = (await this.call('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, timeoutMs)) as
+        | { stopReason?: unknown }
+        | undefined;
+      return {
+        text: this.agentMessageBuffers.get(sessionId) ?? '',
+        stopReason: typeof res?.stopReason === 'string' ? res.stopReason : null,
+      };
     } finally {
       this.agentMessageBuffers.delete(sessionId);
+    }
+  }
+
+  /** Thin wrapper over `session/prompt` (see @agentclientprotocol/sdk's
+   *  PromptRequest/PromptResponse) that also creates the session it prompts
+   *  into via `session/new`. Returns the parsed JSON payload from the final
+   *  `agent_message_chunk` text accumulated over the turn's `session/update`
+   *  notifications -- not the `PromptResponse` itself, which carries only a
+   *  `stopReason` and optional token usage, not the agent's answer. If the
+   *  accumulated text isn't valid JSON, the raw string is returned instead
+   *  of throwing; `parseVerificationResult` treats any non-object input as
+   *  inconclusive rather than a parse error blowing up the run.
+   *  "Read-only" is enforced separately, by `handleIncomingRequest` denying
+   *  every `session/request_permission` the agent sends during the turn. */
+  async prompt(params: { cwd: string; text: string }): Promise<unknown> {
+    const sessionId = await this.newSession(params.cwd);
+    const { text } = await this.promptSessionRaw(sessionId, params.text);
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
     }
   }
 
