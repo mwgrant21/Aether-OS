@@ -18,8 +18,11 @@
 //   AETHER_LIVE_PROVIDER_SMOKE=1  spends NO model tokens. Process spawning,
 //                                 the protocol handshake, and read-only
 //                                 auth/account probes only -- never a turn.
-//   AETHER_LIVE_PROVIDER_TURN=1   spends a SMALL number of Codex tokens: one
-//                                 trivial real turn, end to end.
+//   AETHER_LIVE_PROVIDER_TURN=1   spends a SMALL number of Codex tokens: ONE
+//                                 trivial real turn, end to end. Exactly one --
+//                                 every assertion that needs a real turn rides
+//                                 on the same one, rather than each paying for
+//                                 its own.
 //
 // The turn gate is separate precisely so the cheap checks can run freely while
 // the paid one stays deliberate. Neither is set in CI.
@@ -159,26 +162,19 @@ describeLiveTurn('LIVE TURN: the full turn lifecycle against a real codex app-se
       //    field the fakes had wrong for two rounds.
       expect(result.usage.inputTokens).not.toBeNull();
       expect(result.usage.outputTokens).not.toBeNull();
-    } finally {
-      await adapter.dispose();
-      await bestEffortRemove(cwd);
-    }
-  }, 180_000);
 
-  it('leaves no turn record behind after a real completed turn', async () => {
-    // The restructure's invariant, checked against a real server rather than
-    // a fake: a completed turn retires its record.
-    const adapter = new CodexAppServerAdapter();
-    const cwd = mkdtempSync(join(tmpdir(), 'aether-live-turn-'));
-    try {
-      await adapter.connect();
-      const threadId = await adapter.newSession({ cwd });
-      await adapter.sendTurn({ sessionId: threadId, text: 'Reply with exactly: OK', timeoutMs: 120_000 }, () => {});
+      // 4. The record is retired -- #49's invariant, checked against a real
+      //    server. This assertion lives HERE, after a verified completion,
+      //    rather than in a test of its own: on its own it would pass just as
+      //    happily after a timeout or a provider-side error, both of which
+      //    also retire the record. It would have asserted nothing.
       expect(adapter.liveTurnCount).toBe(0);
     } finally {
       await adapter.dispose();
       await bestEffortRemove(cwd);
     }
   }, 180_000);
+
+
 });
 
