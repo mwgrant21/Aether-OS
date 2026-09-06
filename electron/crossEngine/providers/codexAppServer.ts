@@ -545,6 +545,21 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       // if turn/start answered first, a cancel during the wait for
       // turn/completed would find no id and silently fail to interrupt.
       if (acceptedId !== null) this.activeTurn.set(request.sessionId, acceptedId);
+
+      // Replay a cancellation that landed BEFORE turn/start told us the id.
+      // cancel() records the intent but cannot send turn/interrupt without an
+      // id, and taking the id only from turn/start (correctly, so a stale
+      // notification cannot poison it) means that window is real: without this
+      // replay the provider-side turn keeps consuming work until it completes
+      // or hits the deadline, while sendTurn already reports 'cancelled'.
+      if (acceptedId !== null && this.interrupted.has(request.sessionId)) {
+        void this.call('turn/interrupt', { threadId: request.sessionId, turnId: acceptedId }, 10_000).catch(
+          () => {
+            // Best effort: the turn may have finished in the meantime.
+          }
+        );
+      }
+
       this.flushBufferedTurnNotifications(acceptedId);
 
       let res: { turn?: TurnLike } | undefined = started;
@@ -620,6 +635,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     }
   }
 
+  /** Recording the intent always, and sending turn/interrupt when an id is
+   *  available. A cancel that arrives before turn/start has been acknowledged
+   *  has no id yet; sendTurn replays it as soon as the accepted id arrives. */
   async cancel(sessionId: string): Promise<void> {
     const turnId = this.activeTurn.get(sessionId);
     // Only record the interrupt when a turn is actually in flight. Marking an

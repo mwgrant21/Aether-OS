@@ -556,6 +556,35 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
+  it('replays a cancellation that arrived before turn/start was acknowledged', async () => {
+    // The window the accepted-id-only strategy creates: cancel() has no id to
+    // interrupt with yet, so the interrupt has to be issued once the id lands.
+    const ACK_DELAY_MS = 80;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 'turn-late', status: 'inProgress' } }), ACK_DELAY_MS)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 400 }, () => {});
+    await new Promise((r) => setTimeout(r, 20)); // cancel BEFORE the ack
+    await adapter.cancel(sessionId);
+    await turn;
+
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'a pre-ack cancel must still interrupt once the id arrives').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-late');
+    await adapter.dispose();
+  });
+
   it('can interrupt a turn acknowledged before any notification arrived', async () => {
     // cancel() reads activeTurn; if turn/start answered first and only the
     // waiter knew the id, the interrupt was silently never sent.
