@@ -76,6 +76,19 @@ export class TurnRecord {
    *  opening deltas -- and filtered on flush by the id we eventually learn. */
   readonly buffered: Array<{ method: string; params: TurnScopedParams }> = [];
 
+  /** True while a `sendTurn` call is still awaiting this turn's outcome.
+   *  The TTL sweep must never touch such a record: the TTL (2 min) is SHORTER
+   *  than the default turn deadline (5 min), so expiring on age alone would
+   *  pull the record out from under a caller that is still legitimately
+   *  waiting, and its later deltas and completion would then find nothing --
+   *  reporting a successful long turn as a truncated timeout. */
+  callerWaiting = true;
+
+  /** Autonomous expiry for a record the caller has stopped waiting on.
+   *  Checking `expiresAt` only when another turn happens to start is not a
+   *  TTL: if no later turn is submitted, the record simply never expires. */
+  private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
   private settleFn: ((r: WaiterResult) => void) | null = null;
   private settled = false;
 
@@ -116,8 +129,26 @@ export class TurnRecord {
     return this.phase === 'retired';
   }
 
+  /** Arms the autonomous expiry. `unref` so a retained record can never keep
+   *  a plain Node process alive -- the same hazard the dangling deadline timer
+   *  had. */
+  armExpiry(onExpire: () => void): void {
+    this.clearExpiry();
+    const delay = Math.max(0, this.expiresAt - Date.now());
+    this.expiryTimer = setTimeout(onExpire, delay);
+    (this.expiryTimer as { unref?: () => void }).unref?.();
+  }
+
+  private clearExpiry(): void {
+    if (this.expiryTimer !== null) {
+      clearTimeout(this.expiryTimer);
+      this.expiryTimer = null;
+    }
+  }
+
   retire(): void {
     this.phase = 'retired';
+    this.clearExpiry();
     this.earlyCompletions.clear();
     this.buffered.length = 0;
   }

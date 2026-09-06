@@ -156,7 +156,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
    *  lifetime and its own way of going stale. */
   private readonly turns = new Map<number, TurnRecord>();
 
-  constructor(private readonly spawnChild: () => ChildProcessWithoutNullStreams = defaultSpawn) {}
+  constructor(
+    private readonly spawnChild: () => ChildProcessWithoutNullStreams = defaultSpawn,
+    /** Injectable so the retention bounds can actually be tested rather than
+     *  asserted about. */
+    private readonly turnRecordTtlMs: number = TURN_RECORD_TTL_MS
+  ) {}
 
   capabilities(): ProviderCapabilities {
     return {
@@ -201,18 +206,27 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.turns.delete(record.requestId);
   }
 
-  /** Sweeps expired records, then enforces the cap oldest-first. Called on
-   *  every insert, so an unacknowledged turn cannot retain its record
-   *  indefinitely. */
+  /** Sweeps expired records, then enforces the cap oldest-first.
+   *
+   *  Neither sweep may touch a record whose caller is still waiting. The TTL
+   *  is shorter than the default turn deadline, so expiring on age alone would
+   *  retire a legitimately long-running turn out from under its own `sendTurn`
+   *  -- whose later deltas and completion would then find no record, turning a
+   *  successful turn into a truncated timeout. Only records the caller has
+   *  stopped waiting on are eligible.
+   *
+   *  If every live record is still being awaited, the cap is allowed to be
+   *  exceeded. Concurrent callers bound that, and breaking a live turn to
+   *  respect a bookkeeping limit is the wrong trade. */
   private boundTurns(): void {
     const now = Date.now();
     for (const record of [...this.turns.values()]) {
-      if (record.expiresAt <= now) this.retireTurn(record);
+      if (!record.callerWaiting && record.expiresAt <= now) this.retireTurn(record);
     }
     while (this.turns.size > MAX_LIVE_TURNS) {
-      const oldest = this.turns.values().next().value as TurnRecord | undefined;
-      if (!oldest) break;
-      this.retireTurn(oldest);
+      const evictable = [...this.turns.values()].find((r) => !r.callerWaiting);
+      if (!evictable) break;
+      this.retireTurn(evictable);
     }
   }
 
@@ -551,7 +565,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     const remaining = () => Math.max(0, deadlineAt - Date.now());
 
     const requestId = this.nextId++;
-    const record = new TurnRecord(request.sessionId, requestId, onEvent, Date.now() + TURN_RECORD_TTL_MS);
+    const record = new TurnRecord(request.sessionId, requestId, onEvent, Date.now() + this.turnRecordTtlMs);
     this.turns.set(requestId, record);
     this.boundTurns();
 
@@ -572,8 +586,14 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       if (err instanceof ProviderError && err.code === 'TIMEOUT') {
         // The record deliberately SURVIVES. The acknowledgement may still
         // arrive, and if a cancellation is outstanding it still has to be
-        // carried out -- precisely the state that had no owner before. It is
-        // bounded by TTL, cap, and child death.
+        // carried out -- precisely the state that had no owner before.
+        //
+        // This is the ONLY path that retains a record, so it is also the only
+        // place the caller stops waiting while the record lives on. Both facts
+        // are recorded here: the sweep may now consider it, and its expiry is
+        // ARMED rather than left to whenever a later turn happens to start.
+        record.callerWaiting = false;
+        record.armExpiry(() => this.retireTurn(record));
         return { stopReason: 'timeout', text: record.text, usage: record.usage };
       }
       this.retireTurn(record);

@@ -1177,3 +1177,69 @@ describe('CodexAppServerAdapter: turn record retirement', () => {
   });
 });
 
+describe('CodexAppServerAdapter: retention bounds must not break live turns', () => {
+  it('never expires a record whose caller is still waiting', async () => {
+    // The TTL is shorter than the default turn deadline, so a legitimately
+    // long turn WILL be older than its TTL while still running. Sweeping it
+    // would leave its own sendTurn waiting on a record that no longer exists,
+    // and its later deltas and completion would find nothing - reporting a
+    // successful long turn as a truncated timeout.
+    let settleTurnOne: (() => void) | null = null;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = (req.params as { input: unknown[] }) && 'turn-' + (settleTurnOne ? '2' : '1');
+        if (id === 'turn-1') {
+          // Completes only when the test says so, long after its TTL.
+          settleTurnOne = () => {
+            push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i', delta: 'late but valid' });
+            push('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } });
+          };
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+
+    // 20ms TTL: turn one is comfortably "expired" by age while still running.
+    const adapter = new CodexAppServerAdapter(() => fake.child, 20);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+
+    const first = adapter.sendTurn({ sessionId, text: 'long one', timeoutMs: 2000 }, () => {});
+    await new Promise((r) => setTimeout(r, 60)); // now older than its TTL
+
+    // Starting another turn runs the sweep. It must not take turn one.
+    const second = adapter.sendTurn({ sessionId, text: 'other', timeoutMs: 60 }, () => {});
+    await second;
+
+    settleTurnOne?.();
+    const result = await first;
+    expect(result.stopReason).toBe('completed');
+    expect(result.text).toBe('late but valid');
+    await adapter.dispose();
+  });
+
+  it('expires a retained record on its own timer, with no later turn to trigger a sweep', async () => {
+    // Checking expiresAt only on insert is not a TTL: with no second turn, the
+    // record would sit for the adapter's lifetime holding its listener.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return undefined; // turn/start is never answered
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child, 40);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+
+    await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 20 }, () => {});
+    expect(adapter.liveTurnCount).toBe(1); // retained: the ack may still arrive
+
+    await new Promise((r) => setTimeout(r, 120)); // no further turns submitted
+    expect(adapter.liveTurnCount).toBe(0);
+    await adapter.dispose();
+  });
+});
+
