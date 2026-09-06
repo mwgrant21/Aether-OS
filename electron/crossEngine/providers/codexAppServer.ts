@@ -160,6 +160,13 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private decoder = new StringDecoder('utf8');
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  /** Handlers for responses that arrive AFTER their call timed out. Without
+   *  these a late response is silently dropped, which is fine for most calls
+   *  but not for turn/start: its response is the only place the accepted turn
+   *  id appears, and a cancellation that landed pre-acknowledgement needs that
+   *  id to interrupt anything. Bounded by the number of timed-out calls in a
+   *  turn and cleared on dispose. */
+  private readonly lateHandlers = new Map<number, (result: unknown) => void>();
   private readonly threads = new Set<string>();
   /** threadId -> turnId of the turn currently in flight, and the id cancel()
    *  interrupts. Populated ONLY from turn/start's accepted turn -- never from
@@ -269,7 +276,16 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       }
       if (typeof msg.id === 'number') {
         const p = this.pending.get(msg.id);
-        if (!p) continue;
+        if (!p) {
+          // Already timed out. Give a registered late handler its chance
+          // rather than dropping the response on the floor.
+          const late = this.lateHandlers.get(msg.id);
+          if (late) {
+            this.lateHandlers.delete(msg.id);
+            if (!msg.error) late(msg.result);
+          }
+          continue;
+        }
         this.pending.delete(msg.id);
         if (msg.error) p.reject(new ProviderError('PROTOCOL_ERROR', msg.error.message));
         else p.resolve(msg.result);
@@ -393,12 +409,19 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     }
   }
 
-  private call(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
+  private call(
+    method: string,
+    params?: unknown,
+    timeoutMs = 30_000,
+    onLate?: (result: unknown) => void
+  ): Promise<unknown> {
     const child = this.require();
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // The caller may still care about a response that shows up later.
+        if (onLate) this.lateHandlers.set(id, onLate);
         reject(new ProviderError('TIMEOUT', 'app-server call "' + method + '" timed out'));
       }, timeoutMs);
       this.pending.set(id, {
@@ -498,6 +521,10 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.streamUsage = EMPTY_USAGE;
     this.approvalDenials = [];
 
+    // Declared out here because `finally` reads it after the try block
+    // that populates it has already unwound.
+    const lateCtx = { cancelled: false };
+
     try {
       const timeoutMs = request.timeoutMs ?? 5 * 60_000;
       const params: Record<string, unknown> = {
@@ -537,7 +564,23 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       this.earlyCompletions.clear();
       this.bufferedTurnNotifications = [];
 
-      const started = (await this.call('turn/start', params, remaining())) as { turn?: TurnLike } | undefined;
+      // If turn/start misses the shared deadline, this await rejects and the
+      // replay below is never reached, `finally` clears the interrupt flag,
+      // and the late accepted id is discarded -- so a cancellation issued
+      // before acknowledgement would leave the provider-side turn running with
+      // no turn/interrupt ever sent. lateCtx carries just enough state for the
+      // late handler to finish the job after this turn has given up.
+      const onLateAck = (result: unknown) => {
+        const id = (result as { turn?: TurnLike } | undefined)?.turn?.id;
+        if (!lateCtx.cancelled || typeof id !== 'string' || !this.child) return;
+        void this.call('turn/interrupt', { threadId: request.sessionId, turnId: id }, 10_000).catch(() => {
+          // Best effort: the turn may have ended on its own by now.
+        });
+      };
+
+      const started = (await this.call('turn/start', params, remaining(), onLateAck)) as
+        | { turn?: TurnLike }
+        | undefined;
       const acceptedId = typeof started?.turn?.id === 'string' ? started.turn.id : null;
       if (this.turnWaiter) this.turnWaiter.turnId = acceptedId;
       // Also record it as the active turn. cancel() reads activeTurn, which
@@ -625,6 +668,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       }
       throw err;
     } finally {
+      // Snapshot the cancellation BEFORE clearing it, so a late turn/start
+      // response can still act on it.
+      lateCtx.cancelled = this.interrupted.has(request.sessionId);
       this.turnWaiter = null;
       this.earlyCompletions.clear();
       this.bufferedTurnNotifications = [];
@@ -661,6 +707,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     // An in-flight turn must fail rather than hang to its deadline.
     this.turnWaiter?.settle({ kind: 'gone', reason: 'adapter disposed' });
     this.earlyCompletions.clear();
+    this.lateHandlers.clear();
     this.bufferedTurnNotifications = [];
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', 'adapter disposed'));
     this.pending.clear();

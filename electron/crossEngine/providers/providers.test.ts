@@ -556,6 +556,42 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
+  it('still interrupts when the acknowledgement itself misses the deadline', async () => {
+    // The sixth window of this shape: if turn/start does not answer within the
+    // shared deadline, the await rejects, `finally` clears the interrupt flag,
+    // and the late accepted id is dropped -- so a pre-ack cancellation would
+    // leave the provider-side turn running with no turn/interrupt ever sent.
+    const ACK_DELAY_MS = 200;
+    const TURN_TIMEOUT_MS = 60;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        // Answers well AFTER the caller's deadline has expired.
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 'turn-verylate', status: 'inProgress' } }), ACK_DELAY_MS)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: TURN_TIMEOUT_MS }, () => {});
+    await new Promise((r) => setTimeout(r, 20)); // cancel before the ack
+    await adapter.cancel(sessionId);
+    const result = await turn;
+    expect(result.stopReason).toBe('timeout');
+
+    // Give the late acknowledgement time to land and be acted on.
+    await new Promise((r) => setTimeout(r, ACK_DELAY_MS + 120));
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'a late acknowledgement must still honour the cancellation').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-verylate');
+    await adapter.dispose();
+  });
+
   it('replays a cancellation that arrived before turn/start was acknowledged', async () => {
     // The window the accepted-id-only strategy creates: cancel() has no id to
     // interrupt with yet, so the interrupt has to be issued once the id lands.
