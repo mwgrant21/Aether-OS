@@ -73,8 +73,15 @@ function makeStdioFake(
       }
       server.received.push({ id: msg.id, method: msg.method, params: msg.params });
       const result = handle({ id: msg.id, method: msg.method, params: msg.params }, push, request);
-      if (result !== undefined && msg.id !== undefined) {
-        write({ jsonrpc: '2.0', id: msg.id, result });
+      const id = msg.id;
+      // A handler may return a Promise to answer slowly, which is what lets a
+      // test exercise a deadline that spans more than one protocol phase.
+      if (result && typeof (result as { then?: unknown }).then === 'function') {
+        void (result as Promise<unknown>).then((r) => {
+          if (r !== undefined && id !== undefined) write({ jsonrpc: '2.0', id, result: r });
+        });
+      } else if (result !== undefined && id !== undefined) {
+        write({ jsonrpc: '2.0', id, result });
       }
     }
   });
@@ -396,6 +403,80 @@ describe('CodexAppServerAdapter', () => {
     const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
     expect(result.stopReason).toBe('error');
+    await adapter.dispose();
+  });
+
+  it('ignores a stale turn/completed belonging to an earlier turn', async () => {
+    // A turn that timed out locally can still complete provider-side. That
+    // late notification must not settle the NEXT turn on the same thread.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        if (turnNo === 2) {
+          // The FIRST turn's completion, arriving during the second turn.
+          push('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } });
+        }
+        return { turn: { id: 'turn-' + turnNo, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+    const second = await adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 60 }, () => {});
+    // Matching on threadId alone would return 'completed' here.
+    expect(second.stopReason).toBe('timeout');
+    await adapter.dispose();
+  });
+
+  it('throws PROCESS_EXITED when the child dies mid-turn, never reports a timeout', async () => {
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') return { turn: { id: 't1', status: 'inProgress' } };
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 5_000 }, () => {});
+    setTimeout(() => (fake.child as unknown as EventEmitter).emit('close', 1), 20);
+    // A crashed provider must be distinguishable from an ordinary deadline.
+    await expect(turn).rejects.toBeInstanceOf(ProviderError);
+    await adapter.dispose();
+  });
+
+  it('bounds the whole turn by one deadline, not one per phase', async () => {
+    // turn/start is ACKNOWLEDGED slowly (most of the budget), and no
+    // completion ever arrives. Starting a fresh full-length timer for the
+    // second phase would let this run for ~2x the caller's limit.
+    const ACK_DELAY_MS = 90;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 't1', status: 'inProgress' } }), ACK_DELAY_MS)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const startedAt = Date.now();
+    const result = await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 150 }, () => {});
+    const elapsed = Date.now() - startedAt;
+    expect(result.stopReason).toBe('timeout');
+    // The ack alone consumed 90ms of a 150ms budget. Two independent timers
+    // would give 90 + 150 = 240ms+; one shared deadline gives ~150ms.
+    expect(elapsed).toBeGreaterThanOrEqual(ACK_DELAY_MS);
+    expect(elapsed).toBeLessThan(230);
     await adapter.dispose();
   });
 

@@ -75,8 +75,21 @@ interface Pending {
   reject: (e: Error) => void;
 }
 
-/** Minimal shape of the generated `Turn` this adapter reads. */
-type TurnLike = { status?: unknown; error?: unknown };
+/** Minimal shape of the generated `Turn` this adapter reads. `id` matters:
+ *  a completion notification must be matched to the turn it belongs to, not
+ *  merely to the thread. */
+type TurnLike = { id?: unknown; status?: unknown; error?: unknown };
+
+/** How a turn stopped waiting. A dead transport is NOT a deadline, and the
+ *  contract requires transport faults to throw rather than return a stop
+ *  reason -- collapsing both into "no turn arrived" hid a crashed provider
+ *  behind stopReason: 'timeout'. */
+type WaiterResult = { kind: 'turn'; turn: TurnLike | null } | { kind: 'gone'; reason: string };
+
+/** Completions that arrive before turn/start's response has told us the turn
+ *  id are stashed here, keyed by id. Bounded: cleared at the start and end of
+ *  every turn, and capped regardless. */
+const MAX_EARLY_COMPLETIONS = 8;
 
 /** TurnStatus is "completed" | "interrupted" | "failed" | "inProgress".
  *  Only the first three are outcomes; "inProgress" means the answer has not
@@ -151,7 +164,8 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private streamUsage: TurnUsage = EMPTY_USAGE;
   /** Settled by the `turn/completed` notification (or by child death). See
    *  sendTurn's TURN LIFECYCLE note. */
-  private turnWaiter: { sessionId: string; settle: (turn: TurnLike | null) => void } | null = null;
+  private turnWaiter: { sessionId: string; turnId: string | null; settle: (result: WaiterResult) => void } | null = null;
+  private readonly earlyCompletions = new Map<string, TurnLike | null>();
   /** Per-thread output schema, retained because `turn/start` -- not
    *  `thread/start` -- is what carries it. */
   private readonly outputSchemas = new Map<string, unknown>();
@@ -202,8 +216,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', reason));
     this.pending.clear();
     // A turn awaiting turn/completed must not hang for the full deadline when
-    // the server it was waiting on is gone.
-    this.turnWaiter?.settle(null);
+    // the server it was waiting on is gone -- and must not report that as a
+    // timeout either, which would hide a crashed provider from the caller.
+    this.turnWaiter?.settle({ kind: 'gone', reason });
   }
 
   /** stdin writes throw EPIPE once the child is gone; that must surface as a
@@ -279,7 +294,23 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     // ACCEPTED, so this is what says how it actually ended.
     if (method === 'turn/completed') {
       const turn = (params as { turn?: TurnLike } | undefined)?.turn ?? null;
-      this.turnWaiter?.settle(turn);
+      const turnId = typeof turn?.id === 'string' ? turn.id : null;
+      // Matched by TURN id, not just thread id. A turn that timed out locally
+      // can still complete provider-side, and that late notification would
+      // otherwise settle the NEXT turn on the same thread with the previous
+      // turn's status and text. An unidentifiable completion is ignored (the
+      // waiting turn then hits its deadline) rather than guessed at.
+      if (!turnId) return;
+      if (this.turnWaiter && this.turnWaiter.turnId === turnId) {
+        this.turnWaiter.settle({ kind: 'turn', turn });
+        return;
+      }
+      // Arrived before turn/start's response told us the id -- normal, since
+      // the server may answer the notification first.
+      if (this.earlyCompletions.size >= MAX_EARLY_COMPLETIONS) {
+        this.earlyCompletions.delete(this.earlyCompletions.keys().next().value as string);
+      }
+      this.earlyCompletions.set(turnId, turn);
       return;
     }
 
@@ -430,27 +461,50 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       // Both shapes are handled rather than betting on one: a response that
       // is ALREADY terminal is used as-is, otherwise the turn stays pending
       // until turn/completed (or the deadline, or child death).
-      let settleWaiter: (turn: TurnLike | null) => void = () => {};
-      const completed = new Promise<TurnLike | null>((resolve) => {
+      // ONE deadline for the whole operation. Starting a fresh timeoutMs
+      // timer after turn/start had already consumed part of it let a turn run
+      // for nearly twice the caller's limit.
+      const deadlineAt = Date.now() + timeoutMs;
+      const remaining = () => Math.max(0, deadlineAt - Date.now());
+
+      let settleWaiter: (result: WaiterResult) => void = () => {};
+      const completed = new Promise<WaiterResult>((resolve) => {
         let done = false;
-        settleWaiter = (turn) => {
+        settleWaiter = (result) => {
           if (done) return;
           done = true;
-          resolve(turn);
+          resolve(result);
         };
       });
-      this.turnWaiter = { sessionId: request.sessionId, settle: settleWaiter };
+      this.turnWaiter = { sessionId: request.sessionId, turnId: null, settle: settleWaiter };
+      this.earlyCompletions.clear();
 
-      const started = (await this.call('turn/start', params, timeoutMs)) as { turn?: TurnLike } | undefined;
+      const started = (await this.call('turn/start', params, remaining())) as { turn?: TurnLike } | undefined;
+      const acceptedId = typeof started?.turn?.id === 'string' ? started.turn.id : null;
+      if (this.turnWaiter) this.turnWaiter.turnId = acceptedId;
 
       let res: { turn?: TurnLike } | undefined = started;
       if (!isTerminalTurnStatus(started?.turn?.status)) {
-        const deadline = new Promise<TurnLike | null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
-        const finalTurn = await Promise.race([completed, deadline]);
-        if (finalTurn === null && !this.interrupted.has(request.sessionId)) {
-          return { stopReason: 'timeout', text: this.streamText, usage: this.streamUsage };
+        // The completion may already have arrived while turn/start was still
+        // in flight.
+        const early = acceptedId !== null && this.earlyCompletions.has(acceptedId);
+        if (early) {
+          res = { turn: this.earlyCompletions.get(acceptedId as string) ?? undefined };
+        } else {
+          const deadline = new Promise<WaiterResult>((resolve) =>
+            setTimeout(() => resolve({ kind: 'turn', turn: null }), remaining())
+          );
+          const outcome = await Promise.race([completed, deadline]);
+          if (outcome.kind === 'gone') {
+            // A transport fault throws, per the contract -- callers must be
+            // able to tell a crashed provider from an ordinary deadline.
+            throw new ProviderError('PROCESS_EXITED', outcome.reason);
+          }
+          if (outcome.turn === null && !this.interrupted.has(request.sessionId)) {
+            return { stopReason: 'timeout', text: this.streamText, usage: this.streamUsage };
+          }
+          res = { turn: outcome.turn ?? undefined };
         }
-        res = { turn: finalTurn ?? undefined };
       }
 
       for (const denial of this.approvalDenials) {
@@ -485,6 +539,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       throw err;
     } finally {
       this.turnWaiter = null;
+      this.earlyCompletions.clear();
       this.interrupted.delete(request.sessionId);
       this.activeTurn.delete(request.sessionId);
       this.streamListener = null;
@@ -512,6 +567,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   }
 
   async dispose(): Promise<void> {
+    // An in-flight turn must fail rather than hang to its deadline.
+    this.turnWaiter?.settle({ kind: 'gone', reason: 'adapter disposed' });
+    this.earlyCompletions.clear();
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', 'adapter disposed'));
     this.pending.clear();
     this.threads.clear();
