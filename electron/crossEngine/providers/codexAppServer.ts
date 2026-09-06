@@ -75,6 +75,16 @@ interface Pending {
   reject: (e: Error) => void;
 }
 
+/** Minimal shape of the generated `Turn` this adapter reads. */
+type TurnLike = { status?: unknown; error?: unknown };
+
+/** TurnStatus is "completed" | "interrupted" | "failed" | "inProgress".
+ *  Only the first three are outcomes; "inProgress" means the answer has not
+ *  arrived yet. */
+function isTerminalTurnStatus(status: unknown): boolean {
+  return status === 'completed' || status === 'interrupted' || status === 'failed';
+}
+
 /** Reads a ThreadTokenUsage's `last` breakdown defensively. Field casing is
  *  not asserted -- both camelCase and snake_case are accepted so a serde
  *  rename in a future codex build degrades to nulls rather than throwing. */
@@ -139,6 +149,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private streamThreadId: string | null = null;
   private streamText = '';
   private streamUsage: TurnUsage = EMPTY_USAGE;
+  /** Settled by the `turn/completed` notification (or by child death). See
+   *  sendTurn's TURN LIFECYCLE note. */
+  private turnWaiter: { sessionId: string; settle: (turn: TurnLike | null) => void } | null = null;
+  /** Per-thread output schema, retained because `turn/start` -- not
+   *  `thread/start` -- is what carries it. */
+  private readonly outputSchemas = new Map<string, unknown>();
 
   constructor(private readonly spawnChild: () => ChildProcessWithoutNullStreams = defaultSpawn) {}
 
@@ -185,6 +201,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.child = null;
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', reason));
     this.pending.clear();
+    // A turn awaiting turn/completed must not hang for the full deadline when
+    // the server it was waiting on is gone.
+    this.turnWaiter?.settle(null);
   }
 
   /** stdin writes throw EPIPE once the child is gone; that must surface as a
@@ -256,6 +275,14 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     if (!this.streamListener || !this.streamThreadId || p.threadId !== this.streamThreadId) return;
     const sessionId = this.streamThreadId;
 
+    // The real completion signal. turn/start returns as soon as the turn is
+    // ACCEPTED, so this is what says how it actually ended.
+    if (method === 'turn/completed') {
+      const turn = (params as { turn?: TurnLike } | undefined)?.turn ?? null;
+      this.turnWaiter?.settle(turn);
+      return;
+    }
+
     if (method === 'item/agentMessage/delta' && typeof p.delta === 'string') {
       this.streamText += p.delta;
       this.streamListener({ kind: 'message-chunk', sessionId, text: p.delta });
@@ -309,26 +336,39 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   async health(): Promise<ProviderHealth> {
     this.require();
     try {
-      const account = (await this.call('account/read')) as { authMode?: unknown } | undefined;
-      const mode = typeof account?.authMode === 'string' ? account.authMode : 'unknown';
-      // Fails closed: only a recognised subscription login is `ready`. An
-      // api-key or gateway login is a billing mode this project refuses, and
-      // anything unrecognised is treated as unproven rather than assumed fine.
+      // Params are sent as an explicit {} rather than omitted: the server
+      // rejects account/read when the params key is absent entirely, and the
+      // rejection was being swallowed by the catch below into authMode
+      // 'unknown' -- which the live smoke test caught.
+      // GetAccountResponse is `{ account: Account | null, requiresOpenaiAuth }`
+      // and Account is a tagged union on `type`
+      // ("apiKey" | "chatgpt" | "amazonBedrock") -- NOT a top-level
+      // `authMode`. Reading the wrong field made every real ChatGPT login
+      // classify as 'unknown', so health() reported ready:false and any
+      // health-gated caller was blocked. Field names taken from the generated
+      // bindings, not guessed.
+      const res = (await this.call('account/read', {})) as
+        | { account?: { type?: unknown } | null; requiresOpenaiAuth?: unknown }
+        | undefined;
+      const type = res?.account?.type;
+      // Fails closed: only a proven ChatGPT subscription is `ready`. An
+      // api-key or Bedrock login is a billing mode this project refuses, and
+      // anything unrecognised is unproven rather than assumed fine.
       const authMode =
-        mode === 'chatgpt' || mode === 'chat-gpt' || mode === 'subscription'
+        type === 'chatgpt'
           ? ('subscription' as const)
-          : mode === 'apikey' || mode === 'api-key'
+          : type === 'apiKey'
             ? ('api-key' as const)
-            : mode === 'gateway'
+            : type === 'amazonBedrock'
               ? ('gateway' as const)
-              : mode === 'unauthenticated'
+              : res && res.account === null
                 ? ('unauthenticated' as const)
                 : ('unknown' as const);
       return {
         ready: authMode === 'subscription',
         authMode,
         version: this.serverVersion,
-        detail: 'account/read reported authMode=' + mode,
+        detail: 'account/read reported account.type=' + (typeof type === 'string' ? type : '(absent)'),
       };
     } catch (err) {
       return {
@@ -350,6 +390,11 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       throw new ProviderError('PROTOCOL_ERROR', 'thread/start returned no thread id');
     }
     this.threads.add(id);
+    // Retained rather than sent here: TurnStartParams carries outputSchema,
+    // ThreadStartParams does not. Dropping it while capabilities() advertises
+    // structuredOutputSchema:true would let a caller trust a constraint that
+    // was never applied.
+    if (options.outputSchema !== undefined) this.outputSchemas.set(id, options.outputSchema);
     return id;
   }
 
@@ -366,14 +411,47 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.approvalDenials = [];
 
     try {
+      const timeoutMs = request.timeoutMs ?? 5 * 60_000;
       const params: Record<string, unknown> = {
         threadId: request.sessionId,
         input: [{ type: 'text', text: request.text, text_elements: [] }],
         ...READ_ONLY_THREAD,
       };
-      const res = (await this.call('turn/start', params, request.timeoutMs ?? 5 * 60_000)) as
-        | { turn?: { status?: unknown } }
-        | undefined;
+      const schema = this.outputSchemas.get(request.sessionId);
+      if (schema !== undefined) params.outputSchema = schema;
+
+      // TURN LIFECYCLE. turn/start resolves as soon as the turn is ACCEPTED,
+      // typically with status "inProgress"; the assistant deltas and the real
+      // outcome arrive afterwards as notifications, ending in turn/completed.
+      // Treating the turn/start response as the outcome classified every
+      // normal turn as 'error' and returned empty text, while also clearing
+      // the stream listener before any content arrived.
+      //
+      // Both shapes are handled rather than betting on one: a response that
+      // is ALREADY terminal is used as-is, otherwise the turn stays pending
+      // until turn/completed (or the deadline, or child death).
+      let settleWaiter: (turn: TurnLike | null) => void = () => {};
+      const completed = new Promise<TurnLike | null>((resolve) => {
+        let done = false;
+        settleWaiter = (turn) => {
+          if (done) return;
+          done = true;
+          resolve(turn);
+        };
+      });
+      this.turnWaiter = { sessionId: request.sessionId, settle: settleWaiter };
+
+      const started = (await this.call('turn/start', params, timeoutMs)) as { turn?: TurnLike } | undefined;
+
+      let res: { turn?: TurnLike } | undefined = started;
+      if (!isTerminalTurnStatus(started?.turn?.status)) {
+        const deadline = new Promise<TurnLike | null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
+        const finalTurn = await Promise.race([completed, deadline]);
+        if (finalTurn === null && !this.interrupted.has(request.sessionId)) {
+          return { stopReason: 'timeout', text: this.streamText, usage: this.streamUsage };
+        }
+        res = { turn: finalTurn ?? undefined };
+      }
 
       for (const denial of this.approvalDenials) {
         onEvent({
@@ -406,6 +484,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       }
       throw err;
     } finally {
+      this.turnWaiter = null;
       this.interrupted.delete(request.sessionId);
       this.activeTurn.delete(request.sessionId);
       this.streamListener = null;
@@ -436,6 +515,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', 'adapter disposed'));
     this.pending.clear();
     this.threads.clear();
+    this.outputSchemas.clear();
     this.activeTurn.clear();
     this.interrupted.clear();
     this.streamListener = null;

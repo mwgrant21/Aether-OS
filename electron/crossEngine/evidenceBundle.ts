@@ -123,6 +123,12 @@ export function normalizeEvidencePath(p: string): string {
   if (slashed.startsWith('/')) {
     throw new Error('evidence paths must be project-relative, got an absolute path');
   }
+  // Rejecting absolute paths alone was not enough: '../../etc/secret' is
+  // relative and still escapes the project root, which would let a bundle
+  // cite a file outside the snapshot it claims to describe.
+  if (slashed.split('/').some((seg) => seg === '..')) {
+    throw new Error('evidence paths must be project-relative, got a parent-directory traversal');
+  }
   return slashed;
 }
 

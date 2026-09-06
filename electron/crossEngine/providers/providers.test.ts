@@ -136,7 +136,11 @@ function appServerFake(): FakeServer {
       case 'initialize':
         return { userAgent: 'codex-app-server/0.153.2', codexHome: '', platformFamily: 'windows', platformOs: 'windows' };
       case 'account/read':
-        return { authMode: 'chatgpt' };
+        // GetAccountResponse: { account: Account | null, requiresOpenaiAuth }.
+        // Account is a tagged union on `type`. The previous fake invented a
+        // top-level `authMode`, which is why the adapter's own misreading of
+        // this response went unnoticed.
+        return { account: { type: 'chatgpt', email: null, planType: 'pro' }, requiresOpenaiAuth: false };
       case 'thread/start':
         return { thread: { id: 'thread-1' } };
       case 'turn/start': {
@@ -150,7 +154,12 @@ function appServerFake(): FakeServer {
           turnId: 'turn-1',
           tokenUsage: { last: { inputTokens: 11, outputTokens: 22, cachedInputTokens: 33 } },
         });
-        return { turn: { id: 'turn-1', status: 'completed' } };
+        // The real server accepts the turn immediately and reports the
+        // outcome later via turn/completed. The old fake returned a
+        // synchronously-completed turn, which masked the adapter treating
+        // turn/start's response as the outcome.
+        push('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } });
+        return { turn: { id: 'turn-1', status: 'inProgress' } };
       }
       default:
         return {};
@@ -354,11 +363,32 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
-  it('treats an unrecognised turn status as an error, never as completed', async () => {
+  it('stays pending until turn/completed rather than trusting turn/start', async () => {
+    // turn/start resolves as soon as the turn is ACCEPTED. A fake that never
+    // sends turn/completed must therefore time out, not report a result.
     const fake = makeStdioFake((req) => {
       if (req.method === 'initialize') return { userAgent: 'x' };
       if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (req.method === 'turn/start') return { turn: { id: 't', status: 'inProgress' } };
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 80 }, () => {});
+    expect(result.stopReason).toBe('timeout');
+    await adapter.dispose();
+  });
+
+  it('reports a failed turn from turn/completed as an error, not a completion', async () => {
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        const threadId = (req.params as { threadId: string }).threadId;
+        push('turn/completed', { threadId, turn: { id: 't', status: 'failed', error: { message: 'nope' } } });
+        return { turn: { id: 't', status: 'inProgress' } };
+      }
       return {};
     });
     const adapter = new CodexAppServerAdapter(() => fake.child);
@@ -369,18 +399,45 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
-  it('fails closed on a non-subscription billing mode', async () => {
-    const fake = makeStdioFake((req) => {
-      if (req.method === 'initialize') return { userAgent: 'x' };
-      if (req.method === 'account/read') return { authMode: 'api-key' };
-      return {};
-    });
+  it('forwards a requested outputSchema on turn/start, not thread/start', async () => {
+    const fake = appServerFake();
     const adapter = new CodexAppServerAdapter(() => fake.child);
     await adapter.connect();
-    const health = await adapter.health();
-    expect(health.ready).toBe(false);
-    expect(health.authMode).toBe('api-key');
+    const schema = { type: 'object', required: ['verdict'] };
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot', outputSchema: schema });
+    await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+
+    // capabilities() advertises structuredOutputSchema:true, so dropping the
+    // schema would let a caller trust a constraint that was never applied.
+    // ThreadStartParams has no outputSchema field; TurnStartParams does.
+    const start = fake.received.find((r) => r.method === 'thread/start');
+    const turn = fake.received.find((r) => r.method === 'turn/start');
+    expect((start?.params as Record<string, unknown>)?.outputSchema).toBeUndefined();
+    expect((turn?.params as Record<string, unknown>)?.outputSchema).toEqual(schema);
     await adapter.dispose();
+  });
+
+  it('classifies every Account variant and fails closed off subscription', async () => {
+    // Account = { type: "apiKey" } | { type: "chatgpt", ... } | { type: "amazonBedrock", ... }
+    const cases: Array<[unknown, boolean, string]> = [
+      [{ type: 'chatgpt', email: null, planType: 'pro' }, true, 'subscription'],
+      [{ type: 'apiKey' }, false, 'api-key'],
+      [{ type: 'amazonBedrock', usesCodexManagedCredentials: false }, false, 'gateway'],
+      [null, false, 'unauthenticated'],
+    ];
+    for (const [account, ready, authMode] of cases) {
+      const fake = makeStdioFake((req) => {
+        if (req.method === 'initialize') return { userAgent: 'x' };
+        if (req.method === 'account/read') return { account, requiresOpenaiAuth: false };
+        return {};
+      });
+      const adapter = new CodexAppServerAdapter(() => fake.child);
+      await adapter.connect();
+      const health = await adapter.health();
+      expect(health.ready, JSON.stringify(account)).toBe(ready);
+      expect(health.authMode, JSON.stringify(account)).toBe(authMode);
+      await adapter.dispose();
+    }
   });
 
   it('rejects a thread/start response with no thread id', async () => {
