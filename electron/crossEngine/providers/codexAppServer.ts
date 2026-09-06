@@ -75,6 +75,49 @@ interface Pending {
   reject: (e: Error) => void;
 }
 
+/** The fields every turn-scoped notification carries. `turnId` is what makes
+ *  a late notification from a previous turn distinguishable from this turn's. */
+interface TurnScopedParams {
+  threadId?: string;
+  turnId?: string;
+  delta?: string;
+  tokenUsage?: unknown;
+}
+
+/** Minimal shape of the generated `Turn` this adapter reads. `id` matters:
+ *  a completion notification must be matched to the turn it belongs to, not
+ *  merely to the thread. */
+type TurnLike = { id?: unknown; status?: unknown; error?: unknown };
+
+/** How a turn stopped waiting. A dead transport is NOT a deadline, and the
+ *  contract requires transport faults to throw rather than return a stop
+ *  reason -- collapsing both into "no turn arrived" hid a crashed provider
+ *  behind stopReason: 'timeout'. */
+type WaiterResult = { kind: 'turn'; turn: TurnLike | null } | { kind: 'gone'; reason: string };
+
+/** Completions that arrive before turn/start's response has told us the turn
+ *  id are stashed here, keyed by id. Bounded: cleared at the start and end of
+ *  every turn, and capped regardless. */
+const MAX_EARLY_COMPLETIONS = 8;
+
+/** Turn-scoped content notifications can arrive before turn/start's response
+ *  has told us which turn was accepted, so they are buffered rather than
+ *  dropped. Bounded: cleared at the start and end of every turn. */
+const MAX_BUFFERED_NOTIFICATIONS = 256;
+
+/** Caps on the late-response side table. The TTL is generous relative to a
+ *  turn's own deadline: an acknowledgement that has not arrived two minutes
+ *  after its call gave up is never going to be useful. */
+const MAX_LATE_HANDLERS = 16;
+const LATE_HANDLER_TTL_MS = 120_000;
+
+/** TurnStatus is "completed" | "interrupted" | "failed" | "inProgress".
+ *  Only the first three are outcomes; "inProgress" means the answer has not
+ *  arrived yet. */
+function isTerminalTurnStatus(status: unknown): boolean {
+  return status === 'completed' || status === 'interrupted' || status === 'failed';
+}
+
 /** Reads a ThreadTokenUsage's `last` breakdown defensively. Field casing is
  *  not asserted -- both camelCase and snake_case are accepted so a serde
  *  rename in a future codex build degrades to nulls rather than throwing. */
@@ -123,11 +166,35 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private decoder = new StringDecoder('utf8');
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  /** Handlers for responses that arrive AFTER their call timed out. Without
+   *  these a late response is silently dropped, which is fine for most calls
+   *  but not for turn/start: its response is the only place the accepted turn
+   *  id appears, and a cancellation that landed pre-acknowledgement needs that
+   *  id to interrupt anything.
+   *
+   *  An earlier version of this comment claimed the map was "bounded by the
+   *  number of timed-out calls in a turn and cleared on dispose". That was
+   *  wrong, and asserting it without checking is what let the leak ship: an
+   *  entry was removed only when its response actually arrived, so a
+   *  turn/start the server NEVER acknowledged retained its entry -- and the
+   *  closure over that turn's request and cancellation context -- for the
+   *  adapter's whole lifetime. It is now bounded three ways: a hard cap with
+   *  oldest-first eviction, a TTL swept on every insert, and a clear on child
+   *  death (a dead child can never deliver the response being waited for).
+   *
+   *  This is a bound on a symptom. The underlying lifetime mismatch -- the
+   *  provider turn outliving sendTurn, so its state has no owner once
+   *  sendTurn returns -- is tracked as a follow-up restructure; see the PR
+   *  discussion and the prototyping-task doc. */
+  private readonly lateHandlers = new Map<number, { handler: (result: unknown) => void; expiresAt: number }>();
   private readonly threads = new Set<string>();
-  /** threadId -> turnId of the turn currently in flight. Populated from the
-   *  first notification carrying a turnId, because turn/start does not
-   *  resolve until the turn is over -- so the id needed to interrupt it can
-   *  only come from the stream. */
+  /** threadId -> turnId of the turn currently in flight, and the id cancel()
+   *  interrupts. Populated ONLY from turn/start's accepted turn -- never from
+   *  a notification, which can belong to a previous turn still finishing.
+   *  (The original comment here claimed the id could only come from the
+   *  stream, because turn/start was believed not to resolve until the turn was
+   *  over. That was backwards: turn/start resolves on acceptance and carries
+   *  the id.) */
   private readonly activeTurn = new Map<string, string>();
   private readonly interrupted = new Set<string>();
   private serverVersion: string | null = null;
@@ -139,6 +206,14 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private streamThreadId: string | null = null;
   private streamText = '';
   private streamUsage: TurnUsage = EMPTY_USAGE;
+  /** Settled by the `turn/completed` notification (or by child death). See
+   *  sendTurn's TURN LIFECYCLE note. */
+  private turnWaiter: { sessionId: string; turnId: string | null; settle: (result: WaiterResult) => void } | null = null;
+  private readonly earlyCompletions = new Map<string, TurnLike | null>();
+  private bufferedTurnNotifications: Array<{ method: string; params: TurnScopedParams }> = [];
+  /** Per-thread output schema, retained because `turn/start` -- not
+   *  `thread/start` -- is what carries it. */
+  private readonly outputSchemas = new Map<string, unknown>();
 
   constructor(private readonly spawnChild: () => ChildProcessWithoutNullStreams = defaultSpawn) {}
 
@@ -177,6 +252,24 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     return this.child;
   }
 
+  /** Registers a late-response handler under all three bounds. */
+  private registerLateHandler(id: number, handler: (result: unknown) => void): void {
+    const now = Date.now();
+    for (const [k, v] of this.lateHandlers) if (v.expiresAt <= now) this.lateHandlers.delete(k);
+    while (this.lateHandlers.size >= MAX_LATE_HANDLERS) {
+      const oldest = this.lateHandlers.keys().next().value as number | undefined;
+      if (oldest === undefined) break;
+      this.lateHandlers.delete(oldest);
+    }
+    this.lateHandlers.set(id, { handler, expiresAt: now + LATE_HANDLER_TTL_MS });
+  }
+
+  /** Test-only introspection: the number of retained late-response handlers.
+   *  Exposed so the bound above is asserted rather than asserted-about. */
+  get retainedLateHandlerCount(): number {
+    return this.lateHandlers.size;
+  }
+
   /** Single teardown path for a child that died for any reason. Clearing
    *  `child` first means every later call fails NOT_CONNECTED rather than
    *  writing to a dead pipe. */
@@ -185,6 +278,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.child = null;
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', reason));
     this.pending.clear();
+    // A turn awaiting turn/completed must not hang for the full deadline when
+    // the server it was waiting on is gone -- and must not report that as a
+    // timeout either, which would hide a crashed provider from the caller.
+    // A dead child can never deliver the responses these are waiting for.
+    this.lateHandlers.clear();
+    this.turnWaiter?.settle({ kind: 'gone', reason });
   }
 
   /** stdin writes throw EPIPE once the child is gone; that must surface as a
@@ -217,7 +316,16 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       }
       if (typeof msg.id === 'number') {
         const p = this.pending.get(msg.id);
-        if (!p) continue;
+        if (!p) {
+          // Already timed out. Give a registered late handler its chance
+          // rather than dropping the response on the floor.
+          const late = this.lateHandlers.get(msg.id);
+          if (late) {
+            this.lateHandlers.delete(msg.id);
+            if (!msg.error && late.expiresAt > Date.now()) late.handler(msg.result);
+          }
+          continue;
+        }
         this.pending.delete(msg.id);
         if (msg.error) p.reject(new ProviderError('PROTOCOL_ERROR', msg.error.message));
         else p.resolve(msg.result);
@@ -246,14 +354,77 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   }
 
   private onNotification(method: string, params: unknown): void {
-    const p = (params ?? {}) as {
-      threadId?: string;
-      turnId?: string;
-      delta?: string;
-      tokenUsage?: unknown;
-    };
-    if (p.threadId && p.turnId) this.activeTurn.set(p.threadId, p.turnId);
+    const p = (params ?? {}) as TurnScopedParams;
+    // activeTurn is NOT set from notifications. It used to be, unconditionally
+    // and before the accepted-id gate below, which meant a late notification
+    // from a previous turn could overwrite it with that turn's id -- and
+    // cancel(), which reads activeTurn, would then interrupt the OLD turn
+    // while the accepted one kept running. The id is now retained from
+    // turn/start's accepted turn only (see sendTurn), which is the single
+    // authoritative source and cannot be poisoned by a stale notification.
     if (!this.streamListener || !this.streamThreadId || p.threadId !== this.streamThreadId) return;
+    const sessionId = this.streamThreadId;
+
+    // The real completion signal. turn/start returns as soon as the turn is
+    // ACCEPTED, so this is what says how it actually ended.
+    if (method === 'turn/completed') {
+      const turn = (params as { turn?: TurnLike } | undefined)?.turn ?? null;
+      const turnId = typeof turn?.id === 'string' ? turn.id : null;
+      // Matched by TURN id, not just thread id. A turn that timed out locally
+      // can still complete provider-side, and that late notification would
+      // otherwise settle the NEXT turn on the same thread with the previous
+      // turn's status and text. An unidentifiable completion is ignored (the
+      // waiting turn then hits its deadline) rather than guessed at.
+      if (!turnId) return;
+      if (this.turnWaiter && this.turnWaiter.turnId === turnId) {
+        this.turnWaiter.settle({ kind: 'turn', turn });
+        return;
+      }
+      // Arrived before turn/start's response told us the id -- normal, since
+      // the server may answer the notification first.
+      if (this.earlyCompletions.size >= MAX_EARLY_COMPLETIONS) {
+        this.earlyCompletions.delete(this.earlyCompletions.keys().next().value as string);
+      }
+      this.earlyCompletions.set(turnId, turn);
+      return;
+    }
+
+    // Everything below is turn-scoped CONTENT. Matching only turn/completed on
+    // turn id was not enough: a turn that timed out locally keeps streaming
+    // provider-side, and its late deltas and usage would otherwise be appended
+    // to the NEXT turn's text -- so a correctly-matched second completion
+    // could still carry the first turn's content.
+    const accepted = this.turnWaiter?.turnId ?? null;
+    const notifTurnId = typeof p.turnId === 'string' ? p.turnId : null;
+    if (notifTurnId !== null) {
+      if (accepted === null) {
+        // turn/start has not told us the accepted id yet. Buffer rather than
+        // drop: these are very likely this turn's own opening deltas.
+        if (this.bufferedTurnNotifications.length < MAX_BUFFERED_NOTIFICATIONS) {
+          this.bufferedTurnNotifications.push({ method, params: p });
+        }
+        return;
+      }
+      if (notifTurnId !== accepted) return; // a previous turn still finishing
+    }
+    this.dispatchTurnContent(method, p);
+  }
+
+  /** Replays notifications buffered before the accepted turn id was known,
+   *  keeping only those that belong to it. */
+  private flushBufferedTurnNotifications(acceptedId: string | null): void {
+    const buffered = this.bufferedTurnNotifications;
+    this.bufferedTurnNotifications = [];
+    if (acceptedId === null) return;
+    for (const item of buffered) {
+      if (item.params.turnId !== acceptedId) continue;
+      if (item.params.threadId !== this.streamThreadId) continue;
+      this.dispatchTurnContent(item.method, item.params);
+    }
+  }
+
+  private dispatchTurnContent(method: string, p: TurnScopedParams): void {
+    if (!this.streamListener || !this.streamThreadId) return;
     const sessionId = this.streamThreadId;
 
     if (method === 'item/agentMessage/delta' && typeof p.delta === 'string') {
@@ -278,12 +449,19 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     }
   }
 
-  private call(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
+  private call(
+    method: string,
+    params?: unknown,
+    timeoutMs = 30_000,
+    onLate?: (result: unknown) => void
+  ): Promise<unknown> {
     const child = this.require();
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // The caller may still care about a response that shows up later.
+        if (onLate) this.registerLateHandler(id, onLate);
         reject(new ProviderError('TIMEOUT', 'app-server call "' + method + '" timed out'));
       }, timeoutMs);
       this.pending.set(id, {
@@ -309,26 +487,39 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   async health(): Promise<ProviderHealth> {
     this.require();
     try {
-      const account = (await this.call('account/read')) as { authMode?: unknown } | undefined;
-      const mode = typeof account?.authMode === 'string' ? account.authMode : 'unknown';
-      // Fails closed: only a recognised subscription login is `ready`. An
-      // api-key or gateway login is a billing mode this project refuses, and
-      // anything unrecognised is treated as unproven rather than assumed fine.
+      // Params are sent as an explicit {} rather than omitted: the server
+      // rejects account/read when the params key is absent entirely, and the
+      // rejection was being swallowed by the catch below into authMode
+      // 'unknown' -- which the live smoke test caught.
+      // GetAccountResponse is `{ account: Account | null, requiresOpenaiAuth }`
+      // and Account is a tagged union on `type`
+      // ("apiKey" | "chatgpt" | "amazonBedrock") -- NOT a top-level
+      // `authMode`. Reading the wrong field made every real ChatGPT login
+      // classify as 'unknown', so health() reported ready:false and any
+      // health-gated caller was blocked. Field names taken from the generated
+      // bindings, not guessed.
+      const res = (await this.call('account/read', {})) as
+        | { account?: { type?: unknown } | null; requiresOpenaiAuth?: unknown }
+        | undefined;
+      const type = res?.account?.type;
+      // Fails closed: only a proven ChatGPT subscription is `ready`. An
+      // api-key or Bedrock login is a billing mode this project refuses, and
+      // anything unrecognised is unproven rather than assumed fine.
       const authMode =
-        mode === 'chatgpt' || mode === 'chat-gpt' || mode === 'subscription'
+        type === 'chatgpt'
           ? ('subscription' as const)
-          : mode === 'apikey' || mode === 'api-key'
+          : type === 'apiKey'
             ? ('api-key' as const)
-            : mode === 'gateway'
+            : type === 'amazonBedrock'
               ? ('gateway' as const)
-              : mode === 'unauthenticated'
+              : res && res.account === null
                 ? ('unauthenticated' as const)
                 : ('unknown' as const);
       return {
         ready: authMode === 'subscription',
         authMode,
         version: this.serverVersion,
-        detail: 'account/read reported authMode=' + mode,
+        detail: 'account/read reported account.type=' + (typeof type === 'string' ? type : '(absent)'),
       };
     } catch (err) {
       return {
@@ -350,6 +541,11 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       throw new ProviderError('PROTOCOL_ERROR', 'thread/start returned no thread id');
     }
     this.threads.add(id);
+    // Retained rather than sent here: TurnStartParams carries outputSchema,
+    // ThreadStartParams does not. Dropping it while capabilities() advertises
+    // structuredOutputSchema:true would let a caller trust a constraint that
+    // was never applied.
+    if (options.outputSchema !== undefined) this.outputSchemas.set(id, options.outputSchema);
     return id;
   }
 
@@ -365,15 +561,121 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.streamUsage = EMPTY_USAGE;
     this.approvalDenials = [];
 
+    // Declared out here because `finally` reads it after the try block
+    // that populates it has already unwound.
+    const lateCtx = { cancelled: false };
+
     try {
+      const timeoutMs = request.timeoutMs ?? 5 * 60_000;
       const params: Record<string, unknown> = {
         threadId: request.sessionId,
         input: [{ type: 'text', text: request.text, text_elements: [] }],
         ...READ_ONLY_THREAD,
       };
-      const res = (await this.call('turn/start', params, request.timeoutMs ?? 5 * 60_000)) as
-        | { turn?: { status?: unknown } }
+      const schema = this.outputSchemas.get(request.sessionId);
+      if (schema !== undefined) params.outputSchema = schema;
+
+      // TURN LIFECYCLE. turn/start resolves as soon as the turn is ACCEPTED,
+      // typically with status "inProgress"; the assistant deltas and the real
+      // outcome arrive afterwards as notifications, ending in turn/completed.
+      // Treating the turn/start response as the outcome classified every
+      // normal turn as 'error' and returned empty text, while also clearing
+      // the stream listener before any content arrived.
+      //
+      // Both shapes are handled rather than betting on one: a response that
+      // is ALREADY terminal is used as-is, otherwise the turn stays pending
+      // until turn/completed (or the deadline, or child death).
+      // ONE deadline for the whole operation. Starting a fresh timeoutMs
+      // timer after turn/start had already consumed part of it let a turn run
+      // for nearly twice the caller's limit.
+      const deadlineAt = Date.now() + timeoutMs;
+      const remaining = () => Math.max(0, deadlineAt - Date.now());
+
+      let settleWaiter: (result: WaiterResult) => void = () => {};
+      const completed = new Promise<WaiterResult>((resolve) => {
+        let done = false;
+        settleWaiter = (result) => {
+          if (done) return;
+          done = true;
+          resolve(result);
+        };
+      });
+      this.turnWaiter = { sessionId: request.sessionId, turnId: null, settle: settleWaiter };
+      this.earlyCompletions.clear();
+      this.bufferedTurnNotifications = [];
+
+      // If turn/start misses the shared deadline, this await rejects and the
+      // replay below is never reached, `finally` clears the interrupt flag,
+      // and the late accepted id is discarded -- so a cancellation issued
+      // before acknowledgement would leave the provider-side turn running with
+      // no turn/interrupt ever sent. lateCtx carries just enough state for the
+      // late handler to finish the job after this turn has given up.
+      const onLateAck = (result: unknown) => {
+        const id = (result as { turn?: TurnLike } | undefined)?.turn?.id;
+        if (!lateCtx.cancelled || typeof id !== 'string' || !this.child) return;
+        void this.call('turn/interrupt', { threadId: request.sessionId, turnId: id }, 10_000).catch(() => {
+          // Best effort: the turn may have ended on its own by now.
+        });
+      };
+
+      const started = (await this.call('turn/start', params, remaining(), onLateAck)) as
+        | { turn?: TurnLike }
         | undefined;
+      const acceptedId = typeof started?.turn?.id === 'string' ? started.turn.id : null;
+      if (this.turnWaiter) this.turnWaiter.turnId = acceptedId;
+      // Also record it as the active turn. cancel() reads activeTurn, which
+      // otherwise only gets populated by a notification carrying turnId -- so
+      // if turn/start answered first, a cancel during the wait for
+      // turn/completed would find no id and silently fail to interrupt.
+      if (acceptedId !== null) this.activeTurn.set(request.sessionId, acceptedId);
+
+      // Replay a cancellation that landed BEFORE turn/start told us the id.
+      // cancel() records the intent but cannot send turn/interrupt without an
+      // id, and taking the id only from turn/start (correctly, so a stale
+      // notification cannot poison it) means that window is real: without this
+      // replay the provider-side turn keeps consuming work until it completes
+      // or hits the deadline, while sendTurn already reports 'cancelled'.
+      if (acceptedId !== null && this.interrupted.has(request.sessionId)) {
+        void this.call('turn/interrupt', { threadId: request.sessionId, turnId: acceptedId }, 10_000).catch(
+          () => {
+            // Best effort: the turn may have finished in the meantime.
+          }
+        );
+      }
+
+      this.flushBufferedTurnNotifications(acceptedId);
+
+      let res: { turn?: TurnLike } | undefined = started;
+      if (!isTerminalTurnStatus(started?.turn?.status)) {
+        // The completion may already have arrived while turn/start was still
+        // in flight.
+        const early = acceptedId !== null && this.earlyCompletions.has(acceptedId);
+        if (early) {
+          res = { turn: this.earlyCompletions.get(acceptedId as string) ?? undefined };
+        } else {
+          // The timer handle is retained and cleared once the race settles.
+          // Left dangling, a successful turn kept a live timer for the rest of
+          // its budget -- nearly five minutes by default -- so turns
+          // accumulated timers and a plain Node process using this adapter
+          // could stay alive long after dispose().
+          let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+          const deadline = new Promise<WaiterResult>((resolve) => {
+            deadlineTimer = setTimeout(() => resolve({ kind: 'turn', turn: null }), remaining());
+          });
+          const outcome = await Promise.race([completed, deadline]).finally(() => {
+            if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+          });
+          if (outcome.kind === 'gone') {
+            // A transport fault throws, per the contract -- callers must be
+            // able to tell a crashed provider from an ordinary deadline.
+            throw new ProviderError('PROCESS_EXITED', outcome.reason);
+          }
+          if (outcome.turn === null && !this.interrupted.has(request.sessionId)) {
+            return { stopReason: 'timeout', text: this.streamText, usage: this.streamUsage };
+          }
+          res = { turn: outcome.turn ?? undefined };
+        }
+      }
 
       for (const denial of this.approvalDenials) {
         onEvent({
@@ -406,6 +708,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       }
       throw err;
     } finally {
+      // Snapshot the cancellation BEFORE clearing it, so a late turn/start
+      // response can still act on it.
+      lateCtx.cancelled = this.interrupted.has(request.sessionId);
+      this.turnWaiter = null;
+      this.earlyCompletions.clear();
+      this.bufferedTurnNotifications = [];
       this.interrupted.delete(request.sessionId);
       this.activeTurn.delete(request.sessionId);
       this.streamListener = null;
@@ -413,6 +721,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     }
   }
 
+  /** Recording the intent always, and sending turn/interrupt when an id is
+   *  available. A cancel that arrives before turn/start has been acknowledged
+   *  has no id yet; sendTurn replays it as soon as the accepted id arrives. */
   async cancel(sessionId: string): Promise<void> {
     const turnId = this.activeTurn.get(sessionId);
     // Only record the interrupt when a turn is actually in flight. Marking an
@@ -433,9 +744,15 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   }
 
   async dispose(): Promise<void> {
+    // An in-flight turn must fail rather than hang to its deadline.
+    this.turnWaiter?.settle({ kind: 'gone', reason: 'adapter disposed' });
+    this.earlyCompletions.clear();
+    this.lateHandlers.clear();
+    this.bufferedTurnNotifications = [];
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', 'adapter disposed'));
     this.pending.clear();
     this.threads.clear();
+    this.outputSchemas.clear();
     this.activeTurn.clear();
     this.interrupted.clear();
     this.streamListener = null;

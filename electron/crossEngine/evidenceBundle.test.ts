@@ -42,6 +42,14 @@ describe('normalizeEvidencePath', () => {
   // Rule 2 of the module ("never absolute paths") used to be enforced only by
   // a comment: a drive-absolute path was silently relativized, hashed and
   // sealed, putting the operator's home directory inside an immutable record.
+  it('throws on a parent-directory traversal, which is relative but still escapes', () => {
+    expect(() => normalizeEvidencePath('../secret')).toThrow(/traversal/);
+    expect(() => normalizeEvidencePath('src/../../secret')).toThrow(/traversal/);
+    expect(() => normalizeEvidencePath('src\\..\\..\\secret')).toThrow(/traversal/);
+    // '..' only as a path SEGMENT -- a file legitimately named '..foo' is fine.
+    expect(normalizeEvidencePath('src/..foo.ts')).toBe('src/..foo.ts');
+  });
+
   it('throws on an absolute path rather than quietly relativizing it', () => {
     expect(() => normalizeEvidencePath('C:\\Users\\someone\\proj\\a.ts')).toThrow(/project-relative/);
     expect(() => normalizeEvidencePath('/src/thing.ts')).toThrow(/project-relative/);

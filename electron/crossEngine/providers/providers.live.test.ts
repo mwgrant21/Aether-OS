@@ -33,9 +33,11 @@ describeLive('LIVE: CodexAppServerAdapter against the real codex app-server', ()
       // is where `spawn('codex')` failed with ENOENT on Windows.
       await adapter.connect();
       const health = await adapter.health();
-      expect(['subscription', 'api-key', 'gateway', 'unauthenticated', 'unknown']).toContain(health.authMode);
-      // Not asserting ready===true: the point is that the probe completes and
-      // classifies, not that this particular machine is logged in.
+      // 'unknown' means the response SHAPE drifted, not that the machine is
+      // logged out (that reads 'unauthenticated'). Asserting only membership
+      // of the full enum let this pass vacuously while health() was reading a
+      // field the protocol never had.
+      expect(['subscription', 'api-key', 'gateway', 'unauthenticated']).toContain(health.authMode);
       expect(typeof health.ready).toBe('boolean');
     } finally {
       await adapter.dispose();
@@ -62,7 +64,8 @@ describeLive('LIVE: ClaudeHeadlessCliAdapter against the real claude CLI', () =>
     try {
       await adapter.connect();
       const health = await adapter.health();
-      expect(['subscription', 'api-key', 'gateway', 'unauthenticated', 'unknown']).toContain(health.authMode);
+      // Same reasoning as the Codex probe: 'unknown' means shape drift.
+      expect(['subscription', 'api-key', 'gateway', 'unauthenticated']).toContain(health.authMode);
       expect(typeof health.ready).toBe('boolean');
       // The probe returns the operator's email and org id; neither may reach
       // ProviderHealth, which other layers may log or persist.

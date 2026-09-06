@@ -5,6 +5,11 @@ on:
     branches: [main, master]
   pull_request:
 
+# Least privilege for GITHUB_TOKEN: every job here only reads the repository.
+# Flagged by CodeQL on PR #46 ("Workflow does not contain permissions").
+permissions:
+  contents: read
+
 jobs:
   test-and-build:
     runs-on: ubuntu-latest

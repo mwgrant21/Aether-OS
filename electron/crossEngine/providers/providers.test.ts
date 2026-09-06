@@ -73,8 +73,15 @@ function makeStdioFake(
       }
       server.received.push({ id: msg.id, method: msg.method, params: msg.params });
       const result = handle({ id: msg.id, method: msg.method, params: msg.params }, push, request);
-      if (result !== undefined && msg.id !== undefined) {
-        write({ jsonrpc: '2.0', id: msg.id, result });
+      const id = msg.id;
+      // A handler may return a Promise to answer slowly, which is what lets a
+      // test exercise a deadline that spans more than one protocol phase.
+      if (result && typeof (result as { then?: unknown }).then === 'function') {
+        void (result as Promise<unknown>).then((r) => {
+          if (r !== undefined && id !== undefined) write({ jsonrpc: '2.0', id, result: r });
+        });
+      } else if (result !== undefined && id !== undefined) {
+        write({ jsonrpc: '2.0', id, result });
       }
     }
   });
@@ -136,7 +143,11 @@ function appServerFake(): FakeServer {
       case 'initialize':
         return { userAgent: 'codex-app-server/0.153.2', codexHome: '', platformFamily: 'windows', platformOs: 'windows' };
       case 'account/read':
-        return { authMode: 'chatgpt' };
+        // GetAccountResponse: { account: Account | null, requiresOpenaiAuth }.
+        // Account is a tagged union on `type`. The previous fake invented a
+        // top-level `authMode`, which is why the adapter's own misreading of
+        // this response went unnoticed.
+        return { account: { type: 'chatgpt', email: null, planType: 'pro' }, requiresOpenaiAuth: false };
       case 'thread/start':
         return { thread: { id: 'thread-1' } };
       case 'turn/start': {
@@ -150,7 +161,12 @@ function appServerFake(): FakeServer {
           turnId: 'turn-1',
           tokenUsage: { last: { inputTokens: 11, outputTokens: 22, cachedInputTokens: 33 } },
         });
-        return { turn: { id: 'turn-1', status: 'completed' } };
+        // The real server accepts the turn immediately and reports the
+        // outcome later via turn/completed. The old fake returned a
+        // synchronously-completed turn, which masked the adapter treating
+        // turn/start's response as the outcome.
+        push('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } });
+        return { turn: { id: 'turn-1', status: 'inProgress' } };
       }
       default:
         return {};
@@ -354,11 +370,32 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
-  it('treats an unrecognised turn status as an error, never as completed', async () => {
+  it('stays pending until turn/completed rather than trusting turn/start', async () => {
+    // turn/start resolves as soon as the turn is ACCEPTED. A fake that never
+    // sends turn/completed must therefore time out, not report a result.
     const fake = makeStdioFake((req) => {
       if (req.method === 'initialize') return { userAgent: 'x' };
       if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (req.method === 'turn/start') return { turn: { id: 't', status: 'inProgress' } };
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 80 }, () => {});
+    expect(result.stopReason).toBe('timeout');
+    await adapter.dispose();
+  });
+
+  it('reports a failed turn from turn/completed as an error, not a completion', async () => {
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        const threadId = (req.params as { threadId: string }).threadId;
+        push('turn/completed', { threadId, turn: { id: 't', status: 'failed', error: { message: 'nope' } } });
+        return { turn: { id: 't', status: 'inProgress' } };
+      }
       return {};
     });
     const adapter = new CodexAppServerAdapter(() => fake.child);
@@ -369,18 +406,351 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
-  it('fails closed on a non-subscription billing mode', async () => {
-    const fake = makeStdioFake((req) => {
+  it('ignores a stale turn/completed belonging to an earlier turn', async () => {
+    // A turn that timed out locally can still complete provider-side. That
+    // late notification must not settle the NEXT turn on the same thread.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
       if (req.method === 'initialize') return { userAgent: 'x' };
-      if (req.method === 'account/read') return { authMode: 'api-key' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        if (turnNo === 2) {
+          // The FIRST turn's completion, arriving during the second turn.
+          push('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } });
+        }
+        return { turn: { id: 'turn-' + turnNo, status: 'inProgress' } };
+      }
       return {};
     });
     const adapter = new CodexAppServerAdapter(() => fake.child);
     await adapter.connect();
-    const health = await adapter.health();
-    expect(health.ready).toBe(false);
-    expect(health.authMode).toBe('api-key');
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+    const second = await adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 60 }, () => {});
+    // Matching on threadId alone would return 'completed' here.
+    expect(second.stopReason).toBe('timeout');
     await adapter.dispose();
+  });
+
+  // NOTE: there are two distinct filters, and they need separate tests.
+  // Notifications that arrive BEFORE turn/start's response are buffered and
+  // filtered on flush; those arriving AFTER are filtered by the live gate in
+  // onNotification. A test covering only the first passes with the second
+  // removed, which is how the original version of this test was vacuous.
+  it('does not mix a previous turn\'s BUFFERED deltas into the next turn (flush filter)', async () => {
+    // A timed-out turn keeps streaming provider-side. Those late deltas carry
+    // the OLD turnId and must not be appended to the new turn's text.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = 'turn-' + turnNo;
+        if (turnNo === 2) {
+          // Leftovers from turn 1, arriving during turn 2.
+          push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i0', delta: 'STALE' });
+          push('thread/tokenUsage/updated', {
+            threadId,
+            turnId: 'turn-1',
+            tokenUsage: { last: { inputTokens: 999, outputTokens: 999, cachedInputTokens: 999 } },
+          });
+          push('item/agentMessage/delta', { threadId, turnId: id, itemId: 'i1', delta: 'fresh' });
+          push('turn/completed', { threadId, turn: { id, status: 'completed' } });
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+    const second = await adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 500 }, () => {});
+    expect(second.stopReason).toBe('completed');
+    expect(second.text).toBe('fresh');
+    expect(second.text).not.toContain('STALE');
+    expect(second.usage.inputTokens).not.toBe(999);
+    await adapter.dispose();
+  });
+
+  it('does not mix a previous turn\'s LATE deltas into the next turn (live gate)', async () => {
+    // Same hazard, other path: these arrive AFTER turn/start has told the
+    // adapter which turn was accepted, so they hit the live gate rather than
+    // the buffer.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = 'turn-' + turnNo;
+        if (turnNo === 2) {
+          // Deliberately AFTER the turn/start response is written, so the
+          // adapter already knows the accepted id.
+          setTimeout(() => {
+            push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i0', delta: 'STALE' });
+            push('thread/tokenUsage/updated', {
+              threadId,
+              turnId: 'turn-1',
+              tokenUsage: { last: { inputTokens: 999, outputTokens: 999, cachedInputTokens: 999 } },
+            });
+            push('item/agentMessage/delta', { threadId, turnId: id, itemId: 'i1', delta: 'fresh' });
+            push('turn/completed', { threadId, turn: { id, status: 'completed' } });
+          }, 25);
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+    const second = await adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 500 }, () => {});
+    expect(second.stopReason).toBe('completed');
+    expect(second.text).toBe('fresh');
+    expect(second.usage.inputTokens).not.toBe(999);
+    await adapter.dispose();
+  });
+
+  it('a stale notification cannot redirect cancel() to a previous turn', async () => {
+    // The hazard the previous round's fix created: activeTurn was written
+    // from any notification carrying a turnId, so a late one from turn 1
+    // arriving during turn 2 made cancel() interrupt turn 1 instead.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = 'turn-' + turnNo;
+        if (turnNo === 2) {
+          setTimeout(() => {
+            push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i0', delta: 'STALE' });
+          }, 20);
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+
+    const turn = adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 400 }, () => {});
+    await new Promise((r) => setTimeout(r, 60)); // let the stale delta land
+    await adapter.cancel(sessionId);
+    await turn;
+
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt).toBeTruthy();
+    // Must interrupt the turn actually running, not the one that leaked in.
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-2');
+    await adapter.dispose();
+  });
+
+  it('bounds retained late-response handlers and clears them on child death', async () => {
+    // A turn/start the server never acknowledges used to retain its handler --
+    // and that handler's closure -- for the adapter's entire lifetime.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return undefined; // turn/start is NEVER answered
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    for (let i = 0; i < 25; i++) {
+      await adapter.sendTurn({ sessionId, text: 'go ' + i, timeoutMs: 5 }, () => {});
+    }
+    expect(adapter.retainedLateHandlerCount).toBeGreaterThan(0);
+    expect(adapter.retainedLateHandlerCount).toBeLessThanOrEqual(16);
+
+    (fake.child as unknown as EventEmitter).emit('close', 1);
+    expect(adapter.retainedLateHandlerCount).toBe(0);
+    await adapter.dispose();
+  });
+
+  it('still interrupts when the acknowledgement itself misses the deadline', async () => {
+    // The sixth window of this shape: if turn/start does not answer within the
+    // shared deadline, the await rejects, `finally` clears the interrupt flag,
+    // and the late accepted id is dropped -- so a pre-ack cancellation would
+    // leave the provider-side turn running with no turn/interrupt ever sent.
+    const ACK_DELAY_MS = 200;
+    const TURN_TIMEOUT_MS = 60;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        // Answers well AFTER the caller's deadline has expired.
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 'turn-verylate', status: 'inProgress' } }), ACK_DELAY_MS)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: TURN_TIMEOUT_MS }, () => {});
+    await new Promise((r) => setTimeout(r, 20)); // cancel before the ack
+    await adapter.cancel(sessionId);
+    const result = await turn;
+    expect(result.stopReason).toBe('timeout');
+
+    // Give the late acknowledgement time to land and be acted on.
+    await new Promise((r) => setTimeout(r, ACK_DELAY_MS + 120));
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'a late acknowledgement must still honour the cancellation').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-verylate');
+    await adapter.dispose();
+  });
+
+  it('replays a cancellation that arrived before turn/start was acknowledged', async () => {
+    // The window the accepted-id-only strategy creates: cancel() has no id to
+    // interrupt with yet, so the interrupt has to be issued once the id lands.
+    const ACK_DELAY_MS = 80;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 'turn-late', status: 'inProgress' } }), ACK_DELAY_MS)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 400 }, () => {});
+    await new Promise((r) => setTimeout(r, 20)); // cancel BEFORE the ack
+    await adapter.cancel(sessionId);
+    await turn;
+
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'a pre-ack cancel must still interrupt once the id arrives').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-late');
+    await adapter.dispose();
+  });
+
+  it('can interrupt a turn acknowledged before any notification arrived', async () => {
+    // cancel() reads activeTurn; if turn/start answered first and only the
+    // waiter knew the id, the interrupt was silently never sent.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') return { turn: { id: 'turn-solo', status: 'inProgress' } };
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 400 }, () => {});
+    await new Promise((r) => setTimeout(r, 60));
+    await adapter.cancel(sessionId);
+    await turn;
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'cancel() must send turn/interrupt for the accepted turn').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-solo');
+    await adapter.dispose();
+  });
+
+  it('throws PROCESS_EXITED when the child dies mid-turn, never reports a timeout', async () => {
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') return { turn: { id: 't1', status: 'inProgress' } };
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 5_000 }, () => {});
+    setTimeout(() => (fake.child as unknown as EventEmitter).emit('close', 1), 20);
+    // A crashed provider must be distinguishable from an ordinary deadline.
+    await expect(turn).rejects.toBeInstanceOf(ProviderError);
+    await adapter.dispose();
+  });
+
+  it('bounds the whole turn by one deadline, not one per phase', async () => {
+    // turn/start is ACKNOWLEDGED slowly (most of the budget), and no
+    // completion ever arrives. Starting a fresh full-length timer for the
+    // second phase would let this run for ~2x the caller's limit.
+    const ACK_DELAY_MS = 90;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 't1', status: 'inProgress' } }), ACK_DELAY_MS)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const startedAt = Date.now();
+    const result = await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 150 }, () => {});
+    const elapsed = Date.now() - startedAt;
+    expect(result.stopReason).toBe('timeout');
+    // The ack alone consumed 90ms of a 150ms budget. Two independent timers
+    // would give 90 + 150 = 240ms+; one shared deadline gives ~150ms.
+    expect(elapsed).toBeGreaterThanOrEqual(ACK_DELAY_MS);
+    expect(elapsed).toBeLessThan(230);
+    await adapter.dispose();
+  });
+
+  it('forwards a requested outputSchema on turn/start, not thread/start', async () => {
+    const fake = appServerFake();
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const schema = { type: 'object', required: ['verdict'] };
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot', outputSchema: schema });
+    await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+
+    // capabilities() advertises structuredOutputSchema:true, so dropping the
+    // schema would let a caller trust a constraint that was never applied.
+    // ThreadStartParams has no outputSchema field; TurnStartParams does.
+    const start = fake.received.find((r) => r.method === 'thread/start');
+    const turn = fake.received.find((r) => r.method === 'turn/start');
+    expect((start?.params as Record<string, unknown>)?.outputSchema).toBeUndefined();
+    expect((turn?.params as Record<string, unknown>)?.outputSchema).toEqual(schema);
+    await adapter.dispose();
+  });
+
+  it('classifies every Account variant and fails closed off subscription', async () => {
+    // Account = { type: "apiKey" } | { type: "chatgpt", ... } | { type: "amazonBedrock", ... }
+    const cases: Array<[unknown, boolean, string]> = [
+      [{ type: 'chatgpt', email: null, planType: 'pro' }, true, 'subscription'],
+      [{ type: 'apiKey' }, false, 'api-key'],
+      [{ type: 'amazonBedrock', usesCodexManagedCredentials: false }, false, 'gateway'],
+      [null, false, 'unauthenticated'],
+    ];
+    for (const [account, ready, authMode] of cases) {
+      const fake = makeStdioFake((req) => {
+        if (req.method === 'initialize') return { userAgent: 'x' };
+        if (req.method === 'account/read') return { account, requiresOpenaiAuth: false };
+        return {};
+      });
+      const adapter = new CodexAppServerAdapter(() => fake.child);
+      await adapter.connect();
+      const health = await adapter.health();
+      expect(health.ready, JSON.stringify(account)).toBe(ready);
+      expect(health.authMode, JSON.stringify(account)).toBe(authMode);
+      await adapter.dispose();
+    }
   });
 
   it('rejects a thread/start response with no thread id', async () => {
