@@ -53,13 +53,19 @@ export async function buildVerificationSnapshot(evidence: DispatchEvidence): Pro
     // it omits uncommitted work, so it's combined with an explicit copy of
     // the exact approved touched paths below).
     await execFileAsync('git', ['archive', 'HEAD', '-o', join(snapshotDir, '__baseline.tar')], { cwd: evidence.projectRoot });
-    // --force-local: without it, (GNU/bsd)tar on Windows parses an absolute
-    // path with a drive letter (`C:\...`) as a `host:file` remote-archive
-    // spec (the colon after the drive letter is ambiguous with the
-    // ssh-remote-tar syntax), and fails with "Cannot connect to C:". Passing
-    // the archive name as a bare filename with cwd set to snapshotDir avoids
-    // re-introducing an absolute path into the command at all.
-    await execFileAsync('tar', ['--force-local', '-xf', '__baseline.tar'], { cwd: snapshotDir });
+    // No --force-local here, deliberately. Windows ships bsdtar as
+    // C:WindowsSystem32	ar.exe (verified: bsdtar 3.8.8), which REJECTS
+    // that GNU-only flag outright -- 'Option --force-local is not supported',
+    // exit 1 -- so passing it made this function fail on every default
+    // Windows box, the platform this app actually targets. The flag was
+    // originally added because (GNU)tar parses an absolute path with a drive
+    // letter (`C:...`) as a `host:file` remote-archive spec and fails with
+    // "Cannot connect to C:". That ambiguity is already avoided a second,
+    // portable way: the archive is named as a BARE filename with cwd set to
+    // snapshotDir, so no colon ever reaches tar's argument parser. Keep it
+    // that way -- reintroducing an absolute path here would break GNU tar
+    // whether or not the flag comes back.
+    await execFileAsync('tar', ['-xf', '__baseline.tar'], { cwd: snapshotDir });
     await rm(join(snapshotDir, '__baseline.tar'));
 
     for (const relPath of evidence.touchedFiles) {

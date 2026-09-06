@@ -157,12 +157,41 @@ describe('cross-engine Codex boundary', () => {
     expect(hits).toEqual([]);
   });
 
+  // The provider-neutral adapter layer needs 'codex-acp' as a ProviderId
+  // string literal (contract.ts's union, legacyCodexAcp.ts's `id`). That is an
+  // identifier, not a reference to the adapter executable, so these two files
+  // are allowlisted here rather than the grep being loosened -- any OTHER file
+  // mentioning codex-acp still fails this test. The follow-up assertion below
+  // is what keeps the allowlist honest: an allowlisted file that ever grows a
+  // real package reference or a module resolution fails immediately.
+  const ACP_IDENTIFIER_ONLY = [
+    'electron/crossEngine/providers/contract.ts',
+    'electron/crossEngine/providers/legacyCodexAcp.ts',
+  ];
+
   it('only the reviewed ACP process module references the Codex adapter executable', () => {
     const hits = grepSourceFor(/codex-acp/).filter((f) => {
       const posix = f.replace(/\\/g, '/'); // path.normalize() yields backslashes on Windows
-      return !posix.includes('electron/crossEngine/acpProcess.ts') && !posix.includes('.test.ts') && !posix.includes('docs/');
+      return (
+        !posix.includes('electron/crossEngine/acpProcess.ts') &&
+        !posix.includes('.test.ts') &&
+        !posix.includes('docs/') &&
+        !ACP_IDENTIFIER_ONLY.some((allowed) => posix.includes(allowed))
+      );
     });
     expect(hits).toEqual([]);
+  });
+
+  it('the identifier-only allowlist never gains a real adapter reference', () => {
+    const offenders: string[] = [];
+    for (const rel of ACP_IDENTIFIER_ONLY) {
+      const text = readFileSync(resolve(__dirname, '../../', rel), 'utf8');
+      // The two ways such a file could actually reach the executable: naming
+      // the package, or resolving/spawning a module path.
+      if (/@agentclientprotocol/.test(text)) offenders.push(rel + ': names the adapter package');
+      if (/require\.resolve|createRequire/.test(text)) offenders.push(rel + ': resolves a module path');
+    }
+    expect(offenders).toEqual([]);
   });
 
   // Blocked-billing-variable removal (acpProcess.ts's child-environment builder)
