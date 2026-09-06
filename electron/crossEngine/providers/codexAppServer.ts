@@ -75,6 +75,15 @@ interface Pending {
   reject: (e: Error) => void;
 }
 
+/** The fields every turn-scoped notification carries. `turnId` is what makes
+ *  a late notification from a previous turn distinguishable from this turn's. */
+interface TurnScopedParams {
+  threadId?: string;
+  turnId?: string;
+  delta?: string;
+  tokenUsage?: unknown;
+}
+
 /** Minimal shape of the generated `Turn` this adapter reads. `id` matters:
  *  a completion notification must be matched to the turn it belongs to, not
  *  merely to the thread. */
@@ -90,6 +99,11 @@ type WaiterResult = { kind: 'turn'; turn: TurnLike | null } | { kind: 'gone'; re
  *  id are stashed here, keyed by id. Bounded: cleared at the start and end of
  *  every turn, and capped regardless. */
 const MAX_EARLY_COMPLETIONS = 8;
+
+/** Turn-scoped content notifications can arrive before turn/start's response
+ *  has told us which turn was accepted, so they are buffered rather than
+ *  dropped. Bounded: cleared at the start and end of every turn. */
+const MAX_BUFFERED_NOTIFICATIONS = 256;
 
 /** TurnStatus is "completed" | "interrupted" | "failed" | "inProgress".
  *  Only the first three are outcomes; "inProgress" means the answer has not
@@ -166,6 +180,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
    *  sendTurn's TURN LIFECYCLE note. */
   private turnWaiter: { sessionId: string; turnId: string | null; settle: (result: WaiterResult) => void } | null = null;
   private readonly earlyCompletions = new Map<string, TurnLike | null>();
+  private bufferedTurnNotifications: Array<{ method: string; params: TurnScopedParams }> = [];
   /** Per-thread output schema, retained because `turn/start` -- not
    *  `thread/start` -- is what carries it. */
   private readonly outputSchemas = new Map<string, unknown>();
@@ -280,12 +295,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   }
 
   private onNotification(method: string, params: unknown): void {
-    const p = (params ?? {}) as {
-      threadId?: string;
-      turnId?: string;
-      delta?: string;
-      tokenUsage?: unknown;
-    };
+    const p = (params ?? {}) as TurnScopedParams;
     if (p.threadId && p.turnId) this.activeTurn.set(p.threadId, p.turnId);
     if (!this.streamListener || !this.streamThreadId || p.threadId !== this.streamThreadId) return;
     const sessionId = this.streamThreadId;
@@ -313,6 +323,44 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       this.earlyCompletions.set(turnId, turn);
       return;
     }
+
+    // Everything below is turn-scoped CONTENT. Matching only turn/completed on
+    // turn id was not enough: a turn that timed out locally keeps streaming
+    // provider-side, and its late deltas and usage would otherwise be appended
+    // to the NEXT turn's text -- so a correctly-matched second completion
+    // could still carry the first turn's content.
+    const accepted = this.turnWaiter?.turnId ?? null;
+    const notifTurnId = typeof p.turnId === 'string' ? p.turnId : null;
+    if (notifTurnId !== null) {
+      if (accepted === null) {
+        // turn/start has not told us the accepted id yet. Buffer rather than
+        // drop: these are very likely this turn's own opening deltas.
+        if (this.bufferedTurnNotifications.length < MAX_BUFFERED_NOTIFICATIONS) {
+          this.bufferedTurnNotifications.push({ method, params: p });
+        }
+        return;
+      }
+      if (notifTurnId !== accepted) return; // a previous turn still finishing
+    }
+    this.dispatchTurnContent(method, p);
+  }
+
+  /** Replays notifications buffered before the accepted turn id was known,
+   *  keeping only those that belong to it. */
+  private flushBufferedTurnNotifications(acceptedId: string | null): void {
+    const buffered = this.bufferedTurnNotifications;
+    this.bufferedTurnNotifications = [];
+    if (acceptedId === null) return;
+    for (const item of buffered) {
+      if (item.params.turnId !== acceptedId) continue;
+      if (item.params.threadId !== this.streamThreadId) continue;
+      this.dispatchTurnContent(item.method, item.params);
+    }
+  }
+
+  private dispatchTurnContent(method: string, p: TurnScopedParams): void {
+    if (!this.streamListener || !this.streamThreadId) return;
+    const sessionId = this.streamThreadId;
 
     if (method === 'item/agentMessage/delta' && typeof p.delta === 'string') {
       this.streamText += p.delta;
@@ -478,10 +526,17 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       });
       this.turnWaiter = { sessionId: request.sessionId, turnId: null, settle: settleWaiter };
       this.earlyCompletions.clear();
+      this.bufferedTurnNotifications = [];
 
       const started = (await this.call('turn/start', params, remaining())) as { turn?: TurnLike } | undefined;
       const acceptedId = typeof started?.turn?.id === 'string' ? started.turn.id : null;
       if (this.turnWaiter) this.turnWaiter.turnId = acceptedId;
+      // Also record it as the active turn. cancel() reads activeTurn, which
+      // otherwise only gets populated by a notification carrying turnId -- so
+      // if turn/start answered first, a cancel during the wait for
+      // turn/completed would find no id and silently fail to interrupt.
+      if (acceptedId !== null) this.activeTurn.set(request.sessionId, acceptedId);
+      this.flushBufferedTurnNotifications(acceptedId);
 
       let res: { turn?: TurnLike } | undefined = started;
       if (!isTerminalTurnStatus(started?.turn?.status)) {
@@ -491,10 +546,18 @@ export class CodexAppServerAdapter implements ProviderAdapter {
         if (early) {
           res = { turn: this.earlyCompletions.get(acceptedId as string) ?? undefined };
         } else {
-          const deadline = new Promise<WaiterResult>((resolve) =>
-            setTimeout(() => resolve({ kind: 'turn', turn: null }), remaining())
-          );
-          const outcome = await Promise.race([completed, deadline]);
+          // The timer handle is retained and cleared once the race settles.
+          // Left dangling, a successful turn kept a live timer for the rest of
+          // its budget -- nearly five minutes by default -- so turns
+          // accumulated timers and a plain Node process using this adapter
+          // could stay alive long after dispose().
+          let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+          const deadline = new Promise<WaiterResult>((resolve) => {
+            deadlineTimer = setTimeout(() => resolve({ kind: 'turn', turn: null }), remaining());
+          });
+          const outcome = await Promise.race([completed, deadline]).finally(() => {
+            if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+          });
           if (outcome.kind === 'gone') {
             // A transport fault throws, per the contract -- callers must be
             // able to tell a crashed provider from an ordinary deadline.
@@ -540,6 +603,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     } finally {
       this.turnWaiter = null;
       this.earlyCompletions.clear();
+      this.bufferedTurnNotifications = [];
       this.interrupted.delete(request.sessionId);
       this.activeTurn.delete(request.sessionId);
       this.streamListener = null;
@@ -570,6 +634,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     // An in-flight turn must fail rather than hang to its deadline.
     this.turnWaiter?.settle({ kind: 'gone', reason: 'adapter disposed' });
     this.earlyCompletions.clear();
+    this.bufferedTurnNotifications = [];
     for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', 'adapter disposed'));
     this.pending.clear();
     this.threads.clear();

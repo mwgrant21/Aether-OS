@@ -434,6 +434,112 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
+  // NOTE: there are two distinct filters, and they need separate tests.
+  // Notifications that arrive BEFORE turn/start's response are buffered and
+  // filtered on flush; those arriving AFTER are filtered by the live gate in
+  // onNotification. A test covering only the first passes with the second
+  // removed, which is how the original version of this test was vacuous.
+  it('does not mix a previous turn\'s BUFFERED deltas into the next turn (flush filter)', async () => {
+    // A timed-out turn keeps streaming provider-side. Those late deltas carry
+    // the OLD turnId and must not be appended to the new turn's text.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = 'turn-' + turnNo;
+        if (turnNo === 2) {
+          // Leftovers from turn 1, arriving during turn 2.
+          push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i0', delta: 'STALE' });
+          push('thread/tokenUsage/updated', {
+            threadId,
+            turnId: 'turn-1',
+            tokenUsage: { last: { inputTokens: 999, outputTokens: 999, cachedInputTokens: 999 } },
+          });
+          push('item/agentMessage/delta', { threadId, turnId: id, itemId: 'i1', delta: 'fresh' });
+          push('turn/completed', { threadId, turn: { id, status: 'completed' } });
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+    const second = await adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 500 }, () => {});
+    expect(second.stopReason).toBe('completed');
+    expect(second.text).toBe('fresh');
+    expect(second.text).not.toContain('STALE');
+    expect(second.usage.inputTokens).not.toBe(999);
+    await adapter.dispose();
+  });
+
+  it('does not mix a previous turn\'s LATE deltas into the next turn (live gate)', async () => {
+    // Same hazard, other path: these arrive AFTER turn/start has told the
+    // adapter which turn was accepted, so they hit the live gate rather than
+    // the buffer.
+    let turnNo = 0;
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        turnNo += 1;
+        const threadId = (req.params as { threadId: string }).threadId;
+        const id = 'turn-' + turnNo;
+        if (turnNo === 2) {
+          // Deliberately AFTER the turn/start response is written, so the
+          // adapter already knows the accepted id.
+          setTimeout(() => {
+            push('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'i0', delta: 'STALE' });
+            push('thread/tokenUsage/updated', {
+              threadId,
+              turnId: 'turn-1',
+              tokenUsage: { last: { inputTokens: 999, outputTokens: 999, cachedInputTokens: 999 } },
+            });
+            push('item/agentMessage/delta', { threadId, turnId: id, itemId: 'i1', delta: 'fresh' });
+            push('turn/completed', { threadId, turn: { id, status: 'completed' } });
+          }, 25);
+        }
+        return { turn: { id, status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    await adapter.sendTurn({ sessionId, text: 'first', timeoutMs: 60 }, () => {});
+    const second = await adapter.sendTurn({ sessionId, text: 'second', timeoutMs: 500 }, () => {});
+    expect(second.stopReason).toBe('completed');
+    expect(second.text).toBe('fresh');
+    expect(second.usage.inputTokens).not.toBe(999);
+    await adapter.dispose();
+  });
+
+  it('can interrupt a turn acknowledged before any notification arrived', async () => {
+    // cancel() reads activeTurn; if turn/start answered first and only the
+    // waiter knew the id, the interrupt was silently never sent.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') return { turn: { id: 'turn-solo', status: 'inProgress' } };
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 400 }, () => {});
+    await new Promise((r) => setTimeout(r, 60));
+    await adapter.cancel(sessionId);
+    await turn;
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'cancel() must send turn/interrupt for the accepted turn').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-solo');
+    await adapter.dispose();
+  });
+
   it('throws PROCESS_EXITED when the child dies mid-turn, never reports a timeout', async () => {
     const fake = makeStdioFake((req) => {
       if (req.method === 'initialize') return { userAgent: 'x' };
