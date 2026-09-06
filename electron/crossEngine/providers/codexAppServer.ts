@@ -105,6 +105,12 @@ const MAX_EARLY_COMPLETIONS = 8;
  *  dropped. Bounded: cleared at the start and end of every turn. */
 const MAX_BUFFERED_NOTIFICATIONS = 256;
 
+/** Caps on the late-response side table. The TTL is generous relative to a
+ *  turn's own deadline: an acknowledgement that has not arrived two minutes
+ *  after its call gave up is never going to be useful. */
+const MAX_LATE_HANDLERS = 16;
+const LATE_HANDLER_TTL_MS = 120_000;
+
 /** TurnStatus is "completed" | "interrupted" | "failed" | "inProgress".
  *  Only the first three are outcomes; "inProgress" means the answer has not
  *  arrived yet. */
@@ -164,9 +170,23 @@ export class CodexAppServerAdapter implements ProviderAdapter {
    *  these a late response is silently dropped, which is fine for most calls
    *  but not for turn/start: its response is the only place the accepted turn
    *  id appears, and a cancellation that landed pre-acknowledgement needs that
-   *  id to interrupt anything. Bounded by the number of timed-out calls in a
-   *  turn and cleared on dispose. */
-  private readonly lateHandlers = new Map<number, (result: unknown) => void>();
+   *  id to interrupt anything.
+   *
+   *  An earlier version of this comment claimed the map was "bounded by the
+   *  number of timed-out calls in a turn and cleared on dispose". That was
+   *  wrong, and asserting it without checking is what let the leak ship: an
+   *  entry was removed only when its response actually arrived, so a
+   *  turn/start the server NEVER acknowledged retained its entry -- and the
+   *  closure over that turn's request and cancellation context -- for the
+   *  adapter's whole lifetime. It is now bounded three ways: a hard cap with
+   *  oldest-first eviction, a TTL swept on every insert, and a clear on child
+   *  death (a dead child can never deliver the response being waited for).
+   *
+   *  This is a bound on a symptom. The underlying lifetime mismatch -- the
+   *  provider turn outliving sendTurn, so its state has no owner once
+   *  sendTurn returns -- is tracked as a follow-up restructure; see the PR
+   *  discussion and the prototyping-task doc. */
+  private readonly lateHandlers = new Map<number, { handler: (result: unknown) => void; expiresAt: number }>();
   private readonly threads = new Set<string>();
   /** threadId -> turnId of the turn currently in flight, and the id cancel()
    *  interrupts. Populated ONLY from turn/start's accepted turn -- never from
@@ -232,6 +252,24 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     return this.child;
   }
 
+  /** Registers a late-response handler under all three bounds. */
+  private registerLateHandler(id: number, handler: (result: unknown) => void): void {
+    const now = Date.now();
+    for (const [k, v] of this.lateHandlers) if (v.expiresAt <= now) this.lateHandlers.delete(k);
+    while (this.lateHandlers.size >= MAX_LATE_HANDLERS) {
+      const oldest = this.lateHandlers.keys().next().value as number | undefined;
+      if (oldest === undefined) break;
+      this.lateHandlers.delete(oldest);
+    }
+    this.lateHandlers.set(id, { handler, expiresAt: now + LATE_HANDLER_TTL_MS });
+  }
+
+  /** Test-only introspection: the number of retained late-response handlers.
+   *  Exposed so the bound above is asserted rather than asserted-about. */
+  get retainedLateHandlerCount(): number {
+    return this.lateHandlers.size;
+  }
+
   /** Single teardown path for a child that died for any reason. Clearing
    *  `child` first means every later call fails NOT_CONNECTED rather than
    *  writing to a dead pipe. */
@@ -243,6 +281,8 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     // A turn awaiting turn/completed must not hang for the full deadline when
     // the server it was waiting on is gone -- and must not report that as a
     // timeout either, which would hide a crashed provider from the caller.
+    // A dead child can never deliver the responses these are waiting for.
+    this.lateHandlers.clear();
     this.turnWaiter?.settle({ kind: 'gone', reason });
   }
 
@@ -282,7 +322,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
           const late = this.lateHandlers.get(msg.id);
           if (late) {
             this.lateHandlers.delete(msg.id);
-            if (!msg.error) late(msg.result);
+            if (!msg.error && late.expiresAt > Date.now()) late.handler(msg.result);
           }
           continue;
         }
@@ -421,7 +461,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         // The caller may still care about a response that shows up later.
-        if (onLate) this.lateHandlers.set(id, onLate);
+        if (onLate) this.registerLateHandler(id, onLate);
         reject(new ProviderError('TIMEOUT', 'app-server call "' + method + '" timed out'));
       }, timeoutMs);
       this.pending.set(id, {

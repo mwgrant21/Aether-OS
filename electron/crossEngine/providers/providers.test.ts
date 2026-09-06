@@ -556,6 +556,29 @@ describe('CodexAppServerAdapter', () => {
     await adapter.dispose();
   });
 
+  it('bounds retained late-response handlers and clears them on child death', async () => {
+    // A turn/start the server never acknowledges used to retain its handler --
+    // and that handler's closure -- for the adapter's entire lifetime.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return undefined; // turn/start is NEVER answered
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+
+    for (let i = 0; i < 25; i++) {
+      await adapter.sendTurn({ sessionId, text: 'go ' + i, timeoutMs: 5 }, () => {});
+    }
+    expect(adapter.retainedLateHandlerCount).toBeGreaterThan(0);
+    expect(adapter.retainedLateHandlerCount).toBeLessThanOrEqual(16);
+
+    (fake.child as unknown as EventEmitter).emit('close', 1);
+    expect(adapter.retainedLateHandlerCount).toBe(0);
+    await adapter.dispose();
+  });
+
   it('still interrupts when the acknowledgement itself misses the deadline', async () => {
     // The sixth window of this shape: if turn/start does not answer within the
     // shared deadline, the await rejects, `finally` clears the interrupt flag,
