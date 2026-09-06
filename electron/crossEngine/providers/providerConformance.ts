@@ -22,9 +22,10 @@ export interface ConformanceTarget {
   /** Adapters whose transport cannot be driven without a real provider
    *  (currently none) may skip the turn-level cases. */
   skipTurns?: boolean;
-  /** False for an adapter that deliberately cannot connect (the Claude stub).
-   *  The lifecycle cases that need a live connection are then asserted in
-   *  their not-connected form instead of being skipped outright. */
+  /** False for an adapter that deliberately cannot connect. Its pre-connect
+   *  lifecycle is still asserted in full, plus an explicit check that
+   *  connect() rejects; the turn-level cases are skipped, since every one of
+   *  them needs a live connection. */
   connectable?: boolean;
 }
 
@@ -96,7 +97,12 @@ export function runProviderConformance(target: ConformanceTarget): void {
       await adapter.dispose();
     });
 
-    if (target.skipTurns) return;
+    // Both flags gate the turn-level cases: every one of them calls
+    // connect(), so an adapter that cannot connect must skip them regardless
+    // of skipTurns. Previously only skipTurns was checked, so registering
+    // { connectable: false } alone produced six failing tests rather than the
+    // documented behaviour.
+    if (target.skipTurns || !connectable) return;
 
     it('opens a session and returns a non-empty opaque id', async () => {
       const adapter = await target.create();

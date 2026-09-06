@@ -37,7 +37,15 @@ describe('normalizeEvidencePath', () => {
   it('normalizes Windows separators so a bundle hashes identically on both platforms', () => {
     expect(normalizeEvidencePath('src\\thing.ts')).toBe('src/thing.ts');
     expect(normalizeEvidencePath('./src/thing.ts')).toBe('src/thing.ts');
-    expect(normalizeEvidencePath('/src/thing.ts')).toBe('src/thing.ts');
+  });
+
+  // Rule 2 of the module ("never absolute paths") used to be enforced only by
+  // a comment: a drive-absolute path was silently relativized, hashed and
+  // sealed, putting the operator's home directory inside an immutable record.
+  it('throws on an absolute path rather than quietly relativizing it', () => {
+    expect(() => normalizeEvidencePath('C:\\Users\\someone\\proj\\a.ts')).toThrow(/project-relative/);
+    expect(() => normalizeEvidencePath('/src/thing.ts')).toThrow(/project-relative/);
+    expect(() => normalizeEvidencePath('\\\\server\\share\\a.ts')).toThrow(/project-relative/);
   });
 });
 
@@ -93,6 +101,24 @@ describe('buildEvidenceBundle', () => {
     win.files = [{ ...win.files[0], path: 'src\\thing.ts' }];
     win.lineRanges = [{ ...win.lineRanges![0], path: 'src\\thing.ts' }];
     expect(buildEvidenceBundle(win).manifestSha256).toBe(buildEvidenceBundle(baseInput()).manifestSha256);
+  });
+
+  it('rejects two records for the same path', () => {
+    const input = baseInput();
+    input.files = [
+      { path: 'src/thing.ts', sha256: sha256('a'), bytes: 1, status: 'present' },
+      { path: 'src\\thing.ts', sha256: sha256('b'), bytes: 1, status: 'deleted' },
+    ];
+    // Otherwise isCitationSupported's .find() validates against whichever
+    // record sorted first while the conflicting one sits in the same bundle
+    // and the manifest hash still verifies.
+    expect(() => buildEvidenceBundle(input)).toThrow(/duplicate/);
+  });
+
+  it('refuses to seal a bundle containing an absolute file path', () => {
+    const input = baseInput();
+    input.files = [{ path: 'C:\\Users\\someone\\a.ts', sha256: sha256('x'), bytes: 1, status: 'present' }];
+    expect(() => buildEvidenceBundle(input)).toThrow(/project-relative/);
   });
 
   it('carries no file contents, command output, or absolute paths', () => {
@@ -188,6 +214,14 @@ describe('isCitationSupported', () => {
 
   it('rejects a citation to a line range nobody verified', () => {
     expect(isCitationSupported(bundle, { ...goodCitation, startLine: 1, endLine: 4 }).ok).toBe(false);
+  });
+
+  it('reports an absolute citation path as unsupported rather than throwing', () => {
+    // A citation is untrusted provider output, so a malformed path must not
+    // crash the verifier.
+    const verdict = isCitationSupported(bundle, { ...goodCitation, path: 'C:\\Users\\someone\\a.ts' });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.reason).toMatch(/project-relative/);
   });
 
   it('rejects a citation to a file outside the bundle', () => {

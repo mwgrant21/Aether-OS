@@ -10,7 +10,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 
-import { ProviderError, type ProviderEvent } from './contract';
+import { ProviderError, type ProviderAdapter, type ProviderEvent } from './contract';
 import { FakeProvider } from './fakeProvider';
 import { runProviderConformance } from './providerConformance';
 import { LegacyCodexAcpAdapter } from './legacyCodexAcp';
@@ -225,6 +225,29 @@ function claudeCliFake(opts: { deltas?: string[]; denyPermission?: boolean; omit
     return child;
   };
   return { spawnTurn, calls };
+}
+
+/** Emits pre-built stream-json lines, one write each. */
+function rawClaudeSpawn(lines: unknown[]): (args: string[], cwd: string) => ChildProcess {
+  return rawClaudeSpawnBuffers(lines.map((l) => Buffer.from(JSON.stringify(l) + '\n', 'utf8')));
+}
+
+/** Emits raw byte chunks verbatim, so a test can split a multi-byte character
+ *  across a read boundary. */
+function rawClaudeSpawnBuffers(chunks: Buffer[]): (args: string[], cwd: string) => ChildProcess {
+  return () => {
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    const child = new EventEmitter() as unknown as ChildProcess & { stdout: PassThrough; stdin: PassThrough };
+    child.stdout = stdout;
+    child.stdin = stdin;
+    (child as unknown as { kill: () => void }).kill = vi.fn();
+    queueMicrotask(() => {
+      for (const c of chunks) stdout.write(c);
+      child.emit('close', 0);
+    });
+    return child;
+  };
 }
 
 function makeClaudeAdapter(): ClaudeHeadlessCliAdapter {
@@ -450,14 +473,96 @@ describe('ClaudeHeadlessCliAdapter', () => {
     await adapter.dispose();
   });
 
-  it('does not shell out merely to report health', async () => {
+  it('health is fail-closed: only a proven first-party subscription login is ready', async () => {
     const fake = claudeCliFake();
-    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn);
-    await adapter.connect();
-    await adapter.health();
-    // A health probe that spent tokens would make looking at a status card
-    // cost money -- the same rule AcpClient.probe() follows.
+    const cases: Array<[Record<string, unknown> | null, boolean, string]> = [
+      [{ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' }, true, 'subscription'],
+      [{ loggedIn: false }, false, 'unauthenticated'],
+      [{ loggedIn: true, authMethod: 'apiKey', apiProvider: 'firstParty' }, false, 'api-key'],
+      [{ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'bedrock' }, false, 'gateway'],
+      [{ loggedIn: true }, false, 'unknown'],
+      [null, false, 'unknown'],
+    ];
+    for (const [status, ready, authMode] of cases) {
+      const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn, null, async () => status);
+      await adapter.connect();
+      const health = await adapter.health();
+      expect(health.ready, JSON.stringify(status)).toBe(ready);
+      expect(health.authMode, JSON.stringify(status)).toBe(authMode);
+      await adapter.dispose();
+    }
+    // The probe spends no tokens and must never start a turn -- the same rule
+    // AcpClient.probe() follows by never sending `authenticate`.
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it('health never copies the probe\'s email or org id into ProviderHealth', async () => {
+    const fake = claudeCliFake();
+    const adapter = new ClaudeHeadlessCliAdapter(fake.spawnTurn, null, async () => ({
+      loggedIn: true,
+      authMethod: 'claude.ai',
+      apiProvider: 'firstParty',
+      email: 'someone@example.com',
+      orgId: 'org-abc-123',
+    }));
+    await adapter.connect();
+    const serialized = JSON.stringify(await adapter.health());
+    // ProviderHealth is a structure other layers may log or persist.
+    expect(serialized).not.toContain('someone@example.com');
+    expect(serialized).not.toContain('org-abc-123');
+    await adapter.dispose();
+  });
+
+  it('falls back to the result subtype when stop_reason is absent', async () => {
+    // Defaulting an unrecognised stop_reason straight to 'error' threw away
+    // complete answers: the text was correct while the turn read as failed.
+    const spawnTurn = rawClaudeSpawn([
+      { type: 'system', subtype: 'init', session_id: 's1' },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'done' } } },
+      { type: 'result', subtype: 'success', session_id: 's1', usage: {} },
+    ]);
+    const adapter = new ClaudeHeadlessCliAdapter(spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.stopReason).toBe('completed');
+    expect(result.text).toBe('done');
+    await adapter.dispose();
+  });
+
+  it('still fails closed when neither stop_reason nor subtype is conclusive', async () => {
+    const spawnTurn = rawClaudeSpawn([
+      { type: 'system', subtype: 'init', session_id: 's1' },
+      { type: 'result', session_id: 's1', usage: {} },
+    ]);
+    const adapter = new ClaudeHeadlessCliAdapter(spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    expect((await adapter.sendTurn({ sessionId, text: 'go' }, () => {})).stopReason).toBe('error');
+    await adapter.dispose();
+  });
+
+  it('decodes a multi-byte character split across two stdout chunks', async () => {
+    const line =
+      JSON.stringify({
+        type: 'stream_event',
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'a\u2014b' } },
+      }) + '\n';
+    const full = Buffer.concat([
+      Buffer.from(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }) + '\n', 'utf8'),
+      Buffer.from(line, 'utf8'),
+      Buffer.from(JSON.stringify({ type: 'result', subtype: 'success', session_id: 's1', stop_reason: 'end_turn', usage: {} }) + '\n', 'utf8'),
+    ]);
+    // Split inside the em dash's 3-byte UTF-8 sequence. A raw
+    // chunk.toString('utf8') decodes the partial bytes to U+FFFD, which either
+    // corrupts the text or breaks JSON.parse and is silently swallowed.
+    const cut = full.indexOf(Buffer.from('\u2014', 'utf8')) + 1;
+    const spawnTurn = rawClaudeSpawnBuffers([full.subarray(0, cut), full.subarray(cut)]);
+    const adapter = new ClaudeHeadlessCliAdapter(spawnTurn);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.text).toBe('a\u2014b');
     await adapter.dispose();
   });
 });
@@ -475,3 +580,131 @@ describe('FakeProvider', () => {
     await adapter.dispose();
   });
 });
+
+describe('adapter lifecycle and cancellation (review follow-ups)', () => {
+  it('CodexAppServer surfaces a spawn failure as PROCESS_EXITED instead of crashing the process', async () => {
+    // Without an 'error' listener Node throws this as an uncaught exception,
+    // which in the real app takes down the Electron main process.
+    const spawnChild = () => {
+      const stdout = new PassThrough();
+      const stdin = new PassThrough();
+      const child = new EventEmitter() as unknown as ChildProcessWithoutNullStreams & { stdout: PassThrough; stdin: PassThrough };
+      child.stdout = stdout as unknown as ChildProcessWithoutNullStreams['stdout'];
+      child.stdin = stdin as unknown as ChildProcessWithoutNullStreams['stdin'];
+      child.kill = vi.fn() as unknown as ChildProcessWithoutNullStreams['kill'];
+      queueMicrotask(() => child.emit('error', new Error('spawn codex ENOENT')));
+      return child;
+    };
+    const adapter = new CodexAppServerAdapter(spawnChild);
+    let caught: unknown;
+    try {
+      await adapter.connect();
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ProviderError);
+    expect((caught as ProviderError).code).toBe('PROCESS_EXITED');
+    await adapter.dispose();
+  });
+
+  it('CodexAppServer rejects pending calls when the child closes mid-turn', async () => {
+    // Must NOT answer turn/start -- otherwise the turn completes before the
+    // close event fires and the test proves nothing.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return undefined;
+    });
+    const emitClose = () => (fake.child as unknown as EventEmitter).emit('close', 1);
+    const spawnChild = () => fake.child;
+    const adapter = new CodexAppServerAdapter(spawnChild);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    const turn = adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    emitClose();
+    // Must reject promptly rather than hanging to turn/start's 5-minute cap.
+    await expect(turn).rejects.toBeInstanceOf(ProviderError);
+    await adapter.dispose();
+  });
+
+  it('CodexAppServer: cancelling an idle session does not poison the next turn', async () => {
+    const fake = appServerFake();
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    await adapter.cancel(sessionId); // no turn in flight
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    // A stale interrupt flag would report this completed turn as 'cancelled'.
+    expect(result.stopReason).toBe('completed');
+    await adapter.dispose();
+  });
+
+  it('LegacyCodexAcp: cancelling an idle session does not discard the next turn', async () => {
+    const adapter = makeLegacyAdapter();
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: process.cwd() });
+    await adapter.cancel(sessionId); // races a turn that already finished
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.stopReason).toBe('completed');
+    expect(result.text).toBe('hello world');
+    await adapter.dispose();
+  });
+
+  it('LegacyCodexAcp: a timed-out turn returns the text that did arrive', async () => {
+    // Streams two chunks, then never answers session/prompt.
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { protocolVersion: 1, authMethods: [{ id: 'chat-gpt' }] };
+      if (req.method === 'session/new') return { sessionId: 'acp-session-1' };
+      if (req.method === 'session/prompt') {
+        const sessionId = (req.params as { sessionId: string }).sessionId;
+        push('session/update', { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial ' } } });
+        push('session/update', { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'answer' } } });
+        return undefined; // never responds
+      }
+      return {};
+    });
+    const adapter = new LegacyCodexAcpAdapter(new AcpClient(), fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: process.cwd() });
+    const result = await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 80 }, () => {});
+    expect(result.stopReason).toBe('timeout');
+    // Previously returned '' -- a long answer that timed out on its last chunk
+    // was indistinguishable from one that produced nothing.
+    expect(result.text).toBe('partial answer');
+    await adapter.dispose();
+  });
+});
+
+// Proves the conformance suite's own `connectable: false` option works on its
+// own. It was documented but keyed on a different flag, so registering it
+// without skipTurns produced six failing tests instead.
+class UnconnectableAdapter implements ProviderAdapter {
+  readonly id = 'fake' as const;
+  capabilities() {
+    return {
+      resumableSessions: false,
+      streamingEvents: false,
+      permissionRequests: false,
+      usageReporting: false,
+      cancellation: false,
+      structuredOutputSchema: false,
+    };
+  }
+  async connect(): Promise<void> {
+    throw new ProviderError('NOT_IMPLEMENTED', 'cannot connect');
+  }
+  async health(): Promise<never> {
+    throw new ProviderError('NOT_CONNECTED', 'nope');
+  }
+  async newSession(): Promise<never> {
+    throw new ProviderError('NOT_CONNECTED', 'nope');
+  }
+  async sendTurn(): Promise<never> {
+    throw new ProviderError('NOT_CONNECTED', 'nope');
+  }
+  async cancel(): Promise<void> {}
+  async dispose(): Promise<void> {}
+}
+
+runProviderConformance({ name: 'UnconnectableAdapter', create: () => new UnconnectableAdapter(), connectable: false });
+

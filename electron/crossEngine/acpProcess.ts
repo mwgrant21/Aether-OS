@@ -25,12 +25,59 @@ export function resolveCodexHome(): string {
 
 /** Never starts from process.env and removes keys -- builds an allowlist
  *  from nothing, so a newly invented billing-bypass env var is excluded by
- *  default rather than requiring this function to be updated to block it. */
-export function buildCodexChildEnv(osEnv: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+ *  default rather than requiring this function to be updated to block it.
+ *
+ *  Provider-agnostic on purpose: the Claude headless adapter needs exactly
+ *  this guarantee too. Inheriting the full environment there would let an
+ *  operator's ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL
+ *  silently route every turn through metered billing or a third-party
+ *  gateway instead of the subscription login -- the same class of failure as
+ *  the spend incident that motivated this allowlist in the first place.
+ *  Neither ANTHROPIC_* nor OPENAI_* appears in REQUIRED_OS_VARS, so both are
+ *  excluded by construction rather than by a denylist someone must maintain. */
+export function buildAllowlistedChildEnv(osEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const child: NodeJS.ProcessEnv = {};
   for (const key of REQUIRED_OS_VARS) {
     if (osEnv[key] !== undefined) child[key] = osEnv[key];
   }
+  return child;
+}
+
+/** Drains a child's stderr into a bounded ring buffer and exposes it as
+ *  `retainedStderr()`. Not optional hygiene: a piped stderr with no consumer
+ *  fills the OS pipe buffer at ~64KB and then BLOCKS the child forever, which
+ *  presents as an unexplained hang until the caller's timeout fires. Every
+ *  spawner in this directory must call this. */
+export function attachStderrRingBuffer(child: {
+  stderr: { on: (event: 'data', cb: (chunk: Buffer) => void) => unknown } | null;
+}): () => string {
+  let buf = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    buf = (buf + chunk.toString('utf8')).slice(-MAX_RETAINED_STDERR_BYTES);
+  });
+  const read = () => buf;
+  (child as { retainedStderr?: () => string }).retainedStderr = read;
+  return read;
+}
+
+/** Resolves the pinned `@openai/codex` package's Node entry script.
+ *
+ *  NOT `spawn('codex')`: on Windows the npm-installed `codex` is a `.cmd`
+ *  shim, which Node's non-shell spawn does not resolve (verified on this
+ *  machine: ENOENT, exit -4058) and which it refuses to execute without
+ *  `shell: true` anyway since the CVE-2024-27980 fix. The package's `bin`
+ *  field points at `bin/codex.js`, a Node script, so it is launched with the
+ *  current Node executable -- the same reasoning as resolveAdapterExecutable()
+ *  below, applied to the second Codex entry point. */
+let codexCliEntryPath: string | null = null;
+export function resolveCodexCliEntry(): string {
+  if (codexCliEntryPath) return codexCliEntryPath;
+  codexCliEntryPath = require.resolve('@openai/codex/bin/codex.js');
+  return codexCliEntryPath;
+}
+
+export function buildCodexChildEnv(osEnv: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+  const child = buildAllowlistedChildEnv(osEnv);
   child.CODEX_HOME = codexHome;
   // spawnAcpProcess() below spawns process.execPath. Under a plain Node
   // process (every test, every prior manual smoke test) that's node.exe, so
@@ -43,6 +90,8 @@ export function buildCodexChildEnv(osEnv: NodeJS.ProcessEnv, codexHome: string):
   child.ELECTRON_RUN_AS_NODE = '1';
   return child;
 }
+
+const MAX_RETAINED_STDERR_BYTES = 8192;
 
 let adapterExecutablePath: string | null = null;
 
@@ -57,19 +106,11 @@ function resolveAdapterExecutable(): string {
   return adapterExecutablePath;
 }
 
-const MAX_RETAINED_STDERR_BYTES = 8192;
-
 export function spawnAcpProcess(): ChildProcessWithoutNullStreams {
   const codexHome = resolveCodexHome();
   const env = buildCodexChildEnv(process.env, codexHome);
   const executable = resolveAdapterExecutable();
   const child = spawn(process.execPath, [executable], { shell: false, stdio: ['pipe', 'pipe', 'pipe'], env });
-
-  let stderrBuf = '';
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderrBuf = (stderrBuf + chunk.toString('utf8')).slice(-MAX_RETAINED_STDERR_BYTES);
-  });
-  (child as ChildProcessWithoutNullStreams & { retainedStderr: () => string }).retainedStderr = () => stderrBuf;
-
+  attachStderrRingBuffer(child);
   return child;
 }

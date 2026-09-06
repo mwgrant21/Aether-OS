@@ -26,6 +26,7 @@
 // moves; the CLI marks this surface [experimental].
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import {
   EMPTY_USAGE,
   ProviderError,
@@ -39,7 +40,7 @@ import {
   type TurnStopReason,
   type TurnUsage,
 } from './contract';
-import { buildCodexChildEnv, resolveCodexHome } from '../acpProcess';
+import { attachStderrRingBuffer, buildCodexChildEnv, resolveCodexCliEntry, resolveCodexHome } from '../acpProcess';
 
 const CLIENT_INFO = { name: 'aether-os', title: 'Aether OS', version: '0.1.0' };
 
@@ -90,10 +91,24 @@ function readUsage(raw: unknown): TurnUsage {
 
 /** Spawns the real `codex app-server` against Aether's dedicated CODEX_HOME,
  *  reusing acpProcess.ts's allowlisted child environment so a globally
- *  configured API-key login or unrelated MCP server cannot leak in. */
+ *  configured API-key login or unrelated MCP server cannot leak in.
+ *
+ *  Launches the resolved `bin/codex.js` with the current Node executable
+ *  rather than `spawn('codex')`. The bare name cannot work on Windows: the
+ *  npm-installed `codex` is a `.cmd` shim, which Node's non-shell spawn does
+ *  not resolve (verified on this machine: ENOENT, exit -4058) and refuses to
+ *  execute without `shell: true` regardless since CVE-2024-27980. Every unit
+ *  test injects a fake child, so nothing exercised this path until it was
+ *  reviewed -- the adapter was dead on the one platform this app targets. */
 function defaultSpawn(): ChildProcessWithoutNullStreams {
   const env = buildCodexChildEnv(process.env, resolveCodexHome());
-  return spawn('codex', ['app-server'], { shell: false, stdio: ['pipe', 'pipe', 'pipe'], env });
+  const child = spawn(process.execPath, [resolveCodexCliEntry(), 'app-server'], {
+    shell: false,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env,
+  });
+  attachStderrRingBuffer(child);
+  return child;
 }
 
 export class CodexAppServerAdapter implements ProviderAdapter {
@@ -101,6 +116,11 @@ export class CodexAppServerAdapter implements ProviderAdapter {
 
   private child: ChildProcessWithoutNullStreams | null = null;
   private buffer = '';
+  /** A raw `chunk.toString('utf8')` mangles any multi-byte character split
+   *  across a read boundary into U+FFFD, which then either corrupts the text
+   *  or breaks JSON.parse and gets silently swallowed below. StringDecoder
+   *  holds the partial sequence until the rest arrives. */
+  private decoder = new StringDecoder('utf8');
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private readonly threads = new Set<string>();
@@ -138,6 +158,14 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     const child = this.spawnChild();
     this.child = child;
     child.stdout.on('data', (chunk: Buffer) => this.onData(chunk));
+    // Without these, an ENOENT (or any spawn failure, crash, or EPIPE from a
+    // write after death) emits 'error' on an emitter with no listener, which
+    // Node throws as an uncaught exception -- crashing the Electron main
+    // process instead of surfacing a ProviderError. They also unblock every
+    // pending call immediately rather than letting each hang to its own
+    // timeout, which for turn/start is five minutes.
+    child.on('error', (err: Error) => this.onChildGone('codex app-server failed: ' + err.message));
+    child.on('close', (code: number | null) => this.onChildGone('codex app-server exited (code ' + code + ')'));
     const res = (await this.call('initialize', { clientInfo: CLIENT_INFO, capabilities: null })) as
       | { userAgent?: unknown }
       | undefined;
@@ -149,8 +177,29 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     return this.child;
   }
 
+  /** Single teardown path for a child that died for any reason. Clearing
+   *  `child` first means every later call fails NOT_CONNECTED rather than
+   *  writing to a dead pipe. */
+  private onChildGone(reason: string): void {
+    if (!this.child) return;
+    this.child = null;
+    for (const [, p] of this.pending) p.reject(new ProviderError('PROCESS_EXITED', reason));
+    this.pending.clear();
+  }
+
+  /** stdin writes throw EPIPE once the child is gone; that must surface as a
+   *  ProviderError on the call, never as an unhandled throw. */
+  private writeLine(child: ChildProcessWithoutNullStreams, body: unknown): void {
+    try {
+      child.stdin.write(JSON.stringify(body) + '\n');
+    } catch (err) {
+      this.onChildGone('write to codex app-server failed: ' + (err instanceof Error ? err.message : String(err)));
+      throw new ProviderError('PROCESS_EXITED', 'codex app-server is no longer writable');
+    }
+  }
+
   private onData(chunk: Buffer): void {
-    this.buffer += chunk.toString('utf8');
+    this.buffer += this.decoder.write(chunk);
     let idx: number;
     while ((idx = this.buffer.indexOf('\n')) !== -1) {
       const line = this.buffer.slice(0, idx);
@@ -188,7 +237,11 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     const body = isApproval
       ? { jsonrpc: '2.0', id, result: { decision: 'denied' } }
       : { jsonrpc: '2.0', id, error: { code: -32601, message: 'method not supported: ' + method } };
-    child.stdin.write(JSON.stringify(body) + '\n');
+    try {
+      this.writeLine(child, body);
+    } catch {
+      return; // the child is gone; the turn's pending call already rejected
+    }
     if (isApproval) this.approvalDenials.push({ method, id: String(id) });
   }
 
@@ -243,7 +296,13 @@ export class CodexAppServerAdapter implements ProviderAdapter {
           reject(e);
         },
       });
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      try {
+        this.writeLine(child, { jsonrpc: '2.0', id, method, params });
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err as Error);
+      }
     });
   }
 
@@ -356,6 +415,11 @@ export class CodexAppServerAdapter implements ProviderAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     const turnId = this.activeTurn.get(sessionId);
+    // Only record the interrupt when a turn is actually in flight. Marking an
+    // idle session leaves the flag set with no sendTurn to clear it, and the
+    // NEXT turn then maps a genuine provider-side `failed` status to
+    // 'cancelled' -- reporting a real failure as an operator abort.
+    if (!this.streamThreadId || this.streamThreadId !== sessionId) return;
     this.interrupted.add(sessionId);
     // No active turn (or not connected) is a deliberate no-op, per the
     // contract -- a cancel racing a completing turn is not an error.

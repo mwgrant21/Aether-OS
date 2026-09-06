@@ -37,6 +37,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
+import { attachStderrRingBuffer, buildAllowlistedChildEnv } from '../acpProcess';
 import {
   EMPTY_USAGE,
   ProviderError,
@@ -95,20 +97,26 @@ interface SessionState {
   cancelled: boolean;
 }
 
-function mapStopReason(raw: unknown, cancelled: boolean): TurnStopReason {
-  if (cancelled) return 'cancelled';
+/** `result.stop_reason` is the primary signal, but it is not the only one the
+ *  CLI emits, and defaulting an unrecognised value straight to 'error' threw
+ *  away complete answers: the turn text was correct and present while the
+ *  orchestrator was told the turn failed. The `result` line's own
+ *  `subtype`/`is_error` pair is the documented success signal, so it is the
+ *  fallback rather than a guess. Still fails closed when neither is
+ *  conclusive. */
+function mapStopReason(raw: unknown, result: { subtype?: unknown; isError?: unknown }): TurnStopReason {
   switch (raw) {
     case 'end_turn':
     case 'stop_sequence':
     case 'tool_use':
+    case 'max_tokens':
       return 'completed';
     case 'refusal':
       return 'refused';
-    case 'max_tokens':
-      return 'completed';
-    default:
-      return 'error';
   }
+  if (result.isError === true) return 'error';
+  if (result.subtype === 'success') return 'completed';
+  return 'error';
 }
 
 function readUsage(raw: unknown): TurnUsage {
@@ -124,8 +132,74 @@ function readUsage(raw: unknown): TurnUsage {
 
 export type SpawnTurn = (args: string[], cwd: string) => ChildProcess;
 
-const defaultSpawnTurn: SpawnTurn = (args, cwd) =>
-  spawn('claude', args, { cwd, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+/** Result of `claude auth status` -- a token-free, structured login probe.
+ *  The Claude-side analogue of AcpClient.authenticationStatus(). */
+export type ProbeAuth = () => Promise<{ loggedIn?: unknown; authMethod?: unknown; apiProvider?: unknown } | null>;
+
+/** The child env is an allowlist built from nothing, exactly as on the Codex
+ *  side. Inheriting process.env would let an operator's ANTHROPIC_API_KEY,
+ *  ANTHROPIC_AUTH_TOKEN or ANTHROPIC_BASE_URL silently route every
+ *  deliberation turn through metered billing or a third-party gateway instead
+ *  of the subscription login -- the exact failure class this project has
+ *  already paid for once. None of those names is in the allowlist, so they are
+ *  excluded by construction, not by a denylist someone has to maintain.
+ *
+ *  `claude` itself is a native .exe on this platform and resolves from PATH
+ *  under a non-shell spawn (verified), so unlike `codex` it needs no
+ *  Node-entry indirection. PATH is in the allowlist. */
+const defaultSpawnTurn: SpawnTurn = (args, cwd) => {
+  const child = spawn('claude', args, {
+    cwd,
+    shell: false,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: buildAllowlistedChildEnv(process.env),
+  });
+  attachStderrRingBuffer(child);
+  return child;
+};
+
+const AUTH_PROBE_TIMEOUT_MS = 15_000;
+
+const defaultProbeAuth: ProbeAuth = () =>
+  new Promise((resolve) => {
+    let settled = false;
+    const done = (v: Record<string, unknown> | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    let child: ChildProcess;
+    try {
+      child = spawn('claude', ['auth', 'status'], {
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: buildAllowlistedChildEnv(process.env),
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      child.kill();
+      done(null);
+    }, AUTH_PROBE_TIMEOUT_MS);
+    const decoder = new StringDecoder('utf8');
+    let out = '';
+    child.stdin?.end();
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += decoder.write(chunk);
+    });
+    attachStderrRingBuffer(child);
+    child.on('error', () => done(null));
+    child.on('close', () => {
+      try {
+        done(JSON.parse(out + decoder.end()) as Record<string, unknown>);
+      } catch {
+        done(null);
+      }
+    });
+  });
 
 export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
   readonly id = 'claudeHeadlessCli' as const;
@@ -140,7 +214,8 @@ export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
    *  noApiCalls.test.ts forbids model-ID-shaped literals in source. */
   constructor(
     private readonly spawnTurn: SpawnTurn = defaultSpawnTurn,
-    private readonly model: string | null = null
+    private readonly model: string | null = null,
+    private readonly probeAuth: ProbeAuth = defaultProbeAuth
   ) {}
 
   capabilities(): ProviderCapabilities {
@@ -165,19 +240,58 @@ export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
     if (!this.connected) throw new ProviderError('NOT_CONNECTED', 'claude headless adapter is not connected');
   }
 
-  /** Deliberately does NOT shell out. A version/auth probe that spends tokens
-   *  would make merely looking at a status card cost money -- the same reason
-   *  AcpClient.probe() never sends `authenticate`. Readiness is proven by the
-   *  first real turn; anything else would be a guess dressed as a check. */
+  /** Reads the live login state via `claude auth status` -- structured, and
+   *  it spends no tokens, so mounting a status card cannot cost money (the
+   *  same constraint AcpClient.probe() respects by never sending
+   *  `authenticate`). It never starts a turn.
+   *
+   *  Fails closed, per contract.ts: `ready` is true only for a proven
+   *  first-party subscription login. A logged-out operator, an api-key login,
+   *  a gateway, an unparseable probe or a missing CLI all yield false --
+   *  previously this returned `ready: true` unconditionally, so an
+   *  orchestrator gating on it would route work to a provider that was about
+   *  to fail or bill wrongly.
+   *
+   *  Only the three fields below are read. The probe also returns the
+   *  operator's email and org id; those are deliberately never copied into
+   *  ProviderHealth, which is a structure other layers may log or persist. */
   async health(): Promise<ProviderHealth> {
     this.require();
+    const status = await this.probeAuth();
+    if (!status) {
+      return {
+        ready: false,
+        authMode: 'unknown',
+        version: null,
+        detail: '`claude auth status` did not return a parseable result; treating the provider as unusable.',
+      };
+    }
+    if (status.loggedIn !== true) {
+      return {
+        ready: false,
+        authMode: 'unauthenticated',
+        version: null,
+        detail: '`claude auth status` reports no active login.',
+      };
+    }
+    const method = typeof status.authMethod === 'string' ? status.authMethod : '';
+    const provider = typeof status.apiProvider === 'string' ? status.apiProvider : '';
+    // Provider is checked FIRST: a login can report authMethod 'claude.ai'
+    // while being routed through Bedrock/Vertex/a gateway, and that is a
+    // different billing path regardless of how the account authenticated.
+    const authMode =
+      provider !== '' && provider !== 'firstParty'
+        ? ('gateway' as const)
+        : method === 'claude.ai'
+          ? ('subscription' as const)
+          : /key/i.test(method)
+            ? ('api-key' as const)
+            : ('unknown' as const);
     return {
-      ready: true,
-      authMode: 'subscription',
+      ready: authMode === 'subscription',
+      authMode,
       version: null,
-      detail:
-        'headless CLI adapter; the operator\'s existing Claude Code login is used. ' +
-        'Auth is proven by the first turn rather than by a probe that would spend tokens.',
+      detail: 'claude auth status: authMethod=' + (method || '(absent)') + ', apiProvider=' + (provider || '(absent)'),
     };
   }
 
@@ -213,7 +327,13 @@ export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
     let usage: TurnUsage = EMPTY_USAGE;
     let stopReasonRaw: unknown = null;
     let sawResult = false;
+    let resultSubtype: unknown;
+    let resultIsError: unknown;
     let buffer = '';
+    // Holds a multi-byte character split across a read boundary instead of
+    // decoding the partial bytes to U+FFFD, which would either corrupt the
+    // text or break JSON.parse and be swallowed by the catch below.
+    const decoder = new StringDecoder('utf8');
 
     const handleLine = (line: string): void => {
       if (!line.trim()) return;
@@ -281,6 +401,8 @@ export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
       if (msg.type === 'result') {
         sawResult = true;
         stopReasonRaw = msg.stop_reason;
+        resultSubtype = msg.subtype;
+        resultIsError = msg.is_error;
         usage = readUsage(msg.usage);
         if (typeof msg.session_id === 'string') state.claudeSessionId = msg.session_id;
       }
@@ -309,7 +431,7 @@ export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
       }, timeoutMs);
 
       child.stdout?.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8');
+        buffer += decoder.write(chunk);
         let idx: number;
         while ((idx = buffer.indexOf('\n')) !== -1) {
           const line = buffer.slice(0, idx);
@@ -327,7 +449,7 @@ export class ClaudeHeadlessCliAdapter implements ProviderAdapter {
         // rule the codex app-server adapter applies to an unknown turn status.
         if (state.cancelled) finish({ stopReason: 'cancelled', text, usage });
         else if (!sawResult) finish({ stopReason: 'error', text, usage });
-        else finish({ stopReason: mapStopReason(stopReasonRaw, false), text, usage });
+        else finish({ stopReason: mapStopReason(stopReasonRaw, { subtype: resultSubtype, isError: resultIsError }), text, usage });
       });
     });
 

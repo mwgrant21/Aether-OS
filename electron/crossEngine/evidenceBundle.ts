@@ -99,12 +99,31 @@ export function sha256(input: string | Buffer): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
-/** Forward slashes, no leading './', no leading separator. Backslashes are
- *  treated as separators, which is correct for the Windows paths this runs on
- *  and harmless elsewhere (a literal backslash in a POSIX filename is
- *  vanishingly rare and not worth an unhashable path). */
+/** Forward slashes, no leading './'. Backslashes are treated as separators,
+ *  which is correct for the Windows paths this runs on and harmless elsewhere
+ *  (a literal backslash in a POSIX filename is vanishingly rare and not worth
+ *  an unhashable path).
+ *
+ *  THROWS on an absolute path rather than quietly relativizing it. Rule 2 of
+ *  this module ("carries no payload... never absolute paths") was previously
+ *  enforced only by comment: `C:\Users\<name>\...` normalized to
+ *  `C:/Users/<name>/...` and was then hashed, sealed and deep-frozen into an
+ *  immutable record explicitly designed not to hold it. Stripping the prefix
+ *  instead would be worse than throwing -- two different absolute paths can
+ *  collapse to the same relative one, silently making distinct files look like
+ *  the same evidence. An absolute path here is a caller bug; surface it. */
 export function normalizeEvidencePath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+  const slashed = p.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (/^[A-Za-z]:\//.test(slashed)) {
+    throw new Error('evidence paths must be project-relative, got a drive-absolute path');
+  }
+  if (slashed.startsWith('//')) {
+    throw new Error('evidence paths must be project-relative, got a UNC path');
+  }
+  if (slashed.startsWith('/')) {
+    throw new Error('evidence paths must be project-relative, got an absolute path');
+  }
+  return slashed;
 }
 
 /** Deterministic serialization: object keys sorted recursively, arrays kept in
@@ -161,6 +180,19 @@ export interface BuildEvidenceBundleInput {
  * a hard requirement for the Windows CI lane.
  */
 export function buildEvidenceBundle(input: BuildEvidenceBundleInput): EvidenceBundleV1 {
+  const seenPaths = new Set<string>();
+  for (const f of input.files) {
+    const norm = normalizeEvidencePath(f.path);
+    if (seenPaths.has(norm)) {
+      // Two records for one path make isCitationSupported's .find() pick
+      // whichever happened to sort first, so a citation could validate against
+      // a `present` entry while a conflicting `deleted` one sits in the same
+      // bundle and the manifest hash still verifies.
+      throw new Error('duplicate evidence file entry for ' + norm);
+    }
+    seenPaths.add(norm);
+  }
+
   const unsealed: UnsealedBundle = {
     schemaVersion: EVIDENCE_BUNDLE_SCHEMA_VERSION,
     bundleId: input.bundleId,
@@ -216,7 +248,14 @@ export function isCitationSupported(bundle: EvidenceBundleV1, citation: Evidence
   const bundleVerdict = verifyEvidenceBundle(bundle);
   if (!bundleVerdict.ok) return bundleVerdict;
 
-  const path = normalizeEvidencePath(citation.path);
+  let path: string;
+  try {
+    path = normalizeEvidencePath(citation.path);
+  } catch (err) {
+    // A citation is untrusted provider output, so a malformed path is an
+    // unsupported claim rather than a crash.
+    return { ok: false, reason: err instanceof Error ? err.message : 'invalid citation path' };
+  }
   const file = bundle.files.find((f) => f.path === path);
   if (!file) return { ok: false, reason: 'cited file is not in the evidence bundle: ' + path };
   if (file.status === 'deleted') return { ok: false, reason: 'cited file was deleted: ' + path };

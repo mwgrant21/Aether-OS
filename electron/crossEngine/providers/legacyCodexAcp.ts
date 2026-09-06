@@ -42,6 +42,11 @@ export class LegacyCodexAcpAdapter implements ProviderAdapter {
   private connected = false;
   private readonly sessions = new Set<string>();
   private readonly cancelled = new Set<string>();
+  /** Sessions with a turn in flight right now. cancel() only records against
+   *  these: marking an idle session leaves a flag no sendTurn will clear, and
+   *  the NEXT turn on that session then reports 'cancelled' and discards a
+   *  perfectly good answer. */
+  private readonly activeTurns = new Set<string>();
 
   /** `child` is injectable purely so the conformance suite and unit tests can
    *  drive a PassThrough pair instead of spawning the real adapter -- the
@@ -130,10 +135,18 @@ export class LegacyCodexAcpAdapter implements ProviderAdapter {
       throw new ProviderError('UNKNOWN_SESSION', 'no such session: ' + request.sessionId);
     }
 
+    this.activeTurns.add(request.sessionId);
+    // Accumulated here as well as inside AcpClient, because AcpClient discards
+    // its own buffer in a finally block -- so on timeout the partial answer is
+    // only recoverable from this copy (finding 10).
+    let streamed = '';
     const previous = this.client.onStreamEvent;
     this.client.onStreamEvent = (e) => {
       if (e.sessionId && e.sessionId !== request.sessionId) return;
-      if (e.kind === 'message') onEvent({ kind: 'message-chunk', sessionId: request.sessionId, text: e.text });
+      if (e.kind === 'message') {
+        streamed += e.text;
+        onEvent({ kind: 'message-chunk', sessionId: request.sessionId, text: e.text });
+      }
       else if (e.kind === 'reasoning') onEvent({ kind: 'reasoning-chunk', sessionId: request.sessionId, text: e.text });
       else if (e.kind === 'tool') onEvent({ kind: 'tool-call', sessionId: request.sessionId, name: e.text, detail: '' });
       else
@@ -166,7 +179,10 @@ export class LegacyCodexAcpAdapter implements ProviderAdapter {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('timed out')) {
-        return { stopReason: 'timeout', text: '', usage: EMPTY_USAGE };
+        // Return what actually arrived. Discarding it made a long answer that
+        // timed out on its last chunk indistinguishable from one that produced
+        // nothing at all, unlike both other adapters.
+        return { stopReason: 'timeout', text: streamed, usage: EMPTY_USAGE };
       }
       if (message === 'not connected' || message === 'client disposed') {
         throw new ProviderError('PROCESS_EXITED', message);
@@ -174,16 +190,18 @@ export class LegacyCodexAcpAdapter implements ProviderAdapter {
       throw new ProviderError('PROTOCOL_ERROR', message);
     } finally {
       this.client.onStreamEvent = previous;
+      this.activeTurns.delete(request.sessionId);
       this.cancelled.delete(request.sessionId);
     }
   }
 
   async cancel(sessionId: string): Promise<void> {
-    // Recorded even for an unknown session so a cancel that lands before the
-    // session exists still takes effect -- and never throws, per the
-    // contract. There is no per-session interrupt in ACP; disposing the
-    // client is the only real mechanism and is left to the caller, because
-    // it would tear down every other session on the same connection.
+    // Only meaningful while a turn is actually in flight. The contract calls
+    // cancel() on an idle or finished session a no-op, and it has to be one
+    // here too: a flag set with no sendTurn running is never cleared, so the
+    // session's NEXT turn would report 'cancelled' and throw away a complete
+    // answer. Never throws, per the contract.
+    if (!this.activeTurns.has(sessionId)) return;
     this.cancelled.add(sessionId);
   }
 
