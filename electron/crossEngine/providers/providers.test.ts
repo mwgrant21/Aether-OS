@@ -1078,3 +1078,102 @@ class UnconnectableAdapter implements ProviderAdapter {
 
 runProviderConformance({ name: 'UnconnectableAdapter', create: () => new UnconnectableAdapter(), connectable: false });
 
+// The refactor's own invariant: a turn record leaves `turns` through exactly
+// one function, on exactly these paths. Before the restructure this state was
+// spread across eleven fields with no single retirement point, which is what
+// let round 7's leak exist at all.
+describe('CodexAppServerAdapter: turn record retirement', () => {
+  const completingFake = () =>
+    makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        const threadId = (req.params as { threadId: string }).threadId;
+        push('turn/completed', { threadId, turn: { id: 'turn-1', status: 'completed' } });
+        return { turn: { id: 'turn-1', status: 'inProgress' } };
+      }
+      return {};
+    });
+
+  const stallingFake = (ackId: string | null) =>
+    makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        return ackId === null ? undefined : { turn: { id: ackId, status: 'inProgress' } };
+      }
+      return {};
+    });
+
+  it('retires on a completed outcome', async () => {
+    const fake = completingFake();
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(adapter.liveTurnCount).toBe(0);
+    await adapter.dispose();
+  });
+
+  it('retires on a deadline once the turn id is known', async () => {
+    const fake = stallingFake('turn-known');
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 60 }, () => {});
+    expect(result.stopReason).toBe('timeout');
+    // The id is known, so any interrupt owed was already sent: nothing further
+    // is owed and the record goes.
+    expect(adapter.liveTurnCount).toBe(0);
+    await adapter.dispose();
+  });
+
+  it('KEEPS the record when the turn was never acknowledged', async () => {
+    // The deliberate exception, and the whole reason the record outlives
+    // sendTurn: the acknowledgement may still arrive carrying the id a pending
+    // cancellation needs.
+    const fake = stallingFake(null);
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 40 }, () => {});
+    expect(adapter.liveTurnCount).toBe(1);
+    await adapter.dispose();
+  });
+
+  it('retires on child death', async () => {
+    const fake = stallingFake(null);
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 40 }, () => {});
+    expect(adapter.liveTurnCount).toBe(1);
+    (fake.child as unknown as EventEmitter).emit('close', 1);
+    expect(adapter.liveTurnCount).toBe(0);
+    await adapter.dispose();
+  });
+
+  it('retires on dispose', async () => {
+    const fake = stallingFake(null);
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 40 }, () => {});
+    expect(adapter.liveTurnCount).toBe(1);
+    await adapter.dispose();
+    expect(adapter.liveTurnCount).toBe(0);
+  });
+
+  it('retires oldest-first once the cap is reached', async () => {
+    const fake = stallingFake(null);
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+    for (let i = 0; i < 25; i += 1) {
+      await adapter.sendTurn({ sessionId, text: 'go ' + i, timeoutMs: 5 }, () => {});
+    }
+    expect(adapter.liveTurnCount).toBeLessThanOrEqual(16);
+    await adapter.dispose();
+  });
+});
+
