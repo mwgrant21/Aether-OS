@@ -41,11 +41,23 @@ const TAG_RE = /<\/?[a-zA-Z][^<>]*>/g;
  *  TAG_RE's own comment says it exists to prevent.
  *
  *  Terminates: every iteration that changes the string removes at least one
- *  character, so the loop is bounded by the input length. The explicit guard
- *  is belt-and-braces against a future regex that could match empty. */
+ *  character, so at most `content.length` iterations can change anything. The
+ *  loop bound is derived from the input for exactly that reason.
+ *
+ *  It must NOT be a constant. A first version of this fix capped the loop at
+ *  1000 passes, which reintroduced the very bug it was fixing at a slightly
+ *  higher price: nesting a split tag more than 1000 deep exits the loop with a
+ *  tag still reconstructible. Measured - a 3,014-byte payload built by
+ *  wrapping `<x>` 999 times and embedding it in `</run_su...mmary>` left a
+ *  literal `</run_summary>` in the output, closing the fence early. The
+ *  comment attached to that cap even claimed termination was bounded by input
+ *  length while capping below it; the reasoning was right and the code did not
+ *  match it. */
 export function sanitizeUntrusted(content: string): string {
   let out = content.replace(CONTROL_CHARS_RE, '');
-  for (let guard = 0; guard < 1000; guard += 1) {
+  // +1 so a single no-op confirming pass always fits.
+  const maxPasses = content.length + 1;
+  for (let pass = 0; pass < maxPasses; pass += 1) {
     const next = out.replace(TAG_RE, '');
     if (next === out) return out;
     out = next;
