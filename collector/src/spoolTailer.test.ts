@@ -26,7 +26,7 @@ describe('tailSpoolOnce', () => {
     writeFileSync(file1, `${line1}\n${line2}\n`, 'utf8');
 
     const result = tailSpoolOnce(db, spoolDir, 1000);
-    expect(result).toEqual({ filesProcessed: 1, linesIngested: 2 });
+    expect(result).toEqual({ filesProcessed: 1, linesIngested: 2, filesRetained: 0 });
     expect(existsSync(file1)).toBe(false);
 
     const count: any = db.prepare('SELECT COUNT(*) as c FROM events').get();
@@ -40,7 +40,7 @@ describe('tailSpoolOnce', () => {
     writeFileSync(join(spoolDir, 'notes.txt'), 'irrelevant', 'utf8');
 
     const result = tailSpoolOnce(db, spoolDir, 1000);
-    expect(result).toEqual({ filesProcessed: 0, linesIngested: 0 });
+    expect(result).toEqual({ filesProcessed: 0, linesIngested: 0, filesRetained: 0 });
     expect(existsSync(join(spoolDir, 'notes.txt'))).toBe(true);
     db.close();
   });
@@ -49,7 +49,7 @@ describe('tailSpoolOnce', () => {
     const db = freshDb();
     const missingDir = join(tmpdir(), 'aether-collector-does-not-exist-' + Date.now());
     expect(() => tailSpoolOnce(db, missingDir, 1000)).not.toThrow();
-    expect(tailSpoolOnce(db, missingDir, 1000)).toEqual({ filesProcessed: 0, linesIngested: 0 });
+    expect(tailSpoolOnce(db, missingDir, 1000)).toEqual({ filesProcessed: 0, linesIngested: 0, filesRetained: 0 });
     db.close();
   });
 
@@ -64,6 +64,46 @@ describe('tailSpoolOnce', () => {
     db.close();
   });
 
+  it('keeps the spool file and writes nothing when any line fails to insert, then ingests it whole once the failure clears', () => {
+    const db = freshDb();
+    const spoolDir = freshSpoolDir();
+    // Stand-in for SQLITE_BUSY / disk full / schema drift: make one specific
+    // insert fail so the test can prove the whole file is rolled back, not
+    // just the failing line.
+    db.exec(`CREATE TRIGGER boom BEFORE INSERT ON events WHEN NEW.tool_name = 'BOOM' BEGIN SELECT RAISE(ABORT, 'boom'); END;`);
+    const ok = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's1', tool_name: 'Bash' });
+    const bad = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's1', tool_name: 'BOOM' });
+    const file = join(spoolDir, 's1.jsonl');
+    writeFileSync(file, `${ok}\n${bad}\n${ok}\n`, 'utf8');
+
+    const first = tailSpoolOnce(db, spoolDir, 1000);
+    expect(first).toEqual({ filesProcessed: 0, linesIngested: 0, filesRetained: 1 });
+    expect(existsSync(file)).toBe(true);
+    const afterFailure: any = db.prepare('SELECT COUNT(*) as c FROM events').get();
+    expect(afterFailure.c).toBe(0);
+
+    db.exec('DROP TRIGGER boom');
+    const second = tailSpoolOnce(db, spoolDir, 2000);
+    expect(second).toEqual({ filesProcessed: 1, linesIngested: 3, filesRetained: 0 });
+    expect(existsSync(file)).toBe(false);
+    const afterRetry: any = db.prepare('SELECT COUNT(*) as c FROM events').get();
+    expect(afterRetry.c).toBe(3);
+    db.close();
+  });
+
+  it('skips a malformed line, ingests the rest, and still deletes the file', () => {
+    const db = freshDb();
+    const spoolDir = freshSpoolDir();
+    const ok = JSON.stringify({ hook_event_name: 'Stop', session_id: 's1' });
+    const file = join(spoolDir, 's1.jsonl');
+    writeFileSync(file, `${ok}\n{not json\n${ok}\n`, 'utf8');
+
+    const result = tailSpoolOnce(db, spoolDir, 1000);
+    expect(result).toEqual({ filesProcessed: 1, linesIngested: 2, filesRetained: 0 });
+    expect(existsSync(file)).toBe(false);
+    db.close();
+  });
+
   it('processes multiple spool files in one pass', () => {
     const db = freshDb();
     const spoolDir = freshSpoolDir();
@@ -71,7 +111,7 @@ describe('tailSpoolOnce', () => {
     writeFileSync(join(spoolDir, 's2.jsonl'), JSON.stringify({ hook_event_name: 'Stop', session_id: 's2' }) + '\n', 'utf8');
 
     const result = tailSpoolOnce(db, spoolDir, 1000);
-    expect(result).toEqual({ filesProcessed: 2, linesIngested: 2 });
+    expect(result).toEqual({ filesProcessed: 2, linesIngested: 2, filesRetained: 0 });
     db.close();
   });
 });
