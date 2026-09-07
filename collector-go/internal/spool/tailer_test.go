@@ -210,3 +210,64 @@ func TestStartSpoolTailer_StopWaitsForGoroutineToExit(t *testing.T) {
 		t.Fatalf("expected no events ingested after stop(), got %d", got)
 	}
 }
+
+func TestTailSpoolOnce_FailedCommitIsRolledBackSoLaterWritesStillWork(t *testing.T) {
+	db := freshDB(t)
+	// Production setting (collector.go). It is what turns a poisoned
+	// connection into a poisoned collector: the one connection in the pool is
+	// the only connection every later write can get.
+	db.SetMaxOpenConns(1)
+	spoolDir := freshSpoolDir(t)
+	// Make COMMIT itself fail while every INSERT succeeds: a deferred foreign
+	// key is checked at COMMIT, and SQLite leaves the transaction OPEN when
+	// COMMIT fails -- the same post-condition as SQLITE_BUSY at COMMIT, which
+	// is what an external reader outliving busy_timeout produces in
+	// production. database/sql marks the *sql.Tx done and hands the connection
+	// back regardless, so if nothing issued a ROLLBACK on that same connection,
+	// every later Begin would fail with "cannot start a transaction within a
+	// transaction" until the process restarts.
+	//
+	// What makes this pass today is the DRIVER, not writeAll: modernc.org/sqlite's
+	// tx.Commit checks sqlite3_get_autocommit after a failed COMMIT and forces a
+	// rollback itself (tx.go, "database/sql expects the connection to be clean").
+	// Verified 2026-09-06 against v1.55.0 with both a deferred-FK failure and a
+	// real SQLITE_BUSY from a second handle holding a SHARED lock. This test
+	// pins that guarantee: a driver upgrade that drops it turns this red
+	// instead of turning the collector read-only until restart.
+	for _, stmt := range []string{
+		`PRAGMA foreign_keys = ON`,
+		`CREATE TABLE parent (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE child (pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)`,
+		`CREATE TRIGGER defer_boom AFTER INSERT ON events WHEN NEW.tool_name = 'BOOM' BEGIN INSERT INTO child (pid) VALUES (999); END;`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	ok, _ := json.Marshal(map[string]interface{}{"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "Bash"})
+	bad, _ := json.Marshal(map[string]interface{}{"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "BOOM"})
+	filePath := writeSpoolFile(t, spoolDir, "s1.jsonl", string(ok)+"\n"+string(bad)+"\n"+string(ok)+"\n")
+
+	first := TailSpoolOnce(db, spoolDir, 1000)
+	if first.FilesProcessed != 0 || first.LinesIngested != 0 || first.FilesRetained != 1 {
+		t.Fatalf("expected the file to be retained after the failed COMMIT, got %+v", first)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatalf("expected spool file to survive the failed COMMIT, stat err: %v", err)
+	}
+	if got := eventCount(t, db); got != 0 {
+		t.Fatalf("expected the failed COMMIT to be rolled back (0 events), got %d", got)
+	}
+
+	// The connection must be clean for whoever writes next -- here the retry.
+	if _, err := db.Exec(`DROP TRIGGER defer_boom`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	second := TailSpoolOnce(db, spoolDir, 2000)
+	if second.FilesProcessed != 1 || second.LinesIngested != 3 || second.FilesRetained != 0 {
+		t.Fatalf("expected the retry on a clean connection to ingest all 3 lines, got %+v", second)
+	}
+	if got := eventCount(t, db); got != 3 {
+		t.Fatalf("expected exactly 3 events after retry, got %d", got)
+	}
+}
