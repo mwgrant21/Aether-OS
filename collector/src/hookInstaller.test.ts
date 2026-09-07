@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import {
   readHookInstallState,
   installHooks,
@@ -231,5 +231,260 @@ describe('installPermissionHooks / uninstallPermissionHooks', () => {
 
   it('readHookInstallState (using MANAGED_HOOK_EVENTS) does not report PermissionRequest as an event it manages', () => {
     expect(MANAGED_HOOK_EVENTS).not.toContain('PermissionRequest');
+  });
+});
+
+// Added 2026-09-07 after a Stryker run (collector, run 2: 59.7% on this file)
+// showed the error, backup, no-op and malformed-shape paths were unguarded.
+// See .superpowers/stryker-collector-survivors.md for the mutants these kill.
+describe('hookInstaller: error, backup and malformed-shape guards', () => {
+  const ourEmitGroup = { hooks: [{ type: 'command', command: `node "${SCRIPT_PATH}"` }] };
+  const ourPermGroup = { hooks: [{ type: 'command', command: `node "${PERMISSION_SCRIPT_PATH}"` }] };
+  const junkGroups = [null, 'junk', { hooks: 'nope' }, { hooks: [null, { type: 'command' }] }];
+  const backupsBeside = (settingsPath: string) =>
+    readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aetherbak-'));
+
+  type Outcome = { ok: boolean; backupPath?: string | null; error?: string };
+  const installers: [string, (p: string) => Promise<Outcome>][] = [
+    ['installHooks', (p) => installHooks(p, SCRIPT_PATH)],
+    ['installPermissionHooks', (p) => installPermissionHooks(p, PERMISSION_SCRIPT_PATH)],
+  ];
+  const uninstallers: [string, (p: string) => Promise<Outcome>][] = [
+    ['uninstallHooks', (p) => uninstallHooks(p)],
+    ['uninstallPermissionHooks', (p) => uninstallPermissionHooks(p)],
+  ];
+  const allFns = [...installers, ...uninstallers];
+
+  it.each(installers)('%s on a missing settings.json creates it, reports ok, and writes no backup', async (_name, fn) => {
+    const settingsPath = tempSettingsPath();
+    const result = await fn(settingsPath);
+    expect(result).toEqual({ ok: true, backupPath: null });
+    expect(existsSync(settingsPath)).toBe(true);
+    expect(backupsBeside(settingsPath)).toEqual([]);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(Object.keys(written.hooks).length).toBeGreaterThan(0);
+  });
+
+  it.each(installers)('%s on an existing settings.json writes exactly one backup holding the original bytes and keeps unrelated keys', async (_name, fn) => {
+    const original = '{"permissions":{"allow":["Bash(ls:*)"]},"model":"opus"}';
+    const settingsPath = tempSettingsPath(original);
+    const result = await fn(settingsPath);
+    expect(result.ok).toBe(true);
+    expect(result.backupPath).toBeTruthy();
+    expect(readFileSync(result.backupPath!, 'utf8')).toBe(original);
+    expect(backupsBeside(settingsPath)).toHaveLength(1);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.permissions).toEqual({ allow: ['Bash(ls:*)'] });
+    expect(written.model).toBe('opus');
+  });
+
+  it.each([['[]'], ['null'], ['"hello"'], ['42']])(
+    'refuses a settings.json whose top level is %s and leaves the file and directory untouched',
+    async (content) => {
+      const settingsPath = tempSettingsPath(content);
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('not a JSON object');
+      expect(readFileSync(settingsPath, 'utf8')).toBe(content);
+      expect(backupsBeside(settingsPath)).toEqual([]);
+    }
+  );
+
+  it.each(allFns)('%s reports a parse error on an empty settings.json and leaves it untouched', async (_name, fn) => {
+    const settingsPath = tempSettingsPath('');
+    const result = await fn(settingsPath);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/could not parse existing settings\.json/);
+    expect(readFileSync(settingsPath, 'utf8')).toBe('');
+    expect(backupsBeside(settingsPath)).toEqual([]);
+  });
+
+  it('surfaces a non-ENOENT read failure instead of treating the file as absent', async () => {
+    const dirAsSettings = mkdtempSync(join(tmpdir(), 'aether-collector-hookinstaller-dir-'));
+    const result = await installHooks(dirAsSettings, SCRIPT_PATH);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/EISDIR/);
+  });
+
+  it.each(allFns)('%s reports failure and leaves settings.json byte-identical when the atomic rename fails', async (_name, fn) => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH);
+    await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    const snapshot = readFileSync(settingsPath, 'utf8');
+    const spy = vi.spyOn(fsp, 'rename').mockRejectedValueOnce(new Error('EACCES: simulated rename failure'));
+    try {
+      const result = await fn(settingsPath);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('simulated rename failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe(snapshot);
+  });
+
+  it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {
+    const settingsPath = tempSettingsPath('not valid json {{');
+    await expect(readHookInstallState(settingsPath, SCRIPT_PATH)).resolves.toEqual({
+      installedEvents: [],
+      settingsPath,
+      scriptPath: SCRIPT_PATH,
+    });
+  });
+
+  it('readHookInstallState reports an event installed when our group sits behind an unrelated one', async () => {
+    const existing = {
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'powershell -File other.ps1' }] }, ourEmitGroup] },
+    };
+    const settingsPath = tempSettingsPath(JSON.stringify(existing));
+    const state = await readHookInstallState(settingsPath, SCRIPT_PATH);
+    expect(state.installedEvents).toEqual(['Stop']);
+  });
+
+  it('readHookInstallState ignores null, string, hooks-less and command-less group entries without throwing', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { Stop: junkGroups } }));
+    const state = await readHookInstallState(settingsPath, SCRIPT_PATH);
+    expect(state.installedEvents).toEqual([]);
+  });
+
+  it('installHooks appends our group after junk entries instead of failing or treating them as ours', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { Stop: junkGroups } }));
+    const result = await installHooks(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop).toHaveLength(junkGroups.length + 1);
+    expect(written.hooks.Stop.slice(0, junkGroups.length)).toEqual(junkGroups);
+    expect(written.hooks.Stop[junkGroups.length]).toEqual(ourEmitGroup);
+  });
+
+  it('installPermissionHooks appends its group after junk entries instead of failing or treating them as ours', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { PermissionRequest: junkGroups } }));
+    const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toHaveLength(junkGroups.length + 1);
+    expect(written.hooks.PermissionRequest.slice(0, junkGroups.length)).toEqual(junkGroups);
+    expect(written.hooks.PermissionRequest[junkGroups.length]).toEqual(ourPermGroup);
+  });
+
+  it('installHooks writes hook entries of type "command"', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop[0].hooks[0].type).toBe('command');
+  });
+
+  it('installPermissionHooks leaves a non-array hooks[event] untouched and still installs the other events', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { PermissionRequest: { someWeirdShape: true } } }));
+    const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toEqual({ someWeirdShape: true });
+    expect(written.hooks.PostToolUse).toEqual([ourPermGroup]);
+    expect(written.hooks.Notification).toEqual([ourPermGroup]);
+  });
+
+  it('uninstallPermissionHooks leaves a non-array hooks[event] untouched while still removing its other entries', async () => {
+    const existing = { hooks: { PermissionRequest: { someWeirdShape: true }, Notification: [ourPermGroup] } };
+    const settingsPath = tempSettingsPath(JSON.stringify(existing));
+    const result = await uninstallPermissionHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks).toEqual({ PermissionRequest: { someWeirdShape: true } });
+  });
+
+  it('uninstallPermissionHooks removes only its own entry from a mixed group, leaving the unrelated entry and the group intact', async () => {
+    const existing = {
+      hooks: {
+        PermissionRequest: [
+          {
+            hooks: [
+              { type: 'command', command: 'powershell -File some-other-script.ps1' },
+              { type: 'command', command: `node "${PERMISSION_SCRIPT_PATH}"` },
+            ],
+          },
+        ],
+      },
+    };
+    const settingsPath = tempSettingsPath(JSON.stringify(existing));
+    const result = await uninstallPermissionHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toEqual([
+      { hooks: [{ type: 'command', command: 'powershell -File some-other-script.ps1' }] },
+    ]);
+  });
+
+  it.each(uninstallers)('%s on a missing settings.json is a no-op: ok, no backup, no file created', async (_name, fn) => {
+    const settingsPath = tempSettingsPath();
+    const result = await fn(settingsPath);
+    expect(result).toEqual({ ok: true, backupPath: null });
+    expect(existsSync(settingsPath)).toBe(false);
+    expect(backupsBeside(settingsPath)).toEqual([]);
+  });
+
+  const noHooksShapes: [string, string][] = [
+    ['no hooks key', '{"model":"opus"}'],
+    ['hooks: null', '{"hooks":null}'],
+  ];
+  for (const [label, content] of noHooksShapes) {
+    it.each(uninstallers)(`%s with ${label} is a no-op: ok, no backup, bytes unchanged`, async (_name, fn) => {
+      const settingsPath = tempSettingsPath(content);
+      const result = await fn(settingsPath);
+      expect(result).toEqual({ ok: true, backupPath: null });
+      expect(readFileSync(settingsPath, 'utf8')).toBe(content);
+      expect(backupsBeside(settingsPath)).toEqual([]);
+    });
+  }
+
+  it('uninstallHooks deletes an emptied event key and does not invent keys for events that were absent', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { Stop: [ourEmitGroup] } }));
+    const result = await uninstallHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks).toEqual({});
+  });
+
+  it('uninstallPermissionHooks deletes an emptied event key and does not invent keys for events that were absent', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { PermissionRequest: [ourPermGroup] } }));
+    const result = await uninstallPermissionHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks).toEqual({});
+  });
+
+  it('uninstallHooks preserves junk group entries and still removes ours', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { Stop: [...junkGroups, ourEmitGroup] } }));
+    const result = await uninstallHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop).toEqual(junkGroups);
+  });
+
+  it('uninstallPermissionHooks preserves junk group entries and still removes ours', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { PermissionRequest: [...junkGroups, ourPermGroup] } }));
+    const result = await uninstallPermissionHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toEqual(junkGroups);
+  });
+});
+
+describe('hookInstaller: junk siblings inside our own group', () => {
+  it('uninstallHooks drops only our entry from a group that also holds null and command-less entries', async () => {
+    const group = { hooks: [null, { type: 'command' }, { type: 'command', command: `node "${SCRIPT_PATH}"` }] };
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { Stop: [group] } }));
+    const result = await uninstallHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.Stop).toEqual([{ hooks: [null, { type: 'command' }] }]);
+  });
+
+  it('uninstallPermissionHooks drops only its entry from a group that also holds null and command-less entries', async () => {
+    const group = { hooks: [null, { type: 'command' }, { type: 'command', command: `node "${PERMISSION_SCRIPT_PATH}"` }] };
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { PermissionRequest: [group] } }));
+    const result = await uninstallPermissionHooks(settingsPath);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toEqual([{ hooks: [null, { type: 'command' }] }]);
   });
 });

@@ -196,6 +196,9 @@ export async function uninstallPermissionHooks(
           return { ...(g as HookGroup), hooks: remainingHooks };
         })
         .filter((g) => {
+          // Non-object entries (null, strings) are not ours and cannot have been
+          // emptied by the map above; keep them rather than crash on .hooks.
+          if (typeof g !== 'object' || g === null) return true;
           const groupHooks = (g as HookGroup).hooks;
           return !Array.isArray(groupHooks) || groupHooks.length > 0;
         });
@@ -257,6 +260,9 @@ export async function uninstallHooks(
           return { ...(g as HookGroup), hooks: remainingHooks };
         })
         .filter((g) => {
+          // Non-object entries (null, strings) are not ours and cannot have been
+          // emptied by the map above; keep them rather than crash on .hooks.
+          if (typeof g !== 'object' || g === null) return true;
           const groupHooks = (g as HookGroup).hooks;
           return !Array.isArray(groupHooks) || groupHooks.length > 0;
         });
