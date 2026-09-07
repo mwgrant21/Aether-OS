@@ -208,9 +208,15 @@ func writeBackup(settingsPath, raw string) (string, error) {
 // OS-specific tricks; production always uses os.Rename.
 var renameFile = os.Rename
 
+// writeFileFn is the same kind of seam for the temp-file write.
+var writeFileFn = os.WriteFile
+
 func writeSettingsAtomically(settingsPath, content string) error {
 	tmpPath := fmt.Sprintf("%s.aethertmp-%d", settingsPath, time.Now().UnixMilli())
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+	if err := writeFileFn(tmpPath, []byte(content), 0644); err != nil {
+		// A failed write can still have created the file (ENOSPC); same
+		// cleanup discipline as the rename below (#59).
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := renameFile(tmpPath, settingsPath); err != nil {

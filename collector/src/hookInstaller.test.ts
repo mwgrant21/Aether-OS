@@ -324,6 +324,31 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 
+  it.each(allFns)('%s reports failure and leaves no temp file when writing the temp file fails mid-write', async (_name, fn) => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH);
+    await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    const snapshot = readFileSync(settingsPath, 'utf8');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    // Simulate ENOSPC the way it really happens: the file is created, then the write fails.
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) {
+        await realWriteFile(file, '', 'utf8');
+        throw new Error('ENOSPC: simulated write failure');
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      const result = await fn(settingsPath);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('simulated write failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe(snapshot);
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {
     const settingsPath = tempSettingsPath('not valid json {{');
     await expect(readHookInstallState(settingsPath, SCRIPT_PATH)).resolves.toEqual({

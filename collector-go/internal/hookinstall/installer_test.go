@@ -692,3 +692,44 @@ func TestWriters_RenameFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
 		})
 	}
 }
+
+// Issue #59, second door: a temp-file write that fails after the file was
+// created (ENOSPC is the realistic case) must not leave it behind either.
+func TestWriters_TempWriteFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
+	writers := []struct {
+		name    string
+		content string
+		fn      func(string) InstallResult
+	}{
+		{"InstallHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+		{"UninstallHooks", `{"hooks":{},"model":"opus"}`, UninstallHooks},
+		{"UninstallPermissionHooks", `{"hooks":{},"model":"opus"}`, UninstallPermissionHooks},
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			settingsPath := tempSettingsPathWithContent(t, w.content)
+			orig := writeFileFn
+			writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+				// Create the file with a partial payload, then fail, as a full disk does.
+				_ = os.WriteFile(name, data[:len(data)/2], perm)
+				return os.ErrClosed
+			}
+			defer func() { writeFileFn = orig }()
+
+			result := w.fn(settingsPath)
+			if result.OK {
+				t.Fatalf("OK = true, want failure when the temp write fails")
+			}
+			if !strings.Contains(result.Error, os.ErrClosed.Error()) {
+				t.Errorf("Error = %q, want the write error surfaced", result.Error)
+			}
+			if got := readRaw(t, settingsPath); got != w.content {
+				t.Errorf("settings.json bytes changed: %q", got)
+			}
+			if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+				t.Errorf("temp file leaked beside settings.json: %v", tmp)
+			}
+		})
+	}
+}
