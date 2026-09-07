@@ -29,6 +29,20 @@ function isOurGroup(group: unknown, scriptPath: string): boolean {
   return hooks.some((h) => typeof h?.command === 'string' && h.command.includes(scriptPath));
 }
 
+/**
+ * `hooks` must be a plain object keyed by event name. `undefined` and `null`
+ * mean "none yet"; an array or a primitive is a shape we cannot merge into
+ * without guessing, so installers refuse and uninstallers no-op (#58).
+ */
+function hooksShape(parsed: Record<string, unknown>): 'absent' | 'object' | 'malformed' {
+  const hooks = parsed.hooks;
+  if (hooks === undefined || hooks === null) return 'absent';
+  if (typeof hooks === 'object' && !Array.isArray(hooks)) return 'object';
+  return 'malformed';
+}
+
+const MALFORMED_HOOKS_ERROR = 'existing settings.json "hooks" is not an object; refusing to overwrite';
+
 function ourGroup(scriptPath: string): HookGroup {
   return { hooks: [{ type: 'command', command: `node "${scriptPath}"` }] };
 }
@@ -95,6 +109,7 @@ export async function installHooks(
   const result = await readSettings(settingsPath);
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
+  if (hooksShape(parsed) === 'malformed') return { ok: false, error: MALFORMED_HOOKS_ERROR };
 
   try {
     let backupPath: string | null = null;
@@ -133,6 +148,7 @@ export async function installPermissionHooks(
   const result = await readSettings(settingsPath);
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
+  if (hooksShape(parsed) === 'malformed') return { ok: false, error: MALFORMED_HOOKS_ERROR };
 
   try {
     let backupPath: string | null = null;
@@ -169,7 +185,7 @@ export async function uninstallPermissionHooks(
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
 
-  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+  if (!fileExisted || hooksShape(parsed) !== 'object') {
     return { ok: true, backupPath: null };
   }
 
@@ -224,7 +240,7 @@ export async function uninstallHooks(
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
 
-  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+  if (!fileExisted || hooksShape(parsed) !== 'object') {
     return { ok: true, backupPath: null };
   }
 
