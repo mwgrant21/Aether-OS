@@ -116,7 +116,9 @@ app.on('child-process-gone', (_event, details) => {
 // but throws if its methods are touched before the app is ready.
 app.whenReady().then(() => {
   for (const evt of ['lock-screen', 'unlock-screen', 'suspend', 'resume'] as const) {
-    powerMonitor.on(evt, () => {
+    // powerMonitor.on is typed as one overload per event literal, so a
+    // union loop variable matches none of them; the cast is typing-only.
+    powerMonitor.on(evt as 'suspend', () => {
       console.error(`[diag] powerMonitor ${evt} at=${new Date().toISOString()}`);
     });
   }

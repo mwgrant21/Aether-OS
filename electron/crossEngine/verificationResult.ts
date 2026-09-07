@@ -1,4 +1,4 @@
-import type { VerificationResultV1, VerdictKind } from '../../src/shared/crossEngineTypes';
+import type { VerificationFinding, VerificationResultV1, VerificationTest, VerdictKind } from '../../src/shared/crossEngineTypes';
 
 const VALID_VERDICTS: VerdictKind[] = ['supported', 'contradicted', 'inconclusive'];
 
@@ -21,8 +21,8 @@ export function parseVerificationResult(raw: unknown): VerificationResultV1 {
   const findings = Array.isArray(obj.findings)
     ? obj.findings
         .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          severity: f.severity === 'warning' || f.severity === 'error' ? f.severity : ('info' as const),
+        .map((f): VerificationFinding => ({
+          severity: f.severity === 'warning' ? 'warning' : f.severity === 'error' ? 'error' : 'info',
           claim: typeof f.claim === 'string' ? f.claim : '',
           evidence: typeof f.evidence === 'string' ? f.evidence : '',
           file: typeof f.file === 'string' ? f.file : null,
@@ -32,9 +32,9 @@ export function parseVerificationResult(raw: unknown): VerificationResultV1 {
   const tests = Array.isArray(obj.tests)
     ? obj.tests
         .filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null)
-        .map((t) => ({
+        .map((t): VerificationTest => ({
           command: typeof t.command === 'string' ? t.command : '',
-          outcome: t.outcome === 'passed' || t.outcome === 'failed' ? t.outcome : ('not-run' as const),
+          outcome: t.outcome === 'passed' ? 'passed' : t.outcome === 'failed' ? 'failed' : 'not-run',
           detail: typeof t.detail === 'string' ? t.detail : '',
         }))
     : [];
