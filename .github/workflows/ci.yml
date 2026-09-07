@@ -33,7 +33,24 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-      - run: go build ./... && go vet ./... && go test ./...
+      # -race, because the collector is concurrent by construction: the spool
+      # tail, transcript scan and fleet poll loops all run against one shared
+      # database and one shared logger. Without it, a data race in this package
+      # is invisible to CI and only ever shows up as a flake.
+      #
+      # It has already earned its place. The fleet-heartbeat test read a
+      # bytes.Buffer from the test goroutine while a collector loop logged into
+      # it -- log.SetOutput serialises writers behind the log package's mutex,
+      # but a reader takes no part in that lock. It went unnoticed because the
+      # only signal it ever produced was an intermittent failure of a DIFFERENT
+      # assertion (CI run 34071254746), which blocked an unrelated PR.
+      #
+      # -race requires cgo, which is why CGO_ENABLED is set explicitly rather
+      # than left to the default: this repo's sqlite driver is modernc.org's
+      # pure-Go one, so nothing here would otherwise need a C toolchain, and a
+      # future runner or GOFLAGS change that turns cgo off must fail loudly on
+      # the missing compiler rather than silently drop the detector.
+      - run: go build ./... && go vet ./... && CGO_ENABLED=1 go test -race ./...
         working-directory: collector-go
 
   # Windows is the platform this app actually runs on, and the one carrying
