@@ -1,4 +1,5 @@
 import { promises as fsp } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { dirname } from 'node:path';
 
 export const MANAGED_HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'Notification', 'Stop'] as const;
@@ -79,10 +80,18 @@ async function writeBackup(settingsPath: string, raw: string): Promise<string> {
   return backupPath;
 }
 
+// The temp name must be unique per invocation even when two writers (this
+// collector, the Go collector, two Aether instances) hit the same millisecond,
+// so that a failing writer's cleanup can only ever remove its own file (#59).
+function tempPathFor(settingsPath: string): string {
+  return `${settingsPath}.aethertmp-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
+}
+
 async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
-  const tmpPath = `${settingsPath}.aethertmp-${Date.now()}`;
+  const tmpPath = tempPathFor(settingsPath);
   try {
-    await fsp.writeFile(tmpPath, content, 'utf8');
+    // flag wx: exclusive create, so a collision is an error rather than a clobber.
+    await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
     await fsp.rename(tmpPath, settingsPath);
   } catch (err) {
     // Do not leave the temp file beside the user's real settings.json (#59),

@@ -30,6 +30,8 @@ package hookinstall
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -209,10 +211,33 @@ func writeBackup(settingsPath, raw string) (string, error) {
 var renameFile = os.Rename
 
 // writeFileFn is the same kind of seam for the temp-file write.
-var writeFileFn = os.WriteFile
+var writeFileFn = writeFileExcl
+
+// tempPathFor mirrors hookInstaller.ts's tempPathFor: unique per invocation
+// even when two writers share a millisecond, so a failing writer's cleanup
+// can only ever remove its own file (#59).
+func tempPathFor(settingsPath string) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s.aethertmp-%d-%d-%s", settingsPath, time.Now().UnixMilli(), os.Getpid(), hex.EncodeToString(b[:]))
+}
+
+// writeFileExcl is os.WriteFile with O_EXCL: a name collision is an error,
+// never a clobber of another writer's pending file.
+func writeFileExcl(name string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
 
 func writeSettingsAtomically(settingsPath, content string) error {
-	tmpPath := fmt.Sprintf("%s.aethertmp-%d", settingsPath, time.Now().UnixMilli())
+	tmpPath := tempPathFor(settingsPath)
 	if err := writeFileFn(tmpPath, []byte(content), 0644); err != nil {
 		// A failed write can still have created the file (ENOSPC); same
 		// cleanup discipline as the rename below (#59).

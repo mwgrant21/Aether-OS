@@ -349,6 +349,28 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 
+  it('uses a distinct temp file for each write even when two writes share the same millisecond', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('1700000000000' as unknown as number));
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    const tempPaths: string[] = [];
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) tempPaths.push(String(file));
+      return realWriteFile(file, data, options);
+    });
+    try {
+      expect((await installHooks(settingsPath, SCRIPT_PATH)).ok).toBe(true);
+      expect((await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH)).ok).toBe(true);
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+    expect(tempPaths).toHaveLength(2);
+    expect(tempPaths[0]).not.toBe(tempPaths[1]);
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {
     const settingsPath = tempSettingsPath('not valid json {{');
     await expect(readHookInstallState(settingsPath, SCRIPT_PATH)).resolves.toEqual({

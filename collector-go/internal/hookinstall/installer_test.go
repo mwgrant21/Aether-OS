@@ -733,3 +733,29 @@ func TestWriters_TempWriteFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) 
 		})
 	}
 }
+
+// Two writers in the same millisecond must never share a temp path, or one
+// failing writer's cleanup could delete the other's pending file.
+func TestTempPathFor_DistinctWithinSameMillisecond(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	a := tempPathFor(settingsPath)
+	b := tempPathFor(settingsPath)
+	if a == b {
+		t.Fatalf("two temp paths collided: %s", a)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.HasPrefix(p, settingsPath+".aethertmp-") {
+			t.Errorf("temp path %q does not sit beside settings.json with the .aethertmp- marker", p)
+		}
+	}
+}
+
+func TestWriteFileExcl_RefusesToClobberAnExistingFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "pending")
+	if err := writeFileExcl(settingsPath, []byte("clobber"), 0644); err == nil {
+		t.Fatalf("writeFileExcl succeeded over an existing file, want an error")
+	}
+	if got := readRaw(t, settingsPath); got != "pending" {
+		t.Errorf("existing file changed: %q", got)
+	}
+}
