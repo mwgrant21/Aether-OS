@@ -96,8 +96,11 @@ async function writeSettingsAtomically(settingsPath: string, content: string): P
   } catch (err) {
     // Do not leave the temp file beside the user's real settings.json (#59),
     // whether the write or the rename failed; the original error is what the
-    // caller needs to see, not a cleanup error.
-    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+    // caller needs to see, not a cleanup error. A lost exclusive create
+    // (EEXIST) means the file is another writer's: leave it alone.
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== 'EEXIST') {
+      await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+    }
     throw err;
   }
 }

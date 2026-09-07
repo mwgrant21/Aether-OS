@@ -371,6 +371,32 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 
+  it('leaves another writer\x27s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    let contested = '';
+    // Simulate losing the race: the other writer already owns this exact path.
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) {
+        contested = String(file);
+        await realWriteFile(file, '{"other":"writer"}', 'utf8');
+        throw Object.assign(new Error('EEXIST: file already exists'), { code: 'EEXIST' });
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('EEXIST');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(contested).not.toBe('');
+    expect(existsSync(contested)).toBe(true);
+    expect(readFileSync(contested, 'utf8')).toBe('{"other":"writer"}');
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
+  });
+
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {
     const settingsPath = tempSettingsPath('not valid json {{');
     await expect(readHookInstallState(settingsPath, SCRIPT_PATH)).resolves.toEqual({

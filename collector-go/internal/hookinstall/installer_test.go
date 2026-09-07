@@ -759,3 +759,33 @@ func TestWriteFileExcl_RefusesToClobberAnExistingFile(t *testing.T) {
 		t.Errorf("existing file changed: %q", got)
 	}
 }
+
+// Losing an exclusive-create race (ErrExist) means this invocation never
+// owned the file, so cleanup must leave the other writer's file alone.
+func TestWriters_ExclusiveCreateLoss_LeavesOtherWritersTempFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	var contested string
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		contested = name
+		if err := os.WriteFile(name, []byte("other writer"), perm); err != nil {
+			t.Fatalf("stage other writer: %v", err)
+		}
+		return os.ErrExist
+	}
+	defer func() { writeFileFn = orig }()
+
+	result := InstallHooks(settingsPath, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true, want failure on a lost exclusive create")
+	}
+	if contested == "" {
+		t.Fatalf("temp write never attempted")
+	}
+	if got := readRaw(t, contested); got != "other writer" {
+		t.Errorf("other writer's temp file was removed or changed: %q", got)
+	}
+	if got := readRaw(t, settingsPath); got != "{}" {
+		t.Errorf("settings.json changed: %q", got)
+	}
+}

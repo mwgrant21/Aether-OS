@@ -33,6 +33,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -240,8 +241,11 @@ func writeSettingsAtomically(settingsPath, content string) error {
 	tmpPath := tempPathFor(settingsPath)
 	if err := writeFileFn(tmpPath, []byte(content), 0644); err != nil {
 		// A failed write can still have created the file (ENOSPC); same
-		// cleanup discipline as the rename below (#59).
-		_ = os.Remove(tmpPath)
+		// cleanup discipline as the rename below (#59). A lost exclusive
+		// create (ErrExist) means the file is another writer's: leave it.
+		if !errors.Is(err, os.ErrExist) {
+			_ = os.Remove(tmpPath)
+		}
 		return err
 	}
 	if err := renameFile(tmpPath, settingsPath); err != nil {
