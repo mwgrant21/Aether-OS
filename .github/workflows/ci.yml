@@ -26,6 +26,36 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # collector/ is a standalone package (own package.json, lockfile, tsc
+  # build and vitest config) that the root `npm test` deliberately excludes,
+  # with a comment deferring to "collector's own test command". Nothing in CI
+  # ever ran that command: 29 collector test files plus the two hook tests
+  # under scripts/ (which collector/vitest.config.ts owns) could go red while
+  # every job stayed green. The daemon this package builds is the one that
+  # ingests hook events, so this is not a peripheral suite.
+  #
+  # Same Node matrix as test-and-build: the collector needs node:sqlite
+  # (Node >= 22.5), and the version a user's autostart task runs under is
+  # whatever is on PATH, so both supported majors are exercised.
+  collector:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: collector/package-lock.json
+      - run: npm ci
+        working-directory: collector
+      - run: npm run build
+        working-directory: collector
+      - run: npm test
+        working-directory: collector
+
   go-collector:
     runs-on: ubuntu-latest
     steps:
@@ -98,3 +128,12 @@ jobs:
       # and the native/binary dependencies explicitly.
       - name: Verify Electron artifacts and native modules
         run: node scripts/verify-electron-artifacts.mjs
+
+      # The collector daemon runs on Windows via a logon scheduled task; its
+      # suite has Windows-path and hook-spawn cases the Linux job cannot see.
+      - run: npm ci
+        working-directory: collector
+      - run: npm run build
+        working-directory: collector
+      - run: npm test
+        working-directory: collector
