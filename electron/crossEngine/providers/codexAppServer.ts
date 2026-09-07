@@ -589,11 +589,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
         // carried out -- precisely the state that had no owner before.
         //
         // This is the ONLY path that retains a record, so it is also the only
-        // place the caller stops waiting while the record lives on. Both facts
-        // are recorded here: the sweep may now consider it, and its expiry is
-        // ARMED rather than left to whenever a later turn happens to start.
-        record.callerWaiting = false;
-        record.armExpiry(() => this.retireTurn(record));
+        // place the caller stops waiting while the record lives on.
+        // beginRetention does all three things that must happen together:
+        // marks the caller gone, restarts the TTL from NOW (it was set at
+        // record creation, which under the shipped defaults is already
+        // 180s in the past by this point), and arms the expiry.
+        record.beginRetention(this.turnRecordTtlMs, () => this.retireTurn(record));
         return { stopReason: 'timeout', text: record.text, usage: record.usage };
       }
       this.retireTurn(record);

@@ -1222,6 +1222,69 @@ describe('CodexAppServerAdapter: retention bounds must not break live turns', ()
     await adapter.dispose();
   });
 
+  it('retains for the FULL ttl when the caller waited longer than it -- the shipped ratio', async () => {
+    // The production defaults are ttl 120s against a 300s deadline, so by the
+    // time the caller gives up the record's creation-time expiresAt is already
+    // 180s in the past. Arming from that stale value gave a delay of zero and
+    // retired the record on the next tick, collapsing the retention window to
+    // nothing in exactly the configuration that ships.
+    //
+    // Both earlier retention tests used ttl > timeout, which is the inverse of
+    // production and cannot see this.
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return undefined; // turn/start never answered
+    });
+    const TTL = 250;
+    const adapter = new CodexAppServerAdapter(() => fake.child, TTL);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+
+    // Caller waits LONGER than the ttl, as in production.
+    await adapter.sendTurn({ sessionId, text: 'go', timeoutMs: TTL * 2 }, () => {});
+
+    // The window must start now, not at record creation.
+    expect(adapter.liveTurnCount).toBe(1);
+    await new Promise((r) => setTimeout(r, TTL / 2));
+    expect(adapter.liveTurnCount, 'retired early: the ttl was measured from creation, not from retention').toBe(1);
+
+    await new Promise((r) => setTimeout(r, TTL));
+    expect(adapter.liveTurnCount).toBe(0);
+    await adapter.dispose();
+  });
+
+  it('a late acknowledgement can still interrupt after the caller waited past the ttl', async () => {
+    // The consequence the window exists for. Cancel lands pre-ack, the caller
+    // gives up after longer than the ttl, and the acknowledgement arrives
+    // later still -- the interrupt must be sent.
+    const ACK_DELAY = 260;
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ turn: { id: 'turn-late', status: 'inProgress' } }), ACK_DELAY)
+        );
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child, 100); // ttl < caller deadline
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp' });
+
+    const turn = adapter.sendTurn({ sessionId, text: 'go', timeoutMs: 180 }, () => {});
+    await new Promise((r) => setTimeout(r, 20));
+    await adapter.cancel(sessionId);
+    await turn;
+
+    await new Promise((r) => setTimeout(r, ACK_DELAY));
+    const interrupt = fake.received.find((r) => r.method === 'turn/interrupt');
+    expect(interrupt, 'the late ack must still honour the cancellation').toBeTruthy();
+    expect((interrupt?.params as Record<string, unknown>)?.turnId).toBe('turn-late');
+    await adapter.dispose();
+  });
+
   it('expires a retained record on its own timer, with no later turn to trigger a sweep', async () => {
     // Checking expiresAt only on insert is not a TTL: with no second turn, the
     // record would sit for the adapter's lifetime holding its listener.

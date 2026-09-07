@@ -129,13 +129,25 @@ export class TurnRecord {
     return this.phase === 'retired';
   }
 
-  /** Arms the autonomous expiry. `unref` so a retained record can never keep
-   *  a plain Node process alive -- the same hazard the dangling deadline timer
-   *  had. */
-  armExpiry(onExpire: () => void): void {
+/** The caller has stopped waiting, so this record now lives on its own clock.
+   *
+   *  ONE operation, because the three steps are only correct together and were
+   *  previously written apart. `expiresAt` is set when the record is CREATED,
+   *  but the caller may wait far longer than the TTL before giving up -- with
+   *  the shipped defaults, 300s against a 120s TTL. Arming an expiry from that
+   *  stale absolute time computed `max(0, 120s - 300s) = 0`, so the record was
+   *  retired on the very next tick and the retention window it exists to
+   *  provide was ZERO in the default configuration. Refreshing `expiresAt`
+   *  here is the fix, and folding it in with `callerWaiting` and the timer is
+   *  what stops the three drifting apart again.
+   *
+   *  `unref` so a retained record can never keep a plain Node process alive --
+   *  the same hazard the dangling deadline timer had. */
+  beginRetention(ttlMs: number, onExpire: () => void): void {
+    this.callerWaiting = false;
+    this.expiresAt = Date.now() + ttlMs;
     this.clearExpiry();
-    const delay = Math.max(0, this.expiresAt - Date.now());
-    this.expiryTimer = setTimeout(onExpire, delay);
+    this.expiryTimer = setTimeout(onExpire, Math.max(0, this.expiresAt - Date.now()));
     (this.expiryTimer as { unref?: () => void }).unref?.();
   }
 
