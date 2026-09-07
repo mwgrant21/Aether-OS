@@ -87,6 +87,63 @@ func TestTailSpoolOnce_SkipsBlankLinesWithoutCountingThem(t *testing.T) {
 	}
 }
 
+func TestTailSpoolOnce_KeepsFileAndWritesNothingWhenAnInsertFails_ThenIngestsWholeFileOnRetry(t *testing.T) {
+	db := freshDB(t)
+	spoolDir := freshSpoolDir(t)
+	// Stand-in for SQLITE_BUSY / disk full / schema drift: make one specific
+	// insert fail so the test proves the whole file is rolled back, not just
+	// the failing line.
+	if _, err := db.Exec(`CREATE TRIGGER boom BEFORE INSERT ON events WHEN NEW.tool_name = 'BOOM' BEGIN SELECT RAISE(ABORT, 'boom'); END;`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	ok, _ := json.Marshal(map[string]interface{}{"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "Bash"})
+	bad, _ := json.Marshal(map[string]interface{}{"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "BOOM"})
+	filePath := writeSpoolFile(t, spoolDir, "s1.jsonl", string(ok)+"\n"+string(bad)+"\n"+string(ok)+"\n")
+
+	first := TailSpoolOnce(db, spoolDir, 1000)
+	if first.FilesProcessed != 0 || first.LinesIngested != 0 || first.FilesRetained != 1 {
+		t.Fatalf("expected the file to be retained with nothing ingested, got %+v", first)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatalf("expected spool file to survive the failed pass, stat err: %v", err)
+	}
+	if got := eventCount(t, db); got != 0 {
+		t.Fatalf("expected rollback to leave 0 events, got %d", got)
+	}
+
+	if _, err := db.Exec(`DROP TRIGGER boom`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	second := TailSpoolOnce(db, spoolDir, 2000)
+	if second.FilesProcessed != 1 || second.LinesIngested != 3 || second.FilesRetained != 0 {
+		t.Fatalf("expected the retry to ingest all 3 lines, got %+v", second)
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected spool file to be deleted after the successful retry, stat err: %v", err)
+	}
+	if got := eventCount(t, db); got != 3 {
+		t.Fatalf("expected exactly 3 events after retry (no duplicates), got %d", got)
+	}
+}
+
+func TestTailSpoolOnce_SkipsMalformedLineButStillIngestsRestAndDeletesFile(t *testing.T) {
+	db := freshDB(t)
+	spoolDir := freshSpoolDir(t)
+	ok, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "s1"})
+	filePath := writeSpoolFile(t, spoolDir, "s1.jsonl", string(ok)+"\n{not json\n"+string(ok)+"\n")
+
+	result := TailSpoolOnce(db, spoolDir, 1000)
+	if result.FilesProcessed != 1 || result.LinesIngested != 2 || result.FilesRetained != 0 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected spool file to be deleted, stat err: %v", err)
+	}
+	if got := eventCount(t, db); got != 2 {
+		t.Fatalf("expected 2 events, got %d", got)
+	}
+}
+
 func TestTailSpoolOnce_ProcessesMultipleSpoolFilesInOnePass(t *testing.T) {
 	db := freshDB(t)
 	spoolDir := freshSpoolDir(t)
