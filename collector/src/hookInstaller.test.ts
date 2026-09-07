@@ -320,6 +320,8 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
       spy.mockRestore();
     }
     expect(readFileSync(settingsPath, 'utf8')).toBe(snapshot);
+    // #59: the failed rename must not leave its temp file beside the real settings.json.
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {

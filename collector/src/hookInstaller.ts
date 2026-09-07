@@ -82,7 +82,14 @@ async function writeBackup(settingsPath: string, raw: string): Promise<string> {
 async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
   const tmpPath = `${settingsPath}.aethertmp-${Date.now()}`;
   await fsp.writeFile(tmpPath, content, 'utf8');
-  await fsp.rename(tmpPath, settingsPath);
+  try {
+    await fsp.rename(tmpPath, settingsPath);
+  } catch (err) {
+    // Do not leave the temp file beside the user's real settings.json (#59);
+    // the rename error is what the caller needs to see, not a cleanup error.
+    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 export async function readHookInstallState(settingsPath: string, scriptPath: string): Promise<HookInstallState> {

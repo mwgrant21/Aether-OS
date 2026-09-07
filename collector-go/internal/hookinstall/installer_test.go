@@ -640,3 +640,55 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func tempFilesBeside(t *testing.T, settingsPath string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(settingsPath))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".aethertmp-") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// Issue #59: a failed atomic rename must report the error, leave
+// settings.json byte-identical, and not leave its temp file behind.
+func TestWriters_RenameFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
+	writers := []struct {
+		name    string
+		content string
+		fn      func(string) InstallResult
+	}{
+		{"InstallHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+		{"UninstallHooks", `{"hooks":{},"model":"opus"}`, UninstallHooks},
+		{"UninstallPermissionHooks", `{"hooks":{},"model":"opus"}`, UninstallPermissionHooks},
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			settingsPath := tempSettingsPathWithContent(t, w.content)
+			orig := renameFile
+			renameFile = func(oldpath, newpath string) error { return os.ErrPermission }
+			defer func() { renameFile = orig }()
+
+			result := w.fn(settingsPath)
+			if result.OK {
+				t.Fatalf("OK = true, want failure when rename fails")
+			}
+			if !strings.Contains(result.Error, os.ErrPermission.Error()) {
+				t.Errorf("Error = %q, want the rename error surfaced", result.Error)
+			}
+			if got := readRaw(t, settingsPath); got != w.content {
+				t.Errorf("settings.json bytes changed: %q", got)
+			}
+			if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+				t.Errorf("temp file leaked beside settings.json: %v", tmp)
+			}
+		})
+	}
+}

@@ -204,12 +204,22 @@ func writeBackup(settingsPath, raw string) (string, error) {
 	return backupPath, nil
 }
 
+// renameFile is a seam so tests can force the rename step to fail without
+// OS-specific tricks; production always uses os.Rename.
+var renameFile = os.Rename
+
 func writeSettingsAtomically(settingsPath, content string) error {
 	tmpPath := fmt.Sprintf("%s.aethertmp-%d", settingsPath, time.Now().UnixMilli())
 	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, settingsPath)
+	if err := renameFile(tmpPath, settingsPath); err != nil {
+		// Do not leave the temp file beside the user's real settings.json (#59);
+		// the rename error is what the caller needs to see, not a cleanup error.
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 // ReadHookInstallState mirrors hookInstaller.ts's readHookInstallState.
