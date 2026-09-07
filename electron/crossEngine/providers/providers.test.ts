@@ -958,7 +958,7 @@ describe('adapter lifecycle and cancellation (review follow-ups)', () => {
     const spawnChild = () => {
       const stdout = new PassThrough();
       const stdin = new PassThrough();
-      const child = new EventEmitter() as unknown as ChildProcessWithoutNullStreams & { stdout: PassThrough; stdin: PassThrough };
+      const child = new EventEmitter() as unknown as ChildProcessWithoutNullStreams;
       child.stdout = stdout as unknown as ChildProcessWithoutNullStreams['stdout'];
       child.stdin = stdin as unknown as ChildProcessWithoutNullStreams['stdin'];
       child.kill = vi.fn() as unknown as ChildProcessWithoutNullStreams['kill'];
@@ -1184,7 +1184,10 @@ describe('CodexAppServerAdapter: retention bounds must not break live turns', ()
     // would leave its own sendTurn waiting on a record that no longer exists,
     // and its later deltas and completion would find nothing - reporting a
     // successful long turn as a truncated timeout.
-    let settleTurnOne: (() => void) | null = null;
+    // `null as ...` rather than an annotation: TS narrows an annotated
+    // `= null` to `null` at the use site because the assignment happens
+    // inside a callback it does not track, making `settleTurnOne?.()` `never`.
+    let settleTurnOne = null as (() => void) | null;
     const fake = makeStdioFake((req, push) => {
       if (req.method === 'initialize') return { userAgent: 'x' };
       if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };

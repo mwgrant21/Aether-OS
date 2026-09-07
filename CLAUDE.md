@@ -30,7 +30,8 @@ tool, not a distributed product.
 npm install
 npm run electron:dev   # the real thing: desktop app, live terminal, real session tracking
 npm run dev            # browser-only mode at http://localhost:5173 (no PTY / live tracking)
-npm test                # vitest run — 572 tests at last count
+npm test                # vitest run (renderer + electron main; collector/ has its own suite)
+npm run typecheck:electron  # tsc over electron/ -- NOT covered by npm run build; CI runs it
 npm run build           # tsc -b && vite build (renderer)
 npm run electron:build  # electron-vite build (main + preload + renderer, for the Electron app)
 ```
