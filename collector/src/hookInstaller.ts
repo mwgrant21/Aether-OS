@@ -41,7 +41,8 @@ function hooksShape(parsed: Record<string, unknown>): 'absent' | 'object' | 'mal
   return 'malformed';
 }
 
-const MALFORMED_HOOKS_ERROR = 'existing settings.json "hooks" is not an object; refusing to overwrite';
+const MALFORMED_HOOKS_ERROR =
+  'the "hooks" value in settings.json is not an object keyed by event name; refusing to overwrite it. Fix or remove "hooks", then retry';
 
 function ourGroup(scriptPath: string): HookGroup {
   return { hooks: [{ type: 'command', command: `node "${scriptPath}"` }] };
@@ -88,10 +89,7 @@ export async function readHookInstallState(settingsPath: string, scriptPath: str
   const result = await readSettings(settingsPath);
   const installedEvents: string[] = [];
   if (result.ok) {
-    const hooks = (result.parsed.hooks && typeof result.parsed.hooks === 'object' ? result.parsed.hooks : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks = (hooksShape(result.parsed) === 'object' ? result.parsed.hooks : {}) as Record<string, unknown>;
     for (const eventName of MANAGED_HOOK_EVENTS) {
       const groups = hooks[eventName];
       if (Array.isArray(groups) && groups.some((g) => isOurGroup(g, scriptPath))) {
@@ -115,10 +113,8 @@ export async function installHooks(
     let backupPath: string | null = null;
     if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
 
-    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks: Record<string, unknown> =
+      hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
     for (const eventName of MANAGED_HOOK_EVENTS) {
       const current = hooks[eventName];
       if (current !== undefined && !Array.isArray(current)) {
@@ -154,10 +150,8 @@ export async function installPermissionHooks(
     let backupPath: string | null = null;
     if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
 
-    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks: Record<string, unknown> =
+      hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
     for (const eventName of PERMISSION_HOOK_EVENTS) {
       const current = hooks[eventName];
       if (current !== undefined && !Array.isArray(current)) {
