@@ -34,7 +34,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -145,32 +144,40 @@ func readSettings(settingsPath string) readSettingsResult {
 	return readSettingsResult{ok: true, fileExisted: true, raw: string(raw), parsed: obj}
 }
 
-// normalizeHooksValue mirrors hookInstaller.ts's
-// `parsed.hooks && typeof parsed.hooks === 'object' ? { ...parsed.hooks } : {}`
-// spread pattern used at every install/uninstall call site. JS's typeof
-// considers arrays 'object' too, so `{...arrayValue}` spreads array elements
-// into a plain object keyed by numeric-string index ("0", "1", ...) rather
-// than discarding them -- this normalizes a Go []interface{} the same way,
-// and returns a shallow copy for an already-object value (never the original
-// map, matching the TS spread's copy semantics) or an empty map for any other
-// shape (missing key, nil/null, string, number, bool).
+// hooksShape mirrors hookInstaller.ts's hooksShape (#58). A top-level
+// "hooks" must be a JSON object keyed by event name. "absent" covers a
+// missing key and JSON null (both unmarshal to nil); "object" is usable;
+// anything else -- array, string, number, bool -- is "malformed": a shape
+// this package cannot merge into without guessing, so installers refuse and
+// uninstallers no-op. (Before #58 an array was spread into a numeric-keyed
+// object, silently rewriting the user's config with OK: true.)
+func hooksShape(parsed map[string]interface{}) string {
+	v, exists := parsed["hooks"]
+	if !exists || v == nil {
+		return "absent"
+	}
+	if _, isObj := v.(map[string]interface{}); isObj {
+		return "object"
+	}
+	return "malformed"
+}
+
+// malformedHooksError mirrors hookInstaller.ts's MALFORMED_HOOKS_ERROR.
+const malformedHooksError = "the \"hooks\" value in settings.json is not an object keyed by event name; refusing to overwrite it. Fix or remove \"hooks\", then retry"
+
+// normalizeHooksValue returns a shallow copy of an object-shaped hooks value
+// (never the original map, matching the TS spread's copy semantics) or an
+// empty map when hooks is absent. Callers have already refused or no-opped
+// on a malformed value via hooksShape, so no other shape reaches here.
 func normalizeHooksValue(v interface{}) map[string]interface{} {
-	switch t := v.(type) {
-	case map[string]interface{}:
+	if t, ok := v.(map[string]interface{}); ok {
 		out := make(map[string]interface{}, len(t))
 		for k, val := range t {
 			out[k] = val
 		}
 		return out
-	case []interface{}:
-		out := make(map[string]interface{}, len(t))
-		for i, val := range t {
-			out[strconv.Itoa(i)] = val
-		}
-		return out
-	default:
-		return map[string]interface{}{}
 	}
+	return map[string]interface{}{}
 }
 
 // marshalSettingsJSON mirrors JSON.stringify(merged, null, 2): 2-space
@@ -210,7 +217,10 @@ func ReadHookInstallState(settingsPath, scriptPath string) HookInstallState {
 	result := readSettings(settingsPath)
 	installedEvents := []string{}
 	if result.ok {
-		hooksObj, _ := result.parsed["hooks"].(map[string]interface{})
+		var hooksObj map[string]interface{}
+		if hooksShape(result.parsed) == "object" {
+			hooksObj = result.parsed["hooks"].(map[string]interface{})
+		}
 		for _, eventName := range ManagedHookEvents {
 			groupsArr, ok := hooksObj[eventName].([]interface{})
 			if !ok {
@@ -237,6 +247,10 @@ func installGroup(settingsPath, scriptPath string, events []string) InstallResul
 	result := readSettings(settingsPath)
 	if !result.ok {
 		return InstallResult{OK: false, Error: result.errMsg}
+	}
+	// Refuse before any backup or temp file is written (#58).
+	if hooksShape(result.parsed) == "malformed" {
+		return InstallResult{OK: false, Error: malformedHooksError}
 	}
 
 	var backupPath *string
@@ -383,17 +397,11 @@ func uninstallByMarker(settingsPath string, events []string, marker string) Inst
 	if !result.fileExisted {
 		return InstallResult{OK: true, BackupPath: nil}
 	}
-	// Mirrors TS's `typeof parsed.hooks !== 'object' || parsed.hooks === null`
-	// early-return guard exactly: proceed (and write) only when hooks is a
-	// JSON object OR array (JS's typeof array is 'object' too, so an
-	// array-shaped hooks value must NOT early-return here -- it gets spread
-	// into a numeric-keyed object below via normalizeHooksValue, matching
-	// TS's `{ ...parsed.hooks }`). Anything else -- missing key, null,
-	// string, number, bool -- is a true no-op: no backup, no write.
-	switch result.parsed["hooks"].(type) {
-	case map[string]interface{}, []interface{}:
-		// proceed
-	default:
+	// Mirrors TS's `!fileExisted || hooksShape(parsed) !== 'object'` early
+	// return (#58): only a JSON-object hooks can hold anything of ours.
+	// Missing, null, and malformed (array/string/number/bool) are all a true
+	// no-op: no backup, no write.
+	if hooksShape(result.parsed) != "object" {
 		return InstallResult{OK: true, BackupPath: nil}
 	}
 
