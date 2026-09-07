@@ -356,6 +356,16 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     expect(written.hooks.Stop[junkGroups.length]).toEqual(ourEmitGroup);
   });
 
+  it('installPermissionHooks appends its group after junk entries instead of failing or treating them as ours', async () => {
+    const settingsPath = tempSettingsPath(JSON.stringify({ hooks: { PermissionRequest: junkGroups } }));
+    const result = await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.hooks.PermissionRequest).toHaveLength(junkGroups.length + 1);
+    expect(written.hooks.PermissionRequest.slice(0, junkGroups.length)).toEqual(junkGroups);
+    expect(written.hooks.PermissionRequest[junkGroups.length]).toEqual(ourPermGroup);
+  });
+
   it('installHooks writes hook entries of type "command"', async () => {
     const settingsPath = tempSettingsPath('{}');
     await installHooks(settingsPath, SCRIPT_PATH);

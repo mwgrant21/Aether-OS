@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
@@ -153,8 +153,8 @@ describe('tailSpoolOnce / startSpoolTailer: unreadable entries, retention log, s
       expect(line).toContain('boom');
     } finally {
       errSpy.mockRestore();
+      db.close();
     }
-    db.close();
   });
 
   it('startSpoolTailer polls on the interval and the returned stop function ends polling', () => {
