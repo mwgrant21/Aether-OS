@@ -488,3 +488,62 @@ describe('hookInstaller: junk siblings inside our own group', () => {
     expect(written.hooks.PermissionRequest).toEqual([{ hooks: [null, { type: 'command' }] }]);
   });
 });
+
+// Issue #58: a top-level `hooks` that is an array or a primitive is not a
+// shape we know how to merge into. Installers must refuse (the user would
+// otherwise get ok:true and a rewritten config); uninstallers have nothing of
+// ours to remove there and must no-op without touching the file.
+describe('hookInstaller: top-level hooks that is not a plain object (#58)', () => {
+  type Outcome = { ok: boolean; backupPath?: string | null; error?: string };
+  const backupsBeside = (settingsPath: string) =>
+    readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aetherbak-'));
+  const installers: [string, (p: string) => Promise<Outcome>][] = [
+    ['installHooks', (p) => installHooks(p, SCRIPT_PATH)],
+    ['installPermissionHooks', (p) => installPermissionHooks(p, PERMISSION_SCRIPT_PATH)],
+  ];
+  const uninstallers: [string, (p: string) => Promise<Outcome>][] = [
+    ['uninstallHooks', (p) => uninstallHooks(p)],
+    ['uninstallPermissionHooks', (p) => uninstallPermissionHooks(p)],
+  ];
+  const malformed: [string, string][] = [
+    ['an empty array', '{"hooks":[],"model":"opus"}'],
+    ['an array of groups', '{"hooks":[{"hooks":[{"type":"command","command":"other.ps1"}]}],"model":"opus"}'],
+    ['a string', '{"hooks":"user-string","model":"opus"}'],
+    ['a number', '{"hooks":42,"model":"opus"}'],
+    ['a boolean', '{"hooks":true,"model":"opus"}'],
+  ];
+
+  for (const [label, content] of malformed) {
+    it.each(installers)(`%s refuses when hooks is ${label}: ok:false, bytes unchanged, no backup`, async (_name, fn) => {
+      const settingsPath = tempSettingsPath(content);
+      const result = await fn(settingsPath);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('not an object');
+      expect(readFileSync(settingsPath, 'utf8')).toBe(content);
+      expect(backupsBeside(settingsPath)).toEqual([]);
+    });
+
+    it.each(uninstallers)(`%s no-ops when hooks is ${label}: ok:true, no backup, bytes unchanged`, async (_name, fn) => {
+      const settingsPath = tempSettingsPath(content);
+      const result = await fn(settingsPath);
+      expect(result).toEqual({ ok: true, backupPath: null });
+      expect(readFileSync(settingsPath, 'utf8')).toBe(content);
+      expect(backupsBeside(settingsPath)).toEqual([]);
+    });
+  }
+
+  it('readHookInstallState reports nothing installed when hooks is an array, without throwing', async () => {
+    const settingsPath = tempSettingsPath('{"hooks":[{"hooks":[{"type":"command","command":"other.ps1"}]}]}');
+    const state = await readHookInstallState(settingsPath, SCRIPT_PATH);
+    expect(state.installedEvents).toEqual([]);
+  });
+
+  it('installHooks still treats hooks: null as absent and installs into a fresh object', async () => {
+    const settingsPath = tempSettingsPath('{"hooks":null,"model":"opus"}');
+    const result = await installHooks(settingsPath, SCRIPT_PATH);
+    expect(result.ok).toBe(true);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.model).toBe('opus');
+    for (const eventName of MANAGED_HOOK_EVENTS) expect(written.hooks[eventName]).toHaveLength(1);
+  });
+});

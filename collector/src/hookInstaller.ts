@@ -29,6 +29,21 @@ function isOurGroup(group: unknown, scriptPath: string): boolean {
   return hooks.some((h) => typeof h?.command === 'string' && h.command.includes(scriptPath));
 }
 
+/**
+ * `hooks` must be a plain object keyed by event name. `undefined` and `null`
+ * mean "none yet"; an array or a primitive is a shape we cannot merge into
+ * without guessing, so installers refuse and uninstallers no-op (#58).
+ */
+function hooksShape(parsed: Record<string, unknown>): 'absent' | 'object' | 'malformed' {
+  const hooks = parsed.hooks;
+  if (hooks === undefined || hooks === null) return 'absent';
+  if (typeof hooks === 'object' && !Array.isArray(hooks)) return 'object';
+  return 'malformed';
+}
+
+const MALFORMED_HOOKS_ERROR =
+  'the "hooks" value in settings.json is not an object keyed by event name; refusing to overwrite it. Fix or remove "hooks", then retry';
+
 function ourGroup(scriptPath: string): HookGroup {
   return { hooks: [{ type: 'command', command: `node "${scriptPath}"` }] };
 }
@@ -74,10 +89,7 @@ export async function readHookInstallState(settingsPath: string, scriptPath: str
   const result = await readSettings(settingsPath);
   const installedEvents: string[] = [];
   if (result.ok) {
-    const hooks = (result.parsed.hooks && typeof result.parsed.hooks === 'object' ? result.parsed.hooks : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks = (hooksShape(result.parsed) === 'object' ? result.parsed.hooks : {}) as Record<string, unknown>;
     for (const eventName of MANAGED_HOOK_EVENTS) {
       const groups = hooks[eventName];
       if (Array.isArray(groups) && groups.some((g) => isOurGroup(g, scriptPath))) {
@@ -95,15 +107,14 @@ export async function installHooks(
   const result = await readSettings(settingsPath);
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
+  if (hooksShape(parsed) === 'malformed') return { ok: false, error: MALFORMED_HOOKS_ERROR };
 
   try {
     let backupPath: string | null = null;
     if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
 
-    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks: Record<string, unknown> =
+      hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
     for (const eventName of MANAGED_HOOK_EVENTS) {
       const current = hooks[eventName];
       if (current !== undefined && !Array.isArray(current)) {
@@ -133,15 +144,14 @@ export async function installPermissionHooks(
   const result = await readSettings(settingsPath);
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
+  if (hooksShape(parsed) === 'malformed') return { ok: false, error: MALFORMED_HOOKS_ERROR };
 
   try {
     let backupPath: string | null = null;
     if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
 
-    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks: Record<string, unknown> =
+      hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
     for (const eventName of PERMISSION_HOOK_EVENTS) {
       const current = hooks[eventName];
       if (current !== undefined && !Array.isArray(current)) {
@@ -169,7 +179,7 @@ export async function uninstallPermissionHooks(
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
 
-  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+  if (!fileExisted || hooksShape(parsed) !== 'object') {
     return { ok: true, backupPath: null };
   }
 
@@ -224,7 +234,7 @@ export async function uninstallHooks(
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
 
-  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+  if (!fileExisted || hooksShape(parsed) !== 'object') {
     return { ok: true, backupPath: null };
   }
 

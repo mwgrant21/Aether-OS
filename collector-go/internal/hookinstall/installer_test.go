@@ -426,63 +426,127 @@ func TestUninstallPermissionHooks_RemovesOnlyItsOwnEntries(t *testing.T) {
 	}
 }
 
-func TestInstallHooks_PreservesArrayShapedTopLevelHooks(t *testing.T) {
-	existing := `{"hooks":["legacy-entry-1","legacy-entry-2"]}`
-	settingsPath := tempSettingsPathWithContent(t, existing)
-	result := InstallHooks(settingsPath, scriptPath)
-	if !result.OK {
-		t.Fatalf("InstallHooks failed: %s", result.Error)
-	}
+// Issue #58 (mirrors the TS tests of the same intent): a top-level `hooks`
+// that is an array or a primitive is not a shape we can merge into without
+// guessing. Installers refuse before writing anything; uninstallers have
+// nothing of ours to remove there and no-op without touching the file.
+var malformedTopLevelHooks = []struct {
+	label   string
+	content string
+}{
+	{"empty array", `{"hooks":[],"model":"opus"}`},
+	{"array of groups", `{"hooks":[{"hooks":[{"type":"command","command":"other.ps1"}]}],"model":"opus"}`},
+	{"string", `{"hooks":"user-string","model":"opus"}`},
+	{"number", `{"hooks":42,"model":"opus"}`},
+	{"boolean", `{"hooks":true,"model":"opus"}`},
+}
 
-	written := readWritten(t, settingsPath)
-	hooksObj, ok := written["hooks"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("hooks is not an object after install: %#v", written["hooks"])
+func backupsBeside(t *testing.T, settingsPath string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(settingsPath))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
 	}
-	if got, _ := hooksObj["0"].(string); got != "legacy-entry-1" {
-		t.Errorf(`hooks["0"] = %v, want "legacy-entry-1"`, hooksObj["0"])
-	}
-	if got, _ := hooksObj["1"].(string); got != "legacy-entry-2" {
-		t.Errorf(`hooks["1"] = %v, want "legacy-entry-2"`, hooksObj["1"])
-	}
-	// Plus the newly-installed event groups -- nothing from the original
-	// array is lost, and install still proceeds normally.
-	for _, eventName := range ManagedHookEvents {
-		groups := hooksGroups(t, written, eventName)
-		if len(groups) != 1 {
-			t.Errorf("hooks[%s] length = %d, want 1", eventName, len(groups))
-			continue
+	var out []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".aetherbak-") {
+			out = append(out, e.Name())
 		}
-		if cmd := groupCommand(t, groups[0], 0); !strings.Contains(cmd, scriptPath) {
-			t.Errorf("hooks[%s][0] command = %q, want to contain scriptPath", eventName, cmd)
+	}
+	return out
+}
+
+func readRaw(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(raw)
+}
+
+func TestInstall_RefusesMalformedTopLevelHooks(t *testing.T) {
+	installers := []struct {
+		name string
+		fn   func(string) InstallResult
+	}{
+		{"InstallHooks", func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+	}
+	for _, in := range installers {
+		for _, tc := range malformedTopLevelHooks {
+			t.Run(in.name+"/"+tc.label, func(t *testing.T) {
+				settingsPath := tempSettingsPathWithContent(t, tc.content)
+				result := in.fn(settingsPath)
+				if result.OK {
+					t.Fatalf("OK = true, want refusal for hooks as %s", tc.label)
+				}
+				if !strings.Contains(result.Error, "not an object") {
+					t.Errorf("Error = %q, want it to say the hooks value is not an object", result.Error)
+				}
+				if got := readRaw(t, settingsPath); got != tc.content {
+					t.Errorf("settings.json bytes changed on refusal: %q", got)
+				}
+				if b := backupsBeside(t, settingsPath); len(b) != 0 {
+					t.Errorf("backup written on refusal: %v", b)
+				}
+			})
 		}
 	}
 }
 
-func TestUninstallHooks_ArrayShapedTopLevelHooks_WritesNotNoOp(t *testing.T) {
-	existing := `{"hooks":["legacy-entry-1","legacy-entry-2"]}`
-	settingsPath := tempSettingsPathWithContent(t, existing)
-	result := UninstallHooks(settingsPath)
-	if !result.OK {
-		t.Fatalf("UninstallHooks failed: %s", result.Error)
+func TestUninstall_NoOpsOnMalformedTopLevelHooks(t *testing.T) {
+	uninstallers := []struct {
+		name string
+		fn   func(string) InstallResult
+	}{
+		{"UninstallHooks", UninstallHooks},
+		{"UninstallPermissionHooks", UninstallPermissionHooks},
 	}
-	// None of the array elements match any marker-based removal, so this
-	// must still be a real write (backup taken), not TS's early-return no-op
-	// path, which only applies when hooks is missing/null/non-object.
-	if result.BackupPath == nil || *result.BackupPath == "" {
-		t.Fatalf("BackupPath = %v, want a non-empty path (must not be a no-op for array-shaped hooks)", result.BackupPath)
+	for _, un := range uninstallers {
+		for _, tc := range malformedTopLevelHooks {
+			t.Run(un.name+"/"+tc.label, func(t *testing.T) {
+				settingsPath := tempSettingsPathWithContent(t, tc.content)
+				result := un.fn(settingsPath)
+				if !result.OK {
+					t.Fatalf("OK = false (%s), want a no-op success for hooks as %s", result.Error, tc.label)
+				}
+				if result.BackupPath != nil {
+					t.Errorf("BackupPath = %q, want nil (no-op must not back up)", *result.BackupPath)
+				}
+				if got := readRaw(t, settingsPath); got != tc.content {
+					t.Errorf("settings.json bytes changed on no-op: %q", got)
+				}
+				if b := backupsBeside(t, settingsPath); len(b) != 0 {
+					t.Errorf("backup written on no-op: %v", b)
+				}
+			})
+		}
 	}
+}
 
+func TestReadHookInstallState_ArrayShapedHooks_ReportsNothingInstalled(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, `{"hooks":[{"hooks":[{"type":"command","command":"other.ps1"}]}]}`)
+	state := ReadHookInstallState(settingsPath, scriptPath)
+	if len(state.InstalledEvents) != 0 {
+		t.Errorf("InstalledEvents = %v, want none", state.InstalledEvents)
+	}
+}
+
+func TestInstallHooks_NullHooksTreatedAsAbsent(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, `{"hooks":null,"model":"opus"}`)
+	result := InstallHooks(settingsPath, scriptPath)
+	if !result.OK {
+		t.Fatalf("InstallHooks failed on hooks:null: %s", result.Error)
+	}
 	written := readWritten(t, settingsPath)
-	hooksObj, ok := written["hooks"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("hooks is not an object after uninstall: %#v", written["hooks"])
+	if got, _ := written["model"].(string); got != "opus" {
+		t.Errorf("model = %v, want opus preserved", written["model"])
 	}
-	if got, _ := hooksObj["0"].(string); got != "legacy-entry-1" {
-		t.Errorf(`hooks["0"] = %v, want "legacy-entry-1"`, hooksObj["0"])
-	}
-	if got, _ := hooksObj["1"].(string); got != "legacy-entry-2" {
-		t.Errorf(`hooks["1"] = %v, want "legacy-entry-2"`, hooksObj["1"])
+	for _, eventName := range ManagedHookEvents {
+		if groups := hooksGroups(t, written, eventName); len(groups) != 1 {
+			t.Errorf("hooks[%s] length = %d, want 1", eventName, len(groups))
+		}
 	}
 }
 
