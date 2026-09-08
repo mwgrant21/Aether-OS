@@ -25,7 +25,7 @@ import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
 import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
 import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
-import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
+import { guidanceFor } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { buildLedgerSnapshot, type LedgerSnapshot } from '../src/shared/ledgerMath';
 import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
@@ -33,6 +33,7 @@ import { normalizePath } from '../src/shared/projectIdentity';
 import { createScopedGitProbe } from './gitProbeCache';
 import { createHash } from 'node:crypto';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
+import { applyGuidanceToFile } from './guidanceWriter';
 import {
   createHeadlineThrottle,
   shouldCallForHeadline,
@@ -1053,42 +1054,26 @@ ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { finding
   if (!targetPath) return { ok: false, error: 'invalid target' };
   if (guidanceFor(findingId) === null) return { ok: false, error: 'unknown finding' };
 
-  try {
-    let existing = '';
-    let fileExisted = true;
-    try {
-      existing = await fsp.readFile(targetPath, 'utf8');
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        existing = '';
-        fileExisted = false;
-      } else {
-        throw err;
-      }
-    }
-    const { content, added } = upsertGuidance(existing, findingId);
-    if (!added) {
-      // Already present -- still restart the recurrence clock, per the "Apply
-      // always means recurrence check starts now" contract in optimizeState.ts.
-      await recordAppliedAt(optimizeStatePath, findingId, Date.now());
-      return { ok: true, added: false, alreadyPresent: true, targetPath };
-    }
+  const result = await applyGuidanceToFile(targetPath, findingId);
+  if (!result.ok) return { ok: false, error: result.error };
 
-    let backupPath: string | null = null;
-    if (fileExisted) {
-      backupPath = `${targetPath}.ttbak-${Date.now()}`;
-      await fsp.writeFile(backupPath, existing, 'utf8');
-    }
-    await fsp.mkdir(dirname(targetPath), { recursive: true });
-    await fsp.writeFile(targetPath, content, 'utf8');
-    // Only record appliedAt once the write has actually succeeded -- otherwise
-    // a failed write would still start the recurrence clock and the finding
-    // could silently disappear despite CLAUDE.md never being touched.
+  // recordAppliedAt does its own file IO, so it can fail independently of the
+  // guidance write. Keep it inside a try so this handler always resolves to
+  // an { ok } object rather than rejecting the IPC call.
+  try {
+    // Recorded on BOTH paths, including a reapply where the bullet was already
+    // present, per the "Apply always means recurrence check starts now"
+    // contract in optimizeState.ts -- and only after the write succeeded, so a
+    // failed write cannot start the recurrence clock and make the finding
+    // silently disappear despite CLAUDE.md never being touched.
     await recordAppliedAt(optimizeStatePath, findingId, Date.now());
-    return { ok: true, added: true, targetPath, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
   }
+
+  return result.added
+    ? { ok: true, added: true, targetPath, backupPath: result.backupPath }
+    : { ok: true, added: false, alreadyPresent: true, targetPath };
 });
 
 ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath, statuslineScriptPath));

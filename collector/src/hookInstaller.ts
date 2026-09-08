@@ -75,7 +75,8 @@ async function readSettings(
 }
 
 // A sibling of settings.json whose name is unique per invocation even when two
-// writers (this collector, the Go collector, the Electron app) hit the same
+// writers (this collector, the Go collector, the Electron app via
+// electron/atomicWrite.ts) hit the same
 // millisecond: timestamp + pid + 4 random bytes, always created exclusively.
 function uniqueSiblingPath(settingsPath: string, marker: string): string {
   return `${settingsPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;

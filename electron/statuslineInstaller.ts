@@ -1,5 +1,5 @@
 import { promises as fsp } from 'fs';
-import { randomBytes } from 'crypto';
+import { writeBackup, writeFileAtomically } from './atomicWrite';
 import { dirname } from 'path';
 
 export type InstallStatus = 'installed' | 'installed-other' | 'not-installed' | 'unreadable';
@@ -172,48 +172,10 @@ async function readExistingSettings(
   return { ok: true, fileExisted, raw, parsed: parsed as Record<string, unknown> };
 }
 
-// Mirrors collector/src/hookInstaller.ts: a sibling of settings.json whose name
-// is unique per invocation even when two writers (this app, the TS collector,
-// the Go collector) hit the same millisecond, always created exclusively.
-function uniqueSiblingPath(settingsPath: string, marker: string): string {
-  return `${settingsPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
-}
-
-async function writeBackup(settingsPath: string, raw: string): Promise<string> {
-  const backupPath = uniqueSiblingPath(settingsPath, 'aetherbak');
-  // flag wx: never overwrite an earlier backup, which may be the user's pristine file (#60).
-  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx' });
-  return backupPath;
-}
-
-// A crash, power loss, or ENOSPC mid-write directly to settings.json would
-// leave the user's REAL Claude Code config truncated -- the backup only
-// helps once the user notices and understands the problem. Write-tmp-then-
-// rename means the target is never observably partial. Mirrors the pattern
-// scripts/aether-statusline.mjs already uses for its own, lower-stakes cache
-// file.
-async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
-  const tmpPath = uniqueSiblingPath(settingsPath, 'aethertmp');
-  try {
-    // flag wx: exclusive create, so a collision is an error rather than a clobber.
-    await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
-  } catch (err) {
-    // A lost exclusive create (EEXIST) means the file is another writer's: leave
-    // it alone. Any other failure may have created it (ENOSPC after open), so
-    // it is ours to remove (#59). The original error is what the caller sees.
-    if ((err as NodeJS.ErrnoException | undefined)?.code !== 'EEXIST') {
-      await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
-    }
-    throw err;
-  }
-  try {
-    await fsp.rename(tmpPath, settingsPath);
-  } catch (err) {
-    // Past the create, the temp file is ours whatever the rename error was.
-    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
-    throw err;
-  }
-}
+// Backup and atomic-replace live in ./atomicWrite, shared with main.ts and
+// mirroring collector/src/hookInstaller.ts (#59, #60): three processes write
+// this same settings.json, so they must not drift. The backup marker stays
+// 'aetherbak', matching the collector's, since both back up the same file.
 
 export async function installStatusline(
   settingsPath: string,
@@ -228,7 +190,7 @@ export async function installStatusline(
   try {
     let backupPath: string | null = null;
     if (fileExisted) {
-      backupPath = await writeBackup(settingsPath, raw);
+      backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     }
 
     // Chain rather than clobber: a foreign command (installed-other) is
@@ -243,7 +205,7 @@ export async function installStatusline(
     const patch = statuslineSettingsPatch(scriptPath, chainCommand);
     const merged = { ...parsed, ...patch };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -266,7 +228,7 @@ export async function uninstallStatusline(
   }
 
   try {
-    const backupPath = await writeBackup(settingsPath, raw);
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     const { existingCommand } = detectInstallStatus(parsed, scriptPath);
     const chained = extractChainedCommand(existingCommand);
     if (chained) {
@@ -278,7 +240,7 @@ export async function uninstallStatusline(
     } else {
       delete parsed.statusLine;
     }
-    await writeSettingsAtomically(settingsPath, JSON.stringify(parsed, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(parsed, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
