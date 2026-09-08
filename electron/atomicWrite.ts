@@ -82,6 +82,18 @@ export async function writeBackup(targetPath: string, raw: string, marker: strin
  * a direct write apart from being safe. Refuses a read-only target, and falls
  * back to an in-place write for a hard-linked one, which a rename would sever.
  */
+// What a replace preserves, and what it cannot
+// ---------------------------------------------
+// Replacing via rename gives a NEW inode, so anything attached to the old one
+// has to be re-created deliberately. Handled below: permission bits, symlinked
+// and hard-linked targets, read-only targets. NOT handled: POSIX ACLs, Windows
+// DACLs, ownership, and extended attributes -- Node exposes no API for any of
+// them (only chmod/chown), so they cannot be copied without shelling out to
+// icacls/setfacl per write. The narrowing detail is that a temp file created in
+// the SAME directory inherits the directory's default/inheritable ACEs exactly
+// as a fresh file would, so only ACEs set explicitly on the old file are lost.
+// Writing in place instead would preserve all of it -- and reintroduce the
+// truncation-on-crash bug this function exists to close. See #69.
 export async function writeFileAtomically(targetPath: string, content: string): Promise<void> {
   const realPath = await resolveRealPath(targetPath);
 
