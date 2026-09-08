@@ -114,6 +114,16 @@ export interface ProviderHealth {
  *
  * `null` means NOT REPORTED, and is deliberately different from 0. An adapter
  * with usageReporting: false reports four nulls rather than four zeros.
+ *
+ * What is actually machine-checked, in providerConformance.ts: every adapter
+ * that claims usageReporting is checked for non-negative, finite buckets
+ * (or null) -- that catches a floor-less subtraction, but NOT an adapter that
+ * skips subtracting altogether, since a straight-through nested total is
+ * still non-negative. Disjointness itself -- the exact de-nested value, not
+ * merely its sign -- is only pinned for an adapter that supplies
+ * `ConformanceTarget.rawUsageFixture`; an adapter with no fixture is not
+ * checked for disjointness by the shared suite, only by its own adapter-
+ * specific tests, if it has any.
  */
 export interface TurnUsage {
   inputTokens: number | null;
