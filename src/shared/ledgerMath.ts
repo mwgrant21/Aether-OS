@@ -69,7 +69,10 @@ export interface EstimatedCost {
  *
  * `usdPlan` is `number | null`, and null is a real state with two causes, both
  * of which must render as points-only rather than as $0.00:
- *   - no monthly plan price has been entered in Settings, or
+ *   - no monthly plan price has been entered in Settings (the price itself
+ *     is `null`, distinct from an entered price of `0` -- a $0 plan is a
+ *     real, priced state -- a free tier, or a plan someone else pays for --
+ *     and correctly yields a real `usdPlan: 0`, never this null), or
  *   - the tokens-per-point fit has not yet cleared MIN_FIT_BUCKETS
  *     (quotaEfficiency.ts), so there is no defensible rate to multiply by.
  *
@@ -142,7 +145,12 @@ export function quotaCostForTokens(
   const safeTokens = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
   const safeRate = Number.isFinite(tokensPerPoint) && tokensPerPoint > 0 ? tokensPerPoint : 0;
   const points = safeRate > 0 ? safeTokens / safeRate : 0;
-  const hasPlanPrice = monthlyUsd !== null && Number.isFinite(monthlyUsd) && monthlyUsd > 0;
+  // >= 0, not > 0: a $0 plan price is a real, deliberately-entered value
+  // (PlanPriceCard stores it distinct from null -- see that component's
+  // onChange comment), and it must price out to a real $0.00, not fall back
+  // to the "no price configured" null. planCostPerPoint(0, windowMs) already
+  // returns 0 via its own guard, so this composes without special-casing.
+  const hasPlanPrice = monthlyUsd !== null && Number.isFinite(monthlyUsd) && monthlyUsd >= 0;
   // usdPlan is null, never 0, when either input needed to defend a dollar
   // figure is missing: no plan price configured, or (independently) no
   // tokens-per-point fit yet -- see QuotaCost's doc comment. `points` itself
