@@ -366,6 +366,16 @@ let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 // here before it was extracted).
 const quotaSampleBuffer = createQuotaSampleBuffer();
 let cachedQuotaEfficiency: QuotaEfficiency | null = null;
+// True while the most recent recordQuotaSample call was rejected. Only the
+// EDGE into a rejection streak is logged (see the call site below) -- a
+// genuinely stalled statusline re-emits an unchanged payload on every ~10s
+// poll (WATCH_INTERVAL_MS), and logging every one of those would be an
+// unbounded repeat, unlike this file's other [diag] lines, which are each
+// tied to a one-shot Electron event (a window becomes unresponsive once, not
+// on every tick it stays that way). This mirrors that: one line when the
+// feed stalls, silence for as long as it stays stalled, nothing at all in
+// the normal case.
+let quotaSampleRejectedSinceLastAccepted = false;
 
 // Memoised for a single scan cycle only: reset() is called at the start of
 // every scanAndPushUsage() call so a directory that becomes a git repo
@@ -665,7 +675,18 @@ app.whenReady().then(async () => {
     // live depletion gauge and is never fitted). A payload without it -- an
     // older Claude Code, or a session before the first rate-limit report --
     // simply contributes no sample.
-    if (snapshot.sevenDay) recordQuotaSample(quotaSampleBuffer, snapshot.capturedAtMs, snapshot.sevenDay.usedPercentage);
+    if (snapshot.sevenDay) {
+      const lastAccepted = quotaSampleBuffer.samples[quotaSampleBuffer.samples.length - 1];
+      const accepted = recordQuotaSample(quotaSampleBuffer, snapshot.capturedAtMs, snapshot.sevenDay.usedPercentage);
+      if (accepted) {
+        quotaSampleRejectedSinceLastAccepted = false;
+      } else if (!quotaSampleRejectedSinceLastAccepted) {
+        quotaSampleRejectedSinceLastAccepted = true;
+        console.error(
+          `[diag] quota sample rejected atMs=${snapshot.capturedAtMs} lastAcceptedAtMs=${lastAccepted?.atMs ?? 'none'} at=${new Date().toISOString()}`
+        );
+      }
+    }
     sendToWindow('statusline:snapshot', snapshot);
   });
 
