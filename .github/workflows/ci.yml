@@ -85,7 +85,12 @@ jobs:
       # pure-Go one, so nothing here would otherwise need a C toolchain, and a
       # future runner or GOFLAGS change that turns cgo off must fail loudly on
       # the missing compiler rather than silently drop the detector.
-      - run: go build ./... && go vet ./... && CGO_ENABLED=1 go test -race ./...
+      # GOOS=windows compile-checks linkcount_windows.go, which no lane would
+      # otherwise build: this job is ubuntu-only and windows-build runs no Go.
+      # That file exists so the Go collector is not blind to NTFS hard links on
+      # the platform the app actually ships on, so leaving it unbuilt in CI
+      # would be the one place a break could land unseen.
+      - run: go build ./... && GOOS=windows go build ./... && go vet ./... && CGO_ENABLED=1 go test -race ./...
         working-directory: collector-go
 
   # Windows is the platform this app actually runs on, and the one carrying

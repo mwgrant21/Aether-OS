@@ -949,6 +949,9 @@ func TestWriteSettingsAtomically_KeepsHardLinkedTargetAsOneInode(t *testing.T) {
 }
 
 func TestWriteSettingsAtomically_RefusesAReadOnlyTarget(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the read-only bit, so this asserts nothing there")
+	}
 	dir := t.TempDir()
 	target := filepath.Join(dir, "settings.json")
 	if err := os.WriteFile(target, []byte("protected"), 0644); err != nil {

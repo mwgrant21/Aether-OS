@@ -11,24 +11,33 @@ import { join } from 'path';
 // this test, so drift was caught by review or not at all.
 const repoRoot = join(__dirname, '..');
 
-function logicOnly(source: string): string {
+// Compared LINE BY LINE on purpose. An earlier version collapsed all
+// whitespace into one string, which made the diff a single 2KB line AND
+// silently equated "permission denied" with "permission  denied" -- inside the
+// one string literal that has to match the Go port byte for byte.
+function logicLines(source: string): string[] {
   return source
-    .replace(/^import[^\n]*\n/gm, '') // import style differs by design (node: prefixes)
-    .replace(/\/\*\*[\s\S]*?\*\//g, '') // doc blocks
-    .replace(/^\s*\/\/[^\n]*\n/gm, '') // line comments
-    .replace(/\s+/g, ' ')
-    .trim();
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l.length > 0 &&
+        !l.startsWith('import ') && // import style differs by design (node: prefixes)
+        !l.startsWith('//') &&
+        !l.startsWith('/**') &&
+        !l.startsWith('*')
+    );
 }
 
 describe('atomicWrite parity between the Electron and collector copies', () => {
-  it('is byte-identical once imports and comments are removed', () => {
-    const electron = logicOnly(readFileSync(join(repoRoot, 'electron/atomicWrite.ts'), 'utf8'));
-    const collector = logicOnly(readFileSync(join(repoRoot, 'collector/src/atomicWrite.ts'), 'utf8'));
+  it('is line-for-line identical once imports and comments are removed', () => {
+    const electron = logicLines(readFileSync(join(repoRoot, 'electron/atomicWrite.ts'), 'utf8'));
+    const collector = logicLines(readFileSync(join(repoRoot, 'collector/src/atomicWrite.ts'), 'utf8'));
 
     // If this fails, the two write paths have diverged. Port the change to both
     // (and to collector-go/internal/hookinstall/installer.go) rather than
     // relaxing this test -- see #63 for why they must not drift.
-    expect(collector).toBe(electron);
+    expect(collector).toEqual(electron);
   });
 
   it('exports the same surface from both copies', () => {
@@ -46,9 +55,11 @@ describe('atomicWrite parity between the Electron and collector copies', () => {
       'utf8'
     );
     // Cheap structural check: the Go side must still name each rule the TS side
-    // implements. It is not a proof of equivalence -- the parity harness and the
-    // Go unit tests are -- but it fails loudly if a rule is deleted wholesale.
-    for (const marker of ['resolveRealPath', 'hardLinked', 'linkCountOf', 'EACCES', 'createMode']) {
+    // implements. The Go unit tests are what actually prove equivalence --
+    // run-parity.mjs compares CLI behaviour and has no symlink, hard-link, mode
+    // or read-only case at all, so do not read it as covering these.
+    // It is not a proof of equivalence, but it fails loudly if a rule is deleted.
+    for (const marker of ['resolveRealPath', 'hardLinked', 'linkCountOf', 'EACCES']) {
       expect(go).toContain(marker);
     }
   });

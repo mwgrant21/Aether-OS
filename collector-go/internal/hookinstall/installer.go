@@ -17,6 +17,13 @@
 // would otherwise silently rewrite unrelated hook command strings containing
 // shell redirection/`&&` on every install/uninstall write.
 //
+// Second known, accepted divergence: the read-only check below opens the file,
+// while the TS side uses fs.access(W_OK). Node documents that fs.access does
+// NOT consult ACLs on Windows -- it reads only the read-only attribute -- so a
+// file protected by a deny-write ACE is refused here and replaced there. Go is
+// the better behaviour of the two; it is recorded rather than 'fixed' because
+// matching it would mean making this side worse.
+//
 // Known, accepted divergence from the TS original: Go's encoding/json always
 // emits object keys in sorted order when marshaling a map[string]interface{},
 // whereas Node's JSON.stringify preserves insertion order. This package
@@ -35,6 +42,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,7 +215,12 @@ func writeBackup(settingsPath, raw string) (string, error) {
 	backupPath := backupPathFn(settingsPath)
 	// Exclusive create: never overwrite an earlier backup, which may be the
 	// user's pristine file (#60).
-	if err := writeFileExcl(backupPath, []byte(raw), 0644); err != nil {
+	// 0666 for the same reason as createMode: it mirrors Node's writeFile
+	// default and is narrowed by the umask the same way. Carrying the SOURCE
+	// file's mode onto the backup would be better still -- a 0600 settings.json
+	// currently gets a 0644 backup beside it -- but that gap is shared with
+	// both TS copies and is tracked separately, not fixed asymmetrically here.
+	if err := writeFileExcl(backupPath, []byte(raw), 0666); err != nil {
 		return "", err
 	}
 	return backupPath, nil
@@ -297,11 +310,18 @@ func writeSettingsAtomically(settingsPath, content string) error {
 	// this replaced returned EACCES. Keep that contract, with the same message
 	// shape Node produces so both CLIs report it identically.
 	if haveMode {
-		if f, err := os.OpenFile(realPath, os.O_WRONLY, 0); err != nil {
-			return fmt.Errorf("EACCES: permission denied, write '%s'", realPath)
-		} else {
-			_ = f.Close()
+		f, err := os.OpenFile(realPath, os.O_WRONLY, 0)
+		if err != nil {
+			// Only a genuine permission failure gets the EACCES shape Node produces.
+			// Anything else (EISDIR, a Windows sharing violation, EMFILE) is returned
+			// as-is: laundering it into "permission denied" is a worse diagnostic
+			// than the real error.
+			if errors.Is(err, fs.ErrPermission) {
+				return fmt.Errorf("EACCES: permission denied, write '%s'", realPath)
+			}
+			return err
 		}
+		_ = f.Close()
 	}
 
 	// A hard-linked target is two directory entries on one inode, which a rename
@@ -317,7 +337,11 @@ func writeSettingsAtomically(settingsPath, content string) error {
 	// Mode at CREATION, not after: creating under the umask and narrowing later
 	// leaves a window where another local user can open the temp file and keep
 	// the descriptor. umask can only clear bits, so a restrictive mode survives.
-	createMode := os.FileMode(0644)
+	// 0666, mirroring Node's fs.writeFile default, NOT 0644: both are narrowed
+	// by the umask identically, so under the usual 022 they coincide -- but
+	// under 002 the TS side would produce 0664 and a hardcoded 0644 here would
+	// not. That divergence is invisible to CI, which runs under 022 (#63).
+	createMode := os.FileMode(0666)
 	if haveMode {
 		createMode = mode
 	}
