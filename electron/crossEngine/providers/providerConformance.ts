@@ -13,7 +13,7 @@
 // test.
 
 import { describe, it, expect } from 'vitest';
-import { ProviderError, type ProviderAdapter, type ProviderEvent } from './contract';
+import { ProviderError, type ProviderAdapter, type ProviderEvent, type TurnUsage } from './contract';
 
 export interface ConformanceTarget {
   name: string;
@@ -27,6 +27,21 @@ export interface ConformanceTarget {
    *  connect() rejects; the turn-level cases are skipped, since every one of
    *  them needs a live connection. */
   connectable?: boolean;
+  /** Proves the DISJOINTNESS invariant, not merely the floor: for an adapter
+   *  whose wire format nests buckets (Codex is the motivating case --
+   *  `ThreadTokenUsage.last.inputTokens` INCLUDES `cachedInputTokens`),
+   *  `create()` must return an adapter already wired to a fixture that
+   *  reports a KNOWN NESTED raw payload -- the same fake `create()` normally
+   *  builds is fine, provided its usage numbers are fixed and nested (see
+   *  makeAppServerAdapter() below). `expected` is the exact post-subtraction
+   *  `TurnUsage` that payload must produce. Adapters whose wire format is
+   *  already disjoint (Claude) have nothing to prove here and may omit this
+   *  field entirely; the shape/non-negativity case above still runs for
+   *  them regardless. */
+  rawUsageFixture?: {
+    turnText: string;
+    expected: TurnUsage;
+  };
 }
 
 /** Asserts explicitly rather than via rejects.toMatchObject: matcher
@@ -158,6 +173,27 @@ export function runProviderConformance(target: ConformanceTarget): void {
       }
       await adapter.dispose();
     });
+
+    // The non-negativity case above cannot tell "correctly de-nested" apart
+    // from "passed a nested total straight through" -- both are four
+    // non-negative finite numbers. Only an adapter that supplies a fixture
+    // with a KNOWN nested raw payload lets the suite assert the exact
+    // de-nested result, which is what actually pins disjointness rather than
+    // just the floor. Skipped, visibly, for an adapter that supplies none --
+    // never silently passed.
+    if (target.rawUsageFixture) {
+      const { turnText, expected } = target.rawUsageFixture;
+      it('de-nests a known nested raw usage payload to the exact expected buckets', async () => {
+        const adapter = await target.create();
+        await adapter.connect();
+        const sessionId = await adapter.newSession({ cwd: process.cwd() });
+        const result = await adapter.sendTurn({ sessionId, text: turnText }, () => {});
+        expect(result.usage).toEqual(expected);
+        await adapter.dispose();
+      });
+    } else {
+      it.skip('de-nests a known nested raw usage payload to the exact expected buckets (no rawUsageFixture supplied)', () => {});
+    }
 
     it('returns a valid stop reason rather than throwing on provider-side outcomes', async () => {
       const adapter = await target.create();

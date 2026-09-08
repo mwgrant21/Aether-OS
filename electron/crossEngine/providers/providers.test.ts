@@ -281,7 +281,20 @@ function makeClaudeAdapter(): ClaudeHeadlessCliAdapter {
 
 runProviderConformance({ name: 'FakeProvider', create: () => new FakeProvider({ chunks: ['hel', 'lo'] }) });
 runProviderConformance({ name: 'LegacyCodexAcpAdapter', create: makeLegacyAdapter });
-runProviderConformance({ name: 'CodexAppServerAdapter', create: makeAppServerAdapter });
+runProviderConformance({
+  name: 'CodexAppServerAdapter',
+  create: makeAppServerAdapter,
+  // appServerFake() reports fixed NESTED raw usage (inputTokens: 100 includes
+  // cachedInputTokens: 80; outputTokens: 50 includes reasoningOutputTokens:
+  // 30) -- the same payload the dedicated
+  // 'reports provider-supplied token usage rather than nulls' test below
+  // exercises. This is what lets the shared suite pin the exact de-nested
+  // result rather than only its sign.
+  rawUsageFixture: {
+    turnText: 'go',
+    expected: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 80, reasoningOutputTokens: 30 },
+  },
+});
 runProviderConformance({ name: 'ClaudeHeadlessCliAdapter', create: makeClaudeAdapter });
 
 // ---------------------------------------------------------------------------
