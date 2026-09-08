@@ -18,6 +18,7 @@ import type { TranscriptReadResult, TranscriptSource } from '../electron/transcr
 import type { VerifierStatus, VerificationEvent } from './shared/crossEngineTypes';
 import type { CommunicationPayload } from './shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from '../electron/communicationBridge/mainIntegration';
+import type { QuotaEfficiency } from './shared/quotaEfficiency';
 
 export {};
 
@@ -80,6 +81,10 @@ declare global {
       ledger: {
         onSnapshot: (callback: (snapshot: LedgerSnapshot | null) => void) => () => void;
         current: () => Promise<LedgerSnapshot | null>;
+      };
+      quota: {
+        onEfficiency: (callback: (snapshot: QuotaEfficiency | null) => void) => () => void;
+        current: () => Promise<QuotaEfficiency | null>;
       };
       projects: {
         onSnapshot: (callback: (snapshot: ProjectsSnapshot | null) => void) => () => void;
