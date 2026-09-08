@@ -814,6 +814,59 @@ describe('CodexAppServerAdapter', () => {
     await expect(adapter.newSession({ cwd: 'C:/tmp' })).rejects.toBeInstanceOf(ProviderError);
     await adapter.dispose();
   });
+
+  it('reads account rate limits without opening a thread', async () => {
+    const at = Date.UTC(2026, 8, 7, 12, 0, 0);
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'codex-app-server/0.153.2' };
+      if (req.method === 'account/rateLimits/read') {
+        return {
+          rate_limits: {
+            primary: { used_percent: 12, window_minutes: 300, resets_at: at / 1000 + 900 },
+            secondary: { used_percent: 63.5, window_minutes: 10080, resets_at: at / 1000 + 200_000 },
+          },
+        };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+
+    const limits = await adapter.readAccountRateLimits(at);
+
+    expect(limits.primary).toEqual({ usedPercentage: 12, windowMinutes: 300, resetsAtMs: at + 900_000 });
+    expect(limits.secondary?.usedPercentage).toBe(63.5);
+    // The whole point: no session was spent to read this.
+    expect(fake.received.some((r) => r.method === 'thread/start')).toBe(false);
+    expect(fake.received.some((r) => r.method === 'turn/start')).toBe(false);
+    await adapter.dispose();
+  });
+
+  it('sends an explicit empty params object on account/rateLimits/read', async () => {
+    const fake = makeStdioFake((req) => (req.method === 'initialize' ? { userAgent: 'x' } : {}));
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    await adapter.readAccountRateLimits(0);
+    // Same reason account/read sends {} rather than omitting params (see the
+    // comment in health()): the server rejects the call when the params key is
+    // absent entirely, and that rejection is easy to swallow into a null readout.
+    const sent = fake.received.find((r) => r.method === 'account/rateLimits/read');
+    expect(sent?.params).toEqual({});
+    await adapter.dispose();
+  });
+
+  it('rejects readAccountRateLimits before connect() with NOT_CONNECTED', async () => {
+    const fake = makeStdioFake(() => ({}));
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    let caught: unknown;
+    try {
+      await adapter.readAccountRateLimits(0);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ProviderError);
+    expect((caught as ProviderError).code).toBe('NOT_CONNECTED');
+  });
 });
 
 describe('ClaudeHeadlessCliAdapter', () => {

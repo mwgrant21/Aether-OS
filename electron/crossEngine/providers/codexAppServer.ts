@@ -56,6 +56,7 @@ import {
   type WaiterResult,
 } from './turnRecord';
 import { attachStderrRingBuffer, buildCodexChildEnv, resolveCodexCliEntry, resolveCodexHome } from '../acpProcess';
+import { parseAccountRateLimits, type AccountRateLimits } from './codexRateLimits';
 
 const CLIENT_INFO = { name: 'aether-os', title: 'Aether OS', version: '0.1.0' };
 
@@ -552,6 +553,37 @@ export class CodexAppServerAdapter implements ProviderAdapter {
         detail: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * The account's rate-limit windows, read WITHOUT opening a thread.
+   *
+   * `account/rateLimits/read` sits on the same account surface as
+   * `account/read` -- it needs `initialize` and nothing else. Routing it
+   * through `thread/start` would spend a Codex session per poll to read two
+   * percentages, and a read-only thread cannot make the answer any more
+   * accurate. The test above asserts the absence of thread/start and
+   * turn/start, because "we didn't open a thread" is the kind of property
+   * that quietly stops being true.
+   *
+   * Deliberately NOT on the ProviderAdapter interface: only the app-server
+   * exposes this. Widening the provider-neutral contract for a method one
+   * provider has is exactly what providerConformance.ts's capability-gated
+   * design exists to avoid.
+   *
+   * `nowMs` is a parameter rather than a `Date.now()` call so the parse is
+   * deterministic under test -- a relative `resets_in_seconds` is anchored to
+   * it.
+   *
+   * Unlike health(), this does NOT swallow transport failures into a
+   * neutral-looking value: an empty readout and an unreachable server are
+   * different facts, and a caller that renders "0% used" for the second one
+   * would be worse than one that renders nothing.
+   */
+  async readAccountRateLimits(nowMs: number = Date.now()): Promise<AccountRateLimits> {
+    this.require();
+    const res = await this.call('account/rateLimits/read', {});
+    return parseAccountRateLimits(res, nowMs);
   }
 
   async newSession(options: SessionOptions): Promise<string> {
