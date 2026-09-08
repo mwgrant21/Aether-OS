@@ -49,7 +49,12 @@ export type BucketOutcome =
   /** The percentage did not move. Says nothing about tokens per point. */
   | 'no-quota-movement'
   /** The first bucket in the series: a level with nothing to difference against. */
-  | 'no-prior-sample';
+  | 'no-prior-sample'
+  /** This machine logged tokens but the statusline was never polled in this
+   *  bucket (e.g. the app was closed) -- the inverse of 'external-usage'.
+   *  No quota reading means no delta to fit against; excluded from the fit,
+   *  but its tokens still count in observedTokens. */
+  | 'no-quota-sample';
 
 export interface QuotaBucket {
   /** Bucket start, floored to bucketMs. */
@@ -159,15 +164,29 @@ export function deriveQuotaEfficiency(
   let fittedPoints = 0;
   let observedTokens = 0;
 
-  // Same-bucket alignment: only buckets with a percentage reading are
-  // considered at all. Tokens logged in a bucket the statusline never reported
-  // have nothing to be divided by, and carrying them into a neighbouring
-  // bucket's delta would attribute them to a percentage move they did not
-  // cause.
-  for (const startMs of [...closing.keys()].sort((a, b) => a - b)) {
-    const pct = closing.get(startMs)!.usedPercentage;
+  // The union of every bucket key with EITHER signal -- not just closing.keys().
+  // Quota samples only exist while the app was actually polling the statusline
+  // (i.e. running); token samples come from persistent transcript files and
+  // keep accruing while the app is closed. A token-only bucket is the normal
+  // case for that gap, not an edge case, and observedTokens is documented as
+  // covering every bucket in the window -- iterating only closing.keys() would
+  // silently drop those tokens from a figure Tasks 7/8 render as dollars.
+  const allBucketKeys = new Set<number>([...closing.keys(), ...tokensByBucket.keys()]);
+
+  for (const startMs of [...allBucketKeys].sort((a, b) => a - b)) {
+    const closingEntry = closing.get(startMs);
     const tokens = tokensByBucket.get(startMs) ?? 0;
     observedTokens += tokens;
+
+    if (closingEntry === undefined) {
+      // No quota reading landed in this bucket at all: nothing to difference
+      // against, and previousPct must NOT advance -- the next bucket that does
+      // carry a reading should still diff against the last real level, not
+      // this gap.
+      buckets.push({ startMs, points: 0, tokens, outcome: 'no-quota-sample' });
+      continue;
+    }
+    const pct = closingEntry.usedPercentage;
 
     if (previousPct === null) {
       buckets.push({ startMs, points: 0, tokens, outcome: 'no-prior-sample' });

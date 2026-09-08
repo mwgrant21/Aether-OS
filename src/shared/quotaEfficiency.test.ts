@@ -5,6 +5,7 @@ import {
   tokenSamplesFromEvents,
   MIN_FIT_BUCKETS,
   DEFAULT_BUCKET_MS,
+  SEVEN_DAY_MS,
   type QuotaSample,
   type TokenSample,
 } from './quotaEfficiency';
@@ -115,6 +116,49 @@ describe('deriveQuotaEfficiency', () => {
     expect(empty.tokensPerPoint).toBeNull();
     expect(empty.fittedBuckets).toBe(0);
     expect(empty.observedTokens).toBe(0);
+  });
+
+  it('counts a token-only bucket (no quota sample in it) in observedTokens without touching the fit', () => {
+    // Quota samples only exist for buckets 0-2 (the app was polling then);
+    // bucket 5 has tokens but no quota reading at all -- e.g. the app was
+    // closed. Its tokens must still show up in observedTokens and in
+    // `buckets`, but it carries no quota delta so the fit must be untouched.
+    const result = deriveQuotaEfficiency(
+      [q(0, 10), q(1, 12), q(2, 14)],
+      [t(1, 200_000), t(2, 200_000), t(5, 999_000)],
+      { nowMs: NOW },
+    );
+    const gap = result.buckets.find((b) => b.startMs === T0 + 5 * H);
+    expect(gap?.outcome).toBe('no-quota-sample');
+    expect(gap?.points).toBe(0);
+    expect(gap?.tokens).toBe(999_000);
+    expect(result.observedTokens).toBe(1_399_000); // 200k + 200k + 999k
+    // The fit is exactly what it would be without bucket 5 in the picture.
+    expect(result.fittedBuckets).toBe(2);
+    expect(result.fittedPoints).toBeCloseTo(4, 10);
+    expect(result.tokensPerPoint).toBeNull();
+  });
+
+  it('includes a sample exactly at the 7-day window boundary and excludes one an hour earlier', () => {
+    // T0 - 144H = NOW - SEVEN_DAY_MS, itself an exact bucket boundary.
+    const boundary = NOW - SEVEN_DAY_MS;
+    const inside = deriveQuotaEfficiency(
+      [{ atMs: boundary, usedPercentage: 5 }, q(1, 12)],
+      [],
+      { nowMs: NOW },
+    );
+    expect(inside.buckets.some((b) => b.startMs === boundary)).toBe(true);
+
+    // One bucket earlier: 7 days and change ago -- outside the window under a
+    // correct 7-day cutoff, but would wrongly survive under a too-large one
+    // (e.g. 14 days), and the boundary sample above would wrongly be dropped
+    // under a too-small one (e.g. 3 days).
+    const outside = deriveQuotaEfficiency(
+      [{ atMs: boundary - 1, usedPercentage: 5 }, q(1, 12)],
+      [],
+      { nowMs: NOW },
+    );
+    expect(outside.buckets.some((b) => b.startMs === boundary - H)).toBe(false);
   });
 
   it('discards non-finite samples rather than poisoning the fit with NaN', () => {
