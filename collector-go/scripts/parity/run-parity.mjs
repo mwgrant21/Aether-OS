@@ -451,7 +451,9 @@ function normalizeCliOut(out, root) {
     .replace(/\r\n/g, '\n')
     .split(root)
     .join('<HOME>')
-    .replace(/\.aetherbak-\d+/g, '.aetherbak-<ts>')
+    // Backup names are <ms>-<pid>-<8 hex> since #60 (bare <ms> before that); both
+    // CLIs run as separate processes, so everything after the marker must fold.
+    .replace(/\.aetherbak-\d+(?:-\d+-[0-9a-f]{8})?/g, '.aetherbak-<ts>')
     .trim();
 }
 
