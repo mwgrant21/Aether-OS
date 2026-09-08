@@ -174,6 +174,28 @@ describe('buildDispatchRows', () => {
     }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.endedAt).toBe('2026-08-08T00:03:00.000Z');
   });
+
+  // Review finding: nothing exercised the wiring between buildDispatchRows's
+  // quotaInputs and quotaCostForTokens -- only quotaCostForTokens's own unit
+  // tests and DispatchCostTable's rendering tests (which use hand-built
+  // QuotaCost values), so a future refactor that swapped the two arguments
+  // would typecheck cleanly, keep every other test green, and silently price
+  // every dispatch wrong. Values computed BY HAND below, not by calling
+  // quotaCostForTokens in the test (that would just re-derive the same
+  // answer through the same path and prove nothing):
+  //   points   = 1,000,000 tokens / 200,000 tokens-per-point = 5.0
+  //   usdPlan  = 5.0 points * ($200 plan / 400 points bought per 28-day
+  //              month on the 7-day basis) = 5.0 * $0.50 = $2.50
+  // A swap is caught: exchanging tokensPerPoint (200,000) and planMonthlyUsd
+  // (200) would compute 1,000,000 / 200 = 5,000 points and
+  // 5,000 * (200,000 / 400) = $2,500,000 -- nowhere near $2.50, so this
+  // assertion fails immediately if the two arguments are ever transposed.
+  it('joins tokensPerPoint and planMonthlyUsd into the quota figure without swapping them', () => {
+    const [r] = buildDispatchRows(base, { tokensPerPoint: 200_000, planMonthlyUsd: 200 });
+    expect(r.quota.tokensPerPoint).toBe(200_000);
+    expect(r.quota.points).toBeCloseTo(5.0, 6);
+    expect(r.quota.usdPlan).toBeCloseTo(2.5, 6);
+  });
 });
 
 describe('selectTodaysRows', () => {
