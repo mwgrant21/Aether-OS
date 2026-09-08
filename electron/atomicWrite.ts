@@ -4,8 +4,10 @@ import { randomBytes } from 'crypto';
 // The one implementation of "back up, then replace a user file safely" for the
 // Electron main process. Ported from collector/src/hookInstaller.ts, which grew
 // these rules the hard way (#59, #60); electron/statuslineInstaller.ts and
-// main.ts's optimize:apply both write user-owned files and must not drift from
-// it. The Go port (collector-go/internal/hookinstall) mirrors the same rules.
+// electron/guidanceWriter.ts both write user-owned files and must not drift
+// from it. The Go port (collector-go/internal/hookinstall) mirrors the naming
+// and cleanup rules; symlink and mode preservation below are Electron-only so
+// far, tracked for the collector copies in #63.
 
 /**
  * A sibling of `targetPath` whose name is unique per invocation even when two
@@ -14,9 +16,28 @@ import { randomBytes } from 'crypto';
  * failing writer's cleanup safe -- it can only ever remove its own file (#59)
  * -- and what stops a second backup from overwriting the user's pristine
  * first one (#60).
+ *
+ * The temp marker is deliberately the same (`aethertmp`) for every file this
+ * module writes, so one sweep can find strays; only backup markers vary, since
+ * they are the artifact a user goes looking for by name.
  */
 export function uniqueSiblingPath(targetPath: string, marker: string): string {
   return `${targetPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
+}
+
+/**
+ * The real file behind `targetPath`, following symlinks. A user whose
+ * `~/.claude/CLAUDE.md` (or settings.json) is a link into a dotfiles repo must
+ * keep that link: writing through it is what they asked for, and replacing it
+ * with a regular file silently disconnects the repo. Falls back to the path
+ * itself when it does not exist yet -- there is no link to preserve then.
+ */
+export async function resolveRealPath(targetPath: string): Promise<string> {
+  try {
+    return await fsp.realpath(targetPath);
+  } catch {
+    return targetPath;
+  }
 }
 
 /**
@@ -34,9 +55,25 @@ export async function writeBackup(targetPath: string, raw: string, marker: strin
  * power loss, or ENOSPC part-way through a direct write would otherwise leave
  * the user's real file truncated, and a backup only helps once they notice.
  * Never leaves its temp file behind (#59).
+ *
+ * Follows a symlinked target and carries the existing file's permission bits
+ * onto the replacement, so an atomic replace is not observably different from
+ * a direct write apart from being safe.
  */
 export async function writeFileAtomically(targetPath: string, content: string): Promise<void> {
-  const tmpPath = uniqueSiblingPath(targetPath, 'aethertmp');
+  const realPath = await resolveRealPath(targetPath);
+
+  // Replacing a file must not widen its permissions: a 0600 CLAUDE.md stays
+  // 0600 rather than becoming whatever the umask allows. Undefined when the
+  // file does not exist yet, in which case the default applies as before.
+  let mode: number | undefined;
+  try {
+    mode = (await fsp.stat(realPath)).mode & 0o777;
+  } catch {
+    mode = undefined;
+  }
+
+  const tmpPath = uniqueSiblingPath(realPath, 'aethertmp');
   try {
     // flag wx: exclusive create, so a collision is an error rather than a clobber.
     await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
@@ -49,10 +86,14 @@ export async function writeFileAtomically(targetPath: string, content: string): 
     }
     throw err;
   }
+
   try {
-    await fsp.rename(tmpPath, targetPath);
+    // chmod before the rename, so the file is never briefly visible at the
+    // target path with the wrong mode.
+    if (mode !== undefined) await fsp.chmod(tmpPath, mode);
+    await fsp.rename(tmpPath, realPath);
   } catch (err) {
-    // Past the create, the temp file is ours whatever the rename error was.
+    // Past the create, the temp file is ours whatever the failure was.
     await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
     throw err;
   }

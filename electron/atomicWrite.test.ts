@@ -1,8 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync, existsSync, promises as fsp } from 'fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  lstatSync,
+  statSync,
+  symlinkSync,
+  chmodSync,
+  promises as fsp,
+} from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import { uniqueSiblingPath, writeBackup, writeFileAtomically } from './atomicWrite';
+import { uniqueSiblingPath, writeBackup, writeFileAtomically, resolveRealPath } from './atomicWrite';
 
 function freshTarget(content?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-atomicwrite-'));
@@ -55,29 +66,23 @@ describe('writeBackup', () => {
     }
   });
 
-  it("creates the backup exclusively, so it can never overwrite an earlier one (#60)", async () => {
+  it("refuses to overwrite a backup another writer created at the same name (#60)", async () => {
     const target = freshTarget('original');
-    const spy = vi.spyOn(fsp, 'writeFile');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    let contested = '';
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      contested = String(file);
+      // Another writer wins the name first; our exclusive create must now fail
+      // for real rather than clobbering it.
+      await realWriteFile(contested, 'pristine', 'utf8');
+      return realWriteFile(file, data, options);
+    });
     try {
-      await writeBackup(target, 'original', 'ttbak');
-      const options = spy.mock.calls[0][2] as { flag?: string };
-      expect(options?.flag).toBe('wx');
+      await expect(writeBackup(target, 'newer', 'ttbak')).rejects.toThrow(/EEXIST/);
     } finally {
       spy.mockRestore();
     }
-  });
-
-  it('propagates the error instead of overwriting when the backup name already exists', async () => {
-    const target = freshTarget('original');
-    const spy = vi
-      .spyOn(fsp, 'writeFile')
-      .mockRejectedValueOnce(Object.assign(new Error('EEXIST: file already exists'), { code: 'EEXIST' }));
-    try {
-      await expect(writeBackup(target, 'newer', 'ttbak')).rejects.toThrow('EEXIST');
-    } finally {
-      spy.mockRestore();
-    }
-    expect(readFileSync(target, 'utf8')).toBe('original');
+    expect(readFileSync(contested, 'utf8')).toBe('pristine');
   });
 });
 
@@ -149,4 +154,65 @@ describe('writeFileAtomically', () => {
     expect(readFileSync(contested, 'utf8')).toBe('other writer');
     expect(readFileSync(target, 'utf8')).toBe('keep');
   });
+});
+
+// Creating a symlink needs privilege on Windows; probe once so these cases
+// skip locally and still run on the Linux CI lanes where they matter.
+const symlinkSupported = (() => {
+  try {
+    const d = mkdtempSync(join(tmpdir(), 'aether-symlink-probe-'));
+    writeFileSync(join(d, 'real'), 'x', 'utf8');
+    symlinkSync(join(d, 'real'), join(d, 'link'));
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe('writeFileAtomically: symlinks and permissions', () => {
+  it.skipIf(!symlinkSupported)(
+    'writes through a symlinked target instead of replacing the link (#66)',
+    async () => {
+      const realDir = mkdtempSync(join(tmpdir(), 'aether-symlink-real-'));
+      const linkDir = mkdtempSync(join(tmpdir(), 'aether-symlink-link-'));
+      const realFile = join(realDir, 'CLAUDE.md');
+      const link = join(linkDir, 'CLAUDE.md');
+      writeFileSync(realFile, 'original', 'utf8');
+      symlinkSync(realFile, link);
+
+      await writeFileAtomically(link, 'updated');
+
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readFileSync(realFile, 'utf8')).toBe('updated');
+      // The temp file must land beside the REAL file, and be cleaned up.
+      expect(readdirSync(realDir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+      expect(readdirSync(linkDir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+    }
+  );
+
+  it.skipIf(!symlinkSupported)(
+    'resolveRealPath follows a link and falls back to the path itself when it does not exist',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'aether-symlink-resolve-'));
+      const realFile = join(dir, 'real.md');
+      const link = join(dir, 'link.md');
+      writeFileSync(realFile, 'x', 'utf8');
+      symlinkSync(realFile, link);
+      expect(await resolveRealPath(link)).toBe(await fsp.realpath(realFile));
+
+      const missing = join(dir, 'not-there.md');
+      expect(await resolveRealPath(missing)).toBe(missing);
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'carries the existing file mode onto the replacement rather than widening it',
+    async () => {
+      const target = freshTarget('secret');
+      chmodSync(target, 0o600);
+      await writeFileAtomically(target, 'still secret');
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+      expect(readFileSync(target, 'utf8')).toBe('still secret');
+    }
+  );
 });

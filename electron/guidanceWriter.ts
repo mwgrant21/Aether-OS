@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import { dirname } from 'path';
-import { upsertGuidance } from '../src/shared/optimizeActions';
-import { writeBackup, writeFileAtomically } from './atomicWrite';
+import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
+import { resolveRealPath, writeBackup, writeFileAtomically } from './atomicWrite';
 
 export type ApplyGuidanceResult =
   | { ok: true; added: false; alreadyPresent: true }
@@ -23,11 +23,21 @@ export async function applyGuidanceToFile(
   targetPath: string,
   findingId: string
 ): Promise<ApplyGuidanceResult> {
+  // An unknown finding has no guidance to write. upsertGuidance reports that
+  // the same way it reports "already present" (added: false), so distinguish
+  // them here rather than telling the caller a write succeeded that never
+  // happened -- that would start the recurrence clock for a finding the file
+  // never received.
+  if (guidanceFor(findingId) === null) return { ok: false, error: 'unknown finding' };
+
   try {
+    // Follow a symlinked CLAUDE.md so the backup and the replacement both land
+    // on the real file and the link survives.
+    const realPath = await resolveRealPath(targetPath);
     let existing = '';
     let fileExisted = true;
     try {
-      existing = await fsp.readFile(targetPath, 'utf8');
+      existing = await fsp.readFile(realPath, 'utf8');
     } catch (err: any) {
       if (err?.code === 'ENOENT') {
         existing = '';
@@ -43,9 +53,9 @@ export async function applyGuidanceToFile(
     }
 
     let backupPath: string | null = null;
-    if (fileExisted) backupPath = await writeBackup(targetPath, existing, 'ttbak');
-    await fsp.mkdir(dirname(targetPath), { recursive: true });
-    await writeFileAtomically(targetPath, content);
+    if (fileExisted) backupPath = await writeBackup(realPath, existing, 'ttbak');
+    await fsp.mkdir(dirname(realPath), { recursive: true });
+    await writeFileAtomically(realPath, content);
     return { ok: true, added: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
