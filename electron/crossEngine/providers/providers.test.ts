@@ -159,7 +159,12 @@ function appServerFake(): FakeServer {
         push('thread/tokenUsage/updated', {
           threadId,
           turnId: 'turn-1',
-          tokenUsage: { last: { inputTokens: 11, outputTokens: 22, cachedInputTokens: 33 } },
+          // Deliberately NESTED, the way the real server reports it:
+          // inputTokens (100) INCLUDES cachedInputTokens (80), and
+          // outputTokens (50) INCLUDES reasoningOutputTokens (30).
+          tokenUsage: {
+            last: { inputTokens: 100, outputTokens: 50, cachedInputTokens: 80, reasoningOutputTokens: 30 },
+          },
         });
         // The real server accepts the turn immediately and reports the
         // outcome later via turn/completed. The old fake returned a
@@ -328,7 +333,9 @@ describe('LegacyCodexAcpAdapter', () => {
     await adapter.connect();
     const sessionId = await adapter.newSession({ cwd: process.cwd() });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
-    expect(result.usage).toEqual({ inputTokens: null, outputTokens: null, cachedInputTokens: null });
+    expect(result.usage).toEqual({
+      inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null,
+    });
     await adapter.dispose();
   });
 });
@@ -364,9 +371,39 @@ describe('CodexAppServerAdapter', () => {
     await adapter.connect();
     const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
-    expect(result.usage).toEqual({ inputTokens: 11, outputTokens: 22, cachedInputTokens: 33 });
+    expect(result.usage).toEqual({
+      inputTokens: 20,             // 100 reported - 80 cached
+      outputTokens: 20,            // 50 reported - 30 reasoning
+      cachedInputTokens: 80,
+      reasoningOutputTokens: 30,
+    });
     expect(result.stopReason).toBe('completed');
     expect(result.text).toBe('hello world');
+    await adapter.dispose();
+  });
+
+  it('never reports a negative bucket when the server claims more cache than input', async () => {
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        const threadId = (req.params as { threadId: string }).threadId;
+        push('thread/tokenUsage/updated', {
+          threadId,
+          turnId: 't',
+          tokenUsage: { last: { inputTokens: 5, outputTokens: 5, cachedInputTokens: 9, reasoningOutputTokens: 9 } },
+        });
+        push('turn/completed', { threadId, turn: { id: 't', status: 'completed' } });
+        return { turn: { id: 't', status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.usage.inputTokens).toBe(0);
+    expect(result.usage.outputTokens).toBe(0);
     await adapter.dispose();
   });
 
@@ -813,7 +850,9 @@ describe('ClaudeHeadlessCliAdapter', () => {
     await adapter.connect();
     const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
-    expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 7, cachedInputTokens: 9 });
+    expect(result.usage).toEqual({
+      inputTokens: 5, outputTokens: 7, cachedInputTokens: 9, reasoningOutputTokens: null,
+    });
     expect(result.stopReason).toBe('completed');
     expect(result.text).toBe('hello world');
     await adapter.dispose();

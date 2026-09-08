@@ -97,17 +97,35 @@ const TURN_RECORD_TTL_MS = 120_000;
 const MAX_EARLY_COMPLETIONS = 8;
 const MAX_BUFFERED_NOTIFICATIONS = 256;
 
-/** Reads a ThreadTokenUsage's `last` breakdown defensively. Field casing is
- *  not asserted -- both camelCase and snake_case are accepted so a serde
- *  rename in a future codex build degrades to nulls rather than throwing. */
+/** Reads a ThreadTokenUsage's `last` breakdown defensively, DE-NESTING it.
+ *  Field casing is not asserted -- both camelCase and snake_case are accepted
+ *  so a serde rename in a future codex build degrades to nulls rather than
+ *  throwing.
+ *
+ *  The subtraction is floored at zero. A server that reports more cache than
+ *  input (a rounding artifact, or a bucket definition drifting in a future
+ *  build) must not turn into a negative token count that then subtracts real
+ *  spend from a ledger total -- clamping loses a little accuracy in a case
+ *  that should not happen; a negative loses correctness in a case that then
+ *  propagates. */
 function readUsage(raw: unknown): TurnUsage {
   const last = (raw as { last?: Record<string, unknown> } | undefined)?.last;
   if (!last) return EMPTY_USAGE;
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
+
+  const reportedInput = num(last.inputTokens ?? last.input_tokens);
+  const reportedOutput = num(last.outputTokens ?? last.output_tokens);
+  const cachedInputTokens = num(last.cachedInputTokens ?? last.cached_input_tokens);
+  const reasoningOutputTokens = num(last.reasoningOutputTokens ?? last.reasoning_output_tokens);
+
+  const denest = (total: number | null, nested: number | null): number | null =>
+    total === null ? null : Math.max(0, total - (nested ?? 0));
+
   return {
-    inputTokens: num(last.inputTokens ?? last.input_tokens),
-    outputTokens: num(last.outputTokens ?? last.output_tokens),
-    cachedInputTokens: num(last.cachedInputTokens ?? last.cached_input_tokens),
+    inputTokens: denest(reportedInput, cachedInputTokens),
+    outputTokens: denest(reportedOutput, reasoningOutputTokens),
+    cachedInputTokens,
+    reasoningOutputTokens,
   };
 }
 

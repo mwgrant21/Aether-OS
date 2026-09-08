@@ -87,16 +87,46 @@ export interface ProviderHealth {
   detail: string;
 }
 
+/**
+ * Per-turn token usage, in FOUR DISJOINT buckets.
+ *
+ * Disjoint is the load-bearing word, and it is a contract every adapter owes
+ * rather than a property the wire format supplies. Codex's app-server reports
+ * them NESTED -- `ThreadTokenUsage.last.inputTokens` includes
+ * `cachedInputTokens`, and `outputTokens` includes `reasoningOutputTokens`
+ * (Codex's own `TokenUsage::non_cached_input()` subtracts the cache bucket for
+ * exactly this reason). Copying those straight through means any consumer that
+ * sums the buckets -- the broker ledger being the one that will -- counts every
+ * cached token twice and every reasoning token twice, silently, with no
+ * anomaly to notice.
+ *
+ * So the adapter subtracts, and this type states the post-subtraction meaning:
+ *   inputTokens   FRESH input only. EXCLUDES cachedInputTokens.
+ *   outputTokens  VISIBLE output only. EXCLUDES reasoningOutputTokens.
+ * Which makes `inputTokens + outputTokens + cachedInputTokens +
+ * reasoningOutputTokens` a correct grand total, and makes it correct for every
+ * provider rather than for whichever one the caller happened to have in mind.
+ *
+ * Claude's `claude -p` result usage is already disjoint (`input_tokens`
+ * excludes `cache_read_input_tokens`) and reports no separate reasoning
+ * bucket, so its adapter subtracts nothing and reports
+ * `reasoningOutputTokens: null`.
+ *
+ * `null` means NOT REPORTED, and is deliberately different from 0. An adapter
+ * with usageReporting: false reports four nulls rather than four zeros.
+ */
 export interface TurnUsage {
   inputTokens: number | null;
   outputTokens: number | null;
   cachedInputTokens: number | null;
+  reasoningOutputTokens: number | null;
 }
 
 export const EMPTY_USAGE: TurnUsage = Object.freeze({
   inputTokens: null,
   outputTokens: null,
   cachedInputTokens: null,
+  reasoningOutputTokens: null,
 });
 
 /** Deliberately a single-member union. Widening it later is a visible type
