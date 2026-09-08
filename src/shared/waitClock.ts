@@ -61,10 +61,17 @@ export function beginWait(clock: WaitClock, id: string, atMs: number): void {
  * or late resume (e.g. arriving after a timeout already force-closed the
  * same id) is expected traffic, not an error, and must not corrupt state.
  *
- * If `atMs` is behind the wait's own start (a backward clock movement), the
- * interval is clamped to zero width rather than allowed to go negative --
- * a negative-width interval would silently subtract a negative amount,
- * inflating "active" time above the wall clock it was cut from.
+ * If `atMs` is behind the wait's own start (a backward clock movement),
+ * `endMs` is clamped to `startMs` so the STORED interval itself is never
+ * negative-width. This is defensive, not the mechanism that keeps
+ * waitMsWithin's output non-negative -- that guarantee comes entirely from
+ * the per-interval `end > start` filter in waitMsWithin, which independently
+ * rejects an inverted interval regardless of what is stored here (confirmed
+ * by ablation: removing this clamp changes no test outcome, including the
+ * backward-clock test below). Kept anyway because a raw `endMs < startMs`
+ * in `intervals` would still be a wrong fact about the world for any future
+ * reader that inspects the array directly instead of going through
+ * waitMsWithin.
  */
 export function endWait(clock: WaitClock, id: string, atMs: number): void {
   const index = clock.open.get(id);
@@ -104,11 +111,24 @@ function prune(clock: WaitClock): void {
  * Milliseconds inside [spanStartMs, spanEndMs] during which the app was
  * blocked on the user.
  *
- * Intervals are merged before summing. Two prompts can overlap (a permission
- * request and a post-tool flag review are separate resolver maps in main.ts),
- * and adding their durations would subtract more than the wall clock contains
- * -- producing a negative "active" duration, which is a worse lie than the
- * one this module exists to fix.
+ * THIS is where the module's core guarantee actually lives: every interval
+ * is clipped to `[max(interval.startMs, spanStartMs), min(interval.endMs ??
+ * nowMs, spanEndMs)]` and then dropped unless `end > start`. Because the
+ * clipped end can never exceed spanEndMs and the clipped start can never be
+ * less than spanStartMs, no interval that survives this filter can exceed
+ * the span, and an inverted or degenerate span (spanEndMs <= spanStartMs)
+ * forces `end <= start` for every interval and so drops all of them --
+ * which is also why the earlier `spanEndMs <= spanStartMs` early return
+ * above is itself redundant with this filter (confirmed by ablation) and
+ * kept only as a cheap early exit / explicit NaN guard, not as the actual
+ * source of correctness. Two overlapping prompts (a permission request and
+ * a post-tool flag review are separate resolver maps in main.ts) are then
+ * merged rather than summed independently, because summing two overlapping
+ * durations would double-count the overlap and could report more waited
+ * time than the span actually contains -- merging is what keeps the total
+ * bounded by the span's own width, which is in turn what keeps
+ * activeDurationMs's result non-negative by construction (see its own
+ * comment).
  *
  * A still-open wait counts up to `nowMs`, and stays there: as long as the
  * caller re-derives `wallDurationMs` from the same `nowMs` on every tick,
