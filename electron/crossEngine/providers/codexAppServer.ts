@@ -580,6 +580,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
    * different facts, and a caller that renders "0% used" for the second one
    * would be worse than one that renders nothing.
    */
+  // BUILT, NOT YET WIRED: no production caller. See the header note in
+  // codexRateLimits.ts for what remains before a second quota sample source
+  // can feed the Ledger, and why that is a separate reviewed task.
   async readAccountRateLimits(nowMs: number = Date.now()): Promise<AccountRateLimits> {
     this.require();
     const res = await this.call('account/rateLimits/read', {});

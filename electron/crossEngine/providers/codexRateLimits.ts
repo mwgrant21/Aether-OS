@@ -1,3 +1,29 @@
+// BUILT, NOT YET WIRED. Nothing in production calls this module.
+//
+// `readAccountRateLimits` (codexAppServer.ts) and this parser are reachable
+// only from their own tests: `grep -rn "readAccountRateLimits|parseAccountRateLimits"
+// electron/ src/` finds no call site in main.ts or any IPC handler, and the
+// quota series the Ledger prices is fed exclusively by the Claude statusline
+// (statuslineWatcher.ts -> quotaSampleBuffer -> deriveQuotaEfficiency). This
+// is verified parsing and transport with no producer attached to it, and the
+// whole-branch review flagged that it must not ship looking live.
+//
+// What remains, if a second sample source is ever wanted:
+//   1. A poller in main.ts that calls readAccountRateLimits on an interval,
+//      the way statuslineWatcher polls the statusline file.
+//   2. A decision about the SERIES, not just the transport: quotaSampleBuffer
+//      holds one undifferentiated percentage series and deriveQuotaEfficiency
+//      diffs consecutive readings within an hour bucket. Interleaving two
+//      accounts' percentages into it would produce meaningless deltas, so a
+//      second source needs either its own buffer or a per-source key -- and
+//      the Ledger's cards would then have to say which engine they are about.
+//   3. Failure semantics: `codex app-server` not being installed is the normal
+//      case for a Claude-only machine and must be silent, not an error state.
+// That is a feature-sized change with its own review, deliberately NOT done as
+// part of a fix wave. The plan for this branch specified the parser and the
+// transport and never specified a wiring step -- a plan defect, recorded here
+// rather than papered over by wiring it in unreviewed.
+//
 // Parser for `account/rateLimits/read` on `codex app-server`.
 //
 // Unlike every other method this directory speaks, there are no generated

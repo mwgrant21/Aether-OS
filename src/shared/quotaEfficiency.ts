@@ -227,6 +227,14 @@ export function deriveQuotaEfficiency(
     bucketMs,
     windowMs,
     computedAtMs: opts.nowMs,
+    // `fittedPoints > 0` is REDUNDANT BY CONSTRUCTION and kept as a cheap
+    // division guard, not as the source of correctness: a bucket only reaches
+    // `fittedBuckets += 1` after the `points <= 0` continue above, so
+    // fittedBuckets >= MIN_FIT_BUCKETS (3) already implies fittedPoints > 0.
+    // Annotated rather than deleted, matching waitClock.ts's treatment of its
+    // own ablation-confirmed-redundant early return -- an explicit "this is
+    // belt-and-braces" reads better than a silent one, and better than a
+    // deletion that leaves the next reader to re-derive the invariant.
     tokensPerPoint: fittedBuckets >= MIN_FIT_BUCKETS && fittedPoints > 0 ? fittedTokens / fittedPoints : null,
     fittedBuckets,
     externalUsageBuckets,
