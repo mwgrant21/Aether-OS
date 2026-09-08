@@ -134,7 +134,7 @@ describe('buildDispatchRows', () => {
   };
 
   it('joins the three renderer slices into a priced row', () => {
-    const [r] = buildDispatchRows(base);
+    const [r] = buildDispatchRows(base, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.subagentType).toBe('general-purpose');
     expect(r.toolUses).toBe(4);
     // opus blend: 0.8 * $25 + 0.2 * $5 = $21 per million
@@ -146,14 +146,14 @@ describe('buildDispatchRows', () => {
   // A row that is missing usage still tells the operator the dispatch
   // happened; dropping it would hide work rather than report it as unpriced.
   it('keeps a dispatch with no recorded usage, estimating it at zero', () => {
-    const [r] = buildDispatchRows({ ...base, dispatchUsage: {} });
+    const [r] = buildDispatchRows({ ...base, dispatchUsage: {} }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.estimate.usdApprox).toBe(0);
     expect(r.estimate.tokens).toBe(0);
     expect(r.toolUses).toBe(0);
   });
 
   it('leaves telemetry null when the collector is absent or pre-v5', () => {
-    const [r] = buildDispatchRows({ ...base, diagnostics: null });
+    const [r] = buildDispatchRows({ ...base, diagnostics: null }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.exitState).toBeNull();
     expect(r.retries).toBeNull();
     // The cost estimate does not depend on telemetry, so it still lands.
@@ -171,7 +171,7 @@ describe('buildDispatchRows', () => {
       ...base,
       recentCompletedDispatches: [{ ...base.recentCompletedDispatches[0], startedAt: '2026-08-07T23:58:00.000Z' }],
       dispatchUsage: { tu_1: { tokens: 1000, toolUses: 1, durationMs: 5 * 60 * 1000 } },
-    });
+    }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.endedAt).toBe('2026-08-08T00:03:00.000Z');
   });
 });
@@ -189,6 +189,7 @@ describe('selectTodaysRows', () => {
       durationMs: 300000,
       toolUses: 1,
       estimate: { usdApprox: 1, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+      quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
       exitState: null,
       retries: null,
       ...over,

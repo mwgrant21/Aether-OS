@@ -4,6 +4,7 @@ import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import {
   estimateDispatchCost,
+  quotaCostForTokens,
   reconcile,
   localDayBoundsMs,
   type EstimatedCost,
@@ -35,7 +36,10 @@ export function LedgerView() {
   const { state } = useAetherStore();
   const { ledger, showDispatchDetail } = resolveLedgerViewData(state);
 
-  const rows = buildDispatchRows(state);
+  const rows = buildDispatchRows(state, {
+    tokensPerPoint: state.quotaEfficiency?.tokensPerPoint ?? null,
+    planMonthlyUsd: state.cfg.planMonthlyUsd,
+  });
 
   // The residual is only meaningful when both sides cover the same window.
   // The exact side is today's rollup, built (bucketByDay) from each assistant
@@ -172,11 +176,14 @@ export function resolveLedgerViewData(state: {
  * Exported for testing: the join has real edge cases (a dispatch with no usage
  * recorded yet, telemetry from a pre-v5 collector) and they are worth pinning.
  */
-export function buildDispatchRows(state: {
-  recentCompletedDispatches: { toolUseId: string; subagentType: string; description: string; startedAt: string; prompt: string; model: string | null }[];
-  dispatchUsage: Record<string, { tokens: number; toolUses: number; durationMs: number }>;
-  diagnostics: { dispatches: { toolUseId: string; exitState: string | null; retries: number | null }[] } | null;
-}): DispatchCostRow[] {
+export function buildDispatchRows(
+  state: {
+    recentCompletedDispatches: { toolUseId: string; subagentType: string; description: string; startedAt: string; prompt: string; model: string | null }[];
+    dispatchUsage: Record<string, { tokens: number; toolUses: number; durationMs: number }>;
+    diagnostics: { dispatches: { toolUseId: string; exitState: string | null; retries: number | null }[] } | null;
+  },
+  quotaInputs: { tokensPerPoint: number | null; planMonthlyUsd: number | null },
+): DispatchCostRow[] {
   const telemetry = new Map(state.diagnostics?.dispatches.map((d) => [d.toolUseId, d]) ?? []);
 
   return state.recentCompletedDispatches.map((d) => {
@@ -210,6 +217,14 @@ export function buildDispatchRows(state: {
       durationMs: completed.durationMs,
       toolUses: completed.toolUses,
       estimate: estimateDispatchCost(completed),
+      // tokensPerPoint null (fit still forming) becomes 0 here, which
+      // quotaCostForTokens turns into 0 points and quotaCell renders as an em
+      // dash -- "not yet knowable", never "free".
+      quota: quotaCostForTokens(
+        completed.tokens,
+        quotaInputs.tokensPerPoint ?? 0,
+        quotaInputs.planMonthlyUsd,
+      ),
       exitState: (t?.exitState ?? null) as DispatchCostRow['exitState'],
       retries: t?.retries ?? null,
     };
