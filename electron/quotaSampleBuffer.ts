@@ -32,6 +32,15 @@ export const QUOTA_SAMPLE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 // days of polling and would have re-narrowed the window by hours.
 export const MAX_QUOTA_SAMPLES = 80000;
 
+// Tolerance for the future-timestamp guard in recordQuotaSample: how far
+// `atMs` may lead the local clock (`nowMs`) before it is treated as bogus
+// rather than ordinary skew between whatever process stamps the statusline
+// payload and this process reading it. Both run on the same machine, so
+// this only needs to absorb IO/scheduling lag, not a plausible outage -- see
+// recordQuotaSample's doc for why a window-sized tolerance here was the
+// mistake that caused a permanent lockout in an earlier version of this fix.
+export const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000; // 5 minutes
+
 export interface QuotaSample {
   atMs: number;
   usedPercentage: number;
@@ -69,23 +78,39 @@ export function createQuotaSampleBuffer(
  * buffer) is enough, because the watcher emits sequentially -- a duplicate
  * re-emit always immediately follows the reading it repeats.
  *
- * A second guard rejects an implausible FORWARD jump: `capturedAtMs` is
- * external and untrusted (statuslineWatcher.ts validates only
- * `Number.isFinite`), and the age prune below derives its cutoff from the
- * sample just accepted. One payload stamped far enough ahead would make
- * every real reading look older than the window and evict the whole
- * series in a single call -- up to seven days of cost basis gone on one bad
- * reading. A backward jump needs no such guard: a low `atMs` produces a low
- * cutoff, which prunes nothing.
+ * A second guard rejects an implausible timestamp using a TRUSTED SECOND
+ * REFERENCE -- the local system clock (`nowMs`) -- never the last accepted
+ * sample. An earlier version of this fix compared `atMs` to `last.atMs` and
+ * rejected any forward jump bigger than the retention window. That
+ * conflates two cases that look identical from inside the series alone: a
+ * bogus future stamp, and a genuine multi-day gap (sleep/resume, or the app
+ * simply left running while the statusline goes quiet for a week). Worse,
+ * once that guard fired the sample was never pushed, so `last` never
+ * advanced -- every later sample was then ALSO "more than a window ahead"
+ * of that same frozen `last`, and was rejected too, forever. A gap longer
+ * than one window killed the series permanently: exactly the silent,
+ * unrecoverable loss this module exists to prevent.
  *
- * The threshold reuses `buffer.windowMs` rather than a new constant: a
- * forward step bigger than the whole retention window is implausible for
- * any real clock (the watcher polls every ~10s), so this never fires
- * during normal use, and it fires far earlier than a step so large it would
- * merely leave the bogus sample sitting in the series -- which would still
- * corrupt deriveQuotaEfficiency's per-bucket fit if it were retained rather
- * than turned away. Rejecting here, before the sample is ever pushed, keeps
- * that fit clean instead of merely deferring the damage.
+ * Comparing `atMs` to `nowMs` instead resolves this: a payload timestamp far
+ * ahead of the ACTUAL current moment is bogus regardless of buffer history,
+ * while a payload timestamp far ahead of `last` but consistent with `nowMs`
+ * is a genuine gap -- accepted, with the now-stale series pruned by the age
+ * prune below exactly as it should be (those samples really are outside the
+ * window). No rejection here reads or depends on buffer state, so no
+ * rejection can ever make a later, clock-consistent sample harder to
+ * accept -- see this file's "never lets a rejection leave state..." test.
+ *
+ * `nowMs` defaults to `Date.now()` so production call sites don't need to
+ * pass it, but stays an explicit parameter rather than a bare `Date.now()`
+ * call in the body, so this function is exercised identically in tests and
+ * in production -- no faking globals to control "now".
+ *
+ * `MAX_CLOCK_SKEW_MS` is deliberately tight, unlike `buffer.windowMs` used
+ * above: it only needs to absorb ordinary lag between whatever stamps the
+ * statusline payload and this process reading it (both on the same
+ * machine), not a plausible outage. A window-sized tolerance against a
+ * trusted clock would make this guard nearly useless -- almost any bogus
+ * stamp still "looks recent enough."
  *
  * Returns whether the sample was accepted, so a caller can make a rejection
  * observable instead of silent. main.ts's statusline-snapshot handler
@@ -93,10 +118,15 @@ export function createQuotaSampleBuffer(
  * edge-triggered `[diag] quota sample rejected` log covers both rejection
  * reasons uniformly).
  */
-export function recordQuotaSample(buffer: QuotaSampleBuffer, atMs: number, usedPercentage: number): boolean {
+export function recordQuotaSample(
+  buffer: QuotaSampleBuffer,
+  atMs: number,
+  usedPercentage: number,
+  nowMs: number = Date.now(),
+): boolean {
   const last = buffer.samples[buffer.samples.length - 1];
   if (last && last.atMs === atMs && last.usedPercentage === usedPercentage) return false;
-  if (last && atMs - last.atMs > buffer.windowMs) return false;
+  if (atMs - nowMs > MAX_CLOCK_SKEW_MS) return false;
   buffer.samples.push({ atMs, usedPercentage });
   // Age prune, relative to the sample just accepted: anything at the leading
   // edge that has fallen out of the retention window is no longer joinable to

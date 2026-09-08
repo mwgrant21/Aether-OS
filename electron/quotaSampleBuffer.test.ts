@@ -74,25 +74,85 @@ describe('quotaSampleBuffer', () => {
 
   // `capturedAtMs` is external and untrusted (statuslineWatcher.ts validates
   // only Number.isFinite). A single payload stamped far in the future must
-  // not be allowed to evict the whole retained series -- the age prune's
-  // cutoff is derived from the sample just accepted, so a bogus forward jump
-  // otherwise makes every real reading look older than the window.
+  // not be allowed to evict the whole retained series. The trusted reference
+  // for "implausible" is the local clock (`nowMs`), not the last accepted
+  // sample -- see the lockout regression test below for why comparing only
+  // to `last` is unsound.
   it('does not let an implausible future timestamp evict the whole retained series', () => {
     const buffer = createQuotaSampleBuffer();
     const now = 10 * QUOTA_SAMPLE_WINDOW_MS;
-    expect(recordQuotaSample(buffer, now, 10)).toBe(true);
-    expect(recordQuotaSample(buffer, now + 10_000, 11)).toBe(true);
-    expect(recordQuotaSample(buffer, now + 20_000, 12)).toBe(true);
-    expect(recordQuotaSample(buffer, now + 30_000, 13)).toBe(true);
-    expect(recordQuotaSample(buffer, now + 40_000, 14)).toBe(true);
+    expect(recordQuotaSample(buffer, now, 10, now)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 10_000, 11, now + 10_000)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 20_000, 12, now + 20_000)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 30_000, 13, now + 30_000)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 40_000, 14, now + 40_000)).toBe(true);
 
     const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-    const rejected = recordQuotaSample(buffer, now + 40_000 + oneYearMs, 99);
+    // The local clock (nowMs) still reads `now + 40_000` -- the payload's own
+    // timestamp disagreeing with it by a year is what makes this bogus,
+    // rather than a genuine gap the machine actually experienced.
+    const rejected = recordQuotaSample(buffer, now + 40_000 + oneYearMs, 99, now + 40_000);
 
     // The bogus sample must be observably rejected, not silently retained --
     // and the five real readings must still be there.
     expect(rejected).toBe(false);
     expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([10, 11, 12, 13, 14]);
+  });
+
+  // Coordinator-proved regression against commit 3bbfd5a: that fix's guard,
+  // `atMs - last.atMs > buffer.windowMs`, compares only to the last ACCEPTED
+  // sample. Once it fires, the sample is not pushed, so `last` never
+  // advances -- every later sample is then also "more than a window ahead"
+  // of that same frozen `last` and is rejected too, forever. A statusline
+  // payload that goes quiet while the app keeps running (sleep/resume, or
+  // just a week away from the machine) reproduces this: the watcher keeps
+  // polling every 10s, real time keeps moving, and the series is
+  // permanently dead the moment the gap exceeds one window.
+  it('recovers after a genuine multi-day gap instead of a permanent lockout', () => {
+    const buffer = createQuotaSampleBuffer();
+    const start = 10 * QUOTA_SAMPLE_WINDOW_MS;
+    expect(recordQuotaSample(buffer, start, 10, start)).toBe(true);
+    expect(recordQuotaSample(buffer, start + 10_000, 11, start + 10_000)).toBe(true);
+
+    // Nine real days pass -- genuinely outside the seven-day retention
+    // window, and consistent with the local clock the whole way (nowMs
+    // tracks atMs exactly; nothing here disagrees with reality).
+    const nineDaysMs = 9 * 24 * 60 * 60 * 1000;
+    const resumeStart = start + 10_000 + nineDaysMs;
+    const results = [
+      recordQuotaSample(buffer, resumeStart, 20, resumeStart),
+      recordQuotaSample(buffer, resumeStart + 10_000, 21, resumeStart + 10_000),
+      recordQuotaSample(buffer, resumeStart + 20_000, 22, resumeStart + 20_000),
+    ];
+
+    expect(results).toEqual([true, true, true]);
+    // The pre-gap samples are genuinely nine days old now and correctly
+    // pruned; the resumed samples are accepted, not locked out.
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([20, 21, 22]);
+  });
+
+  // The invariant the lockout bug violated, stated directly so a future
+  // change to the threshold can't reintroduce a different trap: rejecting
+  // one sample must never leave behind any state that a later sample has to
+  // climb over. Each call's accept/reject decision must be self-contained.
+  it('never lets a rejection leave state that blocks a later, clock-consistent sample', () => {
+    const buffer = createQuotaSampleBuffer();
+    const now = 10 * QUOTA_SAMPLE_WINDOW_MS;
+    expect(recordQuotaSample(buffer, now, 10, now)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 10_000, 11, now + 10_000)).toBe(true);
+
+    // Repeated bogus-future rejections against a clock that hasn't moved --
+    // each one is an independent "no", not an accumulating lockout.
+    const bogusFarFuture = now + 10_000 + 365 * 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 5; i++) {
+      expect(recordQuotaSample(buffer, bogusFarFuture + i, 99, now + 10_000)).toBe(false);
+    }
+
+    // A genuine nine-day gap, consistent with the local clock, must be
+    // accepted immediately -- no lockout survived the rejections above.
+    const resumed = now + 10_000 + 9 * 24 * 60 * 60 * 1000;
+    expect(recordQuotaSample(buffer, resumed, 30, resumed)).toBe(true);
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([30]);
   });
 
   // Guards the fix above against overcorrecting into "never prune to be
