@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -840,5 +841,192 @@ func TestWriteBackup_RefusesToClobberAnExistingBackup(t *testing.T) {
 	}
 	if got := readRaw(t, fixed); got != "pristine" {
 		t.Errorf("existing backup changed: %q", got)
+	}
+}
+
+// The write-path guarantees below mirror collector/src/atomicWrite.test.ts and
+// electron/atomicWrite.test.ts case for case (#63). A rename gives a new inode,
+// so each of these is something attached to the old one that must survive.
+
+// symlinkSupported probes once: creating a symlink needs privilege on Windows,
+// so these cases skip there and still run on the Linux CI lane.
+func symlinkSupported(t *testing.T) bool {
+	t.Helper()
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.WriteFile(real, []byte("x"), 0644); err != nil {
+		return false
+	}
+	return os.Symlink(real, filepath.Join(dir, "link")) == nil
+}
+
+func TestWriteSettingsAtomically_WritesThroughSymlinkKeepingTheLink(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	realDir := t.TempDir()
+	linkDir := t.TempDir()
+	realFile := filepath.Join(realDir, "settings.json")
+	link := filepath.Join(linkDir, "settings.json")
+	if err := os.WriteFile(realFile, []byte("original"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Symlink(realFile, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := writeSettingsAtomically(link, "updated"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("link was replaced instead of written through")
+	}
+	if got := readRaw(t, realFile); got != "updated" {
+		t.Errorf("real file = %q, want the new content", got)
+	}
+	if tmp := tempFilesBeside(t, realFile); len(tmp) != 0 {
+		t.Errorf("temp file left beside the real file: %v", tmp)
+	}
+	if tmp := tempFilesBeside(t, link); len(tmp) != 0 {
+		t.Errorf("temp file left beside the link: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_DanglingSymlinkWritesItsDestination(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "not-yet-there.json")
+	link := filepath.Join(dir, "settings.json")
+	if err := os.Symlink(missing, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := writeSettingsAtomically(link, "created through the link"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("dangling link was replaced instead of resolved")
+	}
+	if got := readRaw(t, missing); got != "created through the link" {
+		t.Errorf("destination = %q, want the new content", got)
+	}
+}
+
+func TestWriteSettingsAtomically_KeepsHardLinkedTargetAsOneInode(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	other := filepath.Join(dir, "settings.json.hardlink")
+	if err := os.WriteFile(target, []byte("shared"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Link(target, other); err != nil {
+		t.Skipf("hard links not available here: %v", err)
+	}
+	if linkCountOf(target) <= 1 {
+		t.Skip("link count not reported on this platform")
+	}
+
+	if err := writeSettingsAtomically(target, "updated through one entry"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// A rename would have left the other entry on the old inode.
+	if got := readRaw(t, other); got != "updated through one entry" {
+		t.Errorf("other entry = %q, want the new content (link was severed)", got)
+	}
+	if got := readRaw(t, target); got != "updated through one entry" {
+		t.Errorf("target = %q, want the new content", got)
+	}
+	if tmp := tempFilesBeside(t, target); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_RefusesAReadOnlyTarget(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the read-only bit, so this asserts nothing there")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(target, []byte("protected"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(target, 0444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer func() { _ = os.Chmod(target, 0644) }()
+
+	err := writeSettingsAtomically(target, "overwritten")
+	if err == nil {
+		t.Fatalf("write succeeded against a read-only target, want EACCES")
+	}
+	if !strings.Contains(err.Error(), "EACCES") {
+		t.Errorf("error = %q, want the EACCES shape Node also produces", err.Error())
+	}
+	if got := readRaw(t, target); got != "protected" {
+		t.Errorf("target changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, target); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_CarriesTheExistingModeOntoTheReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(target, []byte("secret"), 0600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := writeSettingsAtomically(target, "still secret"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Errorf("mode = %o, want 600 (a replace must not widen permissions)", got)
+	}
+	if got := readRaw(t, target); got != "still secret" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+func TestWriteSettingsAtomically_CreatesTheTempFileWithTheTargetMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(target, []byte("secret"), 0600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Creating under the umask and narrowing afterwards leaves a window where
+	// another local user can open the temp file and keep the descriptor.
+	var sawMode os.FileMode
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		sawMode = perm
+		return writeFileExcl(name, data, perm)
+	}
+	defer func() { writeFileFn = orig }()
+
+	if err := writeSettingsAtomically(target, "still secret"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if sawMode.Perm() != 0600 {
+		t.Errorf("temp file created with mode %o, want 600", sawMode.Perm())
 	}
 }

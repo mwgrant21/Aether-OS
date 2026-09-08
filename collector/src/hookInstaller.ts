@@ -1,5 +1,5 @@
 import { promises as fsp } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { writeBackup, writeFileAtomically } from './atomicWrite.js';
 import { dirname } from 'node:path';
 
 export const MANAGED_HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'Notification', 'Stop'] as const;
@@ -74,47 +74,11 @@ async function readSettings(
   }
 }
 
-// A sibling of settings.json whose name is unique per invocation even when two
-// writers (this collector, the Go collector, the Electron app via
-// electron/atomicWrite.ts) hit the same
-// millisecond: timestamp + pid + 4 random bytes, always created exclusively.
-function uniqueSiblingPath(settingsPath: string, marker: string): string {
-  return `${settingsPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
-}
-
-async function writeBackup(settingsPath: string, raw: string): Promise<string> {
-  const backupPath = uniqueSiblingPath(settingsPath, 'aetherbak');
-  // flag wx: never overwrite an earlier backup, which may be the user's pristine file (#60).
-  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx' });
-  return backupPath;
-}
-
-function tempPathFor(settingsPath: string): string {
-  return uniqueSiblingPath(settingsPath, 'aethertmp');
-}
-
-async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
-  const tmpPath = tempPathFor(settingsPath);
-  try {
-    // flag wx: exclusive create, so a collision is an error rather than a clobber.
-    await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
-  } catch (err) {
-    // A lost exclusive create (EEXIST) means the file is another writer's: leave
-    // it alone. Any other failure may have created it (ENOSPC after open), so
-    // it is ours to remove (#59). The original error is what the caller sees.
-    if ((err as NodeJS.ErrnoException | undefined)?.code !== 'EEXIST') {
-      await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
-    }
-    throw err;
-  }
-  try {
-    await fsp.rename(tmpPath, settingsPath);
-  } catch (err) {
-    // Past the create, the temp file is ours whatever the rename error was.
-    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
-    throw err;
-  }
-}
+// Backup and atomic-replace live in ./atomicWrite, a deliberate mirror of
+// electron/atomicWrite.ts and collector-go/internal/hookinstall (#63): three
+// processes write this same settings.json, so a difference between them is a
+// bug. That module is where symlink, hard-link, file-mode and read-only
+// handling lives; do not reintroduce a local write path here.
 
 export async function readHookInstallState(settingsPath: string, scriptPath: string): Promise<HookInstallState> {
   const result = await readSettings(settingsPath);
@@ -142,7 +106,7 @@ export async function installHooks(
 
   try {
     let backupPath: string | null = null;
-    if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
+    if (fileExisted) backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
 
     const hooks: Record<string, unknown> =
       hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
@@ -161,7 +125,7 @@ export async function installHooks(
 
     const merged = { ...parsed, hooks };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -179,7 +143,7 @@ export async function installPermissionHooks(
 
   try {
     let backupPath: string | null = null;
-    if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
+    if (fileExisted) backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
 
     const hooks: Record<string, unknown> =
       hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
@@ -196,7 +160,7 @@ export async function installPermissionHooks(
 
     const merged = { ...parsed, hooks };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -215,7 +179,7 @@ export async function uninstallPermissionHooks(
   }
 
   try {
-    const backupPath = await writeBackup(settingsPath, raw);
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     const hooks = { ...(parsed.hooks as Record<string, unknown>) };
     for (const eventName of PERMISSION_HOOK_EVENTS) {
       const current = hooks[eventName];
@@ -251,7 +215,7 @@ export async function uninstallPermissionHooks(
     }
 
     const merged = { ...parsed, hooks };
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -270,7 +234,7 @@ export async function uninstallHooks(
   }
 
   try {
-    const backupPath = await writeBackup(settingsPath, raw);
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     const hooks = { ...(parsed.hooks as Record<string, unknown>) };
     // scriptPath is not known at uninstall time in general (the caller may not
     // have it handy) -- but every MANAGED_HOOK_EVENTS entry we would have added
@@ -315,7 +279,7 @@ export async function uninstallHooks(
     }
 
     const merged = { ...parsed, hooks };
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
