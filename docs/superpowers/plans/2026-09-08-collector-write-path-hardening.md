@@ -131,19 +131,26 @@ before code. #69 is a documented limitation, not work.
 ## Verifying a change to any of this
 
 ```bash
-npx vitest run                                   # root: renderer + electron
-cd collector && npx tsc -b && npx vitest run     # collector package
-cd collector-go && gofmt -l ./... && go vet ./... && go test ./...
-cd collector-go && GOOS=windows go build ./...   # linkcount_windows.go has no other lane
+# Runnable as written, from the repository root. Each cd is in a subshell so the
+# next line does not start from the previous one's directory.
+npx vitest run                                        # root: renderer + electron
+(cd collector && npx tsc -b && npx vitest run)        # collector package
+(cd collector-go && gofmt -l . && go vet ./... && go test ./...)
+(cd collector-go && GOOS=windows go build ./...)      # linkcount_windows.go has no other lane
 npm run typecheck:electron && npm run build && npm run electron:build
 ```
+
+`gofmt` takes filesystem **paths**, not the `go` tool's `./...` package pattern --
+`gofmt -l ./...` exits 2 and takes the rest of the chain down with it. `gofmt -l .`
+recurses and only lists; `go fmt ./...` also works but rewrites files, which is the
+wrong thing for a verification step.
 
 **The parity harness is the one that matters for any write-path change**, and it is
 not in CI:
 
 ```bash
-cd collector && npm run build      # it runs the built Node collector
-cd ../collector-go && node scripts/parity/run-parity.mjs
+(cd collector && npm run build)    # the harness runs the BUILT Node collector
+(cd collector-go && node scripts/parity/run-parity.mjs)
 ```
 
 It takes ~2 minutes and diffs the Node and Go collectors row-for-row plus their CLI
