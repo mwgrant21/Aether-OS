@@ -92,15 +92,20 @@ async function writeSettingsAtomically(settingsPath: string, content: string): P
   try {
     // flag wx: exclusive create, so a collision is an error rather than a clobber.
     await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
-    await fsp.rename(tmpPath, settingsPath);
   } catch (err) {
-    // Do not leave the temp file beside the user's real settings.json (#59),
-    // whether the write or the rename failed; the original error is what the
-    // caller needs to see, not a cleanup error. A lost exclusive create
-    // (EEXIST) means the file is another writer's: leave it alone.
+    // A lost exclusive create (EEXIST) means the file is another writer's: leave
+    // it alone. Any other failure may have created it (ENOSPC after open), so
+    // it is ours to remove (#59). The original error is what the caller sees.
     if ((err as NodeJS.ErrnoException | undefined)?.code !== 'EEXIST') {
       await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
     }
+    throw err;
+  }
+  try {
+    await fsp.rename(tmpPath, settingsPath);
+  } catch (err) {
+    // Past the create, the temp file is ours whatever the rename error was.
+    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
     throw err;
   }
 }

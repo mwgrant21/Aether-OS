@@ -789,3 +789,23 @@ func TestWriters_ExclusiveCreateLoss_LeavesOtherWritersTempFile(t *testing.T) {
 		t.Errorf("settings.json changed: %q", got)
 	}
 }
+
+// ErrExist from the RENAME step is not a lost create: the temp file is ours
+// and must still be removed.
+func TestWriters_RenameErrExist_StillRemovesOwnTempFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := renameFile
+	renameFile = func(oldpath, newpath string) error { return os.ErrExist }
+	defer func() { renameFile = orig }()
+
+	result := InstallHooks(settingsPath, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true, want failure")
+	}
+	if got := readRaw(t, settingsPath); got != "{}" {
+		t.Errorf("settings.json changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+		t.Errorf("own temp file leaked after rename ErrExist: %v", tmp)
+	}
+}

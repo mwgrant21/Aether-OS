@@ -397,6 +397,22 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
   });
 
+  it('still removes its own temp file when the rename (not the create) fails with EEXIST', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    const spy = vi
+      .spyOn(fsp, 'rename')
+      .mockRejectedValueOnce(Object.assign(new Error('EEXIST: destination exists'), { code: 'EEXIST' }));
+    try {
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('EEXIST');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {
     const settingsPath = tempSettingsPath('not valid json {{');
     await expect(readHookInstallState(settingsPath, SCRIPT_PATH)).resolves.toEqual({
