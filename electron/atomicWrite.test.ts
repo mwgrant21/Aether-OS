@@ -9,6 +9,8 @@ import {
   statSync,
   symlinkSync,
   chmodSync,
+  linkSync,
+  statSync as fsStatSync,
   promises as fsp,
 } from 'fs';
 import { tmpdir } from 'os';
@@ -231,6 +233,45 @@ describe('writeFileAtomically: symlinks and permissions', () => {
         expect(readFileSync(target, 'utf8')).toBe('protected');
         expect(siblings(target, 'aethertmp')).toEqual([]);
       } finally {
+        chmodSync(target, 0o644);
+      }
+    }
+  );
+
+  it(
+    'keeps a hard-linked target as one inode instead of severing the link',
+    async () => {
+      const target = freshTarget('shared');
+      const other = target + '.hardlink';
+      linkSync(target, other);
+      expect(fsStatSync(target).nlink).toBeGreaterThan(1);
+
+      await writeFileAtomically(target, 'updated through one entry');
+
+      // Both directory entries must still be the same file, and both must see
+      // the new content -- a rename would have left `other` on the old inode.
+      expect(fsStatSync(target).ino).toBe(fsStatSync(other).ino);
+      expect(readFileSync(other, 'utf8')).toBe('updated through one entry');
+      expect(readFileSync(target, 'utf8')).toBe('updated through one entry');
+      expect(siblings(target, 'aethertmp')).toEqual([]);
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'creates the temp file with the target mode rather than widening it first',
+    async () => {
+      const target = freshTarget('private');
+      chmodSync(target, 0o600);
+      const spy = vi.spyOn(fsp, 'writeFile');
+      try {
+        await writeFileAtomically(target, 'still private');
+        // Call-shape assertion on purpose: the race this guards (another user
+        // opening the temp file between create and chmod) is not observable
+        // in-process, so the check is that the mode is set AT creation.
+        const call = spy.mock.calls.find((c) => String(c[0]).includes('.aethertmp-'));
+        expect((call?.[2] as { mode?: number } | undefined)?.mode).toBe(0o600);
+      } finally {
+        spy.mockRestore();
         chmodSync(target, 0o644);
       }
     }

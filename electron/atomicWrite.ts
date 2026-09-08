@@ -79,7 +79,8 @@ export async function writeBackup(targetPath: string, raw: string, marker: strin
  *
  * Follows a symlinked target and carries the existing file's permission bits
  * onto the replacement, so an atomic replace is not observably different from
- * a direct write apart from being safe.
+ * a direct write apart from being safe. Refuses a read-only target, and falls
+ * back to an in-place write for a hard-linked one, which a rename would sever.
  */
 export async function writeFileAtomically(targetPath: string, content: string): Promise<void> {
   const realPath = await resolveRealPath(targetPath);
@@ -88,8 +89,11 @@ export async function writeFileAtomically(targetPath: string, content: string): 
   // 0600 rather than becoming whatever the umask allows. Undefined when the
   // file does not exist yet, in which case the default applies as before.
   let mode: number | undefined;
+  let hardLinked = false;
   try {
-    mode = (await fsp.stat(realPath)).mode & 0o777;
+    const stat = await fsp.stat(realPath);
+    mode = stat.mode & 0o777;
+    hardLinked = stat.nlink > 1;
   } catch {
     mode = undefined;
   }
@@ -110,10 +114,31 @@ export async function writeFileAtomically(targetPath: string, content: string): 
     }
   }
 
+  // A hard-linked target is two directory entries sharing one inode, which a
+  // rename would sever: the other entry would keep the OLD contents while we
+  // report success -- the same silent divergence as replacing a symlink.
+  // Write in place instead. That trades back the truncation window this
+  // function exists to close, which is the lesser harm here: the caller has
+  // already taken a backup, and a truncated file is visible where a severed
+  // link is not.
+  if (hardLinked) {
+    await fsp.writeFile(realPath, content, { encoding: 'utf8' });
+    return;
+  }
+
   const tmpPath = uniqueSiblingPath(realPath, 'aethertmp');
   try {
     // flag wx: exclusive create, so a collision is an error rather than a clobber.
-    await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
+    // mode at CREATION, not after: creating under the umask and narrowing later
+    // leaves a window where another local user can open the temp file and keep
+    // the descriptor. umask can only clear bits, never add them, so a
+    // restrictive mode survives it; the chmod below still runs to make a
+    // permissive mode exact.
+    await fsp.writeFile(tmpPath, content, {
+      encoding: 'utf8',
+      flag: 'wx',
+      ...(mode !== undefined ? { mode } : {}),
+    });
   } catch (err) {
     // A lost exclusive create (EEXIST) means the file is another writer's: leave
     // it alone. Any other failure may have created it (ENOSPC after open), so
