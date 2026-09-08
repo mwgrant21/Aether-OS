@@ -12,6 +12,9 @@ import {
   cacheImpact,
   buildLedgerSnapshot,
   isSameLocalDay,
+  planCostPerPoint,
+  quotaCostForTokens,
+  QUOTA_WINDOW_MS,
 } from './ledgerMath';
 
 // Verified rates (see modelPricing.ts): sonnet 3/15, opus 5/25, haiku 1/5,
@@ -395,5 +398,66 @@ describe('cacheImpact', () => {
 
   it('ignores events with no cache reads', () => {
     expect(cacheImpact([ev({ usage: usage(M, M, M, 0) })]).cacheReadTokens).toBe(0);
+  });
+});
+
+describe('planCostPerPoint', () => {
+  it('prices a $200 plan at $0.50 per point on the seven-day window', () => {
+    // 28-day month / 7-day window = 4 windows; 4 * 100 points = 400 points.
+    expect(planCostPerPoint(200, QUOTA_WINDOW_MS.seven_day)).toBeCloseTo(0.5, 10);
+  });
+
+  it('prices the same plan far lower per point on the five-hour window', () => {
+    // 40320 minutes / 300 = 134.4 windows; 13440 points.
+    expect(planCostPerPoint(200, QUOTA_WINDOW_MS.five_hour)).toBeCloseTo(200 / 13440, 10);
+  });
+
+  it('returns 0 rather than Infinity or NaN for a zero, negative, or absent input', () => {
+    expect(planCostPerPoint(0, QUOTA_WINDOW_MS.seven_day)).toBe(0);
+    expect(planCostPerPoint(-200, QUOTA_WINDOW_MS.seven_day)).toBe(0);
+    expect(planCostPerPoint(200, 0)).toBe(0);
+    expect(planCostPerPoint(Number.NaN, QUOTA_WINDOW_MS.seven_day)).toBe(0);
+  });
+});
+
+describe('quotaCostForTokens', () => {
+  it('converts tokens to points and points to plan dollars', () => {
+    // 500k tokens at 100k tokens/point = 5 points; 5 points at $0.50 = $2.50.
+    const cost = quotaCostForTokens(500_000, 100_000, 200);
+    expect(cost.points).toBeCloseTo(5, 10);
+    expect(cost.usdPlan).toBeCloseTo(2.5, 10);
+    expect(cost.basis).toBe('seven_day');
+    expect(cost.tokensPerPoint).toBe(100_000);
+  });
+
+  it('reports points with usdPlan null when no plan price is configured', () => {
+    const cost = quotaCostForTokens(500_000, 100_000, null);
+    expect(cost.points).toBeCloseTo(5, 10);
+    expect(cost.usdPlan).toBeNull();
+  });
+
+  it('reports zero points, not Infinity, when the fit has produced no rate yet', () => {
+    const cost = quotaCostForTokens(500_000, 0, 200);
+    expect(cost.points).toBe(0);
+    expect(cost.usdPlan).toBe(0);
+  });
+
+  it('treats a missing or negative token count as zero', () => {
+    expect(quotaCostForTokens(-5, 100_000, 200).points).toBe(0);
+    expect(quotaCostForTokens(Number.NaN, 100_000, 200).points).toBe(0);
+  });
+
+  it('is structurally distinct from the other two cost types', () => {
+    const quota = quotaCostForTokens(1000, 100, 200);
+    const estimate = estimateDispatchCost({
+      toolUseId: 't', subagentType: 'a', description: '', startedAt: '', prompt: '', model: null,
+      tokens: 1000, toolUses: 0, durationMs: 0,
+    });
+    // No shared money field name: a renderer cannot read one where the other
+    // belongs and still compile. This is the same invariant ExactCost and
+    // EstimatedCost already hold (see ledgerMath.ts's header comment).
+    expect(Object.keys(quota)).not.toContain('usd');
+    expect(Object.keys(quota)).not.toContain('usdApprox');
+    expect(Object.keys(estimate)).not.toContain('usdPlan');
   });
 });
