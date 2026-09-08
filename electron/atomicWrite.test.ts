@@ -205,6 +205,37 @@ describe('writeFileAtomically: symlinks and permissions', () => {
     }
   );
 
+  it.skipIf(!symlinkSupported)(
+    'writes the intended destination of a dangling symlink instead of replacing the link',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'aether-symlink-dangling-'));
+      const missingTarget = join(dir, 'not-yet-there.md');
+      const link = join(dir, 'CLAUDE.md');
+      symlinkSync(missingTarget, link);
+
+      await writeFileAtomically(link, 'created through the link');
+
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readFileSync(missingTarget, 'utf8')).toBe('created through the link');
+      expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+    }
+  );
+
+  it(
+    'refuses to replace a read-only target rather than bypassing it via the directory',
+    async () => {
+      const target = freshTarget('protected');
+      chmodSync(target, 0o444);
+      try {
+        await expect(writeFileAtomically(target, 'overwritten')).rejects.toThrow(/EACCES/);
+        expect(readFileSync(target, 'utf8')).toBe('protected');
+        expect(siblings(target, 'aethertmp')).toEqual([]);
+      } finally {
+        chmodSync(target, 0o644);
+      }
+    }
+  );
+
   it.skipIf(process.platform === 'win32')(
     'carries the existing file mode onto the replacement rather than widening it',
     async () => {

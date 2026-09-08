@@ -1,4 +1,5 @@
-import { promises as fsp } from 'fs';
+import { constants, promises as fsp } from 'fs';
+import { dirname, isAbsolute, resolve } from 'path';
 import { randomBytes } from 'crypto';
 
 // The one implementation of "back up, then replace a user file safely" for the
@@ -29,13 +30,33 @@ export function uniqueSiblingPath(targetPath: string, marker: string): string {
  * The real file behind `targetPath`, following symlinks. A user whose
  * `~/.claude/CLAUDE.md` (or settings.json) is a link into a dotfiles repo must
  * keep that link: writing through it is what they asked for, and replacing it
- * with a regular file silently disconnects the repo. Falls back to the path
- * itself when it does not exist yet -- there is no link to preserve then.
+ * with a regular file silently disconnects the repo.
+ *
+ * A DANGLING link resolves to its intended destination, not to the link, so
+ * the first write creates what the user pointed at. Only a path that is not a
+ * link at all falls back to itself, which is the plain new-file case. The
+ * depth cap makes a symlink loop terminate rather than recurse forever.
  */
-export async function resolveRealPath(targetPath: string): Promise<string> {
+export async function resolveRealPath(targetPath: string, depth = 0): Promise<string> {
   try {
     return await fsp.realpath(targetPath);
   } catch {
+    // realpath throws for a path that does not exist -- which covers both a
+    // plain new file AND a DANGLING link, whose intended destination is
+    // missing. Falling back to the path itself would be right for the first
+    // and wrong for the second: it would replace the link with a regular file
+    // and leave the destination the user pointed at still absent.
+    if (depth < 32) {
+      try {
+        if ((await fsp.lstat(targetPath)).isSymbolicLink()) {
+          const link = await fsp.readlink(targetPath);
+          const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
+          return await resolveRealPath(next, depth + 1);
+        }
+      } catch {
+        // Not a link, or unreadable: fall through to the path itself.
+      }
+    }
     return targetPath;
   }
 }
@@ -71,6 +92,22 @@ export async function writeFileAtomically(targetPath: string, content: string): 
     mode = (await fsp.stat(realPath)).mode & 0o777;
   } catch {
     mode = undefined;
+  }
+
+  // A rename is governed by the DIRECTORY's permissions, so it would happily
+  // replace a file the user deliberately made read-only -- something the plain
+  // write this replaced would have refused with EACCES. Keep that contract.
+  if (mode !== undefined) {
+    try {
+      await fsp.access(realPath, constants.W_OK);
+    } catch {
+      const err: NodeJS.ErrnoException = new Error(
+        `EACCES: permission denied, write '${realPath}'`
+      );
+      err.code = 'EACCES';
+      err.path = realPath;
+      throw err;
+    }
   }
 
   const tmpPath = uniqueSiblingPath(realPath, 'aethertmp');
