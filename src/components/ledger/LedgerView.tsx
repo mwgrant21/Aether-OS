@@ -15,6 +15,7 @@ import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { SessionCostCard } from './SessionCostCard';
 import { RollupCard } from './RollupCard';
 import { CacheImpactCard } from './CacheImpactCard';
+import { QuotaCostCard } from './QuotaCostCard';
 import { DispatchCostTable, type DispatchCostRow } from './DispatchCostTable';
 import { PricingBasisFooter } from './PricingBasisFooter';
 import { usd, approxUsd, ESTIMATE_BASIS_TOOLTIP } from './format';
@@ -85,6 +86,12 @@ export function LedgerView() {
               <CacheImpactCard cache={ledger.cache} hitRatio={ledger.cacheHitRate} />
             </div>
           </div>
+
+          <QuotaCostCard
+            quota={state.quotaEfficiency}
+            statusline={state.statusline}
+            planMonthlyUsd={state.cfg.planMonthlyUsd}
+          />
 
           <RollupCard rollups={ledger.rollups} />
 
