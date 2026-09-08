@@ -34,6 +34,7 @@ import {
   SEVEN_DAY_MS,
   type QuotaEfficiency,
 } from '../src/shared/quotaEfficiency';
+import { createQuotaSampleBuffer, recordQuotaSample } from './quotaSampleBuffer';
 import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
 import { normalizePath } from '../src/shared/projectIdentity';
 import { createScopedGitProbe } from './gitProbeCache';
@@ -360,34 +361,11 @@ let cachedLedgerSnapshot: LedgerSnapshot | null = null;
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 
-/**
- * Seven-day rate-limit percentage readings, oldest first.
- *
- * In memory only, and deliberately: this is a live series whose whole value is
- * being current. A persisted copy rehydrated after a restart would date from
- * a window that has since reset, which is the same dishonesty
- * persistence.ts's `statusline` exclusion already refuses.
- *
- * The statusline writes roughly every render and the watcher polls every 10s
- * (statuslineWatcher.ts's WATCH_INTERVAL_MS), so a full 7 days of continuous
- * running is ~60k readings. The cap keeps that bounded at a size the hourly
- * bucketing cannot even use -- two readings per hour would be plenty; the
- * headroom just means a burst never evicts the far end of the window.
- */
-const MAX_QUOTA_SAMPLES = 4000;
-const quotaSamples: { atMs: number; usedPercentage: number }[] = [];
+// See quotaSampleBuffer.ts for the buffer's own reasoning (cap, in-memory-only,
+// and the equality-only dedup rule -- a monotonic high-water mark bug lived
+// here before it was extracted).
+const quotaSampleBuffer = createQuotaSampleBuffer();
 let cachedQuotaEfficiency: QuotaEfficiency | null = null;
-
-function recordQuotaSample(atMs: number, usedPercentage: number): void {
-  // The watcher re-emits the same payload whenever the file is touched
-  // without changing. Deduping on the capture timestamp keeps a stalled
-  // statusline from filling the buffer with copies of one reading and
-  // evicting the history the fit needs.
-  const last = quotaSamples[quotaSamples.length - 1];
-  if (last && last.atMs >= atMs) return;
-  quotaSamples.push({ atMs, usedPercentage });
-  if (quotaSamples.length > MAX_QUOTA_SAMPLES) quotaSamples.shift();
-}
 
 // Memoised for a single scan cycle only: reset() is called at the start of
 // every scanAndPushUsage() call so a directory that becomes a git repo
@@ -488,7 +466,7 @@ async function scanAndPushUsage(): Promise<void> {
   // third pass over the transcripts -- and joins it to the percentage series
   // the statusline watcher has been accumulating. Only the derived numbers
   // cross the IPC boundary; no transcript content does.
-  cachedQuotaEfficiency = deriveQuotaEfficiency(quotaSamples, tokenSamplesFromEvents(optimizeEvents), {
+  cachedQuotaEfficiency = deriveQuotaEfficiency(quotaSampleBuffer.samples, tokenSamplesFromEvents(optimizeEvents), {
     nowMs: Date.now(),
     windowMs: SEVEN_DAY_MS,
   });
@@ -687,7 +665,7 @@ app.whenReady().then(async () => {
     // live depletion gauge and is never fitted). A payload without it -- an
     // older Claude Code, or a session before the first rate-limit report --
     // simply contributes no sample.
-    if (snapshot.sevenDay) recordQuotaSample(snapshot.capturedAtMs, snapshot.sevenDay.usedPercentage);
+    if (snapshot.sevenDay) recordQuotaSample(quotaSampleBuffer, snapshot.capturedAtMs, snapshot.sevenDay.usedPercentage);
     sendToWindow('statusline:snapshot', snapshot);
   });
 
