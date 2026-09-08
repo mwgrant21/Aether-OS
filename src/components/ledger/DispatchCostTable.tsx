@@ -32,14 +32,22 @@ export interface DispatchCostRow {
   toolUses: number;
   estimate: EstimatedCost;
   /**
-   * What this dispatch took out of the subscription quota.
+   * What this dispatch took out of the subscription quota, or `null` when the
+   * dispatch's completion notification carried NO usage at all.
    *
    * Rendered ALONGSIDE `estimate`, never instead of it -- they answer
    * different questions ("what share of the plan did this take" vs "what would
    * this have cost on the API"), and the second is a counterfactual this
    * account never pays. The column header says so.
+   *
+   * Nullable for the same reason RollupBuckets is (ledgerMath.ts): an absent
+   * measurement is not a zero one. A dispatch with no reported usage was
+   * priced through quotaCostForTokens(0, rate, price), which returns a
+   * perfectly well-formed `{ points: 0, usdPlan: 0 }` -- so the cell printed
+   * "$0.00" for work whose token count was never reported. Zero here is
+   * reserved for a dispatch that really did report zero tokens.
    */
-  quota: QuotaCost;
+  quota: QuotaCost | null;
   /** From the collector's schema-v5 columns. null means "not available". */
   exitState: ExitState | null;
   retries: number | null;
@@ -48,15 +56,21 @@ export interface DispatchCostRow {
 /**
  * The quota cell.
  *
- * Three states, all distinct on purpose:
+ * Four states, all distinct on purpose:
  *   dollars  -- a plan price is set and the fit has a rate.
  *   points   -- the fit has a rate but no price is configured.
  *   em dash  -- no rate yet. NOT "0.0 pts": zero would read as "this dispatch
  *               consumed no quota", when the truth is that the amount is not
  *               yet knowable. This is the same null-versus-zero distinction
  *               RollupBuckets makes in ledgerMath.ts.
+ *   em dash  -- no TOKENS reported for the dispatch (quota === null). The same
+ *               rule on the other axis: the rate can be perfectly well known
+ *               and the figure still unknowable, because the thing it would be
+ *               multiplied by was never measured. Rendering $0.00 there was
+ *               the rate-axis rule being enforced while the token axis was not.
  */
-function quotaCell(quota: QuotaCost): string {
+function quotaCell(quota: QuotaCost | null): string {
+  if (quota === null) return '—';
   if (quota.tokensPerPoint <= 0) return '—';
   if (quota.usdPlan !== null) return planUsd(quota.usdPlan);
   return fmtPoints(quota.points);

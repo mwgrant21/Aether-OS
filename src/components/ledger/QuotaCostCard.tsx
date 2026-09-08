@@ -67,15 +67,31 @@ export function QuotaCostCard({
       <div style={rowStyle}>
         <div style={labelStyle(colors)}>TOKENS / POINT</div>
         <div style={valueStyle(colors)}>
-          {quota?.tokensPerPoint != null
+          {quota !== null && quota.tokensPerPoint != null
             ? fmtTokens(Math.round(quota.tokensPerPoint))
-            : `fit forming — ${quota?.fittedBuckets ?? 0} of ${MIN_FIT_BUCKETS} hours`}
+            : quota === null
+              // Same reason as OBSERVED HERE below: before the first efficiency
+              // snapshot there is no bucket count to report, and "0 of 3 hours"
+              // asserted one. The "fit forming" copy softened it but did not
+              // make it true.
+              ? 'fit forming — no scan yet'
+              : `fit forming — ${quota.fittedBuckets} of ${MIN_FIT_BUCKETS} hours`}
         </div>
       </div>
 
       <div style={rowStyle}>
         <div style={labelStyle(colors)}>OBSERVED HERE</div>
-        <div style={valueStyle(colors)}>{fmtTokens(quota?.observedTokens ?? 0)}</div>
+        {/* Em dash, never 0, when no efficiency snapshot exists yet.
+            `quota === null` is reachable for up to ~50s after every launch --
+            the statusline arrives on a 10s watcher while the efficiency
+            snapshot rides a 60s tick -- and indefinitely if a scan throws. A
+            rendered "0" there asserts this machine logged zero tokens in seven
+            days, which is a measurement claim the app has not made. This is
+            quotaCell's own three-state rule (DispatchCostTable.tsx) applied to
+            the card that sits above it. */}
+        <div style={valueStyle(colors)}>
+          {quota === null ? '—' : fmtTokens(quota.observedTokens)}
+        </div>
       </div>
 
       {quota != null && quota.externalUsageBuckets > 0 && (

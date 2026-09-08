@@ -152,6 +152,33 @@ describe('buildDispatchRows', () => {
     expect(r.toolUses).toBe(0);
   });
 
+  // Whole-branch review, FIX 2. The test above passes tokensPerPoint: null, so
+  // it never reaches the branch that matters: with a REAL fit and a REAL plan
+  // price, quotaCostForTokens(0, 200_000, 200) returns a well-formed
+  // { points: 0, usdPlan: 0 } and the cell rendered "$0.00" for a dispatch
+  // whose token count was never reported. A row with no usage must carry a
+  // null quota -- the same absent-versus-zero rule RollupBuckets enforces.
+  it('carries a NULL quota when the dispatch reported no usage, even with a fit and a price', () => {
+    const [r] = buildDispatchRows(
+      { ...base, dispatchUsage: {} },
+      { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
+    );
+    expect(r.quota).toBeNull();
+  });
+
+  // The other half of the same distinction: a dispatch that genuinely reported
+  // zero tokens is a measurement, and must NOT be flattened into the absent
+  // case -- otherwise the fix would trade one lie for another.
+  it('keeps a genuinely-zero token report as a real zero, not as absent', () => {
+    const [r] = buildDispatchRows(
+      { ...base, dispatchUsage: { tu_1: { tokens: 0, toolUses: 0, durationMs: 0 } } },
+      { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
+    );
+    expect(r.quota).not.toBeNull();
+    expect(r.quota!.points).toBe(0);
+    expect(r.quota!.usdPlan).toBe(0);
+  });
+
   it('leaves telemetry null when the collector is absent or pre-v5', () => {
     const [r] = buildDispatchRows({ ...base, diagnostics: null }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.exitState).toBeNull();
@@ -192,9 +219,12 @@ describe('buildDispatchRows', () => {
   // assertion fails immediately if the two arguments are ever transposed.
   it('joins tokensPerPoint and planMonthlyUsd into the quota figure without swapping them', () => {
     const [r] = buildDispatchRows(base, { tokensPerPoint: 200_000, planMonthlyUsd: 200 });
-    expect(r.quota.tokensPerPoint).toBe(200_000);
-    expect(r.quota.points).toBeCloseTo(5.0, 6);
-    expect(r.quota.usdPlan).toBeCloseTo(2.5, 6);
+    // Non-null because this dispatch DID report usage -- see the absent-usage
+    // test below, which is the null case.
+    expect(r.quota).not.toBeNull();
+    expect(r.quota!.tokensPerPoint).toBe(200_000);
+    expect(r.quota!.points).toBeCloseTo(5.0, 6);
+    expect(r.quota!.usdPlan).toBeCloseTo(2.5, 6);
   });
 });
 
