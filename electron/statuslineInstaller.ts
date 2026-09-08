@@ -1,4 +1,5 @@
 import { promises as fsp } from 'fs';
+import { randomBytes } from 'crypto';
 import { dirname } from 'path';
 
 export type InstallStatus = 'installed' | 'installed-other' | 'not-installed' | 'unreadable';
@@ -171,9 +172,17 @@ async function readExistingSettings(
   return { ok: true, fileExisted, raw, parsed: parsed as Record<string, unknown> };
 }
 
+// Mirrors collector/src/hookInstaller.ts: a sibling of settings.json whose name
+// is unique per invocation even when two writers (this app, the TS collector,
+// the Go collector) hit the same millisecond, always created exclusively.
+function uniqueSiblingPath(settingsPath: string, marker: string): string {
+  return `${settingsPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
+}
+
 async function writeBackup(settingsPath: string, raw: string): Promise<string> {
-  const backupPath = `${settingsPath}.aetherbak-${Date.now()}`;
-  await fsp.writeFile(backupPath, raw, 'utf8');
+  const backupPath = uniqueSiblingPath(settingsPath, 'aetherbak');
+  // flag wx: never overwrite an earlier backup, which may be the user's pristine file (#60).
+  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx' });
   return backupPath;
 }
 
@@ -184,9 +193,26 @@ async function writeBackup(settingsPath: string, raw: string): Promise<string> {
 // scripts/aether-statusline.mjs already uses for its own, lower-stakes cache
 // file.
 async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
-  const tmpPath = `${settingsPath}.aethertmp-${Date.now()}`;
-  await fsp.writeFile(tmpPath, content, 'utf8');
-  await fsp.rename(tmpPath, settingsPath);
+  const tmpPath = uniqueSiblingPath(settingsPath, 'aethertmp');
+  try {
+    // flag wx: exclusive create, so a collision is an error rather than a clobber.
+    await fsp.writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    // A lost exclusive create (EEXIST) means the file is another writer's: leave
+    // it alone. Any other failure may have created it (ENOSPC after open), so
+    // it is ours to remove (#59). The original error is what the caller sees.
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== 'EEXIST') {
+      await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+    }
+    throw err;
+  }
+  try {
+    await fsp.rename(tmpPath, settingsPath);
+  } catch (err) {
+    // Past the create, the temp file is ours whatever the rename error was.
+    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 export async function installStatusline(

@@ -809,3 +809,36 @@ func TestWriters_RenameErrExist_StillRemovesOwnTempFile(t *testing.T) {
 		t.Errorf("own temp file leaked after rename ErrExist: %v", tmp)
 	}
 }
+
+// Issue #60: two backups taken in the same millisecond must both survive;
+// the first one is the user's pristine pre-Aether file.
+func TestBackupPathFor_DistinctWithinSameMillisecond(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	a := backupPathFor(settingsPath)
+	b := backupPathFor(settingsPath)
+	if a == b {
+		t.Fatalf("two backup paths collided: %s", a)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.HasPrefix(p, settingsPath+".aetherbak-") {
+			t.Errorf("backup path %q does not sit beside settings.json with the .aetherbak- marker", p)
+		}
+	}
+}
+
+func TestWriteBackup_RefusesToClobberAnExistingBackup(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := backupPathFn
+	fixed := settingsPath + ".aetherbak-fixed"
+	backupPathFn = func(string) string { return fixed }
+	defer func() { backupPathFn = orig }()
+	if err := os.WriteFile(fixed, []byte("pristine"), 0644); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if _, err := writeBackup(settingsPath, "newer"); err == nil {
+		t.Fatalf("writeBackup overwrote an existing backup, want an error")
+	}
+	if got := readRaw(t, fixed); got != "pristine" {
+		t.Errorf("existing backup changed: %q", got)
+	}
+}

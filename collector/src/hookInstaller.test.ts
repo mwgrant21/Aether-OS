@@ -371,7 +371,7 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 
-  it('leaves another writer\x27s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
+  it('leaves another writer\'s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
     const settingsPath = tempSettingsPath('{}');
     const realWriteFile = fsp.writeFile.bind(fsp);
     let contested = '';
@@ -411,6 +411,29 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
     }
     expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
     expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
+  it('keeps both backups when two writes share the same millisecond (#60)', async () => {
+    const original = '{"model":"opus"}';
+    const settingsPath = tempSettingsPath(original);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(1700000000000));
+    let first: string | null | undefined;
+    let second: string | null | undefined;
+    try {
+      first = (await installHooks(settingsPath, SCRIPT_PATH)).backupPath;
+      const afterFirst = readFileSync(settingsPath, 'utf8');
+      second = (await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH)).backupPath;
+      expect(first).toBeTruthy();
+      expect(second).toBeTruthy();
+      expect(first).not.toBe(second);
+      // The first backup is the user's pristine file and must survive the second write.
+      expect(readFileSync(first!, 'utf8')).toBe(original);
+      expect(readFileSync(second!, 'utf8')).toBe(afterFirst);
+      expect(backupsBeside(settingsPath)).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {
