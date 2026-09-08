@@ -26,12 +26,20 @@ export function SessionCostCard({ total, tiers }: { total: ExactCost; tiers: Pri
           "session" is misread by exactly the operator this view is for. */}
       <div style={cardTitleStyle(colors)}>OBSERVED TOTAL — ALL TRANSCRIPTS</div>
       <div style={totalStyle(colors)}>{usd(total.usd)}</div>
+      {/* The whole-branch review's FIX 4: this is the largest number in the
+          view, it is priced at published API rates, and a subscription account
+          never pays it. DispatchCostTable's column already says "API rate (not
+          paid)"; leaving the biggest figure unmarked meant the marked one read
+          as the exception. The marker sits directly under the number rather
+          than in the fine print, because the number is what gets read. */}
+      <div style={notPaidStyle(colors)}>API rate — not what a subscription account pays</div>
       <div style={tierLineStyle(colors)}>
         {tiers.length === 0 ? 'no priced activity observed' : `tier${tiers.length > 1 ? 's' : ''}: ${tiers.join(', ')}`}
       </div>
       <div style={windowNoteStyle(colors)}>
         Every Claude Code transcript on this machine, all projects, no time limit. Not a session and not a
-        billing period — see the rollup for time-scoped figures.
+        billing period — see the rollup for time-scoped figures. On a plan, the money actually committed is
+        in QUOTA COST below.
       </div>
 
       <div style={breakdownStyle}>
@@ -70,6 +78,14 @@ const cardTitleStyle = (c: ColorPalette): CSSProperties => ({
 const totalStyle = (c: ColorPalette): CSSProperties => ({
   font: `700 32px/1.1 ${fonts.mono}`,
   color: c.accentCyan,
+});
+
+const notPaidStyle = (c: ColorPalette): CSSProperties => ({
+  font: `600 10px/1.4 ${fonts.ui}`,
+  letterSpacing: '.08em',
+  textTransform: 'uppercase',
+  color: c.warn,
+  marginTop: 4,
 });
 
 const tierLineStyle = (c: ColorPalette): CSSProperties => ({

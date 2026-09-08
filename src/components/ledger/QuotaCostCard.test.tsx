@@ -105,7 +105,18 @@ describe('QuotaCostCard', () => {
     );
     expect(screen.getByText('58.0 pts')).toBeTruthy();
     expect(screen.getByText('$29.00')).toBeTruthy();
-    expect(screen.getByText(/0 of 3/)).toBeTruthy();
     expect(screen.queryByText(/no seven-day rate-limit data/i)).toBeNull();
+
+    // Whole-branch review, FIX 3. This test was NAMED for not-enough-data and
+    // the row beneath it read "0": `fmtTokens(quota?.observedTokens ?? 0)`
+    // turned "no efficiency snapshot yet" into the assertion that this machine
+    // logged zero tokens in seven days. Reachable for ~50s after every launch
+    // (10s statusline watcher, 60s efficiency tick) and indefinitely if a scan
+    // throws. Em dash, exactly as quotaCell renders an unknowable quota.
+    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.queryByText('0')).toBeNull();
+    // And the fit line must not claim a bucket count it has not counted.
+    expect(screen.queryByText(/0 of 3/)).toBeNull();
+    expect(screen.getByText(/no scan yet/i)).toBeTruthy();
   });
 });
