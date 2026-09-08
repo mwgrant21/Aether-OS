@@ -320,6 +320,97 @@ describe('hookInstaller: error, backup and malformed-shape guards', () => {
       spy.mockRestore();
     }
     expect(readFileSync(settingsPath, 'utf8')).toBe(snapshot);
+    // #59: the failed rename must not leave its temp file beside the real settings.json.
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
+  it.each(allFns)('%s reports failure and leaves no temp file when writing the temp file fails mid-write', async (_name, fn) => {
+    const settingsPath = tempSettingsPath('{}');
+    await installHooks(settingsPath, SCRIPT_PATH);
+    await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH);
+    const snapshot = readFileSync(settingsPath, 'utf8');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    // Simulate ENOSPC the way it really happens: the file is created, then the write fails.
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) {
+        await realWriteFile(file, '', 'utf8');
+        throw new Error('ENOSPC: simulated write failure');
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      const result = await fn(settingsPath);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('simulated write failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe(snapshot);
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
+  it('uses a distinct temp file for each write even when two writes share the same millisecond', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('1700000000000' as unknown as number));
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    const tempPaths: string[] = [];
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) tempPaths.push(String(file));
+      return realWriteFile(file, data, options);
+    });
+    try {
+      expect((await installHooks(settingsPath, SCRIPT_PATH)).ok).toBe(true);
+      expect((await installPermissionHooks(settingsPath, PERMISSION_SCRIPT_PATH)).ok).toBe(true);
+    } finally {
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+    expect(tempPaths).toHaveLength(2);
+    expect(tempPaths[0]).not.toBe(tempPaths[1]);
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
+  it('leaves another writer\x27s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    let contested = '';
+    // Simulate losing the race: the other writer already owns this exact path.
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) {
+        contested = String(file);
+        await realWriteFile(file, '{"other":"writer"}', 'utf8');
+        throw Object.assign(new Error('EEXIST: file already exists'), { code: 'EEXIST' });
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('EEXIST');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(contested).not.toBe('');
+    expect(existsSync(contested)).toBe(true);
+    expect(readFileSync(contested, 'utf8')).toBe('{"other":"writer"}');
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
+  });
+
+  it('still removes its own temp file when the rename (not the create) fails with EEXIST', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    const spy = vi
+      .spyOn(fsp, 'rename')
+      .mockRejectedValueOnce(Object.assign(new Error('EEXIST: destination exists'), { code: 'EEXIST' }));
+    try {
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('EEXIST');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
+    expect(readdirSync(dirname(settingsPath)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 
   it('readHookInstallState reports nothing installed and does not throw on a malformed settings.json', async () => {

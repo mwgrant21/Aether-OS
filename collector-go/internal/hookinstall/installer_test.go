@@ -640,3 +640,172 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func tempFilesBeside(t *testing.T, settingsPath string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(settingsPath))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".aethertmp-") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// Issue #59: a failed atomic rename must report the error, leave
+// settings.json byte-identical, and not leave its temp file behind.
+func TestWriters_RenameFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
+	writers := []struct {
+		name    string
+		content string
+		fn      func(string) InstallResult
+	}{
+		{"InstallHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+		{"UninstallHooks", `{"hooks":{},"model":"opus"}`, UninstallHooks},
+		{"UninstallPermissionHooks", `{"hooks":{},"model":"opus"}`, UninstallPermissionHooks},
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			settingsPath := tempSettingsPathWithContent(t, w.content)
+			orig := renameFile
+			renameFile = func(oldpath, newpath string) error { return os.ErrPermission }
+			defer func() { renameFile = orig }()
+
+			result := w.fn(settingsPath)
+			if result.OK {
+				t.Fatalf("OK = true, want failure when rename fails")
+			}
+			if !strings.Contains(result.Error, os.ErrPermission.Error()) {
+				t.Errorf("Error = %q, want the rename error surfaced", result.Error)
+			}
+			if got := readRaw(t, settingsPath); got != w.content {
+				t.Errorf("settings.json bytes changed: %q", got)
+			}
+			if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+				t.Errorf("temp file leaked beside settings.json: %v", tmp)
+			}
+		})
+	}
+}
+
+// Issue #59, second door: a temp-file write that fails after the file was
+// created (ENOSPC is the realistic case) must not leave it behind either.
+func TestWriters_TempWriteFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
+	writers := []struct {
+		name    string
+		content string
+		fn      func(string) InstallResult
+	}{
+		{"InstallHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+		{"UninstallHooks", `{"hooks":{},"model":"opus"}`, UninstallHooks},
+		{"UninstallPermissionHooks", `{"hooks":{},"model":"opus"}`, UninstallPermissionHooks},
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			settingsPath := tempSettingsPathWithContent(t, w.content)
+			orig := writeFileFn
+			writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+				// Create the file with a partial payload, then fail, as a full disk does.
+				_ = os.WriteFile(name, data[:len(data)/2], perm)
+				return os.ErrClosed
+			}
+			defer func() { writeFileFn = orig }()
+
+			result := w.fn(settingsPath)
+			if result.OK {
+				t.Fatalf("OK = true, want failure when the temp write fails")
+			}
+			if !strings.Contains(result.Error, os.ErrClosed.Error()) {
+				t.Errorf("Error = %q, want the write error surfaced", result.Error)
+			}
+			if got := readRaw(t, settingsPath); got != w.content {
+				t.Errorf("settings.json bytes changed: %q", got)
+			}
+			if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+				t.Errorf("temp file leaked beside settings.json: %v", tmp)
+			}
+		})
+	}
+}
+
+// Two writers in the same millisecond must never share a temp path, or one
+// failing writer's cleanup could delete the other's pending file.
+func TestTempPathFor_DistinctWithinSameMillisecond(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	a := tempPathFor(settingsPath)
+	b := tempPathFor(settingsPath)
+	if a == b {
+		t.Fatalf("two temp paths collided: %s", a)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.HasPrefix(p, settingsPath+".aethertmp-") {
+			t.Errorf("temp path %q does not sit beside settings.json with the .aethertmp- marker", p)
+		}
+	}
+}
+
+func TestWriteFileExcl_RefusesToClobberAnExistingFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "pending")
+	if err := writeFileExcl(settingsPath, []byte("clobber"), 0644); err == nil {
+		t.Fatalf("writeFileExcl succeeded over an existing file, want an error")
+	}
+	if got := readRaw(t, settingsPath); got != "pending" {
+		t.Errorf("existing file changed: %q", got)
+	}
+}
+
+// Losing an exclusive-create race (ErrExist) means this invocation never
+// owned the file, so cleanup must leave the other writer's file alone.
+func TestWriters_ExclusiveCreateLoss_LeavesOtherWritersTempFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	var contested string
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		contested = name
+		if err := os.WriteFile(name, []byte("other writer"), perm); err != nil {
+			t.Fatalf("stage other writer: %v", err)
+		}
+		return os.ErrExist
+	}
+	defer func() { writeFileFn = orig }()
+
+	result := InstallHooks(settingsPath, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true, want failure on a lost exclusive create")
+	}
+	if contested == "" {
+		t.Fatalf("temp write never attempted")
+	}
+	if got := readRaw(t, contested); got != "other writer" {
+		t.Errorf("other writer's temp file was removed or changed: %q", got)
+	}
+	if got := readRaw(t, settingsPath); got != "{}" {
+		t.Errorf("settings.json changed: %q", got)
+	}
+}
+
+// ErrExist from the RENAME step is not a lost create: the temp file is ours
+// and must still be removed.
+func TestWriters_RenameErrExist_StillRemovesOwnTempFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := renameFile
+	renameFile = func(oldpath, newpath string) error { return os.ErrExist }
+	defer func() { renameFile = orig }()
+
+	result := InstallHooks(settingsPath, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true, want failure")
+	}
+	if got := readRaw(t, settingsPath); got != "{}" {
+		t.Errorf("settings.json changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+		t.Errorf("own temp file leaked after rename ErrExist: %v", tmp)
+	}
+}
