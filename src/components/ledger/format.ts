@@ -47,3 +47,22 @@ export function duration(ms: number): string {
  */
 export const ESTIMATE_BASIS_TOOLTIP =
   'blended tier rate applied to a scalar token count; no input/output split is available from the completion notification';
+
+/**
+ * A plan-amortized dollar figure. No tilde, and deliberately so: unlike
+ * approxUsd this is not a guess at what something cost -- it is an exact
+ * division of a price the operator entered. What it is NOT is a marginal
+ * cost: this money was spent whether the work ran or not, which is what the
+ * card's own copy says rather than what a punctuation mark could.
+ */
+export function planUsd(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+/** Rate-limit percentage points, at the precision the statusline reports. */
+export function points(value: number): string {
+  return `${value.toFixed(1)} pts`;
+}
+
+export const QUOTA_BASIS_TOOLTIP =
+  'share of the 7-day rate-limit window this consumed, priced by amortizing the monthly plan across the 400 points a 28-day month buys; tokens-per-point is fitted from observed percentage movement, so it is correlation, not a published rate';
