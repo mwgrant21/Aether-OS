@@ -436,15 +436,27 @@ describe('quotaCostForTokens', () => {
     expect(cost.usdPlan).toBeNull();
   });
 
-  it('reports zero points, not Infinity, when the fit has produced no rate yet', () => {
+  it('reports zero points and usdPlan null, not $0, when the fit has produced no rate yet', () => {
+    // A plan price IS configured here, so this proves the null comes from the
+    // missing rate specifically, not from falling through the no-plan-price
+    // branch above -- the two null causes must stay distinguishable.
     const cost = quotaCostForTokens(500_000, 0, 200);
     expect(cost.points).toBe(0);
-    expect(cost.usdPlan).toBe(0);
+    expect(cost.usdPlan).toBeNull();
   });
 
   it('treats a missing or negative token count as zero', () => {
     expect(quotaCostForTokens(-5, 100_000, 200).points).toBe(0);
     expect(quotaCostForTokens(Number.NaN, 100_000, 200).points).toBe(0);
+  });
+
+  it('prices on the five-hour basis when the caller explicitly asks for it', () => {
+    // Same 500k tokens / 100k tokens-per-point = 5 points as the seven-day
+    // case, but at the far-lower five-hour $/point rate: 5 * (200/13440).
+    const cost = quotaCostForTokens(500_000, 100_000, 200, 'five_hour');
+    expect(cost.basis).toBe('five_hour');
+    expect(cost.points).toBeCloseTo(5, 10);
+    expect(cost.usdPlan).toBeCloseTo(5 * (200 / 13440), 10);
   });
 
   it('is structurally distinct from the other two cost types', () => {

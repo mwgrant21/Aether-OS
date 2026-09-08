@@ -142,10 +142,12 @@ export function quotaCostForTokens(
   const safeTokens = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
   const safeRate = Number.isFinite(tokensPerPoint) && tokensPerPoint > 0 ? tokensPerPoint : 0;
   const points = safeRate > 0 ? safeTokens / safeRate : 0;
-  const usdPlan =
-    monthlyUsd !== null && Number.isFinite(monthlyUsd) && monthlyUsd > 0
-      ? points * planCostPerPoint(monthlyUsd, QUOTA_WINDOW_MS[basis])
-      : null;
+  const hasPlanPrice = monthlyUsd !== null && Number.isFinite(monthlyUsd) && monthlyUsd > 0;
+  // usdPlan is null, never 0, when either input needed to defend a dollar
+  // figure is missing: no plan price configured, or (independently) no
+  // tokens-per-point fit yet -- see QuotaCost's doc comment. `points` itself
+  // stays a real 0 in the no-fit case; only the dollar figure is withheld.
+  const usdPlan = hasPlanPrice && safeRate > 0 ? points * planCostPerPoint(monthlyUsd, QUOTA_WINDOW_MS[basis]) : null;
   return { usdPlan, points, basis, tokensPerPoint: safeRate };
 }
 
