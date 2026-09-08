@@ -29,6 +29,7 @@ function row(over: Partial<DispatchCostRow> & { usdApprox?: number } = {}): Disp
     durationMs: 1000,
     toolUses: 2,
     estimate: { usdApprox, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+    quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
     exitState: null,
     retries: null,
     ...rest,
@@ -139,5 +140,35 @@ describe('DispatchCostTable', () => {
   it('does not mount a VerifyWithCodexButton for a non-completed dispatch', () => {
     render(<DispatchCostTable rows={[row({ toolUseId: 'tu_fatal', exitState: 'fatal' })]} />);
     expect(screen.queryByText('VERIFY WITH CODEX')).toBeNull();
+  });
+
+  it('shows a quota figure alongside the API estimate', () => {
+    render(<DispatchCostTable rows={[row({
+      estimate: { usdApprox: 1.5, basis: 'blended-tier-rate', tokens: 300_000, tier: 'sonnet', tierSource: 'observed' },
+      quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
+    })]} />);
+    expect(screen.getByText('$1.00')).toBeTruthy();   // quota, no tilde
+    expect(screen.getByText('~$1.50')).toBeTruthy();  // API estimate, tilde retained
+  });
+
+  it('falls back to points when no plan price makes a dollar figure possible', () => {
+    render(<DispatchCostTable rows={[row({
+      quota: { usdPlan: null, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
+    })]} />);
+    expect(screen.getByText('2.0 pts')).toBeTruthy();
+  });
+
+  it('shows an em dash, not a zero, when the fit has produced no rate yet', () => {
+    render(<DispatchCostTable rows={[row({
+      quota: { usdPlan: null, points: 0, basis: 'seven_day', tokensPerPoint: 0 },
+    })]} />);
+    // 0 points would read as "this dispatch consumed no quota", which is false
+    // -- it consumed an unknown amount.
+    expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('labels the API column as counterfactual, not as spend', () => {
+    render(<DispatchCostTable rows={[row()]} />);
+    expect(screen.getByText(/API RATE \(NOT PAID\)/i)).toBeTruthy();
   });
 });
