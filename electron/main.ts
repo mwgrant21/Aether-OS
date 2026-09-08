@@ -50,6 +50,7 @@ import {
 import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
 import { createWaitClock, beginWait, endWait, activeDurationMs } from '../src/shared/waitClock';
+import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
@@ -330,30 +331,11 @@ const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDeci
 // own withTimeout resolves the HTTP response independently on timeout, without
 // ever calling back into these maps, so a timed-out request's resolver is never
 // removed -- a slow, session-lifetime leak of one Function reference per timeout.
-// Schedule a matching cleanup so a stale entry can't outlive the server-side
-// timeout that already made it moot.
-//
-// The same non-resolution is why `onExpire` exists: onPermissionRequest/
-// onPostToolUse `await decision` (the Promise this map's resolver settles),
-// and that promise is what closes userWaitClock's interval in their `finally`
-// block. If the operator abandons the prompt, `decision` never settles, that
-// `finally` never runs, and the interval would stay open FOREVER -- not just
-// a leak, but silent corruption: an open interval counts as "still waiting"
-// up to `nowMs` on every later call, so every dispatch after the abandoned
-// prompt would appear to overlap it and get its active duration wrongly
-// driven toward zero. `onExpire` gives the caller a chance to force that
-// interval closed at the same moment its resolver goes stale.
-function scheduleResolverCleanup<T>(
-  map: Map<string, (decision: T) => void>,
-  requestId: string,
-  afterMs: number,
-  onExpire?: () => void,
-): void {
-  setTimeout(() => {
-    map.delete(requestId);
-    onExpire?.();
-  }, afterMs + 1000).unref();
-}
+// scheduleResolverCleanup (its own module, resolverCleanup.ts, so the
+// onExpire behavior below has a real regression test) schedules a matching
+// cleanup so a stale entry can't outlive the server-side timeout that already
+// made it moot, and its `onExpire` hook is what force-closes userWaitClock's
+// interval for an abandoned prompt below -- see that module's comment.
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
