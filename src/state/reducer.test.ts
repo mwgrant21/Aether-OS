@@ -589,6 +589,50 @@ describe('reducer — wholesale-replace state setters', () => {
     expect(reducer(seeded, { type: 'SET_LEDGER', ledger: null }).ledger).toBeNull();
   });
 
+  it('SET_QUOTA_EFFICIENCY replaces quotaEfficiency wholesale, preserving a null rate', () => {
+    // tokensPerPoint: null here deliberately -- this is the guaranteed startup
+    // shape (an empty sample buffer on the first push) and the reducer must
+    // carry it through unchanged, not coerce it to 0.
+    const quota = {
+      basis: 'seven_day' as const,
+      tokenBasis: 'input-output-cachewrite' as const,
+      bucketMs: 3600000,
+      windowMs: 604800000,
+      computedAtMs: 1000,
+      tokensPerPoint: null,
+      fittedBuckets: 0,
+      externalUsageBuckets: 0,
+      fittedTokens: 0,
+      fittedPoints: 0,
+      observedTokens: 0,
+      buckets: [],
+    };
+    const next = reducer(initialState, { type: 'SET_QUOTA_EFFICIENCY', quota });
+    expect(next.quotaEfficiency).toEqual(quota);
+    expect(next.quotaEfficiency?.tokensPerPoint).toBeNull();
+  });
+
+  it('SET_QUOTA_EFFICIENCY accepts null wholesale, not just a null tokensPerPoint field', () => {
+    const seeded = reducer(initialState, {
+      type: 'SET_QUOTA_EFFICIENCY',
+      quota: {
+        basis: 'seven_day' as const,
+        tokenBasis: 'input-output-cachewrite' as const,
+        bucketMs: 3600000,
+        windowMs: 604800000,
+        computedAtMs: 1,
+        tokensPerPoint: 500,
+        fittedBuckets: 3,
+        externalUsageBuckets: 0,
+        fittedTokens: 1500,
+        fittedPoints: 3,
+        observedTokens: 1500,
+        buckets: [],
+      },
+    });
+    expect(reducer(seeded, { type: 'SET_QUOTA_EFFICIENCY', quota: null }).quotaEfficiency).toBeNull();
+  });
+
   it('SET_PROJECTS_SNAPSHOT replaces projectsSnapshot wholesale', () => {
     const snapshot = { roots: [], unscoped: null, computedAtMs: 42 };
     const next = reducer(initialState, { type: 'SET_PROJECTS_SNAPSHOT', snapshot });
