@@ -53,6 +53,102 @@ export interface EstimatedCost {
   tierSource: 'observed' | 'defaulted';
 }
 
+/**
+ * A cost expressed in the SUBSCRIPTION QUOTA the work actually consumed,
+ * rather than in the API rates this account never pays.
+ *
+ * This is a third structurally distinct cost type, not a variant of the other
+ * two, and for the same reason they are distinct from each other: the money
+ * field is `usdPlan`, which collides with neither `usd` nor `usdApprox`, so a
+ * renderer cannot accidentally show a plan-amortized figure where an exact or
+ * an API-rate one belongs. The distinction matters more here than anywhere
+ * else in this file -- ExactCost and EstimatedCost differ in PRECISION, but
+ * QuotaCost differs in what is being measured. An operator on a Max plan pays
+ * the same $200 whether these dispatches ran or not; the honest question is
+ * what share of the month's quota they took, and that is what `points` is.
+ *
+ * `usdPlan` is `number | null`, and null is a real state with two causes, both
+ * of which must render as points-only rather than as $0.00:
+ *   - no monthly plan price has been entered in Settings, or
+ *   - the tokens-per-point fit has not yet cleared MIN_FIT_BUCKETS
+ *     (quotaEfficiency.ts), so there is no defensible rate to multiply by.
+ *
+ * `tokensPerPoint` is carried on the value rather than left at the call site,
+ * for the same reason EstimatedCost carries its `tier` -- a renderer showing
+ * the figure can name the empirical rate it came from, and two figures built
+ * from different fits can be told apart.
+ */
+export interface QuotaCost {
+  usdPlan: number | null;
+  /** Rate-limit percentage points, on the window named by `basis`. */
+  points: number;
+  basis: QuotaBasis;
+  tokensPerPoint: number;
+}
+
+export type QuotaBasis = 'seven_day' | 'five_hour';
+
+/**
+ * A fixed 28-day month, matching the basis the $/point formula is defined on
+ * (spec: `monthlyUsd / (100 * (40320 / windowMinutes))`).
+ *
+ * Fixed rather than calendar deliberately: a calendar month makes $/point
+ * swing 11% between February and March for a plan whose price never changed,
+ * so a week-over-week efficiency comparison would move for a reason that has
+ * nothing to do with efficiency.
+ */
+export const QUOTA_MONTH_MS = 28 * 24 * 60 * 60 * 1000;
+
+export const QUOTA_WINDOW_MS: Record<QuotaBasis, number> = {
+  seven_day: 7 * 24 * 60 * 60 * 1000,
+  five_hour: 5 * 60 * 60 * 1000,
+};
+
+/**
+ * Dollars per rate-limit percentage point.
+ *
+ * A plan buys 100 points per window, and a 28-day month contains
+ * `QUOTA_MONTH_MS / windowMs` windows -- so the month buys
+ * `100 * windowsPerMonth` points, and each is worth that fraction of the
+ * price. On the 7-day window this is simply `monthlyUsd / 400`.
+ *
+ * Returns 0 (never Infinity or NaN) for a non-positive or non-finite input:
+ * this feeds a currency display, and one bad settings value must not turn
+ * every figure on the Ledger into "$NaN".
+ */
+export function planCostPerPoint(monthlyUsd: number, windowMs: number): number {
+  if (!Number.isFinite(monthlyUsd) || monthlyUsd <= 0) return 0;
+  if (!Number.isFinite(windowMs) || windowMs <= 0) return 0;
+  const windowsPerMonth = QUOTA_MONTH_MS / windowMs;
+  return monthlyUsd / (100 * windowsPerMonth);
+}
+
+/**
+ * Prices a token count in quota.
+ *
+ * `basis` defaults to 'seven_day' and every caller in this app leaves it
+ * there: the 7-day window is the cost basis (spec, "Open questions
+ * (resolved)"), and the 5-hour window stays a live depletion gauge that is
+ * never mixed into a cost figure. The parameter exists so a future five-hour
+ * cost figure has to be written deliberately rather than by defaulting into
+ * one.
+ */
+export function quotaCostForTokens(
+  tokens: number,
+  tokensPerPoint: number,
+  monthlyUsd: number | null,
+  basis: QuotaBasis = 'seven_day',
+): QuotaCost {
+  const safeTokens = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
+  const safeRate = Number.isFinite(tokensPerPoint) && tokensPerPoint > 0 ? tokensPerPoint : 0;
+  const points = safeRate > 0 ? safeTokens / safeRate : 0;
+  const usdPlan =
+    monthlyUsd !== null && Number.isFinite(monthlyUsd) && monthlyUsd > 0
+      ? points * planCostPerPoint(monthlyUsd, QUOTA_WINDOW_MS[basis])
+      : null;
+  return { usdPlan, points, basis, tokensPerPoint: safeRate };
+}
+
 // ---------------------------------------------------------------------------
 // The blend ratio -- this assumption is the estimate's entire error term
 // ---------------------------------------------------------------------------
