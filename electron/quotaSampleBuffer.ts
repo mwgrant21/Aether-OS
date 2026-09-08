@@ -69,12 +69,34 @@ export function createQuotaSampleBuffer(
  * buffer) is enough, because the watcher emits sequentially -- a duplicate
  * re-emit always immediately follows the reading it repeats.
  *
+ * A second guard rejects an implausible FORWARD jump: `capturedAtMs` is
+ * external and untrusted (statuslineWatcher.ts validates only
+ * `Number.isFinite`), and the age prune below derives its cutoff from the
+ * sample just accepted. One payload stamped far enough ahead would make
+ * every real reading look older than the window and evict the whole
+ * series in a single call -- up to seven days of cost basis gone on one bad
+ * reading. A backward jump needs no such guard: a low `atMs` produces a low
+ * cutoff, which prunes nothing.
+ *
+ * The threshold reuses `buffer.windowMs` rather than a new constant: a
+ * forward step bigger than the whole retention window is implausible for
+ * any real clock (the watcher polls every ~10s), so this never fires
+ * during normal use, and it fires far earlier than a step so large it would
+ * merely leave the bogus sample sitting in the series -- which would still
+ * corrupt deriveQuotaEfficiency's per-bucket fit if it were retained rather
+ * than turned away. Rejecting here, before the sample is ever pushed, keeps
+ * that fit clean instead of merely deferring the damage.
+ *
  * Returns whether the sample was accepted, so a caller can make a rejection
- * observable instead of silent.
+ * observable instead of silent. main.ts's statusline-snapshot handler
+ * already treats this return value as the sole rejection signal (its
+ * edge-triggered `[diag] quota sample rejected` log covers both rejection
+ * reasons uniformly).
  */
 export function recordQuotaSample(buffer: QuotaSampleBuffer, atMs: number, usedPercentage: number): boolean {
   const last = buffer.samples[buffer.samples.length - 1];
   if (last && last.atMs === atMs && last.usedPercentage === usedPercentage) return false;
+  if (last && atMs - last.atMs > buffer.windowMs) return false;
   buffer.samples.push({ atMs, usedPercentage });
   // Age prune, relative to the sample just accepted: anything at the leading
   // edge that has fallen out of the retention window is no longer joinable to
