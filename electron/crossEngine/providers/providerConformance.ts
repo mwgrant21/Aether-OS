@@ -141,15 +141,21 @@ export function runProviderConformance(target: ConformanceTarget): void {
       await adapter.dispose();
     });
 
-    it('reports a usage shape with the three token fields present', async () => {
+    it('reports four disjoint, non-negative token buckets', async () => {
       const adapter = await target.create();
       if (!adapter.capabilities().usageReporting) return;
       await adapter.connect();
       const sessionId = await adapter.newSession({ cwd: process.cwd() });
       const result = await adapter.sendTurn({ sessionId, text: 'hello' }, () => {});
-      expect(result.usage).toHaveProperty('inputTokens');
-      expect(result.usage).toHaveProperty('outputTokens');
-      expect(result.usage).toHaveProperty('cachedInputTokens');
+      // The buckets are DISJOINT by contract (see TurnUsage in contract.ts):
+      // a provider that reports nested buckets must subtract before reporting.
+      // A negative value is the signature of that subtraction done without a
+      // floor -- the one failure mode the de-nesting itself can introduce.
+      for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'reasoningOutputTokens'] as const) {
+        expect(result.usage).toHaveProperty(key);
+        const value = result.usage[key];
+        expect(value === null || (Number.isFinite(value) && value >= 0)).toBe(true);
+      }
       await adapter.dispose();
     });
 

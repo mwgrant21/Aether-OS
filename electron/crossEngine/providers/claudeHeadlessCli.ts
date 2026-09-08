@@ -124,9 +124,14 @@ function readUsage(raw: unknown): TurnUsage {
   if (!u) return EMPTY_USAGE;
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
   return {
+    // Already disjoint on this wire format: the Anthropic result's
+    // `input_tokens` excludes `cache_read_input_tokens`, so nothing is
+    // subtracted here. Reasoning tokens are not broken out separately on this
+    // surface at all, which is `null` (not reported), never 0.
     inputTokens: num(u.input_tokens),
     outputTokens: num(u.output_tokens),
     cachedInputTokens: num(u.cache_read_input_tokens),
+    reasoningOutputTokens: null,
   };
 }
 
