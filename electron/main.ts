@@ -28,6 +28,12 @@ import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor, upsertGuidance } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { buildLedgerSnapshot, type LedgerSnapshot } from '../src/shared/ledgerMath';
+import {
+  deriveQuotaEfficiency,
+  tokenSamplesFromEvents,
+  SEVEN_DAY_MS,
+  type QuotaEfficiency,
+} from '../src/shared/quotaEfficiency';
 import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
 import { normalizePath } from '../src/shared/projectIdentity';
 import { createScopedGitProbe } from './gitProbeCache';
@@ -354,6 +360,35 @@ let cachedLedgerSnapshot: LedgerSnapshot | null = null;
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 
+/**
+ * Seven-day rate-limit percentage readings, oldest first.
+ *
+ * In memory only, and deliberately: this is a live series whose whole value is
+ * being current. A persisted copy rehydrated after a restart would date from
+ * a window that has since reset, which is the same dishonesty
+ * persistence.ts's `statusline` exclusion already refuses.
+ *
+ * The statusline writes roughly every render and the watcher polls every 10s
+ * (statuslineWatcher.ts's WATCH_INTERVAL_MS), so a full 7 days of continuous
+ * running is ~60k readings. The cap keeps that bounded at a size the hourly
+ * bucketing cannot even use -- two readings per hour would be plenty; the
+ * headroom just means a burst never evicts the far end of the window.
+ */
+const MAX_QUOTA_SAMPLES = 4000;
+const quotaSamples: { atMs: number; usedPercentage: number }[] = [];
+let cachedQuotaEfficiency: QuotaEfficiency | null = null;
+
+function recordQuotaSample(atMs: number, usedPercentage: number): void {
+  // The watcher re-emits the same payload whenever the file is touched
+  // without changing. Deduping on the capture timestamp keeps a stalled
+  // statusline from filling the buffer with copies of one reading and
+  // evicting the history the fit needs.
+  const last = quotaSamples[quotaSamples.length - 1];
+  if (last && last.atMs >= atMs) return;
+  quotaSamples.push({ atMs, usedPercentage });
+  if (quotaSamples.length > MAX_QUOTA_SAMPLES) quotaSamples.shift();
+}
+
 // Memoised for a single scan cycle only: reset() is called at the start of
 // every scanAndPushUsage() call so a directory that becomes a git repo
 // between scans is picked up on the next scan, rather than a stale `false`
@@ -448,6 +483,16 @@ async function scanAndPushUsage(): Promise<void> {
     Date.now(),
   );
   sendToWindow('ledger:snapshot', cachedLedgerSnapshot);
+
+  // Quota efficiency rides the SAME optimizeEvents scan as the Ledger -- no
+  // third pass over the transcripts -- and joins it to the percentage series
+  // the statusline watcher has been accumulating. Only the derived numbers
+  // cross the IPC boundary; no transcript content does.
+  cachedQuotaEfficiency = deriveQuotaEfficiency(quotaSamples, tokenSamplesFromEvents(optimizeEvents), {
+    nowMs: Date.now(),
+    windowMs: SEVEN_DAY_MS,
+  });
+  sendToWindow('quota:efficiency', cachedQuotaEfficiency);
 
   cachedProjectsSnapshot = buildProjectsSnapshot(
     optimizeEvents,
@@ -638,6 +683,11 @@ app.whenReady().then(async () => {
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
     cachedStatuslineSnapshot = snapshot;
+    // The seven-day window is the quota cost basis (the five-hour one stays a
+    // live depletion gauge and is never fitted). A payload without it -- an
+    // older Claude Code, or a session before the first rate-limit report --
+    // simply contributes no sample.
+    if (snapshot.sevenDay) recordQuotaSample(snapshot.capturedAtMs, snapshot.sevenDay.usedPercentage);
     sendToWindow('statusline:snapshot', snapshot);
   });
 
@@ -1100,6 +1150,10 @@ ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath
 ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
 
 ipcMain.handle('ledger:snapshot:current', () => cachedLedgerSnapshot);
+
+// Same startup race the ledger and statusline channels solve this way: the
+// 60s scan can finish before the renderer's listener exists.
+ipcMain.handle('quota:efficiency:current', () => cachedQuotaEfficiency);
 
 ipcMain.handle('projects:snapshot:current', () => cachedProjectsSnapshot);
 
