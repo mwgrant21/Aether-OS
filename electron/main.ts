@@ -49,6 +49,7 @@ import {
 } from './headlineGenerator';
 import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
+import { createWaitClock, beginWait, endWait, activeDurationMs } from '../src/shared/waitClock';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
@@ -81,6 +82,14 @@ let lastTickResult: LiveAgentTick | null = null;
 const headlineThrottle = createHeadlineThrottle();
 const narrationDurationBaseline = createDurationBaseline();
 const periodicContentCache = createPeriodicContentCache();
+/**
+ * When this app was blocked on the operator.
+ *
+ * Process-lifetime, in memory, not persisted -- it only ever answers questions
+ * about spans inside this run, and a rehydrated interval from a previous run
+ * could only ever subtract time from a dispatch it has nothing to do with.
+ */
+const userWaitClock = createWaitClock();
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -323,8 +332,27 @@ const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDeci
 // removed -- a slow, session-lifetime leak of one Function reference per timeout.
 // Schedule a matching cleanup so a stale entry can't outlive the server-side
 // timeout that already made it moot.
-function scheduleResolverCleanup<T>(map: Map<string, (decision: T) => void>, requestId: string, afterMs: number): void {
-  setTimeout(() => map.delete(requestId), afterMs + 1000).unref();
+//
+// The same non-resolution is why `onExpire` exists: onPermissionRequest/
+// onPostToolUse `await decision` (the Promise this map's resolver settles),
+// and that promise is what closes userWaitClock's interval in their `finally`
+// block. If the operator abandons the prompt, `decision` never settles, that
+// `finally` never runs, and the interval would stay open FOREVER -- not just
+// a leak, but silent corruption: an open interval counts as "still waiting"
+// up to `nowMs` on every later call, so every dispatch after the abandoned
+// prompt would appear to overlap it and get its active duration wrongly
+// driven toward zero. `onExpire` gives the caller a chance to force that
+// interval closed at the same moment its resolver goes stale.
+function scheduleResolverCleanup<T>(
+  map: Map<string, (decision: T) => void>,
+  requestId: string,
+  afterMs: number,
+  onExpire?: () => void,
+): void {
+  setTimeout(() => {
+    map.delete(requestId);
+    onExpire?.();
+  }, afterMs + 1000).unref();
 }
 
 // startPermissionServer's own promise only ever resolves on the underlying
@@ -616,11 +644,19 @@ async function tickAndPushAgents(): Promise<void> {
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
     for (const c of result.completed) {
+      // `<duration_ms>` is WALL CLOCK and includes every second this run sat
+      // blocked on an approval prompt. Comparing that against a median of
+      // other wall-clock runs manufactures "slow run" anomalies whose real
+      // cause is that nobody was at the keyboard. Subtract the overlap first,
+      // and record the corrected figure -- recording the wall figure would
+      // poison every later comparison with the same inflation.
+      const startedMs = new Date(c.startedAt).getTime();
+      const measuredMs = activeDurationMs(userWaitClock, startedMs, c.durationMs, Date.now());
       // Snapshot the baseline BEFORE recording this run -- a run must never
       // be compared against a baseline it has already contributed to.
       const medianMsAtEval = getMedianMs(narrationDurationBaseline, c.subagentType);
-      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: c.durationMs }, medianMsAtEval);
-      recordDuration(narrationDurationBaseline, c.subagentType, c.durationMs);
+      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: measuredMs }, medianMsAtEval);
+      recordDuration(narrationDurationBaseline, c.subagentType, measuredMs);
       if (narrated) {
         sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration: narrated.narration, severity: narrated.severity });
       }
@@ -711,9 +747,22 @@ app.whenReady().then(async () => {
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
       });
-      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs);
+      // See scheduleResolverCleanup's comment: onExpire force-closes the wait
+      // interval if the operator abandons the prompt, since `decision` below
+      // never settles in that case and the `finally` never runs on its own.
+      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs, () =>
+        endWait(userWaitClock, requestId, Date.now()),
+      );
+      // The clock opens the moment the prompt reaches the renderer and closes
+      // however this resolves: an answer, the onExpire above, or a throw.
+      // `finally` covers the throw path; a `.then` would miss it.
+      beginWait(userWaitClock, requestId, Date.now());
       sendToWindow('permission:request', { requestId, toolName: req.toolName, toolInput: req.toolInput, risk, editableField });
-      return decision;
+      try {
+        return await decision;
+      } finally {
+        endWait(userWaitClock, requestId, Date.now());
+      }
     },
     postToolUseTimeoutMs: 30000,
     onPostToolUse: async (req: { toolUseId: string; toolName: string; toolOutput: unknown }): Promise<PostToolFlagDecision> => {
@@ -730,7 +779,10 @@ app.whenReady().then(async () => {
       const decision = new Promise<PostToolFlagDecision>((resolve) => {
         pendingPostToolFlagResolvers.set(requestId, resolve);
       });
-      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs);
+      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs, () =>
+        endWait(userWaitClock, requestId, Date.now()),
+      );
+      beginWait(userWaitClock, requestId, Date.now());
       sendToWindow('postToolFlag:request', {
         requestId,
         toolUseId: req.toolUseId,
@@ -738,7 +790,11 @@ app.whenReady().then(async () => {
         anomalyKind: tripped.kind,
         detail: tripped.detail,
       });
-      return decision;
+      try {
+        return await decision;
+      } finally {
+        endWait(userWaitClock, requestId, Date.now());
+      }
     },
     onNotification: ({ sessionId, notificationType }: { sessionId: string; notificationType: string }) => {
       // Real notification-handling logic (session-identity check, the
