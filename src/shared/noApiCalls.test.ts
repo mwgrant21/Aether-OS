@@ -165,6 +165,49 @@ describe('cross-engine Codex boundary', () => {
     expect(hits).toEqual([]);
   });
 
+  // Strictly narrower than the grep above, and the reason it can stay narrow:
+  // the only operation that actually reaches the adapter executable is resolving
+  // the package. Mentioning '@agentclientprotocol/sdk' in a doc comment (acpClient.ts
+  // does, repeatedly) is not that. This asserts the resolution itself lives in exactly
+  // one reviewed module, which the token-level grep alone cannot express.
+  it('no module outside acpProcess.ts resolves an @agentclientprotocol package', () => {
+    const hits = grepSourceFor(/require\.resolve\([^)]*@agentclientprotocol/).filter((f) => {
+      const posix = f.replace(/\\/g, '/');
+      return !posix.includes('electron/crossEngine/acpProcess.ts') && !posix.includes('.test.ts');
+    });
+    expect(hits).toEqual([]);
+  });
+
+  // The Claude headless adapter is the second module in this repo that can
+  // spawn a model-running CLI. It is currently constructed by nothing outside
+  // tests (docs/privacy-and-data.md §12); this guard makes a stray second
+  // spawn site fail loudly rather than quietly widening the boundary.
+  it('only the reviewed headless adapter spawns the claude binary', () => {
+    const hits = grepSourceFor(/spawn\(\s*['\"]claude['\"]/).filter((f) => {
+      const posix = f.replace(/\\/g, '/');
+      return !posix.includes('electron/crossEngine/providers/claudeHeadlessCli.ts') && !posix.includes('.test.ts');
+    });
+    expect(hits).toEqual([]);
+  });
+
+  // --restricted alone is NOT read-only: measured against Claude Code 2.1.263 it
+  // left 110 tools available, including Write, Edit, NotebookEdit and Skill. The
+  // guarantee is the whole flag set, so weakening any part of it fails here.
+  it('the headless Claude adapter never weakens its read-only flag set', () => {
+    const text = readFileSync(
+      resolve(__dirname, '../../electron/crossEngine/providers/claudeHeadlessCli.ts'),
+      'utf8'
+    );
+    for (const flag of ['--restricted', '--strict-mcp-config', '--disable-slash-commands', '--permission-prompts', '--allowedTools']) {
+      expect(text, 'missing required read-only flag ' + flag).toContain(flag);
+    }
+    // A denylist fails open on any newly added tool; an approval-bypassing or
+    // edit-accepting permission mode defeats the point entirely.
+    expect(text).not.toContain('--disallowedTools');
+    expect(text).not.toContain('bypassPermissions');
+    expect(text).not.toContain('acceptEdits');
+  });
+
   // Blocked-billing-variable removal (acpProcess.ts's child-environment builder)
   // and the chat-gpt-only authentication gate (codexVerifier.ts, checked immediately
   // before every verification turn, not only at connect time) are already covered by

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -426,63 +427,127 @@ func TestUninstallPermissionHooks_RemovesOnlyItsOwnEntries(t *testing.T) {
 	}
 }
 
-func TestInstallHooks_PreservesArrayShapedTopLevelHooks(t *testing.T) {
-	existing := `{"hooks":["legacy-entry-1","legacy-entry-2"]}`
-	settingsPath := tempSettingsPathWithContent(t, existing)
-	result := InstallHooks(settingsPath, scriptPath)
-	if !result.OK {
-		t.Fatalf("InstallHooks failed: %s", result.Error)
-	}
+// Issue #58 (mirrors the TS tests of the same intent): a top-level `hooks`
+// that is an array or a primitive is not a shape we can merge into without
+// guessing. Installers refuse before writing anything; uninstallers have
+// nothing of ours to remove there and no-op without touching the file.
+var malformedTopLevelHooks = []struct {
+	label   string
+	content string
+}{
+	{"empty array", `{"hooks":[],"model":"opus"}`},
+	{"array of groups", `{"hooks":[{"hooks":[{"type":"command","command":"other.ps1"}]}],"model":"opus"}`},
+	{"string", `{"hooks":"user-string","model":"opus"}`},
+	{"number", `{"hooks":42,"model":"opus"}`},
+	{"boolean", `{"hooks":true,"model":"opus"}`},
+}
 
-	written := readWritten(t, settingsPath)
-	hooksObj, ok := written["hooks"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("hooks is not an object after install: %#v", written["hooks"])
+func backupsBeside(t *testing.T, settingsPath string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(settingsPath))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
 	}
-	if got, _ := hooksObj["0"].(string); got != "legacy-entry-1" {
-		t.Errorf(`hooks["0"] = %v, want "legacy-entry-1"`, hooksObj["0"])
-	}
-	if got, _ := hooksObj["1"].(string); got != "legacy-entry-2" {
-		t.Errorf(`hooks["1"] = %v, want "legacy-entry-2"`, hooksObj["1"])
-	}
-	// Plus the newly-installed event groups -- nothing from the original
-	// array is lost, and install still proceeds normally.
-	for _, eventName := range ManagedHookEvents {
-		groups := hooksGroups(t, written, eventName)
-		if len(groups) != 1 {
-			t.Errorf("hooks[%s] length = %d, want 1", eventName, len(groups))
-			continue
+	var out []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".aetherbak-") {
+			out = append(out, e.Name())
 		}
-		if cmd := groupCommand(t, groups[0], 0); !strings.Contains(cmd, scriptPath) {
-			t.Errorf("hooks[%s][0] command = %q, want to contain scriptPath", eventName, cmd)
+	}
+	return out
+}
+
+func readRaw(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(raw)
+}
+
+func TestInstall_RefusesMalformedTopLevelHooks(t *testing.T) {
+	installers := []struct {
+		name string
+		fn   func(string) InstallResult
+	}{
+		{"InstallHooks", func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+	}
+	for _, in := range installers {
+		for _, tc := range malformedTopLevelHooks {
+			t.Run(in.name+"/"+tc.label, func(t *testing.T) {
+				settingsPath := tempSettingsPathWithContent(t, tc.content)
+				result := in.fn(settingsPath)
+				if result.OK {
+					t.Fatalf("OK = true, want refusal for hooks as %s", tc.label)
+				}
+				if !strings.Contains(result.Error, "not an object") {
+					t.Errorf("Error = %q, want it to say the hooks value is not an object", result.Error)
+				}
+				if got := readRaw(t, settingsPath); got != tc.content {
+					t.Errorf("settings.json bytes changed on refusal: %q", got)
+				}
+				if b := backupsBeside(t, settingsPath); len(b) != 0 {
+					t.Errorf("backup written on refusal: %v", b)
+				}
+			})
 		}
 	}
 }
 
-func TestUninstallHooks_ArrayShapedTopLevelHooks_WritesNotNoOp(t *testing.T) {
-	existing := `{"hooks":["legacy-entry-1","legacy-entry-2"]}`
-	settingsPath := tempSettingsPathWithContent(t, existing)
-	result := UninstallHooks(settingsPath)
-	if !result.OK {
-		t.Fatalf("UninstallHooks failed: %s", result.Error)
+func TestUninstall_NoOpsOnMalformedTopLevelHooks(t *testing.T) {
+	uninstallers := []struct {
+		name string
+		fn   func(string) InstallResult
+	}{
+		{"UninstallHooks", UninstallHooks},
+		{"UninstallPermissionHooks", UninstallPermissionHooks},
 	}
-	// None of the array elements match any marker-based removal, so this
-	// must still be a real write (backup taken), not TS's early-return no-op
-	// path, which only applies when hooks is missing/null/non-object.
-	if result.BackupPath == nil || *result.BackupPath == "" {
-		t.Fatalf("BackupPath = %v, want a non-empty path (must not be a no-op for array-shaped hooks)", result.BackupPath)
+	for _, un := range uninstallers {
+		for _, tc := range malformedTopLevelHooks {
+			t.Run(un.name+"/"+tc.label, func(t *testing.T) {
+				settingsPath := tempSettingsPathWithContent(t, tc.content)
+				result := un.fn(settingsPath)
+				if !result.OK {
+					t.Fatalf("OK = false (%s), want a no-op success for hooks as %s", result.Error, tc.label)
+				}
+				if result.BackupPath != nil {
+					t.Errorf("BackupPath = %q, want nil (no-op must not back up)", *result.BackupPath)
+				}
+				if got := readRaw(t, settingsPath); got != tc.content {
+					t.Errorf("settings.json bytes changed on no-op: %q", got)
+				}
+				if b := backupsBeside(t, settingsPath); len(b) != 0 {
+					t.Errorf("backup written on no-op: %v", b)
+				}
+			})
+		}
 	}
+}
 
+func TestReadHookInstallState_ArrayShapedHooks_ReportsNothingInstalled(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, `{"hooks":[{"hooks":[{"type":"command","command":"other.ps1"}]}]}`)
+	state := ReadHookInstallState(settingsPath, scriptPath)
+	if len(state.InstalledEvents) != 0 {
+		t.Errorf("InstalledEvents = %v, want none", state.InstalledEvents)
+	}
+}
+
+func TestInstallHooks_NullHooksTreatedAsAbsent(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, `{"hooks":null,"model":"opus"}`)
+	result := InstallHooks(settingsPath, scriptPath)
+	if !result.OK {
+		t.Fatalf("InstallHooks failed on hooks:null: %s", result.Error)
+	}
 	written := readWritten(t, settingsPath)
-	hooksObj, ok := written["hooks"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("hooks is not an object after uninstall: %#v", written["hooks"])
+	if got, _ := written["model"].(string); got != "opus" {
+		t.Errorf("model = %v, want opus preserved", written["model"])
 	}
-	if got, _ := hooksObj["0"].(string); got != "legacy-entry-1" {
-		t.Errorf(`hooks["0"] = %v, want "legacy-entry-1"`, hooksObj["0"])
-	}
-	if got, _ := hooksObj["1"].(string); got != "legacy-entry-2" {
-		t.Errorf(`hooks["1"] = %v, want "legacy-entry-2"`, hooksObj["1"])
+	for _, eventName := range ManagedHookEvents {
+		if groups := hooksGroups(t, written, eventName); len(groups) != 1 {
+			t.Errorf("hooks[%s] length = %d, want 1", eventName, len(groups))
+		}
 	}
 }
 
@@ -575,4 +640,393 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func tempFilesBeside(t *testing.T, settingsPath string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(settingsPath))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".aethertmp-") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// Issue #59: a failed atomic rename must report the error, leave
+// settings.json byte-identical, and not leave its temp file behind.
+func TestWriters_RenameFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
+	writers := []struct {
+		name    string
+		content string
+		fn      func(string) InstallResult
+	}{
+		{"InstallHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+		{"UninstallHooks", `{"hooks":{},"model":"opus"}`, UninstallHooks},
+		{"UninstallPermissionHooks", `{"hooks":{},"model":"opus"}`, UninstallPermissionHooks},
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			settingsPath := tempSettingsPathWithContent(t, w.content)
+			orig := renameFile
+			renameFile = func(oldpath, newpath string) error { return os.ErrPermission }
+			defer func() { renameFile = orig }()
+
+			result := w.fn(settingsPath)
+			if result.OK {
+				t.Fatalf("OK = true, want failure when rename fails")
+			}
+			if !strings.Contains(result.Error, os.ErrPermission.Error()) {
+				t.Errorf("Error = %q, want the rename error surfaced", result.Error)
+			}
+			if got := readRaw(t, settingsPath); got != w.content {
+				t.Errorf("settings.json bytes changed: %q", got)
+			}
+			if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+				t.Errorf("temp file leaked beside settings.json: %v", tmp)
+			}
+		})
+	}
+}
+
+// Issue #59, second door: a temp-file write that fails after the file was
+// created (ENOSPC is the realistic case) must not leave it behind either.
+func TestWriters_TempWriteFailure_ReportsErrorAndLeavesNoTempFile(t *testing.T) {
+	writers := []struct {
+		name    string
+		content string
+		fn      func(string) InstallResult
+	}{
+		{"InstallHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallHooks(p, scriptPath) }},
+		{"InstallPermissionHooks", `{"model":"opus"}`, func(p string) InstallResult { return InstallPermissionHooks(p, permissionScriptPath) }},
+		{"UninstallHooks", `{"hooks":{},"model":"opus"}`, UninstallHooks},
+		{"UninstallPermissionHooks", `{"hooks":{},"model":"opus"}`, UninstallPermissionHooks},
+	}
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			settingsPath := tempSettingsPathWithContent(t, w.content)
+			orig := writeFileFn
+			writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+				// Create the file with a partial payload, then fail, as a full disk does.
+				_ = os.WriteFile(name, data[:len(data)/2], perm)
+				return os.ErrClosed
+			}
+			defer func() { writeFileFn = orig }()
+
+			result := w.fn(settingsPath)
+			if result.OK {
+				t.Fatalf("OK = true, want failure when the temp write fails")
+			}
+			if !strings.Contains(result.Error, os.ErrClosed.Error()) {
+				t.Errorf("Error = %q, want the write error surfaced", result.Error)
+			}
+			if got := readRaw(t, settingsPath); got != w.content {
+				t.Errorf("settings.json bytes changed: %q", got)
+			}
+			if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+				t.Errorf("temp file leaked beside settings.json: %v", tmp)
+			}
+		})
+	}
+}
+
+// Two writers in the same millisecond must never share a temp path, or one
+// failing writer's cleanup could delete the other's pending file.
+func TestTempPathFor_DistinctWithinSameMillisecond(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	a := tempPathFor(settingsPath)
+	b := tempPathFor(settingsPath)
+	if a == b {
+		t.Fatalf("two temp paths collided: %s", a)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.HasPrefix(p, settingsPath+".aethertmp-") {
+			t.Errorf("temp path %q does not sit beside settings.json with the .aethertmp- marker", p)
+		}
+	}
+}
+
+func TestWriteFileExcl_RefusesToClobberAnExistingFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "pending")
+	if err := writeFileExcl(settingsPath, []byte("clobber"), 0644); err == nil {
+		t.Fatalf("writeFileExcl succeeded over an existing file, want an error")
+	}
+	if got := readRaw(t, settingsPath); got != "pending" {
+		t.Errorf("existing file changed: %q", got)
+	}
+}
+
+// Losing an exclusive-create race (ErrExist) means this invocation never
+// owned the file, so cleanup must leave the other writer's file alone.
+func TestWriters_ExclusiveCreateLoss_LeavesOtherWritersTempFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	var contested string
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		contested = name
+		if err := os.WriteFile(name, []byte("other writer"), perm); err != nil {
+			t.Fatalf("stage other writer: %v", err)
+		}
+		return os.ErrExist
+	}
+	defer func() { writeFileFn = orig }()
+
+	result := InstallHooks(settingsPath, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true, want failure on a lost exclusive create")
+	}
+	if contested == "" {
+		t.Fatalf("temp write never attempted")
+	}
+	if got := readRaw(t, contested); got != "other writer" {
+		t.Errorf("other writer's temp file was removed or changed: %q", got)
+	}
+	if got := readRaw(t, settingsPath); got != "{}" {
+		t.Errorf("settings.json changed: %q", got)
+	}
+}
+
+// ErrExist from the RENAME step is not a lost create: the temp file is ours
+// and must still be removed.
+func TestWriters_RenameErrExist_StillRemovesOwnTempFile(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := renameFile
+	renameFile = func(oldpath, newpath string) error { return os.ErrExist }
+	defer func() { renameFile = orig }()
+
+	result := InstallHooks(settingsPath, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true, want failure")
+	}
+	if got := readRaw(t, settingsPath); got != "{}" {
+		t.Errorf("settings.json changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+		t.Errorf("own temp file leaked after rename ErrExist: %v", tmp)
+	}
+}
+
+// Issue #60: two backups taken in the same millisecond must both survive;
+// the first one is the user's pristine pre-Aether file.
+func TestBackupPathFor_DistinctWithinSameMillisecond(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	a := backupPathFor(settingsPath)
+	b := backupPathFor(settingsPath)
+	if a == b {
+		t.Fatalf("two backup paths collided: %s", a)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.HasPrefix(p, settingsPath+".aetherbak-") {
+			t.Errorf("backup path %q does not sit beside settings.json with the .aetherbak- marker", p)
+		}
+	}
+}
+
+func TestWriteBackup_RefusesToClobberAnExistingBackup(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := backupPathFn
+	fixed := settingsPath + ".aetherbak-fixed"
+	backupPathFn = func(string) string { return fixed }
+	defer func() { backupPathFn = orig }()
+	if err := os.WriteFile(fixed, []byte("pristine"), 0644); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if _, err := writeBackup(settingsPath, "newer"); err == nil {
+		t.Fatalf("writeBackup overwrote an existing backup, want an error")
+	}
+	if got := readRaw(t, fixed); got != "pristine" {
+		t.Errorf("existing backup changed: %q", got)
+	}
+}
+
+// The write-path guarantees below mirror collector/src/atomicWrite.test.ts and
+// electron/atomicWrite.test.ts case for case (#63). A rename gives a new inode,
+// so each of these is something attached to the old one that must survive.
+
+// symlinkSupported probes once: creating a symlink needs privilege on Windows,
+// so these cases skip there and still run on the Linux CI lane.
+func symlinkSupported(t *testing.T) bool {
+	t.Helper()
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.WriteFile(real, []byte("x"), 0644); err != nil {
+		return false
+	}
+	return os.Symlink(real, filepath.Join(dir, "link")) == nil
+}
+
+func TestWriteSettingsAtomically_WritesThroughSymlinkKeepingTheLink(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	realDir := t.TempDir()
+	linkDir := t.TempDir()
+	realFile := filepath.Join(realDir, "settings.json")
+	link := filepath.Join(linkDir, "settings.json")
+	if err := os.WriteFile(realFile, []byte("original"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Symlink(realFile, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := writeSettingsAtomically(link, "updated"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("link was replaced instead of written through")
+	}
+	if got := readRaw(t, realFile); got != "updated" {
+		t.Errorf("real file = %q, want the new content", got)
+	}
+	if tmp := tempFilesBeside(t, realFile); len(tmp) != 0 {
+		t.Errorf("temp file left beside the real file: %v", tmp)
+	}
+	if tmp := tempFilesBeside(t, link); len(tmp) != 0 {
+		t.Errorf("temp file left beside the link: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_DanglingSymlinkWritesItsDestination(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "not-yet-there.json")
+	link := filepath.Join(dir, "settings.json")
+	if err := os.Symlink(missing, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := writeSettingsAtomically(link, "created through the link"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("dangling link was replaced instead of resolved")
+	}
+	if got := readRaw(t, missing); got != "created through the link" {
+		t.Errorf("destination = %q, want the new content", got)
+	}
+}
+
+func TestWriteSettingsAtomically_KeepsHardLinkedTargetAsOneInode(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	other := filepath.Join(dir, "settings.json.hardlink")
+	if err := os.WriteFile(target, []byte("shared"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Link(target, other); err != nil {
+		t.Skipf("hard links not available here: %v", err)
+	}
+	if linkCountOf(target) <= 1 {
+		t.Skip("link count not reported on this platform")
+	}
+
+	if err := writeSettingsAtomically(target, "updated through one entry"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// A rename would have left the other entry on the old inode.
+	if got := readRaw(t, other); got != "updated through one entry" {
+		t.Errorf("other entry = %q, want the new content (link was severed)", got)
+	}
+	if got := readRaw(t, target); got != "updated through one entry" {
+		t.Errorf("target = %q, want the new content", got)
+	}
+	if tmp := tempFilesBeside(t, target); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_RefusesAReadOnlyTarget(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the read-only bit, so this asserts nothing there")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(target, []byte("protected"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(target, 0444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer func() { _ = os.Chmod(target, 0644) }()
+
+	err := writeSettingsAtomically(target, "overwritten")
+	if err == nil {
+		t.Fatalf("write succeeded against a read-only target, want EACCES")
+	}
+	if !strings.Contains(err.Error(), "EACCES") {
+		t.Errorf("error = %q, want the EACCES shape Node also produces", err.Error())
+	}
+	if got := readRaw(t, target); got != "protected" {
+		t.Errorf("target changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, target); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_CarriesTheExistingModeOntoTheReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(target, []byte("secret"), 0600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := writeSettingsAtomically(target, "still secret"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Errorf("mode = %o, want 600 (a replace must not widen permissions)", got)
+	}
+	if got := readRaw(t, target); got != "still secret" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+func TestWriteSettingsAtomically_CreatesTheTempFileWithTheTargetMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(target, []byte("secret"), 0600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Creating under the umask and narrowing afterwards leaves a window where
+	// another local user can open the temp file and keep the descriptor.
+	var sawMode os.FileMode
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		sawMode = perm
+		return writeFileExcl(name, data, perm)
+	}
+	defer func() { writeFileFn = orig }()
+
+	if err := writeSettingsAtomically(target, "still secret"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if sawMode.Perm() != 0600 {
+		t.Errorf("temp file created with mode %o, want 600", sawMode.Perm())
+	}
 }

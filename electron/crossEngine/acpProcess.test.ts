@@ -1,4 +1,5 @@
 // electron/crossEngine/acpProcess.test.ts
+import { buildAllowlistedChildEnv } from './acpProcess';
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import { buildCodexChildEnv, resolveCodexHome, spawnAcpProcess } from './acpProcess';
@@ -85,3 +86,31 @@ describe('spawnAcpProcess', () => {
     expect(child).not.toBeNull();
   });
 });
+
+describe('buildAllowlistedChildEnv', () => {
+  // The Claude headless adapter relies on this too: inheriting process.env
+  // there would let an operator's key silently route deliberation turns
+  // through metered billing or a third-party gateway.
+  it('excludes every provider billing variable by construction', () => {
+    const env = buildAllowlistedChildEnv({
+      PATH: '/usr/bin',
+      ANTHROPIC_API_KEY: 'sk-should-not-survive',
+      ANTHROPIC_AUTH_TOKEN: 'tok',
+      ANTHROPIC_BASE_URL: 'https://gateway.example',
+      ANTHROPIC_MODEL: 'x',
+      OPENAI_API_KEY: 'sk-nope',
+      OPENAI_BASE_URL: 'https://gateway.example',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+    });
+    expect(env.PATH).toBe('/usr/bin');
+    for (const key of Object.keys(env)) {
+      expect(key).not.toMatch(/^(ANTHROPIC|OPENAI|CLAUDE_CODE_USE)_/);
+    }
+  });
+
+  it('is an allowlist, not a denylist -- an unknown variable is dropped', () => {
+    const env = buildAllowlistedChildEnv({ SOME_FUTURE_BILLING_BYPASS: 'x', PATH: '/usr/bin' });
+    expect(env.SOME_FUTURE_BILLING_BYPASS).toBeUndefined();
+  });
+});
+

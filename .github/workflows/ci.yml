@@ -5,6 +5,11 @@ on:
     branches: [main, master]
   pull_request:
 
+# Least privilege for GITHUB_TOKEN: every job here only reads the repository.
+# Flagged by CodeQL on PR #46 ("Workflow does not contain permissions").
+permissions:
+  contents: read
+
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
@@ -19,7 +24,42 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # electron/ has its own tsconfig that neither `tsc -b` (root project
+      # references stop at src/) nor electron-vite (esbuild strips types
+      # without checking them) ever evaluates. Without this step the whole
+      # main process ships untyped; it had accumulated 15 errors unnoticed.
+      - run: npm run typecheck:electron
       - run: npm run build
+
+  # collector/ is a standalone package (own package.json, lockfile, tsc
+  # build and vitest config) that the root `npm test` deliberately excludes,
+  # with a comment deferring to "collector's own test command". Nothing in CI
+  # ever ran that command: 29 collector test files plus the two hook tests
+  # under scripts/ (which collector/vitest.config.ts owns) could go red while
+  # every job stayed green. The daemon this package builds is the one that
+  # ingests hook events, so this is not a peripheral suite.
+  #
+  # Same Node matrix as test-and-build: the collector needs node:sqlite
+  # (Node >= 22.5), and the version a user's autostart task runs under is
+  # whatever is on PATH, so both supported majors are exercised.
+  collector:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: collector/package-lock.json
+      - run: npm ci
+        working-directory: collector
+      - run: npm run build
+        working-directory: collector
+      - run: npm test
+        working-directory: collector
 
   go-collector:
     runs-on: ubuntu-latest
@@ -28,5 +68,83 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-      - run: go build ./... && go vet ./... && go test ./...
+      # -race, because the collector is concurrent by construction: the spool
+      # tail, transcript scan and fleet poll loops all run against one shared
+      # database and one shared logger. Without it, a data race in this package
+      # is invisible to CI and only ever shows up as a flake.
+      #
+      # It has already earned its place. The fleet-heartbeat test read a
+      # bytes.Buffer from the test goroutine while a collector loop logged into
+      # it -- log.SetOutput serialises writers behind the log package's mutex,
+      # but a reader takes no part in that lock. It went unnoticed because the
+      # only signal it ever produced was an intermittent failure of a DIFFERENT
+      # assertion (CI run 34071254746), which blocked an unrelated PR.
+      #
+      # -race requires cgo, which is why CGO_ENABLED is set explicitly rather
+      # than left to the default: this repo's sqlite driver is modernc.org's
+      # pure-Go one, so nothing here would otherwise need a C toolchain, and a
+      # future runner or GOFLAGS change that turns cgo off must fail loudly on
+      # the missing compiler rather than silently drop the detector.
+      # GOOS=windows compile-checks linkcount_windows.go, which no lane would
+      # otherwise build: this job is ubuntu-only and windows-build runs no Go.
+      # That file exists so the Go collector is not blind to NTFS hard links on
+      # the platform the app actually ships on, so leaving it unbuilt in CI
+      # would be the one place a break could land unseen.
+      - run: go build ./... && GOOS=windows go build ./... && go vet ./... && CGO_ENABLED=1 go test -race ./...
         working-directory: collector-go
+
+  # Windows is the platform this app actually runs on, and the one carrying
+  # every failure mode Linux CI structurally cannot see: Electron/AppContainer
+  # ACL setup, node-pty prebuilds, Windows path and shell semantics, the
+  # Electron binary install sequence, and archive-tool differences.
+  #
+  # This lane is not decoration and must never be marked continue-on-error.
+  # It has already earned its place: `snapshotBuilder.ts` passed
+  # GNU-only `tar --force-local`, which System32's bsdtar rejects outright
+  # ("Option --force-local is not supported", exit 1). Every Linux job was
+  # green while cross-engine snapshot creation was broken on the target
+  # platform. Reverting that fix turns this job's 6 snapshotBuilder tests red.
+  #
+  # A single Node version, deliberately: the point is platform coverage, not a
+  # second version matrix. 24.x matches the newest entry in the Linux matrix so
+  # a failure here is attributable to the OS rather than to the runtime.
+  #
+  # No credentials are present and none are needed. The cross-engine provider
+  # suite runs entirely against the fake stdio providers in
+  # electron/crossEngine/providers/, so protocol, lifecycle, cancellation and
+  # permission-denial behaviour are all exercised without a Codex or Claude
+  # login. Do not add secrets to this job.
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      # postinstall runs `install-electron && node scripts/grant-appcontainer-acl.js`.
+      # The ACL script is safe unelevated: it exits 0 when electron/dist is
+      # absent and catches icacls failures with a warning rather than failing
+      # the install (see that script's own comments).
+      - run: npm ci
+
+      - run: npm test
+      - run: npm run typecheck:electron
+      - run: npm run build
+      - run: npm run electron:build
+
+      # electron-vite exits 0 on a partially-populated out/, which presents at
+      # runtime as a blank window rather than an error -- so assert the trees
+      # and the native/binary dependencies explicitly.
+      - name: Verify Electron artifacts and native modules
+        run: node scripts/verify-electron-artifacts.mjs
+
+      # The collector daemon runs on Windows via a logon scheduled task; its
+      # suite has Windows-path and hook-spawn cases the Linux job cannot see.
+      - run: npm ci
+        working-directory: collector
+      - run: npm run build
+        working-directory: collector
+      - run: npm test
+        working-directory: collector

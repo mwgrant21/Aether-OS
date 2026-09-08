@@ -363,3 +363,59 @@ offers) by hand inside the live session once it is running. This is not a gap sp
 feature; it is the same category of limitation the Claude terminal's own environment-scrubbing
 already has and already documents above — an interactive shell is, by construction, a surface Aether
 cannot fully police from the outside.
+
+
+---
+
+## 12. Claude headless CLI adapter — built, deliberately not reachable
+
+Added 2026-09-06 with the provider-neutral cross-engine adapter layer
+(`electron/crossEngine/providers/`). Read this before wiring it to anything.
+
+**Nothing about the shipped app's outbound behaviour changed.** `ClaudeHeadlessCliAdapter`
+can spawn `claude -p`, but no IPC handler, no store action, and no UI control constructs it.
+It is reachable only from tests, which drive an injected fake child process and never spawn a
+real CLI. §9 therefore remains accurate for shipped behaviour: Codex verification is still the
+only feature that sends anything anywhere.
+
+**Why it is nonetheless a new boundary.** §11 categorises the Codex terminal with the Claude
+terminal: an interactive session the operator drives directly, keystroke by keystroke. This
+adapter is not that. It would be *Aether* composing a prompt and sending snapshot-derived
+content to a model, on Aether's initiative, with no human typing the turn. That difference —
+not the vendor — is what makes it a distinct exception. It is also not §9's exception: that one
+is scoped to a second vendor and to one operator-triggered verification run.
+
+**Conditions on ever making it reachable.** Wiring this to IPC or UI requires its own opt-in,
+modelled on §9's and not folded into it:
+
+- Default off, with a disclosure click-through naming what is sent, to which provider, under
+  which login, and with which budget.
+- A separate toggle from `state.crossEngineCfg.enabled`. Enabling Codex verification must not
+  silently enable Claude deliberation.
+- The same store-the-signal rule as everywhere else: structured claims, citations, hashes,
+  usage and stop reasons may persist; prompts, source excerpts and provider streams stay
+  ephemeral.
+
+**Read-only is enforced by a measured flag set, not by one flag.** `--restricted` alone is not
+sufficient and it would be wrong to document it as such. Measured against Claude Code 2.1.263,
+`--restricted` left 110 tools available, **including `Write`, `Edit`, `NotebookEdit`, `Skill`
+and MCP write tools**. The guarantee comes from the whole set:
+
+| Flag | What it contributes |
+|---|---|
+| `--restricted` | drops code-running tools and WebFetch, ignores user/project/local settings, confines file tools to the working directory |
+| `--strict-mcp-config` | no MCP servers at all (measured: `mcp_servers: []`, tool surface 110 → 21) |
+| `--disable-slash-commands` | no skills; `Skill` survives `--restricted` |
+| `--allowedTools Read Grep Glob` | fail-closed allowlist, not a denylist — a denylist would admit any newly added tool |
+| `--permission-prompts none` | anything that would prompt is denied automatically, rather than incidentally |
+
+Verified adversarially, not assumed: asked to write a file *and* to spawn a subagent that
+writes a file, the session refused both — *"Permission for this tool use was denied. It
+requires approval, and this session has no approval surface"* — and no file appeared on disk.
+`src/shared/noApiCalls.test.ts` now fails if that flag set is weakened, or if any module other
+than the reviewed adapter spawns the `claude` binary.
+
+**Why not the Claude Agent SDK.** It would work, but adds a runtime dependency and a second
+authentication path. The headless CLI needs neither and runs under the operator's existing
+login. (`claude mcp serve` was also probed and rejected: it exposes Claude Code's tools to an
+MCP client and has no session, turn, cancellation or approval semantics.)

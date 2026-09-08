@@ -17,6 +17,13 @@
 // would otherwise silently rewrite unrelated hook command strings containing
 // shell redirection/`&&` on every install/uninstall write.
 //
+// Second known, accepted divergence: the read-only check below opens the file,
+// while the TS side uses fs.access(W_OK). Node documents that fs.access does
+// NOT consult ACLs on Windows -- it reads only the read-only attribute -- so a
+// file protected by a deny-write ACE is refused here and replaced there. Go is
+// the better behaviour of the two; it is recorded rather than 'fixed' because
+// matching it would mean making this side worse.
+//
 // Known, accepted divergence from the TS original: Go's encoding/json always
 // emits object keys in sorted order when marshaling a map[string]interface{},
 // whereas Node's JSON.stringify preserves insertion order. This package
@@ -30,11 +37,14 @@ package hookinstall
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -145,32 +155,40 @@ func readSettings(settingsPath string) readSettingsResult {
 	return readSettingsResult{ok: true, fileExisted: true, raw: string(raw), parsed: obj}
 }
 
-// normalizeHooksValue mirrors hookInstaller.ts's
-// `parsed.hooks && typeof parsed.hooks === 'object' ? { ...parsed.hooks } : {}`
-// spread pattern used at every install/uninstall call site. JS's typeof
-// considers arrays 'object' too, so `{...arrayValue}` spreads array elements
-// into a plain object keyed by numeric-string index ("0", "1", ...) rather
-// than discarding them -- this normalizes a Go []interface{} the same way,
-// and returns a shallow copy for an already-object value (never the original
-// map, matching the TS spread's copy semantics) or an empty map for any other
-// shape (missing key, nil/null, string, number, bool).
+// hooksShape mirrors hookInstaller.ts's hooksShape (#58). A top-level
+// "hooks" must be a JSON object keyed by event name. "absent" covers a
+// missing key and JSON null (both unmarshal to nil); "object" is usable;
+// anything else -- array, string, number, bool -- is "malformed": a shape
+// this package cannot merge into without guessing, so installers refuse and
+// uninstallers no-op. (Before #58 an array was spread into a numeric-keyed
+// object, silently rewriting the user's config with OK: true.)
+func hooksShape(parsed map[string]interface{}) string {
+	v, exists := parsed["hooks"]
+	if !exists || v == nil {
+		return "absent"
+	}
+	if _, isObj := v.(map[string]interface{}); isObj {
+		return "object"
+	}
+	return "malformed"
+}
+
+// malformedHooksError mirrors hookInstaller.ts's MALFORMED_HOOKS_ERROR.
+const malformedHooksError = "the \"hooks\" value in settings.json is not an object keyed by event name; refusing to overwrite it. Fix or remove \"hooks\", then retry"
+
+// normalizeHooksValue returns a shallow copy of an object-shaped hooks value
+// (never the original map, matching the TS spread's copy semantics) or an
+// empty map when hooks is absent. Callers have already refused or no-opped
+// on a malformed value via hooksShape, so no other shape reaches here.
 func normalizeHooksValue(v interface{}) map[string]interface{} {
-	switch t := v.(type) {
-	case map[string]interface{}:
+	if t, ok := v.(map[string]interface{}); ok {
 		out := make(map[string]interface{}, len(t))
 		for k, val := range t {
 			out[k] = val
 		}
 		return out
-	case []interface{}:
-		out := make(map[string]interface{}, len(t))
-		for i, val := range t {
-			out[strconv.Itoa(i)] = val
-		}
-		return out
-	default:
-		return map[string]interface{}{}
 	}
+	return map[string]interface{}{}
 }
 
 // marshalSettingsJSON mirrors JSON.stringify(merged, null, 2): 2-space
@@ -189,20 +207,167 @@ func marshalSettingsJSON(v interface{}) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
+// backupPathFn is a seam so tests can pin the backup name; production always
+// uses backupPathFor.
+var backupPathFn = backupPathFor
+
 func writeBackup(settingsPath, raw string) (string, error) {
-	backupPath := fmt.Sprintf("%s.aetherbak-%d", settingsPath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, []byte(raw), 0644); err != nil {
+	backupPath := backupPathFn(settingsPath)
+	// Exclusive create: never overwrite an earlier backup, which may be the
+	// user's pristine file (#60).
+	// 0666 for the same reason as createMode: it mirrors Node's writeFile
+	// default and is narrowed by the umask the same way. Carrying the SOURCE
+	// file's mode onto the backup would be better still -- a 0600 settings.json
+	// currently gets a 0644 backup beside it -- but that gap is shared with
+	// both TS copies and is tracked separately, not fixed asymmetrically here.
+	if err := writeFileExcl(backupPath, []byte(raw), 0666); err != nil {
 		return "", err
 	}
 	return backupPath, nil
 }
 
-func writeSettingsAtomically(settingsPath, content string) error {
-	tmpPath := fmt.Sprintf("%s.aethertmp-%d", settingsPath, time.Now().UnixMilli())
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+// renameFile is a seam so tests can force the rename step to fail without
+// OS-specific tricks; production always uses os.Rename.
+var renameFile = os.Rename
+
+// writeFileFn is the same kind of seam for the temp-file write.
+var writeFileFn = writeFileExcl
+
+// uniqueSiblingPath mirrors hookInstaller.ts's uniqueSiblingPath: a sibling of
+// settings.json whose name is unique per invocation even when two writers
+// share a millisecond (timestamp + pid + 4 random bytes), so a failing
+// writer's cleanup can only ever remove its own file (#59) and a backup
+// can never overwrite an earlier one (#60).
+func uniqueSiblingPath(settingsPath, marker string) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s.%s-%d-%d-%s", settingsPath, marker, time.Now().UnixMilli(), os.Getpid(), hex.EncodeToString(b[:]))
+}
+
+// resolveRealPath mirrors atomicWrite.ts's resolveRealPath: the real file
+// behind settingsPath, following symlinks. A user whose settings.json is a
+// link into a dotfiles repo must keep that link -- a rename replaces the link
+// itself, silently disconnecting the repo. A DANGLING link resolves to its
+// intended destination, not to the link, so the first write creates what the
+// user pointed at; only a path that is not a link falls back to itself, which
+// is the plain new-file case. The depth cap makes a symlink loop terminate.
+func resolveRealPath(settingsPath string, depth int) string {
+	if real, err := filepath.EvalSymlinks(settingsPath); err == nil {
+		return real
+	}
+	if depth < 32 {
+		if info, err := os.Lstat(settingsPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if link, err := os.Readlink(settingsPath); err == nil {
+				next := link
+				if !filepath.IsAbs(next) {
+					next = filepath.Join(filepath.Dir(settingsPath), next)
+				}
+				return resolveRealPath(next, depth+1)
+			}
+		}
+	}
+	return settingsPath
+}
+
+func tempPathFor(settingsPath string) string { return uniqueSiblingPath(settingsPath, "aethertmp") }
+
+func backupPathFor(settingsPath string) string { return uniqueSiblingPath(settingsPath, "aetherbak") }
+
+// writeFileExcl is os.WriteFile with O_EXCL: a name collision is an error,
+// never a clobber of another writer's pending file.
+func writeFileExcl(name string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, settingsPath)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writeSettingsAtomically mirrors atomicWrite.ts's writeFileAtomically rule
+// for rule (#63). "Atomic" means atomic with respect to concurrent READERS,
+// not durable: nothing is fsynced, and the caller's backup is what bounds a
+// power loss. A rename gives a NEW inode, so everything attached to the old
+// one is re-created deliberately below -- except ACLs and xattrs, which Go
+// cannot copy any more than Node can (see #69).
+func writeSettingsAtomically(settingsPath, content string) error {
+	realPath := resolveRealPath(settingsPath, 0)
+
+	var mode os.FileMode
+	haveMode := false
+	hardLinked := false
+	if info, err := os.Stat(realPath); err == nil {
+		mode = info.Mode().Perm()
+		haveMode = true
+		hardLinked = linkCountOf(realPath) > 1
+	}
+
+	// A rename is governed by the DIRECTORY's permissions, so it would happily
+	// replace a file the user deliberately made read-only, where the plain write
+	// this replaced returned EACCES. Keep that contract, with the same message
+	// shape Node produces so both CLIs report it identically.
+	if haveMode {
+		f, err := os.OpenFile(realPath, os.O_WRONLY, 0)
+		if err != nil {
+			// Only a genuine permission failure gets the EACCES shape Node produces.
+			// Anything else (EISDIR, a Windows sharing violation, EMFILE) is returned
+			// as-is: laundering it into "permission denied" is a worse diagnostic
+			// than the real error.
+			if errors.Is(err, fs.ErrPermission) {
+				return fmt.Errorf("EACCES: permission denied, write '%s'", realPath)
+			}
+			return err
+		}
+		_ = f.Close()
+	}
+
+	// A hard-linked target is two directory entries on one inode, which a rename
+	// severs: the other entry would keep the OLD contents while we report
+	// success. Write in place instead, trading back the truncation window on
+	// purpose -- the caller has already taken a backup, and a truncated file is
+	// visible where a severed link is not.
+	if hardLinked {
+		return os.WriteFile(realPath, []byte(content), mode)
+	}
+
+	tmpPath := tempPathFor(realPath)
+	// Mode at CREATION, not after: creating under the umask and narrowing later
+	// leaves a window where another local user can open the temp file and keep
+	// the descriptor. umask can only clear bits, so a restrictive mode survives.
+	// 0666, mirroring Node's fs.writeFile default, NOT 0644: both are narrowed
+	// by the umask identically, so under the usual 022 they coincide -- but
+	// under 002 the TS side would produce 0664 and a hardcoded 0644 here would
+	// not. That divergence is invisible to CI, which runs under 022 (#63).
+	createMode := os.FileMode(0666)
+	if haveMode {
+		createMode = mode
+	}
+	if err := writeFileFn(tmpPath, []byte(content), createMode); err != nil {
+		// A failed write can still have created the file (ENOSPC); same
+		// cleanup discipline as the rename below (#59). A lost exclusive
+		// create (ErrExist) means the file is another writer's: leave it.
+		if !errors.Is(err, os.ErrExist) {
+			_ = os.Remove(tmpPath)
+		}
+		return err
+	}
+	if haveMode {
+		// Make a permissive mode exact where umask would have narrowed it.
+		if err := os.Chmod(tmpPath, mode); err != nil {
+			_ = os.Remove(tmpPath)
+			return err
+		}
+	}
+	if err := renameFile(tmpPath, realPath); err != nil {
+		// Do not leave the temp file beside the user's real settings.json (#59);
+		// the rename error is what the caller needs to see, not a cleanup error.
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 // ReadHookInstallState mirrors hookInstaller.ts's readHookInstallState.
@@ -210,7 +375,10 @@ func ReadHookInstallState(settingsPath, scriptPath string) HookInstallState {
 	result := readSettings(settingsPath)
 	installedEvents := []string{}
 	if result.ok {
-		hooksObj, _ := result.parsed["hooks"].(map[string]interface{})
+		var hooksObj map[string]interface{}
+		if hooksShape(result.parsed) == "object" {
+			hooksObj = result.parsed["hooks"].(map[string]interface{})
+		}
 		for _, eventName := range ManagedHookEvents {
 			groupsArr, ok := hooksObj[eventName].([]interface{})
 			if !ok {
@@ -237,6 +405,10 @@ func installGroup(settingsPath, scriptPath string, events []string) InstallResul
 	result := readSettings(settingsPath)
 	if !result.ok {
 		return InstallResult{OK: false, Error: result.errMsg}
+	}
+	// Refuse before any backup or temp file is written (#58).
+	if hooksShape(result.parsed) == "malformed" {
+		return InstallResult{OK: false, Error: malformedHooksError}
 	}
 
 	var backupPath *string
@@ -383,17 +555,11 @@ func uninstallByMarker(settingsPath string, events []string, marker string) Inst
 	if !result.fileExisted {
 		return InstallResult{OK: true, BackupPath: nil}
 	}
-	// Mirrors TS's `typeof parsed.hooks !== 'object' || parsed.hooks === null`
-	// early-return guard exactly: proceed (and write) only when hooks is a
-	// JSON object OR array (JS's typeof array is 'object' too, so an
-	// array-shaped hooks value must NOT early-return here -- it gets spread
-	// into a numeric-keyed object below via normalizeHooksValue, matching
-	// TS's `{ ...parsed.hooks }`). Anything else -- missing key, null,
-	// string, number, bool -- is a true no-op: no backup, no write.
-	switch result.parsed["hooks"].(type) {
-	case map[string]interface{}, []interface{}:
-		// proceed
-	default:
+	// Mirrors TS's `!fileExisted || hooksShape(parsed) !== 'object'` early
+	// return (#58): only a JSON-object hooks can hold anything of ours.
+	// Missing, null, and malformed (array/string/number/bool) are all a true
+	// no-op: no backup, no write.
+	if hooksShape(result.parsed) != "object" {
 		return InstallResult{OK: true, BackupPath: nil}
 	}
 

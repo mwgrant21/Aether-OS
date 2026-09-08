@@ -21,6 +21,7 @@ describe('toolCallHistory', () => {
       ],
       toolResults: [],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 
@@ -52,6 +53,7 @@ describe('toolCallHistory', () => {
       ],
       toolResults: [],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 
@@ -70,6 +72,7 @@ describe('toolCallHistory', () => {
       toolUses: [],
       toolResults: [{ toolUseId: 'tool-1', resultLength: 0 }],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 
@@ -104,6 +107,7 @@ describe('toolCallHistory', () => {
       ],
       toolResults: [],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 
@@ -124,6 +128,7 @@ describe('toolCallHistory', () => {
       ],
       toolResults: [],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 
@@ -155,6 +160,7 @@ describe('toolCallHistory', () => {
         ],
         toolResults: [],
         isHumanPrompt: false,
+        originKind: null,
         humanText: null,
       };
 
@@ -168,6 +174,7 @@ describe('toolCallHistory', () => {
         toolUses: [],
         toolResults: [{ toolUseId: `tool-${i}`, resultLength: 0 }],
         isHumanPrompt: false,
+        originKind: null,
         humanText: null,
       };
 
@@ -200,6 +207,7 @@ describe('toolCallHistory', () => {
       ],
       toolResults: [],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 
@@ -224,6 +232,7 @@ describe('toolCallHistory', () => {
       toolUses: [],
       toolResults: [{ toolUseId: 'read-1', resultLength: 0 }],
       isHumanPrompt: false,
+      originKind: null,
       humanText: null,
     };
 

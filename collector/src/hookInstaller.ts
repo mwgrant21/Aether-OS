@@ -1,4 +1,5 @@
 import { promises as fsp } from 'node:fs';
+import { writeBackup, writeFileAtomically } from './atomicWrite.js';
 import { dirname } from 'node:path';
 
 export const MANAGED_HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'Notification', 'Stop'] as const;
@@ -29,6 +30,21 @@ function isOurGroup(group: unknown, scriptPath: string): boolean {
   return hooks.some((h) => typeof h?.command === 'string' && h.command.includes(scriptPath));
 }
 
+/**
+ * `hooks` must be a plain object keyed by event name. `undefined` and `null`
+ * mean "none yet"; an array or a primitive is a shape we cannot merge into
+ * without guessing, so installers refuse and uninstallers no-op (#58).
+ */
+function hooksShape(parsed: Record<string, unknown>): 'absent' | 'object' | 'malformed' {
+  const hooks = parsed.hooks;
+  if (hooks === undefined || hooks === null) return 'absent';
+  if (typeof hooks === 'object' && !Array.isArray(hooks)) return 'object';
+  return 'malformed';
+}
+
+const MALFORMED_HOOKS_ERROR =
+  'the "hooks" value in settings.json is not an object keyed by event name; refusing to overwrite it. Fix or remove "hooks", then retry';
+
 function ourGroup(scriptPath: string): HookGroup {
   return { hooks: [{ type: 'command', command: `node "${scriptPath}"` }] };
 }
@@ -58,26 +74,17 @@ async function readSettings(
   }
 }
 
-async function writeBackup(settingsPath: string, raw: string): Promise<string> {
-  const backupPath = `${settingsPath}.aetherbak-${Date.now()}`;
-  await fsp.writeFile(backupPath, raw, 'utf8');
-  return backupPath;
-}
-
-async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
-  const tmpPath = `${settingsPath}.aethertmp-${Date.now()}`;
-  await fsp.writeFile(tmpPath, content, 'utf8');
-  await fsp.rename(tmpPath, settingsPath);
-}
+// Backup and atomic-replace live in ./atomicWrite, a deliberate mirror of
+// electron/atomicWrite.ts and collector-go/internal/hookinstall (#63): three
+// processes write this same settings.json, so a difference between them is a
+// bug. That module is where symlink, hard-link, file-mode and read-only
+// handling lives; do not reintroduce a local write path here.
 
 export async function readHookInstallState(settingsPath: string, scriptPath: string): Promise<HookInstallState> {
   const result = await readSettings(settingsPath);
   const installedEvents: string[] = [];
   if (result.ok) {
-    const hooks = (result.parsed.hooks && typeof result.parsed.hooks === 'object' ? result.parsed.hooks : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks = (hooksShape(result.parsed) === 'object' ? result.parsed.hooks : {}) as Record<string, unknown>;
     for (const eventName of MANAGED_HOOK_EVENTS) {
       const groups = hooks[eventName];
       if (Array.isArray(groups) && groups.some((g) => isOurGroup(g, scriptPath))) {
@@ -95,15 +102,14 @@ export async function installHooks(
   const result = await readSettings(settingsPath);
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
+  if (hooksShape(parsed) === 'malformed') return { ok: false, error: MALFORMED_HOOKS_ERROR };
 
   try {
     let backupPath: string | null = null;
-    if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
+    if (fileExisted) backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
 
-    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks: Record<string, unknown> =
+      hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
     for (const eventName of MANAGED_HOOK_EVENTS) {
       const current = hooks[eventName];
       if (current !== undefined && !Array.isArray(current)) {
@@ -119,7 +125,7 @@ export async function installHooks(
 
     const merged = { ...parsed, hooks };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -133,15 +139,14 @@ export async function installPermissionHooks(
   const result = await readSettings(settingsPath);
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
+  if (hooksShape(parsed) === 'malformed') return { ok: false, error: MALFORMED_HOOKS_ERROR };
 
   try {
     let backupPath: string | null = null;
-    if (fileExisted) backupPath = await writeBackup(settingsPath, raw);
+    if (fileExisted) backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
 
-    const hooks = (parsed.hooks && typeof parsed.hooks === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {}) as Record<
-      string,
-      unknown
-    >;
+    const hooks: Record<string, unknown> =
+      hooksShape(parsed) === 'object' ? { ...(parsed.hooks as Record<string, unknown>) } : {};
     for (const eventName of PERMISSION_HOOK_EVENTS) {
       const current = hooks[eventName];
       if (current !== undefined && !Array.isArray(current)) {
@@ -155,7 +160,7 @@ export async function installPermissionHooks(
 
     const merged = { ...parsed, hooks };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -169,12 +174,12 @@ export async function uninstallPermissionHooks(
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
 
-  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+  if (!fileExisted || hooksShape(parsed) !== 'object') {
     return { ok: true, backupPath: null };
   }
 
   try {
-    const backupPath = await writeBackup(settingsPath, raw);
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     const hooks = { ...(parsed.hooks as Record<string, unknown>) };
     for (const eventName of PERMISSION_HOOK_EVENTS) {
       const current = hooks[eventName];
@@ -196,6 +201,9 @@ export async function uninstallPermissionHooks(
           return { ...(g as HookGroup), hooks: remainingHooks };
         })
         .filter((g) => {
+          // Non-object entries (null, strings) are not ours and cannot have been
+          // emptied by the map above; keep them rather than crash on .hooks.
+          if (typeof g !== 'object' || g === null) return true;
           const groupHooks = (g as HookGroup).hooks;
           return !Array.isArray(groupHooks) || groupHooks.length > 0;
         });
@@ -207,7 +215,7 @@ export async function uninstallPermissionHooks(
     }
 
     const merged = { ...parsed, hooks };
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -221,12 +229,12 @@ export async function uninstallHooks(
   if (!result.ok) return { ok: false, error: result.error };
   const { fileExisted, raw, parsed } = result;
 
-  if (!fileExisted || typeof parsed.hooks !== 'object' || parsed.hooks === null) {
+  if (!fileExisted || hooksShape(parsed) !== 'object') {
     return { ok: true, backupPath: null };
   }
 
   try {
-    const backupPath = await writeBackup(settingsPath, raw);
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     const hooks = { ...(parsed.hooks as Record<string, unknown>) };
     // scriptPath is not known at uninstall time in general (the caller may not
     // have it handy) -- but every MANAGED_HOOK_EVENTS entry we would have added
@@ -257,6 +265,9 @@ export async function uninstallHooks(
           return { ...(g as HookGroup), hooks: remainingHooks };
         })
         .filter((g) => {
+          // Non-object entries (null, strings) are not ours and cannot have been
+          // emptied by the map above; keep them rather than crash on .hooks.
+          if (typeof g !== 'object' || g === null) return true;
           const groupHooks = (g as HookGroup).hooks;
           return !Array.isArray(groupHooks) || groupHooks.length > 0;
         });
@@ -268,7 +279,7 @@ export async function uninstallHooks(
     }
 
     const merged = { ...parsed, hooks };
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };

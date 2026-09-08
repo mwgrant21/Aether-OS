@@ -158,10 +158,14 @@ func StartCollector(options Options) (stop func(), err error) {
 	// four loops started below can race for the file lock -- observed
 	// directly during this task's own test-writing: a spool-tail tick's
 	// INSERT INTO events failing with SQLITE_BUSY while a concurrent
-	// fleet-poll tick held the write lock, after which TailSpoolOnce still
-	// deleted the now-unrecoverably-lost spool file (spool/tailer.go deletes
-	// unconditionally once a file's lines have been processed, successfully
-	// or not). SetMaxOpenConns(1) makes database/sql serialize every caller
+	// fleet-poll tick held the write lock -- and, at the time, TailSpoolOnce
+	// then deleted the spool file regardless, losing those events for good.
+	// spool/tailer.go has since been fixed to keep a file whose writes fail
+	// and retry it, so that failure mode is survivable now; but this setting
+	// is still what prevents the in-process contention in the first place,
+	// and it is the only thing that does (a reader in ANOTHER process, e.g.
+	// the Electron app, is out of its reach -- that is the WAL follow-up).
+	// SetMaxOpenConns(1) makes database/sql serialize every caller
 	// through one physical connection, which is what actually restores the
 	// TS original's serialized-DB-access model on top of Go's real
 	// concurrency -- not a new behavior, the correct port of an assumption

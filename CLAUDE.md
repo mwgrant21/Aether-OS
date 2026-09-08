@@ -34,7 +34,8 @@ feed, publisher, or release channel. See `docs/packaging.md`.
 npm install
 npm run electron:dev   # the real thing: desktop app, live terminal, real session tracking
 npm run dev            # browser-only mode at http://localhost:5173 (no PTY / live tracking)
-npm test                # vitest run — 572 tests at last count
+npm test                # vitest run (renderer + electron main; collector/ has its own suite)
+npm run typecheck:electron  # tsc over electron/ -- NOT covered by npm run build; CI runs it
 npm run build           # tsc -b && vite build (renderer)
 npm run electron:build  # electron-vite build (main + preload + renderer, for the Electron app)
 npm run dist            # electron-vite build + electron-builder --win -> release/Aether OS Setup <ver>.exe
@@ -154,7 +155,7 @@ docs/superpowers/
   binding: a cost bucket with no observed data is `null`, never `0` — see
   `RollupCard`, where "no data" and "$0.00" are deliberately different
   renderings, and `bucketByDay`, whose return type forces the distinction.
-- **Model calls**: no model call site exists anywhere in this repo. The
+- **Model calls**: no model call site is reachable from the running app. (Two provider adapters can spawn a CLI — `acpProcess.ts` the Codex ACP adapter, and `providers/claudeHeadlessCli.ts` `claude -p` — but only Codex verification is wired to IPC/UI; the Claude adapter is constructed by nothing outside tests. See `docs/privacy-and-data.md` §9 and §12 before changing that.) The
   `@anthropic-ai/sdk` dependency is gone from `package.json`; `chatCore.ts`,
   `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC
   pair, `.env` key loading (`electron/loadDotEnv.ts`), and the `modelPolicy.ts`

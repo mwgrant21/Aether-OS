@@ -1,4 +1,5 @@
 import { promises as fsp } from 'fs';
+import { writeBackup, writeFileAtomically } from './atomicWrite';
 import { dirname } from 'path';
 
 export type InstallStatus = 'installed' | 'installed-other' | 'not-installed' | 'unreadable';
@@ -171,23 +172,10 @@ async function readExistingSettings(
   return { ok: true, fileExisted, raw, parsed: parsed as Record<string, unknown> };
 }
 
-async function writeBackup(settingsPath: string, raw: string): Promise<string> {
-  const backupPath = `${settingsPath}.aetherbak-${Date.now()}`;
-  await fsp.writeFile(backupPath, raw, 'utf8');
-  return backupPath;
-}
-
-// A crash, power loss, or ENOSPC mid-write directly to settings.json would
-// leave the user's REAL Claude Code config truncated -- the backup only
-// helps once the user notices and understands the problem. Write-tmp-then-
-// rename means the target is never observably partial. Mirrors the pattern
-// scripts/aether-statusline.mjs already uses for its own, lower-stakes cache
-// file.
-async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
-  const tmpPath = `${settingsPath}.aethertmp-${Date.now()}`;
-  await fsp.writeFile(tmpPath, content, 'utf8');
-  await fsp.rename(tmpPath, settingsPath);
-}
+// Backup and atomic-replace live in ./atomicWrite, shared with main.ts and
+// mirroring collector/src/hookInstaller.ts (#59, #60): three processes write
+// this same settings.json, so they must not drift. The backup marker stays
+// 'aetherbak', matching the collector's, since both back up the same file.
 
 export async function installStatusline(
   settingsPath: string,
@@ -202,7 +190,7 @@ export async function installStatusline(
   try {
     let backupPath: string | null = null;
     if (fileExisted) {
-      backupPath = await writeBackup(settingsPath, raw);
+      backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     }
 
     // Chain rather than clobber: a foreign command (installed-other) is
@@ -217,7 +205,7 @@ export async function installStatusline(
     const patch = statuslineSettingsPatch(scriptPath, chainCommand);
     const merged = { ...parsed, ...patch };
     await fsp.mkdir(dirname(settingsPath), { recursive: true });
-    await writeSettingsAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
@@ -240,7 +228,7 @@ export async function uninstallStatusline(
   }
 
   try {
-    const backupPath = await writeBackup(settingsPath, raw);
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
     const { existingCommand } = detectInstallStatus(parsed, scriptPath);
     const chained = extractChainedCommand(existingCommand);
     if (chained) {
@@ -252,7 +240,7 @@ export async function uninstallStatusline(
     } else {
       delete parsed.statusLine;
     }
-    await writeSettingsAtomically(settingsPath, JSON.stringify(parsed, null, 2));
+    await writeFileAtomically(settingsPath, JSON.stringify(parsed, null, 2));
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };

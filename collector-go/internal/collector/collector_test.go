@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,6 +124,52 @@ func eventually(t *testing.T, what string, cond func() bool) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out after 5s waiting for %s", what)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// syncBuffer is a bytes.Buffer that stays safe to read while another goroutine
+// is still logging into it.
+//
+// log.SetOutput serialises WRITES behind the log package's own mutex, but a
+// test reading the buffer takes no part in that lock -- so `logBuf.String()`
+// on the test goroutine races the collector loop's `log.Printf`. A single
+// read made that easy to miss; eventuallyLogContains performs the read on
+// every poll, which is exactly the point where an unsynchronised read stops
+// being theoretical.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// eventuallyLogContains polls a captured log until it contains want.
+//
+// eventually() would do the waiting, but its timeout message can only name the
+// string it was looking for. When a log line fails to appear, what was logged
+// INSTEAD is the whole diagnostic -- so this reports the buffer's contents on
+// failure, the way the fixed-sleep assertion it replaces did.
+func eventuallyLogContains(t *testing.T, buf *syncBuffer, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got := buf.String(); strings.Contains(got, want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out after 5s waiting for %q in the log, got: %q", want, buf.String())
 		}
 		time.Sleep(pollInterval)
 	}
@@ -519,7 +566,7 @@ func TestStartCollector_FleetHeartbeatFailureLogsAndDoesNotCrashOtherLoops(t *te
 	os.MkdirAll(spoolDir, 0755)
 	os.MkdirAll(projectsRoot, 0755)
 
-	var logBuf bytes.Buffer
+	var logBuf syncBuffer
 	origOutput := log.Writer()
 	origFlags := log.Flags()
 	log.SetOutput(&logBuf)
@@ -552,25 +599,35 @@ func TestStartCollector_FleetHeartbeatFailureLogsAndDoesNotCrashOtherLoops(t *te
 	// loop's 20ms ticks land in the window after this drop (transcript scan
 	// is set to a 100s interval above, so its one schema_meta write already
 	// happened during StartCollector, before the drop).
-	dropDB := openForInspection(t, dbPath)
+	// NOT openForInspection: that registers a t.Cleanup close, so the handle
+	// would stay open on this file for the rest of the test. Everything below
+	// waits on the spool tail WRITING to that same database, and pollInterval's
+	// note above is precisely about a reader starving that writer. The drop is
+	// a one-shot, so the connection is released the moment it is done.
+	dropDB, err := schema.OpenDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDatabase for drop: %v", err)
+	}
 	if _, err := dropDB.Exec("DROP TABLE schema_meta"); err != nil {
+		dropDB.Close()
 		t.Fatalf("drop schema_meta: %v", err)
 	}
+	dropDB.Close()
 
-	// Give at least one more fleet-poll ticker cycle time to hit the
-	// now-missing table and log.
-	time.Sleep(100 * time.Millisecond)
-
-	if !strings.Contains(logBuf.String(), "[aether-collector] fleet poll failed") {
-		t.Fatalf("expected a logged fleet-poll-failed line from the heartbeat error, got log output: %q", logBuf.String())
-	}
+	// Wait for a fleet-poll tick to hit the now-missing table and log, rather
+	// than budgeting a fixed 100ms for it.
+	eventuallyLogContains(t, &logBuf, "[aether-collector] fleet poll failed")
 
 	// Other loops (spool tail) must keep working despite every fleet-poll
 	// tick erroring on the (now schema_meta-less) shared connection.
 	payload, _ := json.Marshal(map[string]interface{}{"hook_event_name": "Stop", "session_id": "s1"})
 	os.WriteFile(filepath.Join(spoolDir, "s1.jsonl"), append(payload, '\n'), 0644)
-	time.Sleep(150 * time.Millisecond)
 
-	inspectDB := openForInspection(t, dbPath)
-	assertCount(t, inspectDB, "events", 1)
+	// This is the assertion that failed in CI (run 34071254746) while passing
+	// locally: `time.Sleep(150ms)` then assertCount budgeted three 50ms ticks
+	// on an idle machine for work that a shared runner had not finished. Same
+	// defect, and same fix, as issue #34 -- this test was simply missed in that
+	// pass. eventuallyCountAt (not eventuallyCount) because the write comes
+	// from another goroutine on the same database.
+	eventuallyCountAt(t, dbPath, "events", 1)
 }
