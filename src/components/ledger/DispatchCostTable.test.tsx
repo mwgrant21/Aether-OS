@@ -171,4 +171,17 @@ describe('DispatchCostTable', () => {
     render(<DispatchCostTable rows={[row()]} />);
     expect(screen.getByText(/API RATE \(NOT PAID\)/i)).toBeTruthy();
   });
+
+  // Review finding: a genuinely free plan price (usdPlan: 0, a real priced
+  // state -- see QuotaCost's doc comment) combined with a real fit must
+  // still render a dollar figure, not fall back to points. This is the exact
+  // rendering-layer case the `>= 0` guard in quotaCostForTokens exists to
+  // support, and it had no coverage at the layer the operator actually reads.
+  it('renders a real $0.00, not points, for a genuinely free plan price with a real fit', () => {
+    render(<DispatchCostTable rows={[row({
+      quota: { usdPlan: 0, points: 3, basis: 'seven_day', tokensPerPoint: 150_000 },
+    })]} />);
+    expect(screen.getByText('$0.00')).toBeTruthy();
+    expect(screen.queryByText('3.0 pts')).toBeNull();
+  });
 });
