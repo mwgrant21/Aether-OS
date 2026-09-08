@@ -5,6 +5,7 @@ import { BudgetAlertsCard } from './BudgetAlertsCard';
 import { OperatorCard } from './OperatorCard';
 import { NarrationVerbosityCard } from './NarrationVerbosityCard';
 import { StatuslineCard } from './StatuslineCard';
+import { PlanPriceCard } from './PlanPriceCard';
 import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { CostGuardCard } from './CostGuardCard';
 import { RetentionCard } from './RetentionCard';
@@ -18,6 +19,7 @@ export function SettingsView() {
         <NarrationVerbosityCard />
         <BudgetAlertsCard />
         <StatuslineCard />
+        <PlanPriceCard />
         <CrossEngineVerificationCard />
         <CostGuardCard />
         <RetentionCard />

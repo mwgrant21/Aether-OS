@@ -178,6 +178,18 @@ export interface Cfg {
   densityLevel: 'normal' | 'verbose' | 'summary';
   autoHeadlines: boolean;
   narrationVerbosity: NarrationVerbosity;
+  /**
+   * The monthly subscription price in USD, or null when the operator has not
+   * entered one.
+   *
+   * null and 0 are different answers and must stay different: null means "no
+   * price configured, show quota points only", while 0 means "the operator
+   * deliberately entered a $0 plan" -- a real, if unusual, answer that must
+   * still render as $0.00 rather than falling back to null. The input in
+   * PlanPriceCard clears to null only when the field is emptied or given a
+   * negative/unparsable value, never as a stand-in for a typed 0.
+   */
+  planMonthlyUsd: number | null;
 }
 
 export interface AetherState {
