@@ -9,12 +9,28 @@
 // a window that has since reset, which is the same dishonesty
 // persistence.ts's `statusline` exclusion already refuses.
 //
-// The statusline writes roughly every render and the watcher polls every 10s
-// (statuslineWatcher.ts's WATCH_INTERVAL_MS), so a full 7 days of continuous
-// running is ~60k readings. The cap keeps that bounded at a size the hourly
-// bucketing cannot even use -- two readings per hour would be plenty; the
-// headroom just means a burst never evicts the far end of the window.
-export const MAX_QUOTA_SAMPLES = 4000;
+// Retention is by AGE, not by count, because the consumer's window is an age:
+// deriveQuotaEfficiency is called with a seven-day windowMs (main.ts), and a
+// bucket whose percentage reading has been evicted falls to
+// `outcome: 'no-quota-sample'` -- excluded from the fit while its tokens still
+// count in observedTokens. A count cap silently narrowed the basis: the
+// statusline writes roughly every render and the watcher polls every 10s
+// (statuslineWatcher.ts's WATCH_INTERVAL_MS), so the previous cap of 4000
+// readings held ~11 hours of active use, not the seven days the card and its
+// tooltip both name. External usage under-reported for the same reason -- every
+// evicted hour's percentage movement went unattributed.
+export const QUOTA_SAMPLE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A pure memory backstop, no longer the retention rule. At one reading per 10s
+// a full seven days is ~60k samples, so this bounds a pathological write rate
+// (a statusline rewriting far faster than the watcher's poll interval) without
+// ever being the thing that decides what the window contains. Sized with
+// headroom over the ~60,480 readings a full seven days of 10s polling
+// produces, so normal operation never reaches it -- the age prune below stays
+// the binding constraint, and its own test asserts that ordering. A first
+// draft used a round 60,000 and that test caught it: 60,000 is BELOW seven
+// days of polling and would have re-narrowed the window by hours.
+export const MAX_QUOTA_SAMPLES = 80000;
 
 export interface QuotaSample {
   atMs: number;
@@ -24,10 +40,15 @@ export interface QuotaSample {
 export interface QuotaSampleBuffer {
   samples: QuotaSample[];
   maxSamples: number;
+  /** Retention window. A sample older than `newest - windowMs` is pruned. */
+  windowMs: number;
 }
 
-export function createQuotaSampleBuffer(maxSamples: number = MAX_QUOTA_SAMPLES): QuotaSampleBuffer {
-  return { samples: [], maxSamples };
+export function createQuotaSampleBuffer(
+  maxSamples: number = MAX_QUOTA_SAMPLES,
+  windowMs: number = QUOTA_SAMPLE_WINDOW_MS,
+): QuotaSampleBuffer {
+  return { samples: [], maxSamples, windowMs };
 }
 
 /**
@@ -55,6 +76,14 @@ export function recordQuotaSample(buffer: QuotaSampleBuffer, atMs: number, usedP
   const last = buffer.samples[buffer.samples.length - 1];
   if (last && last.atMs === atMs && last.usedPercentage === usedPercentage) return false;
   buffer.samples.push({ atMs, usedPercentage });
+  // Age prune, relative to the sample just accepted: anything at the leading
+  // edge that has fallen out of the retention window is no longer joinable to
+  // a bucket deriveQuotaEfficiency will consider. Only the leading PREFIX is
+  // scanned (amortized O(1)), not the whole array -- an out-of-order sample in
+  // the middle is rare, harmless (deriveQuotaEfficiency applies its own
+  // `inWindow` filter regardless), and not worth an O(n) sweep on every poll.
+  const cutoff = atMs - buffer.windowMs;
+  while (buffer.samples.length > 0 && buffer.samples[0].atMs < cutoff) buffer.samples.shift();
   if (buffer.samples.length > buffer.maxSamples) buffer.samples.shift();
   return true;
 }

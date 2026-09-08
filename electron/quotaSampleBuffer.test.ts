@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { createQuotaSampleBuffer, recordQuotaSample } from './quotaSampleBuffer';
+import {
+  createQuotaSampleBuffer,
+  recordQuotaSample,
+  QUOTA_SAMPLE_WINDOW_MS,
+} from './quotaSampleBuffer';
 
 describe('quotaSampleBuffer', () => {
   it('accepts a sample whose timestamp is LOWER than the last accepted one', () => {
@@ -32,6 +36,40 @@ describe('quotaSampleBuffer', () => {
     const acceptedDuplicate = recordQuotaSample(buffer, 1000, 42);
     expect(acceptedDuplicate).toBe(false);
     expect(buffer.samples).toEqual([{ atMs: 1000, usedPercentage: 42 }]);
+  });
+
+  // Whole-branch review, FIX 1: retention used to be a COUNT cap of 4000, which
+  // at the watcher's 10s poll is ~11 hours -- so deriveQuotaEfficiency, called
+  // with a seven-day window, joined a series that only reached back half a day.
+  // Every older bucket lost its percentage reading and fell to
+  // 'no-quota-sample': excluded from the fit, while its tokens still counted in
+  // observedTokens. Retention is now by AGE and must match the consumer's
+  // window.
+  it('prunes a sample older than the retention window while keeping one inside it', () => {
+    const buffer = createQuotaSampleBuffer();
+    const now = 10 * QUOTA_SAMPLE_WINDOW_MS; // far from 0, so "older" is real
+    // Six days back: inside a seven-day window, must survive.
+    expect(recordQuotaSample(buffer, now - 6 * 24 * 60 * 60 * 1000, 11)).toBe(true);
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([11]);
+    expect(recordQuotaSample(buffer, now, 42)).toBe(true);
+    // Both still present: nothing has aged out yet.
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([11, 42]);
+
+    // Two more days pass. The six-day-old reading is now eight days old and
+    // must go; the one recorded at `now` is two days old and must stay.
+    expect(recordQuotaSample(buffer, now + 2 * 24 * 60 * 60 * 1000, 55)).toBe(true);
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([42, 55]);
+  });
+
+  // The count cap is a memory backstop, not the retention rule, and must be
+  // large enough that a full seven days of 10s polling never reaches it --
+  // ~60,480 readings. A cap that evicts before the age prune does would
+  // reintroduce exactly the narrowing FIX 1 removed.
+  it('sizes the count cap so a full seven days of 10s polling is never evicted by count', () => {
+    const pollsInSevenDays = QUOTA_SAMPLE_WINDOW_MS / 10_000;
+    const buffer = createQuotaSampleBuffer();
+    expect(buffer.maxSamples).toBeGreaterThanOrEqual(pollsInSevenDays);
+    expect(buffer.windowMs).toBe(QUOTA_SAMPLE_WINDOW_MS);
   });
 
   it('evicts the oldest sample once the buffer exceeds its cap, and acceptance never depends on fullness', () => {
