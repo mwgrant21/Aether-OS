@@ -1,14 +1,17 @@
-import { constants, promises as fsp } from 'fs';
-import { dirname, isAbsolute, resolve } from 'path';
-import { randomBytes } from 'crypto';
+import { constants, promises as fsp } from 'node:fs';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
-// The one implementation of "back up, then replace a user file safely" for the
-// Electron main process. Ported from collector/src/hookInstaller.ts, which grew
-// these rules the hard way (#59, #60); electron/statuslineInstaller.ts and
-// electron/guidanceWriter.ts both write user-owned files and must not drift
-// from it. The Go port (collector-go/internal/hookinstall) mirrors the naming
-// and cleanup rules; symlink and mode preservation below are Electron-only so
-// far, tracked for the collector copies in #63.
+// "Back up, then replace a user file safely" for the collector. This is a
+// deliberate mirror of electron/atomicWrite.ts -- same rules, same order, only
+// the import style differs -- because three processes write the same
+// ~/.claude/settings.json and a difference between them is a bug by
+// definition. collector-go/internal/hookinstall/installer.go is the third
+// copy; the parity harness compares it against this one (#63).
+//
+// Kept as a copy rather than a shared import on purpose: collector/ is its own
+// npm package with its own build, and reaching into electron/ would couple the
+// two builds. If a fourth writer appears, revisit that.
 
 /**
  * A sibling of `targetPath` whose name is unique per invocation even when two
