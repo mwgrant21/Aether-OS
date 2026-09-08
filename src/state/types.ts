@@ -44,6 +44,7 @@ import type { NarrationVerbosity } from '../shared/narrationVerbosity';
 import type { VoiceRole } from '../shared/agentVoiceRoles';
 import type { Severity } from '../shared/voicePacks';
 import type { InterruptionBudgetState } from '../shared/interruptionBudget';
+import type { QuotaEfficiency } from '../shared/quotaEfficiency';
 
 // A single rendered voice-pack line appended to a Comms channel's feed
 // (Stage 14 Task 5, narrationFeed.ts). Distinct from `dispatchNarrations`
@@ -241,6 +242,7 @@ export interface AetherState {
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
   ledger: LedgerSnapshot | null;
+  quotaEfficiency: QuotaEfficiency | null;
   projectsSnapshot: ProjectsSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;

@@ -17,6 +17,7 @@ import type { PermissionDecision, PostToolFlagDecision } from './permissionServe
 import type { PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+import type { QuotaEfficiency } from '../src/shared/quotaEfficiency';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   app: {
@@ -139,6 +140,15 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     // renderer's listener exists, and the interval is 60s -- same startup race
     // the statusline channel already solves this way.
     current: (): Promise<LedgerSnapshot | null> => ipcRenderer.invoke('ledger:snapshot:current'),
+  },
+  quota: {
+    onEfficiency: (callback: (snapshot: QuotaEfficiency | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: QuotaEfficiency | null) => callback(snapshot);
+      ipcRenderer.on('quota:efficiency', listener);
+      return () => ipcRenderer.removeListener('quota:efficiency', listener);
+    },
+    // Same startup race the ledger channel solves this way.
+    current: (): Promise<QuotaEfficiency | null> => ipcRenderer.invoke('quota:efficiency:current'),
   },
   projects: {
     onSnapshot: (callback: (snapshot: ProjectsSnapshot | null) => void) => {

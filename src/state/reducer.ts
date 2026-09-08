@@ -13,6 +13,7 @@ import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
 import { narrationForEvent, rankForInterruption, appendNarrationMessage, type NarrationEvent } from '../components/comms/narrationFeed';
+import type { QuotaEfficiency } from '../shared/quotaEfficiency';
 
 export type Action =
   | { type: 'SET_ACTIVE_TAB'; tab: string }
@@ -46,6 +47,7 @@ export type Action =
   | { type: 'SET_FLEET'; fleet: FleetSessionRow[] | null }
   | { type: 'SET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot | null }
   | { type: 'SET_LEDGER'; ledger: LedgerSnapshot | null }
+  | { type: 'SET_QUOTA_EFFICIENCY'; quota: QuotaEfficiency | null }
   | { type: 'SET_PROJECTS_SNAPSHOT'; snapshot: ProjectsSnapshot | null }
   | { type: 'SET_PENDING_PERMISSION_REQUEST'; request: PermissionRequestUI | null }
   | { type: 'SET_PENDING_POST_TOOL_FLAG'; request: PostToolFlagRequestUI | null }
@@ -253,6 +255,9 @@ export function reducer(state: AetherState, action: Action): AetherState {
 
     case 'SET_LEDGER':
       return { ...state, ledger: action.ledger };
+
+    case 'SET_QUOTA_EFFICIENCY':
+      return { ...state, quotaEfficiency: action.quota };
 
     case 'SET_PROJECTS_SNAPSHOT':
       return { ...state, projectsSnapshot: action.snapshot };

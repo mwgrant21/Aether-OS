@@ -13,6 +13,7 @@ import { useStatuslineSync } from './state/useStatuslineSync';
 import { useFleetSync } from './state/useFleetSync';
 import { useDiagnosticsSync } from './state/useDiagnosticsSync';
 import { useLedgerSync } from './state/useLedgerSync';
+import { useQuotaSync } from './state/useQuotaSync';
 import { useTerminalAliveSync } from './state/useTerminalAliveSync';
 import { useCodexTerminalAliveSync } from './state/useCodexTerminalAliveSync';
 import { useTerminalIdleSync } from './state/useTerminalIdleSync';
@@ -45,6 +46,7 @@ export default function App() {
         <FleetSync />
         <DiagnosticsSync />
         <LedgerSync />
+        <QuotaSync />
         <TerminalAliveSync />
         <CodexTerminalAliveSync />
         <TerminalIdleSync />
@@ -105,6 +107,11 @@ function DiagnosticsSync() {
 
 function LedgerSync() {
   useLedgerSync();
+  return null;
+}
+
+function QuotaSync() {
+  useQuotaSync();
   return null;
 }
 
