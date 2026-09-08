@@ -1,0 +1,66 @@
+# electron-builder configuration for the packaged Aether OS desktop app.
+#
+# Build with `npm run dist` (which runs `electron-vite build` first -- the
+# packager only copies out/, it never compiles). Output lands in release/.
+appId: com.aetheros.desktop
+productName: Aether OS
+copyright: Copyright (c) 2026 Aether OS
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled output plus the manifest main.ts reads at runtime for its
+# version string (electron/main.ts's appVersion). Source, tests, docs, the
+# collector and the Go collector are all deliberately excluded -- none of them
+# are loaded by the packaged main process.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# scripts/ must sit on the REAL filesystem, not inside app.asar: the statusline
+# and hook scripts are spawned by Claude Code -- a separate process with no asar
+# support -- from paths written into ~/.claude/settings.json. electron/main.ts
+# resolves them from process.resourcesPath when app.isPackaged.
+extraResources:
+  - from: scripts
+    to: scripts
+    filter:
+      - '**/*.mjs'
+
+asar: true
+
+# node-pty loads conpty.dll / winpty-agent.exe by filesystem path and forks
+# conpty_console_list_agent as a child process. Windows cannot map a DLL out of
+# an archive, so the whole module is unpacked beside app.asar.
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+
+# node-pty 1.1.0 is an N-API (node-addon-api) addon shipping prebuilds for
+# win32-x64. N-API is ABI-stable across Node AND Electron versions, so the
+# binary already in node_modules runs under Electron 43 as-is. Leaving the
+# rebuild on would invoke node-gyp against a working prebuild for no gain.
+npmRebuild: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  # No code-signing certificate -- SmartScreen will warn on first run of a
+  # freshly built installer. Expected for a personal, locally built tool.
+  signAndEditExecutable: true
+
+nsis:
+  # Per-user install (%LOCALAPPDATA%\Programs\aether-os): no UAC prompt, and the
+  # app writes to the user profile anyway (~/.aether-os, ~/.claude).
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Aether OS
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh

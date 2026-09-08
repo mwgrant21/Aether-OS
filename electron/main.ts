@@ -288,11 +288,17 @@ const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json'
 const permissionServerPortPath = join(os.homedir(), '.aether-os', 'permission-server-port');
 const aetherOsDir = join(os.homedir(), '.aether-os');
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
-// app.getAppPath() resolves the project root in dev, and inside
-// resources/app.asar for a packaged build. This repo has no extraResources
-// packaging config, so a packaged build will not find the script at this
-// path -- a known gap, not something this task solves.
-const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
+// The statusline script is spawned by Claude Code -- an EXTERNAL node process --
+// from a path written into ~/.claude/settings.json. It therefore has to live on
+// the real filesystem: a path inside resources/app.asar reads fine from Electron
+// but is invisible to every other process. The packaged build ships scripts/ via
+// electron-builder's extraResources (unpacked, beside app.asar) and resolves it
+// from process.resourcesPath. In dev there is no asar and app.getAppPath() is the
+// project root, where scripts/ already sits.
+const scriptsDir = app.isPackaged
+  ? join(process.resourcesPath, 'scripts')
+  : join(app.getAppPath(), 'scripts');
+const statuslineScriptPath = join(scriptsDir, 'aether-statusline.mjs');
 let stopStatuslineWatcher: (() => void) | null = null;
 let stopPermissionServer: (() => void) | null = null;
 

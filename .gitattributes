@@ -1,1 +1,5 @@
 *.go text eol=lf
+
+# Icon artifacts are binary -- never line-ending normalise them.
+build/icon.ico binary
+build/icon.png binary

@@ -12,5 +12,9 @@ out
 
 *.tsbuildinfo
 .worktrees/
+.claude/worktrees/
 electron-dev*.log
 test-results/
+
+# electron-builder output
+release/
