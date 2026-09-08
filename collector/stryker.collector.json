@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-js/master/packages/api/schema/stryker-core.json",
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "npx vitest run --exclude src/parity.test.ts"
+  },
+  "mutate": [
+    "src/spoolTailer.ts",
+    "src/ingest.ts",
+    "src/retention.ts",
+    "src/transcriptScan.ts",
+    "src/promptSafety.ts",
+    "src/hookInstaller.ts",
+    "src/staleDispatchSweep.ts",
+    "src/toolCallHistory.ts"
+  ],
+  "ignorePatterns": ["node_modules/**", "dist/**", "reports/**"],
+  "reporters": ["clear-text", "json"],
+  "jsonReporter": { "fileName": "reports/stryker-collector.json" },
+  "coverageAnalysis": "off",
+  "timeoutMS": 90000,
+  "concurrency": 3
+}
