@@ -68,6 +68,23 @@ describe('waitMsWithin', () => {
     // Must clamp to a zero-length interval, not a negative-width one.
     expect(waitMsWithin(clock, T, T + 10_000, T + 10_000)).toBe(0);
   });
+
+  it('is zero for a zero-width span (spanEndMs === spanStartMs)', () => {
+    const clock = createWaitClock();
+    beginWait(clock, 'a', T - 1_000);
+    endWait(clock, 'a', T + 1_000);
+    // Called directly -- activeDurationMs never reaches this guard because it
+    // pre-validates wallDurationMs > 0, so this module's own defense against
+    // an inverted or degenerate span needs its own direct coverage.
+    expect(waitMsWithin(clock, T, T, T + 1_000)).toBe(0);
+  });
+
+  it('is zero for an inverted span (spanEndMs < spanStartMs)', () => {
+    const clock = createWaitClock();
+    beginWait(clock, 'a', T - 1_000);
+    endWait(clock, 'a', T + 1_000);
+    expect(waitMsWithin(clock, T + 5_000, T, T + 5_000)).toBe(0);
+  });
 });
 
 describe('activeDurationMs', () => {
@@ -132,16 +149,38 @@ describe('retention', () => {
   });
 
   it('keeps the most recently closed waits, not the oldest', () => {
+    // 210 equal-width (1ms), non-overlapping intervals: w0..w209. With
+    // MAX_RETAINED_WAITS=200, exactly 10 must be dropped. A test that only
+    // checks the TOTAL retained width (200) cannot tell "dropped w0..w9"
+    // apart from "dropped w200..w209" -- both leave 200 surviving 1ms
+    // intervals summing to 200. This test instead checks WHICH end of the
+    // timeline survives: the earliest span (covering w0..w9) must count 0
+    // once those are pruned away, while the latest span (covering
+    // w200..w209, always within the cap and never eligible for pruning)
+    // must still report its full width.
     const clock = createWaitClock();
     for (let i = 0; i < MAX_RETAINED_WAITS + 10; i += 1) {
       beginWait(clock, `w${i}`, T + i * 10);
       endWait(clock, `w${i}`, T + i * 10 + 1);
     }
-    // The earliest waits (w0..w9) should have been pruned; the union over the
-    // whole timeline should reflect only the retained (most recent) intervals.
-    const totalPossible = (MAX_RETAINED_WAITS + 10) * 1; // each interval is 1ms wide, non-overlapping
-    const counted = waitMsWithin(clock, T, T + (MAX_RETAINED_WAITS + 10) * 10 + 1, T + (MAX_RETAINED_WAITS + 10) * 10 + 1);
-    expect(counted).toBeLessThan(totalPossible);
-    expect(counted).toBe(MAX_RETAINED_WAITS);
+    const now = T + (MAX_RETAINED_WAITS + 10) * 10 + 1;
+
+    // Span covering w0..w9 (indices 0-9): oldest-first pruning must have
+    // dropped all of these, so nothing here should still be counted.
+    const earliestSpan = waitMsWithin(clock, T, T + 9 * 10 + 1, now);
+    expect(earliestSpan).toBe(0);
+
+    // Span covering w200..w209 (the 10 most recent): these are always
+    // within the 200-cap and must never be pruned regardless of direction,
+    // so all 10ms must still be present.
+    const latestSpan = waitMsWithin(clock, T + 200 * 10, T + 209 * 10 + 1, now);
+    expect(latestSpan).toBe(10);
+
+    // Total retained width is still exactly the cap -- kept as a sanity
+    // check, but by itself (as the prior version of this test relied on)
+    // it cannot distinguish pruning direction; the two span checks above
+    // are what make this test load-bearing.
+    const total = waitMsWithin(clock, T, now, now);
+    expect(total).toBe(MAX_RETAINED_WAITS);
   });
 });
