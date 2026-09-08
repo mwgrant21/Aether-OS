@@ -199,9 +199,15 @@ func marshalSettingsJSON(v interface{}) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
+// backupPathFn is a seam so tests can pin the backup name; production always
+// uses backupPathFor.
+var backupPathFn = backupPathFor
+
 func writeBackup(settingsPath, raw string) (string, error) {
-	backupPath := fmt.Sprintf("%s.aetherbak-%d", settingsPath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, []byte(raw), 0644); err != nil {
+	backupPath := backupPathFn(settingsPath)
+	// Exclusive create: never overwrite an earlier backup, which may be the
+	// user's pristine file (#60).
+	if err := writeFileExcl(backupPath, []byte(raw), 0644); err != nil {
 		return "", err
 	}
 	return backupPath, nil
@@ -214,14 +220,20 @@ var renameFile = os.Rename
 // writeFileFn is the same kind of seam for the temp-file write.
 var writeFileFn = writeFileExcl
 
-// tempPathFor mirrors hookInstaller.ts's tempPathFor: unique per invocation
-// even when two writers share a millisecond, so a failing writer's cleanup
-// can only ever remove its own file (#59).
-func tempPathFor(settingsPath string) string {
+// uniqueSiblingPath mirrors hookInstaller.ts's uniqueSiblingPath: a sibling of
+// settings.json whose name is unique per invocation even when two writers
+// share a millisecond (timestamp + pid + 4 random bytes), so a failing
+// writer's cleanup can only ever remove its own file (#59) and a backup
+// can never overwrite an earlier one (#60).
+func uniqueSiblingPath(settingsPath, marker string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("%s.aethertmp-%d-%d-%s", settingsPath, time.Now().UnixMilli(), os.Getpid(), hex.EncodeToString(b[:]))
+	return fmt.Sprintf("%s.%s-%d-%d-%s", settingsPath, marker, time.Now().UnixMilli(), os.Getpid(), hex.EncodeToString(b[:]))
 }
+
+func tempPathFor(settingsPath string) string { return uniqueSiblingPath(settingsPath, "aethertmp") }
+
+func backupPathFor(settingsPath string) string { return uniqueSiblingPath(settingsPath, "aetherbak") }
 
 // writeFileExcl is os.WriteFile with O_EXCL: a name collision is an error,
 // never a clobber of another writer's pending file.

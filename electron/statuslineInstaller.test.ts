@@ -1,7 +1,7 @@
-import { describe, expect, it, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { describe, expect, it, afterEach, vi } from 'vitest';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, promises as fsp } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import {
   detectInstallStatus,
   extractChainedCommand,
@@ -306,5 +306,74 @@ describe('readInstallState / installStatusline / uninstallStatusline', () => {
 
     const afterBytes = readFileSync(settingsPath, 'utf8');
     expect(afterBytes).toBe(original);
+  });
+});
+
+// Same write-path guarantees as collector/src/hookInstaller.ts (#59, #60):
+// this installer writes the same ~/.claude/settings.json from a different
+// process, so it must not collide with, or clean up after, the other writers.
+describe('statuslineInstaller write path (#59, #60)', () => {
+  const freshSettings = (content: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'statusline-installer-writepath-'));
+    const p = join(dir, 'settings.json');
+    writeFileSync(p, content, 'utf8');
+    return p;
+  };
+  const siblings = (p: string, marker: string) => readdirSync(dirname(p)).filter((f) => f.includes(marker));
+
+  it('keeps both backups when two writes share the same millisecond', async () => {
+    const original = '{"sentinel":"pristine"}';
+    const settingsPath = freshSettings(original);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(1700000000000));
+    try {
+      const first = await installStatusline(settingsPath, SCRIPT_PATH);
+      const afterFirst = readFileSync(settingsPath, 'utf8');
+      const second = await uninstallStatusline(settingsPath, SCRIPT_PATH);
+      expect(first.ok && second.ok).toBe(true);
+      expect(first.backupPath).toBeTruthy();
+      expect(second.backupPath).toBeTruthy();
+      expect(first.backupPath).not.toBe(second.backupPath);
+      expect(readFileSync(first.backupPath!, 'utf8')).toBe(original);
+      expect(readFileSync(second.backupPath!, 'utf8')).toBe(afterFirst);
+      expect(siblings(settingsPath, '.aetherbak-')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports failure, leaves settings.json byte-identical, and leaves no temp file when the rename fails', async () => {
+    const settingsPath = freshSettings('{"sentinel":"keep"}');
+    const spy = vi.spyOn(fsp, 'rename').mockRejectedValueOnce(new Error('EACCES: simulated rename failure'));
+    try {
+      const result = await installStatusline(settingsPath, SCRIPT_PATH);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('simulated rename failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{"sentinel":"keep"}');
+    expect(siblings(settingsPath, '.aethertmp-')).toEqual([]);
+  });
+
+  it('leaves another writer\x27s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
+    const settingsPath = freshSettings('{}');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    let contested = '';
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aethertmp-')) {
+        contested = String(file);
+        await realWriteFile(file, '{"other":"writer"}', 'utf8');
+        throw Object.assign(new Error('EEXIST: file already exists'), { code: 'EEXIST' });
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      expect((await installStatusline(settingsPath, SCRIPT_PATH)).ok).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(contested).not.toBe('');
+    expect(readFileSync(contested, 'utf8')).toBe('{"other":"writer"}');
   });
 });

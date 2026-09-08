@@ -74,17 +74,22 @@ async function readSettings(
   }
 }
 
+// A sibling of settings.json whose name is unique per invocation even when two
+// writers (this collector, the Go collector, the Electron app) hit the same
+// millisecond: timestamp + pid + 4 random bytes, always created exclusively.
+function uniqueSiblingPath(settingsPath: string, marker: string): string {
+  return `${settingsPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
+}
+
 async function writeBackup(settingsPath: string, raw: string): Promise<string> {
-  const backupPath = `${settingsPath}.aetherbak-${Date.now()}`;
-  await fsp.writeFile(backupPath, raw, 'utf8');
+  const backupPath = uniqueSiblingPath(settingsPath, 'aetherbak');
+  // flag wx: never overwrite an earlier backup, which may be the user's pristine file (#60).
+  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx' });
   return backupPath;
 }
 
-// The temp name must be unique per invocation even when two writers (this
-// collector, the Go collector, two Aether instances) hit the same millisecond,
-// so that a failing writer's cleanup can only ever remove its own file (#59).
 function tempPathFor(settingsPath: string): string {
-  return `${settingsPath}.aethertmp-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
+  return uniqueSiblingPath(settingsPath, 'aethertmp');
 }
 
 async function writeSettingsAtomically(settingsPath: string, content: string): Promise<void> {
