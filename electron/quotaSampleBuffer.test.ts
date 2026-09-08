@@ -72,6 +72,47 @@ describe('quotaSampleBuffer', () => {
     expect(buffer.windowMs).toBe(QUOTA_SAMPLE_WINDOW_MS);
   });
 
+  // `capturedAtMs` is external and untrusted (statuslineWatcher.ts validates
+  // only Number.isFinite). A single payload stamped far in the future must
+  // not be allowed to evict the whole retained series -- the age prune's
+  // cutoff is derived from the sample just accepted, so a bogus forward jump
+  // otherwise makes every real reading look older than the window.
+  it('does not let an implausible future timestamp evict the whole retained series', () => {
+    const buffer = createQuotaSampleBuffer();
+    const now = 10 * QUOTA_SAMPLE_WINDOW_MS;
+    expect(recordQuotaSample(buffer, now, 10)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 10_000, 11)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 20_000, 12)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 30_000, 13)).toBe(true);
+    expect(recordQuotaSample(buffer, now + 40_000, 14)).toBe(true);
+
+    const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+    const rejected = recordQuotaSample(buffer, now + 40_000 + oneYearMs, 99);
+
+    // The bogus sample must be observably rejected, not silently retained --
+    // and the five real readings must still be there.
+    expect(rejected).toBe(false);
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([10, 11, 12, 13, 14]);
+  });
+
+  // Guards the fix above against overcorrecting into "never prune to be
+  // safe" -- real polling advances the clock forward by WATCH_INTERVAL_MS
+  // (10s) every call, and that normal forward progression must still prune
+  // once a reading falls outside the window.
+  it('keeps pruning correctly under normal small forward steps, not just skipping oversized jumps', () => {
+    const stepMs = 10_000; // the watcher's real poll interval
+    const windowMs = 5 * stepMs; // small window so the test runs fast
+    const buffer = createQuotaSampleBuffer(undefined, windowMs);
+    const start = 10 * windowMs;
+    for (let i = 0; i <= 20; i++) {
+      expect(recordQuotaSample(buffer, start + i * stepMs, i)).toBe(true);
+    }
+    // 20 steps of stepMs is far more than one window's worth of normal
+    // progression -- only the readings within one window of the latest may
+    // remain.
+    expect(buffer.samples.map((s) => s.usedPercentage)).toEqual([15, 16, 17, 18, 19, 20]);
+  });
+
   it('evicts the oldest sample once the buffer exceeds its cap, and acceptance never depends on fullness', () => {
     const buffer = createQuotaSampleBuffer(3);
     expect(recordQuotaSample(buffer, 1, 1)).toBe(true);
