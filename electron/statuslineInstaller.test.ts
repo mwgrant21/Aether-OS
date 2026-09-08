@@ -356,7 +356,7 @@ describe('statuslineInstaller write path (#59, #60)', () => {
     expect(siblings(settingsPath, '.aethertmp-')).toEqual([]);
   });
 
-  it('leaves another writer\x27s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
+  it('leaves another writer\'s temp file alone when exclusive creation loses the name (EEXIST)', async () => {
     const settingsPath = freshSettings('{}');
     const realWriteFile = fsp.writeFile.bind(fsp);
     let contested = '';
