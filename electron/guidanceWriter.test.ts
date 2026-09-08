@@ -140,7 +140,11 @@ describe('applyGuidanceToFile', () => {
       expect(isGuidanceApplied(readFileSync(realFile, 'utf8'), FINDING)).toBe(true);
       // The backup belongs beside the real file, where a user would look for it.
       expect(readFileSync(result.backupPath!, 'utf8')).toBe(original);
-      expect(result.backupPath!.startsWith(realDir)).toBe(true);
+      // Compare resolved directories, not string prefixes: a Windows temp dir is
+      // an 8.3 short path (RUNNER~1) that realpath expands, so the backup path is
+      // spelled differently from realDir while naming the same directory.
+      expect(dirname(result.backupPath!)).toBe(dirname(await fsp.realpath(realFile)));
+      expect(dirname(result.backupPath!)).not.toBe(dirname(link));
     }
   );
 
