@@ -27,9 +27,11 @@ export interface RateLimitWindowReadout {
 
 export interface AccountRateLimits {
   capturedAtMs: number;
-  /** The shorter, faster-moving window (the 5-hour one on a ChatGPT plan). */
+  /** The shorter, faster-moving window (the 5-hour one on a ChatGPT plan).
+   *  Positional -- `asDepletionInput` below double-checks this against
+   *  `windowMinutes` before treating either one as the 5-hour gauge. */
   primary: RateLimitWindowReadout | null;
-  /** The longer window (the weekly one). */
+  /** The longer window (the weekly one). Same caveat as `primary`. */
   secondary: RateLimitWindowReadout | null;
 }
 
@@ -59,7 +61,7 @@ function readWindow(raw: unknown, capturedAtMs: number): RateLimitWindowReadout 
   if (usedPercentage === null) return null;
   return {
     usedPercentage,
-    windowMinutes: num(w.windowMinutes ?? w.window_minutes),
+    windowMinutes: num(w.windowMinutes ?? w.window_minutes ?? w.windowDurationMins ?? w.window_duration_mins),
     resetsAtMs: readResetMs(w, capturedAtMs),
   };
 }
@@ -83,14 +85,32 @@ export function parseAccountRateLimits(raw: unknown, capturedAtMs: number): Acco
   };
 }
 
-/** The primary window in the shape `deriveDepletion` consumes.
+const FIVE_HOUR_WINDOW_MINUTES = 300;
+
+/** Picks the 5-hour window by its reported duration rather than trusting
+ *  that `primary` always is it. A real capture (2026-09-07, codex-cli
+ *  0.153.2) confirms primary=300min / secondary=10080min, which is the
+ *  positional assumption this replaces -- but the binding rule that the
+ *  7-day window is the cost basis and the 5-hour window is a live gauge
+ *  only, never mixed, is exactly the invariant a reordered response would
+ *  silently violate. Falls back to position when neither window reports a
+ *  duration (older/defensive shapes still lack `windowMinutes` entirely). */
+function pickFiveHourWindow(limits: AccountRateLimits): RateLimitWindowReadout | null {
+  const { primary, secondary } = limits;
+  if (primary?.windowMinutes == null && secondary?.windowMinutes == null) return primary;
+  const distance = (w: RateLimitWindowReadout | null) =>
+    w?.windowMinutes == null ? Infinity : Math.abs(w.windowMinutes - FIVE_HOUR_WINDOW_MINUTES);
+  return distance(secondary) < distance(primary) ? secondary : primary;
+}
+
+/** The 5-hour window in the shape `deriveDepletion` consumes.
  *
  *  A window with no reset time yields null: every projection in
  *  depletion.ts is anchored to `resetsAtMs` (it derives the window start from
  *  it when the caller supplies none), so handing it a fabricated reset would
  *  produce a confident, wrong countdown rather than an honest "no data". */
 export function asDepletionInput(limits: AccountRateLimits): DepletionInput {
-  return { capturedAtMs: limits.capturedAtMs, fiveHour: toRateLimitWindow(limits.primary) };
+  return { capturedAtMs: limits.capturedAtMs, fiveHour: toRateLimitWindow(pickFiveHourWindow(limits)) };
 }
 
 export function toRateLimitWindow(readout: RateLimitWindowReadout | null): RateLimitWindow | null {
