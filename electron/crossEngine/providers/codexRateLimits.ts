@@ -100,6 +100,8 @@ function pickFiveHourWindow(limits: AccountRateLimits): RateLimitWindowReadout |
   if (primary?.windowMinutes == null && secondary?.windowMinutes == null) return primary;
   const distance = (w: RateLimitWindowReadout | null) =>
     w?.windowMinutes == null ? Infinity : Math.abs(w.windowMinutes - FIVE_HOUR_WINDOW_MINUTES);
+  // Strict less-than: an exact tie keeps primary. Real data (300 vs 10080)
+  // never ties, so this is an untested-but-deliberate default, not an oversight.
   return distance(secondary) < distance(primary) ? secondary : primary;
 }
 
