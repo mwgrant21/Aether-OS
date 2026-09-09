@@ -13,12 +13,12 @@ multi-machine distribution remain out of scope (see `CLAUDE.md`).
 | Command | What it does |
 |---|---|
 | `npm run dist` | `electron-vite build`, then `electron-builder --win` -> `release/Aether OS Setup <ver>.exe` |
-| `npm run dist:dir` | Same, but stops at `release/win-unpacked/`. No installer, no NSIS step -- the fast way to smoke-test a packaging change |
+| `npm run dist:dir` | Same, but stops at `release/win-unpacked/`, then grants that directory the AppContainer ACE (see #3). No installer, no NSIS step -- the fast way to smoke-test a packaging change |
 | `npm run icon` | Regenerates `build/icon.png` + `build/icon.ico` from `scripts/make-icon.ps1`. Only needed when the mark changes; the outputs are committed |
 
 Config lives in `electron-builder.yml`; the NSIS install hook is `build/installer.nsh`.
 
-## The four things packaging has to get right
+## The five things packaging has to get right
 
 Each of these is a real failure this repo either already hit or would hit. None
 of them are guessable from a default electron-builder config.
@@ -62,6 +62,14 @@ packaged-install counterpart to `scripts/grant-appcontainer-acl.js`, which does
 the same to `node_modules/electron/dist` for `npm run electron:dev`. Chrome ships
 the same ACE on its own install directory, for the same reason.
 
+**`--dir` builds need it too, and skip NSIS to get it.** `npm run dist:dir` never
+runs `customInstall`, so on any machine where the checkout does not already
+inherit the ACE, the `release/win-unpacked` build this file advertises as the
+fast smoke-test path dies exactly the same way. `dist:dir` therefore chains
+`node scripts/grant-appcontainer-acl.js release/win-unpacked`. Given an explicit
+target directory that script fails loudly rather than skipping -- a build that
+cannot be launched must not be handed back as a successful one.
+
 If the app ever opens blank or exits immediately after an install, run:
 
 ```
@@ -79,6 +87,27 @@ electron-builder always bundles production `dependencies`, regardless of the
 `files` list, so this cannot be trimmed by config alone. Dropping it would mean
 making the cross-engine Codex verifier depend on a separately-installed `codex`
 on PATH -- a real feature change, not a packaging tweak. Not done.
+
+### 5. Uninstalling has to undo what the app wrote outside `$INSTDIR`
+
+Enabling the statusline writes `node "$INSTDIR\resources\scripts\aether-statusline.mjs"`
+into `~/.claude/settings.json` -- a file NSIS neither owns nor tracks. Deleting
+the install directory without touching it leaves every subsequent Claude Code
+session invoking a script that is gone, and never restores whatever statusline
+tool Aether was chained through.
+
+`build/installer.nsh`'s `customUnInstall` runs the app once with
+`--uninstall-statusline` before `RMDir /r $INSTDIR`, which is the last moment the
+executable still exists. `electron/statuslineUninstallCli.ts` handles that flag:
+it opens no window, reuses the same `uninstallStatusline` path the in-app toggle
+uses -- so the backup and atomic-replace rules in `electron/atomicWrite.ts` are
+not reimplemented in NSIS script -- and refuses to touch a `statusLine` that
+belongs to some other tool. A watchdog bounds the run so a wedged filesystem can
+never leave the uninstaller blocked.
+
+The hook is guarded on `${isUpdated}`, because electron-builder runs the same
+uninstall section when a newer installer replaces an existing install. Turning
+the user's statusline off on every upgrade would not be an uninstall.
 
 ## Known limitations
 

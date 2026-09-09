@@ -46,6 +46,11 @@ import { createDurationBaseline, getMedianMs, recordDuration } from './durationB
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
+import {
+  STATUSLINE_UNINSTALL_FLAG,
+  resolveStatuslineScriptPath,
+  runStatuslineUninstall,
+} from './statuslineUninstallCli';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
 import { classifyPermissionRisk, shouldAutoAllow, type PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
@@ -81,10 +86,23 @@ const DEFAULT_HEIGHT = 900;
 const MIN_WIDTH = 1280;
 const MIN_HEIGHT = 700;
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
+// Upper bound on the uninstall-time statusline cleanup. It is one small file
+// read and one atomic replace, so this is generous by two orders of magnitude;
+// it exists only so a wedged filesystem cannot leave the Windows uninstaller
+// blocked forever on a process that will never exit.
+const STATUSLINE_UNINSTALL_TIMEOUT_MS = 10_000;
 const boundsFilePath = join(app.getPath('userData'), 'window-bounds.json');
 const iconPath = join(__dirname, '../../build/icon.png');
 
-if (!app.requestSingleInstanceLock()) {
+// The NSIS uninstaller runs this executable with STATUSLINE_UNINSTALL_FLAG to
+// clean up ~/.claude/settings.json before the install directory is deleted (see
+// build/installer.nsh). That run opens no window and must not be turned away by
+// the single-instance lock: NSIS blocks an uninstall while the app is running,
+// but a stale lock left by a crashed instance would otherwise silently skip the
+// cleanup -- the exact failure this run exists to prevent.
+const isStatuslineUninstallRun = process.argv.includes(STATUSLINE_UNINSTALL_FLAG);
+
+if (!isStatuslineUninstallRun && !app.requestSingleInstanceLock()) {
   app.quit();
 }
 
@@ -298,10 +316,43 @@ const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // electron-builder's extraResources (unpacked, beside app.asar) and resolves it
 // from process.resourcesPath. In dev there is no asar and app.getAppPath() is the
 // project root, where scripts/ already sits.
-const scriptsDir = app.isPackaged
-  ? join(process.resourcesPath, 'scripts')
-  : join(app.getAppPath(), 'scripts');
-const statuslineScriptPath = join(scriptsDir, 'aether-statusline.mjs');
+const statuslineScriptPath = resolveStatuslineScriptPath({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  appPath: app.getAppPath(),
+});
+
+// Uninstall cleanup, run by build/installer.nsh before NSIS deletes $INSTDIR.
+// Without it, a user who enabled the statusline and then uninstalled the app
+// would be left with settings.json invoking a script that no longer exists on
+// every subsequent Claude Code session, and any statusline tool Aether had
+// chained through would never be restored.
+//
+// Everything below this point in the module still evaluates -- ipcMain
+// handlers and the like -- which is harmless, but the whenReady handler that
+// creates the window checks isStatuslineUninstallRun so no window can appear
+// during an uninstall. The watchdog is what guarantees the uninstaller cannot
+// hang: nsExec waits on this process with no timeout of its own.
+if (isStatuslineUninstallRun) {
+  const watchdog = setTimeout(() => {
+    console.error('[uninstall] statusline cleanup timed out');
+    app.exit(1);
+  }, STATUSLINE_UNINSTALL_TIMEOUT_MS);
+  watchdog.unref();
+
+  void runStatuslineUninstall(statuslineSettingsPath, statuslineScriptPath)
+    .then(({ code, message }) => {
+      // stdout/stderr are captured into the NSIS install log by nsExec::ExecToLog.
+      console.log(`[uninstall] ${message}`);
+      clearTimeout(watchdog);
+      app.exit(code);
+    })
+    .catch((err) => {
+      console.error(`[uninstall] statusline cleanup failed: ${err?.message ?? String(err)}`);
+      clearTimeout(watchdog);
+      app.exit(1);
+    });
+}
 let stopStatuslineWatcher: (() => void) | null = null;
 let stopPermissionServer: (() => void) | null = null;
 
@@ -617,6 +668,11 @@ async function tickAndPushAgents(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // An uninstall-cleanup run has no UI and exits as soon as settings.json is
+  // repaired. Returning here is what stops a window from flashing up (and the
+  // whole app from booting) in the middle of a Windows uninstall.
+  if (isStatuslineUninstallRun) return;
+
   Menu.setApplicationMenu(null);
   createWindow();
 

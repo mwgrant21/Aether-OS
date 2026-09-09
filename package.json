@@ -16,7 +16,7 @@
     "electron:dev": "electron-vite dev --noSandbox",
     "electron:build": "electron-vite build",
     "dist": "electron-vite build && electron-builder --win",
-    "dist:dir": "electron-vite build && electron-builder --win --dir",
+    "dist:dir": "electron-vite build && electron-builder --win --dir && node scripts/grant-appcontainer-acl.js release/win-unpacked",
     "icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-icon.ps1"
   },
   "dependencies": {
