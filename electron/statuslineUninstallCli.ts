@@ -1,5 +1,6 @@
+import { existsSync } from 'fs';
 import { join } from 'path';
-import { readInstallState, uninstallStatusline } from './statuslineInstaller';
+import { parseOwnStatuslineCommand, readInstallState, uninstallStatusline } from './statuslineInstaller';
 
 /**
  * The CLI flag the NSIS uninstaller passes to the packaged executable. Lives
@@ -55,16 +56,45 @@ export interface StatuslineUninstallResult {
  * had drifted -- is exactly the divergence atomicWrite.parity.test.ts exists
  * to prevent.
  *
- * The status guard is this function's own contribution. uninstallStatusline
+ * The ownership guard is this function's own contribution. uninstallStatusline
  * deletes whatever `statusLine` it finds; that is safe behind the app's UI,
  * which only offers uninstall when the state is already 'installed', and is
  * NOT safe here, where the uninstaller calls this unconditionally. A user who
  * configured some other statusline tool and never enabled Aether's would
  * otherwise have that tool silently deleted by uninstalling this app.
+ *
+ * That guard is parseOwnStatuslineCommand -- the SAME strict full-command
+ * parser migrateStatuslineScriptPath() uses -- not readInstallState's status
+ * alone. detectInstallStatus() classifies by `existingCommand.includes(
+ * scriptPath)`, and a substring test is too weak to gate a destructive write
+ * in either direction:
+ *
+ *   - It says 'installed' for a command the user has customised (`node
+ *     "<script>" --chain <b64> && my-tool`, or an extra flag). uninstall-
+ *     Statusline would then delete the whole entry, or restore only the
+ *     loosely-scanned `--chain`, discarding the user's additions during an
+ *     unattended NSIS uninstall. Anything we did not emit verbatim is not
+ *     ours to rewrite, so it is reported for a manual fix instead.
+ *
+ *   - It says 'installed-other' for one of OUR OWN commands that names a
+ *     PREVIOUS install directory. That is the update-to-a-new-directory case:
+ *     electron-builder.yml allows changing the install directory, and if the
+ *     new build is never launched, main.ts never gets to migrate the path. A
+ *     bare status check would call that a stranger's tool, exit 0, suppress
+ *     installer.nsh's warning, and leave a dead command behind. When the
+ *     command parses as ours AND the script it names is gone, it is our own
+ *     litter: clean it up, restoring any chained tool.
+ *
+ * A strictly-ours command whose script still EXISTS is left alone -- that is a
+ * second live install, possibly one the user runs deliberately.
+ *
+ * scriptExists is injected for tests only; the signature is otherwise
+ * unchanged, so main.ts's call site keeps the real existsSync.
  */
 export async function runStatuslineUninstall(
   settingsPath: string,
-  scriptPath: string
+  scriptPath: string,
+  scriptExists: (p: string) => boolean = existsSync
 ): Promise<StatuslineUninstallResult> {
   let state;
   try {
@@ -93,26 +123,57 @@ export async function runStatuslineUninstall(
     };
   }
 
-  if (state.status !== 'installed') {
-    // 'not-installed'   -- nothing to do.
-    // 'installed-other' -- somebody else's statusLine; not ours to remove.
-    // Both are genuine clean no-ops: we know the state, and it needs no action.
+  if (state.status === 'not-installed') {
+    // A genuine clean no-op: we know the state, and it needs no action.
+    return { code: 0, message: 'no Aether statusline to remove (not-installed)' };
+  }
+
+  // 'installed' or 'installed-other' from here -- there IS a command, and the
+  // strict parser, not the status, decides whether it is ours to touch.
+  const own = parseOwnStatuslineCommand(state.existingCommand);
+
+  if (!own) {
+    if (state.status === 'installed') {
+      // Names our script, but is not a command we emitted verbatim: the user
+      // appended to it. Removing the entry or restoring a loosely-scanned
+      // --chain would silently drop those additions, and this runs unattended
+      // during an uninstall where nobody would see it happen. Report it so
+      // installer.nsh prints the manual-fix instructions.
+      return {
+        code: 1,
+        message: `statusLine in ${settingsPath} references the removed script but was modified; left untouched -- remove it by hand`,
+      };
+    }
+    // Somebody else's statusLine entirely; not ours to remove.
+    return { code: 0, message: 'no Aether statusline to remove (installed-other)' };
+  }
+
+  if (state.status === 'installed-other' && scriptExists(own.scriptPath)) {
+    // Ours by shape, but it names a script that is still on disk -- a second
+    // live install. Deleting its statusline while uninstalling THIS one would
+    // be the silent clobber the whole module exists to avoid.
     return {
       code: 0,
-      message: `no Aether statusline to remove (${state.status})`,
+      message: `statusline belongs to another install at ${own.scriptPath}; left untouched`,
     };
   }
 
+  const stale = state.status === 'installed-other';
+
   try {
-    const result = await uninstallStatusline(settingsPath, scriptPath);
+    // Pass the path the command actually names, not this install's. For the
+    // stale case they differ, and uninstallStatusline has to recognise the
+    // entry it is being asked to repair.
+    const result = await uninstallStatusline(settingsPath, own.scriptPath);
     if (!result.ok) {
       return { code: 1, message: `could not update ${settingsPath}: ${result.error}` };
     }
+    const what = stale ? `stale statusline from a previous install (${own.scriptPath}) removed from` : 'statusline removed from';
     return {
       code: 0,
       message: result.backupPath
-        ? `statusline removed from ${settingsPath} (backup: ${result.backupPath})`
-        : `statusline removed from ${settingsPath}`,
+        ? `${what} ${settingsPath} (backup: ${result.backupPath})`
+        : `${what} ${settingsPath}`,
     };
   } catch (err: any) {
     return { code: 1, message: `could not update ${settingsPath}: ${err?.message ?? String(err)}` };

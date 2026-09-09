@@ -8,7 +8,12 @@ import {
   runStatuslineUninstall,
 } from './statuslineUninstallCli';
 
-const SCRIPT_PATH = 'C:\Program Files\Aether OS\resources\scripts\aether-statusline.mjs';
+// String.raw, NOT a plain quoted string. Written as '...\Program Files\Aether
+// OS\resources\...' this consumed \P \A \r \s \a as JS escapes and produced a
+// path with a carriage return in it and not one backslash -- so every test
+// below ran against a string no Windows install could ever produce, and the
+// strict command parser rightly refused to recognise it as ours.
+const SCRIPT_PATH = String.raw`C:\Program Files\Aether OS\resources\scripts\aether-statusline.mjs`;
 
 describe('resolveStatuslineScriptPath', () => {
   it('resolves under resourcesPath when packaged (scripts/ ships unpacked, beside app.asar)', () => {
@@ -142,6 +147,117 @@ describe('runStatuslineUninstall', () => {
       spy.mockRestore();
     }
     expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+  });
+});
+
+// Both cases below come from readInstallState's status being a SUBSTRING test
+// (`existingCommand.includes(scriptPath)`), which is too weak to gate a
+// destructive write. runStatuslineUninstall re-checks with the strict
+// full-command parser migration already uses.
+describe('runStatuslineUninstall ownership guard (strict parse, not status alone)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'statusline-uninstall-guard-test-'));
+  const settingsPath = join(dir, 'settings.json');
+
+  // String.raw so these are literal Windows paths. Two DIFFERENT install
+  // directories, which is the whole point: electron-builder.yml sets
+  // allowToChangeInstallationDirectory, so an update can land elsewhere.
+  const CURRENT = String.raw`C:\Program Files\Aether OS\resources\scripts\aether-statusline.mjs`;
+  const PREVIOUS = String.raw`C:\Program Files\Aether OS 0.9\resources\scripts\aether-statusline.mjs`;
+
+  const backups = () => readdirSync(dir).filter((f) => f.includes('.aetherbak-'));
+  const write = (command: string) =>
+    writeFileSync(settingsPath, JSON.stringify({ model: 'opus', statusLine: { type: 'command', command } }));
+
+  afterEach(() => {
+    for (const f of readdirSync(dir)) rmSync(join(dir, f), { force: true });
+  });
+
+  // status is 'installed' (the command DOES contain our script path), but the
+  // user appended their own tool. Deleting the entry -- or restoring only the
+  // loosely-scanned --chain -- would discard that during an unattended
+  // uninstall nobody is watching.
+  it('refuses to rewrite a CUSTOMISED command that references our script, and reports it', async () => {
+    const chained = Buffer.from('other-tool', 'utf8').toString('base64');
+    const command = `node "${CURRENT}" --chain ${chained} && my-own-tool`;
+    write(command);
+    const original = readFileSync(settingsPath, 'utf8');
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => true);
+
+    expect(result.code).toBe(1);
+    expect(result.message).toContain('modified');
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+    expect(backups()).toEqual([]);
+  });
+
+  it('refuses a bare extra argument too, not just a chained second command', async () => {
+    write(`node "${CURRENT}" --verbose`);
+    const original = readFileSync(settingsPath, 'utf8');
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => true);
+
+    expect(result.code).toBe(1);
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+  });
+
+  // The update-to-a-new-directory case: the command is ours verbatim but names
+  // the PREVIOUS install, so status comes back 'installed-other'. Exiting 0
+  // there suppressed installer.nsh's warning and left the dead command behind.
+  it('cleans up our OWN stale command from a previous install whose script is gone', async () => {
+    const chained = 'powershell -File "C:\\tools\\line.ps1"';
+    const command = `node "${PREVIOUS}" --chain ${Buffer.from(chained, 'utf8').toString('base64')}`;
+    write(command);
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => false);
+
+    expect(result.code).toBe(0);
+    expect(result.message).toContain('stale statusline from a previous install');
+
+    // The chained third-party tool survives, exactly as it does on a normal
+    // uninstall -- that promise has to hold across a directory move too.
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.statusLine).toEqual({ type: 'command', command: chained });
+    expect(written.model).toBe('opus');
+    expect(backups()).toHaveLength(1);
+  });
+
+  it('deletes statusLine outright when the stale command carried no chain', async () => {
+    write(`node "${PREVIOUS}"`);
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => false);
+
+    expect(result.code).toBe(0);
+    const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(written.statusLine).toBeUndefined();
+    expect(written.model).toBe('opus');
+  });
+
+  // The guard on the guard: "ours by shape" is not enough to delete it. A
+  // second install that is still on disk may be one the user runs on purpose.
+  it('leaves our own command alone when the install it names still exists', async () => {
+    write(`node "${PREVIOUS}"`);
+    const original = readFileSync(settingsPath, 'utf8');
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, (p) => p === PREVIOUS);
+
+    expect(result.code).toBe(0);
+    expect(result.message).toContain('another install');
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+    expect(backups()).toEqual([]);
+  });
+
+  // A stranger's tool must still be a silent, clean no-op -- the stale-cleanup
+  // path above must not widen into deleting things we never wrote.
+  it('still leaves a foreign command untouched even though its script is missing', async () => {
+    write('npx claude-powerline');
+    const original = readFileSync(settingsPath, 'utf8');
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => false);
+
+    expect(result.code).toBe(0);
+    expect(result.message).toContain('installed-other');
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+    expect(backups()).toEqual([]);
   });
 });
 
