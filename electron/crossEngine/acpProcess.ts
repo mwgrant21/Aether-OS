@@ -72,8 +72,32 @@ export function attachStderrRingBuffer(child: {
 let codexCliEntryPath: string | null = null;
 export function resolveCodexCliEntry(): string {
   if (codexCliEntryPath) return codexCliEntryPath;
-  codexCliEntryPath = require.resolve('@openai/codex/bin/codex.js');
+  codexCliEntryPath = toUnpackedPath(require.resolve('@openai/codex/bin/codex.js'));
   return codexCliEntryPath;
+}
+
+/** Maps a module path that resolves INSIDE app.asar to its unpacked sibling.
+ *
+ *  electron-builder's asarUnpack copies a file out to app.asar.unpacked/, but
+ *  it does NOT change what require.resolve() reports -- resolution still
+ *  answers with the in-archive path. That matters here because both entry
+ *  points below are handed to a SEPARATE process
+ *  (spawn(process.execPath, [script]) in spawnAcpProcess() and
+ *  codexAppServer.ts's defaultSpawn()), and a child process has no asar
+ *  support: to anything outside this process the archive is a single file, not
+ *  a directory. Worse, @openai/codex's bin/codex.js then spawns the vendored
+ *  codex.exe out of @openai/codex-win32-x64, and Windows cannot execute a
+ *  binary from inside an archive at all.
+ *
+ *  So the resolved path must be rewritten to the physical one before it is
+ *  handed over. Anchored on the path separators either side so it rewrites the
+ *  archive segment itself and not a directory that merely ends in "app.asar",
+ *  and applied to the first such segment only -- there is never more than one.
+ *
+ *  A no-op in development, where nothing resolves through an .asar path, which
+ *  is exactly why this bug is invisible until the app is packaged. */
+export function toUnpackedPath(resolved: string): string {
+  return resolved.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
 }
 
 export function buildCodexChildEnv(osEnv: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
@@ -102,7 +126,9 @@ let adapterExecutablePath: string | null = null;
  *  than spawned directly. */
 function resolveAdapterExecutable(): string {
   if (adapterExecutablePath) return adapterExecutablePath;
-  adapterExecutablePath = require.resolve('@agentclientprotocol/codex-acp/dist/index.js');
+  adapterExecutablePath = toUnpackedPath(
+    require.resolve('@agentclientprotocol/codex-acp/dist/index.js'),
+  );
   return adapterExecutablePath;
 }
 

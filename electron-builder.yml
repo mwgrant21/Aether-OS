@@ -36,6 +36,26 @@ asar: true
 # an archive, so the whole module is unpacked beside app.asar.
 asarUnpack:
   - '**/node_modules/node-pty/**'
+  # Both Codex entry points are handed to a SEPARATE process
+  # (spawn(process.execPath, [script]) in electron/crossEngine/acpProcess.ts and
+  # providers/codexAppServer.ts), and a child process has no asar support -- to
+  # anything outside the Electron process the archive is one file, not a
+  # directory. @openai/codex's bin/codex.js then spawns the vendored codex.exe
+  # out of @openai/codex-win32-x64, and Windows cannot execute a binary from
+  # inside an archive at all. Without these, Connect Codex and Verify Dispatch
+  # work in `npm run electron:dev` and fail in EVERY packaged build -- installed
+  # and win-unpacked alike.
+  #
+  # Unpacking alone is not sufficient: require.resolve() still reports the
+  # in-archive path for an unpacked file, so resolveCodexCliEntry() and
+  # resolveAdapterExecutable() rewrite it through toUnpackedPath(). Both halves
+  # are required; either one on its own still fails to spawn.
+  #
+  # These bytes are not new weight -- @openai/codex-win32-x64 (~378MB) is a
+  # production transitive dep via @agentclientprotocol/codex-acp and was already
+  # being packaged into app.asar. This only moves it beside the archive.
+  - '**/node_modules/@openai/**'
+  - '**/node_modules/@agentclientprotocol/codex-acp/**'
 
 # node-pty 1.1.0 is an N-API (node-addon-api) addon shipping prebuilds for
 # win32-x64. N-API is ABI-stable across Node AND Electron versions, so the

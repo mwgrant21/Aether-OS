@@ -18,7 +18,7 @@ multi-machine distribution remain out of scope (see `CLAUDE.md`).
 
 Config lives in `electron-builder.yml`; the NSIS install hook is `build/installer.nsh`.
 
-## The five things packaging has to get right
+## The six things packaging has to get right
 
 Each of these is a real failure this repo either already hit or would hit. None
 of them are guessable from a default electron-builder config.
@@ -88,6 +88,9 @@ electron-builder always bundles production `dependencies`, regardless of the
 making the cross-engine Codex verifier depend on a separately-installed `codex`
 on PATH -- a real feature change, not a packaging tweak. Not done.
 
+Those bytes do have to sit outside the archive, though -- see 6 below. That
+moves them beside `app.asar` rather than inside it; it does not add weight.
+
 ### 5. Uninstalling has to undo what the app wrote outside `$INSTDIR`
 
 Enabling the statusline writes `node "$INSTDIR\resources\scripts\aether-statusline.mjs"`
@@ -108,6 +111,29 @@ never leave the uninstaller blocked.
 The hook is guarded on `${isUpdated}`, because electron-builder runs the same
 uninstall section when a newer installer replaces an existing install. Turning
 the user's statusline off on every upgrade would not be an uninstall.
+
+### 6. The Codex entry points must be unpacked AND their resolved paths rewritten
+
+Two separate halves, and either one alone still fails to spawn.
+
+`spawnAcpProcess()` and `codexAppServer.ts`'s `defaultSpawn()` both launch a
+SEPARATE process -- `spawn(process.execPath, [script])`. A child process has no
+asar support: to anything outside the Electron process, `app.asar` is a single
+file, not a directory. And `@openai/codex`'s `bin/codex.js` goes on to spawn the
+vendored `codex.exe`, which Windows cannot execute from inside an archive at
+all. So `asarUnpack` has to cover `@openai/**` and
+`@agentclientprotocol/codex-acp/**` alongside `node-pty`.
+
+That alone is not enough. `require.resolve()` still reports the *in-archive*
+path for a file electron-builder has unpacked, so the resolved path has to be
+rewritten to `app.asar.unpacked` before it is handed to the child.
+`toUnpackedPath()` in `electron/crossEngine/acpProcess.ts` does that, and both
+resolvers run their result through it.
+
+The failure this prevents is invisible in development: nothing resolves through
+an `.asar` path under `npm run electron:dev`, so Connect Codex and Verify
+Dispatch work there and break in every packaged build -- installed and
+`win-unpacked` alike. Found by review on PR #75, not by testing.
 
 ## Known limitations
 
