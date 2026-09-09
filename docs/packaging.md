@@ -112,6 +112,21 @@ The hook is guarded on `${isUpdated}`, because electron-builder runs the same
 uninstall section when a newer installer replaces an existing install. Turning
 the user's statusline off on every upgrade would not be an uninstall.
 
+A second path exists that the uninstall hook cannot cover. Because
+`allowToChangeInstallationDirectory` is enabled, an update may land in a new
+directory; the old tree is then deleted while `settings.json` still names the old
+script. The `${isUpdated}` guard skips cleanup for exactly that run, and the
+uninstaller could not fix it anyway -- app-builder-lib invokes it as
+`_?=<OLD dir>` and never passes the new path, so there is nothing to migrate to.
+
+The app repairs it on next start: `migrateStatuslineScriptPath()` re-points a
+command it can prove it wrote, naming a script that no longer exists, at its own
+current path, carrying any chained third-party tool across. It refuses if the
+existing command is foreign, if the old script still resolves (a live second
+install), if the file cannot be parsed, or if this install's own script is
+missing -- that last one mirroring the `statusline:install` guard, since swapping
+one dead path for another is not a repair.
+
 ### 6. The Codex entry points must be unpacked AND their resolved paths rewritten
 
 Two separate halves, and either one alone still fails to spawn.

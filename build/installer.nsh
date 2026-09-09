@@ -43,6 +43,15 @@
 ; Guarded on ${isUpdated} because electron-builder runs this SAME uninstall
 ; section when a newer installer replaces an existing install. Silently turning
 ; the user's statusline off on every upgrade is not an uninstall.
+;
+; That guard deliberately leaves ONE case to the app. An update installed into a
+; DIFFERENT directory (allowToChangeInstallationDirectory is enabled) deletes the
+; old tree while settings.json still names the old script. This hook cannot
+; repair that: app-builder-lib runs the old uninstaller as `_?=<OLD dir>` and
+; never tells it the new path, so there is nothing here to migrate TO. The app
+; fixes it on next start instead -- migrateStatuslineScriptPath() in
+; electron/statuslineInstaller.ts -- which is also where the backup and
+; atomic-replace rules for settings.json already live.
 !macro customUnInstall
   ${ifNot} ${isUpdated}
     DetailPrint "Removing the Aether OS statusline from settings.json"

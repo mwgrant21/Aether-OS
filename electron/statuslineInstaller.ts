@@ -1,6 +1,10 @@
-import { promises as fsp } from 'fs';
+import { promises as fsp, existsSync } from 'fs';
 import { writeBackup, writeFileAtomically } from './atomicWrite';
-import { dirname } from 'path';
+import { dirname, basename } from 'path';
+
+/** Basename of the script this app installs into settings.json. The one marker
+ *  that lets a stale command be recognised as OURS rather than a foreign tool. */
+export const STATUSLINE_SCRIPT_NAME = 'aether-statusline.mjs';
 
 export type InstallStatus = 'installed' | 'installed-other' | 'not-installed' | 'unreadable';
 
@@ -209,6 +213,124 @@ export async function installStatusline(
     return { ok: true, backupPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };
+  }
+}
+
+/**
+ * Recognises one of OUR OWN installed commands and pulls it apart, or returns
+ * null for anything else. Deliberately strict: it matches only the exact shape
+ * statuslineSettingsPatch() writes (`node "<path>"`, optionally followed by
+ * `--chain <base64>`) with a path whose basename is STATUSLINE_SCRIPT_NAME.
+ *
+ * Strictness is the safety property. This is the gate that decides whether the
+ * migration below may rewrite a user's settings.json unasked, so anything we
+ * are not certain we wrote ourselves must fall through as "not ours" and be
+ * left alone -- a hand-edited variant included.
+ */
+export function parseOwnStatuslineCommand(
+  command: string | null
+): { scriptPath: string; chain: string | null } | null {
+  if (!command) return null;
+  const m = /^node\s+"([^"]+)"(?:\s|$)/.exec(command.trim());
+  if (!m) return null;
+  const scriptPath = m[1];
+  if (basename(scriptPath) !== STATUSLINE_SCRIPT_NAME) return null;
+  return { scriptPath, chain: extractChainedCommand(command) };
+}
+
+export interface StatuslineMigrationResult {
+  migrated: boolean;
+  /** Why nothing happened, or what moved. One line, for the startup log. */
+  reason: string;
+  from?: string;
+  backupPath?: string | null;
+  error?: string;
+}
+
+/**
+ * Re-points a settings.json statusLine that still names a PREVIOUS install of
+ * this app, after that install's directory has gone away.
+ *
+ * Why this lives in the app and not in NSIS: an update may be installed into a
+ * different directory (electron-builder.yml sets
+ * allowToChangeInstallationDirectory), and the old uninstaller cannot fix the
+ * path because it is never told the new one -- app-builder-lib invokes it as
+ * `_?=$installationDir`, which is the OLD directory. There is nothing in
+ * customUnInstall to migrate *to*. installer.nsh's own comment already settles
+ * where the fix belongs: the backup and atomic-replace rules for this file live
+ * in atomicWrite.ts, and a fourth implementation in NSIS script is not a trade
+ * worth making. Doing it here also covers every other way the path can go
+ * stale -- a repair install, a manual move -- not just the update flow.
+ *
+ * Four guards, each of which must hold before a single byte is written:
+ *   - status must be 'installed-other'. 'installed' already points at us;
+ *     'not-installed' has nothing to move; 'unreadable' is a file we could not
+ *     parse and therefore must never rewrite.
+ *   - the existing command must be recognisably ours (parseOwnStatuslineCommand).
+ *     A foreign tool's command is never touched.
+ *   - the script it names must NOT exist. A path that still resolves belongs to
+ *     a live install -- possibly a second one the user runs deliberately -- and
+ *     hijacking it would be the silent clobber this whole module avoids.
+ *   - it must not already be us, which the status check implies but is asserted
+ *     anyway so a future change to detectInstallStatus cannot make this a
+ *     self-rewrite loop.
+ *
+ * Any chained third-party command is carried across unchanged: the reason the
+ * installer chains instead of clobbering is that the user's other statusline
+ * tool must survive, and that promise has to survive a directory move too.
+ */
+export async function migrateStatuslineScriptPath(
+  settingsPath: string,
+  currentScriptPath: string,
+  scriptExists: (p: string) => boolean = existsSync
+): Promise<StatuslineMigrationResult> {
+  const state = await readInstallState(settingsPath, currentScriptPath);
+
+  if (state.status !== 'installed-other') {
+    return { migrated: false, reason: `nothing to migrate (${state.status})` };
+  }
+
+  // Mirrors the guard on the statusline:install IPC handler in main.ts: writing
+  // `node "<missing path>"` into the user's real settings.json breaks every
+  // Claude Code turn, for every project, silently. Migrating to a script this
+  // install does not actually have would just swap one dead command for
+  // another, so refuse before touching anything.
+  if (!scriptExists(currentScriptPath)) {
+    return {
+      migrated: false,
+      reason: `this install's own script is missing at ${currentScriptPath}; refusing to write a dead path`,
+    };
+  }
+
+  const own = parseOwnStatuslineCommand(state.existingCommand);
+  if (!own) {
+    return { migrated: false, reason: 'statusLine belongs to another tool; left untouched' };
+  }
+  if (own.scriptPath === currentScriptPath) {
+    return { migrated: false, reason: 'already points at this install' };
+  }
+  if (scriptExists(own.scriptPath)) {
+    return { migrated: false, reason: `previous script still exists at ${own.scriptPath}; left untouched` };
+  }
+
+  const existingResult = await readExistingSettings(settingsPath);
+  if (!existingResult.ok) {
+    return { migrated: false, reason: 'could not read settings.json', error: existingResult.error };
+  }
+  const { raw, parsed } = existingResult;
+
+  try {
+    const backupPath = await writeBackup(settingsPath, raw, 'aetherbak');
+    const merged = { ...parsed, ...statuslineSettingsPatch(currentScriptPath, own.chain) };
+    await writeFileAtomically(settingsPath, JSON.stringify(merged, null, 2));
+    return {
+      migrated: true,
+      reason: `statusline re-pointed from a removed install to ${currentScriptPath}`,
+      from: own.scriptPath,
+      backupPath,
+    };
+  } catch (err: any) {
+    return { migrated: false, reason: 'could not write settings.json', error: err?.message ?? String(err) };
   }
 }
 

@@ -45,7 +45,12 @@ import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
-import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
+import {
+  readInstallState,
+  installStatusline,
+  uninstallStatusline,
+  migrateStatuslineScriptPath,
+} from './statuslineInstaller';
 import {
   STATUSLINE_UNINSTALL_FLAG,
   resolveStatuslineScriptPath,
@@ -672,6 +677,30 @@ app.whenReady().then(async () => {
   // repaired. Returning here is what stops a window from flashing up (and the
   // whole app from booting) in the middle of a Windows uninstall.
   if (isStatuslineUninstallRun) return;
+
+  // A previous install's script path can outlive the install itself. An update
+  // may be placed in a DIFFERENT directory -- electron-builder.yml sets
+  // allowToChangeInstallationDirectory -- and the old uninstaller cannot repair
+  // settings.json on its way out because it is never told the new path:
+  // app-builder-lib invokes it as `_?=<OLD dir>`. Left alone, Claude Code goes
+  // on invoking a script this app deleted, on every turn, in every project.
+  //
+  // Fire-and-forget on purpose: this must never delay or block window creation,
+  // and a failure to repair is strictly better than a failure to start. Every
+  // decision about whether to write is inside migrateStatuslineScriptPath,
+  // which rewrites only a command it can prove this app wrote, naming a script
+  // that no longer exists, and only ever points it at a script that does.
+  void migrateStatuslineScriptPath(statuslineSettingsPath, statuslineScriptPath)
+    .then((result) => {
+      if (result.migrated) {
+        console.log(`[statusline] ${result.reason} (was ${result.from})`);
+      } else if (result.error) {
+        console.error(`[statusline] migration skipped -- ${result.reason}: ${result.error}`);
+      }
+    })
+    .catch((err) => {
+      console.error('[statusline] migration failed:', err?.message ?? String(err));
+    });
 
   Menu.setApplicationMenu(null);
   createWindow();
