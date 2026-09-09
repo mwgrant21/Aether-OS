@@ -1,6 +1,6 @@
 import { promises as fsp, existsSync } from 'fs';
 import { writeBackup, writeFileAtomically } from './atomicWrite';
-import { dirname, basename } from 'path';
+import { dirname } from 'path';
 
 /** Basename of the script this app installs into settings.json. The one marker
  *  that lets a stale command be recognised as OURS rather than a foreign tool. */
@@ -234,7 +234,15 @@ export function parseOwnStatuslineCommand(
   const m = /^node\s+"([^"]+)"(?:\s|$)/.exec(command.trim());
   if (!m) return null;
   const scriptPath = m[1];
-  if (basename(scriptPath) !== STATUSLINE_SCRIPT_NAME) return null;
+  // Split on BOTH separators rather than using path.basename(). This parses a
+  // string out of a config file, so it must not depend on the host's path
+  // semantics: POSIX basename() treats "\" as an ordinary character, so a
+  // Windows-shaped path (which is what this Windows-only app always writes)
+  // has no separator at all under Linux and basename returns the whole string.
+  // That made every migration silently decline on the Linux CI runner while
+  // passing on Windows.
+  const leaf = scriptPath.split(/[\\/]/).pop() ?? '';
+  if (leaf !== STATUSLINE_SCRIPT_NAME) return null;
   return { scriptPath, chain: extractChainedCommand(command) };
 }
 

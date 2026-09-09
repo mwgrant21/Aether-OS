@@ -388,6 +388,22 @@ describe('parseOwnStatuslineCommand', () => {
     expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}"`)).toEqual({ scriptPath: SCRIPT_PATH, chain: null });
   });
 
+  it('recognises the path shape regardless of the HOST platform', () => {
+    // This parses a string out of a config file, so it must not depend on the
+    // separator semantics of whatever machine happens to be running. Using
+    // path.basename() here passed on Windows and failed on the Linux CI runner:
+    // POSIX basename() treats "\" as an ordinary character, so a Windows path
+    // has no separator at all and the whole string comes back as the leaf.
+    // Both shapes must parse on both platforms.
+    const windows = 'C:\\Program Files\\Aether OS\\resources\\scripts\\aether-statusline.mjs';
+    const posix = '/opt/aether-os/resources/scripts/aether-statusline.mjs';
+    expect(parseOwnStatuslineCommand(`node "${windows}"`)?.scriptPath).toBe(windows);
+    expect(parseOwnStatuslineCommand(`node "${posix}"`)?.scriptPath).toBe(posix);
+    // ...and a same-shaped path to somebody else's script still must not match.
+    expect(parseOwnStatuslineCommand('node "C:\\tools\\their-statusline.mjs"')).toBeNull();
+    expect(parseOwnStatuslineCommand('node "/opt/tools/their-statusline.mjs"')).toBeNull();
+  });
+
   it('refuses anything it cannot prove it wrote itself', () => {
     // This is the gate on rewriting a user's settings.json unasked, so each of
     // these must fall through as "not ours" rather than be leniently accepted.
