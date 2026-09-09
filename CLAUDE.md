@@ -21,8 +21,12 @@ detection, real reactor semantics. `PROGRESS.md`'s "Right now" section is the
 authoritative account of exactly which pieces are real vs. still-simulated —
 read it before assuming any given view's data source.
 
-Packaging/installer/fleet-view are explicitly out of scope — this is a personal
-tool, not a distributed product.
+Fleet-view remains explicitly out of scope — this is a personal tool, not a
+distributed product. **Packaging is no longer excluded**: as of 2026-08-25 there is
+a local Windows installer (electron-builder + NSIS, `npm run dist`) so the app can
+launch from a Start-menu/desktop shortcut instead of `npm run electron:dev`. That is
+a local convenience, not distribution — the build is unsigned, and there is no update
+feed, publisher, or release channel. See `docs/packaging.md`.
 
 ## Run / test / build
 
@@ -34,6 +38,9 @@ npm test                # vitest run (renderer + electron main; collector/ has i
 npm run typecheck:electron  # tsc over electron/ -- NOT covered by npm run build; CI runs it
 npm run build           # tsc -b && vite build (renderer)
 npm run electron:build  # electron-vite build (main + preload + renderer, for the Electron app)
+npm run dist            # electron-vite build + electron-builder --win -> release/Aether OS Setup <ver>.exe
+npm run dist:dir        # same, but stops at release/win-unpacked/ (no installer; fast smoke test)
+npm run icon            # regenerate build/icon.png + build/icon.ico (only when the mark changes)
 ```
 
 
@@ -243,3 +250,9 @@ and should never grow one.
   viewport** (`src/components/layout/useViewportScale.ts` /
   `frameScale.ts`) — it is not a fully responsive reflow, just a uniform
   scale transform. Don't assume arbitrary viewport widths reflow the layout.
+
+<!-- token-tracker:begin -->
+## Token Tracker suggestions
+- Prefer Sonnet for short/trivial turns; reserve Opus for complex reasoning.
+- Pin frequently re-read files into context instead of re-reading them each turn.
+<!-- token-tracker:end -->

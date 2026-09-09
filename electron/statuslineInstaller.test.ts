@@ -1,11 +1,13 @@
 import { describe, expect, it, afterEach, vi } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, promises as fsp } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, promises as fsp } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import {
   detectInstallStatus,
   extractChainedCommand,
   installStatusline,
+  migrateStatuslineScriptPath,
+  parseOwnStatuslineCommand,
   readInstallState,
   statuslineSettingsPatch,
   uninstallStatusline,
@@ -375,5 +377,200 @@ describe('statuslineInstaller write path (#59, #60)', () => {
     }
     expect(contested).not.toBe('');
     expect(readFileSync(contested, 'utf8')).toBe('{"other":"writer"}');
+  });
+});
+
+describe('parseOwnStatuslineCommand', () => {
+  it('recognises our own command and its chain', () => {
+    const chained = 'powershell -File "C:\\other\\tool.ps1"';
+    const cmd = statuslineSettingsPatch(SCRIPT_PATH, chained).statusLine.command;
+    expect(parseOwnStatuslineCommand(cmd)).toEqual({ scriptPath: SCRIPT_PATH, chain: chained });
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}"`)).toEqual({ scriptPath: SCRIPT_PATH, chain: null });
+  });
+
+  it('recognises the path shape regardless of the HOST platform', () => {
+    // This parses a string out of a config file, so it must not depend on the
+    // separator semantics of whatever machine happens to be running. Using
+    // path.basename() here passed on Windows and failed on the Linux CI runner:
+    // POSIX basename() treats "\" as an ordinary character, so a Windows path
+    // has no separator at all and the whole string comes back as the leaf.
+    // Both shapes must parse on both platforms.
+    const windows = 'C:\\Program Files\\Aether OS\\resources\\scripts\\aether-statusline.mjs';
+    const posix = '/opt/aether-os/resources/scripts/aether-statusline.mjs';
+    expect(parseOwnStatuslineCommand(`node "${windows}"`)?.scriptPath).toBe(windows);
+    expect(parseOwnStatuslineCommand(`node "${posix}"`)?.scriptPath).toBe(posix);
+    // ...and a same-shaped path to somebody else's script still must not match.
+    expect(parseOwnStatuslineCommand('node "C:\\tools\\their-statusline.mjs"')).toBeNull();
+    expect(parseOwnStatuslineCommand('node "/opt/tools/their-statusline.mjs"')).toBeNull();
+  });
+
+  it('refuses anything it cannot prove it wrote itself', () => {
+    // This is the gate on rewriting a user's settings.json unasked, so each of
+    // these must fall through as "not ours" rather than be leniently accepted.
+    expect(parseOwnStatuslineCommand(null)).toBeNull();
+    expect(parseOwnStatuslineCommand('powershell -File "C:\\other\\tool.ps1"')).toBeNull();
+    expect(parseOwnStatuslineCommand('node "C:\\somewhere\\other-script.mjs"')).toBeNull();
+    // Right basename, but not the shape we write -- unquoted, so a path with
+    // spaces would already be mis-parsed. Not ours to touch.
+    expect(parseOwnStatuslineCommand(`node ${SCRIPT_PATH}`)).toBeNull();
+    // A different tool that merely mentions our script name in an argument.
+    expect(parseOwnStatuslineCommand(`wrapper --run "aether-statusline.mjs"`)).toBeNull();
+  });
+
+  it('refuses a --chain token that is base64 CHARACTERS but not base64 we could have written', () => {
+    // The character class only proves the token is made of base64 characters.
+    // Node's decoder is permissive, so each of these decodes to nothing or to
+    // garbage without throwing -- and statuslineSettingsPatch can emit none of
+    // them. Accepting one would let a hand-edited command be treated as ours
+    // and rewritten from a null-or-corrupt chain, deleting the user's chained
+    // tool or replacing it with mojibake.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain a`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain ====`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain a=b`)).toBeNull();
+    // Non-canonical padding of a token that WOULD otherwise decode: still not
+    // a byte sequence we emit, so still not ours.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain YQ`)).toBeNull();
+  });
+
+  it('still accepts every chain statuslineSettingsPatch can actually emit', () => {
+    // The round-trip check must not cost us the real cases -- including
+    // non-ASCII, where a naive byte-length assumption would break.
+    for (const chain of ['x', 'other-tool', 'powershell -File "C:\\a b\\c.ps1"', 'echo "café ✓"']) {
+      const encoded = Buffer.from(chain, 'utf8').toString('base64');
+      expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain ${encoded}`)).toEqual({
+        scriptPath: SCRIPT_PATH,
+        chain,
+      });
+    }
+  });
+
+  it('refuses a command carrying anything we did not emit after the path', () => {
+    // A prefix-only match would call these ours and then rewrite them from the
+    // parsed path and chain alone, silently dropping the trailing flag or the
+    // second command. Migration edits settings.json unasked, so a hand-edited
+    // command must be left for the human instead.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --custom-flag`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" && other-tool`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" | tee log.txt`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain abc123 --extra`)).toBeNull();
+    // Not base64 in the chain slot -- not a shape we emit either.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain "quoted thing"`)).toBeNull();
+  });
+
+  it('still accepts exactly what statuslineSettingsPatch emits, chained or not', () => {
+    // The anchoring above must not become so strict that it stops recognising
+    // our own output -- that would silently disable migration entirely.
+    const plain = statuslineSettingsPatch(SCRIPT_PATH).statusLine.command;
+    const chainedCmd = statuslineSettingsPatch(SCRIPT_PATH, 'npx claude-powerline').statusLine.command;
+    expect(parseOwnStatuslineCommand(plain)).toEqual({ scriptPath: SCRIPT_PATH, chain: null });
+    expect(parseOwnStatuslineCommand(chainedCmd)).toEqual({
+      scriptPath: SCRIPT_PATH,
+      chain: 'npx claude-powerline',
+    });
+  });
+});
+
+describe('migrateStatuslineScriptPath', () => {
+  const fresh = (content: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'statusline-migrate-'));
+    const p = join(dir, 'settings.json');
+    writeFileSync(p, content, 'utf8');
+    return p;
+  };
+  const NEW_SCRIPT = 'C:\\Program Files\\Aether OS v2\\resources\\scripts\\aether-statusline.mjs';
+  const OLD_SCRIPT = 'C:\\Program Files\\Aether OS\\resources\\scripts\\aether-statusline.mjs';
+  // The old install's script is gone; THIS install's script is present. A blanket
+  // `() => false` would also claim our own script is missing, which the
+  // dead-path guard correctly refuses to migrate to.
+  const gone = (p: string) => p === NEW_SCRIPT;
+  const stillThere = () => true;
+
+  it('re-points a command left behind by an install that no longer exists', async () => {
+    const settingsPath = fresh(JSON.stringify({ model: 'opus', ...statuslineSettingsPatch(OLD_SCRIPT) }));
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, gone);
+
+    expect(result.migrated).toBe(true);
+    expect(result.from).toBe(OLD_SCRIPT);
+    const after = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(after.statusLine.command).toContain(NEW_SCRIPT);
+    expect(after.statusLine.command).not.toContain(OLD_SCRIPT);
+    expect(after.model, 'unrelated keys must survive').toBe('opus');
+    expect(result.backupPath, 'the original bytes must be recoverable').toBeTruthy();
+  });
+
+  it('carries a chained third-party tool across the move', async () => {
+    // The installer chains rather than clobbers so the user's other statusline
+    // tool keeps working. That promise has to survive a directory change too.
+    const chained = 'powershell -File "C:\\has spaces\\theirs.ps1"';
+    const settingsPath = fresh(JSON.stringify(statuslineSettingsPatch(OLD_SCRIPT, chained)));
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, gone);
+
+    expect(result.migrated).toBe(true);
+    const after = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(extractChainedCommand(after.statusLine.command)).toBe(chained);
+  });
+
+  it('leaves a previous install alone while its script still exists', async () => {
+    // A resolvable path is a live install -- possibly a second one the user
+    // runs deliberately. Hijacking it would be the silent clobber this module
+    // exists to avoid.
+    const original = JSON.stringify(statuslineSettingsPatch(OLD_SCRIPT));
+    const settingsPath = fresh(original);
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, stillThere);
+
+    expect(result.migrated).toBe(false);
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+  });
+
+  it('never touches a foreign statusLine, even when its script is missing', async () => {
+    const original = JSON.stringify({ statusLine: { type: 'command', command: 'their-tool --flag' } });
+    const settingsPath = fresh(original);
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, gone);
+
+    expect(result.migrated).toBe(false);
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+  });
+
+  it('never rewrites a settings.json it could not parse', async () => {
+    const malformed = '{"statusLine": broken';
+    const settingsPath = fresh(malformed);
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, gone);
+
+    expect(result.migrated).toBe(false);
+    expect(readFileSync(settingsPath, 'utf8')).toBe(malformed);
+  });
+
+  it('is a no-op when already pointing at this install, and when there is no statusLine', async () => {
+    const current = JSON.stringify(statuslineSettingsPatch(NEW_SCRIPT));
+    const a = fresh(current);
+    expect((await migrateStatuslineScriptPath(a, NEW_SCRIPT, gone)).migrated).toBe(false);
+    expect(readFileSync(a, 'utf8')).toBe(current);
+
+    const none = JSON.stringify({ model: 'opus' });
+    const b = fresh(none);
+    expect((await migrateStatuslineScriptPath(b, NEW_SCRIPT, gone)).migrated).toBe(false);
+    expect(readFileSync(b, 'utf8')).toBe(none);
+  });
+
+  it("refuses to migrate to a script THIS install does not have", async () => {
+    // Mirrors the statusline:install guard in main.ts. Swapping a dangling
+    // command for a different dangling command is not a repair -- it would
+    // still break every Claude Code turn, just pointing somewhere new.
+    const original = JSON.stringify(statuslineSettingsPatch(OLD_SCRIPT));
+    const settingsPath = fresh(original);
+    const nothingExists = () => false;
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, nothingExists);
+
+    expect(result.migrated).toBe(false);
+    expect(result.reason).toContain('refusing to write a dead path');
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+  });
+
+  it('leaves the file intact when the settings file does not exist at all', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'statusline-migrate-absent-'));
+    const settingsPath = join(dir, 'settings.json');
+    const result = await migrateStatuslineScriptPath(settingsPath, NEW_SCRIPT, gone);
+    expect(result.migrated).toBe(false);
+    expect(existsSync(settingsPath), 'must not create a settings.json that was not there').toBe(false);
   });
 });

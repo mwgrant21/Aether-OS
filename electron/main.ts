@@ -45,7 +45,17 @@ import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
-import { readInstallState, installStatusline, uninstallStatusline } from './statuslineInstaller';
+import {
+  readInstallState,
+  installStatusline,
+  uninstallStatusline,
+  migrateStatuslineScriptPath,
+} from './statuslineInstaller';
+import {
+  STATUSLINE_UNINSTALL_FLAG,
+  resolveStatuslineScriptPath,
+  runStatuslineUninstall,
+} from './statuslineUninstallCli';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
 import { classifyPermissionRisk, shouldAutoAllow, type PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
@@ -81,10 +91,23 @@ const DEFAULT_HEIGHT = 900;
 const MIN_WIDTH = 1280;
 const MIN_HEIGHT = 700;
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
+// Upper bound on the uninstall-time statusline cleanup. It is one small file
+// read and one atomic replace, so this is generous by two orders of magnitude;
+// it exists only so a wedged filesystem cannot leave the Windows uninstaller
+// blocked forever on a process that will never exit.
+const STATUSLINE_UNINSTALL_TIMEOUT_MS = 10_000;
 const boundsFilePath = join(app.getPath('userData'), 'window-bounds.json');
 const iconPath = join(__dirname, '../../build/icon.png');
 
-if (!app.requestSingleInstanceLock()) {
+// The NSIS uninstaller runs this executable with STATUSLINE_UNINSTALL_FLAG to
+// clean up ~/.claude/settings.json before the install directory is deleted (see
+// build/installer.nsh). That run opens no window and must not be turned away by
+// the single-instance lock: NSIS blocks an uninstall while the app is running,
+// but a stale lock left by a crashed instance would otherwise silently skip the
+// cleanup -- the exact failure this run exists to prevent.
+const isStatuslineUninstallRun = process.argv.includes(STATUSLINE_UNINSTALL_FLAG);
+
+if (!isStatuslineUninstallRun && !app.requestSingleInstanceLock()) {
   app.quit();
 }
 
@@ -291,11 +314,50 @@ const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json'
 const permissionServerPortPath = join(os.homedir(), '.aether-os', 'permission-server-port');
 const aetherOsDir = join(os.homedir(), '.aether-os');
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
-// app.getAppPath() resolves the project root in dev, and inside
-// resources/app.asar for a packaged build. This repo has no extraResources
-// packaging config, so a packaged build will not find the script at this
-// path -- a known gap, not something this task solves.
-const statuslineScriptPath = join(app.getAppPath(), 'scripts', 'aether-statusline.mjs');
+// The statusline script is spawned by Claude Code -- an EXTERNAL node process --
+// from a path written into ~/.claude/settings.json. It therefore has to live on
+// the real filesystem: a path inside resources/app.asar reads fine from Electron
+// but is invisible to every other process. The packaged build ships scripts/ via
+// electron-builder's extraResources (unpacked, beside app.asar) and resolves it
+// from process.resourcesPath. In dev there is no asar and app.getAppPath() is the
+// project root, where scripts/ already sits.
+const statuslineScriptPath = resolveStatuslineScriptPath({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  appPath: app.getAppPath(),
+});
+
+// Uninstall cleanup, run by build/installer.nsh before NSIS deletes $INSTDIR.
+// Without it, a user who enabled the statusline and then uninstalled the app
+// would be left with settings.json invoking a script that no longer exists on
+// every subsequent Claude Code session, and any statusline tool Aether had
+// chained through would never be restored.
+//
+// Everything below this point in the module still evaluates -- ipcMain
+// handlers and the like -- which is harmless, but the whenReady handler that
+// creates the window checks isStatuslineUninstallRun so no window can appear
+// during an uninstall. The watchdog is what guarantees the uninstaller cannot
+// hang: nsExec waits on this process with no timeout of its own.
+if (isStatuslineUninstallRun) {
+  const watchdog = setTimeout(() => {
+    console.error('[uninstall] statusline cleanup timed out');
+    app.exit(1);
+  }, STATUSLINE_UNINSTALL_TIMEOUT_MS);
+  watchdog.unref();
+
+  void runStatuslineUninstall(statuslineSettingsPath, statuslineScriptPath)
+    .then(({ code, message }) => {
+      // stdout/stderr are captured into the NSIS install log by nsExec::ExecToLog.
+      console.log(`[uninstall] ${message}`);
+      clearTimeout(watchdog);
+      app.exit(code);
+    })
+    .catch((err) => {
+      console.error(`[uninstall] statusline cleanup failed: ${err?.message ?? String(err)}`);
+      clearTimeout(watchdog);
+      app.exit(1);
+    });
+}
 let stopStatuslineWatcher: (() => void) | null = null;
 let stopPermissionServer: (() => void) | null = null;
 
@@ -611,6 +673,35 @@ async function tickAndPushAgents(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // An uninstall-cleanup run has no UI and exits as soon as settings.json is
+  // repaired. Returning here is what stops a window from flashing up (and the
+  // whole app from booting) in the middle of a Windows uninstall.
+  if (isStatuslineUninstallRun) return;
+
+  // A previous install's script path can outlive the install itself. An update
+  // may be placed in a DIFFERENT directory -- electron-builder.yml sets
+  // allowToChangeInstallationDirectory -- and the old uninstaller cannot repair
+  // settings.json on its way out because it is never told the new path:
+  // app-builder-lib invokes it as `_?=<OLD dir>`. Left alone, Claude Code goes
+  // on invoking a script this app deleted, on every turn, in every project.
+  //
+  // Fire-and-forget on purpose: this must never delay or block window creation,
+  // and a failure to repair is strictly better than a failure to start. Every
+  // decision about whether to write is inside migrateStatuslineScriptPath,
+  // which rewrites only a command it can prove this app wrote, naming a script
+  // that no longer exists, and only ever points it at a script that does.
+  void migrateStatuslineScriptPath(statuslineSettingsPath, statuslineScriptPath)
+    .then((result) => {
+      if (result.migrated) {
+        console.log(`[statusline] ${result.reason} (was ${result.from})`);
+      } else if (result.error) {
+        console.error(`[statusline] migration skipped -- ${result.reason}: ${result.error}`);
+      }
+    })
+    .catch((err) => {
+      console.error('[statusline] migration failed:', err?.message ?? String(err));
+    });
+
   Menu.setApplicationMenu(null);
   createWindow();
 

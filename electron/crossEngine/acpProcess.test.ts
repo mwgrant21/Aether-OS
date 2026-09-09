@@ -2,13 +2,50 @@
 import { buildAllowlistedChildEnv } from './acpProcess';
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
-import { buildCodexChildEnv, resolveCodexHome, spawnAcpProcess } from './acpProcess';
+import { buildCodexChildEnv, resolveCodexHome, spawnAcpProcess, toUnpackedPath } from './acpProcess';
 
 const BLOCKED = [
   'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORG_ID',
   'OPENAI_PROJECT_ID', 'MODEL_PROVIDER', 'DEFAULT_AUTH_REQUEST', 'CODEX_CONFIG', 'CODEX_PATH',
 ];
 const REQUIRED_SURVIVE = ['PATH', 'TEMP', 'TMP'];
+
+describe('toUnpackedPath', () => {
+  // The Windows case is the one that matters in production: this app packages
+  // win-only (electron-builder.yml targets nsis/x64), and require.resolve()
+  // returns backslash-separated paths there. A regex that handled only "/"
+  // would pass a POSIX test and still ship the bug.
+  it('rewrites a Windows in-archive path to its unpacked sibling', () => {
+    const resolved = 'C:\\Users\\m\\AppData\\Local\\Programs\\aether-os\\resources\\app.asar\\node_modules\\@openai\\codex\\bin\\codex.js';
+    expect(toUnpackedPath(resolved)).toBe(
+      'C:\\Users\\m\\AppData\\Local\\Programs\\aether-os\\resources\\app.asar.unpacked\\node_modules\\@openai\\codex\\bin\\codex.js',
+    );
+  });
+
+  it('rewrites a POSIX in-archive path to its unpacked sibling', () => {
+    expect(toUnpackedPath('/opt/aether/resources/app.asar/node_modules/x/index.js')).toBe(
+      '/opt/aether/resources/app.asar.unpacked/node_modules/x/index.js',
+    );
+  });
+
+  // In development nothing resolves through an archive, which is precisely why
+  // the unpacked-path bug is invisible until the app is packaged.
+  it('leaves a development path untouched', () => {
+    const dev = 'C:\\Users\\m\\projects\\aether-os\\node_modules\\@openai\\codex\\bin\\codex.js';
+    expect(toUnpackedPath(dev)).toBe(dev);
+  });
+
+  it('rewrites the archive segment, not a directory that merely ends in app.asar', () => {
+    const decoy = '/home/m/my.app.asar-backup/node_modules/x/index.js';
+    expect(toUnpackedPath(decoy)).toBe(decoy);
+  });
+
+  it('rewrites only the first archive segment', () => {
+    expect(toUnpackedPath('/a/app.asar/b/app.asar/c.js')).toBe(
+      '/a/app.asar.unpacked/b/app.asar/c.js',
+    );
+  });
+});
 
 describe('buildCodexChildEnv', () => {
   it('removes every blocked billing/provider variable', () => {

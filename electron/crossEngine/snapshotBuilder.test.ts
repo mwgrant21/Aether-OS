@@ -116,4 +116,13 @@ describe('buildVerificationSnapshot', () => {
     // Idempotent: a second dispose() call must not throw.
     await expect(snapshot.dispose()).resolves.toBeUndefined();
   });
-});
+  // Every test here builds a real git repo -- `git init`, two `git config`
+  // calls, `git add`, `git commit`, then `git archive` inside the snapshot
+  // builder. That is the only suite in this repo that spawns real git
+  // subprocesses, and process spawn on a cold, shared Windows CI runner is
+  // far slower than locally (the whole file runs in ~1s here, but a single
+  // test blew the 5s default on CI on 2026-09-08 and went green on rerun
+  // with no code change). The suite-level timeout buys headroom for the
+  // subprocess cost without raising the global default and blunting real
+  // hang detection everywhere else.
+}, 30_000);

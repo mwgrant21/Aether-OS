@@ -21,3 +21,6 @@ test-results/
 .superpowers/*.log
 **/.stryker-tmp/
 collector/reports/
+
+# electron-builder output
+release/

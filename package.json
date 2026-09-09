@@ -14,7 +14,10 @@
     "typecheck:electron": "tsc -p electron/tsconfig.json",
     "test:e2e": "playwright test",
     "electron:dev": "electron-vite dev --noSandbox",
-    "electron:build": "electron-vite build"
+    "electron:build": "electron-vite build",
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:dir": "electron-vite build && electron-builder --win --dir && node scripts/grant-appcontainer-acl.js release/win-unpacked",
+    "icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-icon.ps1"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.8.0",
@@ -38,6 +41,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "43.4.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
@@ -48,5 +52,9 @@
     "node-pty@1.1.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.21.5": true
+  },
+  "description": "Mission-control desktop dashboard for working with Claude Code",
+  "author": {
+    "name": "Aether OS"
   }
 }
