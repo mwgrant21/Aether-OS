@@ -231,7 +231,14 @@ export function parseOwnStatuslineCommand(
   command: string | null
 ): { scriptPath: string; chain: string | null } | null {
   if (!command) return null;
-  const m = /^node\s+"([^"]+)"(?:\s|$)/.exec(command.trim());
+  // Anchored at BOTH ends, and the only thing allowed after the path is one
+  // well-formed --chain argument. A prefix-only match would accept a
+  // hand-edited `node "<path>" --custom-flag` or `node "<path>" && other-tool`,
+  // call it ours, and then rewrite it from the parsed path and chain alone --
+  // silently dropping whatever the user had appended. Migration writes to the
+  // user's settings.json unasked, so anything we did not emit verbatim has to
+  // fall through as "not ours" and be left for the human to deal with.
+  const m = /^node\s+"([^"]+)"(?:\s+--chain\s+([A-Za-z0-9+\/=]+))?$/.exec(command.trim());
   if (!m) return null;
   const scriptPath = m[1];
   // Split on BOTH separators rather than using path.basename(). This parses a
@@ -243,7 +250,10 @@ export function parseOwnStatuslineCommand(
   // passing on Windows.
   const leaf = scriptPath.split(/[\\/]/).pop() ?? '';
   if (leaf !== STATUSLINE_SCRIPT_NAME) return null;
-  return { scriptPath, chain: extractChainedCommand(command) };
+  // Only decode when the anchored match actually captured a --chain argument,
+  // so the chain comes from the validated shape rather than a loose scan of
+  // the whole string.
+  return { scriptPath, chain: m[2] ? extractChainedCommand(command) : null };
 }
 
 export interface StatuslineMigrationResult {

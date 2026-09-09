@@ -416,6 +416,31 @@ describe('parseOwnStatuslineCommand', () => {
     // A different tool that merely mentions our script name in an argument.
     expect(parseOwnStatuslineCommand(`wrapper --run "aether-statusline.mjs"`)).toBeNull();
   });
+
+  it('refuses a command carrying anything we did not emit after the path', () => {
+    // A prefix-only match would call these ours and then rewrite them from the
+    // parsed path and chain alone, silently dropping the trailing flag or the
+    // second command. Migration edits settings.json unasked, so a hand-edited
+    // command must be left for the human instead.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --custom-flag`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" && other-tool`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" | tee log.txt`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain abc123 --extra`)).toBeNull();
+    // Not base64 in the chain slot -- not a shape we emit either.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain "quoted thing"`)).toBeNull();
+  });
+
+  it('still accepts exactly what statuslineSettingsPatch emits, chained or not', () => {
+    // The anchoring above must not become so strict that it stops recognising
+    // our own output -- that would silently disable migration entirely.
+    const plain = statuslineSettingsPatch(SCRIPT_PATH).statusLine.command;
+    const chainedCmd = statuslineSettingsPatch(SCRIPT_PATH, 'npx claude-powerline').statusLine.command;
+    expect(parseOwnStatuslineCommand(plain)).toEqual({ scriptPath: SCRIPT_PATH, chain: null });
+    expect(parseOwnStatuslineCommand(chainedCmd)).toEqual({
+      scriptPath: SCRIPT_PATH,
+      chain: 'npx claude-powerline',
+    });
+  });
 });
 
 describe('migrateStatuslineScriptPath', () => {
