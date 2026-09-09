@@ -16,5 +16,11 @@ out
 electron-dev*.log
 test-results/
 
+# Stryker mutation-test artifacts (large; regenerate with collector/stryker.collector.json)
+.superpowers/*.json
+.superpowers/*.log
+**/.stryker-tmp/
+collector/reports/
+
 # electron-builder output
 release/
