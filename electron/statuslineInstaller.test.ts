@@ -417,6 +417,33 @@ describe('parseOwnStatuslineCommand', () => {
     expect(parseOwnStatuslineCommand(`wrapper --run "aether-statusline.mjs"`)).toBeNull();
   });
 
+  it('refuses a --chain token that is base64 CHARACTERS but not base64 we could have written', () => {
+    // The character class only proves the token is made of base64 characters.
+    // Node's decoder is permissive, so each of these decodes to nothing or to
+    // garbage without throwing -- and statuslineSettingsPatch can emit none of
+    // them. Accepting one would let a hand-edited command be treated as ours
+    // and rewritten from a null-or-corrupt chain, deleting the user's chained
+    // tool or replacing it with mojibake.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain a`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain ====`)).toBeNull();
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain a=b`)).toBeNull();
+    // Non-canonical padding of a token that WOULD otherwise decode: still not
+    // a byte sequence we emit, so still not ours.
+    expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain YQ`)).toBeNull();
+  });
+
+  it('still accepts every chain statuslineSettingsPatch can actually emit', () => {
+    // The round-trip check must not cost us the real cases -- including
+    // non-ASCII, where a naive byte-length assumption would break.
+    for (const chain of ['x', 'other-tool', 'powershell -File "C:\\a b\\c.ps1"', 'echo "café ✓"']) {
+      const encoded = Buffer.from(chain, 'utf8').toString('base64');
+      expect(parseOwnStatuslineCommand(`node "${SCRIPT_PATH}" --chain ${encoded}`)).toEqual({
+        scriptPath: SCRIPT_PATH,
+        chain,
+      });
+    }
+  });
+
   it('refuses a command carrying anything we did not emit after the path', () => {
     // A prefix-only match would call these ours and then rewrite them from the
     // parsed path and chain alone, silently dropping the trailing flag or the

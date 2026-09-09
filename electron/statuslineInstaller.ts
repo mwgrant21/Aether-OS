@@ -250,10 +250,44 @@ export function parseOwnStatuslineCommand(
   // passing on Windows.
   const leaf = scriptPath.split(/[\\/]/).pop() ?? '';
   if (leaf !== STATUSLINE_SCRIPT_NAME) return null;
-  // Only decode when the anchored match actually captured a --chain argument,
-  // so the chain comes from the validated shape rather than a loose scan of
-  // the whole string.
-  return { scriptPath, chain: m[2] ? extractChainedCommand(command) : null };
+  if (!m[2]) return { scriptPath, chain: null };
+
+  // The character class above only proves the token is MADE of base64
+  // characters, which is not the same as being base64 we emitted. Node's
+  // decoder is permissive: `--chain a`, `--chain ====` and `--chain a=b` all
+  // decode without throwing, to nothing or to garbage, and statuslineSettings-
+  // Patch() can emit none of them. Accepting one would let a hand-edited
+  // command be treated as ours and then rewritten from a null-or-corrupt
+  // chain -- deleting the user's chained tool, or replacing it with mojibake,
+  // in exactly the unattended paths this parser exists to gate.
+  //
+  // Canonical round-trip is the check: decode, re-encode, and require the
+  // result to be byte-identical to the token in the file. Anything we wrote
+  // survives that by construction; anything else falls through as "not ours".
+  const decoded = Buffer.from(m[2], 'base64').toString('utf8');
+  if (decoded.length === 0) return null;
+  if (Buffer.from(decoded, 'utf8').toString('base64') !== m[2]) return null;
+  // Use the value we just validated rather than re-deriving it with
+  // extractChainedCommand's loose scan of the whole string.
+  return { scriptPath, chain: decoded };
+}
+
+/**
+ * Windows path equality for two strings pulled out of a config file.
+ *
+ * Deliberately string-only, for the same reason parseOwnStatuslineCommand
+ * splits on both separators by hand: path.normalize() carries the HOST's
+ * semantics, and the Linux CI runner does not treat "\" as a separator at all.
+ *
+ * Case-insensitive because NTFS is: an app launched via `c:\apps\aether` writes
+ * a command that detectInstallStatus' case-sensitive `includes()` will not
+ * match against a stored `C:\Apps\Aether`, even though Windows resolves both to
+ * the same file. toLowerCase (not toLocaleLowerCase) so a Turkish locale cannot
+ * fold "I" to a dotless one and change the answer.
+ */
+export function isSameWindowsPath(a: string, b: string): boolean {
+  const norm = (p: string) => p.replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase();
+  return norm(a) === norm(b);
 }
 
 export interface StatuslineMigrationResult {
@@ -324,7 +358,10 @@ export async function migrateStatuslineScriptPath(
   if (!own) {
     return { migrated: false, reason: 'statusLine belongs to another tool; left untouched' };
   }
-  if (own.scriptPath === currentScriptPath) {
+  if (isSameWindowsPath(own.scriptPath, currentScriptPath)) {
+    // Same file, possibly spelled differently -- see isSameWindowsPath. An
+    // exact === here would call a differently-cased spelling of THIS install a
+    // previous one and try to migrate it onto itself.
     return { migrated: false, reason: 'already points at this install' };
   }
   if (scriptExists(own.scriptPath)) {

@@ -1,6 +1,11 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { parseOwnStatuslineCommand, readInstallState, uninstallStatusline } from './statuslineInstaller';
+import {
+  isSameWindowsPath,
+  parseOwnStatuslineCommand,
+  readInstallState,
+  uninstallStatusline,
+} from './statuslineInstaller';
 
 /**
  * The CLI flag the NSIS uninstaller passes to the packaged executable. Lives
@@ -148,17 +153,27 @@ export async function runStatuslineUninstall(
     return { code: 0, message: 'no Aether statusline to remove (installed-other)' };
   }
 
-  if (state.status === 'installed-other' && scriptExists(own.scriptPath)) {
-    // Ours by shape, but it names a script that is still on disk -- a second
-    // live install. Deleting its statusline while uninstalling THIS one would
-    // be the silent clobber the whole module exists to avoid.
+  // 'installed-other' is not proof the command names a DIFFERENT install.
+  // detectInstallStatus compares with a case-sensitive includes(), so a
+  // statusline enabled from `c:\apps\aether` lands here against a stored
+  // `C:\Apps\Aether` -- the same file by every rule Windows applies. Left to
+  // the branch below it would be read as somebody else's live install and
+  // skipped, and NSIS would then delete the script out from under a command it
+  // reported as fine.
+  const isCurrentInstall =
+    state.status === 'installed' || isSameWindowsPath(own.scriptPath, scriptPath);
+
+  if (!isCurrentInstall && scriptExists(own.scriptPath)) {
+    // Ours by shape, names a genuinely different path, and that script is still
+    // on disk -- a second live install. Deleting its statusline while
+    // uninstalling THIS one would be the silent clobber the module avoids.
     return {
       code: 0,
       message: `statusline belongs to another install at ${own.scriptPath}; left untouched`,
     };
   }
 
-  const stale = state.status === 'installed-other';
+  const stale = !isCurrentInstall;
 
   try {
     // Pass the path the command actually names, not this install's. For the

@@ -246,6 +246,60 @@ describe('runStatuslineUninstall ownership guard (strict parse, not status alone
     expect(backups()).toEqual([]);
   });
 
+  // detectInstallStatus compares with a case-sensitive includes(), so this
+  // lands in 'installed-other' even though Windows resolves both spellings to
+  // the same file. Treating it as another live install would skip cleanup and
+  // let NSIS delete the script out from under a command reported as fine.
+  it('recognises a DIFFERENTLY-CASED spelling of this install as ours, not another install', async () => {
+    write(`node "${CURRENT.toLowerCase()}"`);
+
+    // The script exists -- it is this install's own, reached by the other
+    // spelling. That is exactly what made the previous guard skip it.
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => true);
+
+    expect(result.code).toBe(0);
+    expect(result.message).not.toContain('another install');
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).statusLine).toBeUndefined();
+  });
+
+  it('restores the chain when the case-differing spelling carried one', async () => {
+    const chained = 'other-tool --flag';
+    const encoded = Buffer.from(chained, 'utf8').toString('base64');
+    write(`node "${CURRENT.toLowerCase()}" --chain ${encoded}`);
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => true);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).statusLine).toEqual({
+      type: 'command',
+      command: chained,
+    });
+  });
+
+  // Forward-slash spelling of the same path is the other way Windows accepts
+  // one file under two names.
+  it('recognises a forward-slash spelling of this install as ours', async () => {
+    write(`node "${CURRENT.replace(/\\/g, '/')}"`);
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => true);
+
+    expect(result.code).toBe(0);
+    expect(result.message).not.toContain('another install');
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).statusLine).toBeUndefined();
+  });
+
+  // The guard must narrow to EQUIVALENT spellings, not to "any path at all" --
+  // a genuinely different directory is still another install.
+  it('still treats a genuinely different live install as another install', async () => {
+    write(`node "${PREVIOUS}"`);
+
+    const result = await runStatuslineUninstall(settingsPath, CURRENT, () => true);
+
+    expect(result.code).toBe(0);
+    expect(result.message).toContain('another install');
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).statusLine).toBeDefined();
+  });
+
   // A stranger's tool must still be a silent, clean no-op -- the stale-cleanup
   // path above must not widen into deleting things we never wrote.
   it('still leaves a foreign command untouched even though its script is missing', async () => {
