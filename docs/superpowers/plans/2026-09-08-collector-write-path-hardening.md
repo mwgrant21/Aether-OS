@@ -135,15 +135,21 @@ before code. #69 is a documented limitation, not work.
 # next line does not start from the previous one's directory.
 npx vitest run                                        # root: renderer + electron
 (cd collector && npx tsc -b && npx vitest run)        # collector package
-(cd collector-go && gofmt -l . && go vet ./... && go test ./...)
+(cd collector-go && ! gofmt -l . | grep . && go vet ./... && go test ./...)
 (cd collector-go && GOOS=windows go build ./...)      # linkcount_windows.go has no other lane
 npm run typecheck:electron && npm run build && npm run electron:build
 ```
 
-`gofmt` takes filesystem **paths**, not the `go` tool's `./...` package pattern --
-`gofmt -l ./...` exits 2 and takes the rest of the chain down with it. `gofmt -l .`
-recurses and only lists; `go fmt ./...` also works but rewrites files, which is the
-wrong thing for a verification step.
+Two traps in that `gofmt` line, both worth naming once, because a verification
+command that cannot fail is worse than none.
+
+- It takes filesystem **paths**, not the `go` tool's `./...` package pattern.
+  `gofmt -l ./...` exits 2 and takes the rest of the chain down with it.
+- `gofmt -l` **exits 0 even when it lists unformatted files** -- it reports, it does
+  not judge. A bare `gofmt -l . && ...` therefore passes on a violation. The
+  `! ... | grep .` guard is what makes it fail, and `grep` still prints the filenames.
+  `go fmt ./...` also catches them but rewrites files, which is the wrong behaviour
+  for a verification step.
 
 **The parity harness is the one that matters for any write-path change**, and it is
 not in CI:
