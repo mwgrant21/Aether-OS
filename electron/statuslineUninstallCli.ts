@@ -73,10 +73,30 @@ export async function runStatuslineUninstall(
     return { code: 1, message: `could not read ${settingsPath}: ${err?.message ?? String(err)}` };
   }
 
+  if (state.status === 'unreadable') {
+    // NOT a clean no-op, and separated from the two below for that reason.
+    // readInstallState() reports 'unreadable' rather than throwing (see
+    // statuslineInstaller.ts), so this arrives looking like an ordinary
+    // non-'installed' state -- but we could not parse settings.json, which
+    // means we do not know whether it still invokes our statusline, and the
+    // uninstaller is about to delete the script it would point at.
+    //
+    // Exiting 0 here would tell NSIS the cleanup succeeded, suppress the
+    // manual-fix warning in installer.nsh, and leave the user with a dead
+    // command and no indication anything went wrong -- a silent failure inside
+    // the very code path added to prevent one. Report it so the uninstaller
+    // prints the file to fix by hand. Still no rewrite: a file we cannot parse
+    // is a file we must not write.
+    return {
+      code: 1,
+      message: `could not parse ${settingsPath} (unreadable); it may still invoke the removed statusline script`,
+    };
+  }
+
   if (state.status !== 'installed') {
     // 'not-installed'   -- nothing to do.
     // 'installed-other' -- somebody else's statusLine; not ours to remove.
-    // 'unreadable'      -- a file we could not parse, so we must not rewrite it.
+    // Both are genuine clean no-ops: we know the state, and it needs no action.
     return {
       code: 0,
       message: `no Aether statusline to remove (${state.status})`,

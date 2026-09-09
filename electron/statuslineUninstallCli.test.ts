@@ -72,13 +72,32 @@ describe('runStatuslineUninstall', () => {
     expect(backups()).toEqual([]);
   });
 
-  it('refuses to rewrite a settings.json it could not parse', async () => {
+  it('refuses to rewrite a settings.json it could not parse, and reports it as a FAILURE', async () => {
+    // Previously exit 0. That suppressed installer.nsh's manual-fix warning, so
+    // the uninstaller deleted the script, left a possibly-live command pointing
+    // at it, and told the user the uninstall was clean. We cannot parse the
+    // file, so we cannot know the command is gone -- that is a failure to
+    // report, not a no-op to swallow.
     const malformed = '{"statusLine": broken';
     writeFileSync(settingsPath, malformed);
     const result = await runStatuslineUninstall(settingsPath, SCRIPT_PATH);
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(1);
     expect(result.message).toContain('unreadable');
     expect(readFileSync(settingsPath, 'utf8')).toBe(malformed);
+  });
+
+  it('still reports a clean no-op for the two states it genuinely understands', async () => {
+    // The unreadable case above must not drag these with it: both are known
+    // states needing no action, and a nonzero exit here would cry wolf on every
+    // uninstall of an install that never enabled the statusline.
+    writeFileSync(settingsPath, JSON.stringify({ model: 'opus' }));
+    const notInstalled = await runStatuslineUninstall(settingsPath, SCRIPT_PATH);
+    expect(notInstalled.code).toBe(0);
+
+    writeFileSync(settingsPath, JSON.stringify({ statusLine: { type: 'command', command: 'other-tool' } }));
+    const other = await runStatuslineUninstall(settingsPath, SCRIPT_PATH);
+    expect(other.code).toBe(0);
+    expect(other.message).toContain('installed-other');
   });
 
   it('removes our own statusLine, preserves unrelated keys, and backs the file up first', async () => {
