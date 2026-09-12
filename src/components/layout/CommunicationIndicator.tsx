@@ -12,11 +12,11 @@ const providerLabels: Record<CommunicationMetadata['providerState'], string> = {
   cancelled: 'Cancelled', 'timed-out': 'Timed out', failed: 'Provider failed',
 };
 /** Metadata only: page delivery is evidence of serving bytes, never of reading. */
-export function deriveCommunicationIndicator(snapshot: CommunicationBridgeSnapshot | null) {
+export function deriveCommunicationIndicator(snapshot: CommunicationBridgeSnapshot | null, viewed: readonly string[] = []) {
   const rows = [...(snapshot?.metadata ?? [])].sort((a, b) =>
     Number(active.has(b.providerState)) - Number(active.has(a.providerState)) || b.acceptedAt - a.acceptedAt);
   const exchange = rows[0];
-  const readyCount = rows.filter(row => row.delivery.availability === 'ready' && row.delivery.uniquePagesServed === 0).length;
+  const readyCount = rows.filter(row => row.delivery.availability === 'ready' && !viewed.includes(row.exchangeId)).length;
   if (!exchange) return { exchangeId: null, readyCount, heading: 'Agent communication',
     detail: snapshot ? `Bridge ${snapshot.readiness}` : 'Status unavailable',
     delivery: '', health: snapshot?.cleanup === 'pending' ? 'Cleanup pending' : snapshot?.cleanup === 'failed' ? 'Cleanup failed' : '' };
@@ -39,9 +39,9 @@ export function deriveCommunicationIndicator(snapshot: CommunicationBridgeSnapsh
 export function CommunicationIndicator() {
   const { state, dispatch } = useAetherStore();
   const colors = useColors();
-  const view = deriveCommunicationIndicator(state.communicationSnapshot);
+  const view = deriveCommunicationIndicator(state.communicationSnapshot, state.viewedCommunicationAnswers);
   const description = [view.heading, view.detail, view.delivery, view.health,
-    view.readyCount > 0 ? `${view.readyCount} answers ready with no pages served` : ''].filter(Boolean).join('. ');
+    view.readyCount > 0 ? `${view.readyCount} unread answers for operator` : ''].filter(Boolean).join('. ');
   const style: CSSProperties & { WebkitAppRegion: 'no-drag' } = {
     WebkitAppRegion: 'no-drag', flex: '0 1 230px', minWidth: 145, maxWidth: 230,
     padding: '5px 9px', borderRadius: 8, border: `1px solid ${colors.chipBorder}`,

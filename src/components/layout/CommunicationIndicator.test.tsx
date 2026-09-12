@@ -33,7 +33,7 @@ describe('communication metadata indicator', () => {
     const ready = row({ providerState: 'finished', delivery: { availability: 'ready', uniquePagesServed: 0, totalPages: 2, clientConnected: true } });
     const view = deriveCommunicationIndicator(snapshot([ready]));
     expect(view).toMatchObject({ heading: 'Codex → Aether', delivery: 'Answer ready · no pages served', readyCount: 1 });
-    expect(deriveCommunicationIndicator(snapshot([{ ...ready, delivery: { ...ready.delivery, uniquePagesServed: 1 } }]))).toMatchObject({ heading: 'Aether → Claude', delivery: '1 of 2 pages served', readyCount: 0 });
+    expect(deriveCommunicationIndicator(snapshot([{ ...ready, delivery: { ...ready.delivery, uniquePagesServed: 1 } }]))).toMatchObject({ heading: 'Aether → Claude', delivery: '1 of 2 pages served', readyCount: 1 });
     expect(deriveCommunicationIndicator(snapshot([{ ...ready, delivery: { ...ready.delivery, uniquePagesServed: 2 } }])).delivery).toBe('All 2 pages served');
   });
   it.each(['cancelled', 'timed-out', 'failed'] as const)('retains %s, disconnection, and failed cleanup', providerState => {

@@ -256,6 +256,7 @@ export interface AetherState {
   communicationSnapshot: CommunicationBridgeSnapshot | null;
   communicationError: string | null;
   selectedCommunicationExchangeId: string | null;
+  viewedCommunicationAnswers: string[];
   // User-intent config for the independent Codex terminal (Task 4's
   // CodexTerminalView/PtyCodexTerminal) -- default-off. Unlike
   // codexTerminalAlive above (a live signal recomputed every launch and

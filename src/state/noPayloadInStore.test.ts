@@ -64,3 +64,14 @@ describe('no transcript payload in the store', () => {
     expect(offending).toEqual([]);
   });
 });
+
+describe('no communication payload on persistent state surfaces', () => {
+  it('keeps the communication payload type and content readers outside reducer/persistence', () => {
+    for (const file of STATE_SURFACE_FILES) {
+      expect(readSource(file)).not.toMatch(/CommunicationPayload|readPayload|writeText/);
+    }
+    for (const file of ['src/components/comms/ExchangeView.tsx', 'src/components/comms/useExchangeSource.ts']) {
+      expect(readSource(file)).not.toMatch(/commsPersistence|localStorage|sessionStorage|dangerouslySetInnerHTML/);
+    }
+  });
+});
