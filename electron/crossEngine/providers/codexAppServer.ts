@@ -124,9 +124,9 @@ function readUsage(raw: unknown): TurnUsage {
  *  npm-installed `codex` is a `.cmd` shim, which Node's non-shell spawn does
  *  not resolve (verified on this machine: ENOENT, exit -4058) and refuses to
  *  execute without `shell: true` regardless since CVE-2024-27980. */
-function defaultSpawn(): ChildProcessWithoutNullStreams {
+function defaultSpawn(cwd?: string): ChildProcessWithoutNullStreams {
   const env = buildCodexChildEnv(process.env, resolveCodexHome());
-  const child = spawnProviderProcess(process.execPath, [resolveCodexCliEntry(), ...CODEX_APP_SERVER_ARGS], env);
+  const child = spawnProviderProcess(process.execPath, [resolveCodexCliEntry(), ...CODEX_APP_SERVER_ARGS], env, cwd);
   attachStderrRingBuffer(child);
   return child;
 }
@@ -160,10 +160,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private readonly turns = new Map<number, TurnRecord>();
 
   constructor(
-    private readonly spawnChild: () => ChildProcessWithoutNullStreams = defaultSpawn,
+    private readonly spawnChild: (cwd?: string) => ChildProcessWithoutNullStreams = defaultSpawn,
     /** Injectable so the retention bounds can actually be tested rather than
      *  asserted about. */
-    private readonly turnRecordTtlMs: number = TURN_RECORD_TTL_MS
+    private readonly turnRecordTtlMs: number = TURN_RECORD_TTL_MS,
+    /** Must be set before connect so initialization cannot inherit project cwd. */
+    private readonly processCwd?: string
   ) {}
 
   capabilities(): ProviderCapabilities {
@@ -189,7 +191,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   }
 
   private async connectChild(): Promise<void> {
-    const child = this.spawnChild();
+    const child = this.spawnChild(this.processCwd);
     this.child = child;
     this.ownedChild = child;
     this.buffer = '';

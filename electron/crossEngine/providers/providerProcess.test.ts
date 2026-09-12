@@ -1,7 +1,17 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { buildCodexChildEnv } from '../acpProcess';
 import { spawnProviderProcess, disposeProviderProcess } from './providerProcess';
+
+function supervisionDirectory(child: ReturnType<typeof spawnProviderProcess>): string {
+  const hostScript = Buffer.from(child.spawnargs.at(-1)!, 'base64').toString('utf16le');
+  const encoded = /FromBase64String\('([^']+)'\)/.exec(hostScript)![1];
+  return dirname(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')).stop);
+}
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (error) {
@@ -11,6 +21,23 @@ function alive(pid: number): boolean {
 }
 
 describe('provider process containment', () => {
+  it.runIf(process.platform === 'win32')('launches the real child in its private cwd with the production sanitized environment', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'aether-private-cwd-'));
+    const env = buildCodexChildEnv({ ...process.env, OPENAI_API_KEY: 'must-not-inherit' }, cwd);
+    const child = spawnProviderProcess(process.execPath, ['-e', 'console.log(JSON.stringify({cwd:process.cwd(),key:process.env.OPENAI_API_KEY??null}));setInterval(()=>{},1000)'], env, cwd);
+    child.stderr.resume();
+    const files = supervisionDirectory(child);
+    try {
+      const [first] = await once(child.stdout, 'data');
+      expect(JSON.parse(String(first))).toEqual({ cwd, key: null });
+      expect(existsSync(files)).toBe(true);
+      await child.disposeTree();
+      expect(existsSync(files)).toBe(false);
+    } finally {
+      await child.disposeTree();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 20_000);
   it.runIf(process.platform === 'win32')('preserves raw stdio and proves a stubborn real descendant has exited', async () => {
     const script = `const {spawn}=require('node:child_process');
       const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});
@@ -69,12 +96,16 @@ describe('provider process containment', () => {
   it.runIf(process.platform === 'win32')('host crash kills its job but never invents a cleanup receipt', async () => {
     const child = spawnProviderProcess(process.execPath, ['-e', 'console.log(process.pid);setInterval(()=>{},1000)'], process.env);
     child.stderr.resume();
+    const files = supervisionDirectory(child);
     const [first] = await once(child.stdout, 'data');
     const root = Number(String(first).trim());
+    expect(existsSync(files)).toBe(true);
     const closed = once(child, 'close');
     child.kill();
     await closed;
     await expect(child.disposeTree()).rejects.toThrow();
+    expect(existsSync(files)).toBe(false);
+    await expect(child.disposeTree()).rejects.toThrow('cleanup was not confirmed');
     const deadline = Date.now() + 3000;
     while (alive(root) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     expect(alive(root)).toBe(false);

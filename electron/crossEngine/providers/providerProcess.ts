@@ -41,7 +41,7 @@ public static class AetherProviderJob {
  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr handle,uint code);
  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
  static void Check(bool value) { if(!value) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
- public static void Run(string exe,string command,string stop,string receipt) {
+ public static void Run(string exe,string command,string stop,string receipt,string cwd) {
    IntPtr job=CreateJobObject(IntPtr.Zero,null); Check(job!=IntPtr.Zero);
    PI child=new PI(); bool assigned=false;
    try {
@@ -49,7 +49,7 @@ public static class AetherProviderJob {
      Check(SetInformationJobObject(job,9,ref limits,Marshal.SizeOf(typeof(EXT))));
      SI si=new SI(); si.cb=Marshal.SizeOf(typeof(SI)); si.flags=0x100;
      si.input=GetStdHandle(-10); si.output=GetStdHandle(-11); si.error=GetStdHandle(-12);
-     Check(CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,null,ref si,out child));
+     Check(CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,String.IsNullOrEmpty(cwd)?null:cwd,ref si,out child));
      Check(AssignProcessToJobObject(job,child.process)); assigned=true;
      Check(ResumeThread(child.thread)!=0xffffffff);
      while(!File.Exists(stop) && WaitForSingleObject(child.process,50)==258) {}
@@ -77,7 +77,7 @@ function windowsQuote(value: string): string {
   return '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/\\+$/, '$&$&') + '"';
 }
 
-export function spawnProviderProcess(executable: string, args: string[], env: NodeJS.ProcessEnv): ProviderProcess {
+export function spawnProviderProcess(executable: string, args: string[], env: NodeJS.ProcessEnv, cwd?: string): ProviderProcess {
   // Process groups on POSIX allow descendants to escape with setsid(). They
   // cannot satisfy this adapter's containment proof. Add an equally strong
   // platform supervisor before enabling production spawning elsewhere.
@@ -86,20 +86,30 @@ export function spawnProviderProcess(executable: string, args: string[], env: No
   const directory = mkdtempSync(join(tmpdir(), 'aether-provider-'));
   const stop = join(directory, 'stop');
   const receipt = join(directory, 'receipt');
-  const parameters = Buffer.from(JSON.stringify({ executable, command: [executable, ...args].map(windowsQuote).join(' '), stop, receipt })).toString('base64');
-  const script = `$ErrorActionPreference='Stop'\nAdd-Type -TypeDefinition @'\n${WINDOWS_HOST}\n'@\n$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${parameters}'))|ConvertFrom-Json\n[AetherProviderJob]::Run($p.executable,$p.command,$p.stop,$p.receipt)`;
+  const parameters = Buffer.from(JSON.stringify({ executable, command: [executable, ...args].map(windowsQuote).join(' '), stop, receipt, cwd })).toString('base64');
+  const script = `$ErrorActionPreference='Stop'\nAdd-Type -TypeDefinition @'\n${WINDOWS_HOST}\n'@\n$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${parameters}'))|ConvertFrom-Json\n[AetherProviderJob]::Run($p.executable,$p.command,$p.stop,$p.receipt,$p.cwd)`;
   const child = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-    { env, stdio: 'pipe', windowsHide: true, shell: false }) as ProviderProcess;
-  const closed = observeClose(child);
+    { env, cwd, stdio: 'pipe', windowsHide: true, shell: false }) as ProviderProcess;
+  let hostClosed = false;
+  // Capture proof before reaping files. Even failed or timed-out disposal reaps
+  // on eventual host close; active hosts retain their stop/receipt paths. The
+  // error remains in memory, so deleting diagnostics cannot turn failure into
+  // success. No age-based sweep may delete another live supervisor's files.
+  const closed = observeClose(child).then(() => {
+    hostClosed = true;
+    let failure: Error | null = null;
+    try {
+      if (readFileSync(receipt, 'utf8') !== 'empty') throw new Error('provider job cleanup was not confirmed');
+    } catch { failure = new Error('provider job cleanup was not confirmed'); }
+    try { rmSync(directory, { recursive: true, force: true }); }
+    catch { failure ??= new Error('provider supervision files could not be removed'); }
+    return failure;
+  });
   let cleanup: Promise<void> | undefined;
   child.disposeTree = () => cleanup ??= (async () => {
-    writeFileSync(stop, 'stop');
-    await bounded(closed);
-    // Never infer success from the host's exit code or pipe closure.
-    // Failed cleanup retains these payload-free lifecycle files for diagnosis.
-    if (readFileSync(receipt, 'utf8') !== 'empty') throw new Error('provider job cleanup was not confirmed');
-    rmSync(directory, { recursive: true, force: true });
+    if (!hostClosed) writeFileSync(stop, 'stop');
+    await bounded(closed.then(failure => { if (failure) throw failure; }));
   })();
   return child;
 }

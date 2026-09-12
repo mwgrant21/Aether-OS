@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { CodexAppServerAdapter } from './codexAppServer';
 import { assertNoEnabledMcpServers, CODEX_APP_SERVER_ARGS, CODEX_SESSION_CONFIG } from './codexAppServerPolicy';
 
-function fixture(configResponse: unknown = { config: { mcp_servers: {} } }) {
+function fixture(configResponse: unknown = { config: { mcp_servers: {} } }, cwd?: string) {
   const child = new EventEmitter() as ChildProcessWithoutNullStreams & { disposeTree(): Promise<void> };
   child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.disposeTree = async () => { child.emit('close', 0); };
@@ -29,7 +29,8 @@ function fixture(configResponse: unknown = { config: { mcp_servers: {} } }) {
       (child.stdout as PassThrough).write(JSON.stringify({ id: request.id, result }) + '\n');
     }
   });
-  return { adapter: new CodexAppServerAdapter(() => child), calls };
+  const spawnedCwds: Array<string | undefined> = [];
+  return { adapter: new CodexAppServerAdapter(processCwd => { spawnedCwds.push(processCwd); return child; }, undefined, cwd), calls, spawnedCwds };
 }
 
 describe('Codex consultation sandbox and peer configuration', () => {
@@ -45,6 +46,15 @@ describe('Codex consultation sandbox and peer configuration', () => {
     schema = JSON.parse(readFileSync(join(directory, 'v2', 'TurnStartParams.json'), 'utf8'));
   }, 20_000);
   afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true }); });
+
+  it('passes private cwd to spawn before initialization', async () => {
+    const { adapter, calls, spawnedCwds } = fixture(undefined, 'C:/private-empty');
+    try {
+      await adapter.connect();
+      expect(spawnedCwds).toEqual(['C:/private-empty']);
+      expect(calls[0].method).toBe('initialize');
+    } finally { await adapter.dispose(); }
+  });
 
   it('sends the pinned turn sandboxPolicy, denies tool network, and never sends thread sandbox on a turn', async () => {
     const { adapter, calls } = fixture();
