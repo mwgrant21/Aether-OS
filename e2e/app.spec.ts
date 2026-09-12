@@ -54,13 +54,7 @@ test.describe('Aether OS smoke', () => {
   });
 
   test('the embedded terminal spawns a real pty and renders real output', async () => {
-    // The pty isn't a plain shell: ptyManager.js spawns powershell and immediately writes
-    // `claude\r`, launching a live Claude Code CLI session. Sending arbitrary typed input into
-    // that live session (e.g. `echo <marker>` expecting an echo back) is both fragile (the
-    // keystrokes go into Claude's own TUI, not a shell prompt) and inappropriate for an
-    // automated smoke test. Instead, verify the structural fact this test exists to prove: the
-    // pty spawned and is producing real, non-trivial output (its own banner/prompt), retiring
-    // the recurring manual verification.
+    // The native PTY and production IPC are real; launchApp places harmless CLIs on PATH.
     const { app, window } = await launchApp();
     try {
       await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal', exact: true }).click();
@@ -77,7 +71,7 @@ test.describe('Aether OS smoke', () => {
       const xtermRows = window.locator('.xterm-rows');
       await expect(async () => {
         const text = (await xtermRows.textContent())?.trim() ?? '';
-        expect(text.length).toBeGreaterThan(40);
+        expect(text).toContain('AETHER_E2E_CLAUDE_FIXTURE_REAL_PTY_NO_MODEL');
       }).toPass({ timeout: 10000 });
     } finally {
       await app.close();
@@ -87,6 +81,7 @@ test.describe('Aether OS smoke', () => {
   test('the dashboard metrics row renders real-usage data', async () => {
     const { app, window } = await launchApp();
     try {
+      await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Dashboard', exact: true }).click();
       await expect(window.getByText('Tokens used')).toBeVisible({ timeout: 15000 });
     } finally {
       await app.close();

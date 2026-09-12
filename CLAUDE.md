@@ -155,17 +155,20 @@ docs/superpowers/
   binding: a cost bucket with no observed data is `null`, never `0` — see
   `RollupCard`, where "no data" and "$0.00" are deliberately different
   renderings, and `bucketByDay`, whose return type forces the distinction.
-- **Model calls**: no model call site is reachable from the running app. (Two provider adapters can spawn a CLI — `acpProcess.ts` the Codex ACP adapter, and `providers/claudeHeadlessCli.ts` `claude -p` — but only Codex verification is wired to IPC/UI; the Claude adapter is constructed by nothing outside tests. See `docs/privacy-and-data.md` §9 and §12 before changing that.) The
+- **Model calls**: billed API model calls remain prohibited. The reachable subscription
+  exceptions are manual Codex verification and separately opted-in Claude–Codex communication
+  (`communicationBridge`, default off); see `docs/privacy-and-data.md` §9 and §13. The
+  `ClaudeHeadlessCliAdapter` remains test-only (§12); do not activate it implicitly. The
   `@anthropic-ai/sdk` dependency is gone from `package.json`; `chatCore.ts`,
   `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC
   pair, `.env` key loading (`electron/loadDotEnv.ts`), and the `modelPolicy.ts`
   allowlist module have all been deleted (Stage 13.5). `Comms` (the renamed
-  `Chat` tab) answers only through `localResponder.ts` — a local, deterministic
-  responder, no network request. `src/shared/noApiCalls.test.ts` is the guard:
+  `Chat` tab) keeps its local deterministic responder and also displays the explicitly
+  opted-in communication exchanges; display itself makes no model request. `src/shared/noApiCalls.test.ts` is the guard:
   it fails the build if `@anthropic-ai/sdk` reappears in `package.json`, if any
   source file imports it or references `api.anthropic.com`, or if a
-  `messages.create(` call site reappears. There is no allowlist to consult
-  because there is nothing to allow. If a new feature seems to need a model
+  `messages.create(` call site reappears. The existing Codex subscription boundary and narrow communication guard are
+  explicit exceptions, not permission to add arbitrary model call sites. If a new feature seems to need a model
   call (a "live"-feeling status line, a background summarizer, anything
   ticking on a timer), prefer a deterministic, local formatter instead, the way
   `electron/headlineGenerator.ts`'s `formatHeadline()` replaced the old billed
@@ -199,7 +202,7 @@ deliberate scope exclusions exist (Grid/Reactor theming, packaging, etc.).
 **Aether OS is single-user and local-only.** Full stance in `docs/privacy-and-data.md` — read it
 before designing anything that persists or transmits data. The short version:
 
-- **Nothing leaves this machine. There is no exception.**
+- **Outbound content requires a named boundary:** manual Codex verification, separately opted-in Claude–Codex communication, or operator-driven terminals. See privacy §9, §11 and §13; no telemetry or background model summarization.
 - **No telemetry, ever.** Not opt-out, not anonymous, not aggregate.
 - **No externally-reachable listener.** Hook ingest itself is an append-only file spool
   (`~/.aether-os/spool/`), not an HTTP server. Separately, `electron/permissionServer.ts` runs a
