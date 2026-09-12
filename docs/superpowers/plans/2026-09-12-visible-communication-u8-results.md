@@ -1,5 +1,7 @@
 # U8 — actual exchange content in Comms
 
+**Side-review update, 2026-09-12:** U8 accepted with no code findings. Independent full-suite/typecheck execution now Passed using approved command escalation. U7's keyboard/light-theme gate was already closed before U8 by `u7-keyboard-theme-2026-09-12-review.json` and `u7-review-disposition.md`; its omission here was a tracking error. See `u8-review-disposition.md` for the correction and remaining gates. The original checkpoint below is retained as history.
+
 Implemented on `feat/visible-communication-u1`, based on `04286d9`. U9 has not started. No live model calls, push, or merge.
 
 ## What changed

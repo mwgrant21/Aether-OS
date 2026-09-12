@@ -1,5 +1,7 @@
 # U7 implementation and verification
 
+**Update, 2026-09-12 side review:** U7 accepted; the keyboard/light-theme gate below is now Passed. See `u7-review-disposition.md` and `u7-evidence-index.md`. The remainder records the original implementation checkpoint.
+
 Implemented on `feat/visible-communication-u1`, based on `73823c6`.
 
 The global TopBar indicator distinguishes request direction, provider output, answer readiness, and pages actually served. Cleanup and disconnection remain separate. Its native button opens Comms only on activation and selects an exchange ID in transient state. The full exchange view remains U8 work.
