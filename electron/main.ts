@@ -73,6 +73,7 @@ import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegr
 import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
+import { CommunicationGrantControl } from './communicationBridge/grantControl';
 import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
 const require = createRequire(import.meta.url);
@@ -86,7 +87,7 @@ const communicationBridge = new CommunicationBridgeIntegration({
 registerCommunicationIpc(ipcMain, communicationBridge, event => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
   && event.senderFrame === mainWindow.webContents.mainFrame,
-  { startSession: () => communicationSessions.start() });
+  { startSession: () => communicationSessions.start(), grantMore: id => communicationGrants.grant(id) });
 const communicationQuitGate = createCommunicationQuitGate(() => communicationBridge.dispose(), () => app.quit(), async code => {
   const { response } = await dialog.showMessageBox({ type: 'warning', title: 'Aether is waiting for cleanup',
     message: code === 'SHUTDOWN_TIMEOUT' ? 'Cleanup is still unconfirmed.' : 'Cleanup could not be confirmed.',
@@ -1054,6 +1055,13 @@ const communicationSessions = new CommunicationSessionControl({
     });
     liveAgentTracker.notifyPtySpawned(Date.now());
   },
+});
+const communicationGrants = new CommunicationGrantControl(communicationBridge, async () => {
+  const { response } = await dialog.showMessageBox({ type: 'question', title: 'Grant 3 more consultations?',
+    message: 'Allow three additional Codex consultations in this Claude session?',
+    detail: 'These consultations use your subscriptions when Claude requests them. This only increases the current session’s allowance; it does not start work, restart Claude, reset cooldown, or erase previous requests.',
+    buttons: ['Cancel', 'Grant 3 more'], defaultId: 0, cancelId: 0 });
+  return response === 1;
 });
 
 const planUsageScraper = createPlanUsageScraper();

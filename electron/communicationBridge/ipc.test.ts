@@ -9,6 +9,20 @@ function setup() {
 }
 const trusted = {} as never;
 describe('communication IPC', () => {
+  it('validates operator requests before presenting native confirmations', () => {
+    const handlers = new Map<string, Function>();
+    const operator = { startSession: vi.fn(), grantMore: vi.fn() };
+    registerCommunicationIpc({ handle: (name: string, fn: Function) => { handlers.set(name, fn); } } as never, {} as never,
+      event => event === trusted, operator);
+    const start = handlers.get('communication:startSession')!, grant = handlers.get('communication:grantMore')!;
+    expect(() => start({}, 'bad')).toThrow('NOT_AUTHORIZED');
+    expect(() => start(trusted, {})).toThrow('INVALID_INPUT');
+    expect(() => grant(trusted, { launchId: 'forged' })).toThrow('INVALID_INPUT');
+    expect(() => grant(trusted, 'valid', 'extra')).toThrow('INVALID_INPUT');
+    expect(operator.startSession).not.toHaveBeenCalled(); expect(operator.grantMore).not.toHaveBeenCalled();
+    start(trusted); grant(trusted, 'confirm-1');
+    expect(operator.grantMore).toHaveBeenCalledWith('confirm-1');
+  });
   it('exposes only five bounded renderer operations', () => {
     const { handlers, call, service } = setup();
     expect([...handlers.keys()]).toEqual(['snapshot', 'setEnabled', 'readPayload', 'cancel', 'clear'].map(n => `communication:${n}`));

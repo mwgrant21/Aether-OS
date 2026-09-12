@@ -28,6 +28,8 @@ const messages: Record<string, string> = {
   CONFIG_UNREADABLE: 'Claude configuration could not be read or validated. Resolve it before starting a connected session.',
   REVOKED: 'Communication was disabled or replaced before the session could start.',
   LAUNCH_FAILED: 'The connected Claude session could not start.',
+  GRANT_NOT_APPLIED: 'The consultation grant was not applied. The session may have changed or reached its credit limit.',
+  NOT_CONNECTED: 'Wait for a connected Claude session before granting more consultations.',
 };
 export function CommunicationCard() {
   const { state, dispatch } = useAetherStore();
@@ -36,7 +38,23 @@ export function CommunicationCard() {
   const [starting, setStarting] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const startingRef = useRef(false);
+  const [granting, setGranting] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
+  const grantingRef = useRef(false);
   const canStart = state.communicationCfg.enabled && snapshot?.enabled && snapshot.cleanup === 'confirmed';
+  const canGrant = canStart && snapshot?.readiness === 'ready';
+  const grant = async () => {
+    if (!canGrant || grantingRef.current) return;
+    const api = window.aetherElectron?.communication;
+    if (!api) return;
+    grantingRef.current = true; setGranting(true); setGrantError(null);
+    try {
+      const result = await api.grantMore(crypto.randomUUID());
+      if (!result.ok) setGrantError(result.code === 'CANCELLED' ? 'Consultation grant cancelled.'
+        : messages[result.code ?? 'GRANT_NOT_APPLIED'] ?? messages.GRANT_NOT_APPLIED);
+    } catch { setGrantError(messages.GRANT_NOT_APPLIED); }
+    finally { grantingRef.current = false; setGranting(false); }
+  };
   const start = async () => {
     if (!canStart || startingRef.current) return;
     const api = window.aetherElectron?.communication;
@@ -80,6 +98,13 @@ export function CommunicationCard() {
       {starting ? 'Starting connected Claude…' : 'Start fresh connected Claude'}
     </Button>
     {launchError && <p role="alert">{launchError}</p>}
+    <p>Consultation credits remaining: {typeof snapshot?.remainingCredits === 'number' ? snapshot.remainingCredits : 'unavailable'}.</p>
+    <Button onClick={grant} disabled={!canGrant || granting || starting} style={{ padding: '8px 12px',
+      color: colors.textSecondary, border: `1px solid ${colors.panelBorder}`, borderRadius: 7,
+      opacity: !canGrant || granting || starting ? 0.55 : 1 }}>
+      {granting ? 'Confirming consultation grant…' : 'Grant 3 more consultations'}
+    </Button>
+    {grantError && <p role="alert">{grantError}</p>}
     <p role="status">Bridge: {snapshot ? snapshot.readiness : 'status unavailable'}.
       {snapshot && ` Cleanup: ${snapshot.cleanup}.`}</p>
     {state.communicationError && <p role="alert">{messages[state.communicationError] ?? state.communicationError}</p>}
