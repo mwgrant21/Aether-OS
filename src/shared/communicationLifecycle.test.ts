@@ -48,19 +48,54 @@ describe('communication admission and launch accounting', () => {
     let state = ask().state;
     for (let i = 0; i < LIMITS.requestKeyAliases + 50; i++) {
       const retry = ask(state, `alias-${i}`);
-      expect(retry.duplicate).toBe(true);
-      expect(retry.error).toBeNull();
-      expect(retry.exchangeId).toBe('exchange-1');
+      if (i < LIMITS.requestKeyAliases - 1) {
+        expect(retry.duplicate).toBe(true);
+        expect(retry.error).toBeNull();
+        expect(retry.exchangeId).toBe('exchange-1');
+        expect(lookupCommunication(retry.state, { request_key: `alias-${i}` })?.metadata.exchangeId).toBe(retry.exchangeId);
+      } else {
+        expect(retry.duplicate).toBe(false);
+        expect(retry.error).toBe('ALIAS_LIMIT');
+        expect(retry.exchangeId).toBeNull();
+        expect(retry.state.exchanges).toEqual(state.exchanges);
+        expect(communicationCredits(retry.state)).toEqual(communicationCredits(state));
+      }
       state = retry.state;
     }
     expect(exchange(state).requestKeys).toHaveLength(LIMITS.requestKeyAliases);
     expect(state.exchanges).toHaveLength(1);
     expect(communicationCredits(state).reserved).toBe(1);
-    expect(state.cooldownUntil).toBe(0);
+    expect(state.cooldownUntil).toBe(LIMITS.cooldownMs);
     const retained = exchange(state).requestKeys;
     expect(retained[0]).toBe('key-1');
     expect(lookupCommunication(state, { request_key: retained[retained.length - 1] })).toEqual(exchange(state));
     expect(lookupCommunication(state, { request_key: `alias-${LIMITS.requestKeyAliases + 49}` })).toBeUndefined();
+  });
+  it('retained keys recover at the alias cap during cooldown and exhaustion', () => {
+    let state = ask().state;
+    for (let i = 1; i < LIMITS.requestKeyAliases; i++) state = ask(state, `alias-${i}`).state;
+    state = confirmCommunicationCleanup(completed(state), 'exchange-1');
+    for (let i = 2; i <= 3; i++) {
+      state = ask(state, `key-${i}`, `digest-${i}`, i * 100, `exchange-${i}`).state;
+      state = confirmCommunicationCleanup(completed(state, `exchange-${i}`, i * 100 + 10), `exchange-${i}`);
+    }
+    expect(communicationCredits(state).remaining).toBe(0);
+    const rejected = ask(state, 'unretained', 'digest-1', 400);
+    expect(rejected.error).toBe('ALIAS_LIMIT');
+    expect(rejected.exchangeId).toBeNull();
+    expect(rejected.state.cooldownUntil).toBe(400 + LIMITS.cooldownMs);
+    expect(lookupCommunication(rejected.state, { request_key: 'unretained' })).toBeUndefined();
+    for (const key of exchange(state).requestKeys) {
+      const recovered = ask(rejected.state, key, 'digest-1', 401);
+      expect(recovered.error).toBeNull();
+      expect(recovered.duplicate).toBe(true);
+      expect(recovered.exchangeId).toBe('exchange-1');
+      expect(lookupCommunication(recovered.state, { request_key: key })?.metadata.exchangeId).toBe('exchange-1');
+      expect(recovered.state).toEqual(rejected.state);
+    }
+    expect(ask(rejected.state, 'key-1', 'changed', 401).error).toBe('KEY_CONFLICT');
+    expect(communicationError('ALIAS_LIMIT')).toEqual({ schemaVersion: 1, code: 'ALIAS_LIMIT',
+      guidance: 'Do not automatically re-key or retry. Use a previously accepted request_key or the existing exchange_id to retrieve the result.' });
   });
   it('rejects changed content under an existing key and preserves the original mapping', () => {
     const initial = ask().state;

@@ -16,7 +16,9 @@ export function communicationCredits(state: CommunicationLaunch) {
   return { granted: state.granted, reserved, consumed, remaining: state.granted - reserved - consumed };
 }
 export function communicationError(code: CommunicationErrorCode): CommunicationErrorV1 {
-  const guidance = code === 'READ_CAPACITY'
+  const guidance = code === 'ALIAS_LIMIT'
+    ? 'Do not automatically re-key or retry. Use a previously accepted request_key or the existing exchange_id to retrieve the result.'
+    : code === 'READ_CAPACITY'
     ? 'Stop this retrieval attempt. The operator can inspect the answer in Comms. Cancel remains available.'
     : code === 'BUDGET_EXHAUSTED'
       ? 'Do not retry or delegate. Ask the operator to grant more consultations in Aether.'
@@ -46,6 +48,8 @@ function replace(state: CommunicationLaunch, exchange: CommunicationExchange): C
 }
 export function rejectCommunicationAsk(state: CommunicationLaunch, code: CommunicationErrorCode, now: number): CommunicationLaunch {
   // Retrieval errors must not be passed through the ask rejection path.
+  // INVALID_INPUT deliberately shares the anti-rephrasing cooldown, including a
+  // human-requested follow-up in this launch; a malformed model call cannot bypass it.
   if (code === 'COOLDOWN' || code === 'READ_CAPACITY') return state;
   return { ...state, cooldownUntil: Math.max(state.cooldownUntil, now + LIMITS.cooldownMs) };
 }
@@ -71,10 +75,10 @@ export function acceptCommunicationAsk(state: CommunicationLaunch, input: AskCod
   if (keyed && keyed.fingerprint !== prepared.fingerprint) return reject('KEY_CONFLICT');
   const duplicate = keyed ?? state.exchanges.find(e => e.fingerprint === prepared.fingerprint);
   if (duplicate) {
-    // Aliases are bounded: a caller that retries one payload under an endless supply of
-    // fresh keys still recovers the exchange id, but cannot grow launch state without limit.
-    const capped = keyed || duplicate.requestKeys.length >= LIMITS.requestKeyAliases;
-    const next = capped ? state : replace(state, { ...duplicate, requestKeys: [...duplicate.requestKeys, input.request_key] });
+    // Include the original key in the cap. Every successful alias must remain
+    // recoverable by key if the acknowledgement carrying its exchange ID is lost.
+    if (!keyed && duplicate.requestKeys.length >= LIMITS.requestKeyAliases) return reject('ALIAS_LIMIT');
+    const next = keyed ? state : replace(state, { ...duplicate, requestKeys: [...duplicate.requestKeys, input.request_key] });
     return { state: next, exchangeId: duplicate.metadata.exchangeId, duplicate: true, error: null };
   }
   if (!identifier.test(prepared.exchangeId) || !prepared.fingerprint
@@ -217,6 +221,8 @@ export function recordCommunicationPageServed(state: CommunicationLaunch, id: st
       metadata: { ...e.metadata, delivery: { ...e.metadata.delivery, uniquePagesServed: served.length } } };
   });
 }
+/** Launch/helper transport connectivity, not an individual get waiter. All retained
+ * exchanges in this launch share this transport regardless of the BUSY slot guard. */
 export function setCommunicationClientConnected(state: CommunicationLaunch, connected: boolean): CommunicationLaunch {
   return { ...state, exchanges: state.exchanges.map(e => ({ ...e,
     metadata: { ...e.metadata, delivery: { ...e.metadata.delivery, clientConnected: connected } } })) };

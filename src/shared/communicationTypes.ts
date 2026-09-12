@@ -11,7 +11,7 @@ export type CommunicationFailure = 'CANCELLED' | 'LEASE_EXPIRED' | 'TIMEOUT'
 export type CommunicationErrorCode = CommunicationFailure | 'DISABLED' | 'NOT_CONNECTED'
   | 'AUTH_REQUIRED' | 'POLICY_BLOCKED' | 'BUSY' | 'READ_CAPACITY' | 'BUDGET_EXHAUSTED'
   | 'COOLDOWN' | 'RETENTION_FULL' | 'INVALID_INPUT' | 'INPUT_LIMIT' | 'KEY_CONFLICT'
-  | 'UNKNOWN_EXCHANGE' | 'EXPIRED';
+  | 'UNKNOWN_EXCHANGE' | 'EXPIRED' | 'ALIAS_LIMIT';
 export type ProviderState = 'accepted' | 'preparing' | 'waiting' | 'streaming'
   | 'cancelling' | 'finished' | 'cancelled' | 'timed-out' | 'failed';
 export interface CommunicationIdentity {

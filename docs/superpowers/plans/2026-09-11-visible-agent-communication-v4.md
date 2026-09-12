@@ -105,6 +105,7 @@ Every pending response includes a snapshot taken at return: `elapsed_ms`, `remai
 | Active ownership lease | 90 seconds; only the designated lease-owner wait renews on admission and normal pending return while the provider is active. Followers and UI viewing do not renew it. |
 | Server-side get wait | Default 45 seconds, cap 60 seconds; only terminal/cancellation outcomes end it early, not streamed chunks or metadata ticks |
 | Concurrent get waiters | Up to 16 per exchange, sharing one event subscription; independent timers and cancellation. Excess calls stop with READ_CAPACITY, never guidance to await another caller. |
+| Retained request keys | At most 32 per exchange, including the initial key. An unrecognized alias at the cap is rejected with ALIAS_LIMIT; existing keys remain recoverable. |
 | Ask/cancel operation deadline | 2 seconds; provider work and cleanup run outside these handlers |
 | Claude per-server timeout | Explicit 90 seconds, verified interactively against the installed client and effective background/idle configuration |
 | New-request cooldown | 30 seconds after a non-cooldown ask rejection or an unsuccessful terminal outcome. Successful completion clears cooldown so follow-ups can start immediately. Repeated COOLDOWN responses do not extend it. |
@@ -115,6 +116,8 @@ Every pending response includes a snapshot taken at return: `elapsed_ms`, `remai
 | Live validation spending | At most one real Codex consultation per explicitly approved live smoke; fake providers for all repeatable scenarios |
 
 Request IDs, key mappings, canonical payload fingerprints, and budget tombstones survive payload expiry until the owning Claude launch ends. Same key with changed content is KEY_CONFLICT; identical question/context under a new key resolves to the existing exchange. Return recognized duplicates before applying cooldown or exhausted-credit checks so a lost acknowledgment remains recoverable. That does not catch semantic paraphrases, so the credit budget and cooldown remain necessary.
+
+U1 review amendment: accepting a new alias requires retaining its mapping within the 32-key cap. Never return success for an unretained alias: losing that acknowledgment would make get-by-key recovery fail. ALIAS_LIMIT rejects the new alias without reserving credit or starting work and follows the normal rejection cooldown. Previously accepted keys still recover during cooldown and retain KEY_CONFLICT checks. Rejected keys acquire no mapping or acceptance guarantee.
 
 Invalid input, busy, cooldown, disabled, and other pre-acceptance rejections consume no start credit. Preparation failure before turn submission releases its reservation. This clarifies v2 rather than accepting the review's assumption that three invalid inputs necessarily spend three paid starts. The cooldown limits repeated new intents even when those rejections are free to Aether. During cooldown return a deadline and "Do not automatically retry; the operator may request another consultation later." Do not require a model-side sleep. Get/cancel and duplicate lookups remain usable during cooldown.
 
@@ -135,6 +138,7 @@ All responses are bounded and carry a safe code and actionable guidance. No raw 
 | COOLDOWN | Do not automatically retry or paraphrase the request. The operator may request a new consultation after the supplied deadline. |
 | RETENTION_FULL | Do not retry automatically. Existing answers are retained; the operator can clear an answer or wait for normal expiry. |
 | INVALID_INPUT / INPUT_LIMIT / KEY_CONFLICT | Do not automatically resubmit. Explain the rejected input to the operator. |
+| ALIAS_LIMIT | Do not retry or create another alias. Retrieve using a previously accepted request_key or known exchange_id. The new key was not accepted. |
 | UNKNOWN_EXCHANGE / EXPIRED | No result can be recovered by this call. Do not recreate the consultation automatically. |
 | CANCELLED / LEASE_EXPIRED / TIMEOUT / OUTPUT_LIMIT / PROVIDER_FAILED / CLEANUP_FAILED | The consultation did not complete successfully. Do not retry; the operator must decide whether to start another. |
 
