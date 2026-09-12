@@ -31,16 +31,20 @@ export class CommunicationSessionControl<T extends LaunchBundle> {
       let timer: ReturnType<typeof setInterval> | undefined;
       // Reserve cleanup BEFORE starting asynchronous file creation. Disable owns
       // this same operation even if the resource appears after revocation.
-      let finish!: (bundle: T | undefined) => void;
-      const created = new Promise<T | undefined>(resolve => { finish = resolve; });
+      let finish!: (resource: { bundle?: T; cleanupFailed?: boolean }) => void;
+      const created = new Promise<{ bundle?: T; cleanupFailed?: boolean }>(resolve => { finish = resolve; });
       bridge.attachLaunchCleanup(launchId, async () => {
         clearInterval(timer);
-        const bundle = await created;
-        await bundle?.cleanup();
+        const resource = await created;
+        if (resource.cleanupFailed) throw new Error('LAUNCH_CONFIG_CLEANUP_FAILED');
+        await resource.bundle?.cleanup();
       });
       let bundle: T;
-      try { bundle = await this.options.prepare(manifest); finish(bundle); }
-      catch (error) { finish(undefined); throw error; }
+      try { bundle = await this.options.prepare(manifest); finish({ bundle }); }
+      catch (error) {
+        finish({ cleanupFailed: error instanceof Error && error.message === 'LAUNCH_CONFIG_CLEANUP_FAILED' });
+        throw error;
+      }
       if (bridge.currentLaunchId() !== launchId) return { ok: false, code: 'REVOKED' };
       const id = launchId;
       const exited = () => { void bridge.notifyClaudeExit(id); };

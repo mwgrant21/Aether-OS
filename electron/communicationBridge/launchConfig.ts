@@ -31,6 +31,7 @@ interface LaunchDependencies {
   resolveClaude(): Promise<string>;
   checkPolicy(env: NodeJS.ProcessEnv): Promise<void>;
   protect(directory: string): Promise<void>;
+  remove?(directory: string): Promise<void>;
 }
 
 async function jsonFile(path: string): Promise<Record<string, unknown> | undefined> {
@@ -158,6 +159,7 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
   await mkdir(root, { recursive: true, mode: 0o700 });
   if ((await lstat(root)).isSymbolicLink()) throw new Error('UNSAFE_LAUNCH_ROOT');
   const directory = await mkdtemp(join(root, 'launch-'));
+  const remove = dependencies.remove ?? ((path: string) => rm(path, { recursive: true, force: true }));
   try {
     await dependencies.protect(directory); // No capability exists on disk before this succeeds.
     await writeFile(join(directory, 'owner.json'), JSON.stringify({ pid: process.pid }), { mode: 0o600, flag: 'wx' });
@@ -187,9 +189,13 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
         }
         return !started && Date.now() - preparedAt > 15_000 ? 'failed' : 'running';
       },
-      cleanup: () => rm(directory, { recursive: true, force: true }),
+      cleanup: () => remove(directory),
     };
-  } catch { await rm(directory, { recursive: true, force: true }); throw new Error('LAUNCH_CONFIG_FAILED'); }
+  } catch {
+    try { await remove(directory); }
+    catch { throw new Error('LAUNCH_CONFIG_CLEANUP_FAILED'); }
+    throw new Error('LAUNCH_CONFIG_FAILED');
+  }
 }
 
 /** Never age-delete another live app's launch artifacts. A reused PID is kept. */

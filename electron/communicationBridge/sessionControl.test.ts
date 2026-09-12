@@ -12,6 +12,14 @@ function setup() {
   return { bridge, bundle, options, control: new CommunicationSessionControl(options) };
 }
 describe('operator session control', () => {
+  it('retains a failed rollback of partially created launch files', async () => {
+    const { bridge, options, control } = setup(); await bridge.setEnabled(true);
+    options.prepare.mockRejectedValue(new Error('LAUNCH_CONFIG_CLEANUP_FAILED'));
+    expect(await control.start()).toEqual({ ok: false, code: 'LAUNCH_CONFIG_CLEANUP_FAILED' });
+    expect(bridge.snapshot().cleanup).toBe('failed');
+    expect(await bridge.setEnabled(true)).toEqual({ ok: false, code: 'CLEANUP_FAILED' });
+    expect(options.spawn).not.toHaveBeenCalled();
+  });
   it('does not start an exit poll after a synchronous spawn exit', async () => {
     const { bridge, bundle, options, control } = setup();
     await bridge.setEnabled(true);

@@ -6,6 +6,7 @@ import { Button } from '../shared/Button';
 import { prepareClaudeTerminal } from '../terminal/PtyTerminal';
 
 const messages: Record<string, string> = {
+  LAUNCH_CONFIG_CLEANUP_FAILED: 'Partially prepared launch files could not be removed. Communication remains blocked because cleanup failed.',
   SHUTTING_DOWN: 'Cleanup is still running. Wait for it to finish before enabling communication again.',
   DISPOSED: 'Communication has shut down for this app session.',
   CLEANUP_FAILED: 'Communication cleanup failed. New work is blocked.',

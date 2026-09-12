@@ -68,7 +68,22 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     await expect(prepareBridgeLaunch(options, dependencies)).rejects.toThrow('LAUNCH_CONFIG_FAILED');
     expect(await readdir(options.root)).toEqual([]);
   });
-  it('reports startup failure when a policy-blocked script never produces a process receipt', async () => {
+  it('distinguishes retained launch files when partial preparation cleanup also fails', async () => {
+    const { options, dependencies } = await fixture();
+    const broken = { ...dependencies,
+      protect: async (directory: string) => {
+        await protectLaunchDirectory(directory);
+        await writeFile(join(directory, 'partial-manifest'), options.manifest.capability);
+        throw new Error('simulated preparation failure');
+      },
+      remove: async () => { throw new Error('simulated removal failure'); },
+    };
+    await expect(prepareBridgeLaunch(options, broken)).rejects.toThrow('LAUNCH_CONFIG_CLEANUP_FAILED');
+    const entries = await readdir(options.root);
+    expect(entries).toHaveLength(1);
+    expect(await readFile(join(options.root, entries[0], 'partial-manifest'), 'utf8')).toBe(options.manifest.capability);
+  });
+  it('reports startup failure when no native process receipt arrives by the deadline', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
     const realNow = Date.now();
@@ -130,6 +145,42 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       expect(output).not.toContain('private argument');
     } finally { if (child.exitCode === null) child.kill(); }
   }, 25000);
+  it.each(['absent-profile', 'failed-profile', 'native-launch-failure'])('real PowerShell reports the observed outcome for %s', async scenario => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { ...process.env, CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '901' } }, dependencies);
+    const observed = join(options.root, 'observed.json');
+    const fake = join(options.root, 'fake-cli.cjs');
+    await writeFile(fake, "require('node:fs').writeFileSync(process.argv[2],JSON.stringify({threshold:process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS,billing:!!process.env.ANTHROPIC_API_KEY}));");
+    const parameters = JSON.parse(await readFile(join(launch.directory, 'launch.json'), 'utf8'));
+    parameters.arguments = [fake, observed];
+    if (scenario === 'native-launch-failure') parameters.executable = join(options.root, 'does-not-exist.exe');
+    await writeFile(join(launch.directory, 'launch.json'), JSON.stringify(parameters));
+    const q = (value: string) => "'" + value.replace(/'/g, "''") + "'";
+    let prefix = '';
+    if (scenario === 'failed-profile') {
+      const profile = join(options.root, 'failed-profile.ps1');
+      await writeFile(profile, "$env:CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS='2'; $env:ANTHROPIC_API_KEY='PROFILE_SENTINEL'; throw 'deliberate profile failure'");
+      prefix = '& ' + q(profile) + '; ';
+    }
+    // NoProfile deliberately establishes the absent-profile baseline only in this test.
+    const child = spawn('powershell.exe', ['-NoProfile', '-Command', prefix + '& ' + q(launch.scriptPath) + "; Write-Output ('RESTORED=' + $env:CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS)"],
+      { env: launch.env, windowsHide: true, stdio: 'pipe' });
+    let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
+    await new Promise<void>((done, reject) => { child.once('close', () => done()); child.once('error', reject); });
+    if (scenario === 'failed-profile') {
+      expect(child.exitCode).not.toBeNull();
+      expect(await readdir(launch.directory)).not.toContain('started.json');
+      // A terminating profile can prevent -File from running at all. Main's shell-exit
+      // event revokes earlier; this fallback must still become failed, never ready.
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 15001);
+      try { expect(await launch.completion()).toBe('failed'); }
+      finally { clock.mockRestore(); }
+      return;
+    }
+    expect(await launch.completion()).toBe(scenario === 'native-launch-failure' ? 'failed' : 'exited');
+    expect(output).toContain('RESTORED=901');
+    if (scenario !== 'native-launch-failure') expect(JSON.parse(await readFile(observed, 'utf8'))).toEqual({ threshold: '120000', billing: false });
+  }, 15000);
   it('real ConPTY routes stdin to native child and retains the shell after its exit without echoed manifest content', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
@@ -157,5 +208,33 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       terminal.write('exit\r');
       await vi.waitFor(() => expect(exited).toBe(true), { timeout: 5000, interval: 50 });
     } finally { if (!exited) terminal.kill(); }
+  }, 30000);
+  it('real ConPTY Ctrl+C interrupts the native child, restores the threshold, and keeps the shell usable', async () => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { ...process.env, CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '902' } }, dependencies);
+    const fake = join(options.root, 'interruptible-cli.cjs');
+    await writeFile(fake, "process.on('SIGINT',()=>process.exit(130));process.stdin.resume();console.log('INTERRUPT_READY');");
+    const parameters = JSON.parse(await readFile(join(launch.directory, 'launch.json'), 'utf8'));
+    parameters.arguments = [fake];
+    await writeFile(join(launch.directory, 'launch.json'), JSON.stringify(parameters));
+    const terminal = spawnPty(100, 30, launch);
+    let output = '', exited = false, nativePid: number | undefined;
+    terminal.onData(data => { output += data; }); terminal.onExit(() => { exited = true; });
+    try {
+      await vi.waitFor(() => expect(output).toContain('INTERRUPT_READY'), { timeout: 15000, interval: 50 });
+      nativePid = JSON.parse(await readFile(join(launch.directory, 'started.json'), 'utf8')).pid;
+      terminal.write('\x03');
+      await vi.waitFor(async () => expect(await launch.completion()).not.toBe('running'), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(() => process.kill(nativePid!, 0)).toThrow(), { timeout: 5000, interval: 50 });
+      expect(exited).toBe(false);
+      terminal.write("Write-Output ('INTERRUPT_RESTORED=' + $env:CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS)\r");
+      await vi.waitFor(() => expect(output).toContain('INTERRUPT_RESTORED=902'), { timeout: 5000, interval: 50 });
+      expect(output).not.toContain(options.manifest.capability);
+      terminal.write('exit\r');
+      await vi.waitFor(() => expect(exited).toBe(true), { timeout: 5000, interval: 50 });
+    } finally {
+      if (!exited) terminal.kill();
+      if (nativePid) { try { process.kill(nativePid); } catch { /* already confirmed gone */ } }
+    }
   }, 30000);
 });
