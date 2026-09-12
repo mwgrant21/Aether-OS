@@ -14,6 +14,7 @@ export interface ProviderProcess extends ChildProcessWithoutNullStreams {
 // outside the job and writes its receipt ONLY after ActiveProcesses reaches 0.
 // Closing the host's sole job handle also kills members if the host crashes;
 // without a receipt that emergency cleanup is deliberately not called proven.
+// Stdout belongs exclusively to provider JSON-RPC; host diagnostics must use stderr.
 const WINDOWS_HOST = String.raw`
 using System;
 using System.Diagnostics;

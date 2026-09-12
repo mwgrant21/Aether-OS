@@ -32,6 +32,8 @@ Build warnings remain for the existing optimizeRules node:path import and bundle
 
 ## Remaining work
 
+Claude independently accepted commit `fcda04a` with no blocking findings and reported reproducing the test/build counts above. Review disposition: U3 must pass its private cwd through both the supervisor launch and native CreateProcess (currently inherited), and define a bounded retention/reaping policy for failed-supervision directories. Verify actual child cwd and preserve active cleanup evidence. Private cwd is not a filesystem read boundary. The suggested provider-only stdout maintenance comment has been added. These follow-ups do not activate U3 or change U2 runtime behavior.
+
 - U3: bounded exchange controller, reservations, waits, leases, deadlines, output paging and cleanup-before-slot-reuse. Cancellation requests do not themselves prove termination; the controller must await disposal before releasing its slot.
 - U4/U5: MCP and main/preload integration. Repeat U0 against the target Claude client first; 2.1.267 has runtime evidence, while the reviewed 2.1.269 addendum has static evidence only. Align exact error-code guidance with the approved v4 contract and test it.
 - U6 onward: launch configuration, metadata/UI and Comms rendering.
