@@ -44,6 +44,24 @@ describe('communication admission and launch accounting', () => {
     expect(lookupCommunication(alias.state, { request_key: 'alias' })).toEqual(exchange(alias.state));
     expect(communicationCredits(alias.state).reserved).toBe(1);
   });
+  it('bounds alias growth so repeated keys for one payload cannot exhaust memory', () => {
+    let state = ask().state;
+    for (let i = 0; i < LIMITS.requestKeyAliases + 50; i++) {
+      const retry = ask(state, `alias-${i}`);
+      expect(retry.duplicate).toBe(true);
+      expect(retry.error).toBeNull();
+      expect(retry.exchangeId).toBe('exchange-1');
+      state = retry.state;
+    }
+    expect(exchange(state).requestKeys).toHaveLength(LIMITS.requestKeyAliases);
+    expect(state.exchanges).toHaveLength(1);
+    expect(communicationCredits(state).reserved).toBe(1);
+    expect(state.cooldownUntil).toBe(0);
+    const retained = exchange(state).requestKeys;
+    expect(retained[0]).toBe('key-1');
+    expect(lookupCommunication(state, { request_key: retained[retained.length - 1] })).toEqual(exchange(state));
+    expect(lookupCommunication(state, { request_key: `alias-${LIMITS.requestKeyAliases + 49}` })).toBeUndefined();
+  });
   it('rejects changed content under an existing key and preserves the original mapping', () => {
     const initial = ask().state;
     const changed = ask(initial, 'key-1', 'different');

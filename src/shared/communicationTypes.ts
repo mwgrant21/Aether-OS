@@ -3,7 +3,7 @@ export const COMMUNICATION_LIMITS = {
   initialCredits: 3, grantCredits: 3, leaseMs: 90_000, deadlineMs: 300_000,
   cooldownMs: 30_000, retentionMs: 600_000, questionBytes: 16 * 1024,
   contextBytes: 32 * 1024, answerBytes: 64 * 1024, pageBytes: 24 * 1024,
-  envelopeBytes: 32 * 1024, maxWaiters: 16,
+  envelopeBytes: 32 * 1024, maxWaiters: 16, requestKeyAliases: 32,
 } as const;
 
 export type CommunicationFailure = 'CANCELLED' | 'LEASE_EXPIRED' | 'TIMEOUT'

@@ -71,7 +71,10 @@ export function acceptCommunicationAsk(state: CommunicationLaunch, input: AskCod
   if (keyed && keyed.fingerprint !== prepared.fingerprint) return reject('KEY_CONFLICT');
   const duplicate = keyed ?? state.exchanges.find(e => e.fingerprint === prepared.fingerprint);
   if (duplicate) {
-    const next = keyed ? state : replace(state, { ...duplicate, requestKeys: [...duplicate.requestKeys, input.request_key] });
+    // Aliases are bounded: a caller that retries one payload under an endless supply of
+    // fresh keys still recovers the exchange id, but cannot grow launch state without limit.
+    const capped = keyed || duplicate.requestKeys.length >= LIMITS.requestKeyAliases;
+    const next = capped ? state : replace(state, { ...duplicate, requestKeys: [...duplicate.requestKeys, input.request_key] });
     return { state: next, exchangeId: duplicate.metadata.exchangeId, duplicate: true, error: null };
   }
   if (!identifier.test(prepared.exchangeId) || !prepared.fingerprint
