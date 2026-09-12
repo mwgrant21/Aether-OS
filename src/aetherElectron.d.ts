@@ -15,12 +15,22 @@ import type { PermissionDecision, PostToolFlagDecision } from '../electron/permi
 import type { PermissionAutoAllowLevel } from './shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from '../electron/transcriptReader';
 import type { VerifierStatus, VerificationEvent } from './shared/crossEngineTypes';
+import type { CommunicationPayload } from './shared/communicationTypes';
+import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from '../electron/communicationBridge/mainIntegration';
 
 export {};
 
 declare global {
   interface Window {
     aetherElectron?: {
+      communication: {
+        snapshot: () => Promise<CommunicationBridgeSnapshot>;
+        setEnabled: (enabled: boolean) => Promise<BridgeShutdownResult>;
+        readPayload: (id: string) => Promise<CommunicationPayload | undefined>;
+        cancel: (id: string) => Promise<void>;
+        clear: (id: string) => Promise<void>;
+        onSnapshot: (callback: (snapshot: CommunicationBridgeSnapshot) => void) => () => void;
+      };
       app: {
         getVersion: () => Promise<string>;
       };

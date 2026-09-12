@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { createServer, type Socket } from 'node:net';
 import { buildSync } from 'esbuild';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -58,6 +59,53 @@ async function fixture(options: { cleanupFails?: boolean } = {}) {
 }
 
 describe('official SDK stdio bridge', () => {
+  it('returns tools/list while authentication waits, then reports the completed listing', async () => {
+    const nonce = randomBytes(16).toString('hex');
+    const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\u5-discovery-${nonce}` : join(tmpdir(), `u5-${nonce}.sock`);
+    const received: Record<string, unknown>[] = [];
+    let socket: Socket | undefined;
+    const main = createServer(value => {
+      socket = value;
+      let buffer = '';
+      value.on('data', data => {
+        buffer += data.toString();
+        let end: number;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          received.push(JSON.parse(buffer.slice(0, end))); buffer = buffer.slice(end + 1);
+        }
+      });
+    });
+    await new Promise<void>(resolve => main.listen(endpoint, resolve));
+    cleanup.push(() => new Promise<void>(resolve => { socket?.destroy(); main.close(() => resolve()); }));
+    const f = await sdk(endpoint, nonce);
+    expect((await f.client.listTools()).tools).toHaveLength(3);
+    await vi.waitFor(() => expect(received).toEqual([{ type: 'auth', capability: nonce }]));
+    socket!.write('{"type":"ready"}\n');
+    await vi.waitFor(() => expect(received).toEqual([{ type: 'auth', capability: nonce }, { type: 'tools-listed' }]));
+  });
+  it('authenticates proactively, then reports a real tools/list independently of any consultation', async () => {
+    const onAuthenticated = vi.fn(), onToolsListed = vi.fn();
+    const client = { ask: vi.fn(), get: vi.fn(), cancel: vi.fn() };
+    const capability = randomBytes(32).toString('hex');
+    const pipe = await startPipeServer({ capability, client, onAuthenticated, onToolsListed });
+    cleanup.push(() => pipe.close());
+    const f = await sdk(pipe.endpoint, capability);
+    await vi.waitFor(() => expect(onAuthenticated).toHaveBeenCalledTimes(1));
+    expect(onToolsListed).not.toHaveBeenCalled();
+    expect((await f.client.listTools()).tools).toHaveLength(3);
+    await vi.waitFor(() => expect(onToolsListed).toHaveBeenCalledTimes(1));
+    await f.client.listTools(); expect(onToolsListed).toHaveBeenCalledTimes(1);
+    expect(client.ask).not.toHaveBeenCalled(); expect(client.get).not.toHaveBeenCalled(); expect(client.cancel).not.toHaveBeenCalled();
+  });
+  it('keeps discovery available after a configured main endpoint fails', async () => {
+    const capability = randomBytes(32).toString('hex');
+    const pipe = await startPipeServer({ capability, client: { ask: vi.fn(), get: vi.fn(), cancel: vi.fn() } });
+    await pipe.close();
+    const f = await sdk(pipe.endpoint, capability);
+    expect((await f.client.listTools()).tools).toHaveLength(3);
+    const response = await f.client.callTool({ name: 'ask_codex', arguments: { request_key: 'a', question: 'Q' } });
+    expect(envelope(response).code).toBe('NOT_CONNECTED'); expect(f.stderr()).toBe('');
+  });
   it('discovers exactly three bounded tools without main, then reports unavailable promptly', async () => {
     const f = await sdk(); const listed = await f.client.listTools();
     expect(listed.tools.map(t => t.name)).toEqual(['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange']);

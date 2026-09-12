@@ -35,6 +35,29 @@ function line(socket: Socket): Promise<Record<string, unknown>> {
   });
 }
 describe('authenticated bridge pipe', () => {
+  it('reports authentication separately from tools discovery, without provider calls', async () => {
+    const client = fixture(), onAuthenticated = vi.fn(), onToolsListed = vi.fn();
+    const server = await startPipeServer({ capability, client, onAuthenticated, onToolsListed });
+    cleanup.push(() => server.close());
+    const remote = await connectPipeClient({ endpoint: server.endpoint, capability });
+    cleanup.push(() => remote.close());
+    expect(onAuthenticated).toHaveBeenCalledTimes(1); expect(onToolsListed).not.toHaveBeenCalled();
+    remote.markToolsListed(); remote.markToolsListed();
+    await vi.waitFor(() => expect(onToolsListed).toHaveBeenCalledTimes(1));
+    expect(client.ask).not.toHaveBeenCalled(); expect(client.get).not.toHaveBeenCalled(); expect(client.cancel).not.toHaveBeenCalled();
+  });
+  it.each(['unauthenticated', 'extra-field'])('rejects %s readiness notifications', async kind => {
+    const onToolsListed = vi.fn();
+    const server = await startPipeServer({ capability, client: fixture(), onToolsListed });
+    cleanup.push(() => server.close());
+    const socket = await raw(server.endpoint);
+    if (kind === 'extra-field') {
+      const ready = line(socket); socket.write(JSON.stringify({ type: 'auth', capability }) + '\n'); await ready;
+    }
+    const closed = new Promise(resolve => socket.once('close', resolve));
+    socket.write(JSON.stringify({ type: 'tools-listed', ...(kind === 'extra-field' ? { ready: true } : {}) }) + '\n');
+    await closed; expect(onToolsListed).not.toHaveBeenCalled();
+  });
   it('binds requests to the supplied authority; connect and reconnect cannot ask', async () => {
     const { remote, server, client, onDisconnect } = await open();
     expect(client.ask).not.toHaveBeenCalled();

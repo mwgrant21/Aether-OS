@@ -41,6 +41,7 @@ export interface PipeExchangeClient {
   ask(input: unknown, signal?: AbortSignal): Promise<ExchangeResponse>;
   get(input: unknown, signal?: AbortSignal): Promise<ExchangeResponse>;
   cancel(input: unknown): Promise<ExchangeResponse>;
+  markToolsListed(): void;
   close(): void;
 }
 export interface PipeServerOptions {
@@ -48,6 +49,8 @@ export interface PipeServerOptions {
   capability: string;
   /** A main-owned facade already bound to its launch; never selected by client identity. */
   client: ExchangeClient;
+  onAuthenticated?: () => void;
+  onToolsListed?: () => void;
   onDisconnect?: () => void;
 }
 export async function startPipeServer(options: PipeServerOptions): Promise<{ endpoint: string; close(): Promise<void> }> {
@@ -62,6 +65,7 @@ export async function startPipeServer(options: PipeServerOptions): Promise<{ end
     if (sockets.size >= 8) { socket.destroy(); return; }
     sockets.add(socket);
     let authorized = false;
+    let toolsListed = false;
     const pending = new Map<number, { method: string; input: unknown; abort: AbortController }>();
     const recentAsks = new Map<number, string>();
     const authTimer = setTimeout(() => socket.destroy(), 5000);
@@ -81,7 +85,12 @@ export async function startPipeServer(options: PipeServerOptions): Promise<{ end
         if (frame.type !== 'auth' || Object.keys(frame).length !== 2 || authenticated
           || token.length !== secret.length || !timingSafeEqual(token, secret)) { socket.destroy(); return; }
         authorized = true; authenticated = socket; clearTimeout(authTimer);
-        send(socket, { type: 'ready' }); return;
+        if (send(socket, { type: 'ready' })) options.onAuthenticated?.();
+        return;
+      }
+      if (frame.type === 'tools-listed' && Object.keys(frame).length === 1) {
+        if (!toolsListed) { toolsListed = true; options.onToolsListed?.(); }
+        return;
       }
       const id = frame.id;
       if (!Number.isSafeInteger(id) || (id as number) < 1) { socket.destroy(); return; }
@@ -169,6 +178,10 @@ export async function connectPipeClient(options: { endpoint: string; capability:
       send(socket, { type: 'call', id, method, input });
     });
   };
+  let toolsListed = false;
   return { ask: (input, signal) => call('ask', input, signal), get: (input, signal) => call('get', input, signal),
+    markToolsListed: () => {
+      if (!toolsListed && send(socket, { type: 'tools-listed' })) toolsListed = true;
+    },
     cancel: input => call('cancel', input), close: () => socket.destroy() };
 }

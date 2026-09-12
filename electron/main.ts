@@ -69,10 +69,22 @@ import { CodexVerifier } from './crossEngine/codexVerifier';
 import { AcpClient } from './crossEngine/acpClient';
 import { assertCrossEngineFeatureEnabled, assertNoActiveVerificationRun } from './crossEngine/verifyDispatchGuard';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegration';
+import { registerCommunicationIpc } from './communicationBridge/ipc';
+import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 
 const require = createRequire(import.meta.url);
 
 let mainWindow: BrowserWindow | null = null;
+// Exists before Settings or Terminal mount; disabled until explicit preference sync.
+// U6 prepares its main-only launch before starting the configured Claude client.
+const communicationBridge = new CommunicationBridgeIntegration({
+  onSnapshot: snapshot => sendToWindow('communication:snapshot', snapshot),
+});
+registerCommunicationIpc(ipcMain, communicationBridge, event => !!mainWindow
+  && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+  && event.senderFrame === mainWindow.webContents.mainFrame);
+const communicationQuitGate = createCommunicationQuitGate(() => communicationBridge.dispose(), () => app.quit());
 let isQuitting = false;
 let isWindowFocused = true;
 let unfocusedNotificationCount = 0;
@@ -236,7 +248,12 @@ function createWindow(): void {
 
   win.on('resize', scheduleSaveBounds);
   win.on('move', scheduleSaveBounds);
-  win.on('close', () => {
+  win.on('close', (event) => {
+    if (!isQuitting && process.platform !== 'darwin') {
+      event.preventDefault();
+      app.quit();
+      return;
+    }
     if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
     const bounds = win.getNormalBounds();
     saveWindowBounds(boundsFilePath, { ...bounds, isMaximized: win.isMaximized() });
@@ -834,7 +851,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
+  if (!communicationQuitGate(event)) return;
   isQuitting = true;
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();

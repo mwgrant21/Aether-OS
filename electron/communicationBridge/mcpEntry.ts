@@ -10,18 +10,25 @@ delete process.env.AETHER_BRIDGE_PIPE;
 delete process.env.AETHER_BRIDGE_CAPABILITY;
 let connection: Promise<PipeExchangeClient> | undefined;
 let closed = false;
+let toolsListed = false;
 async function client(): Promise<PipeExchangeClient> {
   if (closed || !endpoint || !capability) throw new Error('Bridge unavailable');
-  connection ??= connectPipeClient({ endpoint, capability }).catch(error => { connection = undefined; throw error; });
+  connection ??= connectPipeClient({ endpoint, capability });
   const value = await connection;
   if (closed) { value.close(); throw new Error('Bridge unavailable'); }
+  if (toolsListed) value.markToolsListed();
   return value;
 }
 const server = createBridgeMcpServer({
   ask: async (input, signal) => (await client()).ask(input, signal),
   get: async (input, signal) => (await client()).get(input, signal),
   cancel: async input => (await client()).cancel(input),
+}, () => {
+  toolsListed = true;
+  void client().catch(() => { /* Discovery does not depend on main availability. */ });
 });
+// One connection attempt per helper lifetime; reconnect requires a new launch.
+if (endpoint && capability) void client().catch(() => {});
 const close = () => {
   closed = true;
   void connection?.then(value => value.close(), () => {});

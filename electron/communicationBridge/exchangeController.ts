@@ -111,6 +111,10 @@ export class ExchangeController {
   metadata(): readonly CommunicationMetadata[] {
     return [...this.jobs.values()].filter(j => j.payload).map(j => structuredClone(this.exchange(j).metadata));
   }
+  /** Cleanup ownership outlives payload retention, including operator clear. */
+  cleanupStatus(): CommunicationMetadata['cleanup'] {
+    return this.active ? this.exchange(this.active).metadata.cleanup : 'confirmed';
+  }
   readPayload(id: string): CommunicationPayload | undefined {
     this.expireContent();
     const payload = this.jobs.get(id)?.payload;
