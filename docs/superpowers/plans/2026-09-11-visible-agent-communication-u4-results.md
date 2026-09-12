@@ -35,6 +35,10 @@ Usage: 8 input, 110,630 cache-creation input, 291,156 cache-read input and 450 o
 
 ## Remaining integration
 
+Claude accepted `117b99e` with no blocking findings and reported independently reproducing the test/build counts above. Its separate built-helper probe confirmed discovery with a dead endpoint, safe NOT_CONNECTED guidance, and no sentinel capability in either output stream. No runtime changes were requested by this review.
+
+Security carryover for U5/U6: treat pipe names as discoverable, not confidential. The endpoint nonce avoids collisions; possession of the capability authorizes access. The server's minimum 32-byte string check does not establish entropy: main must generate a cryptographically random launch capability, protect its transfer and revoke it on lifecycle changes. This does not isolate the bridge from malicious processes running as the same OS user. The eight-socket cap and five-second unauthenticated timeout bound resources but do not guarantee availability against repeated local connections. U5 must close stale helpers/listeners during shutdown; no speculative transport redesign is needed for this accepted scope.
+
 - U5 must create the single controller, bind authenticated helpers to existing launch facades, supply the disconnect callback and real provider factory, revoke capabilities, and implement bounded shutdown. Tool listing alone is not authenticated readiness; the helper currently connects lazily on a tool call. Show connected readiness only with both discovery and authenticated-main evidence.
 - U6 owns fresh-session permission/config launch, private manifest/capability lifecycle, billing-variable stripping, post-profile environment pin/restoration and operator grants. No persistent user/global MCP configuration was changed here.
 - U7 onward owns metadata indicator and Comms UI. Empty cwd remains no proof of filesystem read confinement; Codex-managed history remains outside Aether memory retention.
