@@ -100,5 +100,6 @@ export const initialState: AetherState = {
   communicationCfg: { enabled: false },
   communicationSnapshot: null,
   communicationError: null,
+  selectedCommunicationExchangeId: null,
   codexTerminalCfg: { enabled: false },
 };

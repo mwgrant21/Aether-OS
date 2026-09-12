@@ -17,18 +17,25 @@ it('shows a default-off preference and no invented readiness', () => {
   expect(screen.getByRole('status').textContent).toContain('status unavailable');
 });
 
-function EnabledCard({ pending = false, ready = false, credits }: { pending?: boolean; ready?: boolean; credits?: number }) {
+function EnabledCard({ pending = false, ready = false, stopped = false, credits }: { pending?: boolean; ready?: boolean; stopped?: boolean; credits?: number }) {
   const { dispatch } = useAetherStore();
   useEffect(() => {
     dispatch({ type: 'SET_COMMUNICATION_CFG', enabled: true });
     dispatch({ type: 'SET_COMMUNICATION_SNAPSHOT', snapshot: {
-      enabled: true, readiness: ready ? 'ready' : 'waiting', cleanup: pending ? 'pending' : 'confirmed', metadata: [], remainingCredits: credits,
+      enabled: !stopped, readiness: stopped ? 'disabled' : ready ? 'ready' : 'waiting', cleanup: pending ? 'pending' : 'confirmed', metadata: [], remainingCredits: credits,
     } });
-  }, [dispatch, pending, ready, credits]);
+  }, [dispatch, pending, ready, stopped, credits]);
   return <CommunicationCard />;
 }
 it('requires enabled main state and confirmed cleanup before launch', () => {
   render(<AetherStoreProvider><EnabledCard pending /></AetherStoreProvider>);
+  expect((screen.getByRole('button', { name: 'Start fresh connected Claude' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('separates saved enabled preference from a stopped bridge during cleanup', () => {
+  render(<AetherStoreProvider><EnabledCard stopped pending /></AetherStoreProvider>);
+  expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByText(/Preference saved. Bridge stopped while cleanup finishes/)).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Start fresh connected Claude' }) as HTMLButtonElement).disabled).toBe(true);
 });
 

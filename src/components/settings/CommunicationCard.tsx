@@ -80,6 +80,11 @@ export function CommunicationCard() {
       Enable Claude–Codex communication
     </label>
     <p>Enabling saves your preference. It does not launch a session, send a request, or spend allowance. A fresh connected Claude session is required; it starts with three consultation credits.</p>
+    {state.communicationCfg.enabled && snapshot && !snapshot.enabled && <p>
+      Preference saved. {snapshot.cleanup === 'pending' ? 'Bridge stopped while cleanup finishes.'
+        : snapshot.cleanup === 'failed' ? 'Bridge stopped because cleanup failed.' : 'Bridge stopped for this app session.'}
+      {' '}The saved preference does not mean a session is connected.
+    </p>}
     <details>
       <summary>Connected-session permissions and data</summary>
       <p>Consultations use your Claude and Codex subscriptions. Starting a session does not send a model request. Each fresh session starts with three consultation credits.</p>

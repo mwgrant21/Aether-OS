@@ -10,6 +10,7 @@ const STORAGE_KEY = 'aetheros-v1';
 export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> = {
   communicationSnapshot: 'live main-process state; readiness and exchanges must never survive a restart',
   communicationError: 'transient IPC operation result, recomputed this session',
+  selectedCommunicationExchangeId: 'session-only exchange selection; retained for U8 expiry display, never rehydrated',
   used: 'a live per-session token counter recomputed every tick from the burn simulation; a persisted value would carry a stale total into a new session and misstate current usage',
   rate: 'a live burn rate overwritten by every real-usage snapshot (SET_REAL_USAGE); a persisted number would show a stale/wrong rate until the first real snapshot lands',
   momentum: 'a live pulse-momentum value overwritten by every real-usage snapshot (SET_REAL_USAGE); a persisted number would show a stale/wrong momentum reading until the first real snapshot lands',
@@ -59,7 +60,7 @@ export function loadPersisted(): Partial<AetherState> | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     // Only a literal boolean opts in. Never hydrate bridge runtime state, even
     // from an old or manually edited localStorage entry.
-    const { communicationSnapshot: _snapshot, communicationError: _error, ...persisted } = parsed;
+    const { communicationSnapshot: _snapshot, communicationError: _error, selectedCommunicationExchangeId: _selection, ...persisted } = parsed;
     return { ...persisted, communicationCfg: { enabled: parsed.communicationCfg?.enabled === true } };
   } catch {
     return null;
