@@ -91,6 +91,22 @@ describe('exchange controller independent boundaries', () => {
     expect(await client.get({ exchange_id: first })).toMatchObject({ text: 'answer' });
   });
 
+  it('does not record a rejected oversized page as served', async () => {
+    const { client, controller } = setup(() => new FakeProvider({ chunks: ['answer'] }));
+    const id = accepted(client.ask({ request_key: 'defensive', question: 'q' })); await flush();
+    // Fault injection: the normal builder cannot reach this defensive branch.
+    // Keep production APIs unchanged while simulating a future malformed manifest.
+    const internal = controller as unknown as { jobs: Map<string, { pages: Array<{ text: string }> }> };
+    const page = internal.jobs.get(id)!.pages[0];
+    const original = page.text;
+    page.text = 'x'.repeat(32768);
+    expect(await client.get({ exchange_id: id })).toMatchObject({ code: 'OUTPUT_LIMIT' });
+    expect(controller.metadata()[0].delivery.uniquePagesServed).toBe(0);
+    page.text = original;
+    expect(await client.get({ exchange_id: id })).toMatchObject({ text: original });
+    expect(controller.metadata()[0].delivery.uniquePagesServed).toBe(1);
+  });
+
   it('bounds and replays escaped Unicode pages without altering the authoritative answer', async () => {
     const answer = '\u0000"\\😀'.repeat(5000);
     const provider = new FakeProvider();

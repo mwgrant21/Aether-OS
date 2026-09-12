@@ -230,10 +230,11 @@ export class ExchangeController {
     if (exchange.metadata.providerState === 'finished' && job.pages) {
       const index = cursor === undefined ? 0 : job.pages.findIndex(p => p.cursor === cursor);
       if (index < 0) return lifecycle.communicationError('INVALID_INPUT');
-      job.launch.state = lifecycle.recordCommunicationPageServed(job.launch.state, job.id, exchange.pageVersion!, index);
-      const page = { ...job.pages[index], status: lifecycle.communicationStatus(job.launch.state, job.id, this.now())! };
+      const servedState = lifecycle.recordCommunicationPageServed(job.launch.state, job.id, exchange.pageVersion!, index);
+      const page = { ...job.pages[index], status: lifecycle.communicationStatus(servedState, job.id, this.now())! };
       if (byteLength(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(page) }] })) > L.envelopeBytes)
         return lifecycle.communicationError('OUTPUT_LIMIT');
+      job.launch.state = servedState;
       this.emit(); return page;
     }
     return lifecycle.communicationStatus(job.launch.state, job.id, this.now())!;

@@ -1,6 +1,6 @@
 # Visible communication U3 checkpoint
 
-U3 is implemented on `feat/visible-communication-u1`, following `ea7734d`. The process follow-up is committed separately as `898722d`. The new controller is not wired into Electron main, MCP, or UI; no live model calls occurred.
+U3 is implemented on `feat/visible-communication-u1`. Commit order: `ea7734d` (U2 review record), `898722d` (U3 process follow-up), then `a883e1d` (U3 controller). The new controller is not wired into Electron main, MCP, or UI; no live model calls occurred.
 
 ## Implemented
 
@@ -30,6 +30,8 @@ Tests cover 45/60-second waits, the five-minute deadline, owner abort/follower n
 Existing build warnings about optimizeRules node:path and bundle size remain. Skipped/live tests are not counted as passed. No packaging, app launch, collector suite, live model calls, merge or push was performed.
 
 ## Integration responsibilities
+
+Claude accepted `a883e1d` and independently reproduced the checkpoint counts and builds above. Its latent defensive-branch finding is now fixed: response construction computes prospective page-served accounting, validates the full encoded envelope, and only then commits that accounting. A fault-injection regression supplies an oversized internal page, verifies OUTPUT_LIMIT leaves served count at zero, and verifies a subsequent valid page increments it once. No production injection API was added. **Passed:** 64 focused controller/U1 tests (21 controller, 8 boundary, 35 lifecycle), Electron typecheck, and whitespace check for this follow-up. The full suite/build counts above belong to the original U3 checkpoint and were not rerun for this small ordering fix.
 
 - U4 must map authenticated connections to the existing launch facade; a helper reconnect must never call openLaunch or reset credits. It must cancel an accepted exchange if transport cancellation occurs after synchronous ask returns but before its acknowledgment is delivered. Wrap pages once as a single text item; preserve status and encoded-size bounds. Align exact error guidance with v4.
 - U5 must instantiate the single app controller, wire the real factory and enforce a bounded shutdown around dispose. A delayed filesystem allocation remains owned; a shutdown timeout is not cleanup proof. Do not release the slot or delete cwd after a cleanup failure.
