@@ -95,7 +95,7 @@ describe('communication admission and launch accounting', () => {
     }
     expect(ask(rejected.state, 'key-1', 'changed', 401).error).toBe('KEY_CONFLICT');
     expect(communicationError('ALIAS_LIMIT')).toEqual({ schemaVersion: 1, code: 'ALIAS_LIMIT',
-      guidance: 'Do not automatically re-key or retry. Use a previously accepted request_key or the existing exchange_id to retrieve the result.' });
+      guidance: 'Do not retry or create another alias. Retrieve using a previously accepted request_key or known exchange_id. The new key was not accepted.' });
   });
   it('rejects changed content under an existing key and preserves the original mapping', () => {
     const initial = ask().state;
@@ -224,7 +224,7 @@ describe('communication outcomes and timing', () => {
     const state = ask().state;
     expect(rejectCommunicationAsk(state, 'READ_CAPACITY', 100)).toBe(state);
     expect(communicationError('READ_CAPACITY')).toEqual({ schemaVersion: 1, code: 'READ_CAPACITY',
-      guidance: 'Stop this retrieval attempt. The operator can inspect the answer in Comms. Cancel remains available.' });
+      guidance: 'Too many concurrent reads. Stop this retrieval attempt; do not retry, re-key, or start a replacement consultation. The operator can inspect the answer in Comms. Cancel remains available.' });
   });
   it('owner renewals cap at deadline; followers, UI and aborted returns do not renew', () => {
     let state = ask().state;

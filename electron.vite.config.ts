@@ -5,7 +5,10 @@ import { resolve } from 'path';
 export default defineConfig({
   main: {
     build: {
-      lib: { entry: resolve(__dirname, 'electron/main.ts') },
+      lib: { entry: {
+        main: resolve(__dirname, 'electron/main.ts'),
+        'communication-mcp': resolve(__dirname, 'electron/communicationBridge/mcpEntry.ts'),
+      } },
     },
   },
   preload: {

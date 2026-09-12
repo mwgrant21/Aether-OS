@@ -16,15 +16,30 @@ export function communicationCredits(state: CommunicationLaunch) {
   return { granted: state.granted, reserved, consumed, remaining: state.granted - reserved - consumed };
 }
 export function communicationError(code: CommunicationErrorCode): CommunicationErrorV1 {
-  const guidance = code === 'ALIAS_LIMIT'
-    ? 'Do not automatically re-key or retry. Use a previously accepted request_key or the existing exchange_id to retrieve the result.'
-    : code === 'READ_CAPACITY'
-    ? 'Stop this retrieval attempt. The operator can inspect the answer in Comms. Cancel remains available.'
-    : code === 'BUDGET_EXHAUSTED'
-      ? 'Do not retry or delegate. Ask the operator to grant more consultations in Aether.'
-      : code === 'COOLDOWN'
-        ? 'Do not automatically retry or paraphrase. The operator may request another consultation after next_eligible_at.'
-        : 'Do not automatically retry. Report this code to the operator in Aether.';
+  let guidance: string;
+  switch (code) {
+    case 'DISABLED': case 'NOT_CONNECTED': case 'AUTH_REQUIRED': case 'POLICY_BLOCKED':
+      guidance = 'Do not retry. The operator must enable, connect, sign in, or resolve policy in Aether.'; break;
+    case 'BUSY':
+      guidance = 'Do not start or re-key another consultation. An exchange is already active. Only inspect an exchange you own.'; break;
+    case 'READ_CAPACITY':
+      guidance = 'Too many concurrent reads. Stop this retrieval attempt; do not retry, re-key, or start a replacement consultation. The operator can inspect the answer in Comms. Cancel remains available.'; break;
+    case 'BUDGET_EXHAUSTED':
+      guidance = 'Do not retry or delegate another attempt. Ask the operator to grant more consultations in Aether; a session restart is unnecessary.'; break;
+    case 'COOLDOWN':
+      guidance = 'Do not automatically retry or paraphrase the request. The operator may request a new consultation after the supplied deadline.'; break;
+    case 'RETENTION_FULL':
+      guidance = 'Do not retry automatically. Existing answers are retained; the operator can clear an answer or wait for normal expiry.'; break;
+    case 'INVALID_INPUT': case 'INPUT_LIMIT': case 'KEY_CONFLICT':
+      guidance = 'Do not automatically resubmit. Explain the rejected input to the operator.'; break;
+    case 'ALIAS_LIMIT':
+      guidance = 'Do not retry or create another alias. Retrieve using a previously accepted request_key or known exchange_id. The new key was not accepted.'; break;
+    case 'UNKNOWN_EXCHANGE': case 'EXPIRED':
+      guidance = 'No result can be recovered by this call. Do not recreate the consultation automatically.'; break;
+    case 'CANCELLED': case 'LEASE_EXPIRED': case 'TIMEOUT': case 'OUTPUT_LIMIT': case 'PROVIDER_FAILED': case 'CLEANUP_FAILED':
+      guidance = 'The consultation did not complete successfully. Do not retry; the operator must decide whether to start another.'; break;
+    default: { const exhaustive: never = code; throw new Error(`Unknown communication code: ${exhaustive}`); }
+  }
   return { schemaVersion: 1, code, guidance };
 }
 const identifier = /^[A-Za-z0-9_-]{1,64}$/;
