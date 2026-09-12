@@ -15,6 +15,9 @@ import type { GradeRow } from '../shared/optimizeGrade';
 import { narrationForEvent, rankForInterruption, appendNarrationMessage, type NarrationEvent } from '../components/comms/narrationFeed';
 
 export type Action =
+  | { type: 'SET_COMMUNICATION_CFG'; enabled: boolean }
+  | { type: 'SET_COMMUNICATION_SNAPSHOT'; snapshot: AetherState['communicationSnapshot'] }
+  | { type: 'SET_COMMUNICATION_ERROR'; error: string | null }
   | { type: 'SET_ACTIVE_TAB'; tab: string }
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
@@ -101,6 +104,12 @@ function notificationReasonLabel(reason: NotificationReason): string {
 
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
+    case 'SET_COMMUNICATION_CFG':
+      return { ...state, communicationCfg: { enabled: action.enabled } };
+    case 'SET_COMMUNICATION_SNAPSHOT':
+      return { ...state, communicationSnapshot: action.snapshot };
+    case 'SET_COMMUNICATION_ERROR':
+      return { ...state, communicationError: action.error };
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.tab };
 

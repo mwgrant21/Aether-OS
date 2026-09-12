@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor, dialog } from 'electron';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -84,7 +84,18 @@ const communicationBridge = new CommunicationBridgeIntegration({
 registerCommunicationIpc(ipcMain, communicationBridge, event => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
   && event.senderFrame === mainWindow.webContents.mainFrame);
-const communicationQuitGate = createCommunicationQuitGate(() => communicationBridge.dispose(), () => app.quit());
+const communicationQuitGate = createCommunicationQuitGate(() => communicationBridge.dispose(), () => app.quit(), async code => {
+  const { response } = await dialog.showMessageBox({ type: 'warning', title: 'Aether is waiting for cleanup',
+    message: code === 'SHUTDOWN_TIMEOUT' ? 'Cleanup is still unconfirmed.' : 'Cleanup could not be confirmed.',
+    detail: 'Aether has stopped accepting consultations and kept this window open. You can wait again on the existing cleanup operation or keep the app open.',
+    buttons: ['Wait again', 'Keep open', 'Quit anyway…'], defaultId: 1, cancelId: 1 });
+  if (response === 0) return 'retry';
+  if (response !== 2) return 'stay';
+  const confirmation = await dialog.showMessageBox({ type: 'warning', title: 'Quit without confirmed cleanup?',
+    message: 'Provider processes may remain running.', detail: 'Quitting now does not confirm that provider work or cleanup has stopped.',
+    buttons: ['Keep open', 'Quit anyway'], defaultId: 0, cancelId: 0 });
+  return confirmation.response === 1 ? 'force' : 'stay';
+});
 let isQuitting = false;
 let isWindowFocused = true;
 let unfocusedNotificationCount = 0;

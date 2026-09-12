@@ -4,6 +4,7 @@ import { CommunicationBridgeIntegration, type CommunicationBridgeOptions } from 
 import { connectPipeClient, startPipeServer, type PipeServerOptions } from './pipeServer';
 import type { ProviderAdapter, TurnResult } from '../crossEngine/providers/contract';
 import type { CommunicationStatusV1 } from '../../src/shared/communicationTypes';
+import { ExchangeController } from './exchangeController';
 
 function deferred<T>() { let resolve!: (value: T) => void;
   const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
@@ -84,8 +85,54 @@ describe('main-owned communication integration', () => {
     await client.ask({ request_key: 'one', question: 'Question' });
     await waitFor(() => vi.mocked(provider.sendTurn).mock.calls.length === 1);
     expect(await service.dispose()).toEqual({ ok: false, code: 'SHUTDOWN_TIMEOUT' });
-    expect(service.snapshot()).toMatchObject({ enabled: false, metadata: [], cleanup: 'failed' });
+    expect(service.snapshot()).toMatchObject({ enabled: false, metadata: [], cleanup: 'pending' });
     gate.resolve();
+  });
+  it('distinguishes in-flight disable, successful disable, and final disposal', async () => {
+    const closing = deferred<void>();
+    const { service } = fixture({ startListener: async () => ({ endpoint: 'fake', close: () => closing.promise }) });
+    await service.setEnabled(true); await service.prepareLaunch();
+    const disabling = service.setEnabled(false);
+    expect(await service.setEnabled(true)).toEqual({ ok: false, code: 'SHUTTING_DOWN' });
+    closing.resolve(); expect(await disabling).toEqual({ ok: true });
+    expect(await service.setEnabled(true)).toEqual({ ok: true });
+    expect(await service.dispose()).toEqual({ ok: true });
+    expect(await service.setEnabled(true)).toEqual({ ok: false, code: 'DISPOSED' });
+  });
+  it.each(['success', 'rejection'])('re-observes one timed-out cleanup through late %s', async outcome => {
+    const closing = deferred<void>();
+    const close = vi.fn(async () => { await closing.promise; if (outcome === 'rejection') throw new Error('private'); });
+    const controllerDispose = vi.spyOn(ExchangeController.prototype, 'dispose');
+    let facade: PipeServerOptions['client'] | undefined;
+    const { service } = fixture({ shutdownMs: 50, startListener: async options => {
+      facade = options.client; return { endpoint: 'fake', close };
+    } });
+    await service.setEnabled(true); await service.prepareLaunch();
+    vi.useFakeTimers();
+    try {
+      const first = service.dispose();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await first).toEqual({ ok: false, code: 'SHUTDOWN_TIMEOUT' });
+      expect(service.snapshot().cleanup).toBe('pending');
+      expect(await service.setEnabled(true)).toEqual({ ok: false, code: 'SHUTTING_DOWN' });
+      await expect(service.prepareLaunch()).rejects.toThrow('Bridge unavailable');
+      expect(facade!.ask({ request_key: 'revoked', question: 'No work' })).toMatchObject({ code: 'DISABLED' });
+      const second = service.dispose();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await second).toEqual({ ok: false, code: 'SHUTDOWN_TIMEOUT' });
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(controllerDispose).toHaveBeenCalledTimes(1);
+      const observing = service.dispose();
+      closing.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      // Late completion must update authority without a new request or snapshot subscriber.
+      expect(service.snapshot().cleanup).toBe(outcome === 'success' ? 'confirmed' : 'failed');
+      expect(await observing).toEqual(outcome === 'success' ? { ok: true } : { ok: false, code: 'CLEANUP_FAILED' });
+      expect(await service.dispose()).toEqual(await observing);
+      expect(await service.setEnabled(true)).toEqual({ ok: false, code: outcome === 'success' ? 'DISPOSED' : 'CLEANUP_FAILED' });
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(controllerDispose).toHaveBeenCalledTimes(1);
+    } finally { closing.resolve(); vi.useRealTimers(); controllerDispose.mockRestore(); }
   });
   it.each(['before', 'after'])('preserves cleanup failure when payload is cleared %s cleanup settles', async when => {
     const gate = deferred<void>(); const { service, provider } = fixture();

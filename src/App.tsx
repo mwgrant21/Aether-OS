@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useCommunicationSync } from './state/useCommunicationSync';
 import { AetherStoreProvider, useAetherStore } from './state/store';
 import { AppShell } from './components/layout/AppShell';
 import { ComingSoonPanel } from './components/layout/ComingSoonPanel';
@@ -37,6 +38,7 @@ export default function App() {
     <AetherStoreProvider>
       <AppShell>
         <PulseDurationSync />
+        <CommunicationSync />
         <RealUsageSync />
         <RealAgentsSync />
         <AlertSounds />
@@ -65,6 +67,11 @@ export default function App() {
 
 function PulseDurationSync() {
   usePulseDurationVar();
+  return null;
+}
+
+function CommunicationSync() {
+  useCommunicationSync();
   return null;
 }
 

@@ -11,7 +11,7 @@ export interface CommunicationBridgeSnapshot {
   readonly metadata: readonly CommunicationMetadata[];
 }
 export type BridgeShutdownResult = { readonly ok: true } | {
-  readonly ok: false; readonly code: 'CLEANUP_FAILED' | 'SHUTDOWN_TIMEOUT';
+  readonly ok: false; readonly code: 'CLEANUP_FAILED' | 'SHUTDOWN_TIMEOUT' | 'SHUTTING_DOWN' | 'DISPOSED';
 };
 /** Main-only launch credential. Never return this through renderer IPC. */
 export interface CommunicationLaunchManifest {
@@ -39,8 +39,8 @@ export class CommunicationBridgeIntegration {
   private epoch = 0;
   private current?: Launch;
   private serial: Promise<void> = Promise.resolve();
-  private disabling?: Promise<BridgeShutdownResult>;
-  private shutdown?: Promise<BridgeShutdownResult>;
+  private disabling?: Promise<void>;
+  private disablePending = false;
   private cleanup: CommunicationBridgeSnapshot['cleanup'] = 'confirmed';
   private readonly closing = new Set<Promise<void>>();
   private readonly shutdownMs: number;
@@ -71,21 +71,32 @@ export class CommunicationBridgeIntegration {
   }
   setEnabled(enabled: boolean): Promise<BridgeShutdownResult> {
     if (enabled) {
-      if (this.disposed || this.disabling || this.cleanup === 'failed')
-        return Promise.resolve({ ok: false, code: 'CLEANUP_FAILED' });
+      if (this.disablePending) return Promise.resolve({ ok: false, code: 'SHUTTING_DOWN' });
+      if (this.cleanup === 'failed') return Promise.resolve({ ok: false, code: 'CLEANUP_FAILED' });
+      if (this.disposed) return Promise.resolve({ ok: false, code: 'DISPOSED' });
+      this.disabling = undefined;
       this.enabled = true; this.controller.setEnabled(true); this.emit();
       return Promise.resolve({ ok: true });
     }
-    if (this.disabling) return this.disabling;
+    // Re-observe the owned operation. A deadline never starts another disposal.
+    if (this.disabling) return this.bounded(this.disabling);
     this.enabled = false; this.epoch++;
     this.revokeCurrent();
     // Erasure/revocation precede the first await, even when a provider never exits.
     this.controller.setEnabled(false); if (this.cleanup !== 'failed') this.cleanup = 'pending'; this.emit();
-    const cleanup = Promise.all([this.serial, ...this.closing, this.controller.dispose()]).then(() => {});
-    const result = this.bounded(cleanup, true);
-    this.disabling = result;
-    void result.then(() => { if (this.disabling === result) this.disabling = undefined; });
-    return result;
+    this.disablePending = true;
+    const cleanup = Promise.allSettled([this.serial, ...this.closing, this.controller.dispose()]).then(results => {
+      if (results.some(result => result.status === 'rejected')) throw new Error('CLEANUP_FAILED');
+    });
+    this.disabling = cleanup;
+    // Observe completion even after every bounded caller has timed out. Wait for
+    // all owners, including when one rejects before the others have completed.
+    void cleanup.then(() => {
+      this.disablePending = false;
+      if (this.cleanup !== 'failed') this.cleanup = 'confirmed';
+      this.emit();
+    }, () => { this.disablePending = false; this.cleanup = 'failed'; this.emit(); });
+    return this.bounded(cleanup);
   }
   prepareLaunch(): Promise<CommunicationLaunchManifest> {
     const epoch = this.epoch;
@@ -139,7 +150,7 @@ export class CommunicationBridgeIntegration {
     });
     return closing;
   }
-  private async bounded(work: Promise<void>, completesDisable = false): Promise<BridgeShutdownResult> {
+  private async bounded(work: Promise<void>): Promise<BridgeShutdownResult> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let result = await Promise.race<BridgeShutdownResult>([
       work.then(() => ({ ok: true as const }), () => ({ ok: false as const, code: 'CLEANUP_FAILED' as const })),
@@ -147,8 +158,7 @@ export class CommunicationBridgeIntegration {
     ]);
     clearTimeout(timer);
     if (result.ok && this.cleanup === 'failed') result = { ok: false, code: 'CLEANUP_FAILED' };
-    if (!result.ok) this.cleanup = 'failed';
-    else if (completesDisable && this.cleanup !== 'failed') this.cleanup = 'confirmed';
+    if (!result.ok && result.code === 'CLEANUP_FAILED') this.cleanup = 'failed';
     this.emit(); return result;
   }
   readPayload(id: string): CommunicationPayload | undefined { return this.controller.readPayload(id); }
@@ -157,7 +167,6 @@ export class CommunicationBridgeIntegration {
   /** U6 supplies its explicit operator confirmation flow; no U5 IPC grants. */
   grantCredits(confirmationId: string): void { this.controller.grantCredits(confirmationId); }
   dispose(): Promise<BridgeShutdownResult> {
-    if (this.shutdown) return this.shutdown;
-    this.disposed = true; return this.shutdown = this.setEnabled(false);
+    this.disposed = true; return this.setEnabled(false);
   }
 }

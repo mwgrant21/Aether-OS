@@ -30,6 +30,7 @@ export interface PlanUsageSyncResult {
 }
 
 import type { RealAgentDispatch, RealActiveWork } from './liveAgentsMath';
+import type { CommunicationBridgeSnapshot } from '../../electron/communicationBridge/mainIntegration';
 import type { Anomaly } from '../shared/anomalyDetectors';
 import type { OptimizeFinding, OptimizeSummary } from '../shared/optimizeRules';
 import type { GradeRow } from '../shared/optimizeGrade';
@@ -251,6 +252,9 @@ export interface AetherState {
   narrationMessages: Record<string, NarrationMessage[]>;
   narrationBudgets: Record<string, InterruptionBudgetState>;
   crossEngineCfg: { enabled: boolean; provider: 'codex-chatgpt' };
+  communicationCfg: { enabled: boolean };
+  communicationSnapshot: CommunicationBridgeSnapshot | null;
+  communicationError: string | null;
   // User-intent config for the independent Codex terminal (Task 4's
   // CodexTerminalView/PtyCodexTerminal) -- default-off. Unlike
   // codexTerminalAlive above (a live signal recomputed every launch and
