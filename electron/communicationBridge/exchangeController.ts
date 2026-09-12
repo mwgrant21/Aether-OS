@@ -108,6 +108,9 @@ export class ExchangeController {
       this.current.state = lifecycle.grantCommunicationCredits(this.current.state, confirmationId); this.emit();
     }
   }
+  remainingCredits(): number | null {
+    return this.enabled && this.current?.valid ? lifecycle.communicationCredits(this.current.state).remaining : null;
+  }
   metadata(): readonly CommunicationMetadata[] {
     return [...this.jobs.values()].filter(j => j.payload).map(j => structuredClone(this.exchange(j).metadata));
   }

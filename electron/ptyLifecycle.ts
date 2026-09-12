@@ -35,15 +35,13 @@ export class PtyLifecycle {
   }
 
   start(spawn: () => PtyLike, handlers: PtyLifecycleHandlers): PtyLike {
-    if (this.active) {
-      this.active.kill();
-      this.active = null;
-    }
     const pty = spawn();
+    try { this.active?.kill(); } catch (error) { pty.kill(); throw error; }
     this.active = pty;
     pty.onData((data) => handlers.onData(data));
     pty.onExit(() => {
       if (this.active !== pty) return; // superseded -- not the live session's exit
+      this.active = null;
       handlers.onExit();
     });
     handlers.onAlive();

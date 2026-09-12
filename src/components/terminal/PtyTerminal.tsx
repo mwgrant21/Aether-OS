@@ -18,8 +18,9 @@ import '@xterm/xterm/css/xterm.css';
 let sharedHostEl: HTMLDivElement | null = null;
 let sharedTerm: Terminal | null = null;
 let sharedFit: FitAddon | null = null;
+let didRequestStart = false;
 
-function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
+function getOrCreateHost(ensureStart = true): { hostEl: HTMLDivElement; fit: FitAddon } {
   if (!sharedHostEl) {
     sharedHostEl = document.createElement('div');
     sharedHostEl.style.width = '100%';
@@ -38,12 +39,23 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     // (PtyTerminal's effect) only calls getOrCreateHost() after its own
     // guard confirms it exists.
     const pty = window.aetherElectron!.pty;
-    pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once per app lifetime
     pty.onData((data) => sharedTerm!.write(data));
     sharedTerm.onData((input) => pty.write(input));
     sharedTerm.onResize(({ cols, rows }) => pty.resize(cols, rows));
+    // Subscribe before main ensures the session exists: startup output can
+    // arrive immediately, including output replayed from a Settings launch.
+  }
+  if (ensureStart && !didRequestStart) {
+    didRequestStart = true;
+    void window.aetherElectron!.pty.start({ cols: sharedTerm!.cols, rows: sharedTerm!.rows });
   }
   return { hostEl: sharedHostEl, fit: sharedFit! };
+}
+
+/** Capture Settings-launched output in the existing terminal buffer, without
+ * starting an ordinary session or duplicating transcript storage in main. */
+export function prepareClaudeTerminal(): void {
+  if (window.aetherElectron?.pty) getOrCreateHost(false);
 }
 
 export function PtyTerminal() {

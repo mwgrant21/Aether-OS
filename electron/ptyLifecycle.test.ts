@@ -26,6 +26,13 @@ function handlers() {
 }
 
 describe('PtyLifecycle', () => {
+  it('preserves the current terminal if replacement spawning fails', () => {
+    const lifecycle = new PtyLifecycle(), first = fakePty();
+    lifecycle.start(() => first, handlers());
+    expect(() => lifecycle.start(() => { throw new Error('spawn'); }, handlers())).toThrow('spawn');
+    expect(lifecycle.current).toBe(first); expect(first.killed).toBe(false);
+    first.fireExit(); expect(lifecycle.current).toBeNull();
+  });
   it('announces alive once a pty is spawned and wired', () => {
     const lifecycle = new PtyLifecycle();
     const h = handlers();

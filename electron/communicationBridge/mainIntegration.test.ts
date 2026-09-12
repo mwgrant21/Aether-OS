@@ -26,6 +26,67 @@ function fixture(options: CommunicationBridgeOptions = {}) {
 async function waitFor(test: () => boolean) { await vi.waitFor(() => expect(test()).toBe(true), { timeout: 1500, interval: 10 }); }
 
 describe('main-owned communication integration', () => {
+  it('owns deferred launch resources through disable and revokes before their cleanup', async () => {
+    const created = deferred<void>(), removed = vi.fn();
+    const { service, factory } = fixture({ startListener: async () => ({ endpoint: 'fake', close: async () => {} }) });
+    await service.setEnabled(true); const launch = await service.prepareLaunch();
+    expect(service.currentLaunchId()).toBe(launch.launchId);
+    const cleanup = vi.fn(async () => { await created.promise; removed(); });
+    service.attachLaunchCleanup(launch.launchId, cleanup);
+    service.attachLaunchCleanup(launch.launchId, cleanup);
+    const disabling = service.setEnabled(false);
+    expect(service.currentLaunchId()).toBeUndefined();
+    expect(service.snapshot().cleanup).toBe('pending');
+    expect(await service.setEnabled(true)).toEqual({ ok: false, code: 'SHUTTING_DOWN' });
+    expect(removed).not.toHaveBeenCalled(); created.resolve();
+    expect(await disabling).toEqual({ ok: true });
+    expect(cleanup).toHaveBeenCalledOnce(); expect(removed).toHaveBeenCalledOnce();
+    expect(factory).not.toHaveBeenCalled();
+  });
+  it('cleans a late stale attachment and retains its failure without touching a replacement launch', async () => {
+    const gate = deferred<void>();
+    const { service } = fixture({ startListener: async () => ({ endpoint: 'fake', close: async () => {} }) });
+    await service.setEnabled(true); const first = await service.prepareLaunch();
+    await service.notifyClaudeExit(first.launchId); const second = await service.prepareLaunch();
+    const cleanup = vi.fn(async () => { await gate.promise; throw new Error('private path'); });
+    service.attachLaunchCleanup(first.launchId, cleanup);
+    expect(service.currentLaunchId()).toBe(second.launchId);
+    expect(service.snapshot().cleanup).toBe('pending');
+    const disabling = service.setEnabled(false); gate.resolve();
+    expect(await disabling).toEqual({ ok: false, code: 'CLEANUP_FAILED' });
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(JSON.stringify(service.snapshot())).not.toContain('private path');
+  });
+  it('waits for resource ownership after listener cleanup rejects', async () => {
+    const resource = deferred<void>();
+    const { service } = fixture({ shutdownMs: 30,
+      startListener: async () => ({ endpoint: 'fake', close: async () => { throw new Error('private'); } }) });
+    await service.setEnabled(true); const launch = await service.prepareLaunch();
+    const cleanup = vi.fn(() => resource.promise);
+    service.attachLaunchCleanup(launch.launchId, cleanup);
+    expect(await service.setEnabled(false)).toEqual({ ok: false, code: 'SHUTDOWN_TIMEOUT' });
+    expect(await service.setEnabled(true)).toEqual({ ok: false, code: 'SHUTTING_DOWN' });
+    resource.resolve();
+    expect(await service.setEnabled(false)).toEqual({ ok: false, code: 'CLEANUP_FAILED' });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+  it('scopes grants to the confirmed launch and prevents replay without starting a provider', async () => {
+    const { service, factory } = fixture({ startListener: async () => ({ endpoint: 'fake', close: async () => {} }) });
+    expect(service.snapshot().remainingCredits).toBeUndefined();
+    await service.setEnabled(true); const first = await service.prepareLaunch();
+    expect(service.snapshot().remainingCredits).toBe(3);
+    expect(service.grantCreditsForLaunch(first.launchId, 'confirmation')).toBe(true);
+    expect(service.snapshot().remainingCredits).toBe(6);
+    expect(service.grantCreditsForLaunch(first.launchId, 'confirmation')).toBe(false);
+    expect(service.snapshot().remainingCredits).toBe(6);
+    await service.notifyClaudeExit(first.launchId); const second = await service.prepareLaunch();
+    expect(service.grantCreditsForLaunch(first.launchId, 'stale')).toBe(false);
+    expect(service.snapshot().remainingCredits).toBe(3);
+    expect(service.currentLaunchId()).toBe(second.launchId);
+    await service.setEnabled(false);
+    expect(service.grantCreditsForLaunch(second.launchId, 'after-disable')).toBe(false);
+    expect(factory).not.toHaveBeenCalled();
+  });
   it('boots without Settings, disabled with no listener or provider work', async () => {
     const startListener = vi.fn(startPipeServer);
     const { service, factory } = fixture({ startListener });

@@ -2,9 +2,10 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 import type { CommunicationBridgeIntegration } from './mainIntegration';
 
 type RendererService = Pick<CommunicationBridgeIntegration, 'snapshot' | 'setEnabled' | 'readPayload' | 'cancel' | 'clear'>;
-/** No renderer channel returns a capability or creates a Claude launch. */
+/** Launch credentials remain main-only; operator actions confirm in main. */
 export function registerCommunicationIpc(ipc: Pick<IpcMain, 'handle'>, service: RendererService,
-  trusted: (event: IpcMainInvokeEvent) => boolean): void {
+  trusted: (event: IpcMainInvokeEvent) => boolean,
+  operator?: { startSession(): Promise<{ ok: boolean; code?: string }> }): void {
   const handle = (name: string, valid: (args: unknown[]) => boolean, run: (...args: unknown[]) => unknown) => {
     ipc.handle(`communication:${name}`, (event, ...args: unknown[]) => {
       if (!trusted(event)) throw new Error('NOT_AUTHORIZED');
@@ -18,4 +19,5 @@ export function registerCommunicationIpc(ipc: Pick<IpcMain, 'handle'>, service: 
   handle('readPayload', id, value => service.readPayload(value as string));
   handle('cancel', id, value => service.cancel(value as string));
   handle('clear', id, value => service.clear(value as string));
+  if (operator) handle('startSession', args => args.length === 0, () => operator.startSession());
 }

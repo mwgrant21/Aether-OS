@@ -9,6 +9,7 @@ export interface CommunicationBridgeSnapshot {
   readonly readiness: 'disabled' | 'waiting' | 'authenticated' | 'ready' | 'disconnected';
   readonly cleanup: 'confirmed' | 'pending' | 'failed';
   readonly metadata: readonly CommunicationMetadata[];
+  readonly remainingCredits?: number | null;
 }
 export type BridgeShutdownResult = { readonly ok: true } | {
   readonly ok: false; readonly code: 'CLEANUP_FAILED' | 'SHUTDOWN_TIMEOUT' | 'SHUTTING_DOWN' | 'DISPOSED';
@@ -21,6 +22,11 @@ type Listener = Awaited<ReturnType<typeof startPipeServer>>;
 interface Launch {
   id: string; valid: boolean; authenticated: boolean; listed: boolean;
   listening: Promise<Listener>; closing?: Promise<void>;
+  cleanupCallbacks: Set<() => Promise<void>>;
+}
+async function awaitCleanup(work: readonly Promise<void>[]): Promise<void> {
+  const results = await Promise.allSettled(work);
+  if (results.some(result => result.status === 'rejected')) throw new Error('CLEANUP_FAILED');
 }
 export interface CommunicationBridgeOptions extends Omit<ExchangeControllerOptions, 'providerFactory' | 'onMetadata'> {
   providerFactory?: ExchangeControllerOptions['providerFactory'];
@@ -43,6 +49,7 @@ export class CommunicationBridgeIntegration {
   private disablePending = false;
   private cleanup: CommunicationBridgeSnapshot['cleanup'] = 'confirmed';
   private readonly closing = new Set<Promise<void>>();
+  private readonly cleanupCallbacks = new WeakMap<() => Promise<void>, Promise<void>>();
   private readonly shutdownMs: number;
   constructor(private readonly options: CommunicationBridgeOptions = {}) {
     this.shutdownMs = options.shutdownMs ?? 12_000;
@@ -62,8 +69,8 @@ export class CommunicationBridgeIntegration {
         : this.current.authenticated && this.current.listed ? 'ready'
           : this.current.authenticated ? 'authenticated' : 'waiting',
       cleanup: this.cleanup === 'failed' ? 'failed'
-        : this.cleanup === 'pending' || controllerCleanup === 'pending' ? 'pending' : 'confirmed',
-      metadata };
+        : this.cleanup === 'pending' || this.closing.size > 0 || controllerCleanup === 'pending' ? 'pending' : 'confirmed',
+      metadata, ...(this.current ? { remainingCredits: this.controller.remainingCredits() } : {}) };
   }
   private emit(): void {
     const snapshot = this.snapshot(); // Authority bookkeeping must not depend on a mounted UI subscriber.
@@ -71,7 +78,7 @@ export class CommunicationBridgeIntegration {
   }
   setEnabled(enabled: boolean): Promise<BridgeShutdownResult> {
     if (enabled) {
-      if (this.disablePending) return Promise.resolve({ ok: false, code: 'SHUTTING_DOWN' });
+      if (this.disablePending || this.closing.size > 0) return Promise.resolve({ ok: false, code: 'SHUTTING_DOWN' });
       if (this.cleanup === 'failed') return Promise.resolve({ ok: false, code: 'CLEANUP_FAILED' });
       if (this.disposed) return Promise.resolve({ ok: false, code: 'DISPOSED' });
       this.disabling = undefined;
@@ -79,15 +86,13 @@ export class CommunicationBridgeIntegration {
       return Promise.resolve({ ok: true });
     }
     // Re-observe the owned operation. A deadline never starts another disposal.
-    if (this.disabling) return this.bounded(this.disabling);
+    if (this.disabling) return this.bounded(awaitCleanup([this.disabling, ...this.closing]));
     this.enabled = false; this.epoch++;
     this.revokeCurrent();
     // Erasure/revocation precede the first await, even when a provider never exits.
     this.controller.setEnabled(false); if (this.cleanup !== 'failed') this.cleanup = 'pending'; this.emit();
     this.disablePending = true;
-    const cleanup = Promise.allSettled([this.serial, ...this.closing, this.controller.dispose()]).then(results => {
-      if (results.some(result => result.status === 'rejected')) throw new Error('CLEANUP_FAILED');
-    });
+    const cleanup = awaitCleanup([this.serial, ...this.closing, this.controller.dispose()]);
     this.disabling = cleanup;
     // Observe completion even after every bounded caller has timed out. Wait for
     // all owners, including when one rejects before the others have completed.
@@ -109,7 +114,7 @@ export class CommunicationBridgeIntegration {
         throw new Error('Bridge unavailable');
       const capability = randomBytes(32).toString('base64url');
       const launch: Launch = { id: randomUUID(), valid: true, authenticated: false, listed: false,
-        listening: Promise.resolve(undefined as unknown as Listener) };
+        listening: Promise.resolve(undefined as unknown as Listener), cleanupCallbacks: new Set() };
       this.current = launch;
       const client = this.controller.openLaunch();
       const active = () => launch.valid && this.current === launch && this.enabled && epoch === this.epoch;
@@ -131,7 +136,20 @@ export class CommunicationBridgeIntegration {
   notifyClaudeExit(launchId: string): Promise<BridgeShutdownResult> {
     if (this.current?.id !== launchId) return Promise.resolve({ ok: true });
     this.epoch++; this.revokeCurrent(); this.emit();
-    return this.bounded(Promise.all(this.closing).then(() => {}));
+    return this.bounded(awaitCleanup([...this.closing]));
+  }
+  currentLaunchId(): string | undefined { return this.current?.id; }
+  /** Reserve ownership before starting asynchronous creation of launch files.
+   * A stale attachment is cleaned immediately and never gains launch authority. */
+  attachLaunchCleanup(launchId: string, cleanup: () => Promise<void>): void {
+    if (this.current?.id === launchId && this.current.valid) this.current.cleanupCallbacks.add(cleanup);
+    else { this.trackClosing(this.runCleanup(cleanup)); this.emit(); }
+  }
+  private runCleanup(cleanup: () => Promise<void>): Promise<void> {
+    const existing = this.cleanupCallbacks.get(cleanup);
+    if (existing) return existing;
+    const work = Promise.resolve().then(cleanup);
+    this.cleanupCallbacks.set(cleanup, work); return work;
   }
   private revokeCurrent(): void {
     const launch = this.current;
@@ -143,12 +161,16 @@ export class CommunicationBridgeIntegration {
   private closeLaunch(launch: Launch): Promise<void> {
     if (launch.closing) return launch.closing;
     // A listener still starting is closed as soon as it becomes available.
-    const closing = launch.listening.then(listener => listener.close(), () => {});
-    launch.closing = closing; this.closing.add(closing);
-    void closing.then(() => this.closing.delete(closing), () => {
+    const closing = awaitCleanup([launch.listening.then(listener => listener.close(), () => {}),
+      ...[...launch.cleanupCallbacks].map(cleanup => this.runCleanup(cleanup))]);
+    launch.closing = closing; this.trackClosing(closing);
+    return closing;
+  }
+  private trackClosing(closing: Promise<void>): void {
+    this.closing.add(closing);
+    void closing.then(() => { this.closing.delete(closing); this.emit(); }, () => {
       this.closing.delete(closing); this.cleanup = 'failed'; this.emit();
     });
-    return closing;
   }
   private async bounded(work: Promise<void>): Promise<BridgeShutdownResult> {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -166,6 +188,13 @@ export class CommunicationBridgeIntegration {
   cancel(id: string): void { this.controller.cancelFromOperator(id); }
   /** U6 supplies its explicit operator confirmation flow; no U5 IPC grants. */
   grantCredits(confirmationId: string): void { this.controller.grantCredits(confirmationId); }
+  grantCreditsForLaunch(launchId: string, confirmationId: string): boolean {
+    if (!this.enabled || this.disposed || this.current?.id !== launchId || !this.current.valid
+      || this.snapshot().cleanup === 'failed') return false;
+    const before = this.controller.remainingCredits();
+    this.controller.grantCredits(confirmationId);
+    return this.controller.remainingCredits() !== before;
+  }
   dispose(): Promise<BridgeShutdownResult> {
     this.disposed = true; return this.setEnabled(false);
   }

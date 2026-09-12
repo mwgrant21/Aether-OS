@@ -22,6 +22,7 @@ import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './commun
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   communication: {
+    startSession: (): Promise<{ ok: boolean; code?: string }> => ipcRenderer.invoke('communication:startSession'),
     snapshot: (): Promise<CommunicationBridgeSnapshot> => ipcRenderer.invoke('communication:snapshot'),
     setEnabled: (enabled: boolean): Promise<BridgeShutdownResult> => ipcRenderer.invoke('communication:setEnabled', enabled),
     readPayload: (id: string): Promise<CommunicationPayload | undefined> => ipcRenderer.invoke('communication:readPayload', id),

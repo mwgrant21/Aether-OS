@@ -24,6 +24,7 @@ declare global {
   interface Window {
     aetherElectron?: {
       communication: {
+        startSession: () => Promise<{ ok: boolean; code?: string }>;
         snapshot: () => Promise<CommunicationBridgeSnapshot>;
         setEnabled: (enabled: boolean) => Promise<BridgeShutdownResult>;
         readPayload: (id: string) => Promise<CommunicationPayload | undefined>;

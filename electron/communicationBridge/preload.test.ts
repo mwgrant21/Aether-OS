@@ -6,7 +6,7 @@ import '../preload';
 describe('communication Electron wiring', () => {
   it('preload forwards only renderer controls and unsubscribes snapshots', () => {
     const api = mocks.exposeInMainWorld.mock.calls[0][1].communication;
-    expect(Object.keys(api)).toEqual(['snapshot', 'setEnabled', 'readPayload', 'cancel', 'clear', 'onSnapshot']);
+    expect(Object.keys(api)).toEqual(['startSession', 'snapshot', 'setEnabled', 'readPayload', 'cancel', 'clear', 'onSnapshot']);
     api.snapshot(); api.setEnabled(false); api.readPayload('id'); api.cancel('id'); api.clear('id');
     expect(mocks.invoke.mock.calls).toEqual([['communication:snapshot'], ['communication:setEnabled', false], ['communication:readPayload', 'id'], ['communication:cancel', 'id'], ['communication:clear', 'id']]);
     const callback = vi.fn(), off = api.onSnapshot(callback);
