@@ -145,6 +145,34 @@ describe('bounded current trust prompt observation', () => {
     matcher.ingest('\x1b[0m\x1b[?25h\x07\x1b]0;title\x07');
     expect(matcher.state().active).toBe(true);
   });
+  it('ignores only complete CSI 8 character-dimension operations at every split', () => {
+    const operation = '\x1b[8;30;100t';
+    for (let i = 0; i <= operation.length; i++) {
+      const matcher = ready();
+      matcher.ingest(operation.slice(0, i));
+      matcher.ingest(operation.slice(i));
+      expect(matcher.state().active, `split ${i}`).toBe(true);
+    }
+  });
+  it.each(['\x1b[9;1t', '\x1b[18t', '\x1b[8;30t', '\x1b[8;30;100;1t'])('keeps other window operations unsupported %j', operation => {
+    const matcher = ready();
+    matcher.ingest(operation);
+    matcher.ingest(redraw);
+    expect(matcher.state().active).toBe(false);
+  });
+  it('does not derive geometry from CSI 8 text or clear prior mode uncertainty', () => {
+    const unsupportedGeometry = createTrustPromptMatcher(() => 42, { cols: 161, rows: 30 });
+    unsupportedGeometry.ingest('\x1b[8;30;100t' + redraw);
+    expect(unsupportedGeometry.state()).toEqual({ seenAt: null, active: false });
+
+    const physicalGeometry = createTrustPromptMatcher(() => 42, { cols: 80, rows: 24 });
+    physicalGeometry.ingest('\x1b[8;30;100t' + redraw);
+    expect(physicalGeometry.state()).toEqual({ seenAt: null, active: false });
+
+    const uncertain = ready();
+    uncertain.ingest('\x1b[?6h\x1b[8;30;100t' + redraw);
+    expect(uncertain.state()).toEqual({ seenAt: 42, active: false });
+  });
   it.each(['\x1b[', '\x1b]8;;unterminated', '\x1b[999999H', '\x1b[1;1;1H', '\x1b[4h', '\x1b[1;1H' + 'x'.repeat(161), '\x1b[' + '0'.repeat(10000), '\x1b]8;;' + 'x'.repeat(10000), '\x1bP' + 'x'.repeat(10000), '\x1b]broken\x1bX'])('fails closed for uncertain/overflow controls %j', output => {
     const matcher = ready();
     matcher.ingest(output);

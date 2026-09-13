@@ -19,10 +19,12 @@ Keep the original capture as a separate replay case and retain native evidence.
 
 The supported frame established positive recognition in native execution. Opening
 Terminal then produced ConPTY `CSI 8;29;117 t` during the actual renderer resize.
-That window-size report is unsupported by the matcher and leaves sticky
-uncertainty, including after later resize/repaint. The test therefore checks
-clear/repaint recovery before resize, then checks persistent unknown after
-resize and positive recognition only after physical-session replacement.
+With xterm's current default `windowOptions {}`, the matcher narrowly ignores
+only `CSI 8;rows;cols t`; the physical resize path remains the sole geometry
+source. The test observes that emitted sequence, verifies a supported resize and
+repaint recover recognition, verifies unsupported 161-column geometry remains
+unknown, then verifies an actual supported 100-column resize and repaint recover
+without replacing the physical session.
 
 The original JSON records post-PTY output. Sending it through another ConPTY is
 a second transformation, so its unknown replay is not evidence of an installed

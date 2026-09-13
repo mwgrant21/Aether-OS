@@ -41,6 +41,9 @@ export function createTrustPromptMatcher(now: () => number = Date.now, dimension
     // Known cursor visibility and input-protocol controls do not paint cells.
     if (/^(?:>4;2m|[<>?][\d;]*u|>0q)$/.test(sequence)
       || /^\?(?:25|9001|1004|2004|2031)[hl]$/.test(sequence)) return;
+    // xterm ignores character-dimension window operations with the current
+    // default windowOptions {}. Physical PTY geometry remains owned by resize().
+    if (/^8;\d+;\d+t$/.test(sequence)) return;
     if (/^\d*[ST]$/.test(sequence)) { invalidate(); return; } // known scrolling, no persistent mode
     if (!/^[\d;]*[HfABCDGJK]$/.test(sequence)) { uncertainMode(); return; }
     const final = sequence.slice(-1);

@@ -7,7 +7,8 @@ type Snapshot = { readiness: string; sessionStatus: { prompt: string; client: st
 type Bridge = { communication: { snapshot(): Promise<Snapshot>; onSnapshot(cb: (s: Snapshot) => void): () => void };
   pty: { resize(cols: number, rows: number): void } };
 const snapshot = (window: Page) => window.evaluate(() => (Reflect.get(globalThis.window, 'aetherElectron') as Bridge).communication.snapshot());
-const evidence = (app: ElectronApplication) => app.evaluate(({ app }) => Reflect.get(app, '__connectedEvidence') as { writes: string[]; resizes: number[][]; pids: number[] });
+type NativeEvidence = { writes: string[]; resizes: number[][]; pids: number[]; output: string[] };
+const evidence = (app: ElectronApplication) => app.evaluate(({ app }) => Reflect.get(app, '__connectedEvidence') as NativeEvidence);
 const settings = (window: Page) => window.getByTestId('sidebar-nav').getByRole('button', { name: 'Settings', exact: true }).click();
 const resize = (window: Page, cols: number, rows: number) => window.evaluate(({ cols, rows }) => {
   (Reflect.get(globalThis.window, 'aetherElectron') as Bridge).pty.resize(cols, rows);
@@ -53,11 +54,12 @@ test('built production connected native client: readiness, focus, resize, replac
     const before = (await evidence(app)).writes.length;
     await window.keyboard.press('Enter');
     await expect(window.locator('.xterm-helper-textarea')).toBeFocused();
-    // Native resize can report CSI 8;rows;cols t, an unsupported persistent
-    // control. Preserve uncertainty through later supported resize/repaint.
+    await expect.poll(async () => (await evidence(app)).output.join(''), { timeout: 10000 })
+      .toMatch(/\x1b\[8;\d+;\d+t/);
     await resize(window, 100, 30);
     command('prompt');
-    await expect(status).toContainText('Client not ready');
+    await expect.poll(async () => (await snapshot(window)).sessionStatus.prompt).toBe('folder-trust');
+    await expect(status).toContainText('Action required: folder trust');
     await window.screenshot({ path: testInfo.outputPath('focused-terminal-light.png') });
     const writes = (await evidence(app)).writes.slice(before);
     // ConPTY/xterm may reply to device queries. Those are protocol traffic,
@@ -67,7 +69,7 @@ test('built production connected native client: readiness, focus, resize, replac
     await expect(status).toContainText('Client not ready');
     expect((await evidence(app)).resizes).toContainEqual([161, 30]);
     await resize(window, 100, 30); command('prompt');
-    await expect.poll(async () => (await snapshot(window)).sessionStatus.prompt).toBe('unknown');
+    await expect.poll(async () => (await snapshot(window)).sessionStatus.prompt).toBe('folder-trust');
     await settings(window);
     command('clear');
     await window.getByRole('button', { name: 'Start fresh connected Claude', exact: true }).click();
