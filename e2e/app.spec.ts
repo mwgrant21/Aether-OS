@@ -78,6 +78,41 @@ test.describe('Aether OS smoke', () => {
     }
   });
 
+  test('the Codex terminal delivers real output after repeated start', async () => {
+    const { app, window } = await launchApp();
+    try {
+      // Exercise the actual production IPC consumer twice. The isolated helper
+      // resolves codex to a harmless fixture; neither start invokes a model.
+      const results = await window.evaluate(async () => {
+        const api = window.aetherElectron!.codexPty;
+        const startAndObserve = () => new Promise<{ output: string; pid: number }>((resolve, reject) => {
+          let output = '';
+          const timer = setTimeout(() => { unsubscribe(); reject(new Error('Codex PTY output timed out')); }, 10000);
+          const unsubscribe = api.onData(data => {
+            output += data;
+            const pid = /AETHER_CODEX_PID=(\d+)(?:\r?\n)/.exec(output);
+            if (pid && output.includes('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL')) {
+              clearTimeout(timer); unsubscribe(); resolve({ output, pid: Number(pid[1]) });
+            }
+          });
+          api.start({ cols: 100, rows: 30 }).then(() => {
+            // Split the marker so terminal echo cannot satisfy the output assertion.
+            api.write("Write-Output ('AETHER_CODEX_' + 'PID=' + $PID)\r");
+          }).catch(error => {
+            clearTimeout(timer); unsubscribe(); reject(error);
+          });
+        });
+        const first = await startAndObserve();
+        const replacement = await startAndObserve();
+        return { first, replacement };
+      });
+      expect(results.first.output).toContain('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL');
+      expect(results.replacement.output).toContain('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL');
+      expect(results.replacement.pid).not.toBe(results.first.pid);
+    } finally {
+      await app.close();
+    }
+  });
   test('the dashboard metrics row renders real-usage data', async () => {
     const { app, window } = await launchApp();
     try {

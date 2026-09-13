@@ -107,3 +107,69 @@ describe('PtyLifecycle', () => {
     expect(pty.resize).toHaveBeenCalledWith(80, 24);
   });
 });
+
+// These tests control event order; they do not reproduce native node-pty timing.
+describe('PtyLifecycle callback ownership', () => {
+  it('drops old data and exits after replacement, and drops current data after exit', () => {
+    const lifecycle = new PtyLifecycle(), first = fakePty(), second = fakePty();
+    const oldHandlers = handlers(), currentHandlers = handlers();
+    lifecycle.start(() => first, oldHandlers);
+    first.fireData('old current');
+    lifecycle.start(() => second, currentHandlers);
+    first.fireData('late old'); first.fireExit();
+    second.fireData('new current'); second.fireExit();
+    second.fireData('after exit'); second.fireExit();
+    expect(oldHandlers.onData.mock.calls).toEqual([['old current']]);
+    expect(oldHandlers.onExit).not.toHaveBeenCalled();
+    expect(currentHandlers.onData.mock.calls).toEqual([['new current']]);
+    expect(currentHandlers.onExit).toHaveBeenCalledTimes(1);
+    expect(lifecycle.current).toBeNull();
+  });
+
+  it('honors synchronous old exit during kill before announcing the replacement alive', () => {
+    const lifecycle = new PtyLifecycle(), first = fakePty(), second = fakePty();
+    const events: string[] = [];
+    lifecycle.start(() => first, { onData: () => events.push('data'), onAlive: () => events.push('old alive'), onExit: () => events.push('old exit') });
+    first.kill = () => { first.fireExit(); first.fireData('after exit'); };
+    lifecycle.start(() => second, { ...handlers(), onAlive: () => events.push('new alive') });
+    expect(events).toEqual(['old alive', 'old exit', 'new alive']);
+    expect(lifecycle.current).toBe(second);
+  });
+
+  it('continues delivering from the old owner after failed spawn', () => {
+    const lifecycle = new PtyLifecycle(), first = fakePty(), h = handlers(), next = handlers();
+    lifecycle.start(() => first, h);
+    expect(() => lifecycle.start(() => { throw new Error('spawn failed'); }, next)).toThrow('spawn failed');
+    first.fireData('still current');
+    expect(h.onData).toHaveBeenCalledWith('still current');
+    expect(next.onAlive).not.toHaveBeenCalled();
+    expect(lifecycle.current).toBe(first);
+  });
+
+  it('kills the unadopted replacement and retains old ownership when old kill throws', () => {
+    const lifecycle = new PtyLifecycle(), first = fakePty(), second = fakePty();
+    const h = handlers(), next = handlers();
+    lifecycle.start(() => first, h);
+    first.kill = () => { throw new Error('old kill failed'); };
+    expect(() => lifecycle.start(() => second, next)).toThrow('old kill failed');
+    expect(second.killed).toBe(true);
+    expect(lifecycle.current).toBe(first);
+    first.fireData('still current'); first.fireExit();
+    expect(h.onData).toHaveBeenCalledWith('still current');
+    expect(h.onExit).toHaveBeenCalledTimes(1);
+    expect(next.onAlive).not.toHaveBeenCalled();
+    expect(lifecycle.current).toBeNull();
+  });
+
+  it('does not revive an old owner that exits synchronously before its kill throws', () => {
+    const lifecycle = new PtyLifecycle(), first = fakePty(), second = fakePty(), h = handlers();
+    lifecycle.start(() => first, h);
+    first.kill = () => { first.fireExit(); throw new Error('kill failed after exit'); };
+    expect(() => lifecycle.start(() => second, handlers())).toThrow('kill failed after exit');
+    expect(second.killed).toBe(true);
+    expect(lifecycle.current).toBeNull();
+    first.fireData('after exit');
+    expect(h.onData).not.toHaveBeenCalled();
+    expect(h.onExit).toHaveBeenCalledTimes(1);
+  });
+});

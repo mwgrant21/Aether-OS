@@ -24,7 +24,7 @@ export interface PtyLifecycleHandlers {
  *  previous pty is killed and replaced; by the time the OLD pty's exit
  *  callback actually runs, the active pty is already the NEW one. Broadcasting
  *  that exit would report the terminal as dead while a perfectly healthy
- *  session is running, and nothing would ever correct it back. So each exit
+ *  session is running, and nothing would ever correct it back. So each data/exit
  *  callback closes over the exact instance it was registered for and stays
  *  silent unless that instance is still the active one. */
 export class PtyLifecycle {
@@ -38,7 +38,10 @@ export class PtyLifecycle {
     const pty = spawn();
     try { this.active?.kill(); } catch (error) { pty.kill(); throw error; }
     this.active = pty;
-    pty.onData((data) => handlers.onData(data));
+    pty.onData((data) => {
+      if (this.active !== pty) return; // superseded or already exited
+      handlers.onData(data);
+    });
     pty.onExit(() => {
       if (this.active !== pty) return; // superseded -- not the live session's exit
       this.active = null;
