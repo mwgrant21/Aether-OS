@@ -1,10 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import capture from '../__fixtures__/trust-prompt-capture.json';
+import longPathCapture from '../__fixtures__/trust-prompt-long-path-capture.json';
 import { createTrustPromptMatcher } from './trustPromptMatcher';
 
 const captured = capture.chunks.map(chunk => chunk.data).join('');
 const paint = capture.chunks[capture.chunks.length - 1].data;
 const redraw = '\x1b[2J\x1b[H' + paint;
+const longCaptured = longPathCapture.chunks.join('');
+const safety = "Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.";
+const capability = "Claude Code'll be able to read, edit, and execute files here.";
+
+function wrapWords(value: string, width: number): string[] {
+  const lines: string[] = [];
+  let remaining = value;
+  while (remaining.length > width) {
+    let split = remaining.lastIndexOf(' ', width);
+    if (split <= 0) split = width;
+    lines.push(remaining.slice(0, split));
+    remaining = remaining.slice(split).replace(/^ /, '');
+  }
+  lines.push(remaining);
+  return lines;
+}
+
+function syntheticPrompt(cols: number): string {
+  const width = cols - 2;
+  const blocks = [
+    ['Accessing workspace:'],
+    wrapWords('C:\\workspace\\' + 'long-segment-'.repeat(8), width),
+    wrapWords(safety, width),
+    wrapWords(capability, width),
+    ['Security guide'],
+    ['> No, exit', '  Yes, I trust this folder'],
+    ['Enter to confirm · Esc to cancel'],
+  ];
+  let row = 2;
+  let output = '\x1b[2J';
+  for (const block of blocks) {
+    for (const line of block) output += `\x1b[${row++};2H${line}`;
+    row++;
+  }
+  return output;
+}
 function ready() {
   const matcher = createTrustPromptMatcher(() => 42);
   matcher.ingest(captured);
@@ -16,6 +53,21 @@ describe('bounded current trust prompt observation', () => {
   it('recognizes the sanitized real eight-chunk capture without a clock delay', () => {
     const matcher = createTrustPromptMatcher(() => 42);
     for (const chunk of capture.chunks) matcher.ingest(chunk.data);
+    expect(matcher.state()).toEqual({ seenAt: 42, active: true });
+  });
+  it('recognizes the sanitized long-path frame and every delivery split', () => {
+    for (let i = 0; i <= longCaptured.length; i++) {
+      const matcher = createTrustPromptMatcher(() => 42, longPathCapture.dimensions);
+      matcher.ingest(longCaptured.slice(0, i));
+      matcher.ingest(longCaptured.slice(i));
+      expect(matcher.state().active, `split ${i}`).toBe(true);
+    }
+  });
+  it.each([64, 92])('recognizes a prompt rendered with real paragraph wrapping at %i columns', cols => {
+    const rendered = syntheticPrompt(cols);
+    expect(rendered).not.toBe(syntheticPrompt(cols === 64 ? 92 : 64));
+    const matcher = createTrustPromptMatcher(() => 42, { cols, rows: 28 });
+    matcher.ingest(rendered);
     expect(matcher.state()).toEqual({ seenAt: 42, active: true });
   });
   it('accepts every split point, including CSI and OSC ST, and single-character delivery', () => {
@@ -79,6 +131,15 @@ describe('bounded current trust prompt observation', () => {
     matcher.ingest(redraw);
     expect(matcher.state().active).toBe(true);
   });
+  it('rejects a partially stale long-path prompt and recovers on its complete redraw', () => {
+    const matcher = createTrustPromptMatcher(() => 42, longPathCapture.dimensions);
+    matcher.ingest(longCaptured);
+    expect(matcher.state().active).toBe(true);
+    matcher.ingest('\x1b[12;2Hunrelated prompt fragment\x1b[K');
+    expect(matcher.state()).toEqual({ seenAt: 42, active: false });
+    matcher.ingest(longCaptured.replace(/^.*?\x1b\[2J/s, '\x1b[2J'));
+    expect(matcher.state()).toEqual({ seenAt: 42, active: true });
+  });
   it('keeps color, visibility, complete hidden OSC and bell decorations harmless', () => {
     const matcher = ready();
     matcher.ingest('\x1b[0m\x1b[?25h\x07\x1b]0;title\x07');
@@ -116,6 +177,13 @@ describe('bounded current trust prompt observation', () => {
       matcher.ingest('\x1b[' + row + ';1Hunexpected output');
       expect(matcher.state().active).toBe(false);
     }
+  });
+  it('rejects addressed copied prompt fragments interleaved between complete regions', () => {
+    const matcher = createTrustPromptMatcher();
+    matcher.ingest(syntheticPrompt(92));
+    expect(matcher.state().active).toBe(true);
+    matcher.ingest('\x1b[6;2HNo, exit and Yes, I trust this folder\x1b[K');
+    expect(matcher.state().active).toBe(false);
   });
   it.each(['界', '\u0301', '😀'])('rejects unsupported glyph width %j', glyph => {
     const matcher = ready();

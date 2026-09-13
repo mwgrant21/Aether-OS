@@ -75,19 +75,27 @@ export function createTrustPromptMatcher(now: () => number = Date.now, dimension
     if (!geometryValid || unsupportedMode || synchronized || !known || !addressed || mode !== 'text') return false;
     const lines = screen.map(line => line.join('').trim());
     const header = lines.indexOf('Accessing workspace:');
-    if (header < 0 || header + 15 >= ROWS) return false;
+    if (header < 0) return false;
     const option = (value: string) => value.replace(/^[❯>]\s*/, '');
-    return lines[header + 2].length > 0
-      && lines[header + 4] === 'Quick safety check: Is this a project you created or one you trust? (Like your own code, a'
-      && lines[header + 5] === "well-known open source project, or work from your team). If not, take a moment to review what's in"
-      && lines[header + 6] === 'this folder first.'
-      && [1, 3, 7, 9, 11, 14].every(offset => lines[header + offset] === '')
-      && lines[header + 8] === "Claude Code'll be able to read, edit, and execute files here."
-      && lines[header + 10] === 'Security guide'
-      && option(lines[header + 12]) === 'No, exit'
-      && option(lines[header + 13]) === 'Yes, I trust this folder'
-      && lines[header + 15] === 'Enter to confirm · Esc to cancel'
-      && lines.slice(header + 16).every(line => line === '');
+    const blocks: string[][] = [];
+    for (let cursor = header; cursor < ROWS;) {
+      while (cursor < ROWS && lines[cursor] === '') cursor++;
+      if (cursor === ROWS) break;
+      const block: string[] = [];
+      while (cursor < ROWS && lines[cursor] !== '') block.push(lines[cursor++]);
+      blocks.push(block);
+    }
+    const joined = (block: string[]) => block.join(' ');
+    return blocks.length === 7
+      && joined(blocks[0]) === 'Accessing workspace:'
+      && blocks[1].length > 0 && blocks[1].every(line => line.length > 0)
+      && joined(blocks[2]) === "Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first."
+      && joined(blocks[3]) === "Claude Code'll be able to read, edit, and execute files here."
+      && joined(blocks[4]) === 'Security guide'
+      && blocks[5].length === 2
+      && option(blocks[5][0]) === 'No, exit'
+      && option(blocks[5][1]) === 'Yes, I trust this folder'
+      && joined(blocks[6]) === 'Enter to confirm · Esc to cancel';
   }
   return {
     ingest(chunk: string): void {
