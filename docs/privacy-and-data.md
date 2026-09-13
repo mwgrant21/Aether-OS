@@ -479,8 +479,10 @@ rejects new work rather than evicting an unexpired answer. Provider completion, 
 and unique pages served are distinct. Page replay cannot increase unique delivery counts, and
 pages served do not prove Claude read, understood or acted on them.
 
-**Retention and copies.** Aether retains content only in main memory and mounted Comms component
-state. Its reducer receives validated metadata, not question/context/answer, keys or capabilities;
+**Retention and copies.** Aether retains exchange content in main memory and mounted Comms component
+state. The cross-check composer additionally holds its question/context draft in a transient
+App-level provider across navigation; discard or app exit clears that draft. Its reducer receives
+validated metadata, not question/context/answer, keys or capabilities;
 runtime metadata, selection and content are excluded from persistence. Completed content remains
 available for ten minutes from completion despite lease/client loss. Clear, disable or app exit
 can erase Aether's copy earlier. There is currently no visible Clear control; clear is a main/preload operation. Main retains launch tombstones to prevent duplicate spending;
@@ -520,3 +522,27 @@ them; old asynchronous observations cannot update a replacement. Bridge tool lis
 establish client input readiness. Focus connected terminal checks the displayed identity against
 a fresh snapshot, navigates within the current Aether window, and focuses the existing terminal
 without starting a session, accepting trust, pasting, or submitting a command.
+
+**Cross-check composer and optional skill (Tasks 6–8).** The terminal and Comms actions share
+the same transient draft. Opening, copying, and focusing send no model request, collect no files
+or terminal history, and do not enable communication or start a connected session. Copy writes
+the question, optional context, and a content-derived stable request key to the system clipboard;
+that explicit copy leaves Aether's retention boundary. Changing content changes the key; restoring
+identical content restores it. The displayed instance/session identifies the operator's target,
+and a changed launch requires review before another copy or focus. It is not a routing credential:
+the operator still chooses where to paste and submit the copied text.
+
+The versioned `skills/aether-cross-check/SKILL.md` is installed separately at user scope. Installation
+is a local file operation, not proof that a particular connected Claude client discovered or invoked
+it. The skill requests only the three bridge tools using supplied context and stops with **Aether
+bridge unavailable** when those tools are absent. It forbids alternate CLI, server, or delegated
+routes and summaries of unretrieved pages. Normal skill invocation and unrelated action permissions
+remain in effect. Source/installation checks, deterministic helper tests, and real-client discovery
+or provider invocation are separate evidence; the first two do not establish the latter.
+
+To use it, explicitly enable communication in Settings and start a connected Claude session,
+reviewing any terminal prompt yourself. Open **Cross-check with Codex**, enter the question and
+optional context, review its instance/session label, then choose **Copy request** and **Focus
+connected terminal**. Review the terminal before manually pasting/submitting. Submission can spend
+an existing consultation credit. Comms shows the real exchange and pages served; opening the answer
+does not retrieve pages for Claude. If retrieval stops early, any summary must identify it as partial.
