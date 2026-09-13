@@ -3,6 +3,7 @@ import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/re
 import { AetherStoreProvider } from '../../state/store';
 import { CommsView } from './CommsView';
 import type { DisplayMessage, TranscriptSource } from '../../../electron/transcriptReader';
+import { CrossCheckComposerProvider } from '../terminal/CrossCheckComposer';
 
 afterEach(cleanup);
 
@@ -17,7 +18,7 @@ const MESSAGES: DisplayMessage[] = [
 function renderComms() {
   return render(
     <AetherStoreProvider>
-      <CommsView />
+      <CrossCheckComposerProvider><CommsView /></CrossCheckComposerProvider>
     </AetherStoreProvider>,
   );
 }
@@ -30,6 +31,13 @@ describe('CommsView filter box', () => {
         read: vi.fn().mockResolvedValue({ messages: MESSAGES, nextBefore: null }),
       },
     };
+  });
+
+  it('opens the shared cross-check composer from Comms', async () => {
+    renderComms();
+    fireEvent.click(screen.getByRole('button', { name: 'Cross-check with Codex' }));
+    expect(screen.getByRole('region', { name: 'Cross-check with Codex' })).toBeTruthy();
+    expect(screen.getByText('Target: No session selected')).toBeTruthy();
   });
 
   it('renders the full unfiltered message set on the AETHER channel', async () => {

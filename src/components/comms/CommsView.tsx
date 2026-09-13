@@ -10,6 +10,8 @@ import { MessageInput } from './MessageInput';
 import { parseFilter, applyFilter, type DisplayMessage } from './transcriptFilter';
 import { localResponder } from './localResponder';
 import { ExchangeView } from './ExchangeView';
+import { useCrossCheckComposer } from '../terminal/CrossCheckComposer';
+import { Button } from '../shared/Button';
 
 function makeMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -18,6 +20,7 @@ function makeMessageId(): string {
 export function CommsView() {
   const { state, dispatch } = useAetherStore();
   const colors = useColors();
+  const composer = useCrossCheckComposer();
   const [exchanges, setExchanges] = useState(state.selectedCommunicationExchangeId !== null);
   useEffect(() => { if (state.selectedCommunicationExchangeId) setExchanges(true); }, [state.selectedCommunicationExchangeId]);
   return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -26,6 +29,7 @@ export function CommsView() {
         setExchanges(false); dispatch({ type: 'OPEN_COMMUNICATION_EXCHANGE', exchangeId: null });
       }}>Channels</button>
       <button style={chipButtonStyle(colors)} aria-pressed={exchanges} onClick={() => setExchanges(true)}>Agent exchanges</button>
+      <Button onClick={composer.open} style={{ ...chipButtonStyle(colors), marginLeft: 'auto' }}>Cross-check with Codex</Button>
     </nav>
     {exchanges ? <ExchangeView /> : <TranscriptCommsView />}
   </div>;

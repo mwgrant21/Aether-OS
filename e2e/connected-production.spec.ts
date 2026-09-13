@@ -1,7 +1,7 @@
 import { test, expect, type Page, type ElectronApplication } from '@playwright/test';
-import { launchConnectedProduction } from './connectedProductionHelpers';
-import { writeFileSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { connectedFixtureOwnedPids, launchConnectedProduction } from './connectedProductionHelpers';
+import { cleanupConnectedProduction } from './connectedProductionCleanup';
+import { writeFileSync } from 'node:fs';
 
 type Snapshot = { readiness: string; sessionStatus: { prompt: string; client: string; connected: boolean; sessionLabel: string | null } };
 type Bridge = { communication: { snapshot(): Promise<Snapshot>; onSnapshot(cb: (s: Snapshot) => void): () => void };
@@ -91,24 +91,23 @@ test('built production connected native client: readiness, focus, resize, replac
     await testInfo.attach('production-path-evidence', { body: JSON.stringify({ root: fixture.root, history, ...finalEvidence }, null, 2), contentType: 'application/json' });
   } finally {
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-    let pids: number[] = [];
-    try {
-      try {
-        const nativeEvidence = await evidence(app);
-        pids = nativeEvidence.pids;
+    let nativeEvidence: NativeEvidence | null = null;
+    try { nativeEvidence = await evidence(app); } catch { }
+    const owned = connectedFixtureOwnedPids(fixture.root, nativeEvidence?.pids);
+    const electronProcess = app.process();
+    await cleanupConnectedProduction({
+      writeDiagnostics: async () => {
         const diagnostics = testInfo.outputPath('native-fixture-diagnostics.json');
         writeFileSync(diagnostics, JSON.stringify({ root: fixture.root, evidence: nativeEvidence, snapshot: await snapshot(window) }, null, 2));
         await testInfo.attach('native-fixture-diagnostics', { path: diagnostics, contentType: 'application/json' });
-      } finally {
-        command('exit');
-      }
-      const nativePid = Number(readFileSync(join(fixture.root, 'bin/client-pid'), 'utf8'));
-      await expect.poll(() => alive(nativePid), { timeout: 5000 }).toBe(false);
-    } finally {
-      // Even failed diagnostics, early launch or a missing receipt must close
-      // Electron and its owned native shells. Preserve failures for the runner.
-      await app.close();
-      await expect.poll(() => pids.some(alive), { timeout: 5000 }).toBe(false);
-    }
+        if (owned.errors.length) throw owned.errors[0];
+      },
+      requestExit: () => command('exit'), closeApp: () => app.close(),
+      forceCloseApp: () => { if (!electronProcess.killed) electronProcess.kill(); },
+      ownedPids: owned.pids, isAlive: alive, terminatePid: pid => { process.kill(pid); },
+      waitForOwnedExit: async () => {
+        await expect.poll(() => owned.pids.some(alive), { timeout: 5000 }).toBe(false);
+      },
+    });
   }
 });

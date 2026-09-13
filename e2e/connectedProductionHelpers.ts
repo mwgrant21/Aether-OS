@@ -1,8 +1,28 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { guardConnectedSetup } from './connectedProductionCleanup';
+
+export function connectedFixtureOwnedPids(root: string, observed: readonly number[] = []):
+  { pids: number[]; errors: unknown[] } {
+  const pids = new Set(observed.filter(pid => Number.isInteger(pid) && pid > 0));
+  const errors: unknown[] = [];
+  for (const [name, many] of [['pty-pids', true], ['client-pid', false]] as const) {
+    const path = join(root, 'bin', name);
+    if (!existsSync(path)) continue;
+    try {
+      const values = many ? readFileSync(path, 'utf8').split(/\r?\n/) : [readFileSync(path, 'utf8')];
+      for (const value of values.filter(Boolean)) {
+        const pid = Number(value);
+        if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Invalid owned fixture PID in ${name}`);
+        pids.add(pid);
+      }
+    } catch (error) { errors.push(error); }
+  }
+  return { pids: Array.from(pids), errors };
+}
 
 export async function launchConnectedProduction(): Promise<{
   app: ElectronApplication; window: Page; root: string; command(value: string): void;
@@ -47,11 +67,13 @@ require('node:module').syncBuiltinESMExports();
 global.__connectedEvidence = { writes: [], resizes: [], pids: [], output: [] };
 app.__connectedEvidence = global.__connectedEvidence;
 const pty = require(${JSON.stringify(resolve('node_modules/node-pty'))});
+const fixturePids = ${JSON.stringify(join(bin, 'pty-pids'))};
 const originalPtySpawn = pty.spawn;
 pty.spawn = (file, args, options) => {
   if (file !== 'powershell.exe' || !args.includes('-File')) throw new Error('Only connected native shell allowed');
   const child = originalPtySpawn(file, ['-NoProfile', ...args], options);
   global.__connectedEvidence.pids.push(child.pid);
+  require('node:fs').appendFileSync(fixturePids, String(child.pid) + '\\n');
   child.onData(data => global.__connectedEvidence.output.push(data));
   const write = child.write.bind(child), resize = child.resize.bind(child);
   child.write = input => { global.__connectedEvidence.writes.push(input); return write(input); };
@@ -61,7 +83,11 @@ pty.spawn = (file, args, options) => {
 import(${JSON.stringify(new URL('../out/main/main.js', import.meta.url).href)});
 `);
   const app = await electron.launch({ args: [entry, ...(process.env.CI || process.env.E2E_DISABLE_GPU ? ['--disable-gpu'] : [])], env });
-  const window = await app.firstWindow(); await window.waitForLoadState('domcontentloaded');
+  const window = await guardConnectedSetup(async () => {
+    const first = await app.firstWindow();
+    await first.waitForLoadState('domcontentloaded');
+    return first;
+  }, () => app.close(), () => { const child = app.process(); if (!child.killed) child.kill(); });
   let sequence = 0;
   return { app, window, root, command: value => writeFileSync(join(bin, 'control'), `${++sequence}:${value}`) };
 }
