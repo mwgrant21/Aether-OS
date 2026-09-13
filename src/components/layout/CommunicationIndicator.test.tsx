@@ -12,7 +12,7 @@ function row(patch: Partial<CommunicationMetadata> = {}): CommunicationMetadata 
     finishedAt: null, contentExpiresAt: null, observedOutputBytes: null, lastOutputAt: null,
     usage: null, delivery: { availability: 'pending', uniquePagesServed: 0, totalPages: null, clientConnected: true }, ...patch };
 }
-const snapshot = (metadata: CommunicationMetadata[]): CommunicationBridgeSnapshot => ({ enabled: true, readiness: 'ready', cleanup: 'confirmed', metadata });
+const snapshot = (metadata: CommunicationMetadata[]): CommunicationBridgeSnapshot => ({ enabled: true, readiness: 'ready', cleanup: 'confirmed', sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: 'Session 1', prompt: 'unknown' }, metadata });
 afterEach(() => { cleanup(); store.dispatch.mockClear(); });
 describe('communication metadata indicator', () => {
   it('chooses active first, then newest retained without mutating metadata', () => {

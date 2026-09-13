@@ -2,10 +2,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { CodexAppServerAdapter } from '../crossEngine/providers/codexAppServer';
 import { ExchangeController, type ExchangeControllerOptions } from './exchangeController';
 import { startPipeServer, type PipeServerOptions } from './pipeServer';
+import { isCommunicationPrompt, type CommunicationSessionStatus } from '../../src/shared/communicationSessionStatus';
 import type { CommunicationMetadata, CommunicationPayload } from '../../src/shared/communicationTypes';
 
 export interface CommunicationBridgeSnapshot {
   readonly enabled: boolean;
+  readonly sessionStatus: CommunicationSessionStatus;
   readonly readiness: 'disabled' | 'waiting' | 'authenticated' | 'ready' | 'disconnected';
   readonly cleanup: 'confirmed' | 'pending' | 'failed';
   readonly metadata: readonly CommunicationMetadata[];
@@ -20,6 +22,7 @@ export interface CommunicationLaunchManifest {
 }
 type Listener = Awaited<ReturnType<typeof startPipeServer>>;
 interface Launch {
+  sessionLabel: string; prompt: CommunicationSessionStatus['prompt'];
   id: string; valid: boolean; authenticated: boolean; listed: boolean;
   listening: Promise<Listener>; closing?: Promise<void>;
   cleanupCallbacks: Set<() => Promise<void>>;
@@ -40,6 +43,8 @@ export interface CommunicationBridgeOptions extends Omit<ExchangeControllerOptio
  * Lifecycle invalidation is synchronous; waiting is solely for cleanup evidence. */
 export class CommunicationBridgeIntegration {
   private readonly controller: ExchangeController;
+  private readonly instanceLabel = `Instance ${randomBytes(8).toString('hex')}`;
+  private sessionSequence = 0;
   private enabled = false;
   private disposed = false;
   private epoch = 0;
@@ -65,6 +70,8 @@ export class CommunicationBridgeIntegration {
     const controllerCleanup = this.controller.cleanupStatus();
     if (controllerCleanup === 'failed') this.cleanup = 'failed';
     return { enabled: this.enabled,
+      sessionStatus: { instanceLabel: this.instanceLabel, sessionLabel: this.current?.sessionLabel ?? null,
+        prompt: this.current?.prompt ?? 'unknown' },
       readiness: !this.enabled ? 'disabled' : !this.current ? 'disconnected'
         : this.current.authenticated && this.current.listed ? 'ready'
           : this.current.authenticated ? 'authenticated' : 'waiting',
@@ -113,7 +120,7 @@ export class CommunicationBridgeIntegration {
       if (!this.enabled || this.disposed || epoch !== this.epoch || this.snapshot().cleanup === 'failed')
         throw new Error('Bridge unavailable');
       const capability = randomBytes(32).toString('base64url');
-      const launch: Launch = { id: randomUUID(), valid: true, authenticated: false, listed: false,
+      const launch: Launch = { sessionLabel: `Session ${++this.sessionSequence}`, prompt: 'unknown', id: randomUUID(), valid: true, authenticated: false, listed: false,
         listening: Promise.resolve(undefined as unknown as Listener), cleanupCallbacks: new Set() };
       this.current = launch;
       const client = this.controller.openLaunch();
@@ -137,6 +144,14 @@ export class CommunicationBridgeIntegration {
     if (this.current?.id !== launchId) return Promise.resolve({ ok: true });
     this.epoch++; this.revokeCurrent(); this.emit();
     return this.bounded(awaitCleanup([...this.closing]));
+  }
+  /** Main-only observation seam. Neither labels nor prompt state grant authority.
+   * No detector is wired yet; reject stale observations after replacement/revocation. */
+  observePrompt(launchId: string, prompt: CommunicationSessionStatus['prompt']): boolean {
+    const launch = this.current;
+    if (!this.enabled || this.disposed || !launch?.valid || launch.id !== launchId || !isCommunicationPrompt(prompt)) return false;
+    if (launch.prompt !== prompt) { launch.prompt = prompt; this.emit(); }
+    return true;
   }
   currentLaunchId(): string | undefined { return this.current?.id; }
   /** Reserve ownership before starting asynchronous creation of launch files.

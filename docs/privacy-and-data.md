@@ -497,3 +497,13 @@ history may retain content after Aether clears its memory.** Paging does not sup
 transcripts. Aether does not delete or alter those histories and does not claim provider
 nonpersistence or an effective ephemeral-session flag. Explicit clipboard copies also leave
 Aether's retention boundary. Nothing is forwarded to another model merely to display or summarize it.
+
+**Cross-check display identity and prompt status (Task 2).** The runtime communication
+snapshot includes an independently generated instance label, a numbered current bridge-launch
+label, and an allowlisted prompt observation (`unknown` or `folder-trust`). These display
+labels are not credentials and are never accepted as authorization. The status contains no
+pipe endpoint, capability, raw terminal text, or userData path. The existing runtime-snapshot
+persistence exclusion applies to these fields too. Replacement and revocation clear the launch
+label and prompt observation; an old launch cannot update its successor's status. Bridge tool
+listing does not establish terminal input readiness. No detector is wired in Task 2, so normal
+runtime prompt status remains unknown. Bridge revocation is not evidence of a client exit.

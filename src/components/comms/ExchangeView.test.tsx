@@ -18,7 +18,7 @@ beforeEach(() => {
   read = vi.fn().mockResolvedValue(content); cancel = vi.fn().mockResolvedValue(undefined); copy = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
   (window as any).aetherElectron = { communication: { readPayload: read, cancel } };
-  store.state = { ...initialState, selectedCommunicationExchangeId: 'one', communicationSnapshot: { enabled: true, readiness: 'ready', cleanup: 'confirmed', metadata: [row()] } }; store.dispatch.mockClear();
+  store.state = { ...initialState, selectedCommunicationExchangeId: 'one', communicationSnapshot: { enabled: true, readiness: 'ready', cleanup: 'confirmed', sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: null, prompt: 'unknown' }, metadata: [row()] } }; store.dispatch.mockClear();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); localStorage.clear(); });
 describe('mounted exchange content', () => {

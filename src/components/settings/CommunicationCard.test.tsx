@@ -23,6 +23,7 @@ function EnabledCard({ pending = false, ready = false, stopped = false, credits 
     dispatch({ type: 'SET_COMMUNICATION_CFG', enabled: true });
     dispatch({ type: 'SET_COMMUNICATION_SNAPSHOT', snapshot: {
       enabled: !stopped, readiness: stopped ? 'disabled' : ready ? 'ready' : 'waiting', cleanup: pending ? 'pending' : 'confirmed', metadata: [], remainingCredits: credits,
+      sessionStatus: { instanceLabel: 'Instance abcdef1234567890', sessionLabel: stopped ? null : 'Session 1', prompt: 'unknown' },
     } });
   }, [dispatch, pending, ready, stopped, credits]);
   return <CommunicationCard />;
@@ -82,4 +83,14 @@ it('shows launch failure without a successful-looking status', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Start fresh connected Claude' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('cleanup failed'));
   expect(screen.getByRole('status').textContent).toContain('waiting');
+});
+
+it('shows safe launch identity without implying terminal input readiness', () => {
+  const view = render(<AetherStoreProvider><EnabledCard ready /></AetherStoreProvider>);
+  expect(screen.getByTestId('communication-session-identity').textContent).toContain('Instance abcdef1234567890');
+  expect(screen.getByTestId('communication-session-identity').textContent).toContain('Session 1');
+  expect(screen.getByText('Bridge connection does not establish whether Claude is ready for input.')).toBeTruthy();
+  view.rerender(<AetherStoreProvider><EnabledCard stopped /></AetherStoreProvider>);
+  expect(screen.getByTestId('communication-session-identity').textContent).toContain('No active launch');
+  expect(screen.getByTestId('communication-session-identity').textContent).not.toContain('Session 1');
 });

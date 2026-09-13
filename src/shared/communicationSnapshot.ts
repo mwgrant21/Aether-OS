@@ -1,4 +1,5 @@
 import type { CommunicationBridgeSnapshot } from '../../electron/communicationBridge/mainIntegration';
+import { projectCommunicationSessionStatus } from './communicationSessionStatus';
 import type { CommunicationMetadata } from './communicationTypes';
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -12,6 +13,8 @@ export function projectCommunicationSnapshot(value: unknown): CommunicationBridg
   if (!object(value) || typeof value.enabled !== 'boolean' || !cleanup(value.cleanup)
     || !['disabled', 'waiting', 'authenticated', 'ready', 'disconnected'].includes(value.readiness as string)
     || !Array.isArray(value.metadata) || value.metadata.length > 20) return null;
+  const sessionStatus = projectCommunicationSessionStatus(value.sessionStatus);
+  if (!sessionStatus) return null;
   const metadata: CommunicationMetadata[] = [], seen = new Set<string>();
   for (const raw of value.metadata) {
     if (!object(raw) || !communicationId(raw.exchangeId) || !communicationId(raw.launchId) || seen.has(raw.exchangeId)
@@ -36,7 +39,7 @@ export function projectCommunicationSnapshot(value: unknown): CommunicationBridg
         totalPages: m.delivery.totalPages, clientConnected: m.delivery.clientConnected } });
   }
   const snapshot = value as unknown as CommunicationBridgeSnapshot;
-  return { enabled: snapshot.enabled, readiness: snapshot.readiness, cleanup: snapshot.cleanup, metadata,
+  return { sessionStatus, enabled: snapshot.enabled, readiness: snapshot.readiness, cleanup: snapshot.cleanup, metadata,
     ...(count(snapshot.remainingCredits) ? { remainingCredits: snapshot.remainingCredits } : {}) };
 }
 

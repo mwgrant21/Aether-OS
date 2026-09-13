@@ -90,7 +90,8 @@ describe('main-owned communication integration', () => {
   it('boots without Settings, disabled with no listener or provider work', async () => {
     const startListener = vi.fn(startPipeServer);
     const { service, factory } = fixture({ startListener });
-    expect(service.snapshot()).toEqual({ enabled: false, readiness: 'disabled', cleanup: 'confirmed', metadata: [] });
+    expect(service.snapshot()).toEqual({ enabled: false, readiness: 'disabled', cleanup: 'confirmed', metadata: [],
+      sessionStatus: { instanceLabel: expect.stringMatching(/^Instance [a-f0-9]{16}$/), sessionLabel: null, prompt: 'unknown' } });
     await expect(service.prepareLaunch()).rejects.toThrow('Bridge unavailable');
     expect(startListener).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
   });
@@ -284,5 +285,71 @@ describe('main-owned communication integration', () => {
     expect(await service.setEnabled(false)).toEqual({ ok: false, code: 'CLEANUP_FAILED' });
     expect(service.snapshot().cleanup).toBe('failed');
     await expect(service.prepareLaunch()).rejects.toThrow('Bridge unavailable');
+  });
+});
+
+describe('derived communication session status', () => {
+  it('separates prompt observation from discovery and credit authority without starting providers', async () => {
+    const callbacks: PipeServerOptions[] = [];
+    const { service, factory } = fixture({ startListener: async options => {
+      callbacks.push(options); return { endpoint: 'private-endpoint', close: async () => {} };
+    } });
+    await service.setEnabled(true); const first = await service.prepareLaunch();
+    const identity = service.snapshot().sessionStatus;
+    expect(identity.sessionLabel).toBe('Session 1');
+    expect(service.snapshot()).toMatchObject({ readiness: 'waiting', remainingCredits: 3, sessionStatus: { prompt: 'unknown' } });
+    expect(service.observePrompt(first.launchId, 'folder-trust')).toBe(true);
+    expect(service.snapshot()).toMatchObject({ readiness: 'waiting', remainingCredits: 3, sessionStatus: { prompt: 'folder-trust' } });
+    callbacks[0].onAuthenticated?.(); callbacks[0].onToolsListed?.();
+    expect(service.snapshot()).toMatchObject({ readiness: 'ready', remainingCredits: 3, sessionStatus: { prompt: 'folder-trust' } });
+    expect(service.observePrompt(first.launchId, 'unknown')).toBe(true);
+    expect(service.snapshot()).toMatchObject({ readiness: 'ready', remainingCredits: 3, sessionStatus: { prompt: 'unknown' } });
+    expect(service.observePrompt(identity.sessionLabel!, 'folder-trust')).toBe(false);
+    expect(service.observePrompt(first.launchId, 'PRIVATE_RAW_TEXT' as never)).toBe(false);
+    expect(service.currentLaunchId()).toBe(first.launchId);
+    const serialized = JSON.stringify(service.snapshot());
+    for (const privateValue of [first.launchId, first.endpoint, first.capability, 'PRIVATE_RAW_TEXT']) expect(serialized).not.toContain(privateValue);
+    expect(Object.keys(service.snapshot().sessionStatus).sort()).toEqual(['instanceLabel', 'prompt', 'sessionLabel']);
+    expect(factory).not.toHaveBeenCalled();
+  });
+  it('resets replacement and revocation observations and ignores every stale owner callback', async () => {
+    const callbacks: PipeServerOptions[] = [];
+    const { service, factory } = fixture({ startListener: async options => {
+      callbacks.push(options); return { endpoint: 'fake', close: async () => {} };
+    } });
+    await service.setEnabled(true); const first = await service.prepareLaunch();
+    const instanceLabel = service.snapshot().sessionStatus.instanceLabel;
+    service.observePrompt(first.launchId, 'folder-trust');
+    const second = await service.prepareLaunch();
+    expect(service.snapshot().sessionStatus).toEqual({ instanceLabel, sessionLabel: 'Session 2', prompt: 'unknown' });
+    expect(service.observePrompt(first.launchId, 'folder-trust')).toBe(false);
+    callbacks[0].onAuthenticated?.(); callbacks[0].onToolsListed?.(); callbacks[0].onDisconnect?.();
+    await service.notifyClaudeExit(first.launchId);
+    expect(service.snapshot()).toMatchObject({ readiness: 'waiting', sessionStatus: { sessionLabel: 'Session 2', prompt: 'unknown' } });
+    service.observePrompt(second.launchId, 'folder-trust');
+    callbacks[1].onDisconnect?.(); // Helper loss is not proof of terminal exit.
+    expect(service.snapshot()).toMatchObject({ readiness: 'disconnected', sessionStatus: { sessionLabel: null, prompt: 'unknown' } });
+    expect(service.observePrompt(second.launchId, 'folder-trust')).toBe(false);
+    const third = await service.prepareLaunch();
+    service.observePrompt(third.launchId, 'folder-trust');
+    const disabling = service.setEnabled(false);
+    expect(service.snapshot().sessionStatus).toEqual({ instanceLabel, sessionLabel: null, prompt: 'unknown' });
+    expect(service.observePrompt(third.launchId, 'folder-trust')).toBe(false);
+    await disabling;
+    await service.setEnabled(true); const fourth = await service.prepareLaunch();
+    service.observePrompt(fourth.launchId, 'folder-trust');
+    await service.notifyClaudeExit(fourth.launchId);
+    expect(service.snapshot().sessionStatus).toEqual({ instanceLabel, sessionLabel: null, prompt: 'unknown' });
+    expect(factory).not.toHaveBeenCalled();
+  });
+  it('keeps instance identity independent and clears a failed launch without leaking diagnostics', async () => {
+    const first = fixture({ startListener: async () => { throw new Error('PRIVATE_RAW_TEXT'); } });
+    const second = fixture({ startListener: async () => ({ endpoint: 'fake', close: async () => {} }) });
+    expect(first.service.snapshot().sessionStatus.instanceLabel).not.toBe(second.service.snapshot().sessionStatus.instanceLabel);
+    await first.service.setEnabled(true);
+    await expect(first.service.prepareLaunch()).rejects.toThrow('Bridge unavailable');
+    expect(first.service.snapshot().sessionStatus).toMatchObject({ sessionLabel: null, prompt: 'unknown' });
+    expect(JSON.stringify(first.service.snapshot())).not.toContain('PRIVATE_RAW_TEXT');
+    expect(first.factory).not.toHaveBeenCalled(); expect(second.factory).not.toHaveBeenCalled();
   });
 });

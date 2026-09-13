@@ -5,7 +5,7 @@ import { useCommunicationSync } from './useCommunicationSync';
 import { initialState } from './initialState';
 import { loadPersisted, savePersisted } from './persistence';
 import type { CommunicationBridgeSnapshot } from '../../electron/communicationBridge/mainIntegration';
-const disabled: CommunicationBridgeSnapshot = { enabled: false, readiness: 'disabled', cleanup: 'confirmed', metadata: [] };
+const disabled: CommunicationBridgeSnapshot = { enabled: false, readiness: 'disabled', cleanup: 'confirmed', sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: null, prompt: 'unknown' }, metadata: [] };
 const ready: CommunicationBridgeSnapshot = { ...disabled, enabled: true, readiness: 'ready' };
 function Harness() {
   useCommunicationSync();

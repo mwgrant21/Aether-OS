@@ -111,6 +111,11 @@ export function CommunicationCard() {
       {granting ? 'Confirming consultation grant…' : 'Grant 3 more consultations'}
     </Button>
     {grantError && <p role="alert">{grantError}</p>}
+    {snapshot && <p data-testid="communication-session-identity">
+      Aether instance: {snapshot.sessionStatus.instanceLabel}.<br />
+      Bridge launch: {snapshot.sessionStatus.sessionLabel ?? 'No active launch'}.
+    </p>}
+    <p>Bridge connection does not establish whether Claude is ready for input.</p>
     <p role="status">Bridge: {snapshot ? snapshot.readiness : 'status unavailable'}.
       {snapshot && ` Cleanup: ${snapshot.cleanup}.`}</p>
     {state.communicationError && <p role="alert">{messages[state.communicationError] ?? state.communicationError}</p>}
