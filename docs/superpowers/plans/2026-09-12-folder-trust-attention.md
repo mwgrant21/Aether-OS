@@ -76,108 +76,21 @@ layouts fail conservatively. No selected-option parsing or terminal input is add
 ---
 ### Task 4: Wire recognition to the existing observePrompt seam
 
-**Files:**
-- Modify: `electron/main.ts` (declarations before line 84; the `prepare` and `spawn` callbacks at lines 1047-1057)
-- Modify: `electron/ptyLifecycle.consumers.test.ts` (append)
+Implemented as a physical-PTY and launch-scoped `ConnectedPromptObserver`; see `2026-09-12-cross-check-task4-results.md` for final verification and limitations.
 
-**Interfaces:**
-- Consumes: `createTrustPromptMatcher` (Task 3); `CommunicationBridgeIntegration.observePrompt(launchId, prompt)` and `.currentLaunchId()`, both already shipped in `a0a4a85`.
-- Produces: no new exports. Runtime behaviour only.
+Files: `electron/communicationBridge/connectedPromptObserver.ts`, `electron/main.ts`, `electron/communicationBridge/mainIntegration.ts` (comment only), and `electron/ptyLifecycle.consumers.test.ts`.
 
-`observePrompt` already rejects stale launches, validates the value, and emits only on change — so this task supplies evidence and nothing else. Task 1's PTY ownership guard (`ptyLifecycle.ts`) already drops data from a superseded pty, so the matcher cannot be contaminated by an old terminal.
+The previous sample used a global matcher reset during launch preparation and looked up the current launch ID when each chunk arrived. That sample is superseded: preparation is not a physical terminal transition, and incoming bytes must retain their original owner. A fresh matcher belongs to each newly spawned physical PTY and captured launch ID. Every observation requires both owners to remain current. Replacement invalidates observer ownership before the outgoing PTY can emit synchronous callbacks; failed replacement cannot attribute surviving old output to a new launch.
 
-- [ ] **Step 1: Write the failing test**
+Map positive recognition to `folder-trust` and every other result to `unknown`. No confirmed-absent state or readiness/exit conclusion follows from false. Retain the existing bridge seam's launch validation and change-only snapshot emission. Do not expose or persist raw matcher text.
 
-Append to `electron/ptyLifecycle.consumers.test.ts`, which already executes the real main-process callbacks against fake PTYs:
+Use actual physical spawn dimensions (currently100x30), then invalidate evidence and forward each resize. Positive publication waits for successful native resize return and a fresh ownership check. A native resize failure or nested same-owner resize leaves dimensions uncertain until an independent successful resize. A replacement owner is unaffected by an outgoing resize. Resize never resets persistent mode uncertainty. The shared PTY lifecycle ordering and ordinary Claude/Codex behavior remain unchanged.
 
-```ts
-it('reports the folder-trust prompt to the bridge, then clears it once answered', () => {
-  const observed: string[] = [];
-  const matcher = createTrustPromptMatcher(() => 1000);
-  const observe = (prompt: string) => { observed.push(prompt); return true; };
+Verification executes the actual main spawn/resize callbacks with deterministic fake PTYs and includes replacement, revocation, old callbacks, failed spawn/cleanup/resize, unsupported dimensions, persistent uncertainty, unfinished controls, synchronized output, and clear/repaint. Build the Electron bundle now that the matcher is a runtime dependency. Native plumbing smokes use harmless CLI fixtures and do not prove a live connected-client prompt.
 
-  const feed = (data: string) => {
-    const before = matcher.state();
-    matcher.ingest(data);
-    const after = matcher.state();
-    if (before.active !== after.active) observe(after.active ? 'folder-trust' : 'unknown');
-  };
-
-  for (const chunk of capture.chunks) feed(chunk.data);
-  expect(observed).toEqual(['folder-trust']);
-
-  feed('\u001b[2J Welcome to Claude Code\n');
-  expect(observed).toEqual(['folder-trust', 'unknown']);
-
-  feed('more ordinary output\n');
-  expect(observed).toEqual(['folder-trust', 'unknown']);
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run electron/ptyLifecycle.consumers.test.ts -t folder-trust`
-Expected: FAIL — `createTrustPromptMatcher` is not imported in this file yet.
-
-- [ ] **Step 3: Add the matcher to main**
-
-In `electron/main.ts`, **before** the bridge construction at line 84, so no closure reads an uninitialised binding:
-
-```ts
-const trustPromptMatcher = createTrustPromptMatcher();
-```
-
-Import `createTrustPromptMatcher` from `./communicationBridge/trustPromptMatcher`.
-
-- [ ] **Step 4: Report changes only, never per chunk**
-
-Extend the `onData` callback inside the bridge `spawn` at lines 1051-1053:
-
-```ts
-onData: data => {
-  sendToWindow('pty:data', data);
-  planUsageScraper.ingest(data);
-  // Report only when the reading actually moves. onData fires constantly on a busy
-  // terminal, and observePrompt emits a snapshot on change -- an unconditional call
-  // here would push IPC traffic per chunk. This is the same trap planUsageScraper
-  // documents for its own capturedAtMs stamping.
-  const before = trustPromptMatcher.state();
-  trustPromptMatcher.ingest(data);
-  const after = trustPromptMatcher.state();
-  const launchId = communicationBridge.currentLaunchId();
-  if (launchId && before.active !== after.active) {
-    communicationBridge.observePrompt(launchId, after.active ? 'folder-trust' : 'unknown');
-  }
-},
-```
-
-- [ ] **Step 5: Reset the matcher per launch, not per exit**
-
-In the `prepare` callback at line 1047:
-
-```ts
-prepare: manifest => {
-  trustPromptMatcher.reset();
-  return prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable });
-},
-```
-
-Reset belongs in `prepare`, not in the pty `onExit`. Task 5 derives exit attribution from `seenAt`, so clearing the latch on exit would erase the evidence that explains the exit. The next launch clears it instead.
-
-- [ ] **Step 6: Run the affected suites**
-
-Run: `npx vitest run electron/ptyLifecycle.consumers.test.ts electron/communicationBridge/ && npm run typecheck:electron`
-Expected: PASS, clean typecheck.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add electron/main.ts electron/ptyLifecycle.consumers.test.ts
-git commit -m "feat(communication): report folder-trust prompt state to the bridge"
-```
+Task 5 retains responsibility for positive client-exit evidence and actionable copy; it must not infer exit from prompt disappearance or helper disconnection.
 
 ---
-
 ### Task 5: Positive client-exit evidence
 
 **Files:**

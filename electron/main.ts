@@ -73,6 +73,7 @@ import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegr
 import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
+import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import { CommunicationGrantControl } from './communicationBridge/grantControl';
 import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
@@ -1028,6 +1029,7 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const ptyLifecycle = new PtyLifecycle();
+const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
 
 const launchRoot = join(app.getPath('userData'), 'communication-launches');
 const launchMaintenance = app.whenReady().then(() => cleanupStaleBridgeLaunches(launchRoot)).then(() => true, () => false);
@@ -1048,7 +1050,9 @@ const communicationSessions = new CommunicationSessionControl({
   },
   prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable }),
   spawn: (bundle, onExit) => {
-    ptyLifecycle.start(() => spawnPty(100, 30, bundle), {
+    const launchId = communicationBridge.currentLaunchId();
+    if (!launchId) throw new Error('REVOKED');
+    connectedPromptObserver.start(launchId, { cols: 100, rows: 30 }, () => spawnPty(100, 30, bundle), {
       onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
       onExit: () => { onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
@@ -1098,7 +1102,7 @@ ipcMain.on('pty:write', (_event, input: string) => {
 });
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
-  ptyLifecycle.resize(cols, rows);
+  connectedPromptObserver.resize(cols, rows);
 });
 
 ipcMain.handle('plan:sync', async () => {

@@ -146,7 +146,7 @@ export class CommunicationBridgeIntegration {
     return this.bounded(awaitCleanup([...this.closing]));
   }
   /** Main-only observation seam. Neither labels nor prompt state grant authority.
-   * No detector is wired yet; reject stale observations after replacement/revocation. */
+   * Reject stale observations after replacement/revocation. */
   observePrompt(launchId: string, prompt: CommunicationSessionStatus['prompt']): boolean {
     const launch = this.current;
     if (!this.enabled || this.disposed || !launch?.valid || launch.id !== launchId || !isCommunicationPrompt(prompt)) return false;
