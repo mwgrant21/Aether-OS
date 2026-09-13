@@ -1,41 +1,55 @@
-# Folder-Trust Attention Implementation Plan
+# Folder-Trust Recognition Implementation Plan (cross-check Tasks 3-6)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the bare `Bridge: waiting.` status with an evidence-backed attention state that tells the operator when the connected Claude client is blocked on the folder-trust prompt, stalled, or exited.
+**Goal:** Tell the operator when the connected Claude client is blocked on the folder-trust prompt, stalled, or exited — instead of showing a bare `Bridge: waiting.` that means all three.
 
-**Architecture:** A pure `trustAttention` module derives an `{state, trust, since}` value from four inputs — a deterministic pre-launch trust precheck, a PTY prompt matcher, authoritative launch completion, and elapsed time. It is exposed as a new optional sibling field on the bridge snapshot; the `readiness` union is deliberately not widened, so every existing consumer is untouched.
+**Architecture:** Continues the existing cross-check sequence rather than forking it. Task 2 (`a0a4a85`) already shipped `sessionStatus` with a `prompt` field and the main-only `observePrompt()` seam, explicitly noting *"No detector is wired yet"*. This plan supplies that detector (Task 3), wires it (Task 4), adds positive client-exit evidence (Task 5), and derives operator copy from those facts (Task 6).
 
 **Tech Stack:** TypeScript, Electron main/renderer split, Vitest, React.
 
 **Spec:** `docs/superpowers/specs/2026-09-12-folder-trust-attention-design.md`
 
+**Predecessors:** `docs/superpowers/plans/2026-09-12-cross-check-task1-results.md`, `docs/superpowers/plans/2026-09-12-cross-check-task2-results.md`
+
+## Rebase note
+
+This plan replaces an earlier draft that added a parallel `attention` snapshot field and its own detector seam. That draft was written before `a0a4a85` landed and would have produced two competing representations of the same fact. Two consequences:
+
+- **No `attention` field is added.** `sessionStatus` is extended instead, staying the single representation. It remains facts-only, matching its `/** Display-only runtime state. */` contract.
+- **Presentation is derived in the renderer** from those facts plus a clock, not precomputed in main. This overrides the earlier shape decision (`{kind, confidence, since}` in main) as a direct consequence of adopting `sessionStatus`. The derive function still takes `now` as a parameter and stays pure, so it is exactly as testable; only the re-render tick is new.
+
+Task numbering follows the next-task statements in the two results docs above. If the canonical cross-check list numbers these differently, confirm the mapping before starting.
+
 ## Global Constraints
 
-- Target worktree: `.worktrees/visible-communication-u1`, branch `feat/visible-communication-u1`. Run all commands from that directory.
-- Test runner: `npx vitest run <path>` for one file, `npm test` for the full suite (1,691 tests currently passing).
-- Electron typecheck: `npm run typecheck:electron`.
-- Interfaces in `src/shared/communicationTypes.ts` use `readonly` members. Match that.
-- **No copy anywhere may say "press Enter".** Enter selects "No, exit" on the trust prompt — it is the destructive default.
-- **No copy may tell the operator to trust the folder outright.** Copy directs them to review it first.
-- Aether must never write `hasTrustDialogAccepted` on the operator's behalf.
-- Changing the launch cwd is out of scope. Do not touch `ptyManager.ts:58` or the `workingDirectory` in `launchConfig.ts:172`.
-- `stripAnsi` deletes CSI cursor-forward sequences outright. Prompt words arrive separated by `ESC[1C`, so stripped text reads `Yes,Itrustthisfolder`. **Every inter-word gap in a prompt regex must be `\s*`, never a literal space.**
+- Worktree `.worktrees/visible-communication-u1`, branch `feat/visible-communication-u1`. Base: `5be71ab`. Run all commands from that directory.
+- Tests: `npx vitest run <path>` for one file, `npm test` for the full suite. **Baseline is 1,732 passing, 7 skipped** (per the Task 2 results doc).
+- Also required before any task is called done: `npm run typecheck:electron` and `npm run build`.
+- Interfaces in `src/shared/` use `readonly` members.
+- **Task 3's stated bound: no selected-option parsing, no automatic terminal input.** The matcher recognises that the prompt is present. It must never read which option the `❯` marker sits on, and nothing in this plan ever writes to the pty.
+- **No copy anywhere may say "press Enter".** Enter selects "No, exit" — the destructive default.
+- **No copy may tell the operator to trust the folder outright.** Direct them to review it first.
+- `trustedAtLaunch: 'unknown'` means the config was unreadable. It must never render as "not in the trusted list".
+- Out of scope: changing the launch cwd (`ptyManager.ts:58`, `launchConfig.ts:172`), and writing `hasTrustDialogAccepted` on the operator's behalf.
+- `stripAnsi` deletes CSI cursor-forward sequences. Prompt words arrive separated by `ESC[1C`, so stripped text reads `Yes,Itrustthisfolder`. **Every inter-word gap in a prompt regex must be `\s*`, never a literal space.**
 
 ---
 
-### Task 1: Trust-prompt PTY matcher
+### Task 3: Bounded current-prompt recognition
 
 **Files:**
 - Create: `electron/communicationBridge/trustPromptMatcher.ts`
 - Create: `electron/communicationBridge/trustPromptMatcher.test.ts`
-- Already present (committed in this plan's prep): `electron/__fixtures__/trust-prompt-capture.json`
+- Already committed: `electron/__fixtures__/trust-prompt-capture.json`
 
 **Interfaces:**
 - Consumes: `stripAnsi` from `electron/ansiStrip.ts`.
-- Produces: `createTrustPromptMatcher(now?: () => number)` returning `{ ingest(chunk: string): void; state(): TrustPromptState; reset(): void }` where `TrustPromptState = { readonly seenAt: number | null; readonly active: boolean }`.
+- Produces: `createTrustPromptMatcher(now?: () => number)` returning `{ ingest(chunk: string): void; state(): TrustPromptState; reset(): void }`, where `TrustPromptState = { readonly seenAt: number | null; readonly active: boolean }`.
 
-The fixture is a real PTY capture: 8 chunks, last output at 562 ms, then silence for the remaining 24.4 s. That silence is what makes `active` decidable — any printable output after the match means the client moved on.
+`active` is the current-prompt evidence that feeds `sessionStatus.prompt`. `seenAt` is history, used only by Task 5 for exit attribution.
+
+The fixture is a real PTY capture: 8 chunks, last output at 562 ms, then silence to the 25 s cutoff. That silence is what makes `active` decidable — any printable output afterwards means the client moved on.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -108,8 +122,9 @@ const BUFFER_CAP = 16384;
 // with CSI cursor-forward sequences (ESC[1C) rather than spaces, and ansiStrip
 // deletes those outright -- the stripped text reads "Yes,Itrustthisfolder". Every
 // inter-word gap must therefore be \s* and never a literal space. Both option
-// labels are required together so ordinary session output that happens to contain
-// one of them cannot raise a false positive.
+// labels are required together so ordinary session output containing one of them
+// cannot raise a false positive. Recognition stops here by design: the selected
+// option (the ❯ marker) is deliberately NOT parsed.
 const EXIT_OPTION = /No,\s*exit/i;
 const TRUST_OPTION = /Yes,\s*I\s*trust\s*this\s*folder/i;
 
@@ -126,10 +141,10 @@ export function createTrustPromptMatcher(now: () => number = Date.now) {
   function ingest(chunk: string): void {
     try {
       const text = stripAnsi(chunk);
-      // The capture shows the TUI emits nothing at all while the prompt waits
-      // (last byte at 562ms, then silence to the 25s cutoff). So any printable
-      // output after the match is real progress: the operator answered, or the
-      // client exited. Escape-only repaints strip to empty and are ignored.
+      // The capture shows the TUI emits nothing while the prompt waits (last byte
+      // at 562ms, then silence to the 25s cutoff). So any printable output after
+      // the match is real progress: the operator answered, or the client exited.
+      // Escape-only repaints strip to empty and must not clear the state.
       if (seenAt !== null && text.trim() !== '') active = false;
       buffer = (buffer + text).slice(-BUFFER_CAP);
       if (seenAt === null && EXIT_OPTION.test(buffer) && TRUST_OPTION.test(buffer)) {
@@ -157,346 +172,236 @@ Expected: PASS, 6 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add electron/communicationBridge/trustPromptMatcher.ts electron/communicationBridge/trustPromptMatcher.test.ts electron/__fixtures__/trust-prompt-capture.json
-git commit -m "feat(communication): match the folder-trust prompt in the bridge pty stream"
+git add electron/communicationBridge/trustPromptMatcher.ts electron/communicationBridge/trustPromptMatcher.test.ts
+git commit -m "feat(communication): recognize the folder-trust prompt in pty output"
 ```
 
 ---
 
-### Task 2: Attention type and snapshot field
+### Task 4: Wire recognition to the existing observePrompt seam
 
 **Files:**
-- Modify: `src/shared/communicationTypes.ts` (append after `ProviderState`, around line 16)
-- Modify: `electron/communicationBridge/mainIntegration.ts:7-13` (the `CommunicationBridgeSnapshot` interface)
+- Modify: `electron/main.ts` (declarations before line 84; the `prepare` and `spawn` callbacks at lines 1047-1057)
+- Modify: `electron/ptyLifecycle.consumers.test.ts` (append)
 
 **Interfaces:**
-- Produces: `Attention`, `AttentionState`, `AttentionTrust` exported from `src/shared/communicationTypes.ts`; `CommunicationBridgeSnapshot.attention?: Attention`.
+- Consumes: `createTrustPromptMatcher` (Task 3); `CommunicationBridgeIntegration.observePrompt(launchId, prompt)` and `.currentLaunchId()`, both already shipped in `a0a4a85`.
+- Produces: no new exports. Runtime behaviour only.
 
-This task is type-only. `snapshot()` does not yet populate the field — Task 5 wires it. Splitting it this way keeps the projector work (Task 4) reviewable on its own.
-
-- [ ] **Step 1: Add the types**
-
-In `src/shared/communicationTypes.ts`, after the `ProviderState` declaration:
-
-```ts
-/** Lifecycle: what happened to the connected client. */
-export type AttentionState = 'blocked' | 'exited' | 'stalled';
-/** Evidence: what the trust config and the pty actually showed. */
-export type AttentionTrust = 'unaccepted' | 'prompt-seen' | 'unknown' | 'not-implicated';
-/** State and trust are independent: an exit can be certain while its cause is not. */
-export interface Attention {
-  readonly state: AttentionState;
-  readonly trust: AttentionTrust;
-  readonly since: number;
-}
-```
-
-- [ ] **Step 2: Add the snapshot field**
-
-In `electron/communicationBridge/mainIntegration.ts`, import the type alongside the existing shared-type import and add the field to `CommunicationBridgeSnapshot`:
-
-```ts
-import type { Attention, CommunicationMetadata, CommunicationPayload } from '../../src/shared/communicationTypes';
-```
-
-```ts
-export interface CommunicationBridgeSnapshot {
-  readonly enabled: boolean;
-  readonly readiness: 'disabled' | 'waiting' | 'authenticated' | 'ready' | 'disconnected';
-  readonly cleanup: 'confirmed' | 'pending' | 'failed';
-  readonly metadata: readonly CommunicationMetadata[];
-  readonly remainingCredits?: number | null;
-  readonly attention?: Attention;
-}
-```
-
-- [ ] **Step 3: Verify it compiles**
-
-Run: `npm run typecheck:electron`
-Expected: clean exit.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src/shared/communicationTypes.ts electron/communicationBridge/mainIntegration.ts
-git commit -m "feat(communication): declare the attention contract on the bridge snapshot"
-```
-
----
-
-### Task 3: Attention derivation
-
-**Files:**
-- Create: `electron/communicationBridge/trustAttention.ts`
-- Create: `electron/communicationBridge/trustAttention.test.ts`
-
-**Interfaces:**
-- Consumes: `Attention` from `src/shared/communicationTypes.ts`; `CommunicationBridgeSnapshot['readiness']` from `./mainIntegration`.
-- Produces: `TRUST_GRACE_MS`, `TRUST_STALL_MS`, `LaunchCompletion`, `TrustAttentionInputs`, `deriveAttention(i): Omit<Attention, 'since'> | undefined`, and `createTrustAttention()` returning `{ update(i): Attention | undefined; nextDeadline(i): number | null }`.
+`observePrompt` already rejects stale launches, validates the value, and emits only on change — so this task supplies evidence and nothing else. Task 1's PTY ownership guard (`ptyLifecycle.ts`) already drops data from a superseded pty, so the matcher cannot be contaminated by an old terminal.
 
 - [ ] **Step 1: Write the failing test**
 
+Append to `electron/ptyLifecycle.consumers.test.ts`, which already executes the real main-process callbacks against fake PTYs:
+
+```ts
+it('reports the folder-trust prompt to the bridge, then clears it once answered', () => {
+  const observed: string[] = [];
+  const matcher = createTrustPromptMatcher(() => 1000);
+  const observe = (prompt: string) => { observed.push(prompt); return true; };
+
+  const feed = (data: string) => {
+    const before = matcher.state();
+    matcher.ingest(data);
+    const after = matcher.state();
+    if (before.active !== after.active) observe(after.active ? 'folder-trust' : 'unknown');
+  };
+
+  for (const chunk of capture.chunks) feed(chunk.data);
+  expect(observed).toEqual(['folder-trust']);
+
+  feed('\u001b[2J Welcome to Claude Code\n');
+  expect(observed).toEqual(['folder-trust', 'unknown']);
+
+  feed('more ordinary output\n');
+  expect(observed).toEqual(['folder-trust', 'unknown']);
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run electron/ptyLifecycle.consumers.test.ts -t folder-trust`
+Expected: FAIL — `createTrustPromptMatcher` is not imported in this file yet.
+
+- [ ] **Step 3: Add the matcher to main**
+
+In `electron/main.ts`, **before** the bridge construction at line 84, so no closure reads an uninitialised binding:
+
+```ts
+const trustPromptMatcher = createTrustPromptMatcher();
+```
+
+Import `createTrustPromptMatcher` from `./communicationBridge/trustPromptMatcher`.
+
+- [ ] **Step 4: Report changes only, never per chunk**
+
+Extend the `onData` callback inside the bridge `spawn` at lines 1051-1053:
+
+```ts
+onData: data => {
+  sendToWindow('pty:data', data);
+  planUsageScraper.ingest(data);
+  // Report only when the reading actually moves. onData fires constantly on a busy
+  // terminal, and observePrompt emits a snapshot on change -- an unconditional call
+  // here would push IPC traffic per chunk. This is the same trap planUsageScraper
+  // documents for its own capturedAtMs stamping.
+  const before = trustPromptMatcher.state();
+  trustPromptMatcher.ingest(data);
+  const after = trustPromptMatcher.state();
+  const launchId = communicationBridge.currentLaunchId();
+  if (launchId && before.active !== after.active) {
+    communicationBridge.observePrompt(launchId, after.active ? 'folder-trust' : 'unknown');
+  }
+},
+```
+
+- [ ] **Step 5: Reset the matcher per launch, not per exit**
+
+In the `prepare` callback at line 1047:
+
+```ts
+prepare: manifest => {
+  trustPromptMatcher.reset();
+  return prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable });
+},
+```
+
+Reset belongs in `prepare`, not in the pty `onExit`. Task 5 derives exit attribution from `seenAt`, so clearing the latch on exit would erase the evidence that explains the exit. The next launch clears it instead.
+
+- [ ] **Step 6: Run the affected suites**
+
+Run: `npx vitest run electron/ptyLifecycle.consumers.test.ts electron/communicationBridge/ && npm run typecheck:electron`
+Expected: PASS, clean typecheck.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add electron/main.ts electron/ptyLifecycle.consumers.test.ts
+git commit -m "feat(communication): report folder-trust prompt state to the bridge"
+```
+
+---
+
+### Task 5: Positive client-exit evidence
+
+**Files:**
+- Modify: `src/shared/communicationSessionStatus.ts`
+- Modify: `src/shared/communicationSessionStatus.test.ts` (append; create if absent)
+- Modify: `electron/communicationBridge/launchConfig.ts` (add an export; reuses the private `jsonFile` helper at line 37)
+- Modify: `electron/communicationBridge/launchConfig.test.ts` (append)
+- Modify: `electron/communicationBridge/mainIntegration.ts` (`Launch` interface, `snapshot()`, one new observation method)
+- Modify: `electron/communicationBridge/mainIntegration.test.ts` (append)
+- Modify: `electron/main.ts` (the `prepare` and `spawn` callbacks)
+
+**Interfaces:**
+- Produces: `readLaunchTrust(directory: string): Promise<true | false | 'unknown'>` from `launchConfig.ts`; `CommunicationBridgeIntegration.observeLaunch(launchId, evidence)`; four new `CommunicationSessionStatus` fields.
+
+The Task 2 results doc states this task's requirement directly: *"Task 5 must obtain positive client-exit evidence rather than interpreting disconnected readiness as Client exited."*
+
+**The pty cannot supply that evidence.** `spawnPty` runs `powershell.exe -NoExit -File launch.ps1`, so the shell deliberately outlives the CLI and `terminalAlive` tracks PowerShell, not `claude.exe`. The authoritative signal is `PreparedBridgeLaunch.completion()`, backed by `started.json` (child PID via `Start-Process -PassThru`) and the `completed` file (`exited` | `failed`) that `BRIDGE_LAUNCH_SCRIPT` writes in its `finally` block.
+
+- [ ] **Step 1: Write the failing contract test**
+
 ```ts
 import { describe, expect, it } from 'vitest';
-import { createTrustAttention, deriveAttention, TRUST_GRACE_MS, TRUST_STALL_MS,
-  type TrustAttentionInputs } from './trustAttention';
+import { projectCommunicationSessionStatus } from './communicationSessionStatus';
 
-const base: TrustAttentionInputs = {
-  launchId: 'L1', readiness: 'waiting', trustedAtLaunch: true,
-  promptSeenAt: null, promptActive: false, completion: 'running',
-  spawnedAt: 0, now: 0,
+const valid = {
+  instanceLabel: 'Instance 0123456789abcdef', sessionLabel: 'Session 1',
+  prompt: 'folder-trust', promptSeen: true, lifecycle: 'running',
+  trustedAtLaunch: false, spawnedAt: 5,
 };
-const at = (over: Partial<TrustAttentionInputs>): TrustAttentionInputs => ({ ...base, ...over });
 
-describe('deriveAttention', () => {
-  it('reports nothing during a healthy early wait', () => {
-    expect(deriveAttention(at({ now: 500 }))).toBeUndefined();
+describe('session status with launch evidence', () => {
+  it('carries the new evidence fields through', () => {
+    expect(projectCommunicationSessionStatus(valid)).toEqual(valid);
   });
 
-  it('never claims an exit before the client has spawned', () => {
-    expect(deriveAttention(at({ completion: 'starting', spawnedAt: null, now: 60_000 }))).toBeUndefined();
+  it.each([
+    ['bad lifecycle', { ...valid, lifecycle: 'nope' }],
+    ['bad trustedAtLaunch', { ...valid, trustedAtLaunch: 'maybe' }],
+    ['non-boolean promptSeen', { ...valid, promptSeen: 'yes' }],
+    ['negative spawnedAt', { ...valid, spawnedAt: -1 }],
+  ])('rejects %s', (_label, input) => {
+    expect(projectCommunicationSessionStatus(input)).toBeNull();
   });
 
-  it('reports an exit at any readiness, including disconnected', () => {
-    expect(deriveAttention(at({ completion: 'exited', readiness: 'disconnected' })))
-      .toEqual({ state: 'exited', trust: 'not-implicated' });
+  it('rejects evidence claimed with no active launch', () => {
+    expect(projectCommunicationSessionStatus({
+      ...valid, sessionLabel: null, prompt: 'unknown', promptSeen: true,
+      lifecycle: 'starting', spawnedAt: null })).toBeNull();
   });
 
-  it('attributes an exit to the prompt when the prompt was seen', () => {
-    expect(deriveAttention(at({ completion: 'exited', promptSeenAt: 10 })))
-      .toEqual({ state: 'exited', trust: 'prompt-seen' });
-  });
-
-  it('blocks on an active prompt', () => {
-    expect(deriveAttention(at({ promptActive: true, promptSeenAt: 10, now: 600 })))
-      .toEqual({ state: 'blocked', trust: 'prompt-seen' });
-  });
-
-  it('suspects folder trust from the precheck after the grace period', () => {
-    expect(deriveAttention(at({ trustedAtLaunch: false, now: TRUST_GRACE_MS })))
-      .toEqual({ state: 'blocked', trust: 'unaccepted' });
-  });
-
-  it('does not suspect folder trust when the config was merely unreadable', () => {
-    expect(deriveAttention(at({ trustedAtLaunch: 'unknown', now: TRUST_GRACE_MS }))).toBeUndefined();
-  });
-
-  it('escalates to stalled even when trust is implicated, keeping the evidence', () => {
-    expect(deriveAttention(at({ trustedAtLaunch: false, now: TRUST_STALL_MS })))
-      .toEqual({ state: 'stalled', trust: 'unaccepted' });
-  });
-
-  it('covers a stall at authenticated, not just waiting', () => {
-    expect(deriveAttention(at({ readiness: 'authenticated', now: TRUST_STALL_MS })))
-      .toEqual({ state: 'stalled', trust: 'not-implicated' });
-  });
-
-  it('reports nothing once readiness reaches ready', () => {
-    expect(deriveAttention(at({ readiness: 'ready', now: TRUST_STALL_MS }))).toBeUndefined();
-  });
-
-  it('keeps an active prompt blocked however long it waits', () => {
-    expect(deriveAttention(at({ promptActive: true, promptSeenAt: 10, now: 10 * TRUST_STALL_MS })))
-      .toEqual({ state: 'blocked', trust: 'prompt-seen' });
-  });
-});
-
-describe('createTrustAttention', () => {
-  it('stamps since once and preserves it across a trust change', () => {
-    const holder = createTrustAttention();
-    const first = holder.update(at({ trustedAtLaunch: false, now: TRUST_GRACE_MS }));
-    expect(first).toEqual({ state: 'blocked', trust: 'unaccepted', since: TRUST_GRACE_MS });
-    const later = holder.update(at({ trustedAtLaunch: false, promptSeenAt: 1, promptActive: true, now: 9_000 }));
-    expect(later).toEqual({ state: 'blocked', trust: 'prompt-seen', since: TRUST_GRACE_MS });
-  });
-
-  it('preserves since across an escalation to stalled', () => {
-    const holder = createTrustAttention();
-    holder.update(at({ trustedAtLaunch: false, now: TRUST_GRACE_MS }));
-    const stalled = holder.update(at({ trustedAtLaunch: false, now: TRUST_STALL_MS }));
-    expect(stalled).toEqual({ state: 'stalled', trust: 'unaccepted', since: TRUST_GRACE_MS });
-  });
-
-  it('clears and re-stamps after the attention lapses', () => {
-    const holder = createTrustAttention();
-    holder.update(at({ trustedAtLaunch: false, now: TRUST_GRACE_MS }));
-    expect(holder.update(at({ readiness: 'ready', now: 5_000 }))).toBeUndefined();
-    const again = holder.update(at({ trustedAtLaunch: false, now: 8_000 }));
-    expect(again).toEqual({ state: 'blocked', trust: 'unaccepted', since: 8_000 });
-  });
-
-  it('resets everything when the launch id changes', () => {
-    const holder = createTrustAttention();
-    holder.update(at({ trustedAtLaunch: false, now: TRUST_GRACE_MS }));
-    const next = holder.update(at({ launchId: 'L2', trustedAtLaunch: false, now: 100_000 }));
-    expect(next).toEqual({ state: 'blocked', trust: 'unaccepted', since: 100_000 });
-  });
-
-  it('returns only future deadlines and null once exhausted', () => {
-    const holder = createTrustAttention();
-    expect(holder.nextDeadline(at({ trustedAtLaunch: false, now: 0 }))).toBe(TRUST_GRACE_MS);
-    expect(holder.nextDeadline(at({ trustedAtLaunch: false, now: TRUST_GRACE_MS }))).toBe(TRUST_STALL_MS);
-    expect(holder.nextDeadline(at({ trustedAtLaunch: false, now: TRUST_STALL_MS }))).toBeNull();
-    expect(holder.nextDeadline(at({ readiness: 'ready', now: 0 }))).toBeNull();
-    expect(holder.nextDeadline(at({ promptActive: true, now: 0 }))).toBeNull();
+  it('accepts a launch that has not spawned yet', () => {
+    expect(projectCommunicationSessionStatus({
+      ...valid, prompt: 'unknown', promptSeen: false, lifecycle: 'starting', spawnedAt: null,
+    })).not.toBeNull();
   });
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run electron/communicationBridge/trustAttention.test.ts`
-Expected: FAIL — cannot resolve `./trustAttention`.
+Run: `npx vitest run src/shared/communicationSessionStatus.test.ts`
+Expected: FAIL — the new fields are stripped, so the first test's `toEqual` mismatches.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 3: Extend the contract**
+
+In `src/shared/communicationSessionStatus.ts`:
 
 ```ts
-import type { Attention, AttentionTrust } from '../../src/shared/communicationTypes';
-import type { CommunicationBridgeSnapshot } from './mainIntegration';
+export type ClientLifecycle = 'starting' | 'running' | 'exited' | 'failed';
 
-// Provisional. The real capture shows the trust prompt renders 562ms after spawn,
-// so GRACE only needs to outlast a render the matcher will usually catch first.
-// STALL has no measured healthy-handshake baseline yet -- deliberately generous,
-// because a nagging stall banner is worse than a late one. Recalibrate against
-// real healthy launches once one can be measured end to end.
-export const TRUST_GRACE_MS = 3_000;
-export const TRUST_STALL_MS = 20_000;
-
-export type LaunchCompletion = 'starting' | 'running' | 'exited' | 'failed';
-
-export interface TrustAttentionInputs {
-  readonly launchId: string | null;
-  readonly readiness: CommunicationBridgeSnapshot['readiness'];
+export interface CommunicationSessionStatus {
+  readonly instanceLabel: string;
+  readonly sessionLabel: string | null;
+  /** Positive current-prompt evidence only; unknown does not mean input-ready. */
+  readonly prompt: 'unknown' | 'folder-trust';
+  /** History, not current state: the prompt appeared at some point this launch.
+   * Exit attribution needs it, because `prompt` clears the moment it is answered. */
+  readonly promptSeen: boolean;
+  /** Positive client lifecycle from the launch script's own child tracking. The pty
+   * runs powershell with -NoExit and outlives the CLI, so pty liveness cannot
+   * supply this. */
+  readonly lifecycle: ClientLifecycle;
+  /** Deterministic pre-launch config read. 'unknown' means the config was
+   * unreadable and must never be rendered as "not in the trusted list". */
   readonly trustedAtLaunch: true | false | 'unknown';
-  readonly promptSeenAt: number | null;
-  readonly promptActive: boolean;
-  readonly completion: LaunchCompletion;
+  /** Client spawn time, for elapsed-based stall reporting. Null before spawn. */
   readonly spawnedAt: number | null;
-  readonly now: number;
 }
 
-function trustEvidence(i: TrustAttentionInputs): AttentionTrust {
-  if (i.promptSeenAt !== null) return 'prompt-seen';
-  if (i.trustedAtLaunch === false) return 'unaccepted';
-  if (i.trustedAtLaunch === 'unknown') return 'unknown';
-  return 'not-implicated';
-}
-
-/** An exit is reportable at ANY readiness -- readiness falls to 'disconnected' on
- * teardown, and gating on 'waiting' would erase the diagnosis exactly when it
- * matters. Every other rule applies only while the client could still connect. */
-export function deriveAttention(i: TrustAttentionInputs): Omit<Attention, 'since'> | undefined {
-  if (i.launchId === null) return undefined;
-  if (i.completion === 'exited' || i.completion === 'failed') return { state: 'exited', trust: trustEvidence(i) };
-  if (i.completion === 'starting') return undefined;
-  if (i.readiness !== 'waiting' && i.readiness !== 'authenticated') return undefined;
-  if (i.promptActive) return { state: 'blocked', trust: 'prompt-seen' };
-  const elapsed = i.spawnedAt === null ? 0 : i.now - i.spawnedAt;
-  // STALL is checked before GRACE on purpose. Both can be true at once; the stall
-  // reading must win so a long wait escalates to "this is not connecting" instead
-  // of repeating "likely folder trust" forever. Trust evidence is retained either way.
-  if (elapsed >= TRUST_STALL_MS) return { state: 'stalled', trust: trustEvidence(i) };
-  if (i.trustedAtLaunch === false && elapsed >= TRUST_GRACE_MS) return { state: 'blocked', trust: 'unaccepted' };
-  return undefined;
-}
-
-export function createTrustAttention() {
-  let launchId: string | null = null;
-  let raised = false;
-  let since = 0;
-
-  return {
-    /** `since` marks when the episode began, so it survives every state and trust
-     * change within one launch and re-stamps only after the attention lapses. */
-    update(i: TrustAttentionInputs): Attention | undefined {
-      if (i.launchId !== launchId) { launchId = i.launchId; raised = false; since = 0; }
-      const next = deriveAttention(i);
-      if (!next) { raised = false; since = 0; return undefined; }
-      if (!raised) { raised = true; since = i.now; }
-      return { state: next.state, trust: next.trust, since };
-    },
-    /** Only FUTURE instants at which the output can actually change. Returning a
-     * past or already-applied deadline lets the caller reschedule an expired timer. */
-    nextDeadline(i: TrustAttentionInputs): number | null {
-      if (i.launchId === null || i.spawnedAt === null) return null;
-      if (i.completion !== 'running') return null;
-      if (i.readiness !== 'waiting' && i.readiness !== 'authenticated') return null;
-      if (i.promptActive) return null;
-      const grace = i.spawnedAt + TRUST_GRACE_MS;
-      const stall = i.spawnedAt + TRUST_STALL_MS;
-      if (i.trustedAtLaunch === false && i.now < grace) return grace;
-      if (i.now < stall) return stall;
-      return null;
-    },
-  };
+export function isClientLifecycle(value: unknown): value is ClientLifecycle {
+  return value === 'starting' || value === 'running' || value === 'exited' || value === 'failed';
 }
 ```
+
+Extend `projectCommunicationSessionStatus` with the same allowlist discipline it already uses, keeping the existing checks and adding:
+
+```ts
+if (typeof raw.promptSeen !== 'boolean' || !isClientLifecycle(raw.lifecycle)
+  || !(raw.trustedAtLaunch === true || raw.trustedAtLaunch === false || raw.trustedAtLaunch === 'unknown')
+  || !(raw.spawnedAt === null
+    || (typeof raw.spawnedAt === 'number' && Number.isSafeInteger(raw.spawnedAt) && raw.spawnedAt >= 0))) return null;
+// No launch means no evidence, matching the existing sessionLabel/prompt invariant.
+if (raw.sessionLabel === null && (raw.promptSeen || raw.lifecycle !== 'starting' || raw.spawnedAt !== null)) return null;
+```
+
+and copy the four new fields in the return.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run electron/communicationBridge/trustAttention.test.ts`
-Expected: PASS, 16 tests.
+Run: `npx vitest run src/shared/communicationSessionStatus.test.ts`
+Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the trust precheck**
 
-```bash
-git add electron/communicationBridge/trustAttention.ts electron/communicationBridge/trustAttention.test.ts
-git commit -m "feat(communication): derive folder-trust attention from launch evidence"
-```
-
----
-
-### Task 4: Pre-launch trust precheck
-
-**Files:**
-- Modify: `electron/communicationBridge/launchConfig.ts` (add an exported function; reuses the existing `jsonFile` helper at line 37)
-- Modify: `electron/communicationBridge/launchConfig.test.ts` (append a describe block)
-
-**Interfaces:**
-- Consumes: the module-private `jsonFile()` helper, and `homedir`/`resolve`/`join`, all already imported in the file.
-- Produces: `readLaunchTrust(directory: string): Promise<true | false | 'unknown'>`.
-
-Trust keys are stored forward-slashed (`C:/Users/Matt`) while `homedir()` returns backslashes, so comparison must go through `resolve()` + lowercase — the same normalization `checkPolicy` already uses at line 82.
-
-- [ ] **Step 1: Write the failing test**
-
-```ts
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { readLaunchTrust } from './launchConfig';
-
-describe('readLaunchTrust', () => {
-  it('returns false for a directory with no entry at all', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'trust-precheck-'));
-    try { expect(await readLaunchTrust(dir)).toBe(false); }
-    finally { await rm(dir, { recursive: true, force: true }); }
-  });
-
-  it('reports the real home directory as a boolean, never a guess', async () => {
-    const result = await readLaunchTrust(homedir());
-    expect([true, false, 'unknown']).toContain(result);
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run electron/communicationBridge/launchConfig.test.ts -t readLaunchTrust`
-Expected: FAIL — `readLaunchTrust` is not exported.
-
-- [ ] **Step 3: Write the implementation**
-
-Add to `electron/communicationBridge/launchConfig.ts`:
+Add to `electron/communicationBridge/launchConfig.ts`. Trust keys are stored forward-slashed (`C:/Users/Matt`) while `homedir()` is backslashed, so both sides go through `resolve()` + lowercase — the normalization `checkPolicy` already uses at line 82:
 
 ```ts
 /** Deterministic pre-launch evidence: does the client already trust this folder?
- * An absent entry means it has never been trusted, which is a real `false`. Only
- * an unreadable or malformed config yields 'unknown', and 'unknown' must never be
- * rendered as "not in the trusted list" -- we simply could not tell.
- * Keys are stored forward-slashed while homedir() is backslashed, so both sides go
- * through resolve() + lowercase, the same normalization checkPolicy already uses. */
+ * An absent entry means it has never been trusted, which is a real `false`. Only an
+ * unreadable or malformed config yields 'unknown'. */
 export async function readLaunchTrust(directory: string): Promise<true | false | 'unknown'> {
   try {
     const user = await jsonFile(join(homedir(), '.claude.json'));
@@ -515,402 +420,204 @@ export async function readLaunchTrust(directory: string): Promise<true | false |
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `npx vitest run electron/communicationBridge/launchConfig.test.ts`
-Expected: PASS — the new tests plus all pre-existing tests in the file.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add electron/communicationBridge/launchConfig.ts electron/communicationBridge/launchConfig.test.ts
-git commit -m "feat(communication): read folder trust from the client config before launch"
-```
-
----
-
-### Task 5: Project attention across IPC
-
-**Files:**
-- Modify: `src/shared/communicationSnapshot.ts` (predicate near line 7, validation near line 13, return near line 39)
-- Modify: `src/shared/communicationSnapshot.test.ts` (append)
-
-**Interfaces:**
-- Consumes: `Attention` from `./communicationTypes`; the existing `object` and `count` helpers.
-- Produces: no new exports — `projectCommunicationSnapshot` gains `attention` passthrough.
-
-`projectCommunicationSnapshot` is a strict allowlist projector. A field present on the type and on `snapshot()` but missing here type-checks cleanly and silently never reaches the renderer. The guard test exists to catch that for every future field, not just this one.
-
-- [ ] **Step 1: Write the failing test**
+Test it in `launchConfig.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest';
-import { projectCommunicationSnapshot } from './communicationSnapshot';
-import type { CommunicationBridgeSnapshot } from '../../electron/communicationBridge/mainIntegration';
+import { homedir, tmpdir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { readLaunchTrust } from './launchConfig';
 
-const full: CommunicationBridgeSnapshot = {
-  enabled: true, readiness: 'waiting', cleanup: 'confirmed', metadata: [],
-  remainingCredits: 3, attention: { state: 'blocked', trust: 'unaccepted', since: 5 },
-};
-
-describe('projectCommunicationSnapshot attention', () => {
-  it('carries a well-formed attention through', () => {
-    expect(projectCommunicationSnapshot(full)?.attention)
-      .toEqual({ state: 'blocked', trust: 'unaccepted', since: 5 });
+describe('readLaunchTrust', () => {
+  it('returns false for a directory with no entry at all', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'trust-precheck-'));
+    try { expect(await readLaunchTrust(dir)).toBe(false); }
+    finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it('accepts a snapshot with no attention at all', () => {
-    const { attention, ...rest } = full;
-    const projected = projectCommunicationSnapshot(rest);
-    expect(projected).not.toBeNull();
-    expect(projected!.attention).toBeUndefined();
-  });
-
-  it.each([
-    ['bad state', { state: 'nope', trust: 'unaccepted', since: 5 }],
-    ['bad trust', { state: 'blocked', trust: 'nope', since: 5 }],
-    ['negative since', { state: 'blocked', trust: 'unaccepted', since: -1 }],
-    ['non-integer since', { state: 'blocked', trust: 'unaccepted', since: 1.5 }],
-    ['not an object', 'blocked'],
-  ])('rejects the whole snapshot on %s', (_label, attention) => {
-    expect(projectCommunicationSnapshot({ ...full, attention })).toBeNull();
-  });
-
-  it('drops attention when it disappears, so the renderer can clear', () => {
-    const { attention, ...rest } = full;
-    expect('attention' in projectCommunicationSnapshot(rest)!).toBe(false);
-  });
-
-  it('projects every top-level key of a fully-populated snapshot', () => {
-    const projected = projectCommunicationSnapshot(full);
-    expect(projected).not.toBeNull();
-    expect(Object.keys(projected!).sort()).toEqual(Object.keys(full).sort());
+  it('never guesses for the real home directory', async () => {
+    expect([true, false, 'unknown']).toContain(await readLaunchTrust(homedir()));
   });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 6: Carry the evidence on the launch**
 
-Run: `npx vitest run src/shared/communicationSnapshot.test.ts -t attention`
-Expected: FAIL — `attention` is dropped, so the first test gets `undefined`.
+In `mainIntegration.ts`, extend the `Launch` interface and mirror the fields into `snapshot()`'s `sessionStatus`, defaulting a new launch to `promptSeen: false`, `lifecycle: 'starting'`, `trustedAtLaunch: 'unknown'`, `spawnedAt: null`. Set `promptSeen` to `true` inside the existing `observePrompt` whenever it accepts a `'folder-trust'` value, and add the sibling observation method next to it:
 
-- [ ] **Step 3: Write the implementation**
-
-Add the predicate beside the existing `cleanup` predicate in `src/shared/communicationSnapshot.ts`:
+`Launch` is module-private, so a public method must not reference it through `Pick` — that breaks declaration emit. Export an explicit shape beside `CommunicationBridgeSnapshot`:
 
 ```ts
-const attention = (value: unknown): value is Attention => object(value)
-  && ['blocked', 'exited', 'stalled'].includes(value.state as string)
-  && ['unaccepted', 'prompt-seen', 'unknown', 'not-implicated'].includes(value.trust as string)
-  && count(value.since);
-```
-
-Import the type at the top of the file:
-
-```ts
-import type { Attention, CommunicationMetadata } from './communicationTypes';
-```
-
-Reject malformed input alongside the other top-level field checks, immediately after the existing `readiness`/`metadata` guard:
-
-```ts
-if (value.attention !== undefined && !attention(value.attention)) return null;
-```
-
-Copy it field-by-field in the return, mirroring the `remainingCredits` spread:
-
-```ts
-return { enabled: snapshot.enabled, readiness: snapshot.readiness, cleanup: snapshot.cleanup, metadata,
-  ...(count(snapshot.remainingCredits) ? { remainingCredits: snapshot.remainingCredits } : {}),
-  ...(attention(value.attention)
-    ? { attention: { state: value.attention.state, trust: value.attention.trust, since: value.attention.since } }
-    : {}) };
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `npx vitest run src/shared/communicationSnapshot.test.ts`
-Expected: PASS — new tests plus all pre-existing tests in the file.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/shared/communicationSnapshot.ts src/shared/communicationSnapshot.test.ts
-git commit -m "feat(communication): project attention across the renderer boundary"
-```
-
----
-
-### Task 6: Wire the evidence in main
-
-**Files:**
-- Modify: `electron/communicationBridge/mainIntegration.ts` (constructor options, `snapshot()` at 63-72)
-- Modify: `electron/main.ts:1051-1053` (the bridge `spawn` callback)
-- Modify: `electron/communicationBridge/mainIntegration.test.ts` (append)
-
-**Interfaces:**
-- Consumes: `createTrustAttention` (Task 3), `createTrustPromptMatcher` (Task 1), `readLaunchTrust` (Task 4), `PreparedBridgeLaunch.completion()`.
-- Produces: two new `CommunicationBridgeOptions` fields and two new public methods:
-
-```ts
-// on CommunicationBridgeOptions
-attention?: {
-  update(inputs: TrustAttentionInputs): Attention | undefined;
-  nextDeadline(inputs: TrustAttentionInputs): number | null;
-};
-evidence?: () => Pick<TrustAttentionInputs,
-  'trustedAtLaunch' | 'promptSeenAt' | 'promptActive' | 'completion' | 'spawnedAt'>;
-
-// on CommunicationBridgeIntegration
-attentionDeadline(): number | null;
-refreshAttention(): void;
-```
-
-Launch evidence is owned by `main.ts`, not by the bridge. The `prepare` and `spawn` callbacks that already live there are where the trust precheck, the spawn timestamp, and `completion()` naturally land, so the bridge stays about pipes and launches and takes a plain `evidence` callback. Both are injected, so `mainIntegration.test.ts` drives them with no pty and no fs.
-
-`GRACE` and `STALL` elapse with no event, so `main.ts` schedules one timer from `attentionDeadline()`. The timer calls `refreshAttention()`, which emits; the emit runs `onSnapshot`, which reschedules. The loop terminates on its own when `nextDeadline()` returns `null`.
-
-**`clientAlive` is deliberately absent.** `spawnPty` runs `powershell.exe -NoExit`, so the pty outlives the CLI and `terminalAlive` tracks the shell. Use `completion()`, which is backed by `started.json` and the `completed` file the launch script writes.
-
-- [ ] **Step 1: Write the failing test**
-
-```ts
-it('surfaces attention on the snapshot without touching readiness', async () => {
-  const attention = {
-    update: () => ({ state: 'blocked' as const, trust: 'unaccepted' as const, since: 7 }),
-    nextDeadline: () => null,
-  };
-  const bridge = new CommunicationBridgeIntegration({ attention });
-  await bridge.setEnabled(true);
-  const snapshot = bridge.snapshot();
-  expect(snapshot.attention).toEqual({ state: 'blocked', trust: 'unaccepted', since: 7 });
-  expect(snapshot.readiness).toBe('disconnected');
-});
-
-it('omits attention entirely when the deriver reports none', async () => {
-  const bridge = new CommunicationBridgeIntegration({
-    attention: { update: () => undefined, nextDeadline: () => null },
-  });
-  await bridge.setEnabled(true);
-  expect('attention' in bridge.snapshot()).toBe(false);
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run electron/communicationBridge/mainIntegration.test.ts -t attention`
-Expected: FAIL — `attention` is `undefined` on the snapshot.
-
-- [ ] **Step 3: Wire it into the bridge**
-
-Add the imports at the top of `mainIntegration.ts`:
-
-```ts
-import type { Attention } from '../../src/shared/communicationTypes';
-import type { TrustAttentionInputs } from './trustAttention';
-```
-
-Add the two fields to `CommunicationBridgeOptions`, exactly as given in the Interfaces block above.
-
-`snapshot()` currently derives readiness inline inside its return object. `attentionDeadline()` needs the same value, so extract it into a private helper first — this is a pure extraction with no behaviour change:
-
-```ts
-private readinessNow(): CommunicationBridgeSnapshot['readiness'] {
-  return !this.enabled ? 'disabled' : !this.current ? 'disconnected'
-    : this.current.authenticated && this.current.listed ? 'ready'
-      : this.current.authenticated ? 'authenticated' : 'waiting';
-}
-
-private deriveAttentionNow(): Attention | undefined {
-  const evidence = this.options.evidence?.();
-  if (!evidence || !this.options.attention) return undefined;
-  return this.options.attention.update({
-    launchId: this.current?.id ?? null, readiness: this.readinessNow(), now: Date.now(), ...evidence });
+export interface LaunchEvidence {
+  readonly lifecycle?: ClientLifecycle;
+  readonly trustedAtLaunch?: true | false | 'unknown';
+  readonly spawnedAt?: number | null;
 }
 ```
 
-Then `snapshot()` becomes — every existing field computed exactly as before, with `readiness` now coming from the helper and one spread appended:
-
 ```ts
-snapshot(): CommunicationBridgeSnapshot {
-  const metadata = this.controller.metadata();
-  const controllerCleanup = this.controller.cleanupStatus();
-  if (controllerCleanup === 'failed') this.cleanup = 'failed';
-  const attention = this.deriveAttentionNow();
-  return { enabled: this.enabled,
-    readiness: this.readinessNow(),
-    cleanup: this.cleanup === 'failed' ? 'failed'
-      : this.cleanup === 'pending' || this.closing.size > 0 || controllerCleanup === 'pending' ? 'pending' : 'confirmed',
-    metadata, ...(this.current ? { remainingCredits: this.controller.remainingCredits() } : {}),
-    ...(attention ? { attention } : {}) };
+/** Main-only observation seam, same authority rules as observePrompt: labels and
+ * evidence never grant capability, and stale launches are rejected. */
+observeLaunch(launchId: string, evidence: LaunchEvidence): boolean {
+  const launch = this.current;
+  if (!this.enabled || this.disposed || !launch?.valid || launch.id !== launchId) return false;
+  let changed = false;
+  for (const key of ['lifecycle', 'trustedAtLaunch', 'spawnedAt'] as const) {
+    const next = evidence[key];
+    if (next !== undefined && launch[key] !== next) { (launch as Record<string, unknown>)[key] = next; changed = true; }
+  }
+  if (changed) this.emit();
+  return true;
 }
 ```
 
-Add the two public methods beside it:
+- [ ] **Step 7: Feed it from the launch boundaries**
 
-```ts
-/** Absolute ms of the next instant at which attention could change, for the caller's timer. */
-attentionDeadline(): number | null {
-  const evidence = this.options.evidence?.();
-  if (!evidence || !this.options.attention) return null;
-  return this.options.attention.nextDeadline({
-    launchId: this.current?.id ?? null, readiness: this.readinessNow(), now: Date.now(), ...evidence });
-}
-
-/** Re-emit so a threshold crossing reaches the renderer. Nothing else produces an
- * event when GRACE or STALL simply elapses. */
-refreshAttention(): void { this.emit(); }
-```
-
-- [ ] **Step 4: Track launch evidence in main**
-
-In `electron/main.ts`, add these declarations **before** the bridge construction at line 84, so the `evidence` closure never reads an uninitialised binding:
-
-```ts
-const trustPromptMatcher = createTrustPromptMatcher();
-let connectedTrust: true | false | 'unknown' = 'unknown';
-let connectedSpawnedAt: number | null = null;
-let connectedCompletion: LaunchCompletion = 'starting';
-```
-
-Imports to add: `createTrustPromptMatcher` from `./communicationBridge/trustPromptMatcher`, `createTrustAttention` and `type LaunchCompletion` from `./communicationBridge/trustAttention`, `readLaunchTrust` from `./communicationBridge/launchConfig`, and `homedir` from `node:os` if it is not already imported.
-
-Extend the bridge construction at lines 84-86:
-
-```ts
-const communicationBridge = new CommunicationBridgeIntegration({
-  onSnapshot: snapshot => { sendToWindow('communication:snapshot', snapshot); scheduleAttentionDeadline(); },
-  attention: createTrustAttention(),
-  evidence: () => {
-    const prompt = trustPromptMatcher.state();
-    return { trustedAtLaunch: connectedTrust, promptSeenAt: prompt.seenAt, promptActive: prompt.active,
-      completion: connectedCompletion, spawnedAt: connectedSpawnedAt };
-  },
-});
-
-let attentionTimer: ReturnType<typeof setTimeout> | undefined;
-function scheduleAttentionDeadline(): void {
-  if (attentionTimer) { clearTimeout(attentionTimer); attentionTimer = undefined; }
-  const deadline = communicationBridge.attentionDeadline();
-  if (deadline === null) return;
-  attentionTimer = setTimeout(() => {
-    attentionTimer = undefined;
-    communicationBridge.refreshAttention();
-  }, Math.max(0, deadline - Date.now()));
-}
-```
-
-- [ ] **Step 5: Set the evidence at the real launch boundaries**
-
-The launch cwd is `homedir()`, set in `launchConfig.ts:172`. Read trust against that same directory, in the existing `prepare` callback at line 1047:
+In `electron/main.ts`, the launch cwd is `homedir()` (set in `launchConfig.ts:172`), so read trust against that same directory:
 
 ```ts
 prepare: async manifest => {
-  connectedTrust = await readLaunchTrust(homedir());
-  connectedSpawnedAt = null;
-  connectedCompletion = 'starting';
   trustPromptMatcher.reset();
   const prepared = await prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable });
-  // completion() settles when the launch script's child actually ends. This is the
-  // authoritative client lifecycle -- the pty runs powershell with -NoExit and
-  // outlives the CLI, so pty liveness would report "running" through every exit.
-  void prepared.completion().then(
-    result => { connectedCompletion = result; communicationBridge.refreshAttention(); },
-    () => { connectedCompletion = 'failed'; communicationBridge.refreshAttention(); });
+  const launchId = communicationBridge.currentLaunchId();
+  if (launchId) {
+    void readLaunchTrust(homedir()).then(trustedAtLaunch =>
+      communicationBridge.observeLaunch(launchId, { trustedAtLaunch }));
+    // completion() settles when the launch script's own child ends -- the positive
+    // exit evidence this task requires.
+    void prepared.completion().then(
+      lifecycle => communicationBridge.observeLaunch(launchId, { lifecycle }),
+      () => communicationBridge.observeLaunch(launchId, { lifecycle: 'failed' }));
+  }
   return prepared;
 },
 ```
 
-And in the existing `spawn` callback at lines 1050-1056:
+and in `spawn`, before `ptyLifecycle.start(...)`:
 
 ```ts
-spawn: (bundle, onExit) => {
-  connectedSpawnedAt = Date.now();
-  connectedCompletion = 'running';
-  ptyLifecycle.start(() => spawnPty(100, 30, bundle), {
-    onData: data => {
-      sendToWindow('pty:data', data);
-      planUsageScraper.ingest(data);
-      // Refresh only when the prompt reading actually moved. A busy terminal fires
-      // onData constantly, and an unconditional refresh here would push an IPC
-      // snapshot per chunk -- the same trap planUsageScraper documents for its own
-      // capturedAtMs stamping.
-      const before = trustPromptMatcher.state();
-      trustPromptMatcher.ingest(data);
-      const after = trustPromptMatcher.state();
-      if (before.seenAt !== after.seenAt || before.active !== after.active) communicationBridge.refreshAttention();
-    },
-    onAlive: () => sendToWindow('pty:alive', undefined),
-    onExit: () => { onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
-  });
-  liveAgentTracker.notifyPtySpawned(Date.now());
-},
+const launchId = communicationBridge.currentLaunchId();
+if (launchId) communicationBridge.observeLaunch(launchId, { lifecycle: 'running', spawnedAt: Date.now() });
 ```
 
-`trustPromptMatcher.reset()` belongs in `prepare`, not in the pty `onExit`. The exit diagnosis is derived from `promptSeenAt`, so clearing the latch on exit would erase the very evidence that explains the exit; the next launch clears it instead.
+Import `readLaunchTrust` from `./communicationBridge/launchConfig` and `homedir` from `node:os` if not already imported.
 
-- [ ] **Step 6: Run the affected suites**
+- [ ] **Step 8: Run the affected suites**
 
-Run: `npx vitest run electron/communicationBridge/ && npm run typecheck:electron`
+Run: `npx vitest run src/shared/ electron/communicationBridge/ && npm run typecheck:electron`
 Expected: PASS, clean typecheck.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add electron/communicationBridge/mainIntegration.ts electron/communicationBridge/mainIntegration.test.ts electron/main.ts
-git commit -m "feat(communication): feed trust evidence into the bridge snapshot"
+git add src/shared/communicationSessionStatus.ts src/shared/communicationSessionStatus.test.ts electron/communicationBridge/launchConfig.ts electron/communicationBridge/launchConfig.test.ts electron/communicationBridge/mainIntegration.ts electron/communicationBridge/mainIntegration.test.ts electron/main.ts
+git commit -m "feat(communication): obtain positive client-exit and trust evidence"
 ```
 
 ---
 
-### Task 7: Operator-facing copy
+### Task 6: Operator-facing copy
 
 **Files:**
 - Create: `src/components/settings/attentionCopy.ts`
 - Create: `src/components/settings/attentionCopy.test.ts`
-- Modify: `src/components/settings/CommunicationCard.tsx:114`
+- Modify: `src/components/settings/CommunicationCard.tsx` (the status line, now below the Task 2 identity block)
 - Modify: `src/components/layout/CommunicationIndicator.tsx:21`
 - Modify: `src/components/settings/CommunicationCard.test.tsx` (append)
 
 **Interfaces:**
-- Consumes: `Attention` from `src/shared/communicationTypes.ts`.
-- Produces: `attentionCopy(attention: Attention): { readonly title: string; readonly detail: string; readonly canFocusTerminal: boolean }`.
+- Consumes: `CommunicationSessionStatus` (Task 5); `CommunicationBridgeSnapshot['readiness']`.
+- Produces: `deriveAttention(status, readiness, now)` and `attentionCopy(attention)`.
 
-Focus-terminal navigation is `dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })`, with precedent for dispatching it outside the sidebar at `Sidebar.tsx:48-49`. Pair it with the `prepareClaudeTerminal()` the card already imports at line 6.
+Pure derivation, clock injected. `STALL_MS` is provisional: the capture shows the prompt renders at 562 ms, but there is no measured healthy-handshake baseline yet, so 20 s is deliberately generous — a nagging stall banner is worse than a late one.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { describe, expect, it } from 'vitest';
-import { attentionCopy } from './attentionCopy';
-import type { Attention, AttentionState, AttentionTrust } from '../../shared/communicationTypes';
+import { attentionCopy, deriveAttention, STALL_MS } from './attentionCopy';
+import type { CommunicationSessionStatus } from '../../shared/communicationSessionStatus';
 
-const make = (state: AttentionState, trust: AttentionTrust): Attention => ({ state, trust, since: 0 });
+const base: CommunicationSessionStatus = {
+  instanceLabel: 'Instance 0123456789abcdef', sessionLabel: 'Session 1',
+  prompt: 'unknown', promptSeen: false, lifecycle: 'running',
+  trustedAtLaunch: true, spawnedAt: 0,
+};
+const s = (over: Partial<CommunicationSessionStatus>) => ({ ...base, ...over });
+
+describe('deriveAttention', () => {
+  it('reports nothing during a healthy early wait', () => {
+    expect(deriveAttention(s({}), 'waiting', 500)).toBeUndefined();
+  });
+
+  it('reports nothing once readiness reaches ready', () => {
+    expect(deriveAttention(s({}), 'ready', STALL_MS)).toBeUndefined();
+  });
+
+  it('blocks while the prompt is currently on screen', () => {
+    expect(deriveAttention(s({ prompt: 'folder-trust', promptSeen: true }), 'waiting', 600))
+      .toEqual({ state: 'blocked', trust: 'prompt-seen' });
+  });
+
+  it('suspects folder trust from the precheck alone', () => {
+    expect(deriveAttention(s({ trustedAtLaunch: false }), 'waiting', 4000))
+      .toEqual({ state: 'blocked', trust: 'unaccepted' });
+  });
+
+  it('does not suspect folder trust when the config was unreadable', () => {
+    expect(deriveAttention(s({ trustedAtLaunch: 'unknown' }), 'waiting', 4000)).toBeUndefined();
+  });
+
+  it('escalates to stalled while keeping the trust evidence', () => {
+    expect(deriveAttention(s({ trustedAtLaunch: false }), 'waiting', STALL_MS))
+      .toEqual({ state: 'stalled', trust: 'unaccepted' });
+  });
+
+  it('covers a stall at authenticated, not just waiting', () => {
+    expect(deriveAttention(s({}), 'authenticated', STALL_MS))
+      .toEqual({ state: 'stalled', trust: 'not-implicated' });
+  });
+
+  it('reports an exit at any readiness, including disconnected', () => {
+    expect(deriveAttention(s({ lifecycle: 'exited' }), 'disconnected', 600))
+      .toEqual({ state: 'exited', trust: 'not-implicated' });
+  });
+
+  it('attributes an exit to the prompt when the prompt was seen', () => {
+    expect(deriveAttention(s({ lifecycle: 'exited', promptSeen: true }), 'disconnected', 600))
+      .toEqual({ state: 'exited', trust: 'prompt-seen' });
+  });
+
+  it('never claims an exit before the client spawned', () => {
+    expect(deriveAttention(s({ sessionLabel: null, lifecycle: 'starting', spawnedAt: null }), 'waiting', 60_000))
+      .toBeUndefined();
+  });
+
+  it('keeps an active prompt blocked however long it waits', () => {
+    expect(deriveAttention(s({ prompt: 'folder-trust', promptSeen: true }), 'waiting', 10 * STALL_MS))
+      .toEqual({ state: 'blocked', trust: 'prompt-seen' });
+  });
+});
 
 describe('attentionCopy', () => {
-  it('names the required action when the prompt is confirmed on screen', () => {
-    const copy = attentionCopy(make('blocked', 'prompt-seen'));
+  it('names the required action when the prompt is on screen', () => {
+    const copy = attentionCopy({ state: 'blocked', trust: 'prompt-seen' });
     expect(copy.title).toBe('Action required: folder trust');
     expect(copy.detail).toContain('The default choice exits the client.');
     expect(copy.canFocusTerminal).toBe(true);
   });
 
-  it('states the config fact and hedges only the consequence when merely suspected', () => {
-    const copy = attentionCopy(make('blocked', 'unaccepted'));
-    expect(copy.detail).toContain("isn't in the client's trusted list");
+  it('states the config fact and hedges only the consequence', () => {
+    expect(attentionCopy({ state: 'blocked', trust: 'unaccepted' }).detail)
+      .toContain("isn't in the client's trusted list");
   });
 
   it('never claims an untrusted folder when the config was unreadable', () => {
-    const copy = attentionCopy(make('stalled', 'unknown'));
-    expect(copy.detail).not.toContain('trusted list');
-  });
-
-  it('explains the destructive default after an exit at the prompt', () => {
-    expect(attentionCopy(make('exited', 'prompt-seen')).detail).toContain('default choice exits');
+    expect(attentionCopy({ state: 'stalled', trust: 'unknown' }).detail).not.toContain('trusted list');
   });
 
   it('offers no terminal focus once the client has exited', () => {
-    expect(attentionCopy(make('exited', 'not-implicated')).canFocusTerminal).toBe(false);
+    expect(attentionCopy({ state: 'exited', trust: 'not-implicated' }).canFocusTerminal).toBe(false);
   });
 
   it.each([
@@ -920,7 +627,7 @@ describe('attentionCopy', () => {
     ['exited', 'prompt-seen'], ['exited', 'unaccepted'],
     ['exited', 'unknown'], ['exited', 'not-implicated'],
   ] as const)('never tells the operator to press Enter: %s/%s', (state, trust) => {
-    const copy = attentionCopy(make(state, trust));
+    const copy = attentionCopy({ state, trust });
     expect(`${copy.title} ${copy.detail}`).not.toMatch(/press enter|hit enter/i);
     expect(copy.title.length).toBeGreaterThan(0);
     expect(copy.detail.length).toBeGreaterThan(0);
@@ -936,7 +643,43 @@ Expected: FAIL — cannot resolve `./attentionCopy`.
 - [ ] **Step 3: Write the implementation**
 
 ```ts
-import type { Attention } from '../../shared/communicationTypes';
+import type { CommunicationBridgeSnapshot } from '../../../electron/communicationBridge/mainIntegration';
+import type { CommunicationSessionStatus } from '../../shared/communicationSessionStatus';
+
+export const GRACE_MS = 3_000;
+export const STALL_MS = 20_000;
+
+export type AttentionState = 'blocked' | 'exited' | 'stalled';
+export type AttentionTrust = 'unaccepted' | 'prompt-seen' | 'unknown' | 'not-implicated';
+export interface Attention { readonly state: AttentionState; readonly trust: AttentionTrust }
+
+function trustEvidence(status: CommunicationSessionStatus): AttentionTrust {
+  if (status.promptSeen) return 'prompt-seen';
+  if (status.trustedAtLaunch === false) return 'unaccepted';
+  if (status.trustedAtLaunch === 'unknown') return 'unknown';
+  return 'not-implicated';
+}
+
+/** An exit is reportable at ANY readiness -- readiness falls to 'disconnected' on
+ * teardown, and gating on 'waiting' would erase the diagnosis exactly when it
+ * matters. Every other rule applies only while the client could still connect. */
+export function deriveAttention(status: CommunicationSessionStatus,
+  readiness: CommunicationBridgeSnapshot['readiness'], now: number): Attention | undefined {
+  if (status.sessionLabel === null) return undefined;
+  if (status.lifecycle === 'exited' || status.lifecycle === 'failed') {
+    return { state: 'exited', trust: trustEvidence(status) };
+  }
+  if (status.lifecycle === 'starting' || status.spawnedAt === null) return undefined;
+  if (readiness !== 'waiting' && readiness !== 'authenticated') return undefined;
+  if (status.prompt === 'folder-trust') return { state: 'blocked', trust: 'prompt-seen' };
+  const elapsed = now - status.spawnedAt;
+  // STALL is checked before GRACE on purpose. Both can be true at once; the stall
+  // reading must win so a long wait escalates to "this is not connecting" instead of
+  // repeating "likely folder trust" forever. Trust evidence is retained either way.
+  if (elapsed >= STALL_MS) return { state: 'stalled', trust: trustEvidence(status) };
+  if (status.trustedAtLaunch === false && elapsed >= GRACE_MS) return { state: 'blocked', trust: 'unaccepted' };
+  return undefined;
+}
 
 export interface AttentionCopy {
   readonly title: string;
@@ -944,10 +687,10 @@ export interface AttentionCopy {
   readonly canFocusTerminal: boolean;
 }
 
-// Two rules hold across every line below. Nothing says "press Enter", because
-// Enter selects "No, exit" on the trust prompt. And nothing tells the operator to
-// trust the folder outright -- the launch cwd is their home directory, and copy
-// that nudges someone into trusting all of it is the wrong default.
+// Two rules hold across every line below. Nothing says "press Enter", because Enter
+// selects "No, exit" on the trust prompt. And nothing tells the operator to trust the
+// folder outright -- the launch cwd is their home directory, and copy that nudges
+// someone into trusting all of it is the wrong default.
 export function attentionCopy(attention: Attention): AttentionCopy {
   const focus = attention.state !== 'exited';
   if (attention.state === 'blocked') {
@@ -987,13 +730,41 @@ export function attentionCopy(attention: Attention): AttentionCopy {
 Run: `npx vitest run src/components/settings/attentionCopy.test.ts`
 Expected: PASS, 15 tests.
 
-- [ ] **Step 5: Render it in the settings card**
+- [ ] **Step 5: Add the threshold tick**
 
-Replace the status line at `CommunicationCard.tsx:114`. Attention becomes the primary status; the raw readiness enum is demoted to secondary detail:
+`GRACE_MS` and `STALL_MS` elapse with no event, so a component showing this must re-render at the crossing. Create `src/components/settings/useAttentionTick.ts`:
+
+```ts
+import { useEffect, useState } from 'react';
+import { GRACE_MS, STALL_MS } from './attentionCopy';
+
+/** Re-render at the next threshold crossing. Nothing else produces an event when
+ * GRACE or STALL simply elapses. */
+export function useAttentionTick(spawnedAt: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (spawnedAt === null) return;
+    const next = [spawnedAt + GRACE_MS, spawnedAt + STALL_MS].find(deadline => deadline > Date.now());
+    if (next === undefined) return;
+    const timer = setTimeout(() => setNow(Date.now()), next - Date.now());
+    return () => clearTimeout(timer);
+  }, [spawnedAt, now]);
+  return now;
+}
+```
+
+- [ ] **Step 6: Render it in the settings card**
+
+In `CommunicationCard.tsx`, above the existing `<p role="status">Bridge: ...` line (which stays, demoted to secondary detail). Import `attentionCopy`, `deriveAttention`, and `useAttentionTick`; `dispatch` is already in scope at line 35 and `prepareClaudeTerminal` is already imported at line 6:
 
 ```tsx
-{snapshot?.attention && (() => {
-  const copy = attentionCopy(snapshot.attention);
+const now = useAttentionTick(snapshot?.sessionStatus.spawnedAt ?? null);
+const attention = snapshot && deriveAttention(snapshot.sessionStatus, snapshot.readiness, now);
+```
+
+```tsx
+{attention && (() => {
+  const copy = attentionCopy(attention);
   return <div role="alert" style={{ marginTop: 10 }}>
     <strong style={{ color: colors.textPrimary }}>{copy.title}</strong>
     <p style={{ margin: '4px 0 0' }}>{copy.detail}</p>
@@ -1004,36 +775,32 @@ Replace the status line at `CommunicationCard.tsx:114`. Attention becomes the pr
       border: `1px solid ${colors.panelBorder}`, borderRadius: 7 }}>Focus terminal</Button>}
   </div>;
 })()}
-<p role="status">Bridge: {snapshot ? snapshot.readiness : 'status unavailable'}.
-  {snapshot && ` Cleanup: ${snapshot.cleanup}.`}</p>
 ```
 
-Import `attentionCopy` at the top of the file.
+`SET_ACTIVE_TAB` with `tab: 'Terminal'` is the navigation action; `Sidebar.tsx:48-49` is the precedent for dispatching it from outside the sidebar.
 
-- [ ] **Step 6: Render it in the global indicator**
+- [ ] **Step 7: Render it in the global indicator**
 
-At `CommunicationIndicator.tsx:21`, the always-visible surface must reflect attention too — Settings is usually closed, so a Settings-only fix leaves the reported problem in place. Add the import first:
-
-```ts
-import { attentionCopy } from '../settings/attentionCopy';
-```
-
+Settings is usually closed, so a Settings-only fix leaves the reported problem in place. At `CommunicationIndicator.tsx:21`, add `import { attentionCopy, deriveAttention } from '../settings/attentionCopy';` and:
 
 ```ts
 detail: snapshot
-  ? (snapshot.attention ? attentionCopy(snapshot.attention).title : `Bridge ${snapshot.readiness}`)
+  ? (() => {
+      const attention = deriveAttention(snapshot.sessionStatus, snapshot.readiness, Date.now());
+      return attention ? attentionCopy(attention).title : `Bridge ${snapshot.readiness}`;
+    })()
   : 'Status unavailable',
 ```
 
-- [ ] **Step 7: Run the full suite**
+- [ ] **Step 8: Run the full verification set**
 
-Run: `npm test && npm run typecheck:electron`
-Expected: PASS — 1,691 pre-existing tests plus the ~45 added by this plan.
+Run: `npm test && npm run typecheck:electron && npm run build`
+Expected: PASS — the 1,732-test baseline plus roughly 40 added by this plan; both checks exit 0.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/components/settings/attentionCopy.ts src/components/settings/attentionCopy.test.ts src/components/settings/CommunicationCard.tsx src/components/settings/CommunicationCard.test.tsx src/components/layout/CommunicationIndicator.tsx
+git add src/components/settings/attentionCopy.ts src/components/settings/attentionCopy.test.ts src/components/settings/useAttentionTick.ts src/components/settings/CommunicationCard.tsx src/components/settings/CommunicationCard.test.tsx src/components/layout/CommunicationIndicator.tsx
 git commit -m "feat(communication): tell the operator when the client needs a trust decision"
 ```
 
@@ -1041,6 +808,6 @@ git commit -m "feat(communication): tell the operator when the client needs a tr
 
 ## Calibration follow-up
 
-`TRUST_STALL_MS` ships provisional. Once a connected launch reaches `ready` end to end on a trusted folder, measure the spawn-to-`ready` interval and tighten the constant if 20 s is far above it. Do not tighten it below an observed healthy handshake — a nagging stall banner is worse than a late one.
+`STALL_MS` ships provisional. Once a connected launch reaches `ready` end to end on a trusted folder, measure spawn-to-`ready` and tighten it if 20 s is far above that. Never tighten below an observed healthy handshake.
 
-`TRUST_GRACE_MS` matters less than it looks: the real capture shows the prompt renders at 562 ms, so the matcher normally reaches `confirmed` long before the grace window elapses. Grace only covers the case where the matcher misses.
+`GRACE_MS` matters less than it looks: the capture shows the prompt renders at 562 ms, so `prompt === 'folder-trust'` normally arrives long before the grace window elapses. Grace only covers the case where recognition misses.
