@@ -4,6 +4,7 @@ import { useColors } from '../shared/useColors';
 import { useRef, useState } from 'react';
 import { Button } from '../shared/Button';
 import { prepareClaudeTerminal } from '../terminal/PtyTerminal';
+import { CommunicationClientStatus } from '../terminal/CommunicationClientStatus';
 
 const messages: Record<string, string> = {
   LAUNCH_CONFIG_CLEANUP_FAILED: 'Partially prepared launch files could not be removed. Communication remains blocked because cleanup failed.',
@@ -113,10 +114,11 @@ export function CommunicationCard() {
     {grantError && <p role="alert">{grantError}</p>}
     {snapshot && <p data-testid="communication-session-identity">
       Aether instance: {snapshot.sessionStatus.instanceLabel}.<br />
-      Bridge launch: {snapshot.sessionStatus.sessionLabel ?? 'No active launch'}.
+      Claude session: {snapshot.sessionStatus.sessionLabel ?? 'No active launch'}.
     </p>}
+    <CommunicationClientStatus />
     <p>Bridge connection does not establish whether Claude is ready for input.</p>
-    <p role="status">Bridge: {snapshot ? snapshot.readiness : 'status unavailable'}.
+    <p role="status" aria-label="Bridge status">Bridge: {snapshot ? snapshot.readiness : 'status unavailable'}.
       {snapshot && ` Cleanup: ${snapshot.cleanup}.`}</p>
     {state.communicationError && <p role="alert">{messages[state.communicationError] ?? state.communicationError}</p>}
   </section>;

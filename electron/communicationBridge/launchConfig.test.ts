@@ -33,6 +33,30 @@ describe('bridge policy', () => {
 });
 
 describe.runIf(process.platform === 'win32')('private Windows launch', () => {
+  it('retains only observed PID evidence after receipt cleanup and distinguishes read failure', async () => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch(options, dependencies);
+    await writeFile(join(launch.directory, 'started.json'), JSON.stringify({ pid: process.pid }));
+    expect(await launch.completion()).toBe('running');
+    await launch.cleanup();
+    expect(await readdir(options.root)).toEqual([]);
+    expect(await launch.completion()).toBe('running');
+    const probe = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); });
+    try {
+      await expect(launch.completion()).rejects.toThrow('LAUNCH_STATUS_UNREADABLE');
+      probe.mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+      expect(await launch.completion()).toBe('exited');
+    } finally { probe.mockRestore(); }
+  });
+  it('does not infer exit or running from absent or malformed startup evidence', async () => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch(options, dependencies);
+    expect(await launch.completion()).toBe('starting');
+    await writeFile(join(launch.directory, 'started.json'), JSON.stringify({ pid: 'secret' }));
+    expect(await launch.completion()).toBe('failed');
+    await launch.cleanup();
+    expect(await launch.completion()).toBe('unknown');
+  });
   it.runIf(process.env.AETHER_LAUNCH_PREFLIGHT === '1')('checks installed native CLI version and local policy without a model call', async () => {
     const path = await preflightBridgeLaunch({ nodePath: process.execPath, helperPath: join(process.cwd(), 'out/main/communication-mcp.js') });
     expect(path.toLowerCase()).toMatch(/claude\.exe$/);
@@ -58,7 +82,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     expect(launch.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(launch.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS).toBe('120000');
     expect(launch.env.AETHER_BRIDGE_CAPABILITY).toBeUndefined();
-    expect(await launch.completion()).toBe('running');
+    expect(await launch.completion()).toBe('starting');
     await launch.cleanup();
     expect(await readdir(options.root)).toEqual([]);
   });

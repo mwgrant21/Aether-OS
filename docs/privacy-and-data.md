@@ -498,12 +498,25 @@ transcripts. Aether does not delete or alter those histories and does not claim 
 nonpersistence or an effective ephemeral-session flag. Explicit clipboard copies also leave
 Aether's retention boundary. Nothing is forwarded to another model merely to display or summarize it.
 
-**Cross-check display identity and prompt status (Task 2).** The runtime communication
-snapshot includes an independently generated instance label, a numbered current bridge-launch
-label, and an allowlisted prompt observation (`unknown` or `folder-trust`). These display
-labels are not credentials and are never accepted as authorization. The status contains no
-pipe endpoint, capability, raw terminal text, or userData path. The existing runtime-snapshot
-persistence exclusion applies to these fields too. Replacement and revocation clear the launch
-label and prompt observation; an old launch cannot update its successor's status. Bridge tool
-listing does not establish terminal input readiness. No detector is wired in Task 2, so normal
-runtime prompt status remains unknown. Bridge revocation is not evidence of a client exit.
+**Cross-check display identity and client status (Tasks 2–5).** The runtime communication
+snapshot includes an independently generated instance label, a numbered session label,
+an allowlisted prompt observation (`unknown` or `folder-trust`), client lifecycle evidence
+(`unknown`, `starting`, `running`, `exited`, or `failed`), and whether launch authority is
+current. These display fields never authorize bridge operations. No pipe endpoint, capability,
+raw terminal text, PID, or userData path crosses this status boundary. The existing runtime
+snapshot persistence exclusion applies to all of these fields.
+
+The main-process prompt detector retains only a bounded transient screen for the owning PTY
+and launch; unsupported output and dimensions yield unknown. Positive client exit comes from
+the launch receipt or an observed launched PID that no longer exists, never helper disconnect,
+PTY shell liveness, silence, or prompt disappearance. Launch cleanup samples evidence before
+removing its credential files; main may retain the observed PID in memory to check client exit
+after helper loss. Status reads are bounded; unreadable status stays unknown. If cleanup occurs
+before any PID/exit receipt can be observed, later exit cannot be confirmed.
+
+Revocation immediately clears prompt evidence and authority. The session label and independently
+observed lifecycle can remain as display history until replacement or disable, which discard
+them; old asynchronous observations cannot update a replacement. Bridge tool listing does not
+establish client input readiness. Focus connected terminal checks the displayed identity against
+a fresh snapshot, navigates within the current Aether window, and focuses the existing terminal
+without starting a session, accepting trust, pasting, or submitting a command.

@@ -3,18 +3,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useEffect } from 'react';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
 import { CommunicationCard } from './CommunicationCard';
-const terminal = vi.hoisted(() => ({ prepare: vi.fn() }));
-vi.mock('../terminal/PtyTerminal', () => ({ prepareClaudeTerminal: terminal.prepare }));
+const terminal = vi.hoisted(() => ({ prepare: vi.fn(), focus: vi.fn() }));
+vi.mock('../terminal/PtyTerminal', () => ({ prepareClaudeTerminal: terminal.prepare, focusClaudeTerminal: terminal.focus }));
 afterEach(() => { cleanup(); localStorage.clear(); delete (window as unknown as { aetherElectron?: unknown }).aetherElectron; });
 it('shows a default-off preference and no invented readiness', () => {
   render(<AetherStoreProvider><CommunicationCard /></AetherStoreProvider>);
   const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
   expect(checkbox.checked).toBe(false);
-  expect(screen.getByRole('status').textContent).toContain('status unavailable');
+  expect(screen.getByRole('status', { name: 'Bridge status' }).textContent).toContain('status unavailable');
   expect(screen.getByText(/does not launch a session/)).toBeTruthy();
   fireEvent.click(checkbox);
   expect(checkbox.checked).toBe(true);
-  expect(screen.getByRole('status').textContent).toContain('status unavailable');
+  expect(screen.getByRole('status', { name: 'Bridge status' }).textContent).toContain('status unavailable');
 });
 
 function EnabledCard({ pending = false, ready = false, stopped = false, credits }: { pending?: boolean; ready?: boolean; stopped?: boolean; credits?: number }) {
@@ -23,7 +23,7 @@ function EnabledCard({ pending = false, ready = false, stopped = false, credits 
     dispatch({ type: 'SET_COMMUNICATION_CFG', enabled: true });
     dispatch({ type: 'SET_COMMUNICATION_SNAPSHOT', snapshot: {
       enabled: !stopped, readiness: stopped ? 'disabled' : ready ? 'ready' : 'waiting', cleanup: pending ? 'pending' : 'confirmed', metadata: [], remainingCredits: credits,
-      sessionStatus: { instanceLabel: 'Instance abcdef1234567890', sessionLabel: stopped ? null : 'Session 1', prompt: 'unknown' },
+      sessionStatus: { instanceLabel: 'Instance abcdef1234567890', sessionLabel: stopped ? null : 'Session 1', prompt: 'unknown', client: 'unknown', connected: !stopped },
     } });
   }, [dispatch, pending, ready, stopped, credits]);
   return <CommunicationCard />;
@@ -54,7 +54,7 @@ it('grants once during confirmation without launching or inventing credits', asy
   expect(startSession).not.toHaveBeenCalled();
   await act(async () => resolve({ ok: true }));
   expect(screen.getByText('Consultation credits remaining: 0.')).toBeTruthy();
-  expect(screen.getByRole('status').textContent).toContain('ready');
+  expect(screen.getByRole('status', { name: 'Bridge status' }).textContent).toContain('ready');
 });
 it('requires main readiness for grants and labels absent credits unavailable', () => {
   render(<AetherStoreProvider><EnabledCard /></AetherStoreProvider>);
@@ -72,7 +72,7 @@ it('makes one no-argument launch request and does not invent readiness on succes
   expect(startSession).toHaveBeenCalledWith();
   expect(terminal.prepare.mock.invocationCallOrder.at(-1)).toBeLessThan(startSession.mock.invocationCallOrder[0]);
   await act(async () => resolve({ ok: true }));
-  expect(screen.getByRole('status').textContent).toContain('waiting');
+  expect(screen.getByRole('status', { name: 'Bridge status' }).textContent).toContain('waiting');
   expect(screen.getByText('mcp__aether-bridge__ask_codex')).toBeTruthy();
   expect(screen.getByText(/client-wide/)).toBeTruthy();
 });
@@ -82,7 +82,16 @@ it('shows launch failure without a successful-looking status', async () => {
   render(<AetherStoreProvider><EnabledCard /></AetherStoreProvider>);
   fireEvent.click(screen.getByRole('button', { name: 'Start fresh connected Claude' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('cleanup failed'));
-  expect(screen.getByRole('status').textContent).toContain('waiting');
+  expect(screen.getByRole('status', { name: 'Bridge status' }).textContent).toContain('waiting');
+});
+
+it('surfaces REVOKED as specific launch feedback, never client-exit evidence', async () => {
+  const startSession = vi.fn().mockResolvedValue({ ok: false, code: 'REVOKED' });
+  Object.defineProperty(window, 'aetherElectron', { value: { communication: { startSession } }, configurable: true });
+  render(<AetherStoreProvider><EnabledCard /></AetherStoreProvider>);
+  fireEvent.click(screen.getByRole('button', { name: 'Start fresh connected Claude' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('disabled or replaced before the session could start'));
+  expect(screen.queryByText('Client exited')).toBeNull();
 });
 
 it('shows safe launch identity without implying terminal input readiness', () => {

@@ -19,6 +19,7 @@ let sharedHostEl: HTMLDivElement | null = null;
 let sharedTerm: Terminal | null = null;
 let sharedFit: FitAddon | null = null;
 let didRequestStart = false;
+let pendingFocus = false;
 
 function getOrCreateHost(ensureStart = true): { hostEl: HTMLDivElement; fit: FitAddon } {
   if (!sharedHostEl) {
@@ -58,18 +59,31 @@ export function prepareClaudeTerminal(): void {
   if (window.aetherElectron?.pty) getOrCreateHost(false);
 }
 
+/** Focus only. A navigation triggered here must never start or write to a PTY. */
+export function focusClaudeTerminal(): void {
+  pendingFocus = true;
+  if (sharedHostEl?.isConnected && sharedTerm) {
+    sharedTerm.focus();
+    pendingFocus = false;
+  }
+}
+
 export function PtyTerminal() {
   const colors = useColors();
   const anchorRef = useRef<HTMLDivElement>(null);
+  // Survive StrictMode's effect replay: both setups belong to this focus-only mount.
+  const focusOnMount = useRef(pendingFocus);
   const hasElectronPty = typeof window !== 'undefined' && !!window.aetherElectron?.pty;
 
   useEffect(() => {
     const anchor = anchorRef.current;
     if (!anchor || !hasElectronPty) return;
 
-    const { hostEl, fit } = getOrCreateHost();
+    const focusing = focusOnMount.current;
+    const { hostEl, fit } = getOrCreateHost(!focusing);
     anchor.appendChild(hostEl);
     fit.fit();
+    if (focusing) { sharedTerm!.focus(); pendingFocus = false; }
 
     const resizeObserver = new ResizeObserver(() => fit.fit());
     resizeObserver.observe(anchor);

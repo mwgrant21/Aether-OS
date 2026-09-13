@@ -16,7 +16,7 @@ const psQuote = (value: string) => "'" + value.replace(/'/g, "''") + "'";
 
 export interface PreparedBridgeLaunch extends BridgePtyLaunch {
   directory: string;
-  completion(): Promise<'running' | 'exited' | 'failed'>;
+  completion(): Promise<'unknown' | 'starting' | 'running' | 'exited' | 'failed'>;
   cleanup(): Promise<void>;
 }
 export interface LaunchConfigOptions {
@@ -176,20 +176,30 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
     await writeFile(scriptPath, BRIDGE_LAUNCH_SCRIPT, { mode: 0o600, flag: 'wx' });
     const env = { ...buildPtyEnv(source), [BACKGROUND]: '120000' };
     const preparedAt = Date.now();
+    let observedPid: number | undefined;
+    let cleaned = false;
     return { directory, scriptPath, env,
       completion: async () => {
         try {
+          if (cleaned) throw Object.assign(new Error('removed'), { code: 'ENOENT' });
           const receipt = (await readFile(join(directory, 'completed'), 'utf8')).trim();
           return receipt === 'exited' ? 'exited' : 'failed';
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('LAUNCH_STATUS_UNREADABLE'); }
-        const started = await jsonFile(join(directory, 'started.json'));
+        const started = cleaned ? undefined : await jsonFile(join(directory, 'started.json'));
         if (typeof started?.pid === 'number' && Number.isInteger(started.pid) && started.pid > 0) {
-          try { process.kill(started.pid, 0); }
-          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return 'exited'; }
+          observedPid = started.pid;
         }
-        return !started && Date.now() - preparedAt > 15_000 ? 'failed' : 'running';
+        if (observedPid !== undefined) {
+          try { process.kill(observedPid, 0); return 'running'; }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return 'exited';
+            throw new Error('LAUNCH_STATUS_UNREADABLE');
+          }
+        }
+        if (started) return 'failed';
+        return cleaned ? 'unknown' : Date.now() - preparedAt > 15_000 ? 'failed' : 'starting';
       },
-      cleanup: () => remove(directory),
+      cleanup: async () => { await remove(directory); cleaned = true; },
     };
   } catch {
     try { await remove(directory); }

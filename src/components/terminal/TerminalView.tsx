@@ -5,6 +5,7 @@ import { ActiveAgentsCard } from './ActiveAgentsCard';
 import { LiveOutputCard } from './LiveOutputCard';
 import { PlanUsageCard } from './PlanUsageCard';
 import { PtyTerminal } from './PtyTerminal';
+import { CommunicationClientStatus } from './CommunicationClientStatus';
 
 export function TerminalView() {
   const colors = useColors();
@@ -19,6 +20,7 @@ export function TerminalView() {
           <span style={{ marginLeft: 'auto', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL · zsh</span>
         </div>
 
+        <CommunicationClientStatus inTerminal />
         <div style={termHostStyle}>
           <PtyTerminal />
         </div>

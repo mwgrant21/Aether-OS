@@ -7,11 +7,50 @@ afterEach(async () => { for (const service of services.splice(0)) await service.
 function setup() {
   const bridge = new CommunicationBridgeIntegration({ providerFactory: () => { throw new Error('No model calls'); } });
   services.push(bridge);
-  const bundle = { cleanup: vi.fn(async () => {}), completion: vi.fn(async () => 'running' as 'running' | 'exited') };
+  const bundle = { cleanup: vi.fn(async () => {}), completion: vi.fn(async () => 'running' as 'unknown' | 'starting' | 'running' | 'exited' | 'failed') };
   const options = { bridge, confirm: vi.fn(async () => true), prepare: vi.fn(async () => bundle), spawn: vi.fn(), pollMs: 5 };
   return { bridge, bundle, options, control: new CommunicationSessionControl(options) };
 }
 describe('operator session control', () => {
+  it('keeps helper loss independent from client exit and samples before removing receipts', async () => {
+    const { bridge, bundle, control } = setup(); await bridge.setEnabled(true);
+    await control.start(); const id = bridge.currentLaunchId()!;
+    await bridge.notifyClaudeExit(id);
+    expect(bundle.completion).toHaveBeenCalled();
+    expect(bundle.completion.mock.invocationCallOrder[0]).toBeLessThan(bundle.cleanup.mock.invocationCallOrder[0]);
+    expect(bridge.snapshot().sessionStatus).toMatchObject({ client: 'running', connected: false });
+    bundle.completion.mockResolvedValue('exited');
+    await vi.waitFor(() => expect(bridge.snapshot().sessionStatus.client).toBe('exited'));
+    expect(bridge.currentLaunchId()).toBeUndefined();
+  });
+  it.each(['failed', 'read-error', 'spawn-error'])('never publishes client exited for %s', async failure => {
+    const { bridge, bundle, options, control } = setup(); await bridge.setEnabled(true);
+    if (failure === 'spawn-error') options.spawn.mockImplementation(() => { throw new Error('SPAWN_FAILED'); });
+    else if (failure === 'read-error') bundle.completion.mockRejectedValue(new Error('unreadable'));
+    else bundle.completion.mockResolvedValue('failed');
+    await control.start();
+    await vi.waitFor(() => expect(bridge.snapshot().sessionStatus.client).toBe(failure === 'read-error' ? 'unknown' : 'failed'));
+    expect(bridge.snapshot().sessionStatus.connected).toBe(false);
+  });
+  it.each(['replace', 'disable'])('ignores delayed completion after %s', async action => {
+    const { bridge, bundle, control } = setup(); await bridge.setEnabled(true); await control.start();
+    let release!: (state: 'exited') => void;
+    bundle.completion.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await vi.waitFor(() => expect(release).toBeDefined());
+    const transition = action === 'replace' ? bridge.prepareLaunch() : bridge.setEnabled(false);
+    await Promise.resolve(); await Promise.resolve();
+    release('exited'); await transition;
+    expect(bridge.snapshot().sessionStatus.client).toBe(action === 'replace' ? 'starting' : 'unknown');
+  });
+  it('bounds stuck status reads without retaining credentials or claiming failure/exit', async () => {
+    const { bridge, bundle, options } = setup(); await bridge.setEnabled(true);
+    const control = new CommunicationSessionControl({ ...options, statusReadMs: 20 });
+    bundle.completion.mockImplementation(() => new Promise(() => {}));
+    await control.start(); const id = bridge.currentLaunchId()!;
+    expect(await bridge.notifyClaudeExit(id)).toEqual({ ok: true });
+    expect(bundle.cleanup).toHaveBeenCalledOnce();
+    expect(bridge.snapshot().sessionStatus).toMatchObject({ client: 'unknown', connected: false });
+  });
   it('retains a failed rollback of partially created launch files', async () => {
     const { bridge, options, control } = setup(); await bridge.setEnabled(true);
     options.prepare.mockRejectedValue(new Error('LAUNCH_CONFIG_CLEANUP_FAILED'));

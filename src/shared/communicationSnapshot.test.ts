@@ -8,7 +8,7 @@ const row = () => ({ launchId: 'launch', exchangeId: 'exchange', providerState: 
   finishedAt: null, contentExpiresAt: null, observedOutputBytes: null, lastOutputAt: null,
   usage: { inputTokens: null, outputTokens: 0 },
   delivery: { availability: 'pending', uniquePagesServed: 0, totalPages: null, clientConnected: true } });
-const snapshot = () => ({ enabled: true, readiness: 'ready', cleanup: 'confirmed', remainingCredits: 0, sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: 'Session 1', prompt: 'unknown' }, metadata: [row()] });
+const snapshot = () => ({ enabled: true, readiness: 'ready', cleanup: 'confirmed', remainingCredits: 0, sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: 'Session 1', prompt: 'unknown', client: 'running', connected: true }, metadata: [row()] });
 afterEach(() => localStorage.clear());
 describe('content-free communication state', () => {
   it('removes unexpected properties at every boundary without inventing unavailable measurements', () => {
@@ -65,6 +65,9 @@ describe('session status serialization', () => {
       { ...snapshot().sessionStatus, sessionLabel: 'Session 9007199254740992' },
       { ...snapshot().sessionStatus, prompt: 'input-ready' },
       { ...snapshot().sessionStatus, prompt: 'raw terminal output' },
+      { ...snapshot().sessionStatus, client: 'raw terminal output' },
+      { ...snapshot().sessionStatus, connected: 'yes' },
+      { ...snapshot().sessionStatus, connected: false, prompt: 'folder-trust' },
       { ...snapshot().sessionStatus, sessionLabel: null, prompt: 'folder-trust' }]) {
       expect(projectCommunicationSnapshot({ ...snapshot(), sessionStatus })).toBeNull();
     }

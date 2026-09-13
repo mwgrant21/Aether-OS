@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { CodexAppServerAdapter } from '../crossEngine/providers/codexAppServer';
 import { ExchangeController, type ExchangeControllerOptions } from './exchangeController';
 import { startPipeServer, type PipeServerOptions } from './pipeServer';
-import { isCommunicationPrompt, type CommunicationSessionStatus } from '../../src/shared/communicationSessionStatus';
+import { isCommunicationClient, isCommunicationPrompt, type CommunicationSessionStatus } from '../../src/shared/communicationSessionStatus';
 import type { CommunicationMetadata, CommunicationPayload } from '../../src/shared/communicationTypes';
 
 export interface CommunicationBridgeSnapshot {
@@ -23,6 +23,7 @@ export interface CommunicationLaunchManifest {
 type Listener = Awaited<ReturnType<typeof startPipeServer>>;
 interface Launch {
   sessionLabel: string; prompt: CommunicationSessionStatus['prompt'];
+  client: CommunicationSessionStatus['client'];
   id: string; valid: boolean; authenticated: boolean; listed: boolean;
   listening: Promise<Listener>; closing?: Promise<void>;
   cleanupCallbacks: Set<() => Promise<void>>;
@@ -49,6 +50,7 @@ export class CommunicationBridgeIntegration {
   private disposed = false;
   private epoch = 0;
   private current?: Launch;
+  private display?: Launch;
   private serial: Promise<void> = Promise.resolve();
   private disabling?: Promise<void>;
   private disablePending = false;
@@ -70,8 +72,8 @@ export class CommunicationBridgeIntegration {
     const controllerCleanup = this.controller.cleanupStatus();
     if (controllerCleanup === 'failed') this.cleanup = 'failed';
     return { enabled: this.enabled,
-      sessionStatus: { instanceLabel: this.instanceLabel, sessionLabel: this.current?.sessionLabel ?? null,
-        prompt: this.current?.prompt ?? 'unknown' },
+      sessionStatus: { instanceLabel: this.instanceLabel, sessionLabel: this.display?.sessionLabel ?? null,
+        prompt: this.current?.prompt ?? 'unknown', client: this.display?.client ?? 'unknown', connected: !!this.current },
       readiness: !this.enabled ? 'disabled' : !this.current ? 'disconnected'
         : this.current.authenticated && this.current.listed ? 'ready'
           : this.current.authenticated ? 'authenticated' : 'waiting',
@@ -94,7 +96,7 @@ export class CommunicationBridgeIntegration {
     }
     // Re-observe the owned operation. A deadline never starts another disposal.
     if (this.disabling) return this.bounded(awaitCleanup([this.disabling, ...this.closing]));
-    this.enabled = false; this.epoch++;
+    this.enabled = false; this.epoch++; this.display = undefined;
     this.revokeCurrent();
     // Erasure/revocation precede the first await, even when a provider never exits.
     this.controller.setEnabled(false); if (this.cleanup !== 'failed') this.cleanup = 'pending'; this.emit();
@@ -115,14 +117,14 @@ export class CommunicationBridgeIntegration {
     const operation = this.serial.then(async () => {
       if (!this.enabled || this.disposed || epoch !== this.epoch || this.snapshot().cleanup === 'failed')
         throw new Error('Bridge unavailable');
-      this.revokeCurrent();
+      this.display = undefined; this.revokeCurrent();
       await Promise.all(this.closing);
       if (!this.enabled || this.disposed || epoch !== this.epoch || this.snapshot().cleanup === 'failed')
         throw new Error('Bridge unavailable');
       const capability = randomBytes(32).toString('base64url');
-      const launch: Launch = { sessionLabel: `Session ${++this.sessionSequence}`, prompt: 'unknown', id: randomUUID(), valid: true, authenticated: false, listed: false,
+      const launch: Launch = { sessionLabel: `Session ${++this.sessionSequence}`, prompt: 'unknown', client: 'starting', id: randomUUID(), valid: true, authenticated: false, listed: false,
         listening: Promise.resolve(undefined as unknown as Listener), cleanupCallbacks: new Set() };
-      this.current = launch;
+      this.current = launch; this.display = launch;
       const client = this.controller.openLaunch();
       const active = () => launch.valid && this.current === launch && this.enabled && epoch === this.epoch;
       launch.listening = Promise.resolve().then(() => (this.options.startListener ?? startPipeServer)({ capability, client,
@@ -133,7 +135,7 @@ export class CommunicationBridgeIntegration {
       this.emit();
       let listener: Listener;
       try { listener = await launch.listening; }
-      catch { if (this.current === launch) this.revokeCurrent(); throw new Error('Bridge unavailable'); }
+      catch { if (this.current === launch) { launch.client = 'failed'; this.revokeCurrent(); } throw new Error('Bridge unavailable'); }
       if (!active()) { await this.closeLaunch(launch); throw new Error('Bridge unavailable'); }
       return { launchId: launch.id, endpoint: listener.endpoint, capability };
     });
@@ -141,10 +143,25 @@ export class CommunicationBridgeIntegration {
     return operation;
   }
   notifyClaudeExit(launchId: string): Promise<BridgeShutdownResult> {
-    if (this.current?.id !== launchId) return Promise.resolve({ ok: true });
+    if (this.current?.id !== launchId) return this.display?.id === launchId
+      ? this.bounded(awaitCleanup([...this.closing])) : Promise.resolve({ ok: true });
     this.epoch++; this.revokeCurrent(); this.emit();
     return this.bounded(awaitCleanup([...this.closing]));
   }
+  /** Completion evidence is display-only after revocation. Old owners cannot update a replacement. */
+  observeClient(launchId: string, client: CommunicationSessionStatus['client']): boolean {
+    const launch = this.display;
+    if (!this.enabled || this.disposed || launch?.id !== launchId || !isCommunicationClient(client)) return false;
+    if (launch.client === 'exited' || launch.client === 'failed') return false;
+    if (launch.client === client) return true;
+    launch.client = client;
+    if (client === 'exited' || client === 'failed') {
+      // Revoke before publishing the terminal state, including controller callbacks.
+      if (this.current === launch) { this.epoch++; this.revokeCurrent(); }
+    }
+    this.emit(); return true;
+  }
+  isDisplayedLaunch(launchId: string): boolean { return this.enabled && !this.disposed && this.display?.id === launchId; }
   /** Main-only observation seam. Neither labels nor prompt state grant authority.
    * Reject stale observations after replacement/revocation. */
   observePrompt(launchId: string, prompt: CommunicationSessionStatus['prompt']): boolean {

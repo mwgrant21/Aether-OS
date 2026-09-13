@@ -91,7 +91,15 @@ Verification executes the actual main spawn/resize callbacks with deterministic 
 Task 5 retains responsibility for positive client-exit evidence and actionable copy; it must not infer exit from prompt disappearance or helper disconnection.
 
 ---
-### Task 5: Positive client-exit evidence
+### Canonical Task 5 implementation disposition
+
+Canonical Task 5 implements positive client evidence plus actionable copy/focus. The legacy Task 5/6 samples below are retained as design history, not remaining implementation instructions. Use `2026-09-12-cross-check-task5-results.md` and the canonical cross-check task list for current behavior and verification.
+
+The implementation uses client lifecycle (`unknown`, `starting`, `running`, `exited`, `failed`) and a current-authority boolean alongside the existing prompt observation. Main retains display evidence after helper loss independently of revoked authority. Receipts or disappearance of an observed launched PID can prove exit; helper disconnect, shell exit, timeout, and unreadable status cannot. Reads are bounded and sample evidence before credential cleanup; when no PID or receipt was observed before cleanup, later exit remains unknown. Replacement and disable clear the retained display owner.
+
+Copy uses current prompt evidence and client lifecycle directly, with generic check-terminal guidance whenever input readiness is unresolved. No trust-config inference, historical prompt attribution, or elapsed-time suspicion is needed for this contract, so the legacy `trustedAtLaunch`, `promptSeen`, `spawnedAt`, `STALL_MS`, and `GRACE_MS` proposals are not implemented. This avoids naming folder trust without current positive evidence. Settings and Terminal use the same status component; focus refreshes display identity and navigates/focuses without starting a session or submitting input, including StrictMode effect replay.
+
+### Archived Task 5 proposal: Positive client-exit evidence
 
 **Files:**
 - Modify: `src/shared/communicationSessionStatus.ts`
@@ -325,7 +333,7 @@ git commit -m "feat(communication): obtain positive client-exit and trust eviden
 
 ---
 
-### Task 6: Operator-facing copy
+### Archived Task 6 proposal: Operator-facing copy
 
 **Files:**
 - Create: `src/components/settings/attentionCopy.ts`
@@ -615,7 +623,7 @@ git commit -m "feat(communication): tell the operator when the client needs a tr
 
 ---
 
-## Calibration follow-up
+## Archived calibration proposal (not implemented)
 
 `STALL_MS` ships provisional. Once a connected launch reaches `ready` end to end on a trusted folder, measure spawn-to-`ready` and tighten it if 20 s is far above that. Never tighten below an observed healthy handshake.
 
