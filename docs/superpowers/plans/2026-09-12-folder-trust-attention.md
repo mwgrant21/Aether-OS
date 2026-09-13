@@ -38,146 +38,42 @@ Task numbering follows the next-task statements in the two results docs above. I
 
 ### Task 3: Bounded current-prompt recognition
 
-**Files:**
-- Create: `electron/communicationBridge/trustPromptMatcher.ts`
-- Create: `electron/communicationBridge/trustPromptMatcher.test.ts`
-- Already committed: `electron/__fixtures__/trust-prompt-capture.json`
+**Status: Passed, 2026-09-12.** See `2026-09-12-cross-check-task3-results.md`
+for results, independent review, fixture provenance, and limits.
 
-**Interfaces:**
-- Consumes: `stripAnsi` from `electron/ansiStrip.ts`.
-- Produces: `createTrustPromptMatcher(now?: () => number)` returning `{ ingest(chunk: string): void; state(): TrustPromptState; reset(): void }`, where `TrustPromptState = { readonly seenAt: number | null; readonly active: boolean }`.
+Implemented `trustPromptMatcher.ts` and its 42-test suite; sanitized the capture
+with equal-length placeholders while preserving all eight chunk timestamps and
+control sequences. No runtime wiring or model call belongs to this task.
 
-`active` is the current-prompt evidence that feeds `sessionStatus.prompt`. `seenAt` is history, used only by Task 5 for exit attribution.
+The original append-only two-option sample was superseded: silence cannot prove
+current presence, printable output may be a repaint, and stripping screen erase
+commands preserves stale text. The implementation uses a bounded current-screen
+model and matches the full captured layout. The shared `ansiStrip` is unchanged;
+it already handles complete BEL/ST OSC strings, whereas the detector needs
+streaming control handling across chunks.
 
-The fixture is a real PTY capture: 8 chunks, last output at 562 ms, then silence to the 25 s cutoff. That silence is what makes `active` decidable — any printable output afterwards means the client moved on.
+Contract: `createTrustPromptMatcher(now?, {rows, cols}?)`, default100x30 with
+maximum160x32, returns `ingest`, `state`, `resize(cols, rows)`, and `reset`.
+`state()` exposes only `{seenAt, active}`; history is not current readiness/exit
+proof. Task4 must supply actual physical dimensions and forward resize before
+further bytes. Resize clears pixels/current evidence and preserves history and
+persistent-mode uncertainty. Full reset is valid only for a fresh physical session.
 
-- [ ] **Step 1: Write the failing test**
+Known screen erasure/scrolling can be followed by a fresh recognized redraw.
+Unsupported persistent modes, conceal, or malformed controls require fresh-session
+reset; CSI2J and resize cannot restore that evidence. CSI3J only erases scrollback.
+OSC metadata is opaque, cancellation is handled, and synchronized output cannot
+be considered visible before flush. Unsupported wrapping, glyphs, geometry, or
+layouts fail conservatively. No selected-option parsing or terminal input is added.
 
-```ts
-import { describe, expect, it } from 'vitest';
-import { createTrustPromptMatcher } from './trustPromptMatcher';
-import capture from '../__fixtures__/trust-prompt-capture.json';
-
-const chunks: { at: number; data: string }[] = capture.chunks;
-
-describe('createTrustPromptMatcher', () => {
-  it('matches the real captured folder-trust prompt', () => {
-    const matcher = createTrustPromptMatcher(() => 1000);
-    for (const chunk of chunks) matcher.ingest(chunk.data);
-    expect(matcher.state()).toEqual({ seenAt: 1000, active: true });
-  });
-
-  it('does not match ordinary session output', () => {
-    const matcher = createTrustPromptMatcher(() => 1000);
-    matcher.ingest('Running tests...\nNo, exit was mentioned in a log line\n');
-    expect(matcher.state()).toEqual({ seenAt: null, active: false });
-  });
-
-  it('clears active once printable output arrives after the prompt', () => {
-    const matcher = createTrustPromptMatcher(() => 1000);
-    for (const chunk of chunks) matcher.ingest(chunk.data);
-    matcher.ingest('\u001b[2J Welcome to Claude Code\n');
-    expect(matcher.state()).toEqual({ seenAt: 1000, active: false });
-  });
-
-  it('ignores escape-only repaints that carry no printable text', () => {
-    const matcher = createTrustPromptMatcher(() => 1000);
-    for (const chunk of chunks) matcher.ingest(chunk.data);
-    matcher.ingest('\u001b[?25l\u001b[?25h');
-    expect(matcher.state().active).toBe(true);
-  });
-
-  it('never re-stamps seenAt on repeated ingestion', () => {
-    let clock = 1000;
-    const matcher = createTrustPromptMatcher(() => clock);
-    for (const chunk of chunks) matcher.ingest(chunk.data);
-    clock = 9999;
-    for (const chunk of chunks) matcher.ingest(chunk.data);
-    expect(matcher.state().seenAt).toBe(1000);
-  });
-
-  it('reset returns to the initial state', () => {
-    const matcher = createTrustPromptMatcher(() => 1000);
-    for (const chunk of chunks) matcher.ingest(chunk.data);
-    matcher.reset();
-    expect(matcher.state()).toEqual({ seenAt: null, active: false });
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run electron/communicationBridge/trustPromptMatcher.test.ts`
-Expected: FAIL — cannot resolve `./trustPromptMatcher`.
-
-- [ ] **Step 3: Write the implementation**
-
-```ts
-import { stripAnsi } from '../ansiStrip';
-
-const BUFFER_CAP = 16384;
-
-// Calibrated against electron/__fixtures__/trust-prompt-capture.json, a real PTY
-// capture of the Claude Code folder-trust prompt. The prompt separates its words
-// with CSI cursor-forward sequences (ESC[1C) rather than spaces, and ansiStrip
-// deletes those outright -- the stripped text reads "Yes,Itrustthisfolder". Every
-// inter-word gap must therefore be \s* and never a literal space. Both option
-// labels are required together so ordinary session output containing one of them
-// cannot raise a false positive. Recognition stops here by design: the selected
-// option (the ❯ marker) is deliberately NOT parsed.
-const EXIT_OPTION = /No,\s*exit/i;
-const TRUST_OPTION = /Yes,\s*I\s*trust\s*this\s*folder/i;
-
-export interface TrustPromptState {
-  readonly seenAt: number | null;
-  readonly active: boolean;
-}
-
-export function createTrustPromptMatcher(now: () => number = Date.now) {
-  let buffer = '';
-  let seenAt: number | null = null;
-  let active = false;
-
-  function ingest(chunk: string): void {
-    try {
-      const text = stripAnsi(chunk);
-      // The capture shows the TUI emits nothing while the prompt waits (last byte
-      // at 562ms, then silence to the 25s cutoff). So any printable output after
-      // the match is real progress: the operator answered, or the client exited.
-      // Escape-only repaints strip to empty and must not clear the state.
-      if (seenAt !== null && text.trim() !== '') active = false;
-      buffer = (buffer + text).slice(-BUFFER_CAP);
-      if (seenAt === null && EXIT_OPTION.test(buffer) && TRUST_OPTION.test(buffer)) {
-        seenAt = now();
-        active = true;
-      }
-    } catch {
-      /* parsing must never break the pty data path -- same rule as planUsageScraper */
-    }
-  }
-
-  return {
-    ingest,
-    state: (): TrustPromptState => ({ seenAt, active }),
-    reset(): void { buffer = ''; seenAt = null; active = false; },
-  };
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `npx vitest run electron/communicationBridge/trustPromptMatcher.test.ts`
-Expected: PASS, 6 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add electron/communicationBridge/trustPromptMatcher.ts electron/communicationBridge/trustPromptMatcher.test.ts
-git commit -m "feat(communication): recognize the folder-trust prompt in pty output"
-```
+- [x] Implement bounded recognition and sanitized capture regression.
+- [x] Verify capture at every split point and one-character delivery.
+- [x] Verify stale/erased/overwritten text, OSC spoofing, cancellation, conceal,
+      modes, geometry, right-margin behavior, synchronization, reset, and bounds.
+- [x] Run full unit suite (1774 passed,7 skipped), build, Electron typecheck.
+- [x] Independent final review:42 focused tests +13 adversarial probes Passed.
 
 ---
-
 ### Task 4: Wire recognition to the existing observePrompt seam
 
 **Files:**
