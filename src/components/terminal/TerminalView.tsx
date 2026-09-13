@@ -6,9 +6,12 @@ import { LiveOutputCard } from './LiveOutputCard';
 import { PlanUsageCard } from './PlanUsageCard';
 import { PtyTerminal } from './PtyTerminal';
 import { CommunicationClientStatus } from './CommunicationClientStatus';
+import { Button } from '../shared/Button';
+import { useCrossCheckComposer } from './CrossCheckComposer';
 
 export function TerminalView() {
   const colors = useColors();
+  const composer = useCrossCheckComposer();
   return (
     <div style={rootStyle}>
       <div style={terminalCardStyle(colors)}>
@@ -17,7 +20,11 @@ export function TerminalView() {
           <span style={liveDotStyle(colors)} />
           <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>operator@aether-core</span>
           <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.textDim }}>:~$ session active</span>
-          <span style={{ marginLeft: 'auto', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL · zsh</span>
+          <Button onClick={composer.open} style={{ marginLeft: 'auto', padding: '5px 8px', borderRadius: 6,
+            border: `1px solid ${colors.panelBorder}`, color: colors.accentCyanSoft, font: `400 11px/1 ${fonts.mono}` }}>
+            Cross-check with Codex
+          </Button>
+          <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL · zsh</span>
         </div>
 
         <CommunicationClientStatus inTerminal />

@@ -25,6 +25,7 @@ import { usePermissionAutoAllowSync } from './state/usePermissionAutoAllowSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
 import { PermissionCardStack } from './components/agents/PermissionCardStack';
 import { RecapBanner } from './components/dashboard/RecapBanner';
+import { CrossCheckComposerProvider } from './components/terminal/CrossCheckComposer';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -37,6 +38,7 @@ export default function App() {
   return (
     <AetherStoreProvider>
       <AppShell>
+        <CrossCheckComposerProvider>
         <PulseDurationSync />
         <CommunicationSync />
         <RealUsageSync />
@@ -60,6 +62,7 @@ export default function App() {
         <ActiveView />
         <PermissionCardStack />
         <BottomMetricsRow />
+        </CrossCheckComposerProvider>
       </AppShell>
     </AetherStoreProvider>
   );
