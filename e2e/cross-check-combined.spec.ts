@@ -74,7 +74,7 @@ test('combined cross-check: two isolated instances, real clipboard/helper, repla
       const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
       const payload = copied.match(/<aether_bridge_payload_json>([\s\S]*)<\/aether_bridge_payload_json>$/);
       expect(payload).not.toBeNull(); requests.push(JSON.parse(payload![1]));
-      expect(requests.at(-1)).toMatchObject({ question: `TASK8_QUESTION_${label}`, context: `TASK8_CONTEXT_${label}` });
+      expect(requests[requests.length - 1]).toMatchObject({ question: `TASK8_QUESTION_${label}`, context: `TASK8_CONTEXT_${label}` });
       await page.getByRole('button', { name: 'Focus connected terminal', exact: true }).click();
       await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
       const afterWrites = (await evidence(app)).writes;
