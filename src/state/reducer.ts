@@ -1,5 +1,6 @@
 import type { AetherState, Cfg, DispatchChannelStub, FleetSessionRow, MemoryRow, MemoryTombstone, OpMode, PermissionRequestUI, PlanUsageTier, PostToolFlagRequestUI, RealUsageSnapshot, RecapPayload } from './types';
 import type { NotificationReason } from '../shared/alertSounds';
+import { communicationId, projectCommunicationSnapshot, safeCommunicationError } from '../shared/communicationSnapshot';
 import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
 import type { ProjectsSnapshot } from '../shared/projectsSnapshot';
@@ -15,6 +16,11 @@ import type { GradeRow } from '../shared/optimizeGrade';
 import { narrationForEvent, rankForInterruption, appendNarrationMessage, type NarrationEvent } from '../components/comms/narrationFeed';
 
 export type Action =
+  | { type: 'VIEW_COMMUNICATION_ANSWER'; exchangeId: string }
+  | { type: 'OPEN_COMMUNICATION_EXCHANGE'; exchangeId: string | null }
+  | { type: 'SET_COMMUNICATION_CFG'; enabled: boolean }
+  | { type: 'SET_COMMUNICATION_SNAPSHOT'; snapshot: AetherState['communicationSnapshot'] }
+  | { type: 'SET_COMMUNICATION_ERROR'; error: string | null }
   | { type: 'SET_ACTIVE_TAB'; tab: string }
   | { type: 'TOGGLE_APPROVALS' }
   | { type: 'TOGGLE_NOTIFS' }
@@ -101,6 +107,22 @@ function notificationReasonLabel(reason: NotificationReason): string {
 
 export function reducer(state: AetherState, action: Action): AetherState {
   switch (action.type) {
+    case 'SET_COMMUNICATION_CFG':
+      return { ...state, communicationCfg: { enabled: action.enabled } };
+    case 'SET_COMMUNICATION_SNAPSHOT': {
+      const snapshot = projectCommunicationSnapshot(action.snapshot);
+      return { ...state, communicationSnapshot: snapshot,
+        viewedCommunicationAnswers: state.viewedCommunicationAnswers.filter(id => snapshot?.metadata.some(m => m.exchangeId === id)) };
+    }
+    case 'VIEW_COMMUNICATION_ANSWER':
+      if (!state.communicationSnapshot?.metadata.some(m => m.exchangeId === action.exchangeId && m.delivery.availability === 'ready')
+        || state.viewedCommunicationAnswers.includes(action.exchangeId)) return state;
+      return { ...state, viewedCommunicationAnswers: [...state.viewedCommunicationAnswers, action.exchangeId].slice(-20) };
+    case 'SET_COMMUNICATION_ERROR':
+      return { ...state, communicationError: safeCommunicationError(action.error) };
+    case 'OPEN_COMMUNICATION_EXCHANGE':
+      if (action.exchangeId !== null && !communicationId(action.exchangeId)) return state;
+      return { ...state, selectedCommunicationExchangeId: action.exchangeId, activeTab: 'Comms' };
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.tab };
 

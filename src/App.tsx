@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useCommunicationSync } from './state/useCommunicationSync';
 import { AetherStoreProvider, useAetherStore } from './state/store';
 import { AppShell } from './components/layout/AppShell';
 import { ComingSoonPanel } from './components/layout/ComingSoonPanel';
@@ -24,6 +25,7 @@ import { usePermissionAutoAllowSync } from './state/usePermissionAutoAllowSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
 import { PermissionCardStack } from './components/agents/PermissionCardStack';
 import { RecapBanner } from './components/dashboard/RecapBanner';
+import { CrossCheckComposerProvider } from './components/terminal/CrossCheckComposer';
 
 function ActiveView() {
   const { state } = useAetherStore();
@@ -36,7 +38,9 @@ export default function App() {
   return (
     <AetherStoreProvider>
       <AppShell>
+        <CrossCheckComposerProvider>
         <PulseDurationSync />
+        <CommunicationSync />
         <RealUsageSync />
         <RealAgentsSync />
         <AlertSounds />
@@ -58,6 +62,7 @@ export default function App() {
         <ActiveView />
         <PermissionCardStack />
         <BottomMetricsRow />
+        </CrossCheckComposerProvider>
       </AppShell>
     </AetherStoreProvider>
   );
@@ -65,6 +70,11 @@ export default function App() {
 
 function PulseDurationSync() {
   usePulseDurationVar();
+  return null;
+}
+
+function CommunicationSync() {
+  useCommunicationSync();
   return null;
 }
 

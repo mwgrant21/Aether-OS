@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor, dialog } from 'electron';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -69,10 +69,38 @@ import { CodexVerifier } from './crossEngine/codexVerifier';
 import { AcpClient } from './crossEngine/acpClient';
 import { assertCrossEngineFeatureEnabled, assertNoActiveVerificationRun } from './crossEngine/verifyDispatchGuard';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegration';
+import { registerCommunicationIpc } from './communicationBridge/ipc';
+import { createCommunicationQuitGate } from './communicationBridge/quitGate';
+import { CommunicationSessionControl } from './communicationBridge/sessionControl';
+import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
+import { CommunicationGrantControl } from './communicationBridge/grantControl';
+import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
 const require = createRequire(import.meta.url);
 
 let mainWindow: BrowserWindow | null = null;
+// Exists before Settings or Terminal mount; disabled until explicit preference sync.
+// U6 prepares its main-only launch before starting the configured Claude client.
+const communicationBridge = new CommunicationBridgeIntegration({
+  onSnapshot: snapshot => sendToWindow('communication:snapshot', snapshot),
+});
+registerCommunicationIpc(ipcMain, communicationBridge, event => !!mainWindow
+  && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+  && event.senderFrame === mainWindow.webContents.mainFrame,
+  { startSession: () => communicationSessions.start(), grantMore: id => communicationGrants.grant(id) });
+const communicationQuitGate = createCommunicationQuitGate(() => communicationBridge.dispose(), () => app.quit(), async code => {
+  const { response } = await dialog.showMessageBox({ type: 'warning', title: 'Aether is waiting for cleanup',
+    message: code === 'SHUTDOWN_TIMEOUT' ? 'Cleanup is still unconfirmed.' : 'Cleanup could not be confirmed.',
+    detail: 'Aether has stopped accepting consultations and kept this window open. You can wait again on the existing cleanup operation or keep the app open.',
+    buttons: ['Wait again', 'Keep open', 'Quit anyway…'], defaultId: 1, cancelId: 1 });
+  if (response === 0) return 'retry';
+  if (response !== 2) return 'stay';
+  const confirmation = await dialog.showMessageBox({ type: 'warning', title: 'Quit without confirmed cleanup?',
+    message: 'Provider processes may remain running.', detail: 'Quitting now does not confirm that provider work or cleanup has stopped.',
+    buttons: ['Keep open', 'Quit anyway'], defaultId: 0, cancelId: 0 });
+  return confirmation.response === 1 ? 'force' : 'stay';
+});
 let isQuitting = false;
 let isWindowFocused = true;
 let unfocusedNotificationCount = 0;
@@ -236,7 +264,12 @@ function createWindow(): void {
 
   win.on('resize', scheduleSaveBounds);
   win.on('move', scheduleSaveBounds);
-  win.on('close', () => {
+  win.on('close', (event) => {
+    if (!isQuitting && process.platform !== 'darwin') {
+      event.preventDefault();
+      app.quit();
+      return;
+    }
     if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
     const bounds = win.getNormalBounds();
     saveWindowBounds(boundsFilePath, { ...bounds, isMaximized: win.isMaximized() });
@@ -834,7 +867,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
+  if (!communicationQuitGate(event)) return;
   isQuitting = true;
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();
@@ -995,10 +1029,54 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const ptyLifecycle = new PtyLifecycle();
+const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
+
+const launchRoot = join(app.getPath('userData'), 'communication-launches');
+const launchMaintenance = app.whenReady().then(() => cleanupStaleBridgeLaunches(launchRoot)).then(() => true, () => false);
+let connectedExecutable: string | undefined;
+const launchRuntime = { helperPath: join(__dirname, 'communication-mcp.js'), nodePath: process.execPath };
+const communicationSessions = new CommunicationSessionControl({
+  bridge: communicationBridge,
+  confirm: async () => {
+    const result = await dialog.showMessageBox({ type: 'question', title: 'Start connected Claude?',
+      message: ptyLifecycle.current ? 'Replace the current Claude terminal with a fresh connected session?' : 'Start a fresh connected Claude session?',
+      detail: 'This authorizes up to three Claude-initiated Codex consultations using your subscriptions. Preapproved tools: mcp__aether-bridge__ask_codex, mcp__aether-bridge__get_codex_exchange, mcp__aether-bridge__cancel_codex_exchange. Existing MCP tools remain available. The MCP background threshold is forced to 120000 ms client-wide, including other servers. Returned advice may influence Claude; ordinary action permissions still apply. The current terminal ends only after launch preparation succeeds.',
+      buttons: ['Cancel', 'Start fresh session'], defaultId: 0, cancelId: 0 });
+    return result.response === 1;
+  },
+  preflight: async () => {
+    if (!await launchMaintenance) throw new Error('STALE_LAUNCH_CLEANUP_FAILED');
+    connectedExecutable = await preflightBridgeLaunch(launchRuntime);
+  },
+  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable }),
+  spawn: (bundle, onExit) => {
+    const launchId = communicationBridge.currentLaunchId();
+    if (!launchId) throw new Error('REVOKED');
+    connectedPromptObserver.start(launchId, { cols: 100, rows: 30 }, () => spawnPty(100, 30, bundle), {
+      onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
+      onAlive: () => sendToWindow('pty:alive', undefined),
+      onExit: () => { onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
+    });
+    liveAgentTracker.notifyPtySpawned(Date.now());
+  },
+});
+const communicationGrants = new CommunicationGrantControl(communicationBridge, async () => {
+  const { response } = await dialog.showMessageBox({ type: 'question', title: 'Grant 3 more consultations?',
+    message: 'Allow three additional Codex consultations in this Claude session?',
+    detail: 'These consultations use your subscriptions when Claude requests them. This only increases the current session’s allowance; it does not start work, restart Claude, reset cooldown, or erase previous requests.',
+    buttons: ['Cancel', 'Grant 3 more'], defaultId: 0, cancelId: 0 });
+  return response === 1;
+});
 
 const planUsageScraper = createPlanUsageScraper();
 
 ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
+  // Settings can already have launched a connected session. Mounting Terminal
+  // only attaches to that shell; it must never silently replace it.
+  if (communicationSessions.busy || ptyLifecycle.current) {
+    if (ptyLifecycle.current) sendToWindow('pty:alive', undefined);
+    return;
+  }
   const sender = event.sender;
   ptyLifecycle.start(() => spawnPty(cols, rows), {
     onData: (data) => {
@@ -1024,7 +1102,7 @@ ipcMain.on('pty:write', (_event, input: string) => {
 });
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
-  ptyLifecycle.resize(cols, rows);
+  connectedPromptObserver.resize(cols, rows);
 });
 
 ipcMain.handle('plan:sync', async () => {

@@ -7,7 +7,7 @@ subordinate to this document.
 
 ## 1. The stance
 
-**Aether OS is single-user, local-only. Nothing about your work leaves this machine.**
+**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), and operator-driven terminals (§11).**
 
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
@@ -19,26 +19,18 @@ only, reachable only from this machine, with no port exposed externally and no t
 surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
-**Nothing leaves this machine, with exactly one named, default-off, opt-in exception.** As of
-Stage 13.5 (`docs/roadmap.md` §3.5), there is no model call site anywhere in this codebase for
-Aether's own features: the `@anthropic-ai/sdk` dependency is gone,
-`chatCore.ts`/`claudeClient.ts`/`systemPrompt.ts`/`chatProxyPlugin.ts` and the `chat:*` IPC pair are
-deleted, and `.env` key loading (`electron/loadDotEnv.ts`) is gone too — the app cannot read a key
-from disk even if one exists. `Comms` (the renamed Chat tab) answers only through
-`localResponder.ts`, a local, deterministic responder, with no network request. **Cross-engine
-Codex verification (§10) is the sole exception** — an explicit, default-off, opt-in feature that
-sends a scoped snapshot to a second vendor's agent, never automatic and never enabled by any other
-feature in this app.
+**Aether does not call billed model APIs.** Stage 13.5 removed the Anthropic SDK,
+chat API proxy, and `.env` key loading. The legacy deterministic Comms responder stays local.
+Two independently default-off features can send content to OpenAI under the operator's Codex
+subscription: manual verification (§9) and Claude-requested consultations (§13). Neither toggle
+enables the other. The communication view displays real exchanges without asking another model
+to summarize them.
 
-This claim is about Aether's own code and holds no API key — it does not extend to the embedded
-terminal. The terminal auto-launches the user's own `claude` session (`electron/ptyManager.ts`)
-whenever the Terminal view is mounted, which sends prompts to Anthropic on every turn under the
-user's own credentials, exactly like
-running `claude` in any other terminal window. That traffic is the user's Claude Code usage, not
-something Aether initiates, proxies, or can see — Aether has no visibility into it and no path to
-influence it beyond scrubbing `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` from the
-environment the terminal shell inherits, so a key exported for other tools on the operator's
-machine cannot be picked up by the session Aether starts.
+The embedded Claude terminal sends prompts to Anthropic under the user's Claude Code login.
+Aether strips API-key, auth-token and base-URL overrides from the launch environment; the
+terminal is not a network-isolated application. With §13 enabled and a connected session
+explicitly started, Aether also provides the three disclosed consultation tools. Their results
+can influence Claude's subsequent work, subject to Claude's normal action permissions.
 
 **The same carve-out, additionally gated, now covers a second terminal.** A Codex terminal
 (`electron/codexPtyManager.ts`) — a second, independent, real interactive `codex` CLI session —
@@ -57,7 +49,7 @@ ships anonymous telemetry **enabled by default**.
 
 Bank these as removed from scope, permanently:
 
-- No authentication or authorization model
+- No multi-user account or organization authorization model; §13 uses a short-lived local launch capability
 - No multi-tenant schema, no user/seat/org columns
 - No shared folder, no report writing, no roll-up, no leaderboard
 - No sharing links, no export-to-cloud, no sync
@@ -216,9 +208,9 @@ designed as such:
 - The SQLite store is **not** encrypted, and the README should say so plainly rather than implying
   otherwise. Given §4, its contents are paths, names, timestamps and integers — the honest position
   is "here is exactly what is in it," not a security claim the implementation does not back.
-- `.env` stays gitignored (it already is). The API key is read in the Electron main process only and
-  is never exposed through preload, never returned from an IPC handler, and never logged.
-  `chat:hasKey` returns a **boolean only** — never the key, never a prefix, never a length.
+- `.env` stays gitignored. Stage 13.5 removed key loading and the `chat:hasKey`/chat API
+  handlers; there is no Aether API-key input path. Subscription adapter credentials remain
+  subject to their explicit provider boundaries below.
 - Spool files are deleted after consumption, not left to accumulate as a second copy of the data.
 
 ---
@@ -238,10 +230,10 @@ its equivalent) has to be rebuilt from scratch, not assumed to still be standing
 
 ---
 
-## 9. Cross-engine Codex verification — the one named outbound exception
+## 9. Cross-engine Codex verification — manual outbound exception
 
 Shipped 2026-08-07 — see `docs/superpowers/plans/2026-08-07-codex-acp-cross-engine-verification.md`.
-This is the only feature in Aether OS that sends anything to a second vendor. It exists to let the
+This explicit verification feature sends scoped evidence to a second vendor. It exists to let the
 operator ask a different model family (OpenAI's Codex, via the Agent Client Protocol) whether a
 Claude dispatch's claimed work is actually supported by its artifacts — see
 `docs/ideas/cross-engine-verification.md` for the rationale (dissimilar redundancy).
@@ -291,24 +283,27 @@ the toggle is switched off completes normally and is cleaned up the same way eve
 
 ---
 
-## 10. Correction to fix in `CLAUDE.md`
+## 10. Historical correction before the Stage 13.5 API teardown
 
-The current project memory states:
+The pre-teardown project memory stated:
 
 > The key is read server-side only (electron main process); `.env` is gitignored.
 
-**The first clause is not true today.** The key is read by `vite-plugins/chatProxyPlugin.ts` in the
+**The first clause was false at that point in development.** The key is read by `vite-plugins/chatProxyPlugin.ts` in the
 Vite dev server; the Electron main process never sees it, which is precisely why Chat's real replies
 do not work in the desktop app at all
 (`docs/superpowers/plans/2026-07-27-chat-ipc-correctness.md`). The documented belief is what let the
 defect hide for as long as it did.
 
-Stage 0.5 makes the statement true. Until it lands, the line should read *"read server-side only
+The correction proposed at the time was *"read server-side only
 (Vite dev-server plugin today; moving to the Electron main process in Stage 0.5)"* — an accurate
 description of a broken state beats an aspirational one, which is this project's stated standard
 everywhere else.
 
 ---
+
+**Current status:** Stage 13.5 subsequently deleted both key-loading and chat API paths.
+The preceding correction is retained as history, not an active implementation instruction.
 
 ## 11. Codex terminal — a second interactive session, same open-ended access as Claude's
 
@@ -375,8 +370,8 @@ Added 2026-09-06 with the provider-neutral cross-engine adapter layer
 **Nothing about the shipped app's outbound behaviour changed.** `ClaudeHeadlessCliAdapter`
 can spawn `claude -p`, but no IPC handler, no store action, and no UI control constructs it.
 It is reachable only from tests, which drive an injected fake child process and never spawn a
-real CLI. §9 therefore remains accurate for shipped behaviour: Codex verification is still the
-only feature that sends anything anywhere.
+real CLI. This adapter remains unreachable from product controls. The separate Codex consultation
+path in §13 does not activate it.
 
 **Why it is nonetheless a new boundary.** §11 categorises the Codex terminal with the Claude
 terminal: an interactive session the operator drives directly, keystroke by keystroke. This
@@ -419,3 +414,135 @@ than the reviewed adapter spawns the `claude` binary.
 authentication path. The headless CLI needs neither and runs under the operator's existing
 login. (`claude mcp serve` was also probed and rejected: it exposes Claude Code's tools to an
 MCP client and has no session, turn, cancellation or approval semantics.)
+
+---
+
+## 13. Visible Claude–Codex communication — separate opt-in boundary
+
+Implemented on `feat/visible-communication-u1` through U8; U9 component-path verification has passed; complete connected-launch verification remains in
+progress. This section describes implementation and controls, not a passed production-path or
+live-provider test. Consult the U9 results for those verdicts. No live cross-provider smoke has
+been run for this feature; it requires a separate explicit one-consultation allowance.
+
+**Controls and authority.** Settings → Agent communication → Enable Claude–Codex communication
+persists only `communicationCfg.enabled`, default false. Enabling alone launches no session and
+spends no allowance. Main starts disabled until preference synchronization. Choose **Start fresh
+connected Claude** to prepare a fresh native Windows Claude session; replacement of an active
+terminal requires confirmation. No resume flag is added. Readiness is established by this
+bridge's authenticated handshake and tool listing, not merely by writing a config file or by
+the saved checkbox. During cleanup the saved preference can remain enabled while the bridge
+is stopped; cleanup completion is not a promise to reconnect or launch automatically.
+
+That session preapproves exactly `mcp__aether-bridge__ask_codex`,
+`mcp__aether-bridge__get_codex_exchange`, and `mcp__aether-bridge__cancel_codex_exchange` through
+session-scoped launch arguments. It does not write global allow rules or disable unrelated MCP
+servers. Explicit deny, managed-policy, duplicate server-name, unsupported client-version and
+launch-cleanup failures are surfaced; they are not bypassed. Main rechecks its gate for asks.
+The connected client forces `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=120000` after shell profiles,
+overriding customized thresholds for **all MCP servers in that Claude launch**. The prior shell
+setting is restored when the connected launch ends; no user/machine environment setting is changed.
+
+**Content and provider boundary.** Claude supplies a question and optional pasted context. No
+project picker, automatic file ingestion or repository snapshot is part of this feature. Aether
+sends these inputs to its Codex app-server adapter using the existing subscription-only health
+check, isolated configuration, `approvalPolicy: never` and a read-only turn sandbox with tool
+network access disabled. Each exchange gets a private empty working directory. This avoids
+inherited project context; it does **not** confine filesystem reads to that directory or prove
+that command execution is impossible. Write permission is not granted. Codex output is rendered
+as text and returned as attributed advisory data, not authorization to act. The advisory framing
+is guidance, not an instruction-isolation security boundary.
+
+**Spending and lifetime.** One provider job can occupy the app slot at a time, including unresolved
+cleanup. Each fresh connected launch has three provider-start credits shared by all callers and
+subagents. Settings **Grant 3 more consultations** requires operator confirmation and adds three
+without restarting Claude. MCP cannot grant credits. Reads, cancel, duplicate recovery and helper
+reconnect cannot increase the allowance. Duplicate keys/exact content recover the existing job;
+changed content under a reused key fails. Rejected input spends no credit; ambiguous provider
+submission is charged conservatively. Grants do not reset cooldown or deduplication tombstones.
+
+An active job has a 90-second renewable ownership lease and an absolute five-minute deadline.
+`get` waits 45 seconds by default, at most 60; streamed chunks do not wake the wait. Up to 16
+waiters may share a job, but only the designated owner renews the lease. Followers, cancelled
+reads and Comms viewing do not renew it; a follower is not automatically promoted. Lease expiry,
+cancel, helper loss or session replacement stops active work. Rejections and unsuccessful outcomes
+impose a 30-second cooldown; repeated cooldown replies do not extend it and successful completion
+permits immediate follow-up. Cancelled/timed-out outcomes cannot become late success. Unresolved
+cleanup blocks new work; bounded shutdown waits observe the same cleanup operation rather than
+starting duplicate disposal. Quit-anyway may leave provider processes running.
+
+**Bounds and receipt semantics.** UTF-8 limits are 16 KiB question, 32 KiB optional context and
+64 KiB answer. Source pages are at most 24 KiB; encoded envelopes at most 32 KiB, so escaping
+can create extra pages. The client size annotation is 40000 characters, not a token estimate.
+Request-key aliases are bounded at 32 per exchange. Retention reserves capacity before accepting
+work; at most 20 retained records and a 2 MiB reservation budget may be occupied. Full retention
+rejects new work rather than evicting an unexpired answer. Provider completion, answer availability
+and unique pages served are distinct. Page replay cannot increase unique delivery counts, and
+pages served do not prove Claude read, understood or acted on them.
+
+**Retention and copies.** Aether retains exchange content in main memory and mounted Comms component
+state. The cross-check composer additionally holds its question/context draft in a transient
+App-level provider across navigation; discard or app exit clears that draft. Its reducer receives
+validated metadata, not question/context/answer, keys or capabilities;
+runtime metadata, selection and content are excluded from persistence. Completed content remains
+available for ten minutes from completion despite lease/client loss. Clear, disable or app exit
+can erase Aether's copy earlier. There is currently no visible Clear control; clear is a main/preload operation. Main retains launch tombstones to prevent duplicate spending;
+payload expiry does not restore credits. Same-launch recovery uses the displayed exchange ID and
+retrieval instruction. A replacement launch cannot retrieve its predecessor's answer through MCP;
+the operator can explicitly copy a still-retained answer from Comms.
+
+The short-lived launch capability travels in restrictive operational files/environment; only the
+quoted config path is typed into the shell. It is never typed as inline secret JSON. Launch files
+are cleaned on disable, replacement and exit, with stale-file cleanup on next startup. Their
+existence is a disclosed exception to memory-only *content* handling, not a provider transcript.
+**Claude Code's local session transcript, possible client tool-output files, and Codex-managed
+history may retain content after Aether clears its memory.** Paging does not suppress normal
+transcripts. Aether does not delete or alter those histories and does not claim provider
+nonpersistence or an effective ephemeral-session flag. Explicit clipboard copies also leave
+Aether's retention boundary. Nothing is forwarded to another model merely to display or summarize it.
+
+**Cross-check display identity and client status (Tasks 2–5).** The runtime communication
+snapshot includes an independently generated instance label, a numbered session label,
+an allowlisted prompt observation (`unknown` or `folder-trust`), client lifecycle evidence
+(`unknown`, `starting`, `running`, `exited`, or `failed`), and whether launch authority is
+current. These display fields never authorize bridge operations. No pipe endpoint, capability,
+raw terminal text, PID, or userData path crosses this status boundary. The existing runtime
+snapshot persistence exclusion applies to all of these fields.
+
+The main-process prompt detector retains only a bounded transient screen for the owning PTY
+and launch; unsupported output and dimensions yield unknown. Positive client exit comes from
+the launch receipt or an observed launched PID that no longer exists, never helper disconnect,
+PTY shell liveness, silence, or prompt disappearance. Launch cleanup samples evidence before
+removing its credential files; main may retain the observed PID in memory to check client exit
+after helper loss. Status reads are bounded; unreadable status stays unknown. If cleanup occurs
+before any PID/exit receipt can be observed, later exit cannot be confirmed.
+
+Revocation immediately clears prompt evidence and authority. The session label and independently
+observed lifecycle can remain as display history until replacement or disable, which discard
+them; old asynchronous observations cannot update a replacement. Bridge tool listing does not
+establish client input readiness. Focus connected terminal checks the displayed identity against
+a fresh snapshot, navigates within the current Aether window, and focuses the existing terminal
+without starting a session, accepting trust, pasting, or submitting a command.
+
+**Cross-check composer and optional skill (Tasks 6–8).** The terminal and Comms actions share
+the same transient draft. Opening, copying, and focusing send no model request, collect no files
+or terminal history, and do not enable communication or start a connected session. Copy writes
+the question, optional context, and a content-derived stable request key to the system clipboard;
+that explicit copy leaves Aether's retention boundary. Changing content changes the key; restoring
+identical content restores it. The displayed instance/session identifies the operator's target,
+and a changed launch requires review before another copy or focus. It is not a routing credential:
+the operator still chooses where to paste and submit the copied text.
+
+The versioned `skills/aether-cross-check/SKILL.md` is installed separately at user scope. Installation
+is a local file operation, not proof that a particular connected Claude client discovered or invoked
+it. The skill requests only the three bridge tools using supplied context and stops with **Aether
+bridge unavailable** when those tools are absent. It forbids alternate CLI, server, or delegated
+routes and summaries of unretrieved pages. Normal skill invocation and unrelated action permissions
+remain in effect. Source/installation checks, deterministic helper tests, and real-client discovery
+or provider invocation are separate evidence; the first two do not establish the latter.
+
+To use it, explicitly enable communication in Settings and start a connected Claude session,
+reviewing any terminal prompt yourself. Open **Cross-check with Codex**, enter the question and
+optional context, review its instance/session label, then choose **Copy request** and **Focus
+connected terminal**. Review the terminal before manually pasting/submitting. Submission can spend
+an existing consultation credit. Comms shows the real exchange and pages served; opening the answer
+does not retrieve pages for Claude. If retrieval stops early, any summary must identify it as partial.

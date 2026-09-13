@@ -2,6 +2,20 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { launchApp } from './electronHelpers';
 
+// Narrow structural view for browser callbacks: this e2e TypeScript project
+// does not load the renderer's global Window augmentation.
+type SmokeBridge = {
+  codexPty: {
+    start(opts: { cols: number; rows: number }): Promise<void>;
+    write(input: string): void;
+    onData(callback: (data: string) => void): () => void;
+  };
+  communication: { snapshot(): Promise<{
+    enabled: boolean; readiness: string;
+    sessionStatus: { instanceLabel: string; sessionLabel: string | null; prompt: string };
+  }> };
+};
+
 /**
  * Read the sidebar's tab ids out of viewRegistry.ts's source rather than
  * hardcoding them. A hardcoded list silently stops covering new views: before
@@ -54,13 +68,7 @@ test.describe('Aether OS smoke', () => {
   });
 
   test('the embedded terminal spawns a real pty and renders real output', async () => {
-    // The pty isn't a plain shell: ptyManager.js spawns powershell and immediately writes
-    // `claude\r`, launching a live Claude Code CLI session. Sending arbitrary typed input into
-    // that live session (e.g. `echo <marker>` expecting an echo back) is both fragile (the
-    // keystrokes go into Claude's own TUI, not a shell prompt) and inappropriate for an
-    // automated smoke test. Instead, verify the structural fact this test exists to prove: the
-    // pty spawned and is producing real, non-trivial output (its own banner/prompt), retiring
-    // the recurring manual verification.
+    // The native PTY and production IPC are real; launchApp places harmless CLIs on PATH.
     const { app, window } = await launchApp();
     try {
       await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal', exact: true }).click();
@@ -77,16 +85,87 @@ test.describe('Aether OS smoke', () => {
       const xtermRows = window.locator('.xterm-rows');
       await expect(async () => {
         const text = (await xtermRows.textContent())?.trim() ?? '';
-        expect(text.length).toBeGreaterThan(40);
+        expect(text).toContain('AETHER_E2E_CLAUDE_FIXTURE_REAL_PTY_NO_MODEL');
       }).toPass({ timeout: 10000 });
     } finally {
       await app.close();
     }
   });
 
+  test('the Codex terminal delivers real output after repeated start', async () => {
+    const { app, window } = await launchApp();
+    try {
+      // Exercise the actual production IPC consumer twice. The isolated helper
+      // resolves codex to a harmless fixture; neither start invokes a model.
+      const results = await window.evaluate(async () => {
+        const injected: unknown = Reflect.get(globalThis.window, 'aetherElectron');
+        if (!injected || typeof injected !== 'object') throw new Error('Desktop preload bridge unavailable');
+        const api = (injected as SmokeBridge).codexPty;
+        const startAndObserve = () => new Promise<{ output: string; pid: number }>((resolve, reject) => {
+          let output = '';
+          const timer = setTimeout(() => { unsubscribe(); reject(new Error('Codex PTY output timed out')); }, 10000);
+          const unsubscribe = api.onData(data => {
+            output += data;
+            const pid = /AETHER_CODEX_PID=(\d+)(?:\r?\n)/.exec(output);
+            if (pid && output.includes('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL')) {
+              clearTimeout(timer); unsubscribe(); resolve({ output, pid: Number(pid[1]) });
+            }
+          });
+          api.start({ cols: 100, rows: 30 }).then(() => {
+            // Split the marker so terminal echo cannot satisfy the output assertion.
+            api.write("Write-Output ('AETHER_CODEX_' + 'PID=' + $PID)\r");
+          }).catch(error => {
+            clearTimeout(timer); unsubscribe(); reject(error);
+          });
+        });
+        const first = await startAndObserve();
+        const replacement = await startAndObserve();
+        return { first, replacement };
+      });
+      expect(results.first.output).toContain('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL');
+      expect(results.replacement.output).toContain('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL');
+      expect(results.replacement.pid).not.toBe(results.first.pid);
+    } finally {
+      await app.close();
+    }
+  });
+  test('isolated instances display distinct safe identities without launching a session', async () => {
+    const first = await launchApp();
+    try {
+      const second = await launchApp();
+      try {
+        const statuses = [];
+        for (const { window } of [first, second]) {
+          await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Settings', exact: true }).click();
+          const identity = window.getByTestId('communication-session-identity');
+          await expect(identity).toContainText('No active launch');
+          const snapshot = await window.evaluate(() => {
+            const injected: unknown = Reflect.get(globalThis.window, 'aetherElectron');
+            if (!injected || typeof injected !== 'object') throw new Error('Desktop preload bridge unavailable');
+            return (injected as SmokeBridge).communication.snapshot();
+          });
+          expect(snapshot.enabled).toBe(false);
+          expect(snapshot.readiness).toBe('disabled');
+          expect(snapshot.sessionStatus.sessionLabel).toBeNull();
+          expect(snapshot.sessionStatus.prompt).toBe('unknown');
+          expect(snapshot.sessionStatus.instanceLabel).toMatch(/^Instance [a-f0-9]{16}$/);
+          await expect(identity).toContainText(snapshot.sessionStatus.instanceLabel);
+          statuses.push(snapshot.sessionStatus);
+        }
+        expect(statuses[0].instanceLabel).not.toBe(statuses[1].instanceLabel);
+        // Reading the second instance never changes the first instance identity.
+        await expect(first.window.getByTestId('communication-session-identity')).toContainText(statuses[0].instanceLabel);
+      } finally {
+        await second.app.close();
+      }
+    } finally {
+      await first.app.close();
+    }
+  });
   test('the dashboard metrics row renders real-usage data', async () => {
     const { app, window } = await launchApp();
     try {
+      await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Dashboard', exact: true }).click();
       await expect(window.getByText('Tokens used')).toBeVisible({ timeout: 15000 });
     } finally {
       await app.close();
