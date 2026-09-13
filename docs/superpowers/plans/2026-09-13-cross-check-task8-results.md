@@ -1,4 +1,4 @@
-# Task 8: combined verification and whole-change review
+# Task 8: combined verification and cross-check-scope review
 
 Base: `86b7c1b`. Implementation and fixture verification: **Passed**. Full real-client acceptance: **Incomplete**. No production application code, installed skill, Claude configuration, or permission rules changed in this task.
 
@@ -23,7 +23,7 @@ Base: `86b7c1b`. Implementation and fixture verification: **Passed**. Full real-
 | Cleanup | **Passed**: independent PID inventory plus bounded cleanup and fallback. Parent additionally checked helper PIDs 63868, 66340 and 54884 after its run: none remained alive. |
 | Visual inspection | **Passed**: parent inspected dark/light composer screenshots and the combined partial-delivery screenshot. The latter shows 1 of 3 pages served and the open composer. |
 | Installed skill drift | **Passed**: 6,171 bytes, source/installed SHA-256 `E4B1BDBDFA7AAD5BD7173AD387D6D19A2D4F8D1249024FE076ED6F359F9FD084`. Name/description metadata present. No skill edits or reinstall. |
-| Independent whole-change review | **Passed**: reviewed cross-check range `3a2ca1c..86b7c1b` and final Task 8 additions. No remaining actionable findings. |
+| Independent cross-check-scope review | **Passed, scoped**: reviewed the 15 commits in cross-check range `3a2ca1c..86b7c1b` plus final Task 8 additions: 16 of 36 branch commits. No remaining actionable findings in that scope. The other 20 U1-U9 foundation commits had individual gates, not a full-branch review. Full merge-base review of `28b7fc4..3acb33b` remains **Incomplete** before merge. |
 
 Saved evidence is in `outputs/task8-evidence/`: dark/light composer and folder-trust screenshots, native measurements, partial-delivery screenshot, combined evidence, and raw copy/focus write arrays. Native paste again preserved four payloads exactly after the documented Windows clipboard CRLF-to-xterm-CR conversion; largest clipboard content was 296,337 bytes, received UTF-8 296,328 bytes. This proves the harmless native receiver path, not a real model client's input handling.
 
@@ -42,3 +42,7 @@ The earlier Task 6C recognition timeout did not recur in this Task 8 run. Its ca
 - Fresh full production connected-launch acceptance and the separately authorized U9 live Claude-to-Codex consultation, actual retrieved-page summary, and cleanup evidence. No live Claude or Codex model request occurred in Task 8.
 
 These live checks need a separately specified probe allowance under the agreed plan. No push, merge, dotclaude commit, or distributed-file maintenance was performed.
+
+## 2026-09-13 clarification
+
+Historical no-push statements above describe the actions taken during Task 8; they do not describe the current remote state. The parent independently verified with git ls-remote that the remote branch is now at commit 3acb33b. This later verification does not imply that a push occurred during Task 8.
