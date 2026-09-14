@@ -92,6 +92,12 @@ class ConnectedClientFixture {
         if (command.EndsWith(":clear")) Paint(h, "\u001b[2J\u001b[HFixture waiting; no readiness assertion.");
         if (command.EndsWith(":uncertain")) Paint(h, "\u001b[?6h" + prompt);
         if (command.EndsWith(":record")) RecordInput(h, root);
+        // Report the real ConPTY console; the request never supplies dimensions.
+        // A fresh identity lets the test reject a previous process's receipt.
+        if (command.EndsWith(":geometry")) File.WriteAllText(Path.Combine(root, "geometry.json"),
+          "{\"cols\":" + Console.WindowWidth + ",\"rows\":" + Console.WindowHeight +
+          ",\"pid\":" + System.Diagnostics.Process.GetCurrentProcess().Id +
+          ",\"sampleId\":\"" + Guid.NewGuid().ToString("N") + "\"}");
         if (command.EndsWith(":exit")) return;
         Console.Out.Flush();
       }

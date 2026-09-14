@@ -1030,6 +1030,9 @@ ipcMain.handle('app:getVersion', () => {
 // without loading main.ts (and node-pty) in the test environment.
 const ptyLifecycle = new PtyLifecycle();
 const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
+// A detached renderer retains its fitted xterm geometry. Replacement must use
+// that geometry even when reattaching produces no new xterm resize event.
+let claudeTerminalDimensions = { cols: 100, rows: 30 };
 
 const launchRoot = join(app.getPath('userData'), 'communication-launches');
 const launchMaintenance = app.whenReady().then(() => cleanupStaleBridgeLaunches(launchRoot)).then(() => true, () => false);
@@ -1052,7 +1055,8 @@ const communicationSessions = new CommunicationSessionControl({
   spawn: (bundle, onExit) => {
     const launchId = communicationBridge.currentLaunchId();
     if (!launchId) throw new Error('REVOKED');
-    connectedPromptObserver.start(launchId, { cols: 100, rows: 30 }, () => spawnPty(100, 30, bundle), {
+    const dimensions = { ...claudeTerminalDimensions };
+    connectedPromptObserver.start(launchId, dimensions, () => spawnPty(dimensions.cols, dimensions.rows, bundle), {
       onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
       onExit: () => { onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
@@ -1094,6 +1098,8 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
       planUsageScraper.reset(); // a new pty means a fresh /usage read next time
     },
   });
+  if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
+    claudeTerminalDimensions = { cols, rows };
   liveAgentTracker.notifyPtySpawned(Date.now());
 });
 
@@ -1103,6 +1109,8 @@ ipcMain.on('pty:write', (_event, input: string) => {
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   connectedPromptObserver.resize(cols, rows);
+  if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
+    claudeTerminalDimensions = { cols, rows };
 });
 
 ipcMain.handle('plan:sync', async () => {

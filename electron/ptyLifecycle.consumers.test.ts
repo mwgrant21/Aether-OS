@@ -50,6 +50,7 @@ function fixture() {
   }) };
   const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
   const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
+    claudeTerminalDimensions: { cols: 100, rows: 30 },
     planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() } };
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -119,9 +120,28 @@ describe('production connected prompt wiring (deterministic physical PTYs)', () 
     f.codex(f.event, { cols: 100, rows: 30 }); codex.fireData(capturedPrompt);
     expect(f.communicationBridge.observePrompt).not.toHaveBeenCalled();
     f.connected({}, vi.fn());
-    expect(f.spawnPty).toHaveBeenLastCalledWith(100, 30, {});
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, {});
     connected.fireData(capturedPrompt);
+    expect(f.prompt()).toBe('unknown');
+    f.resize({}, { cols: 100, rows: 30 }); connected.fireData(redraw);
     expect(f.prompt()).toBe('folder-trust');
+  });
+
+  it('retains successful renderer geometry across replacement, failed resize, and ignored ordinary start', () => {
+    const f = fixture(), ordinary = fakePty(), connected = fakePty();
+    f.spawnPty.mockReturnValueOnce(ordinary).mockReturnValueOnce(connected);
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.resize({}, { cols: 125, rows: 48 });
+    expect(ordinary.resize).toHaveBeenCalledWith(125, 48);
+    ordinary.resize.mockImplementationOnce(() => { throw new Error('resize'); });
+    expect(() => f.resize({}, { cols: 140, rows: 60 })).toThrow('resize');
+    f.resize({}, { cols: 0, rows: 30 });
+    f.ordinary(f.event, { cols: 100, rows: 30 });
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    f.connected({}, vi.fn());
+    expect(f.spawnPty).toHaveBeenLastCalledWith(125, 48, {});
+    expect(ordinary.kill).toHaveBeenCalledOnce();
+    expect(connected.resize).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('resets before replacement; old synchronous exit=%s cannot contaminate new evidence', synchronousExit => {
