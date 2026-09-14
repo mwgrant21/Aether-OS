@@ -72,7 +72,16 @@ describe('provider process containment', () => {
   it.runIf(process.platform === 'win32')('launches the real child in its private cwd with the production sanitized environment', async () => {
     const started = Date.now();
     const cwd = mkdtempSync(join(tmpdir(), 'aether-private-cwd-'));
-    const env = buildCodexChildEnv({ ...process.env, OPENAI_API_KEY: 'must-not-inherit' }, cwd);
+    const hadApiKey = Object.hasOwn(process.env, 'OPENAI_API_KEY');
+    const previousApiKey = process.env.OPENAI_API_KEY;
+    let env: NodeJS.ProcessEnv;
+    try {
+      process.env.OPENAI_API_KEY = 'must-not-inherit';
+      env = buildCodexChildEnv(process.env, cwd);
+    } finally {
+      if (hadApiKey) process.env.OPENAI_API_KEY = previousApiKey!;
+      else delete process.env.OPENAI_API_KEY;
+    }
     const report = (value: unknown) => console.error('[provider-private-cwd]', JSON.stringify(value));
     const keys = ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'Path', 'PATH'];
     report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
@@ -99,6 +108,11 @@ describe('provider process containment', () => {
     try {
       const first = await trace.firstOutput;
       trace.phase('assertions-start');
+      for (const key of keys) if (process.env[key] !== undefined) {
+        expect(Object.hasOwn(env, key), `${key} retained as an exact child key`).toBe(true);
+        expect(env[key] === process.env[key], `${key} retains its OS value`).toBe(true);
+      }
+      expect(Object.hasOwn(env, 'OPENAI_API_KEY')).toBe(false);
       expect(JSON.parse(String(first))).toEqual({ cwd, key: null });
       expect(existsSync(files)).toBe(true);
       trace.phase('assertions-passed');
