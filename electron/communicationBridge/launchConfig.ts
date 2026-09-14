@@ -116,6 +116,13 @@ export async function protectLaunchDirectory(directory: string): Promise<void> {
 
 export const BRIDGE_LAUNCH_SCRIPT = [
   "$ErrorActionPreference='Stop'",
+  'function Publish-AetherReceipt([string]$Name, [string]$Content) {',
+  '  $final=Join-Path $PSScriptRoot $Name',
+  "  $temporary=Join-Path $PSScriptRoot ($Name + '.' + [Guid]::NewGuid().ToString('N') + '.tmp')",
+  '  # The sibling inherits the protected launch ACL. Publish only after the writer closes.',
+  '  Set-Content -LiteralPath $temporary -Value $Content',
+  '  [IO.File]::Move($temporary, $final)',
+  '}',
   '$aetherLaunch=$null',
   '$aetherChild=$null',
   'try {',
@@ -126,7 +133,7 @@ export const BRIDGE_LAUNCH_SCRIPT = [
   "  $env:CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS='120000'",
   '  $aetherArgs=@($aetherLaunch.arguments | ForEach-Object { \'"\' + ([string]$_ -replace \'(\\\\*)"\', \'$1$1\\"\' -replace \'(\\\\+)$\', \'$1$1\') + \'"\' })',
   '  $aetherChild=Start-Process -FilePath $aetherLaunch.executable -ArgumentList ($aetherArgs -join \' \') -WorkingDirectory $aetherLaunch.workingDirectory -NoNewWindow -PassThru',
-  "  @{pid=$aetherChild.Id} | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'started.json')",
+  "  Publish-AetherReceipt 'started.json' (@{pid=$aetherChild.Id} | ConvertTo-Json -Compress)",
   '  $aetherChild.WaitForExit()',
   '} catch {',
   "  Write-Warning 'Connected Claude launch failed or was interrupted. Check Aether communication status.'",
@@ -136,9 +143,9 @@ export const BRIDGE_LAUNCH_SCRIPT = [
   '    else {Remove-Item Env:\\CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS -ErrorAction SilentlyContinue}',
   '  } else {Remove-Item Env:\\CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS -ErrorAction SilentlyContinue}',
   '  # An interrupted WaitForExit is not proof. Main also observes the native PID.',
-  "  if($null -eq $aetherChild){'failed' | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'completed')}",
-  "  elseif($aetherChild.HasExited){'exited' | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'completed')}",
-  "  else {'failed' | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'completed')}",
+  "  if($null -eq $aetherChild){Publish-AetherReceipt 'completed' 'failed'}",
+  "  elseif($aetherChild.HasExited){Publish-AetherReceipt 'completed' 'exited'}",
+  "  else {Publish-AetherReceipt 'completed' 'failed'}",
   '}',
 ].join('\r\n');
 

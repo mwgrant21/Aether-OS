@@ -268,3 +268,107 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     }
   }, 30000);
 });
+
+describe.runIf(process.platform === 'win32')('atomic Windows launch receipts', () => {
+  const q = (value: string) => "'" + value.replace(/'/g, "''") + "'";
+  async function runScript(script: string, directory: string) {
+    const path = join(directory, 'receipt-test.ps1');
+    await writeFile(path, script);
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', path], {
+      windowsHide: true, stdio: 'pipe', timeout: 20000,
+    });
+    let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
+    const closed = new Promise<number | null>((done, reject) => { child.once('close', done); child.once('error', reject); });
+    return { child, closed, output: () => output };
+  }
+
+  it.each(['atomic', 'direct-write negative control'])('keeps incomplete bytes invisible: %s', async mode => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch(options, dependencies);
+    let script = await readFile(launch.scriptPath, 'utf8');
+    if (mode !== 'atomic') {
+      // Scratch-only negative control recreates the old direct-final writer.
+      script = script.replace('Set-Content -LiteralPath $temporary -Value $Content', 'Set-Content -LiteralPath $final -Value $Content')
+        .replace('[IO.File]::Move($temporary, $final)', '');
+      await writeFile(launch.scriptPath, script);
+    }
+    const runner = await runScript(String.raw`
+$ErrorActionPreference='Stop'
+Remove-Item Env:\CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
+function Start-Process {
+  $fake=[pscustomobject]@{Id=${process.pid};HasExited=$true}
+  $fake | Add-Member ScriptMethod WaitForExit {}
+  return $fake
+}
+function Set-Content {
+  param([string]$LiteralPath, [string]$Value)
+  $name=if([IO.Path]::GetFileName($LiteralPath).StartsWith('started.json')){'started'}else{'completed'}
+  [IO.File]::WriteAllText($LiteralPath, $(if($name -eq 'started'){'{"pid":'}else{'ex'}))
+  [IO.File]::WriteAllText((Join-Path ${q(options.root)} ($name+'.paused')), $LiteralPath)
+  $deadline=[DateTime]::UtcNow.AddSeconds(10)
+  while(!(Test-Path -LiteralPath (Join-Path ${q(options.root)} ($name+'.release')))) {
+    if([DateTime]::UtcNow -gt $deadline){throw 'receipt test gate timed out'}
+    Start-Sleep -Milliseconds 20
+  }
+  Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value
+}
+& ${q(launch.scriptPath)}
+`, options.root);
+    try {
+      for (const name of ['started', 'completed']) {
+        const marker = join(options.root, name + '.paused');
+        await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBeTruthy(), { timeout: 10000, interval: 20 });
+        const partialPath = await readFile(marker, 'utf8');
+        expect(await readFile(partialPath, 'utf8')).toBe(name === 'started' ? '{"pid":' : 'ex');
+        if (mode === 'atomic') {
+          expect(partialPath).toMatch(/\.[a-f0-9]{32}\.tmp$/);
+          await expect(readFile(join(launch.directory, name === 'started' ? 'started.json' : 'completed'))).rejects.toMatchObject({ code: 'ENOENT' });
+          expect(await launch.completion()).toBe(name === 'started' ? 'starting' : 'running');
+        } else if (name === 'started') {
+          await expect(launch.completion()).rejects.toThrow('CONFIG_UNREADABLE');
+        } else {
+          expect(await launch.completion()).toBe('failed');
+        }
+        await writeFile(join(options.root, name + '.release'), 'release');
+        await vi.waitFor(async () => expect(await launch.completion()).toBe(name === 'started' ? (mode === 'atomic' ? 'running' : 'failed') : 'exited'), { timeout: 10000, interval: 20 });
+      }
+      expect(await runner.closed, runner.output()).toBe(0);
+      expect(JSON.parse(await readFile(join(launch.directory, 'started.json'), 'utf8'))).toEqual({ pid: process.pid });
+      expect((await readFile(join(launch.directory, 'completed'), 'utf8')).trim()).toBe('exited');
+    } finally {
+      await Promise.all(['started', 'completed'].map(name => writeFile(join(options.root, name + '.release'), 'release')));
+      await runner.closed;
+
+    }
+  }, 30000);
+
+  it.each(['started.json', 'completed'])('does not overwrite an existing %s', async name => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch(options, dependencies);
+    const source = await readFile(launch.scriptPath, 'utf8');
+    const helper = source.slice(0, source.indexOf('$aetherLaunch=$null'));
+    expect(helper).toContain('[IO.File]::Move($temporary, $final)');
+    await writeFile(join(launch.directory, name), 'existing final');
+    const runner = await runScript(helper + `\nPublish-AetherReceipt ${q(name)} 'replacement'`, launch.directory);
+    expect(await runner.closed).not.toBe(0);
+    expect(await readFile(join(launch.directory, name), 'utf8')).toBe('existing final');
+    const siblings = (await readdir(launch.directory)).filter(entry => entry.startsWith(name + '.') && entry.endsWith('.tmp'));
+    expect(siblings).toHaveLength(1);
+    expect((await readFile(join(launch.directory, siblings[0]), 'utf8')).trim()).toBe('replacement');
+  }, 15000);
+
+  it('retains conservative malformed and unreadable final handling', async () => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch(options, dependencies);
+    await writeFile(join(launch.directory, 'started.json'), '{"pid":');
+    await expect(launch.completion()).rejects.toThrow('CONFIG_UNREADABLE');
+    await rm(join(launch.directory, 'started.json'));
+    await mkdir(join(launch.directory, 'started.json'));
+    await expect(launch.completion()).rejects.toThrow('CONFIG_UNREADABLE');
+    await writeFile(join(launch.directory, 'completed'), 'ex');
+    expect(await launch.completion()).toBe('failed');
+    await rm(join(launch.directory, 'completed'));
+    await mkdir(join(launch.directory, 'completed'));
+    await expect(launch.completion()).rejects.toThrow('LAUNCH_STATUS_UNREADABLE');
+  });
+});
