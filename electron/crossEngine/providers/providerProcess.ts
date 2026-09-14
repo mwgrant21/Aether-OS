@@ -92,7 +92,7 @@ export function spawnProviderProcess(executable: string, args: string[], env: No
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
     { env, cwd, stdio: 'pipe', windowsHide: true, shell: false }) as ProviderProcess;
   let hostClosed = false;
-  // Capture proof before reaping files. Even failed or timed-out disposal reaps
+  // Capture proof before reaping files. Even when a caller stops waiting, reap
   // on eventual host close; active hosts retain their stop/receipt paths. The
   // error remains in memory, so deleting diagnostics cannot turn failure into
   // success. No age-based sweep may delete another live supervisor's files.
@@ -109,22 +109,16 @@ export function spawnProviderProcess(executable: string, args: string[], env: No
   let cleanup: Promise<void> | undefined;
   child.disposeTree = () => cleanup ??= (async () => {
     if (!hostClosed) writeFileSync(stop, 'stop');
-    await bounded(closed.then(failure => { if (failure) throw failure; }));
+    // Callers bound their wait, not this owned operation. A late valid receipt
+    // must still release ownership; real cleanup failures remain latched.
+    const failure = await closed;
+    if (failure) throw failure;
   })();
   return child;
 }
 
 function observeClose(child: ChildProcessWithoutNullStreams): Promise<void> {
   return new Promise(resolve => { child.once('close', () => resolve()); });
-}
-
-async function bounded(promise: Promise<void>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([promise, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('provider cleanup was not confirmed within 10 seconds')), 10_000);
-    })]);
-  } finally { clearTimeout(timer); }
 }
 
 /** Injected stdio fakes still have an explicit cleanup contract; real spawns
