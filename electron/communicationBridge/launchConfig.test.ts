@@ -271,15 +271,34 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
 
 describe.runIf(process.platform === 'win32')('atomic Windows launch receipts', () => {
   const q = (value: string) => "'" + value.replace(/'/g, "''") + "'";
-  async function runScript(script: string, directory: string) {
+  async function runScript(script: string, directory: string, privateValues: string[]) {
     const path = join(directory, 'receipt-test.ps1');
     await writeFile(path, script);
+    const started = Date.now();
+    const safe = (text: string) => privateValues.flatMap(value => [value, value.replace(/'/g, "''")])
+      .reduce((output, value) => output.split(value).join('[private]'), text).slice(-4096);
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', path], {
       windowsHide: true, stdio: 'pipe', timeout: 20000,
     });
-    let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
-    const closed = new Promise<number | null>((done, reject) => { child.once('close', done); child.once('error', reject); });
-    return { child, closed, output: () => output };
+    let stdout = '', stderr = '';
+    // Keep padding so truncation cannot expose the tail of a redacted fixture value.
+    child.stdout.on('data', data => { stdout = (stdout + data).slice(-8192); });
+    child.stderr.on('data', data => { stderr = (stderr + data).slice(-8192); });
+    const state = { spawned: false, exited: false, closed: false, code: null as number | null,
+      signal: null as string | null, error: null as string | null };
+    child.once('spawn', () => { state.spawned = true; });
+    child.once('exit', (code, signal) => { Object.assign(state, { exited: true, code, signal }); });
+    let processError: Error | undefined;
+    const closed = new Promise<number | null>((done, reject) => {
+      child.once('close', (code, signal) => {
+        Object.assign(state, { closed: true, code, signal });
+        if (processError) reject(processError); else done(code);
+      });
+      child.once('error', error => { processError = error; state.error = safe(error.message); });
+    });
+    void closed.catch(() => {}); // Retain rejection for its caller without an early unhandled rejection.
+    return { child, closed, safe, output: () => safe(stdout + stderr),
+      snapshot: () => ({ elapsedMs: Date.now() - started, ...state, stdout: safe(stdout), stderr: safe(stderr) }) };
   }
 
   it.each(['atomic', 'direct-write negative control'])('keeps incomplete bytes invisible: %s', async mode => {
@@ -313,12 +332,33 @@ function Set-Content {
   Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value
 }
 & ${q(launch.scriptPath)}
-`, options.root);
+`, options.root, [options.root, options.manifest.capability]);
+    let gate = 'started', phase = 'waiting for pause', partialPath: string | undefined;
+    const failures: unknown[] = [];
+    const message = (error: unknown) => runner.safe(error instanceof Error ? error.message : String(error));
+    const diagnose = async (stage: string) => {
+      try {
+        const paths = { started: join(launch.directory, 'started.json'), completed: join(launch.directory, 'completed'),
+          paused: join(options.root, gate + '.paused'), startedRelease: join(options.root, 'started.release'),
+          completedRelease: join(options.root, 'completed.release'), ...(partialPath ? { partial: partialPath } : {}) };
+        const receipts = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name, path]) => {
+          try { return [name, { state: 'read', text: runner.safe((await readFile(path)).subarray(0, 512).toString('utf8')) }]; }
+          catch (error) { return [name, { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'read-error',
+            code: (error as NodeJS.ErrnoException).code ?? null, error: message(error) }]; }
+        })));
+        console.error('[atomic-receipt]', JSON.stringify({ mode, stage, gate, phase, process: runner.snapshot(), receipts,
+          failures: failures.map(message) }));
+      } catch (error) {
+        failures.push(error);
+        // Logging failures must not replace the assertion or prevent cleanup.
+      }
+    };
     try {
       for (const name of ['started', 'completed']) {
+        gate = name; phase = 'waiting for pause'; partialPath = undefined;
         const marker = join(options.root, name + '.paused');
         await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBeTruthy(), { timeout: 10000, interval: 20 });
-        const partialPath = await readFile(marker, 'utf8');
+        partialPath = await readFile(marker, 'utf8'); phase = 'checking partial receipt';
         expect(await readFile(partialPath, 'utf8')).toBe(name === 'started' ? '{"pid":' : 'ex');
         if (mode === 'atomic') {
           expect(partialPath).toMatch(/\.[a-f0-9]{32}\.tmp$/);
@@ -329,17 +369,26 @@ function Set-Content {
         } else {
           expect(await launch.completion()).toBe('failed');
         }
+        phase = 'releasing gate';
         await writeFile(join(options.root, name + '.release'), 'release');
+        phase = 'waiting for completion';
         await vi.waitFor(async () => expect(await launch.completion()).toBe(name === 'started' ? (mode === 'atomic' ? 'running' : 'failed') : 'exited'), { timeout: 10000, interval: 20 });
       }
+      phase = 'checking process close';
       expect(await runner.closed, runner.output()).toBe(0);
+      phase = 'checking final receipts';
       expect(JSON.parse(await readFile(join(launch.directory, 'started.json'), 'utf8'))).toEqual({ pid: process.pid });
       expect((await readFile(join(launch.directory, 'completed'), 'utf8')).trim()).toBe('exited');
+    } catch (error) {
+      failures.push(error); await diagnose('before cleanup');
     } finally {
-      await Promise.all(['started', 'completed'].map(name => writeFile(join(options.root, name + '.release'), 'release')));
-      await runner.closed;
-
+      const releases = await Promise.allSettled(['started', 'completed'].map(name => writeFile(join(options.root, name + '.release'), 'release')));
+      for (const result of releases) if (result.status === 'rejected') failures.push(result.reason);
+      try { await runner.closed; } catch (error) { failures.push(error); }
+      if (failures.length) await diagnose('after cleanup');
     }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, failures.map(message).join('\n'));
   }, 30000);
 
   it.each(['started.json', 'completed'])('does not overwrite an existing %s', async name => {
@@ -349,7 +398,7 @@ function Set-Content {
     const helper = source.slice(0, source.indexOf('$aetherLaunch=$null'));
     expect(helper).toContain('[IO.File]::Move($temporary, $final)');
     await writeFile(join(launch.directory, name), 'existing final');
-    const runner = await runScript(helper + `\nPublish-AetherReceipt ${q(name)} 'replacement'`, launch.directory);
+    const runner = await runScript(helper + `\nPublish-AetherReceipt ${q(name)} 'replacement'`, launch.directory, [options.root, options.manifest.capability]);
     expect(await runner.closed).not.toBe(0);
     expect(await readFile(join(launch.directory, name), 'utf8')).toBe('existing final');
     const siblings = (await readdir(launch.directory)).filter(entry => entry.startsWith(name + '.') && entry.endsWith('.tmp'));
