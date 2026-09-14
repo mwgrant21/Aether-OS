@@ -5,7 +5,7 @@ import { useExchangeSource } from './useExchangeSource';
 import { initialState } from '../../state/initialState';
 import { reducer } from '../../state/reducer';
 import { loadPersisted, savePersisted } from '../../state/persistence';
-import { deriveCommunicationIndicator } from '../layout/CommunicationIndicator';
+import { CommunicationIndicator, deriveCommunicationIndicator } from '../layout/CommunicationIndicator';
 import type { CommunicationMetadata } from '../../shared/communicationTypes';
 const store = { state: initialState, dispatch: vi.fn() };
 vi.mock('../../state/store', () => ({ useAetherStore: () => store }));
@@ -18,7 +18,7 @@ beforeEach(() => {
   read = vi.fn().mockResolvedValue(content); cancel = vi.fn().mockResolvedValue(undefined); copy = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
   (window as any).aetherElectron = { communication: { readPayload: read, cancel } };
-  store.state = { ...initialState, selectedCommunicationExchangeId: 'one', communicationSnapshot: { enabled: true, readiness: 'ready', cleanup: 'confirmed', sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: null, prompt: 'unknown', client: 'unknown', connected: false }, metadata: [row()] } }; store.dispatch.mockClear();
+  store.state = { ...initialState, selectedCommunicationExchangeId: 'one', communicationSnapshot: { enabled: true, readiness: 'ready', cleanup: 'confirmed', sessionStatus: { instanceLabel: 'Instance 0123456789abcdef', sessionLabel: null, prompt: 'unknown', client: 'unknown', connected: false }, metadata: [row()] } }; store.dispatch.mockReset();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); localStorage.clear(); });
 describe('mounted exchange content', () => {
@@ -58,6 +58,59 @@ describe('mounted exchange content', () => {
     expect(loadPersisted()).not.toHaveProperty('viewedCommunicationAnswers');
     const snapshot = { ...store.state.communicationSnapshot!, metadata: [row({ delivery: { availability: 'ready', uniquePagesServed: 2, totalPages: 2, clientConnected: true } })] };
     expect(deriveCommunicationIndicator(snapshot, []).readyCount).toBe(1);
+  });
+});
+describe('unread completion through the mounted view', () => {
+  const views = () => <><ExchangeView /><CommunicationIndicator /></>;
+  const update = (metadata: CommunicationMetadata) => {
+    store.state = reducer(store.state, { type: 'SET_COMMUNICATION_SNAPSHOT',
+      snapshot: { ...store.state.communicationSnapshot!, metadata: [metadata] } });
+  };
+  const streaming = () => row({ providerState: 'streaming', finishedAt: null, contentExpiresAt: null,
+    delivery: { availability: 'pending', uniquePagesServed: 0, totalPages: null, clientConnected: true } });
+  const expectUnread = () => {
+    expect(store.state.viewedCommunicationAnswers).toEqual([]);
+    expect(store.dispatch).not.toHaveBeenCalledWith({ type: 'VIEW_COMMUNICATION_ANSWER', exchangeId: 'one' });
+    expect(screen.getByRole('button', { name: /1 unread answers for operator/ })).toBeTruthy();
+  };
+  it.each(['delayed', 'failed then retried'])('keeps streaming output unread until the %s final read succeeds', async outcome => {
+    let resolve!: (value: typeof content) => void, reject!: (error: Error) => void;
+    read.mockResolvedValueOnce({ ...content, answer: 'PARTIAL' })
+      .mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+    store.dispatch.mockImplementation(action => { store.state = reducer(store.state, action); });
+    update(streaming());
+    const view = render(views()); await flush();
+    expect(screen.getByText('PARTIAL')).toBeTruthy();
+    update(row()); view.rerender(views()); await flush();
+    expect(read).toHaveBeenCalledTimes(2);
+    expectUnread(); expect(screen.queryByText('PARTIAL')).toBeNull();
+    if (outcome === 'failed then retried') {
+      await act(async () => reject(new Error('final read failed'))); await flush();
+      view.rerender(views()); expectUnread();
+      expect(screen.getByRole('alert').textContent).toContain('Could not read exchange content');
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+    } else await act(async () => resolve(content));
+    await flush(); view.rerender(views());
+    expect(screen.getByText(content.answer)).toBeTruthy();
+    expect(store.state.viewedCommunicationAnswers).toEqual(['one']);
+    expect(screen.queryByRole('button', { name: /unread answers for operator/ })).toBeNull();
+  });
+  it('ignores a precompletion read that arrives after finished metadata and waits for the final read', async () => {
+    let releasePartial!: (value: typeof content) => void, releaseFinal!: (value: typeof content) => void;
+    read.mockImplementationOnce(() => new Promise(resolve => { releasePartial = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { releaseFinal = resolve; }));
+    store.dispatch.mockImplementation(action => { store.state = reducer(store.state, action); });
+    update(streaming());
+    const view = render(views()); await flush();
+    update(row()); view.rerender(views()); await flush();
+    expect(read).toHaveBeenCalledTimes(1); expectUnread();
+    await act(async () => releasePartial({ ...content, answer: 'LATE_PARTIAL' })); await flush();
+    expect(read).toHaveBeenCalledTimes(2); expectUnread();
+    expect(screen.queryByText('LATE_PARTIAL')).toBeNull();
+    await act(async () => releaseFinal(content)); await flush(); view.rerender(views());
+    expect(screen.getByText(content.answer)).toBeTruthy();
+    expect(store.state.viewedCommunicationAnswers).toEqual(['one']);
+    expect(screen.queryByRole('button', { name: /unread answers for operator/ })).toBeNull();
   });
 });
 describe('bounded source lifecycle', () => {

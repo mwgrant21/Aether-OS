@@ -12,7 +12,9 @@ function payloadCopy(value: unknown): CommunicationPayload | null {
 
 /** Only this mounted view owns content. Reads never renew Claude's lease or serve a page. */
 export function useExchangeSource(metadata: CommunicationMetadata | null) {
-  const key = metadata ? `${metadata.launchId}/${metadata.exchangeId}` : null;
+  // Completion sets retention expiry. A streaming read cannot satisfy the
+  // completed generation during the render before its new effect starts.
+  const key = metadata ? `${metadata.launchId}/${metadata.exchangeId}/${metadata.contentExpiresAt ?? 'active'}` : null;
   const expires = metadata?.contentExpiresAt ?? null;
   const expired = metadata?.delivery.availability === 'expired' || (expires !== null && Date.now() >= expires);
   const [result, setResult] = useState<{ key: string | null; payload: CommunicationPayload | null; status: 'loading' | 'ready' | 'missing' | 'error' }>({ key: null, payload: null, status: 'missing' });
