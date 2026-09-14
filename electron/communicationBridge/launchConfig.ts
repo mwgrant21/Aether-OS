@@ -99,7 +99,8 @@ async function resolveClaude(): Promise<string> {
   const executable = stdout.trim();
   if (!executable.toLowerCase().endsWith('.exe')) throw new Error('NATIVE_CLAUDE_REQUIRED');
   const version = await run(executable, ['--version'], { env: buildPtyEnv(), windowsHide: true, timeout: 10_000 });
-  if (!new RegExp('^' + BRIDGE_CLAUDE_VERSION.replace(/\./g, '\\.') + '\\s').test(version.stdout.trim())) throw new Error('CLAUDE_VERSION_REPROBE_REQUIRED');
+  const output = version.stdout.trim();
+  if (!output.startsWith(BRIDGE_CLAUDE_VERSION) || !/^\s/.test(output.slice(BRIDGE_CLAUDE_VERSION.length))) throw new Error('CLAUDE_VERSION_REPROBE_REQUIRED');
   return executable;
 }
 
