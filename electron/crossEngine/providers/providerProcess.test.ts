@@ -153,32 +153,61 @@ function ownedFixtureCleanup(child: { disposeTree(): Promise<void> }, remove: ()
 }
 
 describe('provider process containment', () => {
-  it.runIf(process.platform === 'win32')('launches the real child in its private cwd with the production sanitized environment (instrumented host)', async () => {
+  const pendingMatrixCleanup = new Map<string, number>();
+  // One fixed-order diagnostic pass, not randomized causal evidence. A timed-out
+  // earlier host can remain unresolved while later arms run; retain arm labels.
+  it.runIf(process.platform === 'win32').each([
+    { order: 1, environment: 'sanitized', workingDirectory: 'private' },
+    { order: 2, environment: 'sanitized', workingDirectory: 'inherited' },
+    { order: 3, environment: 'full', workingDirectory: 'inherited' },
+    { order: 4, environment: 'full', workingDirectory: 'private' },
+  ] as const)('compares instrumented host arm $order: $environment environment / $workingDirectory cwd', async ({ order, environment, workingDirectory }) => {
     const started = Date.now();
-    const cwd = mkdtempSync(join(tmpdir(), 'aether-private-cwd-'));
+    const privateRoot = mkdtempSync(join(tmpdir(), 'aether-private-cwd-'));
+    const cwd = workingDirectory === 'private' ? privateRoot : undefined;
+    const expectedCwd = cwd ?? process.cwd();
+    const arm = `${environment}/${workingDirectory}`;
+    const report = (value: unknown) => console.error('[provider-env-cwd]', JSON.stringify({
+      arm, order, precedingCleanupUnconfirmed: [...pendingMatrixCleanup].filter(([, priorOrder]) => priorOrder < order).map(([priorArm]) => priorArm),
+      ...(value as Record<string, unknown>),
+    }));
+    const keys = ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'Path', 'PATH'];
     const hadApiKey = Object.hasOwn(process.env, 'OPENAI_API_KEY');
     const previousApiKey = process.env.OPENAI_API_KEY;
     let env: NodeJS.ProcessEnv;
+    let child: ReturnType<typeof spawnInstrumentedHost>;
     try {
+      // The fixed payload reports this key. Never let a real key reach a full-
+      // environment child: keep the sentinel through the actual synchronous
+      // spawn (process.env is a live proxy), then restore before any await.
       process.env.OPENAI_API_KEY = 'must-not-inherit';
-      env = buildCodexChildEnv(process.env, cwd);
+      env = environment === 'sanitized' ? buildCodexChildEnv(process.env, privateRoot) : process.env;
+      report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
+        osEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(process.env, key)])),
+        childEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(env, key)])) });
+      child = spawnInstrumentedHost(process.execPath, ['-e', 'console.log(JSON.stringify({cwd:process.cwd(),key:process.env.OPENAI_API_KEY??null}));setInterval(()=>{},1000)'], env, cwd);
+    } catch (error) {
+      try { rmSync(privateRoot, { recursive: true, force: true }); }
+      catch (cleanupError) {
+        const reason = [privateRoot, expectedCwd, process.execPath].reduce((text, path) => text.split(path).join('[private-path]'),
+          error instanceof Error ? error.message : String(error)).replace(/[A-Za-z0-9+/]{128,}={0,2}/g, '[encoded-command]').slice(0, 1024);
+        const code = (cleanupError as NodeJS.ErrnoException).code ?? 'unknown';
+        throw new AggregateError([error, cleanupError], `${reason}; fixture-directory cleanup failed (${code})`);
+      }
+      throw error;
     } finally {
       if (hadApiKey) process.env.OPENAI_API_KEY = previousApiKey!;
       else delete process.env.OPENAI_API_KEY;
     }
-    const report = (value: unknown) => console.error('[provider-private-cwd]', JSON.stringify(value));
-    const keys = ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'Path', 'PATH'];
-    report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
-      osEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(process.env, key)])),
-      childEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(env, key)])) });
-    const child = spawnInstrumentedHost(process.execPath, ['-e', 'console.log(JSON.stringify({cwd:process.cwd(),key:process.env.OPENAI_API_KEY??null}));setInterval(()=>{},1000)'], env, cwd);
+    pendingMatrixCleanup.set(arm, order);
     report({ event: 'instrumented-host-spawn', commandCharsUpperBound: child.spawnargs.reduce((length, arg) => length + arg.length + 3, 1) });
     const files = supervisionDirectory(child);
-    const trace = traceStartup(child, report, started, [cwd, files, process.execPath], true);
+    const trace = traceStartup(child, report, started, [privateRoot, expectedCwd, files, process.execPath], true);
     let cleanupObserved = false;
     const dispose = ownedFixtureCleanup(child, () => {
       expect(existsSync(files)).toBe(false);
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(privateRoot, { recursive: true, force: true });
+      pendingMatrixCleanup.delete(arm);
     }, trace.phase);
     onTestFailed(() => trace.phase('test-failed'));
     onTestFinished(async () => {
@@ -197,8 +226,8 @@ describe('provider process containment', () => {
         expect(Object.hasOwn(env, key), `${key} retained as an exact child key`).toBe(true);
         expect(env[key] === process.env[key], `${key} retains its OS value`).toBe(true);
       }
-      expect(Object.hasOwn(env, 'OPENAI_API_KEY')).toBe(false);
-      expect(JSON.parse(String(first))).toEqual({ cwd, key: null });
+      if (environment === 'sanitized') expect(Object.hasOwn(env, 'OPENAI_API_KEY')).toBe(false);
+      expect(JSON.parse(String(first))).toEqual({ cwd: expectedCwd, key: environment === 'full' ? 'must-not-inherit' : null });
       expect(existsSync(files)).toBe(true);
       trace.phase('assertions-passed');
     } catch (error) { failures.push(error); trace.failure('startup-or-assertion-failed', error);
