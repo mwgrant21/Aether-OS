@@ -1,7 +1,8 @@
 import { test, expect, type Page, type ElectronApplication } from '@playwright/test';
 import { connectedFixtureOwnedPids, launchConnectedProduction } from './connectedProductionHelpers';
-import { cleanupConnectedProduction } from './connectedProductionCleanup';
-import { writeFileSync } from 'node:fs';
+import { ConnectedCleanupError, cleanupConnectedProduction } from './connectedProductionCleanup';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 type Snapshot = { readiness: string; sessionStatus: { prompt: string; client: string; connected: boolean; sessionLabel: string | null } };
 type Bridge = { communication: { snapshot(): Promise<Snapshot>; onSnapshot(cb: (s: Snapshot) => void): () => void };
@@ -18,6 +19,10 @@ test('built production connected native client: readiness, focus, resize, replac
   test.setTimeout(120000);
   const fixture = await launchConnectedProduction();
   const { app, window, command } = fixture;
+  let bodyError: unknown;
+  const failures: unknown[] = [];
+  const describeError = (error: unknown) => error instanceof Error
+    ? { name: error.name, message: error.message, stack: error.stack } : String(error);
   try {
     await settings(window);
     await window.getByLabel('Enable Claude–Codex communication').check();
@@ -26,8 +31,18 @@ test('built production connected native client: readiness, focus, resize, replac
       Reflect.set(globalThis.window, '__snapshotHistory', history);
       (Reflect.get(globalThis.window, 'aetherElectron') as Bridge).communication.onSnapshot(s => history.push(s));
     });
+    // These fixed capture frames require 100x30. The initial Terminal mount
+    // may already have supplied a different fitted size before Settings opens.
+    await resize(window, 100, 30);
     await window.getByRole('button', { name: 'Start fresh connected Claude', exact: true }).click();
     await expect.poll(async () => (await snapshot(window)).sessionStatus.client, { timeout: 30000 }).toBe('running');
+    command('geometry');
+    const geometryPath = join(fixture.root, 'bin', 'geometry.json');
+    await expect.poll(() => {
+      if (!existsSync(geometryPath)) return null;
+      try { return JSON.parse(readFileSync(geometryPath, 'utf8')); }
+      catch { return null; } // The native writer may not have finished the receipt.
+    }).toMatchObject({ cols: 100, rows: 30 });
     const first = await snapshot(window);
     const status = window.getByTestId('communication-client-status');
     await expect(status).toContainText('Client not ready');
@@ -89,18 +104,23 @@ test('built production connected native client: readiness, focus, resize, replac
     expect(history.some(s => s.sessionStatus.prompt === 'folder-trust')).toBe(true);
     expect(history.filter(s => s.sessionStatus.client === 'exited').every(s => s.sessionStatus.prompt === 'unknown')).toBe(true);
     await testInfo.attach('production-path-evidence', { body: JSON.stringify({ root: fixture.root, history, ...finalEvidence }, null, 2), contentType: 'application/json' });
+  } catch (error) {
+    bodyError = error; failures.push(error);
   } finally {
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
     let nativeEvidence: NativeEvidence | null = null;
-    try { nativeEvidence = await evidence(app); } catch { }
+    let finalSnapshot: Snapshot | null = null;
+    const diagnosticErrors: unknown[] = [];
+    try { nativeEvidence = await evidence(app); } catch (error) { diagnosticErrors.push(error); }
+    try { finalSnapshot = await snapshot(window); } catch (error) { diagnosticErrors.push(error); }
     const owned = connectedFixtureOwnedPids(fixture.root, nativeEvidence?.pids);
     const electronProcess = app.process();
-    await cleanupConnectedProduction({
+    try { await cleanupConnectedProduction({
       writeDiagnostics: async () => {
         const diagnostics = testInfo.outputPath('native-fixture-diagnostics.json');
-        writeFileSync(diagnostics, JSON.stringify({ root: fixture.root, evidence: nativeEvidence, snapshot: await snapshot(window) }, null, 2));
+        writeFileSync(diagnostics, JSON.stringify({ root: fixture.root, evidence: nativeEvidence, snapshot: finalSnapshot,
+          bodyError: bodyError === undefined ? null : describeError(bodyError), diagnosticErrors: diagnosticErrors.map(describeError) }, null, 2));
         await testInfo.attach('native-fixture-diagnostics', { path: diagnostics, contentType: 'application/json' });
-        if (owned.errors.length) throw owned.errors[0];
       },
       requestExit: () => command('exit'), closeApp: () => app.close(),
       forceCloseApp: () => { if (!electronProcess.killed) electronProcess.kill(); },
@@ -108,6 +128,17 @@ test('built production connected native client: readiness, focus, resize, replac
       waitForOwnedExit: async () => {
         await expect.poll(() => owned.pids.some(alive), { timeout: 5000 }).toBe(false);
       },
-    });
+    }); } catch (error) {
+      failures.push(...(error instanceof ConnectedCleanupError ? error.causes : [error]));
+    }
+    failures.push(...diagnosticErrors, ...owned.errors);
+    try {
+      const cleanupPath = testInfo.outputPath('native-fixture-cleanup.json');
+      writeFileSync(cleanupPath, JSON.stringify({ root: fixture.root, ownedPids: owned.pids, alive: owned.pids.filter(alive),
+        bodyError: bodyError === undefined ? null : describeError(bodyError), errors: failures.map(describeError) }, null, 2));
+      await testInfo.attach('native-fixture-cleanup', { path: cleanupPath, contentType: 'application/json' });
+    } catch (error) { failures.push(error); }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, failures.map(String).join('\n'));
 });
