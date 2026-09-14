@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile, readdir, rm, mkdir } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { assertBridgePolicy, BRIDGE_ALLOWED_TOOLS, prepareBridgeLaunch, protectLaunchDirectory, cleanupStaleBridgeLaunches, preflightBridgeLaunch } from './launchConfig';
+import { assertBridgePolicy, BRIDGE_ALLOWED_TOOLS, BRIDGE_CLAUDE_VERSION, prepareBridgeLaunch, protectLaunchDirectory, cleanupStaleBridgeLaunches, preflightBridgeLaunch } from './launchConfig';
 import { spawnPty } from '../ptyManager';
 
 const directories: string[] = [];
@@ -30,6 +30,12 @@ describe('bridge policy', () => {
   it.each([{ allowManagedPermissionRulesOnly: true }, { allowedMcpServers: [] }, { deniedMcpServers: [] }])('does not override managed policy', value => {
     expect(() => assertBridgePolicy(value)).toThrow('MANAGED_POLICY_REQUIRES_REVIEW');
   });
+});
+
+it('keeps the native connected fixture version aligned with production', async () => {
+  const source = await readFile(join(process.cwd(), 'e2e/fixtures/connected-client.cs'), 'utf8');
+  const version = source.match(/Console\.WriteLine\("(\d+\.\d+\.\d+) \(Aether harmless native fixture\)"\)/)?.[1];
+  expect(version).toBe(BRIDGE_CLAUDE_VERSION);
 });
 
 describe.runIf(process.platform === 'win32')('private Windows launch', () => {
