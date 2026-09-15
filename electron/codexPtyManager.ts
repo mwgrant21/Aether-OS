@@ -42,20 +42,24 @@ const BILLING_AUTH_ENV_VARS = [
 // change.
 //
 // Drop exactly that set and nothing else. npm marks its own launches with
-// npm_execpath and records the invocation dir in INIT_CWD, so the set is
-// computable rather than guessed: a packaged build (no npm) strips nothing,
-// and a node_modules/.bin the operator put on PATH themselves (a custom
-// prefix, a direnv PATH_add) is kept -- a suffix-only match would have
-// thrown away their real install. Everything else (global npm bin,
-// nvm/Homebrew/system dirs) stays in place and order. The shell profile
-// still runs afterwards and may add its own PATH entries; that is operator
-// configuration, not npm contamination, and is left alone.
+// npm_execpath and exposes the package directory its set-path walks up
+// from as npm_config_local_prefix (npm_package_json sits in that same dir),
+// so the set is computable rather than guessed: a packaged build (no npm)
+// strips nothing, and a node_modules/.bin the operator put on PATH
+// themselves (a custom prefix, a direnv PATH_add) is kept -- a suffix-only
+// match would have thrown away their real install. Not INIT_CWD: with
+// `npm --prefix <dir> run ...` that is the caller's directory, not the
+// package's, and the injected entries follow the package. Everything else
+// (global npm bin, nvm/Homebrew/system dirs) stays in place and order. The
+// shell profile still runs afterwards and may add its own PATH entries;
+// that is operator configuration, not npm contamination, and is left alone.
 export function npmInjectedBinDirs(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] {
-  const initCwd = env.INIT_CWD;
-  if (!env.npm_execpath || !initCwd) return [];
+  if (!env.npm_execpath) return [];
   const p = platform === 'win32' ? path.win32 : path.posix;
+  const packageDir = env.npm_config_local_prefix || (env.npm_package_json ? p.dirname(env.npm_package_json) : undefined);
+  if (!packageDir) return [];
   const dirs: string[] = [];
-  let dir = p.normalize(initCwd);
+  let dir = p.normalize(packageDir);
   for (;;) {
     dirs.push(p.join(dir, 'node_modules', '.bin'));
     const parent = p.dirname(dir);

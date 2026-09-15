@@ -54,18 +54,24 @@ describe('buildUnsetCommand', () => {
 });
 
 // `npm run electron:dev` (and any `npm exec`) prepends `<dir>/node_modules/.bin`
-// for the invocation dir (INIT_CWD) and every ancestor to PATH before Electron
-// starts, so the bare `codex` CODEX_LAUNCH_COMMAND resolved to the
-// project-local pinned @openai/codex shim (0.153.2) instead of the operator's
-// global install (0.154.0) -- the terminal reported a stale version no
-// "update" could fix. The launch env must drop exactly that npm-injected set
-// and nothing else.
+// for the package dir (npm_config_local_prefix) and every ancestor to PATH
+// before Electron starts, so the bare `codex` CODEX_LAUNCH_COMMAND resolved
+// to the project-local pinned @openai/codex shim (0.153.2) instead of the
+// operator's global install (0.154.0) -- the terminal reported a stale
+// version no "update" could fix. The launch env must drop exactly that
+// npm-injected set and nothing else.
 describe('buildCodexPtyEnv PATH filtering', () => {
   const GLOBAL_NPM = 'C:\\Users\\op\\AppData\\Roaming\\npm';
   // A node_modules/.bin the operator put on PATH themselves (custom prefix,
-  // direnv PATH_add): not an ancestor of INIT_CWD, so npm did not inject it.
+  // direnv PATH_add): not an ancestor of the package dir, so npm did not
+  // inject it.
   const OPERATOR_BIN = 'D:\\tools\\node_modules\\.bin';
-  const WIN_NPM = { npm_execpath: 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js', INIT_CWD: 'C:\\proj\\aether-os' };
+  const WIN_NPM = {
+    npm_execpath: 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js',
+    npm_config_local_prefix: 'C:\\proj\\aether-os',
+    npm_package_json: 'C:\\proj\\aether-os\\package.json',
+    INIT_CWD: 'C:\\proj\\aether-os',
+  };
   const WIN_PATH = [
     'C:\\proj\\aether-os\\node_modules\\.bin',
     'C:\\proj\\node_modules\\.bin',
@@ -94,8 +100,25 @@ describe('buildCodexPtyEnv PATH filtering', () => {
   });
 
   it('strips nothing when the process was not launched by npm (packaged build)', () => {
-    const env = buildCodexPtyEnv({ INIT_CWD: 'C:\\proj\\aether-os', Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    const env = buildCodexPtyEnv({ npm_config_local_prefix: 'C:\\proj\\aether-os', Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
     expect(env.Path).toBe(WIN_PATH);
+  });
+
+  // `npm --prefix C:\proj\aether-os run electron:dev` from C:\Users\op: npm
+  // injects the package's ancestors, but INIT_CWD is the caller's directory.
+  // The filter must follow the package, and must not touch a bin dir that is
+  // only an ancestor of the caller.
+  it('follows the npm package dir, not INIT_CWD, for an npm --prefix launch from elsewhere', () => {
+    const CALLER_BIN = 'C:\\Users\\op\\node_modules\\.bin';
+    const source = { ...WIN_NPM, INIT_CWD: 'C:\\Users\\op', Path: [CALLER_BIN, WIN_PATH].join(';') };
+    const env = buildCodexPtyEnv(source, 'C:/fake/codex-home', 'win32');
+    expect(env.Path).toBe([CALLER_BIN, WIN_EXPECTED].join(';'));
+  });
+
+  it('falls back to the npm_package_json directory when npm_config_local_prefix is absent', () => {
+    const { npm_config_local_prefix: _omit, ...withoutPrefix } = WIN_NPM;
+    const env = buildCodexPtyEnv({ ...withoutPrefix, Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    expect(env.Path).toBe(WIN_EXPECTED);
   });
 
   it('matches the PATH key case-insensitively and does not add a second key', () => {
@@ -107,7 +130,7 @@ describe('buildCodexPtyEnv PATH filtering', () => {
   it('uses the POSIX delimiter and forward-slash form off win32', () => {
     const source = {
       npm_execpath: '/usr/lib/node_modules/npm/bin/npm-cli.js',
-      INIT_CWD: '/home/op/proj',
+      npm_config_local_prefix: '/home/op/proj',
       PATH: '/home/op/proj/node_modules/.bin:/home/op/node_modules/.bin:/node_modules/.bin:/usr/local/bin:/opt/mine/node_modules/.bin:/usr/bin',
     };
     const env = buildCodexPtyEnv(source, '/fake/codex-home', 'linux');

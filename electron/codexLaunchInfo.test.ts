@@ -72,10 +72,10 @@ async function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
 }
 
 // The launch env the real terminal gets: built from a PATH carrying the npm
-// markers npm itself sets for a `npm run` launch (INIT_CWD = the project).
+// markers npm itself sets for a `npm run` launch (package dir = the project).
 function launchEnvFor(pathValue: string): NodeJS.ProcessEnv {
   return buildCodexPtyEnv(
-    { PATH: pathValue, npm_execpath: 'fake-npm-cli.js', INIT_CWD: path.join(root, 'proj') },
+    { PATH: pathValue, npm_execpath: 'fake-npm-cli.js', npm_config_local_prefix: path.join(root, 'proj') },
     root,
     platform,
   );
