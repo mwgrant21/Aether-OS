@@ -2,10 +2,30 @@ import * as pty from 'node-pty';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCodexHome } from './crossEngine/acpProcess';
+import { resolveCodexExecutable } from './codexLaunchInfo';
 
 // The terminal ALWAYS starts a fresh codex session -- matching ptyManager.ts's
 // identical decision for claude: never add resume flags.
-const CODEX_LAUNCH_COMMAND = 'codex\r';
+//
+// Launch the executable resolved on the launch env explicitly rather than a
+// bare `codex`: the resolved file is what the header's version readout
+// probed (codexLaunchInfo.ts), and a bare name would let PowerShell pick
+// codex.ps1 over codex.cmd from the same dir -- which fails outright under a
+// restrictive execution policy instead of falling back. Only when nothing
+// resolves does the bare name go in, leaving the operator's profile (nvm,
+// Homebrew, ~/.local/bin PATH setup) its chance to find one.
+export function buildCodexLaunchCommand(executable: string | null, platform: NodeJS.Platform): string {
+  if (executable === null) return 'codex\r';
+  if (platform === 'win32') return `& '${executable.replace(/'/g, "''")}'\r`;
+  return `'${executable.replace(/'/g, "'\\''")}'\r`;
+}
+
+// Where the PTY shell starts. Also the base for relative PATH components in
+// codexLaunchInfo.ts's resolution, so the readout resolves what the shell
+// resolves.
+export function codexPtyCwd(): string {
+  return os.homedir();
+}
 
 // A real interactive terminal cannot structurally prevent the operator from
 // typing an API key by hand inside the session -- stripping these from the
@@ -143,14 +163,16 @@ export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly stri
 
 export function spawnCodexPty(cols = 100, rows = 30) {
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
+  const env = buildCodexLaunchEnv();
+  const cwd = codexPtyCwd();
   const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-color',
     cols,
     rows,
-    cwd: os.homedir(),
-    env: buildCodexLaunchEnv(),
+    cwd,
+    env,
   });
   ptyProcess.write(buildUnsetCommand(process.platform, BILLING_AUTH_ENV_VARS));
-  ptyProcess.write(CODEX_LAUNCH_COMMAND);
+  ptyProcess.write(buildCodexLaunchCommand(resolveCodexExecutable(env, process.platform, cwd), process.platform));
   return ptyProcess;
 }

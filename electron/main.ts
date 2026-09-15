@@ -6,7 +6,7 @@ import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
-import { spawnCodexPty, buildCodexLaunchEnv } from './codexPtyManager';
+import { spawnCodexPty, buildCodexLaunchEnv, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
@@ -1154,7 +1154,7 @@ ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: num
 // npm-injected PATH is what made the terminal run the project-local shim.
 // The executable path crosses IPC for display only (the point of the readout
 // is to show the operator which install is selected); it is never stored.
-ipcMain.handle('codexPty:launchInfo', () => getCodexLaunchInfo(buildCodexLaunchEnv()));
+ipcMain.handle('codexPty:launchInfo', () => getCodexLaunchInfo(buildCodexLaunchEnv(), process.platform, codexPtyCwd()));
 
 ipcMain.handle('attachments:list', () => attachmentsStore.list());
 ipcMain.handle('attachments:add', () => attachmentsStore.add());

@@ -96,17 +96,31 @@ afterAll(() => {
 describe('resolveCodexExecutable', () => {
   it('returns the project shim from the raw npm-injected PATH', () => {
     const env = { PATH: [projectBin, globalBin].join(delimiter) };
-    expect(resolveCodexExecutable(env, platform)).toBe(path.join(projectBin, win32 ? 'codex.cmd' : 'codex'));
+    expect(resolveCodexExecutable(env, platform, root)).toBe(path.join(projectBin, win32 ? 'codex.cmd' : 'codex'));
   });
 
   it('returns the global copy from the filtered launch env built from the same PATH', () => {
     const env = launchEnvFor([projectBin, globalBin].join(delimiter));
-    expect(resolveCodexExecutable(env, platform)).toBe(path.join(globalBin, win32 ? 'codex.cmd' : 'codex'));
+    expect(resolveCodexExecutable(env, platform, root)).toBe(path.join(globalBin, win32 ? 'codex.cmd' : 'codex'));
   });
 
   it('returns null when no PATH entry holds a codex executable', () => {
-    expect(resolveCodexExecutable({ PATH: path.join(root, 'empty') }, platform)).toBeNull();
-    expect(resolveCodexExecutable({}, platform)).toBeNull();
+    expect(resolveCodexExecutable({ PATH: path.join(root, 'empty') }, platform, root)).toBeNull();
+    expect(resolveCodexExecutable({}, platform, root)).toBeNull();
+  });
+
+  // The PTY shell starts in its own cwd (os.homedir()), not Electron's, so a
+  // relative PATH component must be resolved from there or the readout and
+  // the launch would disagree.
+  it('resolves a relative PATH component against the PTY cwd, not the Electron process cwd', () => {
+    const env = { PATH: 'global' };
+    expect(resolveCodexExecutable(env, platform, root)).toBe(path.join(globalBin, win32 ? 'codex.cmd' : 'codex'));
+    expect(resolveCodexExecutable(env, platform, path.join(root, 'proj'))).toBeNull();
+  });
+
+  it.skipIf(win32)('treats an empty POSIX PATH component as the PTY cwd', () => {
+    const env = { PATH: `${path.join(root, 'empty')}::${path.join(root, 'other')}` };
+    expect(resolveCodexExecutable(env, platform, globalBin)).toBe(path.join(globalBin, 'codex'));
   });
 });
 
@@ -133,7 +147,7 @@ describe('probeCodexVersion', () => {
 describe('getCodexLaunchInfo', () => {
   it('reports the executable and version the filtered launch env will actually run', async () => {
     const env = launchEnvFor([projectBin, globalBin].join(delimiter));
-    const info = await getCodexLaunchInfo(env, platform);
+    const info = await getCodexLaunchInfo(env, platform, root);
     expect(info).toEqual({
       executable: path.join(globalBin, win32 ? 'codex.cmd' : 'codex'),
       version: 'codex-cli 0.154.0',
@@ -142,7 +156,7 @@ describe('getCodexLaunchInfo', () => {
   });
 
   it('reports a not-found error instead of throwing when codex is absent', async () => {
-    const info = await getCodexLaunchInfo({ PATH: path.join(root, 'empty') }, platform);
+    const info = await getCodexLaunchInfo({ PATH: path.join(root, 'empty') }, platform, root);
     expect(info.executable).toBeNull();
     expect(info.version).toBeNull();
     expect(info.error).toMatch(/not found/i);

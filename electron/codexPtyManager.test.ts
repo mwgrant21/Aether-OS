@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCodexPtyEnv, buildUnsetCommand } from './codexPtyManager';
+import { buildCodexPtyEnv, buildUnsetCommand, buildCodexLaunchCommand } from './codexPtyManager';
 
 // Mirrors ptyManager.test.ts's guard, for the Codex terminal's own launch path.
 // Mirrors acpProcess.test.ts's BLOCKED list -- the verifier already enumerates
@@ -83,7 +83,7 @@ describe('buildCodexPtyEnv PATH filtering', () => {
   ].join(';');
   const WIN_EXPECTED = ['C:\\Windows\\System32', OPERATOR_BIN, GLOBAL_NPM, 'C:\\Program Files\\nodejs'].join(';');
 
-  it('drops exactly the INIT_CWD-ancestor node_modules/.bin entries on win32, keeping order of the rest', () => {
+  it('drops exactly the package-dir-ancestor node_modules/.bin entries on win32, keeping order of the rest', () => {
     const env = buildCodexPtyEnv({ ...WIN_NPM, Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
     expect(env.Path).toBe(WIN_EXPECTED);
   });
@@ -141,5 +141,27 @@ describe('buildCodexPtyEnv PATH filtering', () => {
     const source = { ...WIN_NPM, Path: WIN_PATH };
     buildCodexPtyEnv(source, 'C:/fake/codex-home', 'win32');
     expect(source.Path).toBe(WIN_PATH);
+  });
+});
+
+// The terminal launches the executable resolved on its launch env (the one
+// the header's readout probed) explicitly, so a bare `codex` cannot make
+// PowerShell pick codex.ps1 over codex.cmd from the same dir and fail under
+// a restrictive execution policy. Bare `codex` is the fallback only when
+// nothing resolved, leaving the profile's PATH setup its chance.
+describe('buildCodexLaunchCommand', () => {
+  it('launches the resolved file via the call operator on win32, single-quoted with quotes doubled', () => {
+    expect(buildCodexLaunchCommand("C:\\Program Files\\o'brien\\npm\\codex.cmd", 'win32')).toBe(
+      "& 'C:\\Program Files\\o''brien\\npm\\codex.cmd'\r",
+    );
+  });
+
+  it('launches the resolved file single-quoted with POSIX quote escaping off win32', () => {
+    expect(buildCodexLaunchCommand("/opt/o'brien/bin/codex", 'linux')).toBe("'/opt/o'\\''brien/bin/codex'\r");
+  });
+
+  it('falls back to a bare codex when nothing resolved on the launch env', () => {
+    expect(buildCodexLaunchCommand(null, 'win32')).toBe('codex\r');
+    expect(buildCodexLaunchCommand(null, 'linux')).toBe('codex\r');
   });
 });
