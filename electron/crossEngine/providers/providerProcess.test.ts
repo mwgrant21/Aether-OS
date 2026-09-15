@@ -4,8 +4,8 @@ import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as childProcess from 'node:child_process';
-import { existsSync, mkdtempSync, rmdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdtempSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { attachStderrRingBuffer, buildAllowlistedChildEnv, buildCodexChildEnv } from '../acpProcess';
 import { spawnProviderProcess, disposeProviderProcess } from './providerProcess';
@@ -15,7 +15,8 @@ import { spawnProviderProcess, disposeProviderProcess } from './providerProcess'
 vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal<typeof import('node:child_process')>() }));
 
 // Derived diagnostic host, not the byte-identical production baseline. Keep all
-// original statements and parameter bytes; only insert constant stderr writes.
+// original statements and parameter bytes; the optional mechanism probe also
+// inserts one first cmdlet, only in its dedicated diagnostic arm.
 const hostStageAnchors = [
   ['ps-entry', "$ErrorActionPreference='Stop'", 'before', 'ps'],
   ['add-type-before', "Add-Type -TypeDefinition @'", 'before', 'ps'],
@@ -36,10 +37,15 @@ const hostStageAnchors = [
   ['host-complete', '[AetherProviderJob]::Run($p.executable,$p.command,$p.stop,$p.receipt,$p.cwd)', 'after', 'ps'],
 ] as const;
 
-function instrumentHostScript(script: string): string {
+const firstCmdletStages = ['first-cmdlet-before', 'first-cmdlet-after'] as const;
+const firstCmdletProbe = "[Console]::Error.WriteLine('[aether-test-host-stage:first-cmdlet-before]')\n[void](Get-Date)\n[Console]::Error.WriteLine('[aether-test-host-stage:first-cmdlet-after]')";
+const recognizedHostStages: readonly string[] = [...hostStageAnchors.map(([stage]) => stage), ...firstCmdletStages];
+
+function instrumentHostScript(script: string, firstCmdlet = false): string {
   for (const [stage, anchor] of hostStageAnchors) {
     if (script.split(anchor).length !== 2) throw new Error(`Host instrumentation anchor must occur exactly once: ${stage}`);
   }
+  if (firstCmdlet) script = script.replace("$ErrorActionPreference='Stop'", "$ErrorActionPreference='Stop'\n" + firstCmdletProbe);
   for (const [stage, anchor, side, language] of hostStageAnchors) {
     const marker = `[aether-test-host-stage:${stage}]`;
     const write = language === 'cs' ? `Console.Error.WriteLine("${marker}");`
@@ -51,7 +57,7 @@ function instrumentHostScript(script: string): string {
   return script;
 }
 
-function spawnInstrumentedHost(...parameters: Parameters<typeof spawnProviderProcess>) {
+function spawnInstrumentedHost(parameters: Parameters<typeof spawnProviderProcess>, firstCmdlet = false) {
   const realSpawn = childProcess.spawn;
   // Only the production host's three-argument overload is supported here.
   const interception = vi.spyOn(childProcess, 'spawn').mockImplementation(((command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
@@ -60,7 +66,7 @@ function spawnInstrumentedHost(...parameters: Parameters<typeof spawnProviderPro
     }
     const script = Buffer.from(args[4], 'base64').toString('utf16le');
     let instrumented: string;
-    try { instrumented = Buffer.from(instrumentHostScript(script), 'utf16le').toString('base64'); }
+    try { instrumented = Buffer.from(instrumentHostScript(script, firstCmdlet), 'utf16le').toString('base64'); }
     catch (error) {
       // Production allocated this empty directory before calling spawn. No host
       // owns it yet; remove only that empty directory, never recursively.
@@ -106,7 +112,7 @@ function traceStartup(child: ChildProcessWithoutNullStreams, report: (value: unk
     const lines = pendingStderr.split(/\r?\n/);
     pendingStderr = lines.pop()!;
     for (const line of lines) {
-      const stage = hostStageAnchors.find(([name]) => line === `[aether-test-host-stage:${name}]`)?.[0];
+      const stage = recognizedHostStages.find(name => line === `[aether-test-host-stage:${name}]`);
       if (stage && !seenStages.has(stage)) {
         seenStages.add(stage); lastHostStage = stage; phase('host-stage', { stage });
       }
@@ -182,36 +188,47 @@ function diagnosticArmEnv(bases: ReturnType<typeof diagnosticEnvBases>, environm
 }
 
 // Diagnostic selections only: these keys never widen the production allowlist.
-const diagnosticKeys = [
-  'PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH', 'DOTNET_MULTILEVEL_LOOKUP',
-  'DOTNET_NOLOGO', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE',
-  'POWERSHELL_DISTRIBUTION_CHANNEL', 'POWERSHELL_UPDATECHECK',
-] as const;
-type DiagnosticSelection = typeof diagnosticKeys[number] | 'seven-key-control' | 'sanitized-control';
-const diagnosticSelections: readonly DiagnosticSelection[] = [
-  'seven-key-control', ...diagnosticKeys, 'sanitized-control',
-];
+const cacheKey = 'PSMODULEANALYSISCACHEPATH';
+const diagnosticSelections = ['inherited-cache-control', 'private-cache', 'first-cmdlet', 'sanitized-control'] as const;
+type DiagnosticSelection = typeof diagnosticSelections[number];
 const excludedDiagnosticKeys = ['OPENAI_API_KEY'];
 
-function diagnosticKeyArm(bases: ReturnType<typeof diagnosticEnvBases>, selection: DiagnosticSelection, codexHome: string) {
-  const requestedKeys: readonly string[] = selection === 'seven-key-control' ? diagnosticKeys
-    : selection === 'sanitized-control' ? [] : [selection];
-  const appliedKeys = bases.droppedKeys.filter(key => requestedKeys.includes(key.toUpperCase()));
+function diagnosticMechanismArm(bases: ReturnType<typeof diagnosticEnvBases>, selection: DiagnosticSelection, privateRoot: string) {
+  const requestedKeys = selection === 'inherited-cache-control' || selection === 'private-cache' ? [cacheKey] : [];
+  const appliedKeys = selection === 'private-cache' ? [cacheKey]
+    : bases.droppedKeys.filter(key => requestedKeys.includes(key.toUpperCase()));
   const missingKeys = requestedKeys.filter(key => !appliedKeys.some(name => name.toUpperCase() === key));
-  const env = diagnosticArmEnv(bases, 'sanitized', 'on', codexHome);
+  const env = diagnosticArmEnv(bases, 'sanitized', 'on', privateRoot);
   for (const key of appliedKeys) env[key] = bases.full[key];
+  let cachePathPrivate: boolean | null = null, cachePathInitiallyAbsent: boolean | null = null;
+  if (selection === 'private-cache') {
+    const path = join(privateRoot, 'ModuleAnalysisCache');
+    const relativePath = relative(privateRoot, path);
+    cachePathPrivate = isAbsolute(privateRoot) && relativePath === 'ModuleAnalysisCache';
+    cachePathInitiallyAbsent = !existsSync(path);
+    if (!cachePathPrivate || !cachePathInitiallyAbsent) throw new Error('Private cache fixture must be contained and initially absent');
+    env[cacheKey] = path; // Never create the cache file before the host starts.
+  }
   // Enforce the payload's null contract even if the sanitized base ever changes.
   for (const key of Object.keys(env)) if (excludedDiagnosticKeys.includes(key.toUpperCase())) delete env[key];
   const verbatimFromFrozenParent = Object.fromEntries(requestedKeys.map(key => {
     const applied = appliedKeys.find(name => name.toUpperCase() === key);
-    return [key, applied === undefined ? null : Object.hasOwn(env, applied) && env[applied] === bases.full[applied]];
+    return [key, applied === undefined || selection === 'private-cache' ? null
+      : Object.hasOwn(env, applied) && env[applied] === bases.full[applied]];
   }));
-  return { env, requestedKeys, missingKeys, appliedKeys, verbatimFromFrozenParent };
+  const appliedSource = appliedKeys.length === 0 ? null : selection === 'private-cache' ? 'private-fixture' : 'frozen-parent';
+  return { env, requestedKeys, missingKeys, appliedKeys, verbatimFromFrozenParent,
+    appliedSource, cachePathPrivate, cachePathInitiallyAbsent };
 }
 
 function diagnosticKeyNames(keys: readonly string[]) {
   return { count: keys.length, names: keys.slice(0, 256).map(key => key.slice(0, 128)),
     truncated: keys.length > 256 || keys.some(key => key.length > 128) };
+}
+
+function diagnosticCachePaths(env: NodeJS.ProcessEnv): string[] {
+  return Object.entries(env).filter(([key, value]) => key.toUpperCase() === cacheKey && Boolean(value))
+    .map(([, value]) => value!);
 }
 
 describe('provider process containment', () => {
@@ -250,15 +267,17 @@ describe('provider process containment', () => {
           droppedKeys: names.slice(0, 256).map(key => key.slice(0, 128)),
           droppedKeyNamesTruncated: names.length > 256 || names.some(key => key.length > 128) });
       }
-      const selected = diagnosticKeyArm(sharedBases, selection, privateRoot);
+      const selected = diagnosticMechanismArm(sharedBases, selection, privateRoot);
       env = selected.env;
       report({ event: 'key-selection', selection, excludedDiagnosticKeys,
         requested: diagnosticKeyNames(selected.requestedKeys), missing: diagnosticKeyNames(selected.missingKeys),
-        applied: diagnosticKeyNames(selected.appliedKeys), verbatimFromFrozenParent: selected.verbatimFromFrozenParent });
+        applied: diagnosticKeyNames(selected.appliedKeys), verbatimFromFrozenParent: selected.verbatimFromFrozenParent,
+        appliedSource: selected.appliedSource, cachePathPrivate: selected.cachePathPrivate,
+        cachePathInitiallyAbsent: selected.cachePathInitiallyAbsent, firstCmdletProbe: selection === 'first-cmdlet' });
       report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
         osEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(process.env, key)])),
         childEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(env, key)])) });
-      child = spawnInstrumentedHost(process.execPath, ['-e', 'console.log(JSON.stringify({cwd:process.cwd(),key:process.env.OPENAI_API_KEY??null}));setInterval(()=>{},1000)'], env, cwd);
+      child = spawnInstrumentedHost([process.execPath, ['-e', 'console.log(JSON.stringify({cwd:process.cwd(),key:process.env.OPENAI_API_KEY??null}));setInterval(()=>{},1000)'], env, cwd], selection === 'first-cmdlet');
     } catch (error) {
       try { rmSync(privateRoot, { recursive: true, force: true }); }
       catch (cleanupError) {
@@ -275,7 +294,8 @@ describe('provider process containment', () => {
     pendingMatrixCleanup.set(arm, order);
     report({ event: 'instrumented-host-spawn', commandCharsUpperBound: child.spawnargs.reduce((length, arg) => length + arg.length + 3, 1) });
     const files = supervisionDirectory(child);
-    const trace = traceStartup(child, report, started, [privateRoot, expectedCwd, files, process.execPath], true);
+    const trace = traceStartup(child, report, started,
+      [privateRoot, expectedCwd, files, process.execPath, ...diagnosticCachePaths(env)], true);
     let cleanupObserved = false;
     const dispose = ownedFixtureCleanup(child, () => {
       expect(existsSync(files)).toBe(false);
@@ -386,51 +406,53 @@ describe('provider process containment', () => {
 });
 
 describe('provider diagnostic environment selection', () => {
-  it('keeps nine selections ordered and bounds names-only diagnostic output', () => {
-    expect(diagnosticSelections).toEqual(['seven-key-control', 'PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH',
-      'DOTNET_MULTILEVEL_LOOKUP', 'DOTNET_NOLOGO', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE',
-      'POWERSHELL_DISTRIBUTION_CHANNEL', 'POWERSHELL_UPDATECHECK', 'sanitized-control']);
+  it('keeps four mechanism selections ordered and bounds names-only diagnostic output', () => {
+    expect(diagnosticSelections).toEqual(['inherited-cache-control', 'private-cache', 'first-cmdlet', 'sanitized-control']);
     expect(diagnosticKeyNames(['x'.repeat(129)]).truncated).toBe(true);
     expect(diagnosticKeyNames(Array.from({ length: 257 }, (_, i) => `KEY_${i}`))).toMatchObject({ count: 257, truncated: true });
   });
-  it('copies only each exact requested key from the frozen parent with distinct values and no API key', () => {
+  it('copies only the inherited cache key from the frozen parent and leaves probe and sanitized environments identical', () => {
     const parent: NodeJS.ProcessEnv = { SystemRoot: 'fixture-root', PATH: 'fixture-path',
-      ...Object.fromEntries(diagnosticKeys.map((key, index) => [key.toLowerCase(), `distinct-value-${index}`])),
-      PSMODULEPATH_EXTRA: 'not-selected', DOTNET_OTHER: 'not-selected-either',
+      psmoduleanalysiscachepath: 'original-cache', PSMODULEPATH: 'not-selected',
+      PSMODULEANALYSISCACHEPATH_EXTRA: 'not-selected-either',
       openai_api_key: 'must-not-inherit', CODEX_HOME: 'parent-home', ELECTRON_RUN_AS_NODE: '0' };
     const bases = diagnosticEnvBases(parent);
-    parent.psmodulepath = 'changed-after-snapshot';
-    for (const selection of diagnosticSelections) {
-      const arm = diagnosticKeyArm(bases, selection, 'fixture-home');
-      const requested = selection === 'seven-key-control' ? [...diagnosticKeys]
-        : selection === 'sanitized-control' ? [] : [selection];
-      const expected = requested.map(key => key.toLowerCase());
-      expect(arm.requestedKeys).toEqual(requested);
-      expect(arm.missingKeys).toEqual([]);
-      expect(arm.appliedKeys).toEqual([...expected].sort());
-      expect(arm.verbatimFromFrozenParent).toEqual(Object.fromEntries(requested.map(key => [key, true])));
-      expect(arm.env).toEqual({ ...bases.sanitized, CODEX_HOME: 'fixture-home', ELECTRON_RUN_AS_NODE: '1',
-        ...Object.fromEntries(expected.map(key => [key, `distinct-value-${diagnosticKeys.findIndex(name => name.toLowerCase() === key)}`])) });
-      expect(Object.keys(arm.env).some(key => key.toUpperCase() === 'OPENAI_API_KEY')).toBe(false);
-    }
+    parent.psmoduleanalysiscachepath = 'changed-after-snapshot';
+    const inherited = diagnosticMechanismArm(bases, 'inherited-cache-control', 'fixture-home');
+    const baseline = diagnosticMechanismArm(bases, 'sanitized-control', 'fixture-home');
+    const probe = diagnosticMechanismArm(bases, 'first-cmdlet', 'fixture-home');
+    expect(inherited).toMatchObject({ requestedKeys: [cacheKey], missingKeys: [], appliedKeys: ['psmoduleanalysiscachepath'],
+      verbatimFromFrozenParent: { [cacheKey]: true }, appliedSource: 'frozen-parent',
+      cachePathPrivate: null, cachePathInitiallyAbsent: null });
+    expect(inherited.env).toEqual({ ...baseline.env, psmoduleanalysiscachepath: 'original-cache' });
+    expect(probe).toEqual(baseline);
+    expect(baseline.env).toEqual(buildCodexChildEnv(bases.sanitized, 'fixture-home'));
+    expect(Object.keys(inherited.env).some(key => key.toUpperCase() === 'OPENAI_API_KEY')).toBe(false);
     expect(parent.openai_api_key).toBe('must-not-inherit');
-    expect(parent.psmodulepath).toBe('changed-after-snapshot');
+    expect(parent.psmoduleanalysiscachepath).toBe('changed-after-snapshot');
   });
   it('reports missing requested keys without inventing applied values or verbatim evidence', () => {
-    const bases = diagnosticEnvBases({ PATH: 'fixture-path', PsModulePath: '',
-      PSMODULEANALYSISCACHEPATH: undefined, POWERSHELL_UPDATECHECK_EXTRA: 'not-an-exact-match' });
-    const control = diagnosticKeyArm(bases, 'seven-key-control', 'fixture-home');
-    expect(control.appliedKeys).toEqual(['PsModulePath']);
-    expect(control.missingKeys).toEqual(diagnosticKeys.filter(key => key !== 'PSMODULEPATH'));
-    expect(control.verbatimFromFrozenParent).toEqual(Object.fromEntries(diagnosticKeys.map(key =>
-      [key, key === 'PSMODULEPATH' ? true : null])));
-    expect(control.env.PsModulePath).toBe('');
-    const missing = diagnosticKeyArm(bases, 'PSMODULEANALYSISCACHEPATH', 'fixture-home');
-    expect(missing.requestedKeys).toEqual(['PSMODULEANALYSISCACHEPATH']);
-    expect(missing.missingKeys).toEqual(['PSMODULEANALYSISCACHEPATH']);
-    expect(missing.appliedKeys).toEqual([]);
-    expect(missing.verbatimFromFrozenParent).toEqual({ PSMODULEANALYSISCACHEPATH: null });
-    expect(missing.env).toEqual(diagnosticKeyArm(bases, 'sanitized-control', 'fixture-home').env);
+    const bases = diagnosticEnvBases({ PATH: 'fixture-path', PSMODULEANALYSISCACHEPATH: undefined,
+      PSMODULEANALYSISCACHEPATH_EXTRA: 'not-an-exact-match' });
+    const missing = diagnosticMechanismArm(bases, 'inherited-cache-control', 'fixture-home');
+    expect(missing).toMatchObject({ requestedKeys: [cacheKey], missingKeys: [cacheKey], appliedKeys: [],
+      verbatimFromFrozenParent: { [cacheKey]: null }, appliedSource: null });
+    expect(missing.env).toEqual(diagnosticMechanismArm(bases, 'sanitized-control', 'fixture-home').env);
+  });
+  it('uses an absent private cache path without creating a file or claiming inherited evidence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-cache-selection-'));
+    try {
+      const bases = diagnosticEnvBases({ PATH: 'fixture-path', psmoduleanalysiscachepath: 'parent-cache', OPENAI_API_KEY: 'must-not-inherit' });
+      const arm = diagnosticMechanismArm(bases, 'private-cache', root);
+      expect(arm).toMatchObject({ requestedKeys: [cacheKey], missingKeys: [], appliedKeys: [cacheKey],
+        verbatimFromFrozenParent: { [cacheKey]: null }, appliedSource: 'private-fixture',
+        cachePathPrivate: true, cachePathInitiallyAbsent: true });
+      expect(arm.env).toEqual({ ...buildCodexChildEnv(bases.sanitized, root), [cacheKey]: join(root, 'ModuleAnalysisCache') });
+      expect(existsSync(arm.env[cacheKey]!)).toBe(false);
+      writeFileSync(join(root, 'ModuleAnalysisCache'), 'existing fixture');
+      expect(() => diagnosticMechanismArm(bases, 'private-cache', root)).toThrow('contained and initially absent');
+      expect(() => diagnosticMechanismArm(bases, 'private-cache', 'relative-root')).toThrow('contained and initially absent');
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it('separates dropped keys and overrides without retaining mixed-case parent override aliases', () => {
@@ -461,6 +483,20 @@ describe('provider diagnostic environment selection', () => {
 });
 
 describe('provider startup diagnostic failure paths', () => {
+  it('inserts only one first cmdlet and its markers after Stop without changing baseline statements or parameters', () => {
+    const script = [...new Set(hostStageAnchors.map(([, anchor]) => anchor))].join('\n') + "\n$p='distinct parameter bytes'";
+    const baseline = instrumentHostScript(script);
+    const probe = instrumentHostScript(script, true);
+    expect(instrumentHostScript(script, false)).toBe(baseline);
+    expect(baseline).not.toContain('Get-Date');
+    expect(baseline).not.toContain('first-cmdlet');
+    expect(probe.split(firstCmdletProbe)).toHaveLength(2);
+    expect(probe.replace('\n' + firstCmdletProbe, '')).toBe(baseline);
+    expect(probe).toContain("$ErrorActionPreference='Stop'\n" + firstCmdletProbe
+      + "\n[Console]::Error.WriteLine('[aether-test-host-stage:add-type-before]')");
+    expect(probe.match(/Get-Date/g)).toHaveLength(1);
+    expect(probe).not.toContain('Out-Null');
+  });
   it('rejects every missing or duplicated host anchor instead of instrumenting stale source', () => {
     const script = [...new Set(hostStageAnchors.map(([, anchor]) => anchor))].join('\n');
     for (const [stage, anchor] of hostStageAnchors) {
@@ -472,7 +508,7 @@ describe('provider startup diagnostic failure paths', () => {
   it.runIf(process.platform === 'win32').each(['early exit', 'missing executable'])('retains instrumented native stage evidence after %s', async outcome => {
     const originalSpawn = childProcess.spawn;
     const missingRoot = outcome === 'missing executable' ? mkdtempSync(join(tmpdir(), 'aether-missing-exe-')) : undefined;
-    const child = spawnInstrumentedHost(missingRoot ? join(missingRoot, 'absent.exe') : process.execPath, ['-e', 'process.exit(7)'], process.env);
+    const child = spawnInstrumentedHost([missingRoot ? join(missingRoot, 'absent.exe') : process.execPath, ['-e', 'process.exit(7)'], process.env]);
     const report = vi.fn(), trace = traceStartup(child, report, Date.now(), [supervisionDirectory(child), process.execPath], true);
     try {
       expect(childProcess.spawn).toBe(originalSpawn);
@@ -505,6 +541,23 @@ describe('provider startup diagnostic failure paths', () => {
       expect(report.mock.calls.filter(([entry]) => entry.event === 'host-stage').map(([entry]) => entry.stage))
         .toEqual(['ps-entry', 'resume-after', 'create-before']);
       expect(report.mock.calls.at(-1)![0].lastHostStage).toBe('create-before');
+    } finally { trace.finish(); vi.useRealTimers(); }
+  });
+  it('records fragmented first-cmdlet markers in received order and rejects prefixed or duplicate markers', async () => {
+    vi.useFakeTimers();
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+    child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    const report = vi.fn(), trace = traceStartup(child, report, Date.now(), [], true);
+    try {
+      (child.stderr as PassThrough).write('[aether-test-host-stage:ps-entry]\n[aether-test-host-stage:first-cmdlet-be');
+      await vi.advanceTimersByTimeAsync(7);
+      (child.stderr as PassThrough).write('fore]\r\nsource: [aether-test-host-stage:first-cmdlet-after]\n');
+      await vi.advanceTimersByTimeAsync(11);
+      (child.stderr as PassThrough).write('[aether-test-host-stage:first-cmdlet-after]\n[aether-test-host-stage:first-cmdlet-before]\n[aether-test-host-stage:add-type-before]\n');
+      const stages = report.mock.calls.map(([entry]) => entry).filter(entry => entry.event === 'host-stage');
+      expect(stages.map(entry => [entry.stage, entry.elapsedMs])).toEqual([
+        ['ps-entry', 0], ['first-cmdlet-before', 7], ['first-cmdlet-after', 18], ['add-type-before', 18],
+      ]);
     } finally { trace.finish(); vi.useRealTimers(); }
   });
   it.each(['success', 'failure'])('keeps delayed cleanup shared and retains its eventual %s', async outcome => {
@@ -549,5 +602,26 @@ describe('provider startup diagnostic failure paths', () => {
       await vi.advanceTimersByTimeAsync(18_880);
       expect(report.mock.calls.at(-1)![0].event).toBe('20s-budget-nearly-exhausted');
     } finally { trace.finish(); vi.useRealTimers(); }
+  });
+  it.each(['C:/inherited-cache/private-analysis-cache', ''])('redacts only nonempty selected cache values from stderr and failures (%s)', async cachePath => {
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+    child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    const bases = diagnosticEnvBases({ PsModuleAnalysisCachePath: cachePath, PSMODULEPATH: 'unselected' });
+    const selected = diagnosticMechanismArm(bases, 'inherited-cache-control', 'fixture-home');
+    const paths = diagnosticCachePaths(selected.env);
+    expect(paths).toEqual(cachePath ? [cachePath] : []);
+    const report = vi.fn(), trace = traceStartup(child, report, Date.now(), paths);
+    const rejected = expect(trace.firstOutput).rejects.toThrow('before output');
+    try {
+      (child.stderr as PassThrough).write('Cache analysis failed: ' + cachePath);
+      trace.failure('startup-or-assertion-failed', new Error('Cache request failed: ' + cachePath));
+      expect(report.mock.calls.at(-1)![0]).toMatchObject({
+        stderr: 'Cache analysis failed: ' + (cachePath ? '[private-path]' : ''),
+        error: 'Cache request failed: ' + (cachePath ? '[private-path]' : ''),
+      });
+      child.emit('close', 1, null);
+      await rejected;
+      if (cachePath) expect(JSON.stringify(report.mock.calls)).not.toContain(cachePath);
+    } finally { trace.finish(); }
   });
 });
