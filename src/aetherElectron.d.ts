@@ -10,6 +10,7 @@ import type { RetentionStatus, PurgeResult } from '../electron/retentionStore';
 import type { LedgerSnapshot } from './shared/ledgerMath';
 import type { ProjectsSnapshot } from './shared/projectsSnapshot';
 import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
+import type { CodexLaunchInfo } from '../electron/codexLaunchInfo';
 import type { PermissionRequestUI, PostToolFlagRequestUI } from './state/types';
 import type { PermissionDecision, PostToolFlagDecision } from '../electron/permissionServer';
 import type { PermissionAutoAllowLevel } from './shared/permissionRisk';
@@ -51,6 +52,7 @@ declare global {
         start: (opts: { cols: number; rows: number }) => Promise<void>;
         write: (input: string) => void;
         resize: (cols: number, rows: number) => void;
+        launchInfo: () => Promise<CodexLaunchInfo>;
         onData: (callback: (data: string) => void) => () => void;
         onAlive: (callback: () => void) => () => void;
         onExit: (callback: () => void) => () => void;
