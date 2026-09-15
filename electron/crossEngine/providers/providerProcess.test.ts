@@ -7,7 +7,7 @@ import * as childProcess from 'node:child_process';
 import { existsSync, mkdtempSync, rmdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { attachStderrRingBuffer, buildCodexChildEnv } from '../acpProcess';
+import { attachStderrRingBuffer, buildAllowlistedChildEnv, buildCodexChildEnv } from '../acpProcess';
 import { spawnProviderProcess, disposeProviderProcess } from './providerProcess';
 
 // Native ESM namespace properties cannot be spied on. This test-local facade
@@ -152,23 +152,54 @@ function ownedFixtureCleanup(child: { disposeTree(): Promise<void> }, remove: ()
   })();
 }
 
+// Preserve the live Windows environment proxy's OS aliases before enumerating
+// dropped entries. This normalized full base is not the untouched parent env.
+function diagnosticEnvBases(osEnv: NodeJS.ProcessEnv) {
+  const overrideKeys = new Set(['CODEX_HOME', 'ELECTRON_RUN_AS_NODE']);
+  const sanitized = buildAllowlistedChildEnv(osEnv);
+  for (const key of Object.keys(sanitized)) if (overrideKeys.has(key.toUpperCase())) delete sanitized[key];
+  const retained = new Set(Object.keys(sanitized).map(key => key.toUpperCase()));
+  const full = { ...sanitized }, droppedKeys: string[] = [];
+  for (const key of Object.keys(osEnv).sort()) {
+    const normalized = key.toUpperCase();
+    if (overrideKeys.has(normalized) || retained.has(normalized) || osEnv[key] === undefined) continue;
+    retained.add(normalized); full[key] = osEnv[key]; droppedKeys.push(key);
+  }
+  const parentOverridePresent = Object.fromEntries([...overrideKeys].map(key =>
+    [key, Object.keys(osEnv).some(name => name.toUpperCase() === key && osEnv[name] !== undefined)]));
+  return { sanitized, full, droppedKeys, parentOverridePresent };
+}
+
+function diagnosticArmEnv(bases: ReturnType<typeof diagnosticEnvBases>, environment: 'full' | 'sanitized',
+  overrides: 'on' | 'off', codexHome: string): NodeJS.ProcessEnv {
+  const env = { ...bases[environment] };
+  if (overrides === 'on') {
+    const production = buildCodexChildEnv(bases.sanitized, codexHome);
+    env.CODEX_HOME = production.CODEX_HOME;
+    env.ELECTRON_RUN_AS_NODE = production.ELECTRON_RUN_AS_NODE;
+  }
+  return env;
+}
+
 describe('provider process containment', () => {
   const pendingMatrixCleanup = new Map<string, number>();
+  let sharedBases: ReturnType<typeof diagnosticEnvBases> | undefined;
   // One fixed-order diagnostic pass, not randomized causal evidence. A timed-out
   // earlier host can remain unresolved while later arms run; retain arm labels.
   it.runIf(process.platform === 'win32').each([
-    { order: 1, environment: 'sanitized', workingDirectory: 'private' },
-    { order: 2, environment: 'sanitized', workingDirectory: 'inherited' },
-    { order: 3, environment: 'full', workingDirectory: 'inherited' },
-    { order: 4, environment: 'full', workingDirectory: 'private' },
-  ] as const)('compares instrumented host arm $order: $environment environment / $workingDirectory cwd', async ({ order, environment, workingDirectory }) => {
+    { order: 1, environment: 'full', overrides: 'off' },
+    { order: 2, environment: 'full', overrides: 'on' },
+    { order: 3, environment: 'sanitized', overrides: 'on' },
+    { order: 4, environment: 'sanitized', overrides: 'off' },
+  ] as const)('compares instrumented host arm $order: $environment environment / overrides $overrides', async ({ order, environment, overrides }) => {
     const started = Date.now();
     const privateRoot = mkdtempSync(join(tmpdir(), 'aether-private-cwd-'));
-    const cwd = workingDirectory === 'private' ? privateRoot : undefined;
-    const expectedCwd = cwd ?? process.cwd();
-    const arm = `${environment}/${workingDirectory}`;
+    const cwd = privateRoot;
+    const expectedCwd = privateRoot;
+    const arm = `${environment}/overrides-${overrides}/private`;
     const report = (value: unknown) => console.error('[provider-env-cwd]', JSON.stringify({
-      arm, order, precedingCleanupUnconfirmed: [...pendingMatrixCleanup].filter(([, priorOrder]) => priorOrder < order).map(([priorArm]) => priorArm),
+      arm, order, environment, overrides, workingDirectory: 'private', droppedKeyCount: sharedBases?.droppedKeys.length ?? null,
+      precedingCleanupUnconfirmed: [...pendingMatrixCleanup].filter(([, priorOrder]) => priorOrder < order).map(([priorArm]) => priorArm),
       ...(value as Record<string, unknown>),
     }));
     const keys = ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'Path', 'PATH'];
@@ -181,7 +212,15 @@ describe('provider process containment', () => {
       // environment child: keep the sentinel through the actual synchronous
       // spawn (process.env is a live proxy), then restore before any await.
       process.env.OPENAI_API_KEY = 'must-not-inherit';
-      env = environment === 'sanitized' ? buildCodexChildEnv(process.env, privateRoot) : process.env;
+      if (!sharedBases) {
+        sharedBases = diagnosticEnvBases(process.env);
+        const names = sharedBases.droppedKeys;
+        report({ event: 'environment-selection', fullBase: 'normalized-retained-plus-dropped',
+          parentOverridePresent: sharedBases.parentOverridePresent,
+          droppedKeys: names.slice(0, 256).map(key => key.slice(0, 128)),
+          droppedKeyNamesTruncated: names.length > 256 || names.some(key => key.length > 128) });
+      }
+      env = diagnosticArmEnv(sharedBases, environment, overrides, privateRoot);
       report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
         osEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(process.env, key)])),
         childEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(env, key)])) });
@@ -310,6 +349,34 @@ describe('provider process containment', () => {
     while (alive(root) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     expect(alive(root)).toBe(false);
   }, 20_000);
+});
+
+describe('provider diagnostic environment selection', () => {
+  it('separates dropped keys and overrides without retaining mixed-case parent override aliases', () => {
+    const parent = { SystemRoot: 'os-root', PATH: 'os-path', SECRET_FIXTURE: 'fixture-only',
+      OPENAI_API_KEY: 'must-not-inherit', codex_home: 'parent-home', CODEX_HOME: 'other-parent-home',
+      Electron_Run_As_Node: '0', ELECTRON_RUN_AS_NODE: 'parent-node-mode' };
+    const bases = diagnosticEnvBases(parent);
+    expect(bases.droppedKeys).toEqual(['OPENAI_API_KEY', 'SECRET_FIXTURE']);
+    expect(bases.parentOverridePresent).toEqual({ CODEX_HOME: true, ELECTRON_RUN_AS_NODE: true });
+    expect(bases.sanitized).toEqual({ PATH: 'os-path', SystemRoot: 'os-root' });
+    for (const environment of ['full', 'sanitized'] as const) for (const overrides of ['off', 'on'] as const) {
+      const env = diagnosticArmEnv(bases, environment, overrides, 'fixture-home');
+      expect(Object.keys(env).filter(key => ['CODEX_HOME', 'ELECTRON_RUN_AS_NODE'].includes(key.toUpperCase())))
+        .toEqual(overrides === 'on' ? ['CODEX_HOME', 'ELECTRON_RUN_AS_NODE'] : []);
+      expect(env.SECRET_FIXTURE).toBe(environment === 'full' ? 'fixture-only' : undefined);
+      expect(env.OPENAI_API_KEY).toBe(environment === 'full' ? 'must-not-inherit' : undefined);
+      if (overrides === 'on') expect([env.CODEX_HOME, env.ELECTRON_RUN_AS_NODE]).toEqual(['fixture-home', '1']);
+    }
+    expect(bases.full).toEqual({ ...bases.sanitized, OPENAI_API_KEY: 'must-not-inherit', SECRET_FIXTURE: 'fixture-only' });
+    expect(parent.codex_home).toBe('parent-home');
+  });
+  it('keeps sanitized/on identical to the production builder on the live environment', () => {
+    const bases = diagnosticEnvBases(process.env);
+    expect(diagnosticArmEnv(bases, 'sanitized', 'on', 'fixture-home'))
+      .toEqual(buildCodexChildEnv(process.env, 'fixture-home'));
+    for (const key of Object.keys(bases.sanitized)) expect(bases.full[key]).toBe(bases.sanitized[key]);
+  });
 });
 
 describe('provider startup diagnostic failure paths', () => {
