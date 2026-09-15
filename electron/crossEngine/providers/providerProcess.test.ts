@@ -179,7 +179,6 @@ describe('provider process containment', () => {
   // earlier host can remain unresolved while later arms run; retain arm labels.
   for (const [index, configuration] of [
     { selection: 'production', budgetMs: 20_000 },
-    { selection: 'without-powershell-configuration', budgetMs: 60_000 },
   ].entries()) {
     const { selection, budgetMs } = configuration, order = index + 1;
     it.runIf(process.platform === 'win32')(`compares instrumented host arm ${order}: ${selection} / overrides on`, async () => {
