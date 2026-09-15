@@ -8,6 +8,7 @@ import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { findProjectByKey } from '../projects/projectsMath';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
+import { CommunicationIndicator } from './CommunicationIndicator';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
@@ -56,6 +57,7 @@ export function TopBar() {
           just pushes the op-mode/approval/notification/operator/window
           controls to the right, matching the original layout's spacing. */}
       <div style={{ flex: 1 }} />
+      <CommunicationIndicator />
 
       {scopeLabel && (
         <Button

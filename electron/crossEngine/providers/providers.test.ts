@@ -48,6 +48,7 @@ function makeStdioFake(
   child.stdout = stdout as unknown as ChildProcessWithoutNullStreams['stdout'];
   child.stdin = stdin as unknown as ChildProcessWithoutNullStreams['stdin'];
   child.kill = vi.fn() as unknown as ChildProcessWithoutNullStreams['kill'];
+  Object.assign(child, { disposeTree: async () => { child.kill(); } });
 
   const server: FakeServer = { child, received: [], sent: [], answers: [] };
   const write = (obj: unknown) => {
@@ -72,7 +73,8 @@ function makeStdioFake(
         continue;
       }
       server.received.push({ id: msg.id, method: msg.method, params: msg.params });
-      const result = handle({ id: msg.id, method: msg.method, params: msg.params }, push, request);
+      const result = msg.method === 'config/read' ? { config: { mcp_servers: {} } }
+        : handle({ id: msg.id, method: msg.method, params: msg.params }, push, request);
       const id = msg.id;
       // A handler may return a Promise to answer slowly, which is what lets a
       // test exercise a deadline that spans more than one protocol phase.
@@ -952,6 +954,65 @@ describe('FakeProvider', () => {
 });
 
 describe('adapter lifecycle and cancellation (review follow-ups)', () => {
+  it('awaits confirmed tree cleanup, shares disposal, and blocks reconnect until then', async () => {
+    const first = appServerFake();
+    const second = appServerFake();
+    let finish!: () => void;
+    const cleanup = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    Object.assign(first.child, { disposeTree: cleanup });
+    const spawnChild = vi.fn().mockReturnValueOnce(first.child).mockReturnValueOnce(second.child);
+    const adapter = new CodexAppServerAdapter(spawnChild);
+    await adapter.connect();
+    const disposal = adapter.dispose();
+    expect(adapter.dispose()).toBe(disposal);
+    let disposed = false;
+    void disposal.then(() => { disposed = true; });
+    const reconnect = adapter.connect();
+    await Promise.resolve();
+    expect(disposed).toBe(false);
+    expect(spawnChild).toHaveBeenCalledTimes(1);
+    await expect(adapter.health()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    finish();
+    await disposal;
+    await reconnect;
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(spawnChild).toHaveBeenCalledTimes(2);
+    // Old host events cannot tear down the newly owned process.
+    first.child.emit('close', 0);
+    expect((await adapter.health()).ready).toBe(true);
+    await adapter.dispose();
+  });
+
+  it('retains failed cleanup and refuses to replace even an exited wrapper', async () => {
+    const fake = appServerFake();
+    const failure = new Error('tree termination denied');
+    const cleanup = vi.fn(async () => { throw failure; });
+    Object.assign(fake.child, { disposeTree: cleanup });
+    const spawnChild = vi.fn(() => fake.child);
+    const adapter = new CodexAppServerAdapter(spawnChild);
+    await adapter.connect();
+    fake.child.emit('close', 1);
+    await expect(adapter.dispose()).rejects.toBe(failure);
+    await expect(adapter.dispose()).rejects.toBe(failure);
+    await expect(adapter.connect()).rejects.toBe(failure);
+    expect(spawnChild).toHaveBeenCalledTimes(1);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes concurrent connects while the initialize response is pending', async () => {
+    let answer!: (result: unknown) => void;
+    const fake = makeStdioFake(req => req.method === 'initialize'
+      ? new Promise(resolve => { answer = resolve; }) : {});
+    const spawnChild = vi.fn(() => fake.child);
+    const adapter = new CodexAppServerAdapter(spawnChild);
+    const one = adapter.connect();
+    const two = adapter.connect();
+    answer({ userAgent: 'test' });
+    await Promise.all([one, two]);
+    expect(spawnChild).toHaveBeenCalledTimes(1);
+    await adapter.dispose();
+  });
+
   it('CodexAppServer surfaces a spawn failure as PROCESS_EXITED instead of crashing the process', async () => {
     // Without an 'error' listener Node throws this as an uncaught exception,
     // which in the real app takes down the Electron main process.
@@ -962,6 +1023,7 @@ describe('adapter lifecycle and cancellation (review follow-ups)', () => {
       child.stdout = stdout as unknown as ChildProcessWithoutNullStreams['stdout'];
       child.stdin = stdin as unknown as ChildProcessWithoutNullStreams['stdin'];
       child.kill = vi.fn() as unknown as ChildProcessWithoutNullStreams['kill'];
+      Object.assign(child, { disposeTree: async () => {} });
       queueMicrotask(() => child.emit('error', new Error('spawn codex ENOENT')));
       return child;
     };

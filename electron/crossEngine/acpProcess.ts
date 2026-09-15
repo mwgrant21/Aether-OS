@@ -10,6 +10,9 @@ const REQUIRED_OS_VARS = [
   'PATH', 'Path', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT',
   'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
   'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL',
+  // Preserve the parent's PowerShell module-discovery and analysis-cache configuration.
+  // PR #76 hosted diagnostics observed long Windows provider-host startup delays without these keys.
+  'PSModulePath', 'PSModuleAnalysisCachePath',
 ];
 
 /** Dedicated Codex home: isolates Aether from any globally configured

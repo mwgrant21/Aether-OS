@@ -33,7 +33,8 @@
 // turn can still surprise us, and leaves through exactly one function
 // (`retireTurn`).
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawnProviderProcess, disposeProviderProcess } from './providerProcess';
 import { StringDecoder } from 'node:string_decoder';
 import {
   EMPTY_USAGE,
@@ -56,15 +57,18 @@ import {
   type WaiterResult,
 } from './turnRecord';
 import { attachStderrRingBuffer, buildCodexChildEnv, resolveCodexCliEntry, resolveCodexHome } from '../acpProcess';
+import { assertNoEnabledMcpServers, CODEX_APP_SERVER_ARGS, CODEX_SESSION_CONFIG } from './codexAppServerPolicy';
 
 const CLIENT_INFO = { name: 'aether-os', title: 'Aether OS', version: '0.1.0' };
 
-/** Read-only at the protocol level, not by after-the-fact refusal.
- *  `sandbox: 'read-only'` and `approvalPolicy: 'never'` together mean the
- *  agent is never granted a write/exec capability in the first place, so
- *  there is no approval to race. Approval requests are still denied below in
- *  case a future server version asks anyway. */
+/** Read-only constrains writes, not all execution or reads outside cwd.
+ * ThreadStartParams uses sandbox; TurnStartParams instead uses sandboxPolicy.
+ * Approval requests are still denied below if a server asks anyway. */
 const READ_ONLY_THREAD = { sandbox: 'read-only' as const, approvalPolicy: 'never' as const };
+const READ_ONLY_TURN = {
+  sandboxPolicy: { type: 'readOnly' as const, networkAccess: false },
+  approvalPolicy: 'never' as const,
+};
 
 const APPROVAL_METHODS = new Set([
   'item/commandExecution/requestApproval',
@@ -120,13 +124,9 @@ function readUsage(raw: unknown): TurnUsage {
  *  npm-installed `codex` is a `.cmd` shim, which Node's non-shell spawn does
  *  not resolve (verified on this machine: ENOENT, exit -4058) and refuses to
  *  execute without `shell: true` regardless since CVE-2024-27980. */
-function defaultSpawn(): ChildProcessWithoutNullStreams {
+function defaultSpawn(cwd?: string): ChildProcessWithoutNullStreams {
   const env = buildCodexChildEnv(process.env, resolveCodexHome());
-  const child = spawn(process.execPath, [resolveCodexCliEntry(), 'app-server'], {
-    shell: false,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env,
-  });
+  const child = spawnProviderProcess(process.execPath, [resolveCodexCliEntry(), ...CODEX_APP_SERVER_ARGS], env, cwd);
   attachStderrRingBuffer(child);
   return child;
 }
@@ -135,6 +135,9 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   readonly id = 'codexAppServer' as const;
 
   private child: ChildProcessWithoutNullStreams | null = null;
+  private ownedChild: ChildProcessWithoutNullStreams | null = null;
+  private disposal: Promise<void> | null = null;
+  private connecting: Promise<void> | null = null;
   private buffer = '';
   /** A raw `chunk.toString('utf8')` mangles any multi-byte character split
    *  across a read boundary into U+FFFD, which then either corrupts the text
@@ -157,10 +160,12 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   private readonly turns = new Map<number, TurnRecord>();
 
   constructor(
-    private readonly spawnChild: () => ChildProcessWithoutNullStreams = defaultSpawn,
+    private readonly spawnChild: (cwd?: string) => ChildProcessWithoutNullStreams = defaultSpawn,
     /** Injectable so the retention bounds can actually be tested rather than
      *  asserted about. */
-    private readonly turnRecordTtlMs: number = TURN_RECORD_TTL_MS
+    private readonly turnRecordTtlMs: number = TURN_RECORD_TTL_MS,
+    /** Must be set before connect so initialization cannot inherit project cwd. */
+    private readonly processCwd?: string
   ) {}
 
   capabilities(): ProviderCapabilities {
@@ -175,16 +180,30 @@ export class CodexAppServerAdapter implements ProviderAdapter {
   }
 
   async connect(): Promise<void> {
+    if (this.disposal) await this.disposal;
+    if (this.connecting) return this.connecting;
     if (this.child) return;
-    const child = this.spawnChild();
+    if (this.ownedChild) await this.dispose();
+    if (this.connecting) return this.connecting;
+    if (this.child) return;
+    this.connecting = this.connectChild();
+    try { await this.connecting; } finally { this.connecting = null; }
+  }
+
+  private async connectChild(): Promise<void> {
+    const child = this.spawnChild(this.processCwd);
     this.child = child;
-    child.stdout.on('data', (chunk: Buffer) => this.onData(chunk));
+    this.ownedChild = child;
+    this.buffer = '';
+    this.decoder = new StringDecoder('utf8');
+    child.stdout.on('data', (chunk: Buffer) => { if (this.child === child) this.onData(chunk); });
     // Without these, an ENOENT (or any spawn failure, crash, or EPIPE from a
     // write after death) emits 'error' on an emitter with no listener, which
     // Node throws as an uncaught exception -- crashing the Electron main
     // process instead of surfacing a ProviderError.
-    child.on('error', (err: Error) => this.onChildGone('codex app-server failed: ' + err.message));
-    child.on('close', (code: number | null) => this.onChildGone('codex app-server exited (code ' + code + ')'));
+    child.on('error', (err: Error) => { if (this.child === child) this.onChildGone('codex app-server failed: ' + err.message); });
+    child.stdin.on('error', (err: Error) => { if (this.child === child) this.onChildGone('codex app-server stdin failed: ' + err.message); });
+    child.on('close', (code: number | null) => { if (this.child === child) this.onChildGone('codex app-server exited (code ' + code + ')'); });
     const res = (await this.call('initialize', { clientInfo: CLIENT_INFO, capabilities: null })) as
       | { userAgent?: unknown }
       | undefined;
@@ -538,7 +557,11 @@ export class CodexAppServerAdapter implements ProviderAdapter {
 
   async newSession(options: SessionOptions): Promise<string> {
     this.require();
-    const res = (await this.call('thread/start', { cwd: options.cwd, ...READ_ONLY_THREAD })) as
+    // Resolve the same cwd's project layers before accepting a new thread.
+    assertNoEnabledMcpServers(await this.call('config/read', { cwd: options.cwd, includeLayers: false }));
+    const res = (await this.call('thread/start', {
+      cwd: options.cwd, ...READ_ONLY_THREAD, config: { ...CODEX_SESSION_CONFIG },
+    })) as
       | { thread?: { id?: unknown } }
       | undefined;
     const id = res?.thread?.id;
@@ -572,7 +595,7 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     const params: Record<string, unknown> = {
       threadId: request.sessionId,
       input: [{ type: 'text', text: request.text, text_elements: [] }],
-      ...READ_ONLY_THREAD,
+      ...READ_ONLY_TURN,
     };
     const schema = this.outputSchemas.get(request.sessionId);
     if (schema !== undefined) params.outputSchema = schema;
@@ -693,7 +716,10 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     await this.sendInterrupt(record);
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
+    const owned = this.ownedChild;
+    this.child = null;
     for (const record of [...this.turns.values()]) {
       record.settle({ kind: 'gone', reason: 'adapter disposed' });
       this.retireTurn(record);
@@ -702,11 +728,13 @@ export class CodexAppServerAdapter implements ProviderAdapter {
     this.pending.clear();
     this.threads.clear();
     this.outputSchemas.clear();
-    if (this.child) {
-      this.child.stdin.end();
-      this.child.kill();
-      this.child = null;
-    }
+    this.disposal = (async () => {
+      if (owned) await disposeProviderProcess(owned);
+      this.ownedChild = null;
+    })();
+    // Rejected cleanup stays latched: reconnect may not replace an unproven tree.
+    void this.disposal.then(() => { this.disposal = null; }, () => {});
+    return this.disposal;
   }
 
   /** Test-only introspection: how many turn records are retained. Exposed so

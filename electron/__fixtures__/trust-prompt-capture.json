@@ -1,0 +1,39 @@
+{
+  "reason": "timeout",
+  "cwd": "C:\\Users\\User\\AppData\\Local\\Temp\\trust-capture-000000",
+  "chunks": [
+    {
+      "at": 59,
+      "data": "\u001b[?9001h\u001b[?1004h"
+    },
+    {
+      "at": 219,
+      "data": "\u001b[?25l\u001b[2J\u001b[m\u001b[H\u001b]0;claude\u0007\u001b[?25h"
+    },
+    {
+      "at": 548,
+      "data": "\u001b[?2004h\u001b[?2031h\u001b[?1004h"
+    },
+    {
+      "at": 549,
+      "data": "\u001b[<u\u001b[>5u\u001b[>4;2m"
+    },
+    {
+      "at": 555,
+      "data": "\u001b[?2026h\u001b[?2026l"
+    },
+    {
+      "at": 557,
+      "data": "\u001b[>0q"
+    },
+    {
+      "at": 557,
+      "data": "\u001b[?u"
+    },
+    {
+      "at": 562,
+      "data": "\u001b[?25l\u001b[38;2;255;193;7m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[1m\u001b[3;2HAccessing\u001b[1Cworkspace:\u001b[m\u001b[1m\u001b[5;2HC:\\Users\\User\\AppData\\Local\\Temp\\trust-capture-000000\u001b[22m\u001b[7;2HQuick\u001b[1Csafety\u001b[1Ccheck:\u001b[1CIs\u001b[1Cthis\u001b[1Ca\u001b[1Cproject\u001b[1Cyou\u001b[1Ccreated\u001b[1Cor\u001b[1Cone\u001b[1Cyou\u001b[1Ctrust?\u001b[1C(Like\u001b[1Cyour\u001b[1Cown\u001b[1Ccode,\u001b[1Ca\u001b[8;2Hwell-known\u001b[1Copen\u001b[1Csource\u001b[1Cproject,\u001b[1Cor\u001b[1Cwork\u001b[1Cfrom\u001b[1Cyour\u001b[1Cteam).\u001b[1CIf\u001b[1Cnot,\u001b[1Ctake\u001b[1Ca\u001b[1Cmoment\u001b[1Cto\u001b[1Creview\u001b[1Cwhat's\u001b[1Cin\u001b[9;2Hthis\u001b[1Cfolder\u001b[1Cfirst.\u001b[11;2HClaude\u001b[1CCode'll\u001b[1Cbe\u001b[1Cable\u001b[1Cto\u001b[1Cread,\u001b[1Cedit,\u001b[1Cand\u001b[1Cexecute\u001b[1Cfiles\u001b[1Chere.\u001b[38;2;153;153;153m\u001b]8;id=u-zaxmda%5166649326141359084;https://code.claude.com/docs/en/security\u001b\\\u001b[13;2HSecurity guide\u001b[38;2;177;185;249m\u001b]8;;\u001b\\\u001b[15;2H❯\u001b[1CNo,\u001b[1Cexit\u001b[m\u001b[16;4HYes,\u001b[1CI\u001b[1Ctrust\u001b[1Cthis\u001b[1Cfolder\u001b[38;2;153;153;153m\u001b[18;2HEnter\u001b[1Cto\u001b[1Cconfirm\u001b[1C·\u001b[1CEsc\u001b[1Cto\u001b[1Ccancel"
+    }
+  ],
+  "sanitization": "Username and temporary directory suffix replaced with equal-length placeholders in cwd and visible text. Original chunk count, timing, and control sequences preserved; this is a sanitized capture, not untouched bytes."
+}

@@ -17,8 +17,24 @@ import type { PermissionDecision, PostToolFlagDecision } from './permissionServe
 import type { PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+import type { CommunicationPayload } from '../src/shared/communicationTypes';
+import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './communicationBridge/mainIntegration';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
+  communication: {
+    grantMore: (confirmationId: string): Promise<{ ok: boolean; code?: string }> => ipcRenderer.invoke('communication:grantMore', confirmationId),
+    startSession: (): Promise<{ ok: boolean; code?: string }> => ipcRenderer.invoke('communication:startSession'),
+    snapshot: (): Promise<CommunicationBridgeSnapshot> => ipcRenderer.invoke('communication:snapshot'),
+    setEnabled: (enabled: boolean): Promise<BridgeShutdownResult> => ipcRenderer.invoke('communication:setEnabled', enabled),
+    readPayload: (id: string): Promise<CommunicationPayload | undefined> => ipcRenderer.invoke('communication:readPayload', id),
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke('communication:cancel', id),
+    clear: (id: string): Promise<void> => ipcRenderer.invoke('communication:clear', id),
+    onSnapshot: (callback: (snapshot: CommunicationBridgeSnapshot) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: CommunicationBridgeSnapshot) => callback(snapshot);
+      ipcRenderer.on('communication:snapshot', listener);
+      return () => ipcRenderer.removeListener('communication:snapshot', listener);
+    },
+  },
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
   },

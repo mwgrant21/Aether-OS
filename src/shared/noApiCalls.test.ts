@@ -229,3 +229,14 @@ describe('cross-engine Codex boundary', () => {
     expect(sliceBody).not.toMatch(/VerificationResultV1|verificationResult|lastVerification/);
   });
 });
+
+describe('visible communication provider boundary', () => {
+  it('constructs the Codex app-server adapter only in the reviewed main integration', () => {
+    const hits = grepSourceFor(/new\s+CodexAppServerAdapter\s*\(/).map(p => p.replace(/\\/g, '/'));
+    expect(hits).toEqual(['electron/communicationBridge/mainIntegration.ts']);
+  });
+  it('keeps generic provider turns in the controller and conformance harness only', () => {
+    const hits = grepSourceFor(/\.sendTurn\s*\(/).map(p => p.replace(/\\/g, '/')).sort();
+    expect(hits).toEqual(['electron/communicationBridge/exchangeController.ts', 'electron/crossEngine/providers/providerConformance.ts']);
+  });
+});

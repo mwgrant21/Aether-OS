@@ -17,7 +17,7 @@ export function CostGuardCard() {
         <div style={valueStyle(colors)}>DISABLED · no SDK installed, no key-reachable path</div>
       </div>
       <div style={rowStyle(colors)}>
-        <div style={labelStyle(colors)}>MODEL CALLS BY AETHER</div>
+        <div style={labelStyle(colors)}>DIRECT ANTHROPIC CALLS</div>
         <div style={valueStyle(colors)}>NONE · zero call sites</div>
       </div>
       <div style={rowStyle(colors)}>
@@ -34,8 +34,9 @@ export function CostGuardCard() {
       <p style={hintStyle(colors)}>
         The Anthropic SDK dependency was removed from this app and all model-calling code paths
         deleted in Stage 13.5 — there is no key-reachable path left for Aether to call the
-        Anthropic API on your behalf. Cross-engine verification (above) is the one real network
-        exception, and it only ever runs when you enable it.
+        Anthropic API directly. Cross-engine verification and opted-in Claude–Codex consultations
+        use external clients and your subscriptions. Communication starts require an allowance;
+        enabling its preference alone does not make a consultation.
       </p>
     </div>
   );

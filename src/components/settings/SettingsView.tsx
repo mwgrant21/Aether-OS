@@ -8,6 +8,7 @@ import { StatuslineCard } from './StatuslineCard';
 import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { CostGuardCard } from './CostGuardCard';
 import { RetentionCard } from './RetentionCard';
+import { CommunicationCard } from './CommunicationCard';
 
 export function SettingsView() {
   return (
@@ -19,6 +20,7 @@ export function SettingsView() {
         <BudgetAlertsCard />
         <StatuslineCard />
         <CrossEngineVerificationCard />
+        <CommunicationCard />
         <CostGuardCard />
         <RetentionCard />
       </div>

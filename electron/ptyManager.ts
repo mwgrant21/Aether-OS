@@ -45,16 +45,21 @@ export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly stri
   return `unset ${vars.join(' ')}\r`;
 }
 
-export function spawnPty(cols = 100, rows = 30) {
+export interface BridgePtyLaunch { scriptPath: string; env: NodeJS.ProcessEnv }
+
+export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch) {
+  if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
-  const ptyProcess = pty.spawn(shell, [], {
+  const ptyProcess = pty.spawn(shell, bridge ? ['-NoExit', '-File', bridge.scriptPath] : [], {
     name: 'xterm-color',
     cols,
     rows,
     cwd: os.homedir(),
-    env: buildPtyEnv(),
+    env: bridge ? bridge.env : buildPtyEnv(),
   });
-  ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));
-  ptyProcess.write(CLAUDE_LAUNCH_COMMAND);
+  if (!bridge) {
+    ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));
+    ptyProcess.write(CLAUDE_LAUNCH_COMMAND);
+  }
   return ptyProcess;
 }
