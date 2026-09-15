@@ -125,6 +125,36 @@ describe('spawnAcpProcess', () => {
 });
 
 describe('buildAllowlistedChildEnv', () => {
+  it('forwards the parent PowerShell module and cache values without substituting either', () => {
+    const parent = { PSModulePath: 'C:/modules/one;D:/modules/two', PSModuleAnalysisCachePath: 'C:/cache/analysis' };
+    expect(buildAllowlistedChildEnv(parent)).toEqual(parent);
+  });
+
+  it('does not synthesize absent PowerShell configuration and retains explicitly empty values', () => {
+    expect(buildAllowlistedChildEnv({})).toEqual({});
+    expect(buildAllowlistedChildEnv({ PSModulePath: '', PSModuleAnalysisCachePath: '' }))
+      .toEqual({ PSModulePath: '', PSModuleAnalysisCachePath: '' });
+  });
+
+  it.runIf(process.platform === 'win32')('reads differently cased PowerShell keys through the live Windows proxy', () => {
+    const keys = ['PSModulePath', 'PSModuleAnalysisCachePath'] as const;
+    const previous = keys.map(key => ({ key, present: Object.hasOwn(process.env, key), value: process.env[key] }));
+    try {
+      process.env.psmodulepath = 'fixture-module-path';
+      process.env.PSMODULEANALYSISCACHEPATH = 'fixture-analysis-cache';
+      const child = buildAllowlistedChildEnv(process.env);
+      expect(child.PSModulePath === 'fixture-module-path').toBe(true);
+      expect(child.PSModuleAnalysisCachePath === 'fixture-analysis-cache').toBe(true);
+      expect(Object.keys(child).filter(key => keys.some(canonical => canonical.toUpperCase() === key.toUpperCase())))
+        .toEqual([...keys]);
+    } finally {
+      for (const { key, present, value } of previous) {
+        if (present) process.env[key] = value!;
+        else delete process.env[key];
+      }
+    }
+  });
+
   // The Claude headless adapter relies on this too: inheriting process.env
   // there would let an operator's key silently route deliberation turns
   // through metered billing or a third-party gateway.
