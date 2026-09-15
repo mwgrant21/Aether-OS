@@ -7,6 +7,9 @@ import type { CommunicationLaunchManifest } from './mainIntegration';
 import { buildPtyEnv, type BridgePtyLaunch } from '../ptyManager';
 
 const run = promisify(execFile);
+// Hosted Windows protection rejected around the former 10s limit (PR #76, 2026-09-15).
+// Allow more helper startup/execution time while retaining a finite timeout.
+const POWERSHELL_HELPER_TIMEOUT_MS = 30_000;
 export const BRIDGE_ALLOWED_TOOLS = ['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange']
   .map(name => 'mcp__aether-bridge__' + name);
 export const BRIDGE_CLAUDE_VERSION = '2.1.270';
@@ -88,14 +91,14 @@ async function checkPolicy(env: NodeJS.ProcessEnv): Promise<void> {
     join(home, '.mcp.json'), join(managed, 'managed-settings.json')]) assertBridgePolicy(await jsonFile(path));
   const { stdout } = await run(powershell(), ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; foreach($k in @('HKLM:\\SOFTWARE\\Policies\\ClaudeCode','HKCU:\\SOFTWARE\\Policies\\ClaudeCode')) { if(Test-Path -LiteralPath $k) { $v=Get-ItemProperty -LiteralPath $k; if($v.Settings) { Write-Output $v.Settings } } }"],
-  { windowsHide: true, timeout: 10_000, maxBuffer: 2 * 1024 * 1024 });
+  { windowsHide: true, timeout: POWERSHELL_HELPER_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 });
   if (stdout.trim()) throw new Error('MANAGED_POLICY_REQUIRES_REVIEW');
 }
 
 async function resolveClaude(): Promise<string> {
   const { stdout } = await run(powershell(), ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; (Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source"],
-  { windowsHide: true, timeout: 10_000 });
+  { windowsHide: true, timeout: POWERSHELL_HELPER_TIMEOUT_MS });
   const executable = stdout.trim();
   if (!executable.toLowerCase().endsWith('.exe')) throw new Error('NATIVE_CLAUDE_REQUIRED');
   const version = await run(executable, ['--version'], { env: buildPtyEnv(), windowsHide: true, timeout: 10_000 });
@@ -112,7 +115,7 @@ export async function protectLaunchDirectory(directory: string): Promise<void> {
     "$acl.AddAccessRule($rule); [IO.Directory]::SetAccessControl($p,$acl); " +
     "$actual=[IO.Directory]::GetAccessControl($p); if(!$actual.AreAccessRulesProtected){throw 'ACL'}; " +
     "foreach($r in $actual.Access){if($r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or $r.AccessControlType -ne 'Allow'){throw 'ACL'}}";
-  await run(powershell(), ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10_000 });
+  await run(powershell(), ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: POWERSHELL_HELPER_TIMEOUT_MS });
 }
 
 export const BRIDGE_LAUNCH_SCRIPT = [
