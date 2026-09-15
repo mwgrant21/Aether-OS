@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 
 // What the Codex terminal is about to run: the executable a bare `codex`
 // resolves to on the terminal's OWN launch PATH (buildCodexLaunchEnv, after
@@ -67,19 +67,55 @@ export function probeCodexVersion(executable: string, env: NodeJS.ProcessEnv, ti
     ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${executable}" --version"`]]
     : [executable, ['--version']];
   return new Promise((resolve, reject) => {
-    execFile(
-      file,
-      args,
-      { env, timeout: timeoutMs, windowsHide: true, windowsVerbatimArguments: win32, maxBuffer: 64 * 1024 },
-      (err, stdout) => {
-        if (err) {
-          reject(err.killed ? new Error(`timed out after ${timeoutMs}ms`) : err);
-          return;
-        }
-        resolve(stdout.trim());
-      },
-    );
+    const child = spawn(file, args, {
+      env,
+      windowsHide: true,
+      windowsVerbatimArguments: win32,
+      // POSIX: own process group, so the timeout can kill the whole tree.
+      detached: !win32,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let stdout = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      killTree(child.pid, win32);
+      reject(new Error(`timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (stdout.length < 64 * 1024) stdout += chunk.toString();
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(`exited with code ${code}`));
+    });
   });
+}
+
+// A plain kill of the spawned pid reaches only the head of the chain. On
+// Windows the shim is cmd.exe -> node -> codex.exe, so the wedged tail this
+// timeout exists for would survive and pile up on every re-probe. Take the
+// whole tree: taskkill /T on Windows, the process group on POSIX.
+function killTree(pid: number | undefined, win32: boolean): void {
+  if (pid === undefined) return;
+  if (win32) {
+    execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
+    return;
+  }
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    // already gone
+  }
 }
 
 export async function getCodexLaunchInfo(

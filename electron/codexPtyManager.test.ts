@@ -53,48 +53,69 @@ describe('buildUnsetCommand', () => {
   });
 });
 
-// `npm run electron:dev` (and any `npm exec`) prepends every ancestor
-// node_modules/.bin to PATH before Electron starts, so the bare `codex`
-// CODEX_LAUNCH_COMMAND resolved to the project-local pinned @openai/codex
-// shim (0.153.2) instead of the operator's global install (0.154.0) -- the
-// terminal reported a stale version no "update" could fix. The launch env
-// must drop exactly those npm-injected entries and nothing else.
+// `npm run electron:dev` (and any `npm exec`) prepends `<dir>/node_modules/.bin`
+// for the invocation dir (INIT_CWD) and every ancestor to PATH before Electron
+// starts, so the bare `codex` CODEX_LAUNCH_COMMAND resolved to the
+// project-local pinned @openai/codex shim (0.153.2) instead of the operator's
+// global install (0.154.0) -- the terminal reported a stale version no
+// "update" could fix. The launch env must drop exactly that npm-injected set
+// and nothing else.
 describe('buildCodexPtyEnv PATH filtering', () => {
   const GLOBAL_NPM = 'C:\\Users\\op\\AppData\\Roaming\\npm';
+  // A node_modules/.bin the operator put on PATH themselves (custom prefix,
+  // direnv PATH_add): not an ancestor of INIT_CWD, so npm did not inject it.
+  const OPERATOR_BIN = 'D:\\tools\\node_modules\\.bin';
+  const WIN_NPM = { npm_execpath: 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js', INIT_CWD: 'C:\\proj\\aether-os' };
   const WIN_PATH = [
     'C:\\proj\\aether-os\\node_modules\\.bin',
     'C:\\proj\\node_modules\\.bin',
     'C:\\node_modules\\.bin\\',
     'C:\\Windows\\System32',
+    OPERATOR_BIN,
     GLOBAL_NPM,
     'C:\\Program Files\\nodejs',
   ].join(';');
-  const WIN_EXPECTED = ['C:\\Windows\\System32', GLOBAL_NPM, 'C:\\Program Files\\nodejs'].join(';');
+  const WIN_EXPECTED = ['C:\\Windows\\System32', OPERATOR_BIN, GLOBAL_NPM, 'C:\\Program Files\\nodejs'].join(';');
 
-  it('drops npm-injected node_modules/.bin entries on win32, keeping order of the rest', () => {
-    const env = buildCodexPtyEnv({ Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+  it('drops exactly the INIT_CWD-ancestor node_modules/.bin entries on win32, keeping order of the rest', () => {
+    const env = buildCodexPtyEnv({ ...WIN_NPM, Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
     expect(env.Path).toBe(WIN_EXPECTED);
   });
 
+  it('keeps an operator-managed node_modules/.bin that npm did not inject', () => {
+    const env = buildCodexPtyEnv({ ...WIN_NPM, Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    expect(env.Path?.split(';')).toContain(OPERATOR_BIN);
+  });
+
+  it('matches injected entries case-insensitively and with either separator on win32', () => {
+    const source = { ...WIN_NPM, Path: ['c:/PROJ/aether-os/node_modules/.bin', 'C:\\Windows\\System32'].join(';') };
+    const env = buildCodexPtyEnv(source, 'C:/fake/codex-home', 'win32');
+    expect(env.Path).toBe('C:\\Windows\\System32');
+  });
+
+  it('strips nothing when the process was not launched by npm (packaged build)', () => {
+    const env = buildCodexPtyEnv({ INIT_CWD: 'C:\\proj\\aether-os', Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    expect(env.Path).toBe(WIN_PATH);
+  });
+
   it('matches the PATH key case-insensitively and does not add a second key', () => {
-    const env = buildCodexPtyEnv({ PATH: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    const env = buildCodexPtyEnv({ ...WIN_NPM, PATH: WIN_PATH }, 'C:/fake/codex-home', 'win32');
     expect(env.PATH).toBe(WIN_EXPECTED);
     expect(Object.keys(env).filter((k) => k.toUpperCase() === 'PATH')).toEqual(['PATH']);
   });
 
   it('uses the POSIX delimiter and forward-slash form off win32', () => {
-    const source = { PATH: '/home/op/proj/node_modules/.bin:/home/op/node_modules/.bin:/usr/local/bin:/usr/bin' };
+    const source = {
+      npm_execpath: '/usr/lib/node_modules/npm/bin/npm-cli.js',
+      INIT_CWD: '/home/op/proj',
+      PATH: '/home/op/proj/node_modules/.bin:/home/op/node_modules/.bin:/node_modules/.bin:/usr/local/bin:/opt/mine/node_modules/.bin:/usr/bin',
+    };
     const env = buildCodexPtyEnv(source, '/fake/codex-home', 'linux');
-    expect(env.PATH).toBe('/usr/local/bin:/usr/bin');
-  });
-
-  it('leaves a PATH with no npm-injected entries byte-identical', () => {
-    const env = buildCodexPtyEnv({ PATH: '/usr/local/bin:/usr/bin' }, '/fake/codex-home', 'linux');
-    expect(env.PATH).toBe('/usr/local/bin:/usr/bin');
+    expect(env.PATH).toBe('/usr/local/bin:/opt/mine/node_modules/.bin:/usr/bin');
   });
 
   it('does not mutate the source PATH', () => {
-    const source = { Path: WIN_PATH };
+    const source = { ...WIN_NPM, Path: WIN_PATH };
     buildCodexPtyEnv(source, 'C:/fake/codex-home', 'win32');
     expect(source.Path).toBe(WIN_PATH);
   });

@@ -1,5 +1,6 @@
 import * as pty from 'node-pty';
 import os from 'node:os';
+import path from 'node:path';
 import { resolveCodexHome } from './crossEngine/acpProcess';
 
 // The terminal ALWAYS starts a fresh codex session -- matching ptyManager.ts's
@@ -31,26 +32,51 @@ const BILLING_AUTH_ENV_VARS = [
   'CODEX_PATH',
 ] as const;
 
-// `npm run electron:dev` (like any `npm exec`/`npm run`) prepends every
-// ancestor `node_modules/.bin` to PATH before Electron even starts, and the
-// terminal inherits that PATH. So the bare `codex` in CODEX_LAUNCH_COMMAND
-// resolved to this project's pinned @openai/codex shim (the cross-check
-// provider's tested dependency, see acpProcess.ts) instead of the
-// operator's own install -- the terminal ran a stale version that no global
-// update could change. Drop exactly those npm-injected entries; everything
-// else (global npm bin, nvm/Homebrew/system dirs) stays in place and order.
-// The shell profile still runs afterwards and may add its own PATH entries;
-// that is the operator's configuration, not npm contamination, and is left
-// alone. Any dir ending in node_modules/.bin qualifies -- npm puts them there,
-// nobody else does. Windows-only case-insensitivity mirrors its filesystem.
-const NPM_BIN_SUFFIX_WIN32 = /[\\/]node_modules[\\/]\.bin[\\/]?$/i;
-const NPM_BIN_SUFFIX_POSIX = /\/node_modules\/\.bin\/?$/;
+// `npm run electron:dev` (like any `npm exec`/`npm run`) prepends
+// `<dir>/node_modules/.bin` for the directory npm was invoked from and every
+// ancestor of it to PATH before Electron even starts, and the terminal
+// inherits that PATH. So the bare `codex` in CODEX_LAUNCH_COMMAND resolved
+// to this project's pinned @openai/codex shim (the cross-check provider's
+// tested dependency, see acpProcess.ts) instead of the operator's own
+// install -- the terminal ran a stale version that no global update could
+// change.
+//
+// Drop exactly that set and nothing else. npm marks its own launches with
+// npm_execpath and records the invocation dir in INIT_CWD, so the set is
+// computable rather than guessed: a packaged build (no npm) strips nothing,
+// and a node_modules/.bin the operator put on PATH themselves (a custom
+// prefix, a direnv PATH_add) is kept -- a suffix-only match would have
+// thrown away their real install. Everything else (global npm bin,
+// nvm/Homebrew/system dirs) stays in place and order. The shell profile
+// still runs afterwards and may add its own PATH entries; that is operator
+// configuration, not npm contamination, and is left alone.
+export function npmInjectedBinDirs(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] {
+  const initCwd = env.INIT_CWD;
+  if (!env.npm_execpath || !initCwd) return [];
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const dirs: string[] = [];
+  let dir = p.normalize(initCwd);
+  for (;;) {
+    dirs.push(p.join(dir, 'node_modules', '.bin'));
+    const parent = p.dirname(dir);
+    if (parent === dir) return dirs;
+    dir = parent;
+  }
+}
 
 export function stripNpmBinPathEntries(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
   const win32 = platform === 'win32';
-  const delimiter = win32 ? ';' : ':';
-  const suffix = win32 ? NPM_BIN_SUFFIX_WIN32 : NPM_BIN_SUFFIX_POSIX;
+  const p = win32 ? path.win32 : path.posix;
+  // Compare in one canonical form: normalized separators, no trailing
+  // separator, and case-folded on Windows to mirror its filesystem.
+  const canon = (entry: string): string => {
+    const t = p.normalize(entry.trim()).replace(/[\\/]+$/, '');
+    return win32 ? t.toLowerCase() : t;
+  };
+  const injected = new Set(npmInjectedBinDirs(env, platform).map(canon));
   const out = { ...env };
+  if (injected.size === 0) return out;
+  const delimiter = win32 ? ';' : ':';
   // Windows spells the key `Path` (sometimes `PATH`); Node's process.env
   // proxy hides that, but a spread copy keeps whichever spelling it had.
   // Rewrite that same key -- never introduce a second one.
@@ -60,7 +86,7 @@ export function stripNpmBinPathEntries(env: NodeJS.ProcessEnv, platform: NodeJS.
     if (typeof value !== 'string') continue;
     out[key] = value
       .split(delimiter)
-      .filter((entry) => !suffix.test(entry.trim()))
+      .filter((entry) => !injected.has(canon(entry)))
       .join(delimiter);
   }
   return out;
