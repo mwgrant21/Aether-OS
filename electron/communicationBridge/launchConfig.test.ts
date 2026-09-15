@@ -267,6 +267,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     terminal.onData(data => { output += data; }); terminal.onExit(() => { exited = true; });
     try {
       await vi.waitFor(() => expect(output).toContain('INTERRUPT_READY'), { timeout: 15000, interval: 50 });
+      await vi.waitFor(async () => expect(await launch.completion()).toBe('running'), { timeout: 5000, interval: 50 });
       nativePid = JSON.parse(await readFile(join(launch.directory, 'started.json'), 'utf8')).pid;
       terminal.write('\x03');
       await vi.waitFor(async () => expect(await launch.completion()).not.toBe('running'), { timeout: 5000, interval: 50 });
