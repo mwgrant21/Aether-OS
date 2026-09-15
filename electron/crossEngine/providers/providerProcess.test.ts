@@ -181,24 +181,58 @@ function diagnosticArmEnv(bases: ReturnType<typeof diagnosticEnvBases>, environm
   return env;
 }
 
+// Diagnostic partitions only: these lists never widen the production allowlist.
+const diagnosticGroups = [
+  { name: 'windows-machine-identity', exact: 'USERNAME USERDOMAIN USERDOMAIN_ROAMINGPROFILE LOGONSERVER COMPUTERNAME OS PROCESSOR_ARCHITECTURE PROCESSOR_IDENTIFIER PROCESSOR_LEVEL PROCESSOR_REVISION NUMBER_OF_PROCESSORS SYSTEMDRIVE DRIVERDATA PUBLIC ALLUSERSPROFILE PROGRAMDATA PROGRAMFILES PROGRAMFILES(X86) PROGRAMW6432 COMMONPROGRAMFILES COMMONPROGRAMFILES(X86) COMMONPROGRAMW6432 PROMPT', prefixes: [] },
+  { name: 'powershell-dotnet', exact: 'PSMODULEPATH PSMODULEANALYSISCACHEPATH POWERSHELL_DISTRIBUTION_CHANNEL POWERSHELL_UPDATECHECK DOTNET_MULTILEVEL_LOOKUP DOTNET_NOLOGO DOTNET_SKIP_FIRST_TIME_EXPERIENCE', prefixes: [] },
+  { name: 'github-runner', exact: 'CI ENABLE_RUNNER_TRACING AGENT_TOOLSDIRECTORY IMAGEOS IMAGEVERSION', prefixes: ['ACTIONS_', 'GITHUB_', 'RUNNER_'] },
+  { name: 'node-npm-vitest', exact: 'NODE NODE_ENV INIT_CWD VITEST VITEST_MODE VITEST_POOL_ID VITEST_WORKER_ID TINYPOOL_WORKER_ID COLOR EDITOR MODE DEV PROD TEST SSR BASE_URL OPENAI_API_KEY', prefixes: ['NPM_'] },
+  { name: 'toolchains', exact: 'ANT_HOME CABAL_DIR CHOCOLATEYINSTALL CHROMEWEBDRIVER EDGEWEBDRIVER GECKOWEBDRIVER IEWEBDRIVER COBERTURA_HOME CONDA GCM_INTERACTIVE GRADLE_HOME M2 M2_REPO MAVEN_OPTS PHPROOT RTOOLS45_HOME SBT_HOME SELENIUM_JAR_PATH VCPKG_INSTALLATION_ROOT WIX', prefixes: ['ANDROID_', 'AZURE_', 'AZ_DEVOPS_', 'GHCUP_', 'GOROOT_', 'JAVA_HOME', 'PG', 'PIPX_'] },
+] as const;
+type DiagnosticGroup = typeof diagnosticGroups[number]['name'] | 'remainder';
+type DiagnosticSelection = DiagnosticGroup | 'full-control' | 'sanitized-control';
+const diagnosticSelections: readonly DiagnosticSelection[] = [
+  'full-control', ...diagnosticGroups.map(group => group.name), 'remainder', 'sanitized-control',
+];
+const excludedDiagnosticKeys = ['OPENAI_API_KEY'];
+
+function diagnosticGroup(key: string): DiagnosticGroup {
+  const name = key.toUpperCase();
+  return diagnosticGroups.find(group => group.exact.split(' ').includes(name)
+    || group.prefixes.some(prefix => name.startsWith(prefix)))?.name ?? 'remainder';
+}
+
+function diagnosticGroupArm(bases: ReturnType<typeof diagnosticEnvBases>, selection: DiagnosticSelection, codexHome: string) {
+  const matchedKeys = bases.droppedKeys.filter(key => selection === 'full-control'
+    || selection !== 'sanitized-control' && diagnosticGroup(key) === selection);
+  const excludedKeys = matchedKeys.filter(key => excludedDiagnosticKeys.includes(key.toUpperCase()));
+  const appliedKeys = matchedKeys.filter(key => !excludedDiagnosticKeys.includes(key.toUpperCase()));
+  const env = diagnosticArmEnv(bases, 'sanitized', 'on', codexHome);
+  for (const key of appliedKeys) env[key] = bases.full[key];
+  // Enforce the payload's null contract even if the sanitized base ever changes.
+  for (const key of Object.keys(env)) if (excludedDiagnosticKeys.includes(key.toUpperCase())) delete env[key];
+  return { env, matchedKeys, excludedKeys, appliedKeys };
+}
+
+function diagnosticKeyNames(keys: string[]) {
+  return { count: keys.length, names: keys.slice(0, 256).map(key => key.slice(0, 128)),
+    truncated: keys.length > 256 || keys.some(key => key.length > 128) };
+}
+
 describe('provider process containment', () => {
   const pendingMatrixCleanup = new Map<string, number>();
   let sharedBases: ReturnType<typeof diagnosticEnvBases> | undefined;
   // One fixed-order diagnostic pass, not randomized causal evidence. A timed-out
   // earlier host can remain unresolved while later arms run; retain arm labels.
-  it.runIf(process.platform === 'win32').each([
-    { order: 1, environment: 'full', overrides: 'off' },
-    { order: 2, environment: 'full', overrides: 'on' },
-    { order: 3, environment: 'sanitized', overrides: 'on' },
-    { order: 4, environment: 'sanitized', overrides: 'off' },
-  ] as const)('compares instrumented host arm $order: $environment environment / overrides $overrides', async ({ order, environment, overrides }) => {
+  it.runIf(process.platform === 'win32').each(diagnosticSelections.map((selection, index) => ({ selection, order: index + 1 })))
+  ('compares instrumented host arm $order: $selection / overrides on', async ({ order, selection }) => {
     const started = Date.now();
     const privateRoot = mkdtempSync(join(tmpdir(), 'aether-private-cwd-'));
     const cwd = privateRoot;
     const expectedCwd = privateRoot;
-    const arm = `${environment}/overrides-${overrides}/private`;
+    const arm = `${selection}/overrides-on/private`;
     const report = (value: unknown) => console.error('[provider-env-cwd]', JSON.stringify({
-      arm, order, environment, overrides, workingDirectory: 'private', droppedKeyCount: sharedBases?.droppedKeys.length ?? null,
+      arm, order, environment: selection, overrides: 'on', workingDirectory: 'private', droppedKeyCount: sharedBases?.droppedKeys.length ?? null,
       precedingCleanupUnconfirmed: [...pendingMatrixCleanup].filter(([, priorOrder]) => priorOrder < order).map(([priorArm]) => priorArm),
       ...(value as Record<string, unknown>),
     }));
@@ -208,19 +242,24 @@ describe('provider process containment', () => {
     let env: NodeJS.ProcessEnv;
     let child: ReturnType<typeof spawnInstrumentedHost>;
     try {
-      // The fixed payload reports this key. Never let a real key reach a full-
-      // environment child: keep the sentinel through the actual synchronous
-      // spawn (process.env is a live proxy), then restore before any await.
+      // The frozen snapshot is taken under a sentinel, never a real API key.
+      // Every arm excludes the key before synchronous spawn; restore the live
+      // environment before any await, including on setup/spawn failure.
       process.env.OPENAI_API_KEY = 'must-not-inherit';
       if (!sharedBases) {
         sharedBases = diagnosticEnvBases(process.env);
         const names = sharedBases.droppedKeys;
-        report({ event: 'environment-selection', fullBase: 'normalized-retained-plus-dropped',
+        report({ event: 'environment-selection', fullBase: 'normalized-retained-plus-dropped-excluding-diagnostic-keys',
+          excludedDiagnosticKeys,
           parentOverridePresent: sharedBases.parentOverridePresent,
           droppedKeys: names.slice(0, 256).map(key => key.slice(0, 128)),
           droppedKeyNamesTruncated: names.length > 256 || names.some(key => key.length > 128) });
       }
-      env = diagnosticArmEnv(sharedBases, environment, overrides, privateRoot);
+      const selected = diagnosticGroupArm(sharedBases, selection, privateRoot);
+      env = selected.env;
+      report({ event: 'group-selection', selection, excludedDiagnosticKeys,
+        matched: diagnosticKeyNames(selected.matchedKeys), applied: diagnosticKeyNames(selected.appliedKeys),
+        excluded: diagnosticKeyNames(selected.excludedKeys) });
       report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
         osEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(process.env, key)])),
         childEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(env, key)])) });
@@ -265,8 +304,8 @@ describe('provider process containment', () => {
         expect(Object.hasOwn(env, key), `${key} retained as an exact child key`).toBe(true);
         expect(env[key] === process.env[key], `${key} retains its OS value`).toBe(true);
       }
-      if (environment === 'sanitized') expect(Object.hasOwn(env, 'OPENAI_API_KEY')).toBe(false);
-      expect(JSON.parse(String(first))).toEqual({ cwd: expectedCwd, key: environment === 'full' ? 'must-not-inherit' : null });
+      expect(Object.keys(env).some(key => key.toUpperCase() === 'OPENAI_API_KEY')).toBe(false);
+      expect(JSON.parse(String(first))).toEqual({ cwd: expectedCwd, key: null });
       expect(existsSync(files)).toBe(true);
       trace.phase('assertions-passed');
     } catch (error) { failures.push(error); trace.failure('startup-or-assertion-failed', error);
@@ -352,6 +391,46 @@ describe('provider process containment', () => {
 });
 
 describe('provider diagnostic environment selection', () => {
+  it('classifies exact and prefix boundaries case-insensitively with an exhaustive remainder', () => {
+    const cases: Record<DiagnosticGroup, string[]> = {
+      'windows-machine-identity': ['username', 'ProgramFiles(x86)', 'COMMONPROGRAMW6432', 'Prompt'],
+      'powershell-dotnet': ['psmodulepath', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE'],
+      'github-runner': ['actions_runtime', 'Github_job', 'RUNNER_OS', 'CI', 'IMAGEVERSION'],
+      'node-npm-vitest': ['npm_config_cache', 'node_env', 'VITEST_POOL_ID', 'OPENAI_API_KEY'],
+      toolchains: ['android_home', 'AZ_DEVOPS_TEST', 'JAVA_HOME_17_X64', 'pg', 'PGROOT', 'PIPX_HOME', 'M2'],
+      remainder: ['USERNAME_EXTRA', 'DOTNET_OTHER', 'GITHUB', 'NODE_OPTIONS', 'JAVA', 'UNKNOWN_FIXTURE'],
+    };
+    for (const [group, names] of Object.entries(cases)) for (const name of names) expect(diagnosticGroup(name), name).toBe(group);
+    expect(diagnosticSelections).toEqual(['full-control', 'windows-machine-identity', 'powershell-dotnet',
+      'github-runner', 'node-npm-vitest', 'toolchains', 'remainder', 'sanitized-control']);
+    expect(diagnosticKeyNames(['x'.repeat(129)]).truncated).toBe(true);
+    expect(diagnosticKeyNames(Array.from({ length: 257 }, (_, i) => `KEY_${i}`))).toMatchObject({ count: 257, truncated: true });
+  });
+  it('partitions every dropped key once and applies only the selected group with the API key excluded from all arms', () => {
+    const parent = { SystemRoot: 'fixture-root', PATH: 'fixture-path', username: 'identity-value',
+      PSMODULEPATH: 'powershell-value', Github_job: 'runner-value', NPM_CONFIG_CACHE: 'node-value',
+      JAVA_HOME_17_X64: 'toolchain-value', UNKNOWN_FIXTURE: 'remainder-value',
+      openai_api_key: 'must-not-inherit', CODEX_HOME: 'parent-home', ELECTRON_RUN_AS_NODE: '0' };
+    const bases = diagnosticEnvBases(parent);
+    const groups = diagnosticSelections.filter(selection => !selection.endsWith('-control'));
+    const partition = groups.flatMap(selection => diagnosticGroupArm(bases, selection, 'fixture-home').matchedKeys);
+    expect(partition.sort()).toEqual([...bases.droppedKeys].sort());
+    expect(new Set(partition).size).toBe(bases.droppedKeys.length);
+    for (const selection of diagnosticSelections) {
+      const arm = diagnosticGroupArm(bases, selection, 'fixture-home');
+      const expected = selection === 'full-control' ? Object.keys(parent).filter(key => partition.includes(key) && key !== 'openai_api_key')
+        : selection === 'sanitized-control' ? [] : Object.entries({ username: 'windows-machine-identity', PSMODULEPATH: 'powershell-dotnet',
+          Github_job: 'github-runner', NPM_CONFIG_CACHE: 'node-npm-vitest', JAVA_HOME_17_X64: 'toolchains', UNKNOWN_FIXTURE: 'remainder' })
+          .filter(([, group]) => group === selection).map(([key]) => key);
+      expect(arm.appliedKeys.sort()).toEqual(expected.sort());
+      expect(arm.excludedKeys).toEqual(['full-control', 'node-npm-vitest'].includes(selection) ? ['openai_api_key'] : []);
+      expect(arm.env).toEqual({ ...bases.sanitized, CODEX_HOME: 'fixture-home', ELECTRON_RUN_AS_NODE: '1',
+        ...Object.fromEntries(expected.map(key => [key, parent[key as keyof typeof parent]])) });
+      expect(Object.keys(arm.env).some(key => key.toUpperCase() === 'OPENAI_API_KEY')).toBe(false);
+    }
+    expect(parent.openai_api_key).toBe('must-not-inherit');
+  });
+
   it('separates dropped keys and overrides without retaining mixed-case parent override aliases', () => {
     const parent = { SystemRoot: 'os-root', PATH: 'os-path', SECRET_FIXTURE: 'fixture-only',
       OPENAI_API_KEY: 'must-not-inherit', codex_home: 'parent-home', CODEX_HOME: 'other-parent-home',
