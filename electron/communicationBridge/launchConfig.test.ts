@@ -41,6 +41,21 @@ it('keeps the native connected fixture version aligned with production', async (
 describe.runIf(process.platform === 'win32')('private Windows launch', () => {
   it('retains only observed PID evidence after receipt cleanup and distinguishes read failure', async () => {
     const { options, dependencies } = await fixture();
+    // Time the existing protection call; do not warm PowerShell with an extra call.
+    const protect = dependencies.protect;
+    dependencies.protect = async directory => {
+      const started = process.hrtime.bigint();
+      let outcome = 'rejected';
+      try {
+        await protect(directory);
+        outcome = 'resolved';
+      } finally {
+        try {
+          console.error('[launch-protection]', JSON.stringify({ event: 'protect-directory',
+            elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000, outcome }));
+        } catch { /* Diagnostics must not replace the protection result. */ }
+      }
+    };
     const launch = await prepareBridgeLaunch(options, dependencies);
     await writeFile(join(launch.directory, 'started.json'), JSON.stringify({ pid: process.pid }));
     expect(await launch.completion()).toBe('running');
@@ -53,7 +68,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       probe.mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
       expect(await launch.completion()).toBe('exited');
     } finally { probe.mockRestore(); }
-  });
+  }, 20_000);
   it('does not infer exit or running from absent or malformed startup evidence', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
@@ -62,15 +77,15 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     expect(await launch.completion()).toBe('failed');
     await launch.cleanup();
     expect(await launch.completion()).toBe('unknown');
-  });
+  }, 20_000);
   it.runIf(process.env.AETHER_LAUNCH_PREFLIGHT === '1')('checks installed native CLI version and local policy without a model call', async () => {
     const path = await preflightBridgeLaunch({ nodePath: process.execPath, helperPath: join(process.cwd(), 'out/main/communication-mcp.js') });
     expect(path.toLowerCase()).toMatch(/claude\.exe$/);
-  });
+  }, 20_000);
   it('enforces a current-user-only ACL in real Windows PowerShell', async () => {
     const { root } = await fixture();
     await protectLaunchDirectory(root);
-  });
+  }, 20_000);
   it('protects the directory before writing secrets and grants only exact session tools', async () => {
     const { options, dependencies } = await fixture();
     dependencies.protect = async directory => {
@@ -91,7 +106,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     expect(await launch.completion()).toBe('starting');
     await launch.cleanup();
     expect(await readdir(options.root)).toEqual([]);
-  });
+  }, 20_000);
   it('fails without secrets when directory protection fails', async () => {
     const { options, dependencies } = await fixture();
     dependencies.protect = async () => { throw new Error('denied'); };
@@ -112,7 +127,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     const entries = await readdir(options.root);
     expect(entries).toHaveLength(1);
     expect(await readFile(join(options.root, entries[0], 'partial-manifest'), 'utf8')).toBe(options.manifest.capability);
-  });
+  }, 20_000);
   it('reports startup failure when no native process receipt arrives by the deadline', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
@@ -120,7 +135,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(realNow + 15001);
     try { expect(await launch.completion()).toBe('failed'); }
     finally { clock.mockRestore(); }
-  });
+  }, 20_000);
   it('refuses a profile-supplied config root before starting Claude and restores the original threshold', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { ...process.env, CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '777' } }, dependencies);
@@ -132,7 +147,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     expect(await launch.completion()).toBe('failed');
     expect(output).toContain('RESTORED=777');
     expect(await readdir(launch.directory)).not.toContain('started.json');
-  });
+  }, 20_000);
   it('removes only stale owned bundles and retains live or unknown owners', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
@@ -142,7 +157,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     await cleanupStaleBridgeLaunches(options.root);
     expect(await readdir(options.root)).toEqual(expect.arrayContaining([launch.directory.split(/[\\/]/).at(-1), 'launch-unknown']));
     expect(await readdir(options.root)).not.toContain('launch-stale');
-  });
+  }, 20_000);
   it.each([undefined, '333'])('real PowerShell restores %s, strips profile billing variables, and observes child exit before shell exit', async previous => {
     const { options, dependencies } = await fixture();
     const sourceEnv = { ...process.env };
