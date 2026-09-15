@@ -2,22 +2,40 @@ import * as pty from 'node-pty';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCodexHome } from './crossEngine/acpProcess';
-import { resolveCodexExecutable } from './codexLaunchInfo';
 
 // The terminal ALWAYS starts a fresh codex session -- matching ptyManager.ts's
 // identical decision for claude: never add resume flags.
 //
-// Launch the executable resolved on the launch env explicitly rather than a
-// bare `codex`: the resolved file is what the header's version readout
-// probed (codexLaunchInfo.ts), and a bare name would let PowerShell pick
-// codex.ps1 over codex.cmd from the same dir -- which fails outright under a
-// restrictive execution policy instead of falling back. Only when nothing
-// resolves does the bare name go in, leaving the operator's profile (nvm,
-// Homebrew, ~/.local/bin PATH setup) its chance to find one.
-export function buildCodexLaunchCommand(executable: string | null, platform: NodeJS.Platform): string {
-  if (executable === null) return 'codex\r';
-  if (platform === 'win32') return `& '${executable.replace(/'/g, "''")}'\r`;
-  return `'${executable.replace(/'/g, "'\\''")}'\r`;
+// Resolution happens INSIDE the shell, after its profile has run, so a
+// profile that prepends nvm/Homebrew/~/.local/bin to PATH decides what
+// launches exactly as it would in any interactive shell. On PowerShell the
+// bare name would select codex.ps1 over the codex.cmd npm ships beside it,
+// and a restrictive execution policy then fails the launch instead of
+// falling back -- so prefer the .cmd/.exe shim from the same PATH walk and
+// only fall back to the bare name. On POSIX the bare name already is the
+// shell's own resolution.
+//
+// codexLaunchInfo.ts runs buildCodexResolveScript (the same selection, plus
+// `--version`) in a profile-loaded copy of this shell for the header
+// readout, so what it reports is what this command launches.
+const PS_SELECT = '$c = Get-Command codex.cmd, codex.exe -ErrorAction SilentlyContinue | Select-Object -First 1';
+
+export function buildCodexLaunchCommand(platform: NodeJS.Platform): string {
+  if (platform === 'win32') return `${PS_SELECT}; if ($c) { & $c.Source } else { codex }\r`;
+  return 'codex\r';
+}
+
+// Prints the selected executable on line 1 and its `--version` on line 2;
+// exits CODEX_NOT_FOUND_EXIT (3) when the shell finds no codex at all.
+export function buildCodexResolveScript(platform: NodeJS.Platform): string {
+  if (platform === 'win32') {
+    return (
+      `${PS_SELECT}; ` +
+      'if (-not $c) { $c = Get-Command codex -ErrorAction SilentlyContinue | Select-Object -First 1 }; ' +
+      'if (-not $c) { exit 3 }; $c.Source; & $c.Source --version'
+    );
+  }
+  return 'p=$(command -v codex) || exit 3; printf \'%s\\n\' "$p"; "$p" --version';
 }
 
 // Where the PTY shell starts. Also the base for relative PATH components in
@@ -173,6 +191,6 @@ export function spawnCodexPty(cols = 100, rows = 30) {
     env,
   });
   ptyProcess.write(buildUnsetCommand(process.platform, BILLING_AUTH_ENV_VARS));
-  ptyProcess.write(buildCodexLaunchCommand(resolveCodexExecutable(env, process.platform, cwd), process.platform));
+  ptyProcess.write(buildCodexLaunchCommand(process.platform));
   return ptyProcess;
 }

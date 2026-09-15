@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCodexPtyEnv, buildUnsetCommand, buildCodexLaunchCommand } from './codexPtyManager';
+import { buildCodexPtyEnv, buildUnsetCommand, buildCodexLaunchCommand, buildCodexResolveScript } from './codexPtyManager';
 
 // Mirrors ptyManager.test.ts's guard, for the Codex terminal's own launch path.
 // Mirrors acpProcess.test.ts's BLOCKED list -- the verifier already enumerates
@@ -144,24 +144,31 @@ describe('buildCodexPtyEnv PATH filtering', () => {
   });
 });
 
-// The terminal launches the executable resolved on its launch env (the one
-// the header's readout probed) explicitly, so a bare `codex` cannot make
-// PowerShell pick codex.ps1 over codex.cmd from the same dir and fail under
-// a restrictive execution policy. Bare `codex` is the fallback only when
-// nothing resolved, leaving the profile's PATH setup its chance.
-describe('buildCodexLaunchCommand', () => {
-  it('launches the resolved file via the call operator on win32, single-quoted with quotes doubled', () => {
-    expect(buildCodexLaunchCommand("C:\\Program Files\\o'brien\\npm\\codex.cmd", 'win32')).toBe(
-      "& 'C:\\Program Files\\o''brien\\npm\\codex.cmd'\r",
+// Resolution happens inside the shell after its profile has run, so profile
+// PATH setup (nvm, Homebrew, ~/.local/bin) still decides what launches. On
+// PowerShell the .cmd/.exe shim is preferred over the codex.ps1 a bare name
+// would select (which fails under a restrictive execution policy instead of
+// falling back); POSIX keeps the bare name, which is already the shell's own
+// resolution. The readout script makes the identical selection.
+describe('buildCodexLaunchCommand / buildCodexResolveScript', () => {
+  const SELECT = '$c = Get-Command codex.cmd, codex.exe -ErrorAction SilentlyContinue | Select-Object -First 1';
+
+  it('on win32 launches the .cmd/.exe shim the shell finds, falling back to a bare codex', () => {
+    expect(buildCodexLaunchCommand('win32')).toBe(`${SELECT}; if ($c) { & $c.Source } else { codex }\r`);
+  });
+
+  it('off win32 launches a bare codex, leaving resolution to the profile-initialised shell', () => {
+    expect(buildCodexLaunchCommand('linux')).toBe('codex\r');
+  });
+
+  it('the win32 resolve script makes the same selection, then prints path and --version, exit 3 if none', () => {
+    expect(buildCodexResolveScript('win32')).toBe(
+      `${SELECT}; if (-not $c) { $c = Get-Command codex -ErrorAction SilentlyContinue | Select-Object -First 1 }; ` +
+        'if (-not $c) { exit 3 }; $c.Source; & $c.Source --version',
     );
   });
 
-  it('launches the resolved file single-quoted with POSIX quote escaping off win32', () => {
-    expect(buildCodexLaunchCommand("/opt/o'brien/bin/codex", 'linux')).toBe("'/opt/o'\\''brien/bin/codex'\r");
-  });
-
-  it('falls back to a bare codex when nothing resolved on the launch env', () => {
-    expect(buildCodexLaunchCommand(null, 'win32')).toBe('codex\r');
-    expect(buildCodexLaunchCommand(null, 'linux')).toBe('codex\r');
+  it('the POSIX resolve script uses command -v, then prints path and --version, exit 3 if none', () => {
+    expect(buildCodexResolveScript('linux')).toBe('p=$(command -v codex) || exit 3; printf \'%s\\n\' "$p"; "$p" --version');
   });
 });

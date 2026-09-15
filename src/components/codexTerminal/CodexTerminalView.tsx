@@ -10,8 +10,9 @@ export function CodexTerminalView() {
   const { state } = useAetherStore();
   const enabled = state.codexTerminalCfg.enabled;
 
-  // Which `codex` this terminal launches (resolved on its own filtered PATH
-  // in main, see electron/codexLaunchInfo.ts). Pull-based like
+  // Which `codex` this terminal launches (answered by a profile-loaded shell
+  // running the terminal's own selection on its filtered launch env, see
+  // electron/codexLaunchInfo.ts). Pull-based like
   // useTranscriptSource: fetched once per enable, held in view state only,
   // never dispatched into the store. It describes the NEXT launch -- an
   // already-running session keeps whatever version it started with.
