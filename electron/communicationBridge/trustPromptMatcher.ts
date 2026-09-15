@@ -166,4 +166,3 @@ export function createTrustPromptMatcher(now: () => number = Date.now, dimension
     reset(): void { invalidate(); row = 0; col = 0; pendingWrap = false; mode = 'text'; control = ''; payloadLength = 0; seenAt = null; unsupportedMode = false; synchronized = false; },
   };
 }
-

@@ -421,8 +421,14 @@ MCP client and has no session, turn, cancellation or approval semantics.)
 
 Implemented on `feat/visible-communication-u1` through U8; U9 component-path verification has passed; complete connected-launch verification remains in
 progress. This section describes implementation and controls, not a passed production-path or
-live-provider test. Consult the U9 results for those verdicts. No live cross-provider smoke has
-been run for this feature; it requires a separate explicit one-consultation allowance.
+live-provider test. Consult the U9 results for those verdicts. One qualified live consultation was observed on 2026-09-14 (a single exchange through the
+connected bridge with real tools, on the interactive client's default model; recorded in the
+integration review notes). That establishes one successful delivery, not a reliability rate,
+and no comprehensive live verification has been run. Packaged-runtime coverage as of
+2026-09-14 is limited to Codex ACP readiness and bridge-helper component loading; the
+app-server supervisor path, a complete connected launch, and normal-quit cleanup are not
+verified under packaged Electron. Live consultations remain gated by the explicit
+per-consultation allowance.
 
 **Controls and authority.** Settings → Agent communication → Enable Claude–Codex communication
 persists only `communicationCfg.enabled`, default false. Enabling alone launches no session and

@@ -296,4 +296,3 @@ describe('bounded current trust prompt observation', () => {
     expect(Object.keys(matcher.state())).toEqual(['seenAt', 'active']);
   });
 });
-
