@@ -13,6 +13,11 @@ import { execFile, spawn } from 'node:child_process';
 // exists to avoid, or (resolved pre-profile) pin a launch the profile can no
 // longer redirect.
 //
+// Honest limit: this probe is a non-interactive shell, the terminal is an
+// interactive one. A profile that branches on interactivity, prompts, or
+// keeps state across sessions can make the two differ; this readout is the
+// best available preflight, not a receipt from the live session.
+//
 // Token-free: `codex --version` prints one line and exits; nothing here
 // contacts a model.
 export interface CodexLaunchInfo {
