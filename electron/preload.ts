@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     start: (opts: { cols: number; rows: number }) => ipcRenderer.invoke('codexPty:start', opts),
     write: (input: string) => ipcRenderer.send('codexPty:write', input),
     resize: (cols: number, rows: number) => ipcRenderer.send('codexPty:resize', { cols, rows }),
+    launchInfo: () => ipcRenderer.invoke('codexPty:launchInfo'),
     onData: (callback: (data: string) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
       ipcRenderer.on('codexPty:data', listener);

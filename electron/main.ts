@@ -6,7 +6,8 @@ import os from 'node:os';
 import { spawnPty } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
-import { spawnCodexPty } from './codexPtyManager';
+import { spawnCodexPty, buildCodexLaunchEnv } from './codexPtyManager';
+import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
@@ -1147,6 +1148,13 @@ ipcMain.on('codexPty:write', (_event, input: string) => {
 ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   codexPtyLifecycle.resize(cols, rows);
 });
+
+// Which `codex` the terminal will launch and its version, resolved against
+// the SAME env spawnCodexPty uses -- never Electron's raw process.env, whose
+// npm-injected PATH is what made the terminal run the project-local shim.
+// The executable path crosses IPC for display only (the point of the readout
+// is to show the operator which install is selected); it is never stored.
+ipcMain.handle('codexPty:launchInfo', () => getCodexLaunchInfo(buildCodexLaunchEnv()));
 
 ipcMain.handle('attachments:list', () => attachmentsStore.list());
 ipcMain.handle('attachments:add', () => attachmentsStore.add());

@@ -31,13 +31,60 @@ const BILLING_AUTH_ENV_VARS = [
   'CODEX_PATH',
 ] as const;
 
-export function buildCodexPtyEnv(source: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
-  const env = { ...source };
+// `npm run electron:dev` (like any `npm exec`/`npm run`) prepends every
+// ancestor `node_modules/.bin` to PATH before Electron even starts, and the
+// terminal inherits that PATH. So the bare `codex` in CODEX_LAUNCH_COMMAND
+// resolved to this project's pinned @openai/codex shim (the cross-check
+// provider's tested dependency, see acpProcess.ts) instead of the
+// operator's own install -- the terminal ran a stale version that no global
+// update could change. Drop exactly those npm-injected entries; everything
+// else (global npm bin, nvm/Homebrew/system dirs) stays in place and order.
+// The shell profile still runs afterwards and may add its own PATH entries;
+// that is the operator's configuration, not npm contamination, and is left
+// alone. Any dir ending in node_modules/.bin qualifies -- npm puts them there,
+// nobody else does. Windows-only case-insensitivity mirrors its filesystem.
+const NPM_BIN_SUFFIX_WIN32 = /[\\/]node_modules[\\/]\.bin[\\/]?$/i;
+const NPM_BIN_SUFFIX_POSIX = /\/node_modules\/\.bin\/?$/;
+
+export function stripNpmBinPathEntries(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  const win32 = platform === 'win32';
+  const delimiter = win32 ? ';' : ':';
+  const suffix = win32 ? NPM_BIN_SUFFIX_WIN32 : NPM_BIN_SUFFIX_POSIX;
+  const out = { ...env };
+  // Windows spells the key `Path` (sometimes `PATH`); Node's process.env
+  // proxy hides that, but a spread copy keeps whichever spelling it had.
+  // Rewrite that same key -- never introduce a second one.
+  for (const key of Object.keys(out)) {
+    if (key.toUpperCase() !== 'PATH') continue;
+    const value = out[key];
+    if (typeof value !== 'string') continue;
+    out[key] = value
+      .split(delimiter)
+      .filter((entry) => !suffix.test(entry.trim()))
+      .join(delimiter);
+  }
+  return out;
+}
+
+export function buildCodexPtyEnv(
+  source: NodeJS.ProcessEnv,
+  codexHome: string,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const env = stripNpmBinPathEntries(source, platform);
   for (const key of BILLING_AUTH_ENV_VARS) delete env[key];
   // Dedicated, isolated home shared with the cross-engine verifier -- never
   // the operator's global ~/.codex. See electron/crossEngine/acpProcess.ts.
   env.CODEX_HOME = codexHome;
   return env;
+}
+
+// The one env the terminal launches with. The version readout (see
+// codexLaunchInfo.ts) must resolve `codex` against THIS env, not against
+// Electron's raw process.env -- otherwise it would report the very shim the
+// filter above exists to avoid.
+export function buildCodexLaunchEnv(): NodeJS.ProcessEnv {
+  return buildCodexPtyEnv(process.env, resolveCodexHome());
 }
 
 // A login/interactive shell sources the operator's own profile (~/.bashrc,
@@ -71,7 +118,7 @@ export function spawnCodexPty(cols = 100, rows = 30) {
     cols,
     rows,
     cwd: os.homedir(),
-    env: buildCodexPtyEnv(process.env, resolveCodexHome()),
+    env: buildCodexLaunchEnv(),
   });
   ptyProcess.write(buildUnsetCommand(process.platform, BILLING_AUTH_ENV_VARS));
   ptyProcess.write(CODEX_LAUNCH_COMMAND);

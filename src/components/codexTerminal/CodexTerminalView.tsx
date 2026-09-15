@@ -1,4 +1,5 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import type { CodexLaunchInfo } from '../../../electron/codexLaunchInfo';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
@@ -7,12 +8,34 @@ import { PtyCodexTerminal } from './PtyCodexTerminal';
 export function CodexTerminalView() {
   const colors = useColors();
   const { state } = useAetherStore();
+  const enabled = state.codexTerminalCfg.enabled;
+
+  // Which `codex` this terminal launches (resolved on its own filtered PATH
+  // in main, see electron/codexLaunchInfo.ts). Pull-based like
+  // useTranscriptSource: fetched once per enable, held in view state only,
+  // never dispatched into the store. It describes the NEXT launch -- an
+  // already-running session keeps whatever version it started with.
+  const [launch, setLaunch] = useState<CodexLaunchInfo | null>(null);
+  useEffect(() => {
+    // Browser-only `npm run dev` has no preload bridge: leave the readout at
+    // its resolving placeholder rather than throwing (PtyCodexTerminal makes
+    // the same no-bridge check before it tries to start a pty).
+    const api = window.aetherElectron;
+    if (!enabled || !api) return;
+    let live = true;
+    api.codexPty.launchInfo().then((info) => {
+      if (live) setLaunch(info);
+    });
+    return () => {
+      live = false;
+    };
+  }, [enabled]);
 
   // The pty must never spawn for an operator who hasn't opted in -- gating
   // here (before PtyCodexTerminal ever mounts) means the codexPty:start IPC
   // call in PtyCodexTerminal's getOrCreateHost is never reached while
   // disabled, even if the operator navigates to this tab.
-  if (!state.codexTerminalCfg.enabled) {
+  if (!enabled) {
     return (
       <div style={rootStyle}>
         <div style={disabledCardStyle(colors)}>Codex terminal is disabled — enable it in Settings first.</div>
@@ -27,7 +50,13 @@ export function CodexTerminalView() {
           <span style={liveDotStyle(colors)} />
           <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>operator@codex</span>
           <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.textDim }}>:~$ session active</span>
-          <span style={{ marginLeft: 'auto', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>CODEX TERMINAL</span>
+          <span
+            title={launch?.executable ?? undefined}
+            style={{ marginLeft: 'auto', font: `400 11px/1 ${fonts.mono}`, color: launch?.error ? colors.warn : colors.textDim }}
+          >
+            {launch === null ? 'resolving codex…' : (launch.version ?? launch.error)}
+          </span>
+          <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>CODEX TERMINAL</span>
         </div>
         <div style={termHostStyle}>
           <PtyCodexTerminal />

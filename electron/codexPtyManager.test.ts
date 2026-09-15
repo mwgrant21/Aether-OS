@@ -52,3 +52,50 @@ describe('buildUnsetCommand', () => {
     );
   });
 });
+
+// `npm run electron:dev` (and any `npm exec`) prepends every ancestor
+// node_modules/.bin to PATH before Electron starts, so the bare `codex`
+// CODEX_LAUNCH_COMMAND resolved to the project-local pinned @openai/codex
+// shim (0.153.2) instead of the operator's global install (0.154.0) -- the
+// terminal reported a stale version no "update" could fix. The launch env
+// must drop exactly those npm-injected entries and nothing else.
+describe('buildCodexPtyEnv PATH filtering', () => {
+  const GLOBAL_NPM = 'C:\\Users\\op\\AppData\\Roaming\\npm';
+  const WIN_PATH = [
+    'C:\\proj\\aether-os\\node_modules\\.bin',
+    'C:\\proj\\node_modules\\.bin',
+    'C:\\node_modules\\.bin\\',
+    'C:\\Windows\\System32',
+    GLOBAL_NPM,
+    'C:\\Program Files\\nodejs',
+  ].join(';');
+  const WIN_EXPECTED = ['C:\\Windows\\System32', GLOBAL_NPM, 'C:\\Program Files\\nodejs'].join(';');
+
+  it('drops npm-injected node_modules/.bin entries on win32, keeping order of the rest', () => {
+    const env = buildCodexPtyEnv({ Path: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    expect(env.Path).toBe(WIN_EXPECTED);
+  });
+
+  it('matches the PATH key case-insensitively and does not add a second key', () => {
+    const env = buildCodexPtyEnv({ PATH: WIN_PATH }, 'C:/fake/codex-home', 'win32');
+    expect(env.PATH).toBe(WIN_EXPECTED);
+    expect(Object.keys(env).filter((k) => k.toUpperCase() === 'PATH')).toEqual(['PATH']);
+  });
+
+  it('uses the POSIX delimiter and forward-slash form off win32', () => {
+    const source = { PATH: '/home/op/proj/node_modules/.bin:/home/op/node_modules/.bin:/usr/local/bin:/usr/bin' };
+    const env = buildCodexPtyEnv(source, '/fake/codex-home', 'linux');
+    expect(env.PATH).toBe('/usr/local/bin:/usr/bin');
+  });
+
+  it('leaves a PATH with no npm-injected entries byte-identical', () => {
+    const env = buildCodexPtyEnv({ PATH: '/usr/local/bin:/usr/bin' }, '/fake/codex-home', 'linux');
+    expect(env.PATH).toBe('/usr/local/bin:/usr/bin');
+  });
+
+  it('does not mutate the source PATH', () => {
+    const source = { Path: WIN_PATH };
+    buildCodexPtyEnv(source, 'C:/fake/codex-home', 'win32');
+    expect(source.Path).toBe(WIN_PATH);
+  });
+});
