@@ -181,40 +181,35 @@ function diagnosticArmEnv(bases: ReturnType<typeof diagnosticEnvBases>, environm
   return env;
 }
 
-// Diagnostic partitions only: these lists never widen the production allowlist.
-const diagnosticGroups = [
-  { name: 'windows-machine-identity', exact: 'USERNAME USERDOMAIN USERDOMAIN_ROAMINGPROFILE LOGONSERVER COMPUTERNAME OS PROCESSOR_ARCHITECTURE PROCESSOR_IDENTIFIER PROCESSOR_LEVEL PROCESSOR_REVISION NUMBER_OF_PROCESSORS SYSTEMDRIVE DRIVERDATA PUBLIC ALLUSERSPROFILE PROGRAMDATA PROGRAMFILES PROGRAMFILES(X86) PROGRAMW6432 COMMONPROGRAMFILES COMMONPROGRAMFILES(X86) COMMONPROGRAMW6432 PROMPT', prefixes: [] },
-  { name: 'powershell-dotnet', exact: 'PSMODULEPATH PSMODULEANALYSISCACHEPATH POWERSHELL_DISTRIBUTION_CHANNEL POWERSHELL_UPDATECHECK DOTNET_MULTILEVEL_LOOKUP DOTNET_NOLOGO DOTNET_SKIP_FIRST_TIME_EXPERIENCE', prefixes: [] },
-  { name: 'github-runner', exact: 'CI ENABLE_RUNNER_TRACING AGENT_TOOLSDIRECTORY IMAGEOS IMAGEVERSION', prefixes: ['ACTIONS_', 'GITHUB_', 'RUNNER_'] },
-  { name: 'node-npm-vitest', exact: 'NODE NODE_ENV INIT_CWD VITEST VITEST_MODE VITEST_POOL_ID VITEST_WORKER_ID TINYPOOL_WORKER_ID COLOR EDITOR MODE DEV PROD TEST SSR BASE_URL OPENAI_API_KEY', prefixes: ['NPM_'] },
-  { name: 'toolchains', exact: 'ANT_HOME CABAL_DIR CHOCOLATEYINSTALL CHROMEWEBDRIVER EDGEWEBDRIVER GECKOWEBDRIVER IEWEBDRIVER COBERTURA_HOME CONDA GCM_INTERACTIVE GRADLE_HOME M2 M2_REPO MAVEN_OPTS PHPROOT RTOOLS45_HOME SBT_HOME SELENIUM_JAR_PATH VCPKG_INSTALLATION_ROOT WIX', prefixes: ['ANDROID_', 'AZURE_', 'AZ_DEVOPS_', 'GHCUP_', 'GOROOT_', 'JAVA_HOME', 'PG', 'PIPX_'] },
+// Diagnostic selections only: these keys never widen the production allowlist.
+const diagnosticKeys = [
+  'PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH', 'DOTNET_MULTILEVEL_LOOKUP',
+  'DOTNET_NOLOGO', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE',
+  'POWERSHELL_DISTRIBUTION_CHANNEL', 'POWERSHELL_UPDATECHECK',
 ] as const;
-type DiagnosticGroup = typeof diagnosticGroups[number]['name'] | 'remainder';
-type DiagnosticSelection = DiagnosticGroup | 'full-control' | 'sanitized-control';
+type DiagnosticSelection = typeof diagnosticKeys[number] | 'seven-key-control' | 'sanitized-control';
 const diagnosticSelections: readonly DiagnosticSelection[] = [
-  'full-control', ...diagnosticGroups.map(group => group.name), 'remainder', 'sanitized-control',
+  'seven-key-control', ...diagnosticKeys, 'sanitized-control',
 ];
 const excludedDiagnosticKeys = ['OPENAI_API_KEY'];
 
-function diagnosticGroup(key: string): DiagnosticGroup {
-  const name = key.toUpperCase();
-  return diagnosticGroups.find(group => group.exact.split(' ').includes(name)
-    || group.prefixes.some(prefix => name.startsWith(prefix)))?.name ?? 'remainder';
-}
-
-function diagnosticGroupArm(bases: ReturnType<typeof diagnosticEnvBases>, selection: DiagnosticSelection, codexHome: string) {
-  const matchedKeys = bases.droppedKeys.filter(key => selection === 'full-control'
-    || selection !== 'sanitized-control' && diagnosticGroup(key) === selection);
-  const excludedKeys = matchedKeys.filter(key => excludedDiagnosticKeys.includes(key.toUpperCase()));
-  const appliedKeys = matchedKeys.filter(key => !excludedDiagnosticKeys.includes(key.toUpperCase()));
+function diagnosticKeyArm(bases: ReturnType<typeof diagnosticEnvBases>, selection: DiagnosticSelection, codexHome: string) {
+  const requestedKeys: readonly string[] = selection === 'seven-key-control' ? diagnosticKeys
+    : selection === 'sanitized-control' ? [] : [selection];
+  const appliedKeys = bases.droppedKeys.filter(key => requestedKeys.includes(key.toUpperCase()));
+  const missingKeys = requestedKeys.filter(key => !appliedKeys.some(name => name.toUpperCase() === key));
   const env = diagnosticArmEnv(bases, 'sanitized', 'on', codexHome);
   for (const key of appliedKeys) env[key] = bases.full[key];
   // Enforce the payload's null contract even if the sanitized base ever changes.
   for (const key of Object.keys(env)) if (excludedDiagnosticKeys.includes(key.toUpperCase())) delete env[key];
-  return { env, matchedKeys, excludedKeys, appliedKeys };
+  const verbatimFromFrozenParent = Object.fromEntries(requestedKeys.map(key => {
+    const applied = appliedKeys.find(name => name.toUpperCase() === key);
+    return [key, applied === undefined ? null : Object.hasOwn(env, applied) && env[applied] === bases.full[applied]];
+  }));
+  return { env, requestedKeys, missingKeys, appliedKeys, verbatimFromFrozenParent };
 }
 
-function diagnosticKeyNames(keys: string[]) {
+function diagnosticKeyNames(keys: readonly string[]) {
   return { count: keys.length, names: keys.slice(0, 256).map(key => key.slice(0, 128)),
     truncated: keys.length > 256 || keys.some(key => key.length > 128) };
 }
@@ -249,17 +244,17 @@ describe('provider process containment', () => {
       if (!sharedBases) {
         sharedBases = diagnosticEnvBases(process.env);
         const names = sharedBases.droppedKeys;
-        report({ event: 'environment-selection', fullBase: 'normalized-retained-plus-dropped-excluding-diagnostic-keys',
+        report({ event: 'environment-selection', sourceBase: 'frozen-normalized-retained-plus-dropped',
           excludedDiagnosticKeys,
           parentOverridePresent: sharedBases.parentOverridePresent,
           droppedKeys: names.slice(0, 256).map(key => key.slice(0, 128)),
           droppedKeyNamesTruncated: names.length > 256 || names.some(key => key.length > 128) });
       }
-      const selected = diagnosticGroupArm(sharedBases, selection, privateRoot);
+      const selected = diagnosticKeyArm(sharedBases, selection, privateRoot);
       env = selected.env;
-      report({ event: 'group-selection', selection, excludedDiagnosticKeys,
-        matched: diagnosticKeyNames(selected.matchedKeys), applied: diagnosticKeyNames(selected.appliedKeys),
-        excluded: diagnosticKeyNames(selected.excludedKeys) });
+      report({ event: 'key-selection', selection, excludedDiagnosticKeys,
+        requested: diagnosticKeyNames(selected.requestedKeys), missing: diagnosticKeyNames(selected.missingKeys),
+        applied: diagnosticKeyNames(selected.appliedKeys), verbatimFromFrozenParent: selected.verbatimFromFrozenParent });
       report({ event: 'spawn-request', elapsedMs: Date.now() - started, node: process.version,
         osEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(process.env, key)])),
         childEnvPresent: Object.fromEntries(keys.map(key => [key, Object.hasOwn(env, key)])) });
@@ -391,44 +386,51 @@ describe('provider process containment', () => {
 });
 
 describe('provider diagnostic environment selection', () => {
-  it('classifies exact and prefix boundaries case-insensitively with an exhaustive remainder', () => {
-    const cases: Record<DiagnosticGroup, string[]> = {
-      'windows-machine-identity': ['username', 'ProgramFiles(x86)', 'COMMONPROGRAMW6432', 'Prompt'],
-      'powershell-dotnet': ['psmodulepath', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE'],
-      'github-runner': ['actions_runtime', 'Github_job', 'RUNNER_OS', 'CI', 'IMAGEVERSION'],
-      'node-npm-vitest': ['npm_config_cache', 'node_env', 'VITEST_POOL_ID', 'OPENAI_API_KEY'],
-      toolchains: ['android_home', 'AZ_DEVOPS_TEST', 'JAVA_HOME_17_X64', 'pg', 'PGROOT', 'PIPX_HOME', 'M2'],
-      remainder: ['USERNAME_EXTRA', 'DOTNET_OTHER', 'GITHUB', 'NODE_OPTIONS', 'JAVA', 'UNKNOWN_FIXTURE'],
-    };
-    for (const [group, names] of Object.entries(cases)) for (const name of names) expect(diagnosticGroup(name), name).toBe(group);
-    expect(diagnosticSelections).toEqual(['full-control', 'windows-machine-identity', 'powershell-dotnet',
-      'github-runner', 'node-npm-vitest', 'toolchains', 'remainder', 'sanitized-control']);
+  it('keeps nine selections ordered and bounds names-only diagnostic output', () => {
+    expect(diagnosticSelections).toEqual(['seven-key-control', 'PSMODULEPATH', 'PSMODULEANALYSISCACHEPATH',
+      'DOTNET_MULTILEVEL_LOOKUP', 'DOTNET_NOLOGO', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE',
+      'POWERSHELL_DISTRIBUTION_CHANNEL', 'POWERSHELL_UPDATECHECK', 'sanitized-control']);
     expect(diagnosticKeyNames(['x'.repeat(129)]).truncated).toBe(true);
     expect(diagnosticKeyNames(Array.from({ length: 257 }, (_, i) => `KEY_${i}`))).toMatchObject({ count: 257, truncated: true });
   });
-  it('partitions every dropped key once and applies only the selected group with the API key excluded from all arms', () => {
-    const parent = { SystemRoot: 'fixture-root', PATH: 'fixture-path', username: 'identity-value',
-      PSMODULEPATH: 'powershell-value', Github_job: 'runner-value', NPM_CONFIG_CACHE: 'node-value',
-      JAVA_HOME_17_X64: 'toolchain-value', UNKNOWN_FIXTURE: 'remainder-value',
+  it('copies only each exact requested key from the frozen parent with distinct values and no API key', () => {
+    const parent: NodeJS.ProcessEnv = { SystemRoot: 'fixture-root', PATH: 'fixture-path',
+      ...Object.fromEntries(diagnosticKeys.map((key, index) => [key.toLowerCase(), `distinct-value-${index}`])),
+      PSMODULEPATH_EXTRA: 'not-selected', DOTNET_OTHER: 'not-selected-either',
       openai_api_key: 'must-not-inherit', CODEX_HOME: 'parent-home', ELECTRON_RUN_AS_NODE: '0' };
     const bases = diagnosticEnvBases(parent);
-    const groups = diagnosticSelections.filter(selection => !selection.endsWith('-control'));
-    const partition = groups.flatMap(selection => diagnosticGroupArm(bases, selection, 'fixture-home').matchedKeys);
-    expect(partition.sort()).toEqual([...bases.droppedKeys].sort());
-    expect(new Set(partition).size).toBe(bases.droppedKeys.length);
+    parent.psmodulepath = 'changed-after-snapshot';
     for (const selection of diagnosticSelections) {
-      const arm = diagnosticGroupArm(bases, selection, 'fixture-home');
-      const expected = selection === 'full-control' ? Object.keys(parent).filter(key => partition.includes(key) && key !== 'openai_api_key')
-        : selection === 'sanitized-control' ? [] : Object.entries({ username: 'windows-machine-identity', PSMODULEPATH: 'powershell-dotnet',
-          Github_job: 'github-runner', NPM_CONFIG_CACHE: 'node-npm-vitest', JAVA_HOME_17_X64: 'toolchains', UNKNOWN_FIXTURE: 'remainder' })
-          .filter(([, group]) => group === selection).map(([key]) => key);
-      expect(arm.appliedKeys.sort()).toEqual(expected.sort());
-      expect(arm.excludedKeys).toEqual(['full-control', 'node-npm-vitest'].includes(selection) ? ['openai_api_key'] : []);
+      const arm = diagnosticKeyArm(bases, selection, 'fixture-home');
+      const requested = selection === 'seven-key-control' ? [...diagnosticKeys]
+        : selection === 'sanitized-control' ? [] : [selection];
+      const expected = requested.map(key => key.toLowerCase());
+      expect(arm.requestedKeys).toEqual(requested);
+      expect(arm.missingKeys).toEqual([]);
+      expect(arm.appliedKeys).toEqual([...expected].sort());
+      expect(arm.verbatimFromFrozenParent).toEqual(Object.fromEntries(requested.map(key => [key, true])));
       expect(arm.env).toEqual({ ...bases.sanitized, CODEX_HOME: 'fixture-home', ELECTRON_RUN_AS_NODE: '1',
-        ...Object.fromEntries(expected.map(key => [key, parent[key as keyof typeof parent]])) });
+        ...Object.fromEntries(expected.map(key => [key, `distinct-value-${diagnosticKeys.findIndex(name => name.toLowerCase() === key)}`])) });
       expect(Object.keys(arm.env).some(key => key.toUpperCase() === 'OPENAI_API_KEY')).toBe(false);
     }
     expect(parent.openai_api_key).toBe('must-not-inherit');
+    expect(parent.psmodulepath).toBe('changed-after-snapshot');
+  });
+  it('reports missing requested keys without inventing applied values or verbatim evidence', () => {
+    const bases = diagnosticEnvBases({ PATH: 'fixture-path', PsModulePath: '',
+      PSMODULEANALYSISCACHEPATH: undefined, POWERSHELL_UPDATECHECK_EXTRA: 'not-an-exact-match' });
+    const control = diagnosticKeyArm(bases, 'seven-key-control', 'fixture-home');
+    expect(control.appliedKeys).toEqual(['PsModulePath']);
+    expect(control.missingKeys).toEqual(diagnosticKeys.filter(key => key !== 'PSMODULEPATH'));
+    expect(control.verbatimFromFrozenParent).toEqual(Object.fromEntries(diagnosticKeys.map(key =>
+      [key, key === 'PSMODULEPATH' ? true : null])));
+    expect(control.env.PsModulePath).toBe('');
+    const missing = diagnosticKeyArm(bases, 'PSMODULEANALYSISCACHEPATH', 'fixture-home');
+    expect(missing.requestedKeys).toEqual(['PSMODULEANALYSISCACHEPATH']);
+    expect(missing.missingKeys).toEqual(['PSMODULEANALYSISCACHEPATH']);
+    expect(missing.appliedKeys).toEqual([]);
+    expect(missing.verbatimFromFrozenParent).toEqual({ PSMODULEANALYSISCACHEPATH: null });
+    expect(missing.env).toEqual(diagnosticKeyArm(bases, 'sanitized-control', 'fixture-home').env);
   });
 
   it('separates dropped keys and overrides without retaining mixed-case parent override aliases', () => {
