@@ -1,4 +1,4 @@
-// ProviderAdapter over `codex app-server` (codex-cli 0.153.2).
+// ProviderAdapter over `codex app-server` (codex-cli 0.154.0).
 //
 // Why this exists alongside legacyCodexAcp.ts: the ACP adapter is a one-shot
 // verification transport with no resumable sessions, no turn-level

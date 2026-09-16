@@ -32,7 +32,7 @@
     "react-dom": "^18.3.1"
   },
   "overrides": {
-    "@openai/codex": "0.153.2"
+    "@openai/codex": "0.154.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",

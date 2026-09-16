@@ -16,7 +16,7 @@ export const CODEX_APP_SERVER_ARGS = Object.freeze([
 ]);
 
 /** An empty CLI mcp_servers override MERGES rather than clearing stored entries
- * in 0.153.2 (measured with config/read). Refuse enabled servers before creating
+ * in 0.154.0 (measured with config/read). Refuse enabled servers before creating
  * a thread rather than pretending dedicated CODEX_HOME alone disables peers.
  * This is configuration validation, not filesystem read confinement. */
 export function assertNoEnabledMcpServers(response: unknown): void {
