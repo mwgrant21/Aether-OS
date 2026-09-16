@@ -7,6 +7,24 @@ import { spawn } from 'node:child_process';
 import { assertBridgePolicy, BRIDGE_ALLOWED_TOOLS, BRIDGE_CLAUDE_VERSION, prepareBridgeLaunch, protectLaunchDirectory, cleanupStaleBridgeLaunches, preflightBridgeLaunch } from './launchConfig';
 import { spawnPty } from '../ptyManager';
 
+// Two different kinds of wait live in this file and they do not deserve the
+// same budget.
+//
+// A LOCAL_WAIT polls state this process already owns -- a pid probe -- and is
+// slow only if something is actually wrong.
+//
+// A SHELL_WAIT needs a real PowerShell to reach a prompt, read what was typed
+// into the ConPTY, run it, and echo -- or to write a receipt and exit. On a
+// cold CI runner that is seconds; PowerShell start-up alone has been measured
+// at ~9s on these runners (PR #76).
+//
+// The FIRST shell wait in each test already carried the larger budget. The
+// later ones did not, although they are the same kind of wait against the same
+// cold shell -- which is how 'INTERRUPT_RESTORED=902' came to fail a CI run on
+// a PR that had changed nothing in this file (#82).
+const LOCAL_WAIT = { timeout: 5000, interval: 50 };
+const SHELL_WAIT = { timeout: 15000, interval: 50 };
+
 const directories: string[] = [];
 afterEach(async () => { for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true }); });
 async function fixture() {
@@ -201,7 +219,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       { env: launch.env, windowsHide: true, stdio: 'pipe' });
     let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
     try {
-      await vi.waitFor(async () => { expect(await launch.completion()).toBe('exited'); }, { timeout: 15000, interval: 50 });
+      await vi.waitFor(async () => { expect(await launch.completion()).toBe('exited'); }, SHELL_WAIT);
       expect(child.exitCode).toBeNull();
       const observed = JSON.parse(await readFile(observedPath, 'utf8'));
       expect(observed).toMatchObject({ threshold: '120000', billing: false, args: ['quote"and\\tail\\', 'private argument'] });
@@ -263,21 +281,21 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     let output = '', exited = false;
     terminal.onData(data => { output += data; }); terminal.onExit(() => { exited = true; });
     try {
-      await vi.waitFor(() => expect(output).toContain('NATIVE_READY'), { timeout: 15000, interval: 50 });
+      await vi.waitFor(() => expect(output).toContain('NATIVE_READY'), SHELL_WAIT);
       terminal.write('x');
-      await vi.waitFor(async () => expect(await launch.completion()).toBe('exited'), { timeout: 5000, interval: 50 });
+      await vi.waitFor(async () => expect(await launch.completion()).toBe('exited'), SHELL_WAIT);
       expect(exited).toBe(false);
       expect(JSON.parse(await readFile(observedPath, 'utf8'))).toEqual({ input: 'x', tty: true, threshold: '120000' });
       terminal.write("Get-History | ConvertTo-Json -Compress\r");
       terminal.write("Write-Output 'HISTORY_CHECK_DONE'\r");
-      await vi.waitFor(() => expect(output).toContain('HISTORY_CHECK_DONE'), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(output).toContain('HISTORY_CHECK_DONE'), SHELL_WAIT);
       expect(output).not.toContain(options.manifest.capability);
       expect(output).not.toContain(options.helperPath);
       expect(output).not.toContain('AETHER_BRIDGE_CAPABILITY');
       terminal.write('exit\r');
-      await vi.waitFor(() => expect(exited).toBe(true), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(exited).toBe(true), SHELL_WAIT);
     } finally { if (!exited) terminal.kill(); }
-  }, 50_000);
+  }, 120_000);
   it('real ConPTY Ctrl+C interrupts the native child, restores the threshold, and keeps the shell usable', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { ...process.env, CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '902' } }, dependencies);
@@ -290,23 +308,23 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     let output = '', exited = false, nativePid: number | undefined;
     terminal.onData(data => { output += data; }); terminal.onExit(() => { exited = true; });
     try {
-      await vi.waitFor(() => expect(output).toContain('INTERRUPT_READY'), { timeout: 15000, interval: 50 });
-      await vi.waitFor(async () => expect(await launch.completion()).toBe('running'), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(output).toContain('INTERRUPT_READY'), SHELL_WAIT);
+      await vi.waitFor(async () => expect(await launch.completion()).toBe('running'), SHELL_WAIT);
       nativePid = JSON.parse(await readFile(join(launch.directory, 'started.json'), 'utf8')).pid;
       terminal.write('\x03');
-      await vi.waitFor(async () => expect(await launch.completion()).not.toBe('running'), { timeout: 5000, interval: 50 });
-      await vi.waitFor(() => expect(() => process.kill(nativePid!, 0)).toThrow(), { timeout: 5000, interval: 50 });
+      await vi.waitFor(async () => expect(await launch.completion()).not.toBe('running'), SHELL_WAIT);
+      await vi.waitFor(() => expect(() => process.kill(nativePid!, 0)).toThrow(), LOCAL_WAIT);
       expect(exited).toBe(false);
       terminal.write("Write-Output ('INTERRUPT_RESTORED=' + $env:CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS)\r");
-      await vi.waitFor(() => expect(output).toContain('INTERRUPT_RESTORED=902'), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(output).toContain('INTERRUPT_RESTORED=902'), SHELL_WAIT);
       expect(output).not.toContain(options.manifest.capability);
       terminal.write('exit\r');
-      await vi.waitFor(() => expect(exited).toBe(true), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(exited).toBe(true), SHELL_WAIT);
     } finally {
       if (!exited) terminal.kill();
       if (nativePid) { try { process.kill(nativePid); } catch { /* already confirmed gone */ } }
     }
-  }, 50_000);
+  }, 120_000);
 });
 
 describe.runIf(process.platform === 'win32')('atomic Windows launch receipts', () => {
