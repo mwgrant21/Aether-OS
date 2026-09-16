@@ -33,6 +33,7 @@
 // turn can still surprise us, and leaves through exactly one function
 // (`retireTurn`).
 
+import { version as APP_VERSION } from '../../../package.json';
 import { type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawnProviderProcess, disposeProviderProcess } from './providerProcess';
 import { StringDecoder } from 'node:string_decoder';
@@ -59,7 +60,11 @@ import {
 import { attachStderrRingBuffer, buildCodexChildEnv, resolveCodexCliEntry, resolveCodexHome } from '../acpProcess';
 import { assertNoEnabledMcpServers, CODEX_APP_SERVER_ARGS, CODEX_SESSION_CONFIG } from './codexAppServerPolicy';
 
-const CLIENT_INFO = { name: 'aether-os', title: 'Aether OS', version: '0.1.0' };
+/** Identity sent to the app-server's `initialize`. Sourced from package.json
+ *  rather than repeated here: a hard-coded literal silently drifted to 0.1.0
+ *  while the app reached 0.4.0. The import is inlined at build time, so this
+ *  keeps the provider tree free of any Electron/app.getPath() dependency. */
+const CLIENT_INFO = { name: 'aether-os', title: 'Aether OS', version: APP_VERSION };
 
 /** Read-only constrains writes, not all execution or reads outside cwd.
  * ThreadStartParams uses sandbox; TurnStartParams instead uses sandboxPolicy.
