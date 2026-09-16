@@ -12,7 +12,7 @@
 //   - Codex ACP (the adapter package acpProcess.ts resolves; this file
 //     deliberately does not name the specifier -- see noApiCalls.test.ts):
 //     session/new, session/prompt, session/update, session/request_permission.
-//   - Codex app-server (codex-cli 0.153.2, `codex app-server`): thread/start,
+//   - Codex app-server (codex-cli 0.154.0, `codex app-server`): thread/start,
 //     thread/resume, turn/start, turn/interrupt, account/read,
 //     account/rateLimits/read, plus item/* notifications and item/*
 //     requestApproval server->client requests.

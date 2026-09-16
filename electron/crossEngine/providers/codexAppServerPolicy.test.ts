@@ -41,7 +41,7 @@ describe('Codex consultation sandbox and peer configuration', () => {
     const require = createRequire(import.meta.url);
     // Offline schema generation only: never connect or start a provider turn.
     const entry = require.resolve('@openai/codex/bin/codex.js');
-    expect(execFileSync(process.execPath, [entry, '--version'], { encoding: 'utf8' }).trim()).toBe('codex-cli 0.153.2');
+    expect(execFileSync(process.execPath, [entry, '--version'], { encoding: 'utf8' }).trim()).toBe('codex-cli 0.154.0');
     execFileSync(process.execPath, [entry, 'app-server', 'generate-json-schema', '--experimental', '--out', directory], { timeout: 15_000 });
     schema = JSON.parse(readFileSync(join(directory, 'v2', 'TurnStartParams.json'), 'utf8'));
   }, 20_000);
