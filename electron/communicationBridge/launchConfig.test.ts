@@ -346,6 +346,7 @@ function Set-Content {
     Start-Sleep -Milliseconds 20
   }
   Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value
+  [IO.File]::WriteAllText((Join-Path ${q(options.root)} ($name+'.written')), 'written')
 }
 & ${q(launch.scriptPath)}
 `, options.root, [options.root, options.manifest.capability]);
@@ -355,7 +356,7 @@ function Set-Content {
     const diagnose = async (stage: string) => {
       try {
         const paths = { started: join(launch.directory, 'started.json'), completed: join(launch.directory, 'completed'),
-          paused: join(options.root, gate + '.paused'), startedRelease: join(options.root, 'started.release'),
+          paused: join(options.root, gate + '.paused'), written: join(options.root, gate + '.written'), startedRelease: join(options.root, 'started.release'),
           completedRelease: join(options.root, 'completed.release'), ...(partialPath ? { partial: partialPath } : {}) };
         const receipts = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name, path]) => {
           try { return [name, { state: 'read', text: runner.safe((await readFile(path)).subarray(0, 512).toString('utf8')) }]; }
@@ -387,6 +388,12 @@ function Set-Content {
         }
         phase = 'releasing gate';
         await writeFile(join(options.root, name + '.release'), 'release');
+        phase = 'waiting for receipt write';
+        // completion() opens the receipt to read it and PowerShell's Set-Content opens it
+        // with no sharing, so polling across the write makes each side fail the other
+        // ("being used by another process" / EBUSY) and leaves the receipt partial for
+        // good. Wait on a separate marker the gate drops once its write has returned.
+        await vi.waitFor(async () => expect(await readFile(join(options.root, name + '.written'), 'utf8')).toBeTruthy(), { timeout: 10000, interval: 20 });
         phase = 'waiting for completion';
         await vi.waitFor(async () => expect(await launch.completion()).toBe(name === 'started' ? (mode === 'atomic' ? 'running' : 'failed') : 'exited'), { timeout: 10000, interval: 20 });
       }
