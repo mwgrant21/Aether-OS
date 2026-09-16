@@ -17,6 +17,28 @@ async function fixture() {
   return { root, options, dependencies };
 }
 
+/** completion() read against a pinned clock. A launch with no startup receipt
+ *  flips from 'starting' to 'failed' once 15s of REAL time have passed since
+ *  preparation (launchConfig.ts:211), so an unpinned 'starting' assertion
+ *  states how fast the runner was, not what the launch did. What spends that
+ *  budget is whatever happens BETWEEN preparation and the assertion --
+ *  preparation's own cost is not in it, since preparedAt is stamped last, so
+ *  a slow protectLaunchDirectory does not count against it. The
+ *  atomic-receipts site is the exposed one: it spends the budget on a
+ *  PowerShell spawn and a gate wait before it asserts. The deadline itself
+ *  keeps its own test, which pins the clock past it the same way.
+ *
+ *  `at` must be read AFTER prepareBridgeLaunch returns. Its preparedAt is
+ *  stamped at the END of preparation, so a reading taken before the call
+ *  pins the clock BEHIND preparedAt and the elapsed time goes negative --
+ *  which passes for any deadline whatsoever, including one of zero, and so
+ *  asserts nothing. Pinned just after the call it is a real instant inside
+ *  the window. */
+async function completionAt(launch: { completion: () => Promise<string> }, at: number) {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(at);
+  try { return await launch.completion(); } finally { clock.mockRestore(); }
+}
+
 describe('bridge policy', () => {
   it('does not replace unrelated global servers', () => {
     expect(() => assertBridgePolicy({ mcpServers: { other: { command: 'keep' } }, permissions: { deny: ['Bash(rm *)'] } })).not.toThrow();
@@ -72,7 +94,8 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
   it('does not infer exit or running from absent or malformed startup evidence', async () => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
-    expect(await launch.completion()).toBe('starting');
+    const afterPrepare = Date.now();
+    expect(await completionAt(launch, afterPrepare)).toBe('starting');
     await writeFile(join(launch.directory, 'started.json'), JSON.stringify({ pid: 'secret' }));
     expect(await launch.completion()).toBe('failed');
     await launch.cleanup();
@@ -93,6 +116,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       await protectLaunchDirectory(directory);
     };
     const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { PATH: process.env.PATH, ANTHROPIC_API_KEY: 'billing', CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '321' } }, dependencies);
+    const afterPrepare = Date.now();
     const config = JSON.parse(await readFile(join(launch.directory, 'mcp.json'), 'utf8'));
     const parameters = JSON.parse(await readFile(join(launch.directory, 'launch.json'), 'utf8'));
     expect(Object.keys(config.mcpServers)).toEqual(['aether-bridge']);
@@ -103,7 +127,7 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     expect(launch.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(launch.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS).toBe('120000');
     expect(launch.env.AETHER_BRIDGE_CAPABILITY).toBeUndefined();
-    expect(await launch.completion()).toBe('starting');
+    expect(await completionAt(launch, afterPrepare)).toBe('starting');
     await launch.cleanup();
     expect(await readdir(options.root)).toEqual([]);
   }, 40_000);
@@ -320,6 +344,7 @@ describe.runIf(process.platform === 'win32')('atomic Windows launch receipts', (
   it.each(['atomic', 'direct-write negative control'])('keeps incomplete bytes invisible: %s', async mode => {
     const { options, dependencies } = await fixture();
     const launch = await prepareBridgeLaunch(options, dependencies);
+    const afterPrepare = Date.now();
     let script = await readFile(launch.scriptPath, 'utf8');
     if (mode !== 'atomic') {
       // Scratch-only negative control recreates the old direct-final writer.
@@ -380,7 +405,7 @@ function Set-Content {
         if (mode === 'atomic') {
           expect(partialPath).toMatch(/\.[a-f0-9]{32}\.tmp$/);
           await expect(readFile(join(launch.directory, name === 'started' ? 'started.json' : 'completed'))).rejects.toMatchObject({ code: 'ENOENT' });
-          expect(await launch.completion()).toBe(name === 'started' ? 'starting' : 'running');
+          expect(await completionAt(launch, afterPrepare)).toBe(name === 'started' ? 'starting' : 'running');
         } else if (name === 'started') {
           await expect(launch.completion()).rejects.toThrow('CONFIG_UNREADABLE');
         } else {
