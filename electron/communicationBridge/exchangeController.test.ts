@@ -6,7 +6,7 @@ import type { CommunicationStatusV1 } from '../../src/shared/communicationTypes'
 
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-const usage = { inputTokens: null, outputTokens: null, cachedInputTokens: null };
+const usage = { inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null };
 function fixture() {
   const turns: ReturnType<typeof deferred<TurnResult>>[] = [];
   const events: ((e: ProviderEvent) => void)[] = [];
