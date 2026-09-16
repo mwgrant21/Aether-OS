@@ -43,6 +43,7 @@ export const initialState: AetherState = {
     // money" rationale behind this and the July 31st overrun it followed.
     autoHeadlines: true,
     narrationVerbosity: 'full',
+    planMonthlyUsd: null,
   },
   logs: [],
   memories: [],
@@ -87,6 +88,7 @@ export const initialState: AetherState = {
   fleet: null,
   diagnostics: null,
   ledger: null,
+  quotaEfficiency: null,
   projectsSnapshot: null,
   pendingPermissionRequest: null,
   pendingPostToolFlag: null,

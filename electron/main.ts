@@ -29,6 +29,13 @@ import { summarizeOptimize, gradeBreakdown } from '../src/shared/optimizeGrade';
 import { guidanceFor } from '../src/shared/optimizeActions';
 import { computeCacheHitRate } from '../src/shared/cacheHitRate';
 import { buildLedgerSnapshot, type LedgerSnapshot } from '../src/shared/ledgerMath';
+import {
+  deriveQuotaEfficiency,
+  tokenSamplesFromEvents,
+  SEVEN_DAY_MS,
+  type QuotaEfficiency,
+} from '../src/shared/quotaEfficiency';
+import { createQuotaSampleBuffer, recordQuotaSample } from './quotaSampleBuffer';
 import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
 import { normalizePath } from '../src/shared/projectIdentity';
 import { createScopedGitProbe } from './gitProbeCache';
@@ -44,6 +51,8 @@ import {
 } from './headlineGenerator';
 import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
+import { createWaitClock, beginWait, endWait, activeDurationMs } from '../src/shared/waitClock';
+import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
 import {
@@ -114,6 +123,14 @@ let lastTickResult: LiveAgentTick | null = null;
 const headlineThrottle = createHeadlineThrottle();
 const narrationDurationBaseline = createDurationBaseline();
 const periodicContentCache = createPeriodicContentCache();
+/**
+ * When this app was blocked on the operator.
+ *
+ * Process-lifetime, in memory, not persisted -- it only ever answers questions
+ * about spans inside this run, and a rehydrated interval from a previous run
+ * could only ever subtract time from a dispatch it has nothing to do with.
+ */
+const userWaitClock = createWaitClock();
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -411,11 +428,11 @@ const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDeci
 // own withTimeout resolves the HTTP response independently on timeout, without
 // ever calling back into these maps, so a timed-out request's resolver is never
 // removed -- a slow, session-lifetime leak of one Function reference per timeout.
-// Schedule a matching cleanup so a stale entry can't outlive the server-side
-// timeout that already made it moot.
-function scheduleResolverCleanup<T>(map: Map<string, (decision: T) => void>, requestId: string, afterMs: number): void {
-  setTimeout(() => map.delete(requestId), afterMs + 1000).unref();
-}
+// scheduleResolverCleanup (its own module, resolverCleanup.ts, so the
+// onExpire behavior below has a real regression test) schedules a matching
+// cleanup so a stale entry can't outlive the server-side timeout that already
+// made it moot, and its `onExpire` hook is what force-closes userWaitClock's
+// interval for an abandoned prompt below -- see that module's comment.
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
@@ -450,6 +467,22 @@ let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
 let cachedLedgerSnapshot: LedgerSnapshot | null = null;
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
+
+// See quotaSampleBuffer.ts for the buffer's own reasoning (cap, in-memory-only,
+// and the equality-only dedup rule -- a monotonic high-water mark bug lived
+// here before it was extracted).
+const quotaSampleBuffer = createQuotaSampleBuffer();
+let cachedQuotaEfficiency: QuotaEfficiency | null = null;
+// True while the most recent recordQuotaSample call was rejected. Only the
+// EDGE into a rejection streak is logged (see the call site below) -- a
+// genuinely stalled statusline re-emits an unchanged payload on every ~10s
+// poll (WATCH_INTERVAL_MS), and logging every one of those would be an
+// unbounded repeat, unlike this file's other [diag] lines, which are each
+// tied to a one-shot Electron event (a window becomes unresponsive once, not
+// on every tick it stays that way). This mirrors that: one line when the
+// feed stalls, silence for as long as it stays stalled, nothing at all in
+// the normal case.
+let quotaSampleRejectedSinceLastAccepted = false;
 
 // Memoised for a single scan cycle only: reset() is called at the start of
 // every scanAndPushUsage() call so a directory that becomes a git repo
@@ -545,6 +578,16 @@ async function scanAndPushUsage(): Promise<void> {
     Date.now(),
   );
   sendToWindow('ledger:snapshot', cachedLedgerSnapshot);
+
+  // Quota efficiency rides the SAME optimizeEvents scan as the Ledger -- no
+  // third pass over the transcripts -- and joins it to the percentage series
+  // the statusline watcher has been accumulating. Only the derived numbers
+  // cross the IPC boundary; no transcript content does.
+  cachedQuotaEfficiency = deriveQuotaEfficiency(quotaSampleBuffer.samples, tokenSamplesFromEvents(optimizeEvents), {
+    nowMs: Date.now(),
+    windowMs: SEVEN_DAY_MS,
+  });
+  sendToWindow('quota:efficiency', cachedQuotaEfficiency);
 
   cachedProjectsSnapshot = buildProjectsSnapshot(
     optimizeEvents,
@@ -680,11 +723,19 @@ async function tickAndPushAgents(): Promise<void> {
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
     for (const c of result.completed) {
+      // `<duration_ms>` is WALL CLOCK and includes every second this run sat
+      // blocked on an approval prompt. Comparing that against a median of
+      // other wall-clock runs manufactures "slow run" anomalies whose real
+      // cause is that nobody was at the keyboard. Subtract the overlap first,
+      // and record the corrected figure -- recording the wall figure would
+      // poison every later comparison with the same inflation.
+      const startedMs = new Date(c.startedAt).getTime();
+      const measuredMs = activeDurationMs(userWaitClock, startedMs, c.durationMs, Date.now());
       // Snapshot the baseline BEFORE recording this run -- a run must never
       // be compared against a baseline it has already contributed to.
       const medianMsAtEval = getMedianMs(narrationDurationBaseline, c.subagentType);
-      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: c.durationMs }, medianMsAtEval);
-      recordDuration(narrationDurationBaseline, c.subagentType, c.durationMs);
+      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: measuredMs }, medianMsAtEval);
+      recordDuration(narrationDurationBaseline, c.subagentType, measuredMs);
       if (narrated) {
         sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration: narrated.narration, severity: narrated.severity });
       }
@@ -764,6 +815,22 @@ app.whenReady().then(async () => {
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
     cachedStatuslineSnapshot = snapshot;
+    // The seven-day window is the quota cost basis (the five-hour one stays a
+    // live depletion gauge and is never fitted). A payload without it -- an
+    // older Claude Code, or a session before the first rate-limit report --
+    // simply contributes no sample.
+    if (snapshot.sevenDay) {
+      const lastAccepted = quotaSampleBuffer.samples[quotaSampleBuffer.samples.length - 1];
+      const accepted = recordQuotaSample(quotaSampleBuffer, snapshot.capturedAtMs, snapshot.sevenDay.usedPercentage);
+      if (accepted) {
+        quotaSampleRejectedSinceLastAccepted = false;
+      } else if (!quotaSampleRejectedSinceLastAccepted) {
+        quotaSampleRejectedSinceLastAccepted = true;
+        console.error(
+          `[diag] quota sample rejected atMs=${snapshot.capturedAtMs} lastAcceptedAtMs=${lastAccepted?.atMs ?? 'none'} at=${new Date().toISOString()}`
+        );
+      }
+    }
     sendToWindow('statusline:snapshot', snapshot);
   });
 
@@ -788,9 +855,22 @@ app.whenReady().then(async () => {
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
       });
-      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs);
+      // See scheduleResolverCleanup's comment: onExpire force-closes the wait
+      // interval if the operator abandons the prompt, since `decision` below
+      // never settles in that case and the `finally` never runs on its own.
+      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs, () =>
+        endWait(userWaitClock, requestId, Date.now()),
+      );
+      // The clock opens the moment the prompt reaches the renderer and closes
+      // however this resolves: an answer, the onExpire above, or a throw.
+      // `finally` covers the throw path; a `.then` would miss it.
+      beginWait(userWaitClock, requestId, Date.now());
       sendToWindow('permission:request', { requestId, toolName: req.toolName, toolInput: req.toolInput, risk, editableField });
-      return decision;
+      try {
+        return await decision;
+      } finally {
+        endWait(userWaitClock, requestId, Date.now());
+      }
     },
     postToolUseTimeoutMs: 30000,
     onPostToolUse: async (req: { toolUseId: string; toolName: string; toolOutput: unknown }): Promise<PostToolFlagDecision> => {
@@ -807,7 +887,10 @@ app.whenReady().then(async () => {
       const decision = new Promise<PostToolFlagDecision>((resolve) => {
         pendingPostToolFlagResolvers.set(requestId, resolve);
       });
-      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs);
+      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs, () =>
+        endWait(userWaitClock, requestId, Date.now()),
+      );
+      beginWait(userWaitClock, requestId, Date.now());
       sendToWindow('postToolFlag:request', {
         requestId,
         toolUseId: req.toolUseId,
@@ -815,7 +898,11 @@ app.whenReady().then(async () => {
         anomalyKind: tripped.kind,
         detail: tripped.detail,
       });
-      return decision;
+      try {
+        return await decision;
+      } finally {
+        endWait(userWaitClock, requestId, Date.now());
+      }
     },
     onNotification: ({ sessionId, notificationType }: { sessionId: string; notificationType: string }) => {
       // Real notification-handling logic (session-identity check, the
@@ -1274,6 +1361,10 @@ ipcMain.handle('statusline:state', () => readInstallState(statuslineSettingsPath
 ipcMain.handle('statusline:snapshot:current', () => cachedStatuslineSnapshot);
 
 ipcMain.handle('ledger:snapshot:current', () => cachedLedgerSnapshot);
+
+// Same startup race the ledger and statusline channels solve this way: the
+// 60s scan can finish before the renderer's listener exists.
+ipcMain.handle('quota:efficiency:current', () => cachedQuotaEfficiency);
 
 ipcMain.handle('projects:snapshot:current', () => cachedProjectsSnapshot);
 

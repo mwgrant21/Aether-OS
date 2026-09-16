@@ -16,14 +16,18 @@ export function RollupCard({ rollups }: { rollups: RollupBuckets }) {
   const colors = useColors();
   return (
     <div style={cardStyle(colors)}>
-      <div style={cardTitleStyle(colors)}>ROLLUP</div>
+      {/* Same API-rate basis as the total above, so it carries the same
+          marker (whole-branch review, FIX 4). Two dollar models sit side by
+          side in this view and only the smaller one was labelled. */}
+      <div style={cardTitleStyle(colors)}>ROLLUP — API RATE (NOT PAID)</div>
       <div style={rowsStyle}>
         <Bucket label="Today" value={rollups.today} colors={colors} />
         <Bucket label="Last 7 days" value={rollups.week} colors={colors} />
         <Bucket label="This month" value={rollups.month} colors={colors} />
       </div>
       <div style={noteStyle(colors)}>
-        Week is a rolling 7 days; month is the calendar month, in this machine's time zone.
+        Week is a rolling 7 days; month is the calendar month, in this machine's time zone. Priced at
+        published API rates — a counterfactual, not a bill.
       </div>
     </div>
   );

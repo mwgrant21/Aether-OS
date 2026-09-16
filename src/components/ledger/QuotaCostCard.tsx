@@ -1,0 +1,178 @@
+import type { CSSProperties } from 'react';
+import { fonts, type ColorPalette } from '../../styles/tokens';
+import { useColors } from '../shared/useColors';
+import { planCostPerPoint, QUOTA_WINDOW_MS } from '../../shared/ledgerMath';
+import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
+import { MIN_FIT_BUCKETS, type QuotaEfficiency } from '../../shared/quotaEfficiency';
+import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
+import { planUsd, points as fmtPoints, tokens as fmtTokens, QUOTA_BASIS_TOOLTIP } from './format';
+
+/**
+ * What the subscription actually paid for this window.
+ *
+ * The window-level figure deliberately does NOT go through the tokens-per-point
+ * fit: the statusline reports the seven-day percentage directly, so points
+ * consumed is a measurement, not an inference, and only the price is needed to
+ * value it. The fit exists to ATTRIBUTE that consumption to individual
+ * dispatches (DispatchCostTable), which is a strictly harder claim -- and this
+ * card reports the fit's state so the operator can see how much weight the
+ * per-dispatch column deserves.
+ */
+export function QuotaCostCard({
+  quota,
+  statusline,
+  planMonthlyUsd,
+  nowMs = Date.now(),
+}: {
+  quota: QuotaEfficiency | null;
+  statusline: StatuslineSnapshot | null;
+  planMonthlyUsd: number | null;
+  nowMs?: number;
+}) {
+  const colors = useColors();
+  const sevenDay = statusline?.sevenDay ?? null;
+
+  if (sevenDay === null) {
+    return (
+      <div style={cardStyle(colors)}>
+        <div style={titleStyle(colors)} title={QUOTA_BASIS_TOOLTIP}>QUOTA COST · 7 DAY</div>
+        <div style={emptyStyle(colors)}>
+          No seven-day rate-limit data. Install the statusline hook from Settings — the percentage
+          series this prices comes from it.
+        </div>
+      </div>
+    );
+  }
+
+  // A percentage is this window's consumption only while the window is still
+  // open and the reading is recent. startStatuslineWatcher reloads whatever
+  // file is already on disk the moment the app starts, so a snapshot written
+  // days ago -- against a seven-day window that has since reset -- arrives
+  // looking exactly like a live one. Pricing it states a dollar figure for a
+  // window that no longer exists, and that figure stands until Claude next
+  // writes the statusline, which may be never. Both halves are needed:
+  // resetsAtMs catches the rolled-over window, capturedAtMs catches a feed
+  // that simply stopped -- the same bound every other statusline consumer
+  // uses (depletion.ts, contextWindowCard.ts, PlanUsageCard.tsx).
+  const windowEnded = sevenDay.resetsAtMs <= nowMs;
+  const feedStale = statusline !== null && nowMs - statusline.capturedAtMs > STATUSLINE_STALE_AFTER_MS;
+  const stale = windowEnded || feedStale;
+
+  const usedPoints = sevenDay.usedPercentage;
+  // A $0 plan price still prices out to a real $0.00: planCostPerPoint(0, ...)
+  // returns 0 (its own guard), never null, so a genuinely-entered $0 plan and
+  // "no price configured" stay distinguishable -- perPoint is null ONLY when
+  // planMonthlyUsd itself is null.
+  const perPoint = planMonthlyUsd === null ? null : planCostPerPoint(planMonthlyUsd, QUOTA_WINDOW_MS.seven_day);
+
+  return (
+    <div style={cardStyle(colors)}>
+      <div style={titleStyle(colors)} title={QUOTA_BASIS_TOOLTIP}>QUOTA COST · 7 DAY</div>
+
+      {stale && (
+        <p style={hintStyle(colors)}>
+          {windowEnded
+            ? 'This reading\u2019s seven-day window has already reset \u2014 the figure below is the last reading from a window that has closed, not current consumption.'
+            : 'The statusline feed has gone stale \u2014 the figure below is the last reading, not current consumption.'}
+        </p>
+      )}
+
+      <div style={rowStyle}>
+        <div style={labelStyle(colors)}>CONSUMED</div>
+        <div style={valueStyle(colors)}>{fmtPoints(usedPoints)}</div>
+      </div>
+
+      {perPoint !== null && !stale && (
+        <div style={rowStyle}>
+          <div style={labelStyle(colors)}>PLAN VALUE</div>
+          <div style={valueStyle(colors)}>{planUsd(usedPoints * perPoint)}</div>
+        </div>
+      )}
+
+      <div style={rowStyle}>
+        <div style={labelStyle(colors)}>TOKENS / POINT</div>
+        <div style={valueStyle(colors)}>
+          {quota !== null && quota.tokensPerPoint != null
+            ? fmtTokens(Math.round(quota.tokensPerPoint))
+            : quota === null
+              // Same reason as OBSERVED HERE below: before the first efficiency
+              // snapshot there is no bucket count to report, and "0 of 3 hours"
+              // asserted one. The "fit forming" copy softened it but did not
+              // make it true.
+              ? 'fit forming — no scan yet'
+              : `fit forming — ${quota.fittedBuckets} of ${MIN_FIT_BUCKETS} hours`}
+        </div>
+      </div>
+
+      <div style={rowStyle}>
+        <div style={labelStyle(colors)}>OBSERVED HERE</div>
+        {/* Em dash, never 0, when no efficiency snapshot exists yet.
+            `quota === null` is reachable for up to ~50s after every launch --
+            the statusline arrives on a 10s watcher while the efficiency
+            snapshot rides a 60s tick -- and indefinitely if a scan throws. A
+            rendered "0" there asserts this machine logged zero tokens in seven
+            days, which is a measurement claim the app has not made. This is
+            quotaCell's own three-state rule (DispatchCostTable.tsx) applied to
+            the card that sits above it. */}
+        <div style={valueStyle(colors)}>
+          {quota === null ? '—' : fmtTokens(quota.observedTokens)}
+        </div>
+      </div>
+
+      {quota != null && quota.externalUsageBuckets > 0 && (
+        <p style={hintStyle(colors)}>
+          External usage: {quota.externalUsageBuckets} hours where the account's quota moved but this
+          machine logged no tokens — other machines or projects on the same account. Those hours are
+          excluded from the tokens-per-point fit.
+        </p>
+      )}
+
+      {planMonthlyUsd === null && (
+        <p style={hintStyle(colors)}>
+          Set a monthly plan price in Settings to see this window's consumption in dollars.
+        </p>
+      )}
+
+      <p style={hintStyle(colors)}>
+        This is what the subscription bought, not marginal spend — the plan costs the same whether
+        this work ran or not. Tokens per point is fitted from observed percentage movement, so it is
+        correlation, not a published rate.
+      </p>
+    </div>
+  );
+}
+
+function cardStyle(colors: ColorPalette): CSSProperties {
+  return {
+    padding: 15,
+    borderRadius: 14,
+    border: `1px solid ${colors.panelBorder}`,
+    background: colors.panelGradient,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    flexShrink: 0,
+  };
+}
+function titleStyle(colors: ColorPalette): CSSProperties {
+  return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
+const rowStyle: CSSProperties = {
+  marginTop: 10,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+};
+function labelStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
+}
+function valueStyle(colors: ColorPalette): CSSProperties {
+  return { font: `600 11px/1 ${fonts.mono}`, color: colors.textSecondary, textAlign: 'right' };
+}
+function emptyStyle(colors: ColorPalette): CSSProperties {
+  return { marginTop: 12, font: `500 11px/1.4 ${fonts.ui}`, color: colors.textMuted };
+}
+function hintStyle(colors: ColorPalette): CSSProperties {
+  return { marginTop: 12, font: `500 11px/1.4 ${fonts.ui}`, color: colors.textMuted };
+}

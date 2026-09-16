@@ -162,6 +162,18 @@ describe('deriveDepletion', () => {
     expect(staleReadout.msUntilDepleted).not.toBeNull();
     expect(staleReadout.depletesBeforeReset).toBe(fresh.depletesBeforeReset);
   });
+
+  it('accepts a bare DepletionInput, not only a full StatuslineSnapshot', () => {
+    const now = Date.UTC(2026, 8, 7, 12, 0, 0);
+    const readout = deriveDepletion(
+      { capturedAtMs: now, fiveHour: { usedPercentage: 50, resetsAtMs: now + 2 * 60 * 60 * 1000 } },
+      now - 2 * 60 * 60 * 1000,
+      now,
+    );
+    expect(readout.source).toBe('statusline');
+    expect(readout.usedPercentage).toBe(50);
+    expect(readout.msUntilDepleted).toBe(2 * 60 * 60 * 1000);
+  });
 });
 
 describe('formatResetCountdown', () => {

@@ -4,6 +4,7 @@ import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import {
   estimateDispatchCost,
+  quotaCostForTokens,
   reconcile,
   localDayBoundsMs,
   type EstimatedCost,
@@ -15,6 +16,7 @@ import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { SessionCostCard } from './SessionCostCard';
 import { RollupCard } from './RollupCard';
 import { CacheImpactCard } from './CacheImpactCard';
+import { QuotaCostCard } from './QuotaCostCard';
 import { DispatchCostTable, type DispatchCostRow } from './DispatchCostTable';
 import { PricingBasisFooter } from './PricingBasisFooter';
 import { usd, approxUsd, ESTIMATE_BASIS_TOOLTIP } from './format';
@@ -34,7 +36,10 @@ export function LedgerView() {
   const { state } = useAetherStore();
   const { ledger, showDispatchDetail } = resolveLedgerViewData(state);
 
-  const rows = buildDispatchRows(state);
+  const rows = buildDispatchRows(state, {
+    tokensPerPoint: state.quotaEfficiency?.tokensPerPoint ?? null,
+    planMonthlyUsd: state.cfg.planMonthlyUsd,
+  });
 
   // The residual is only meaningful when both sides cover the same window.
   // The exact side is today's rollup, built (bucketByDay) from each assistant
@@ -73,6 +78,21 @@ export function LedgerView() {
         </div>
       ) : (
         <>
+          {/* Whole-branch review, FIX 4. Two dollar models are on this page and
+              they mean opposite things: the API-rate figures are what this work
+              WOULD have cost pay-as-you-go, which a subscription account never
+              pays, and the plan figures are the share of a bill already paid. The
+              API-rate ones are also the largest numbers here, so without this the
+              view's biggest figure reads as the real one. Stated once, at the top,
+              rather than only per card -- each card still carries its own marker
+              for an operator who scrolls straight to it. */}
+          <div style={basisNoteStyle(colors)}>
+            Two dollar figures below, and they are not comparable.{' '}
+            <strong style={basisTermStyle(colors)}>API rate</strong> is what this work would have cost at
+            published pay-as-you-go rates — a counterfactual a subscription account never pays.{' '}
+            <strong style={basisTermStyle(colors)}>Plan value</strong> is the share of a subscription
+            already paid for that it consumed. Only the second is money that moved.
+          </div>
           <div style={cardsRowStyle}>
             <div style={{ flex: '1 1 320px' }}>
               <SessionCostCard total={ledger.total} tiers={ledger.tiers} />
@@ -85,6 +105,12 @@ export function LedgerView() {
               <CacheImpactCard cache={ledger.cache} hitRatio={ledger.cacheHitRate} />
             </div>
           </div>
+
+          <QuotaCostCard
+            quota={state.quotaEfficiency}
+            statusline={state.statusline}
+            planMonthlyUsd={state.cfg.planMonthlyUsd}
+          />
 
           <RollupCard rollups={ledger.rollups} />
 
@@ -165,11 +191,14 @@ export function resolveLedgerViewData(state: {
  * Exported for testing: the join has real edge cases (a dispatch with no usage
  * recorded yet, telemetry from a pre-v5 collector) and they are worth pinning.
  */
-export function buildDispatchRows(state: {
-  recentCompletedDispatches: { toolUseId: string; subagentType: string; description: string; startedAt: string; prompt: string; model: string | null }[];
-  dispatchUsage: Record<string, { tokens: number; toolUses: number; durationMs: number }>;
-  diagnostics: { dispatches: { toolUseId: string; exitState: string | null; retries: number | null }[] } | null;
-}): DispatchCostRow[] {
+export function buildDispatchRows(
+  state: {
+    recentCompletedDispatches: { toolUseId: string; subagentType: string; description: string; startedAt: string; prompt: string; model: string | null }[];
+    dispatchUsage: Record<string, { tokens: number; toolUses: number; durationMs: number }>;
+    diagnostics: { dispatches: { toolUseId: string; exitState: string | null; retries: number | null }[] } | null;
+  },
+  quotaInputs: { tokensPerPoint: number | null; planMonthlyUsd: number | null },
+): DispatchCostRow[] {
   const telemetry = new Map(state.diagnostics?.dispatches.map((d) => [d.toolUseId, d]) ?? []);
 
   return state.recentCompletedDispatches.map((d) => {
@@ -203,6 +232,26 @@ export function buildDispatchRows(state: {
       durationMs: completed.durationMs,
       toolUses: completed.toolUses,
       estimate: estimateDispatchCost(completed),
+      // Two independent reasons this figure can be unknowable, and both must
+      // render as an em dash rather than a dollar amount:
+      //   - no RATE yet (tokensPerPoint null while the fit forms) becomes 0
+      //     here, which quotaCostForTokens turns into 0 points and quotaCell
+      //     renders as an em dash -- "not yet knowable", never "free".
+      //   - no TOKENS reported for this dispatch at all. `completed.tokens`
+      //     defaults to 0 above so the row still renders, but 0 is a real
+      //     number to quotaCostForTokens: with a fit and a plan price present
+      //     it returns `{ points: 0, usdPlan: 0 }` and the cell printed
+      //     "$0.00" for work whose token count was never measured. `usage`
+      //     being undefined -- not `completed.tokens === 0`, which a dispatch
+      //     may genuinely report -- is what distinguishes the two.
+      quota:
+        usage === undefined
+          ? null
+          : quotaCostForTokens(
+              completed.tokens,
+              quotaInputs.tokensPerPoint ?? 0,
+              quotaInputs.planMonthlyUsd,
+            ),
       exitState: (t?.exitState ?? null) as DispatchCostRow['exitState'],
       retries: t?.retries ?? null,
     };
@@ -254,6 +303,17 @@ const titleStyle = (c: ColorPalette): CSSProperties => ({
   font: `700 16px/1 ${fonts.ui}`,
   letterSpacing: '.16em',
   color: c.accentCyan,
+});
+
+const basisNoteStyle = (c: ColorPalette): CSSProperties => ({
+  font: `400 11px/1.6 ${fonts.ui}`,
+  color: c.textMuted,
+  maxWidth: 760,
+});
+
+const basisTermStyle = (c: ColorPalette): CSSProperties => ({
+  color: c.textSecondary,
+  fontWeight: 600,
 });
 
 const scopeStyle = (c: ColorPalette): CSSProperties => ({

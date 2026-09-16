@@ -29,6 +29,7 @@ function row(over: Partial<DispatchCostRow> & { usdApprox?: number } = {}): Disp
     durationMs: 1000,
     toolUses: 2,
     estimate: { usdApprox, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+    quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
     exitState: null,
     retries: null,
     ...rest,
@@ -139,5 +140,48 @@ describe('DispatchCostTable', () => {
   it('does not mount a VerifyWithCodexButton for a non-completed dispatch', () => {
     render(<DispatchCostTable rows={[row({ toolUseId: 'tu_fatal', exitState: 'fatal' })]} />);
     expect(screen.queryByText('VERIFY WITH CODEX')).toBeNull();
+  });
+
+  it('shows a quota figure alongside the API estimate', () => {
+    render(<DispatchCostTable rows={[row({
+      estimate: { usdApprox: 1.5, basis: 'blended-tier-rate', tokens: 300_000, tier: 'sonnet', tierSource: 'observed' },
+      quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
+    })]} />);
+    expect(screen.getByText('$1.00')).toBeTruthy();   // quota, no tilde
+    expect(screen.getByText('~$1.50')).toBeTruthy();  // API estimate, tilde retained
+  });
+
+  it('falls back to points when no plan price makes a dollar figure possible', () => {
+    render(<DispatchCostTable rows={[row({
+      quota: { usdPlan: null, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
+    })]} />);
+    expect(screen.getByText('2.0 pts')).toBeTruthy();
+  });
+
+  it('shows an em dash, not a zero, when the fit has produced no rate yet', () => {
+    render(<DispatchCostTable rows={[row({
+      quota: { usdPlan: null, points: 0, basis: 'seven_day', tokensPerPoint: 0 },
+    })]} />);
+    // 0 points would read as "this dispatch consumed no quota", which is false
+    // -- it consumed an unknown amount.
+    expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('labels the API column as counterfactual, not as spend', () => {
+    render(<DispatchCostTable rows={[row()]} />);
+    expect(screen.getByText(/API RATE \(NOT PAID\)/i)).toBeTruthy();
+  });
+
+  // Review finding: a genuinely free plan price (usdPlan: 0, a real priced
+  // state -- see QuotaCost's doc comment) combined with a real fit must
+  // still render a dollar figure, not fall back to points. This is the exact
+  // rendering-layer case the `>= 0` guard in quotaCostForTokens exists to
+  // support, and it had no coverage at the layer the operator actually reads.
+  it('renders a real $0.00, not points, for a genuinely free plan price with a real fit', () => {
+    render(<DispatchCostTable rows={[row({
+      quota: { usdPlan: 0, points: 3, basis: 'seven_day', tokensPerPoint: 150_000 },
+    })]} />);
+    expect(screen.getByText('$0.00')).toBeTruthy();
+    expect(screen.queryByText('3.0 pts')).toBeNull();
   });
 });

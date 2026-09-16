@@ -45,6 +45,7 @@ import type { NarrationVerbosity } from '../shared/narrationVerbosity';
 import type { VoiceRole } from '../shared/agentVoiceRoles';
 import type { Severity } from '../shared/voicePacks';
 import type { InterruptionBudgetState } from '../shared/interruptionBudget';
+import type { QuotaEfficiency } from '../shared/quotaEfficiency';
 
 // A single rendered voice-pack line appended to a Comms channel's feed
 // (Stage 14 Task 5, narrationFeed.ts). Distinct from `dispatchNarrations`
@@ -178,6 +179,18 @@ export interface Cfg {
   densityLevel: 'normal' | 'verbose' | 'summary';
   autoHeadlines: boolean;
   narrationVerbosity: NarrationVerbosity;
+  /**
+   * The monthly subscription price in USD, or null when the operator has not
+   * entered one.
+   *
+   * null and 0 are different answers and must stay different: null means "no
+   * price configured, show quota points only", while 0 means "the operator
+   * deliberately entered a $0 plan" -- a real, if unusual, answer that must
+   * still render as $0.00 rather than falling back to null. The input in
+   * PlanPriceCard clears to null only when the field is emptied or given a
+   * negative/unparsable value, never as a stand-in for a typed 0.
+   */
+  planMonthlyUsd: number | null;
 }
 
 export interface AetherState {
@@ -242,6 +255,7 @@ export interface AetherState {
   fleet: FleetSessionRow[] | null;
   diagnostics: DiagnosticsSnapshot | null;
   ledger: LedgerSnapshot | null;
+  quotaEfficiency: QuotaEfficiency | null;
   projectsSnapshot: ProjectsSnapshot | null;
   pendingPermissionRequest: PermissionRequestUI | null;
   pendingPostToolFlag: PostToolFlagRequestUI | null;

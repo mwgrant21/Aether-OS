@@ -125,7 +125,7 @@ describe('official SDK stdio bridge', () => {
     const asked = await f.client.callTool({ name: 'ask_codex', arguments: { request_key: 'a', question: 'Q' } });
     expect(asked.isError).toBe(false); const accepted = envelope(asked);
     await vi.waitFor(() => expect(f.provider.sendTurn).toHaveBeenCalledTimes(1));
-    f.finish({ text: 'Advice "quoted"\n🧭'.repeat(1900), usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null }, stopReason: 'completed' });
+    f.finish({ text: 'Advice "quoted"\n🧭'.repeat(1900), usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null }, stopReason: 'completed' });
     let cursor: string | undefined, answer = '';
     do {
       const result = await f.client.callTool({ name: 'get_codex_exchange', arguments: { exchange_id: accepted.exchange_id, ...(cursor ? { cursor } : {}) } });
@@ -188,7 +188,7 @@ describe('official SDK stdio bridge', () => {
   it('puts actionable terminal failure guidance in the actual SDK response', async () => {
     const f = await fixture(); await f.client.callTool({ name: 'ask_codex', arguments: { request_key: 'a', question: 'Q' } });
     await vi.waitFor(() => expect(f.provider.sendTurn).toHaveBeenCalled());
-    f.finish({ text: 'partial', usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null }, stopReason: 'error' });
+    f.finish({ text: 'partial', usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null }, stopReason: 'error' });
     const result = await f.client.callTool({ name: 'get_codex_exchange', arguments: { request_key: 'a' } });
     expect(result.isError).toBe(true);
     expect(envelope(result)).toMatchObject({ code: 'PROVIDER_FAILED', failure: 'PROVIDER_FAILED',
@@ -199,7 +199,7 @@ describe('official SDK stdio bridge', () => {
     const f = await fixture({ cleanupFails: true });
     await f.client.callTool({ name: 'ask_codex', arguments: { request_key: 'a', question: 'Q' } });
     await vi.waitFor(() => expect(f.provider.sendTurn).toHaveBeenCalled());
-    f.finish({ text: '\\"\n🧭'.repeat(8000), usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null }, stopReason: 'completed' });
+    f.finish({ text: '\\"\n🧭'.repeat(8000), usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null }, stopReason: 'completed' });
     await vi.waitFor(() => expect(f.controller.metadata()[0].cleanup).toBe('failed'));
     const result = await f.client.callTool({ name: 'get_codex_exchange', arguments: { request_key: 'a' } });
     expect(result.isError).toBe(true); expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(32768);

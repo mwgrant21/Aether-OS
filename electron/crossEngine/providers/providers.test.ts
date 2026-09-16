@@ -161,7 +161,12 @@ function appServerFake(): FakeServer {
         push('thread/tokenUsage/updated', {
           threadId,
           turnId: 'turn-1',
-          tokenUsage: { last: { inputTokens: 11, outputTokens: 22, cachedInputTokens: 33 } },
+          // Deliberately NESTED, the way the real server reports it:
+          // inputTokens (100) INCLUDES cachedInputTokens (80), and
+          // outputTokens (50) INCLUDES reasoningOutputTokens (30).
+          tokenUsage: {
+            last: { inputTokens: 100, outputTokens: 50, cachedInputTokens: 80, reasoningOutputTokens: 30 },
+          },
         });
         // The real server accepts the turn immediately and reports the
         // outcome later via turn/completed. The old fake returned a
@@ -278,7 +283,20 @@ function makeClaudeAdapter(): ClaudeHeadlessCliAdapter {
 
 runProviderConformance({ name: 'FakeProvider', create: () => new FakeProvider({ chunks: ['hel', 'lo'] }) });
 runProviderConformance({ name: 'LegacyCodexAcpAdapter', create: makeLegacyAdapter });
-runProviderConformance({ name: 'CodexAppServerAdapter', create: makeAppServerAdapter });
+runProviderConformance({
+  name: 'CodexAppServerAdapter',
+  create: makeAppServerAdapter,
+  // appServerFake() reports fixed NESTED raw usage (inputTokens: 100 includes
+  // cachedInputTokens: 80; outputTokens: 50 includes reasoningOutputTokens:
+  // 30) -- the same payload the dedicated
+  // 'reports provider-supplied token usage rather than nulls' test below
+  // exercises. This is what lets the shared suite pin the exact de-nested
+  // result rather than only its sign.
+  rawUsageFixture: {
+    turnText: 'go',
+    expected: { inputTokens: 20, outputTokens: 20, cachedInputTokens: 80, reasoningOutputTokens: 30 },
+  },
+});
 runProviderConformance({ name: 'ClaudeHeadlessCliAdapter', create: makeClaudeAdapter });
 
 // ---------------------------------------------------------------------------
@@ -330,7 +348,9 @@ describe('LegacyCodexAcpAdapter', () => {
     await adapter.connect();
     const sessionId = await adapter.newSession({ cwd: process.cwd() });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
-    expect(result.usage).toEqual({ inputTokens: null, outputTokens: null, cachedInputTokens: null });
+    expect(result.usage).toEqual({
+      inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null,
+    });
     await adapter.dispose();
   });
 });
@@ -366,9 +386,39 @@ describe('CodexAppServerAdapter', () => {
     await adapter.connect();
     const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
-    expect(result.usage).toEqual({ inputTokens: 11, outputTokens: 22, cachedInputTokens: 33 });
+    expect(result.usage).toEqual({
+      inputTokens: 20,             // 100 reported - 80 cached
+      outputTokens: 20,            // 50 reported - 30 reasoning
+      cachedInputTokens: 80,
+      reasoningOutputTokens: 30,
+    });
     expect(result.stopReason).toBe('completed');
     expect(result.text).toBe('hello world');
+    await adapter.dispose();
+  });
+
+  it('never reports a negative bucket when the server claims more cache than input', async () => {
+    const fake = makeStdioFake((req, push) => {
+      if (req.method === 'initialize') return { userAgent: 'x' };
+      if (req.method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (req.method === 'turn/start') {
+        const threadId = (req.params as { threadId: string }).threadId;
+        push('thread/tokenUsage/updated', {
+          threadId,
+          turnId: 't',
+          tokenUsage: { last: { inputTokens: 5, outputTokens: 5, cachedInputTokens: 9, reasoningOutputTokens: 9 } },
+        });
+        push('turn/completed', { threadId, turn: { id: 't', status: 'completed' } });
+        return { turn: { id: 't', status: 'inProgress' } };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
+    const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
+    expect(result.usage.inputTokens).toBe(0);
+    expect(result.usage.outputTokens).toBe(0);
     await adapter.dispose();
   });
 
@@ -766,6 +816,59 @@ describe('CodexAppServerAdapter', () => {
     await expect(adapter.newSession({ cwd: 'C:/tmp' })).rejects.toBeInstanceOf(ProviderError);
     await adapter.dispose();
   });
+
+  it('reads account rate limits without opening a thread', async () => {
+    const at = Date.UTC(2026, 8, 7, 12, 0, 0);
+    const fake = makeStdioFake((req) => {
+      if (req.method === 'initialize') return { userAgent: 'codex-app-server/0.153.2' };
+      if (req.method === 'account/rateLimits/read') {
+        return {
+          rate_limits: {
+            primary: { used_percent: 12, window_minutes: 300, resets_at: at / 1000 + 900 },
+            secondary: { used_percent: 63.5, window_minutes: 10080, resets_at: at / 1000 + 200_000 },
+          },
+        };
+      }
+      return {};
+    });
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+
+    const limits = await adapter.readAccountRateLimits(at);
+
+    expect(limits.primary).toEqual({ usedPercentage: 12, windowMinutes: 300, resetsAtMs: at + 900_000 });
+    expect(limits.secondary?.usedPercentage).toBe(63.5);
+    // The whole point: no session was spent to read this.
+    expect(fake.received.some((r) => r.method === 'thread/start')).toBe(false);
+    expect(fake.received.some((r) => r.method === 'turn/start')).toBe(false);
+    await adapter.dispose();
+  });
+
+  it('sends an explicit empty params object on account/rateLimits/read', async () => {
+    const fake = makeStdioFake((req) => (req.method === 'initialize' ? { userAgent: 'x' } : {}));
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    await adapter.connect();
+    await adapter.readAccountRateLimits(0);
+    // Same reason account/read sends {} rather than omitting params (see the
+    // comment in health()): the server rejects the call when the params key is
+    // absent entirely, and that rejection is easy to swallow into a null readout.
+    const sent = fake.received.find((r) => r.method === 'account/rateLimits/read');
+    expect(sent?.params).toEqual({});
+    await adapter.dispose();
+  });
+
+  it('rejects readAccountRateLimits before connect() with NOT_CONNECTED', async () => {
+    const fake = makeStdioFake(() => ({}));
+    const adapter = new CodexAppServerAdapter(() => fake.child);
+    let caught: unknown;
+    try {
+      await adapter.readAccountRateLimits(0);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ProviderError);
+    expect((caught as ProviderError).code).toBe('NOT_CONNECTED');
+  });
 });
 
 describe('ClaudeHeadlessCliAdapter', () => {
@@ -815,7 +918,9 @@ describe('ClaudeHeadlessCliAdapter', () => {
     await adapter.connect();
     const sessionId = await adapter.newSession({ cwd: 'C:/tmp/snapshot' });
     const result = await adapter.sendTurn({ sessionId, text: 'go' }, () => {});
-    expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 7, cachedInputTokens: 9 });
+    expect(result.usage).toEqual({
+      inputTokens: 5, outputTokens: 7, cachedInputTokens: 9, reasoningOutputTokens: null,
+    });
     expect(result.stopReason).toBe('completed');
     expect(result.text).toBe('hello world');
     await adapter.dispose();

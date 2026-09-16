@@ -59,6 +59,7 @@ import {
 } from './turnRecord';
 import { attachStderrRingBuffer, buildCodexChildEnv, resolveCodexCliEntry, resolveCodexHome } from '../acpProcess';
 import { assertNoEnabledMcpServers, CODEX_APP_SERVER_ARGS, CODEX_SESSION_CONFIG } from './codexAppServerPolicy';
+import { parseAccountRateLimits, type AccountRateLimits } from './codexRateLimits';
 
 /** Identity sent to the app-server's `initialize`. Sourced from package.json
  *  rather than repeated here: a hard-coded literal silently drifted to 0.1.0
@@ -106,17 +107,35 @@ const TURN_RECORD_TTL_MS = 120_000;
 const MAX_EARLY_COMPLETIONS = 8;
 const MAX_BUFFERED_NOTIFICATIONS = 256;
 
-/** Reads a ThreadTokenUsage's `last` breakdown defensively. Field casing is
- *  not asserted -- both camelCase and snake_case are accepted so a serde
- *  rename in a future codex build degrades to nulls rather than throwing. */
+/** Reads a ThreadTokenUsage's `last` breakdown defensively, DE-NESTING it.
+ *  Field casing is not asserted -- both camelCase and snake_case are accepted
+ *  so a serde rename in a future codex build degrades to nulls rather than
+ *  throwing.
+ *
+ *  The subtraction is floored at zero. A server that reports more cache than
+ *  input (a rounding artifact, or a bucket definition drifting in a future
+ *  build) must not turn into a negative token count that then subtracts real
+ *  spend from a ledger total -- clamping loses a little accuracy in a case
+ *  that should not happen; a negative loses correctness in a case that then
+ *  propagates. */
 function readUsage(raw: unknown): TurnUsage {
   const last = (raw as { last?: Record<string, unknown> } | undefined)?.last;
   if (!last) return EMPTY_USAGE;
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
+
+  const reportedInput = num(last.inputTokens ?? last.input_tokens);
+  const reportedOutput = num(last.outputTokens ?? last.output_tokens);
+  const cachedInputTokens = num(last.cachedInputTokens ?? last.cached_input_tokens);
+  const reasoningOutputTokens = num(last.reasoningOutputTokens ?? last.reasoning_output_tokens);
+
+  const denest = (total: number | null, nested: number | null): number | null =>
+    total === null ? null : Math.max(0, total - (nested ?? 0));
+
   return {
-    inputTokens: num(last.inputTokens ?? last.input_tokens),
-    outputTokens: num(last.outputTokens ?? last.output_tokens),
-    cachedInputTokens: num(last.cachedInputTokens ?? last.cached_input_tokens),
+    inputTokens: denest(reportedInput, cachedInputTokens),
+    outputTokens: denest(reportedOutput, reasoningOutputTokens),
+    cachedInputTokens,
+    reasoningOutputTokens,
   };
 }
 
@@ -558,6 +577,40 @@ export class CodexAppServerAdapter implements ProviderAdapter {
         detail: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * The account's rate-limit windows, read WITHOUT opening a thread.
+   *
+   * `account/rateLimits/read` sits on the same account surface as
+   * `account/read` -- it needs `initialize` and nothing else. Routing it
+   * through `thread/start` would spend a Codex session per poll to read two
+   * percentages, and a read-only thread cannot make the answer any more
+   * accurate. The test above asserts the absence of thread/start and
+   * turn/start, because "we didn't open a thread" is the kind of property
+   * that quietly stops being true.
+   *
+   * Deliberately NOT on the ProviderAdapter interface: only the app-server
+   * exposes this. Widening the provider-neutral contract for a method one
+   * provider has is exactly what providerConformance.ts's capability-gated
+   * design exists to avoid.
+   *
+   * `nowMs` is a parameter rather than a `Date.now()` call so the parse is
+   * deterministic under test -- a relative `resets_in_seconds` is anchored to
+   * it.
+   *
+   * Unlike health(), this does NOT swallow transport failures into a
+   * neutral-looking value: an empty readout and an unreachable server are
+   * different facts, and a caller that renders "0% used" for the second one
+   * would be worse than one that renders nothing.
+   */
+  // BUILT, NOT YET WIRED: no production caller. See the header note in
+  // codexRateLimits.ts for what remains before a second quota sample source
+  // can feed the Ledger, and why that is a separate reviewed task.
+  async readAccountRateLimits(nowMs: number = Date.now()): Promise<AccountRateLimits> {
+    this.require();
+    const res = await this.call('account/rateLimits/read', {});
+    return parseAccountRateLimits(res, nowMs);
   }
 
   async newSession(options: SessionOptions): Promise<string> {

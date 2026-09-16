@@ -134,7 +134,7 @@ describe('buildDispatchRows', () => {
   };
 
   it('joins the three renderer slices into a priced row', () => {
-    const [r] = buildDispatchRows(base);
+    const [r] = buildDispatchRows(base, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.subagentType).toBe('general-purpose');
     expect(r.toolUses).toBe(4);
     // opus blend: 0.8 * $25 + 0.2 * $5 = $21 per million
@@ -146,14 +146,41 @@ describe('buildDispatchRows', () => {
   // A row that is missing usage still tells the operator the dispatch
   // happened; dropping it would hide work rather than report it as unpriced.
   it('keeps a dispatch with no recorded usage, estimating it at zero', () => {
-    const [r] = buildDispatchRows({ ...base, dispatchUsage: {} });
+    const [r] = buildDispatchRows({ ...base, dispatchUsage: {} }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.estimate.usdApprox).toBe(0);
     expect(r.estimate.tokens).toBe(0);
     expect(r.toolUses).toBe(0);
   });
 
+  // Whole-branch review, FIX 2. The test above passes tokensPerPoint: null, so
+  // it never reaches the branch that matters: with a REAL fit and a REAL plan
+  // price, quotaCostForTokens(0, 200_000, 200) returns a well-formed
+  // { points: 0, usdPlan: 0 } and the cell rendered "$0.00" for a dispatch
+  // whose token count was never reported. A row with no usage must carry a
+  // null quota -- the same absent-versus-zero rule RollupBuckets enforces.
+  it('carries a NULL quota when the dispatch reported no usage, even with a fit and a price', () => {
+    const [r] = buildDispatchRows(
+      { ...base, dispatchUsage: {} },
+      { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
+    );
+    expect(r.quota).toBeNull();
+  });
+
+  // The other half of the same distinction: a dispatch that genuinely reported
+  // zero tokens is a measurement, and must NOT be flattened into the absent
+  // case -- otherwise the fix would trade one lie for another.
+  it('keeps a genuinely-zero token report as a real zero, not as absent', () => {
+    const [r] = buildDispatchRows(
+      { ...base, dispatchUsage: { tu_1: { tokens: 0, toolUses: 0, durationMs: 0 } } },
+      { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
+    );
+    expect(r.quota).not.toBeNull();
+    expect(r.quota!.points).toBe(0);
+    expect(r.quota!.usdPlan).toBe(0);
+  });
+
   it('leaves telemetry null when the collector is absent or pre-v5', () => {
-    const [r] = buildDispatchRows({ ...base, diagnostics: null });
+    const [r] = buildDispatchRows({ ...base, diagnostics: null }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.exitState).toBeNull();
     expect(r.retries).toBeNull();
     // The cost estimate does not depend on telemetry, so it still lands.
@@ -171,8 +198,33 @@ describe('buildDispatchRows', () => {
       ...base,
       recentCompletedDispatches: [{ ...base.recentCompletedDispatches[0], startedAt: '2026-08-07T23:58:00.000Z' }],
       dispatchUsage: { tu_1: { tokens: 1000, toolUses: 1, durationMs: 5 * 60 * 1000 } },
-    });
+    }, { tokensPerPoint: null, planMonthlyUsd: null });
     expect(r.endedAt).toBe('2026-08-08T00:03:00.000Z');
+  });
+
+  // Review finding: nothing exercised the wiring between buildDispatchRows's
+  // quotaInputs and quotaCostForTokens -- only quotaCostForTokens's own unit
+  // tests and DispatchCostTable's rendering tests (which use hand-built
+  // QuotaCost values), so a future refactor that swapped the two arguments
+  // would typecheck cleanly, keep every other test green, and silently price
+  // every dispatch wrong. Values computed BY HAND below, not by calling
+  // quotaCostForTokens in the test (that would just re-derive the same
+  // answer through the same path and prove nothing):
+  //   points   = 1,000,000 tokens / 200,000 tokens-per-point = 5.0
+  //   usdPlan  = 5.0 points * ($200 plan / 400 points bought per 28-day
+  //              month on the 7-day basis) = 5.0 * $0.50 = $2.50
+  // A swap is caught: exchanging tokensPerPoint (200,000) and planMonthlyUsd
+  // (200) would compute 1,000,000 / 200 = 5,000 points and
+  // 5,000 * (200,000 / 400) = $2,500,000 -- nowhere near $2.50, so this
+  // assertion fails immediately if the two arguments are ever transposed.
+  it('joins tokensPerPoint and planMonthlyUsd into the quota figure without swapping them', () => {
+    const [r] = buildDispatchRows(base, { tokensPerPoint: 200_000, planMonthlyUsd: 200 });
+    // Non-null because this dispatch DID report usage -- see the absent-usage
+    // test below, which is the null case.
+    expect(r.quota).not.toBeNull();
+    expect(r.quota!.tokensPerPoint).toBe(200_000);
+    expect(r.quota!.points).toBeCloseTo(5.0, 6);
+    expect(r.quota!.usdPlan).toBeCloseTo(2.5, 6);
   });
 });
 
@@ -189,6 +241,7 @@ describe('selectTodaysRows', () => {
       durationMs: 300000,
       toolUses: 1,
       estimate: { usdApprox: 1, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+      quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
       exitState: null,
       retries: null,
       ...over,

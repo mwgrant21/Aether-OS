@@ -1,5 +1,16 @@
 import type { StatuslineSnapshot } from './statuslinePayload';
 
+/**
+ * The only two fields deriveDepletion actually reads. Named and taken
+ * structurally so a source that is NOT the Claude statusline -- Codex's
+ * `account/rateLimits/read`, via codexRateLimits.ts's asDepletionInput --
+ * can feed the same projection without either faking the other ten fields of
+ * a StatuslineSnapshot or getting a parallel copy of this arithmetic.
+ * StatuslineSnapshot still satisfies it, so every existing caller is
+ * unchanged.
+ */
+export type DepletionInput = Pick<StatuslineSnapshot, 'capturedAtMs' | 'fiveHour'>;
+
 export type DepletionSource = 'statusline' | 'estimate' | 'none';
 
 export interface DepletionReadout {
@@ -39,7 +50,7 @@ function emptyReadout(stale: boolean): DepletionReadout {
 }
 
 export function deriveDepletion(
-  snapshot: StatuslineSnapshot | null,
+  snapshot: DepletionInput | null,
   windowStartMs: number | null,
   nowMs: number,
 ): DepletionReadout {
