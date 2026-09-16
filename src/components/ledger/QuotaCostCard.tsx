@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { planCostPerPoint, QUOTA_WINDOW_MS } from '../../shared/ledgerMath';
+import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 import { MIN_FIT_BUCKETS, type QuotaEfficiency } from '../../shared/quotaEfficiency';
 import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import { planUsd, points as fmtPoints, tokens as fmtTokens, QUOTA_BASIS_TOOLTIP } from './format';
@@ -21,10 +22,12 @@ export function QuotaCostCard({
   quota,
   statusline,
   planMonthlyUsd,
+  nowMs = Date.now(),
 }: {
   quota: QuotaEfficiency | null;
   statusline: StatuslineSnapshot | null;
   planMonthlyUsd: number | null;
+  nowMs?: number;
 }) {
   const colors = useColors();
   const sevenDay = statusline?.sevenDay ?? null;
@@ -41,6 +44,20 @@ export function QuotaCostCard({
     );
   }
 
+  // A percentage is this window's consumption only while the window is still
+  // open and the reading is recent. startStatuslineWatcher reloads whatever
+  // file is already on disk the moment the app starts, so a snapshot written
+  // days ago -- against a seven-day window that has since reset -- arrives
+  // looking exactly like a live one. Pricing it states a dollar figure for a
+  // window that no longer exists, and that figure stands until Claude next
+  // writes the statusline, which may be never. Both halves are needed:
+  // resetsAtMs catches the rolled-over window, capturedAtMs catches a feed
+  // that simply stopped -- the same bound every other statusline consumer
+  // uses (depletion.ts, contextWindowCard.ts, PlanUsageCard.tsx).
+  const windowEnded = sevenDay.resetsAtMs <= nowMs;
+  const feedStale = statusline !== null && nowMs - statusline.capturedAtMs > STATUSLINE_STALE_AFTER_MS;
+  const stale = windowEnded || feedStale;
+
   const usedPoints = sevenDay.usedPercentage;
   // A $0 plan price still prices out to a real $0.00: planCostPerPoint(0, ...)
   // returns 0 (its own guard), never null, so a genuinely-entered $0 plan and
@@ -52,12 +69,20 @@ export function QuotaCostCard({
     <div style={cardStyle(colors)}>
       <div style={titleStyle(colors)} title={QUOTA_BASIS_TOOLTIP}>QUOTA COST · 7 DAY</div>
 
+      {stale && (
+        <p style={hintStyle(colors)}>
+          {windowEnded
+            ? 'This reading\u2019s seven-day window has already reset \u2014 the figure below is the last reading from a window that has closed, not current consumption.'
+            : 'The statusline feed has gone stale \u2014 the figure below is the last reading, not current consumption.'}
+        </p>
+      )}
+
       <div style={rowStyle}>
         <div style={labelStyle(colors)}>CONSUMED</div>
         <div style={valueStyle(colors)}>{fmtPoints(usedPoints)}</div>
       </div>
 
-      {perPoint !== null && (
+      {perPoint !== null && !stale && (
         <div style={rowStyle}>
           <div style={labelStyle(colors)}>PLAN VALUE</div>
           <div style={valueStyle(colors)}>{planUsd(usedPoints * perPoint)}</div>

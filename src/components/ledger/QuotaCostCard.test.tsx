@@ -5,6 +5,7 @@ import { AetherStoreProvider } from '../../state/store';
 import { QuotaCostCard } from './QuotaCostCard';
 import type { QuotaEfficiency } from '../../shared/quotaEfficiency';
 import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
+import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 
 // useColors() reads the theme from the store, so every themed component needs
 // the provider -- the established convention in this repo's component tests
@@ -49,13 +50,13 @@ function efficiency(over: Partial<QuotaEfficiency> = {}): QuotaEfficiency {
 
 describe('QuotaCostCard', () => {
   it('prices the seven-day window from the live percentage and the plan price', () => {
-    render(<QuotaCostCard quota={efficiency()} statusline={statusline(58)} planMonthlyUsd={200} />);
+    render(<QuotaCostCard quota={efficiency()} statusline={statusline(58)} nowMs={NOW} planMonthlyUsd={200} />);
     expect(screen.getByText('58.0 pts')).toBeTruthy();
     expect(screen.getByText('$29.00')).toBeTruthy(); // 58 * ($200 / 400)
   });
 
   it('shows points with no dollar figure when no plan price is configured', () => {
-    render(<QuotaCostCard quota={efficiency()} statusline={statusline(58)} planMonthlyUsd={null} />);
+    render(<QuotaCostCard quota={efficiency()} statusline={statusline(58)} nowMs={NOW} planMonthlyUsd={null} />);
     expect(screen.getByText('58.0 pts')).toBeTruthy();
     expect(screen.queryByText(/^\$/)).toBeNull();
     expect(screen.getByText(/set a monthly plan price/i)).toBeTruthy();
@@ -65,7 +66,7 @@ describe('QuotaCostCard', () => {
     render(
       <QuotaCostCard
         quota={efficiency({ tokensPerPoint: null, fittedBuckets: 2, fittedTokens: 0, fittedPoints: 0 })}
-        statusline={statusline(58)}
+        statusline={statusline(58)} nowMs={NOW}
         planMonthlyUsd={200}
       />,
     );
@@ -77,7 +78,7 @@ describe('QuotaCostCard', () => {
 
   it('surfaces external usage as an indicator rather than hiding it', () => {
     render(
-      <QuotaCostCard quota={efficiency({ externalUsageBuckets: 4 })} statusline={statusline(58)} planMonthlyUsd={200} />,
+      <QuotaCostCard quota={efficiency({ externalUsageBuckets: 4 })} statusline={statusline(58)} nowMs={NOW} planMonthlyUsd={200} />,
     );
     expect(screen.getByText(/4 hours/i)).toBeTruthy();
     expect(screen.getByText(/other machines or projects/i)).toBeTruthy();
@@ -88,8 +89,26 @@ describe('QuotaCostCard', () => {
     expect(screen.getByText(/no seven-day rate-limit data/i)).toBeTruthy();
   });
 
+  it('does not price a seven-day window that has already reset', () => {
+    // The launch-time reload path: whatever statusline file is on disk is read
+    // immediately, so a closed window arrives looking live.
+    const expired = statusline(58);
+    expired.sevenDay!.resetsAtMs = NOW - 1;
+    render(<QuotaCostCard quota={efficiency()} statusline={expired} planMonthlyUsd={200} nowMs={NOW} />);
+    expect(screen.queryByText('$29.00')).toBeNull();
+    expect(screen.getByText(/already reset/i)).toBeTruthy();
+  });
+
+  it('does not price a reading older than the statusline staleness bound', () => {
+    const old = statusline(58);
+    old.capturedAtMs = NOW - STATUSLINE_STALE_AFTER_MS - 1;
+    render(<QuotaCostCard quota={efficiency()} statusline={old} planMonthlyUsd={200} nowMs={NOW} />);
+    expect(screen.queryByText('$29.00')).toBeNull();
+    expect(screen.getByText(/gone stale/i)).toBeTruthy();
+  });
+
   it('renders a $0 plan price as a genuine zero, not the missing-price state', () => {
-    render(<QuotaCostCard quota={efficiency()} statusline={statusline(58)} planMonthlyUsd={0} />);
+    render(<QuotaCostCard quota={efficiency()} statusline={statusline(58)} nowMs={NOW} planMonthlyUsd={0} />);
     expect(screen.getByText('58.0 pts')).toBeTruthy();
     expect(screen.getByText('$0.00')).toBeTruthy();
     expect(screen.queryByText(/set a monthly plan price/i)).toBeNull();
@@ -99,7 +118,7 @@ describe('QuotaCostCard', () => {
     render(
       <QuotaCostCard
         quota={null}
-        statusline={statusline(58)}
+        statusline={statusline(58)} nowMs={NOW}
         planMonthlyUsd={200}
       />,
     );

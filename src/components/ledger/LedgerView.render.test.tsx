@@ -61,11 +61,18 @@ const quota: QuotaEfficiency = {
   buckets: [],
 };
 
+// The dispatch fixtures are pinned to NOW because their figures are compared
+// against each other. The statusline snapshot cannot be: QuotaCostCard refuses
+// to price a reading whose seven-day window has closed or whose feed has gone
+// stale, and it reads the real clock through this tree. A fixture frozen in the
+// past would assert the stale rendering while claiming to test the live one.
+const LIVE_NOW = Date.now();
+
 const statusline: StatuslineSnapshot = {
-  capturedAtMs: NOW,
+  capturedAtMs: LIVE_NOW,
   sessionId: null, modelId: null, modelDisplayName: null,
   fiveHour: null,
-  sevenDay: { usedPercentage: 58, resetsAtMs: NOW + 86_400_000 },
+  sevenDay: { usedPercentage: 58, resetsAtMs: LIVE_NOW + 86_400_000 },
   contextUsedPercentage: null, contextWindowSize: null, contextUsage: null,
   totalCostUsd: null, currentDir: null, projectDir: null,
 };
