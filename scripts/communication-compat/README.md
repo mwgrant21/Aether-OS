@@ -127,7 +127,17 @@ should `BRIDGE_CLAUDE_VERSION` change — together with the fixture version in
 
 ## Status
 
-The harness is recovered, generalized and self-verified. The **2.1.274
-behavioural probe has not been run** — `BRIDGE_CLAUDE_VERSION` is unchanged at
-`2.1.270`, and the bridge correctly refuses to launch against the installed
-2.1.274 client until a passing probe says otherwise.
+**Current pin: `2.1.274`.** Raised from `2.1.270` on 2026-09-17 after this
+harness probed it. Full evidence, including what the probe does *not* establish:
+[`docs/superpowers/plans/2026-09-16-bridge-claude-2.1.274-probe-results.md`](../../docs/superpowers/plans/2026-09-16-bridge-claude-2.1.274-probe-results.md).
+
+Two valid sessions backed that bump — one in `manual` mode (isolating
+`--allowedTools` as the only possible approver) and one in production's argument
+shape — both with tool annotations matching `BRIDGE_TOOLS`. Two earlier sessions
+were invalidated by an annotation mismatch and are recorded in that document
+rather than deleted.
+
+This section states the pin because a stale status here is worse than none: an
+operator reading "not yet probed" next to a pin that has already moved will
+either repeat the work or mistrust the evidence. **Update it in the same commit
+that changes `BRIDGE_CLAUDE_VERSION`.**
