@@ -35,6 +35,24 @@ const contains = (parent, child) => {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 };
+// Resolve against the nearest EXISTING ancestor before creating anything.
+// Creating the directory first and checking afterwards still mutates the
+// reference when --scratch names a not-yet-existing path inside it, and leaves
+// the stray directory behind on rejection.
+let probe = scratchRootArg;
+while (!fs.existsSync(probe)) {
+  const parent = path.dirname(probe);
+  if (parent === probe) break;
+  probe = parent;
+}
+const anchorReal = fs.existsSync(probe) ? fs.realpathSync(probe) : probe;
+const intendedReal = path.resolve(anchorReal, path.relative(probe, scratchRootArg));
+if (contains(intendedReal, referenceAbs) || contains(referenceAbs, intendedReal)
+    || contains(anchorReal, referenceAbs) || contains(referenceAbs, anchorReal)) {
+  console.error(`refusing unsafe --scratch: ${intendedReal} overlaps the reference run ${referenceAbs}`);
+  process.exit(2);
+}
+
 fs.mkdirSync(scratchRootArg, { recursive: true });
 
 // path.resolve is LEXICAL only. On Windows a junction (or a symlink anywhere)
@@ -105,7 +123,11 @@ const cases = [
       e.result.content[0].text = e.result.content[0].text.replace(/雪/, 'X'); // one character
       fs.writeFileSync(p, JSON.stringify(e, null, 2));
     } },
-  { name: 'forged-marker', property: 'payload_integrity',
+  { name: 'forged-marker', property: 'evidence_complete',
+    // Caught at evidence time now, not at payload comparison: a marker that is
+    // not present in the generated payload text means the evidence itself is
+    // inconsistent. payload_integrity's own path stays covered by
+    // altered-payload, which mutates the text the model actually received.
     mutate: dir => {
       const p = path.join(dir, 'expected-result.json');
       const e = JSON.parse(fs.readFileSync(p, 'utf8'));

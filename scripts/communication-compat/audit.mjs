@@ -88,8 +88,22 @@ if (missing.length) {
 // goes unexplained. Shape is therefore checked here, while a verdict can still
 // be recorded.
 const shapeProblems = [];
-if (!Array.isArray(E_raw?.markers) || E_raw.markers.length === 0 || !E_raw.markers.every(m => typeof m === 'string')) {
-  shapeProblems.push('expected-result.json: markers must be a non-empty array of strings');
+{
+  // Not merely "some strings": the receipts are three distinct UUIDs the server
+  // generated and embedded in the payload. Without that, an expected-result.json
+  // whose markers were replaced by the cleanup receipt would satisfy both
+  // "every marker reported" and the cleanup regex while all three real receipts
+  // were absent -- payload_integrity passing on a payload nobody received.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const m = E_raw?.markers;
+  const text = E_raw?.result?.content?.[0]?.text;
+  if (!Array.isArray(m) || m.length !== 3 || !m.every(x => typeof x === 'string' && UUID.test(x))) {
+    shapeProblems.push('expected-result.json: markers must be exactly three UUID-shaped strings');
+  } else if (new Set(m).size !== 3) {
+    shapeProblems.push('expected-result.json: the three markers must be distinct');
+  } else if (typeof text === 'string' && !m.every(x => text.includes(x))) {
+    shapeProblems.push('expected-result.json: every marker must occur in the generated payload text');
+  }
 }
 if (typeof E_raw?.result?.content?.[0]?.text !== 'string') {
   shapeProblems.push('expected-result.json: result.content[0].text must be a string');

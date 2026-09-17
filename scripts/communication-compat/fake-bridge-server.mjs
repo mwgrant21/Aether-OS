@@ -49,7 +49,14 @@ const tools = [
     inputSchema: { type: 'object', properties: { exchange_id: { type: 'string' } }, required: ['exchange_id'], additionalProperties: false } },
 ].map(t => ({ ...t,
   _meta: { 'anthropic/maxResultSizeChars': 40000 },
-  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }));
+  // MUST mirror BRIDGE_TOOLS' annotations in electron/communicationBridge/mcpServer.ts.
+  // These influence client presentation and permission handling, so a mismatch
+  // means the probe validates a tool shape production never ships: a client
+  // could preapprove synthetic read-only tools while prompting for the real
+  // open-world ones, and exact_preapproval would pass regardless. The 2.1.270
+  // harness had readOnlyHint/openWorldHint inverted and this one inherited it;
+  // compatHarnessParity.test.ts now fails the build if they drift again.
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }));
 
 const server = new Server(
   { name: 'aether-compat-fake', version: '1.0.0' },
