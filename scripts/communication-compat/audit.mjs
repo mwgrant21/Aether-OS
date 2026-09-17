@@ -62,13 +62,44 @@ const expected = parseJson('expected-result.json');
 const events = parseJsonl('events.jsonl');
 const debugRead = readMaybe('client-debug.log');
 
+const E_raw = expected.ok ? expected.value : null;
+const S_raw = session.ok ? session.value : null;
+const EV_raw = events.ok ? events.value : [];
+
 const missing = [session, expected, events, debugRead].filter(r => !r.ok).map(r => r.reason);
 if (missing.length) {
   record('evidence_complete', false, missing.join('; '));
   emit();
   process.exit(1);
 }
-record('evidence_complete', true, 'session.json, expected-result.json, events.jsonl, client-debug.log all present and parseable');
+// Parseable is not the same as usable. A half-written expected-result.json can
+// be valid JSON and still lack `markers`, and dereferencing it later would throw
+// a stack trace INSTEAD of the per-property failure report this auditor
+// promises -- the same way a crash, rather than a verdict, is how a real failure
+// goes unexplained. Shape is therefore checked here, while a verdict can still
+// be recorded.
+const shapeProblems = [];
+if (!Array.isArray(E_raw?.markers) || E_raw.markers.length === 0 || !E_raw.markers.every(m => typeof m === 'string')) {
+  shapeProblems.push('expected-result.json: markers must be a non-empty array of strings');
+}
+if (typeof E_raw?.result?.content?.[0]?.text !== 'string') {
+  shapeProblems.push('expected-result.json: result.content[0].text must be a string');
+}
+if (typeof E_raw?.serialized_bytes !== 'number') {
+  shapeProblems.push('expected-result.json: serialized_bytes must be a number');
+}
+if (typeof S_raw?.session_id !== 'string' || typeof S_raw?.cwd !== 'string') {
+  shapeProblems.push('session.json: session_id and cwd must be strings');
+}
+if (!EV_raw.some(e => e?.event === 'server_start')) {
+  shapeProblems.push('events.jsonl: no server_start event (truncated or wrong run?)');
+}
+if (shapeProblems.length) {
+  record('evidence_complete', false, shapeProblems.join('; '));
+  emit();
+  process.exit(1);
+}
+record('evidence_complete', true, 'session.json, expected-result.json, events.jsonl, client-debug.log all present, parseable and structurally sound');
 
 const S = session.value, E = expected.value, EV = events.value;
 const debug = debugRead.raw.split(/\r?\n/);

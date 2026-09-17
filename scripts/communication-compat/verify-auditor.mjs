@@ -71,6 +71,17 @@ const cases = [
       const raw = fs.readFileSync(p, 'utf8');
       fs.writeFileSync(p, raw.slice(0, Math.floor(raw.length * 0.6))); // cut mid-line
     } },
+  { name: 'markers-field-removed', property: 'evidence_complete',
+    // Valid JSON, unusable content: dereferencing this later threw a stack trace
+    // instead of the promised per-property report.
+    mutate: dir => {
+      const p = path.join(dir, 'expected-result.json');
+      const e = JSON.parse(fs.readFileSync(p, 'utf8'));
+      delete e.markers;
+      fs.writeFileSync(p, JSON.stringify(e, null, 2));
+    } },
+  { name: 'expected-result-is-empty-object', property: 'evidence_complete',
+    mutate: dir => fs.writeFileSync(path.join(dir, 'expected-result.json'), '{}') },
   { name: 'altered-payload', property: 'payload_integrity',
     mutate: dir => {
       const p = path.join(dir, 'expected-result.json');
