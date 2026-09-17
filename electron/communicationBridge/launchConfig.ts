@@ -12,7 +12,7 @@ const run = promisify(execFile);
 const POWERSHELL_HELPER_TIMEOUT_MS = 30_000;
 export const BRIDGE_ALLOWED_TOOLS = ['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange']
   .map(name => 'mcp__aether-bridge__' + name);
-export const BRIDGE_CLAUDE_VERSION = '2.1.270';
+export const BRIDGE_CLAUDE_VERSION = '2.1.274';
 const BACKGROUND = 'CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS';
 const powershell = () => join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
 const psQuote = (value: string) => "'" + value.replace(/'/g, "''") + "'";
