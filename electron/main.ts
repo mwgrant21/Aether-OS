@@ -51,7 +51,6 @@ import {
 } from './headlineGenerator';
 import { formatNarration } from './narrationGenerator';
 import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
-import { createWaitClock, beginWait, endWait, activeDurationMs } from '../src/shared/waitClock';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
@@ -123,14 +122,6 @@ let lastTickResult: LiveAgentTick | null = null;
 const headlineThrottle = createHeadlineThrottle();
 const narrationDurationBaseline = createDurationBaseline();
 const periodicContentCache = createPeriodicContentCache();
-/**
- * When this app was blocked on the operator.
- *
- * Process-lifetime, in memory, not persisted -- it only ever answers questions
- * about spans inside this run, and a rehydrated interval from a previous run
- * could only ever subtract time from a dispatch it has nothing to do with.
- */
-const userWaitClock = createWaitClock();
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 900;
@@ -428,11 +419,11 @@ const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDeci
 // own withTimeout resolves the HTTP response independently on timeout, without
 // ever calling back into these maps, so a timed-out request's resolver is never
 // removed -- a slow, session-lifetime leak of one Function reference per timeout.
-// scheduleResolverCleanup (its own module, resolverCleanup.ts, so the
-// onExpire behavior below has a real regression test) schedules a matching
-// cleanup so a stale entry can't outlive the server-side timeout that already
-// made it moot, and its `onExpire` hook is what force-closes userWaitClock's
-// interval for an abandoned prompt below -- see that module's comment.
+// scheduleResolverCleanup (its own module, resolverCleanup.ts) schedules a
+// matching cleanup so a stale entry can't outlive the server-side timeout
+// that already made it moot. Its optional `onExpire` hook is currently unused:
+// it existed to force-close a user-wait interval for an abandoned prompt, and
+// that subtraction has been removed (see the comment at the narration loop).
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
@@ -723,14 +714,19 @@ async function tickAndPushAgents(): Promise<void> {
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
     for (const c of result.completed) {
-      // `<duration_ms>` is WALL CLOCK and includes every second this run sat
-      // blocked on an approval prompt. Comparing that against a median of
-      // other wall-clock runs manufactures "slow run" anomalies whose real
-      // cause is that nobody was at the keyboard. Subtract the overlap first,
-      // and record the corrected figure -- recording the wall figure would
-      // poison every later comparison with the same inflation.
-      const startedMs = new Date(c.startedAt).getTime();
-      const measuredMs = activeDurationMs(userWaitClock, startedMs, c.durationMs, Date.now());
+      // WALL CLOCK, deliberately. This used to subtract the time the app spent
+      // blocked on an approval prompt, on the theory that a dispatch which sat
+      // waiting for the operator should not read as "slower than usual".
+      //
+      // That subtraction was removed because it could not be made correct. Read
+      // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
+      // BEFORE attempting to reintroduce it -- the short version is that a
+      // subagent's tool calls are not written to the transcript at all, so a
+      // prompt raised inside a dispatch can never be attributed back to it, and
+      // a prompt raised on the main thread does not block the dispatch it would
+      // have been subtracted from. Every correction it made was therefore taken
+      // from a dispatch that had not waited.
+      const measuredMs = c.durationMs;
       // Snapshot the baseline BEFORE recording this run -- a run must never
       // be compared against a baseline it has already contributed to.
       const medianMsAtEval = getMedianMs(narrationDurationBaseline, c.subagentType);
@@ -855,22 +851,9 @@ app.whenReady().then(async () => {
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
       });
-      // See scheduleResolverCleanup's comment: onExpire force-closes the wait
-      // interval if the operator abandons the prompt, since `decision` below
-      // never settles in that case and the `finally` never runs on its own.
-      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs, () =>
-        endWait(userWaitClock, requestId, Date.now()),
-      );
-      // The clock opens the moment the prompt reaches the renderer and closes
-      // however this resolves: an answer, the onExpire above, or a throw.
-      // `finally` covers the throw path; a `.then` would miss it.
-      beginWait(userWaitClock, requestId, Date.now());
+      scheduleResolverCleanup(pendingPermissionResolvers, requestId, permissionServerOptions.timeoutMs);
       sendToWindow('permission:request', { requestId, toolName: req.toolName, toolInput: req.toolInput, risk, editableField });
-      try {
-        return await decision;
-      } finally {
-        endWait(userWaitClock, requestId, Date.now());
-      }
+      return await decision;
     },
     postToolUseTimeoutMs: 30000,
     onPostToolUse: async (req: { toolUseId: string; toolName: string; toolOutput: unknown }): Promise<PostToolFlagDecision> => {
@@ -887,10 +870,7 @@ app.whenReady().then(async () => {
       const decision = new Promise<PostToolFlagDecision>((resolve) => {
         pendingPostToolFlagResolvers.set(requestId, resolve);
       });
-      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs, () =>
-        endWait(userWaitClock, requestId, Date.now()),
-      );
-      beginWait(userWaitClock, requestId, Date.now());
+      scheduleResolverCleanup(pendingPostToolFlagResolvers, requestId, permissionServerOptions.postToolUseTimeoutMs);
       sendToWindow('postToolFlag:request', {
         requestId,
         toolUseId: req.toolUseId,
@@ -898,11 +878,7 @@ app.whenReady().then(async () => {
         anomalyKind: tripped.kind,
         detail: tripped.detail,
       });
-      try {
-        return await decision;
-      } finally {
-        endWait(userWaitClock, requestId, Date.now());
-      }
+      return await decision;
     },
     onNotification: ({ sessionId, notificationType }: { sessionId: string; notificationType: string }) => {
       // Real notification-handling logic (session-identity check, the
