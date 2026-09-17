@@ -29,6 +29,12 @@ if (!reference) { console.error('usage: node verify-auditor.mjs --reference <kno
 // that only this process created.
 const referenceAbs = path.resolve(reference);
 if (!fs.existsSync(referenceAbs)) { console.error(`reference run not found: ${referenceAbs}`); process.exit(2); }
+// Canonicalize the reference HERE, before any overlap check. Comparing a lexical
+// reference path against a canonical scratch ancestor misses the overlap when the
+// reference itself is a symlink or junction and --scratch names a nonexistent
+// directory inside its real target -- mkdirSync then mutates the read-only
+// reference, and only the later check notices, too late to undo it.
+const referenceReal = fs.realpathSync(referenceAbs);
 
 const scratchRootArg = path.resolve(argOf('scratch', path.join(os.tmpdir(), 'aether-compat-auditor-verify')));
 const contains = (parent, child) => {
@@ -47,9 +53,9 @@ while (!fs.existsSync(probe)) {
 }
 const anchorReal = fs.existsSync(probe) ? fs.realpathSync(probe) : probe;
 const intendedReal = path.resolve(anchorReal, path.relative(probe, scratchRootArg));
-if (contains(intendedReal, referenceAbs) || contains(referenceAbs, intendedReal)
-    || contains(anchorReal, referenceAbs) || contains(referenceAbs, anchorReal)) {
-  console.error(`refusing unsafe --scratch: ${intendedReal} overlaps the reference run ${referenceAbs}`);
+if (contains(intendedReal, referenceReal) || contains(referenceReal, intendedReal)
+    || contains(anchorReal, referenceReal) || contains(referenceReal, anchorReal)) {
+  console.error(`refusing unsafe --scratch: ${intendedReal} overlaps the reference run ${referenceReal}`);
   process.exit(2);
 }
 
@@ -62,7 +68,6 @@ fs.mkdirSync(scratchRootArg, { recursive: true });
 // descendant. Canonicalize both sides with realpath -- after creating the root,
 // so it can be resolved -- and compare those.
 const scratchRootReal = fs.realpathSync(scratchRootArg);
-const referenceReal = fs.realpathSync(referenceAbs);
 if (contains(scratchRootReal, referenceReal) || contains(referenceReal, scratchRootReal)) {
   console.error(`refusing unsafe --scratch: ${scratchRootReal} overlaps the reference run ${referenceReal}`);
   process.exit(2);
