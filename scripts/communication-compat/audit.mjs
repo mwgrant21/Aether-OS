@@ -1,0 +1,326 @@
+// Audits one compatibility probe run and reports EVERY property separately.
+//
+// READ-ONLY by default. The 2.1.270 auditor wrote its report into a shared
+// outputs/ path, so merely inspecting old evidence would have overwritten it;
+// this one writes nothing unless given an explicit --out.
+//
+//   node audit.mjs --run <dir> [--transcript <path>] [--out <file>] [--json]
+//
+// Exit code 0 only when every required property passes. A missing, empty,
+// truncated or mismatched piece of evidence is a FAILURE, never a skip: the
+// point of the harness is that it cannot accidentally report success.
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
+const argOf = (name, fallback) => {
+  const i = process.argv.indexOf('--' + name);
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : fallback;
+};
+
+const runDir = argOf('run');
+if (!runDir) { console.error('usage: node audit.mjs --run <dir> [--transcript <path>] [--out <file>]'); process.exit(2); }
+
+const properties = [];
+// Declared up here on purpose: emit() reads it, and emit() runs on the early
+// evidence-missing exits too. A `const` declared further down would be in the
+// temporal dead zone at that point and throw, killing the report instead of
+// printing it -- which is precisely how a 'Failed' run would lose its reason.
+let usage = null;
+const record = (name, ok, detail) => { properties.push({ property: name, verdict: ok ? 'Passed' : 'Failed', detail }); return ok; };
+const fail = (name, detail) => record(name, false, detail);
+
+function readMaybe(file) {
+  const p = path.join(runDir, file);
+  if (!fs.existsSync(p)) return { ok: false, reason: `missing ${file}` };
+  const raw = fs.readFileSync(p, 'utf8').replace(/^﻿/, '');
+  if (!raw.trim()) return { ok: false, reason: `empty ${file}` };
+  return { ok: true, raw };
+}
+
+function parseJson(file) {
+  const r = readMaybe(file);
+  if (!r.ok) return r;
+  try { return { ok: true, value: JSON.parse(r.raw) }; }
+  catch (e) { return { ok: false, reason: `unparseable ${file}: ${e.message}` }; }
+}
+
+function parseJsonl(file) {
+  const r = readMaybe(file);
+  if (!r.ok) return r;
+  const rows = [];
+  for (const [i, line] of r.raw.trim().split(/\r?\n/).entries()) {
+    let value;
+    try { value = JSON.parse(line); }
+    catch (e) { return { ok: false, reason: `${file} line ${i + 1} unparseable (truncated run?): ${e.message}` }; }
+    // null is valid JSON and sails through any `row?.field` guard here, only to
+    // throw further down where the optional chaining stops. Rows must be usable
+    // objects, not merely parseable ones.
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+      return { ok: false, reason: `${file} line ${i + 1} is not a JSON object (got ${kind})` };
+    }
+    rows.push(value);
+  }
+  return { ok: true, value: rows };
+}
+
+// ---------------------------------------------------------------- evidence
+const session = parseJson('session.json');
+const expected = parseJson('expected-result.json');
+const events = parseJsonl('events.jsonl');
+const debugRead = readMaybe('client-debug.log');
+
+const E_raw = expected.ok ? expected.value : null;
+const S_raw = session.ok ? session.value : null;
+const EV_raw = events.ok ? events.value : [];
+
+const missing = [session, expected, events, debugRead].filter(r => !r.ok).map(r => r.reason);
+if (missing.length) {
+  record('evidence_complete', false, missing.join('; '));
+  emit();
+  process.exit(1);
+}
+// Parseable is not the same as usable. A half-written expected-result.json can
+// be valid JSON and still lack `markers`, and dereferencing it later would throw
+// a stack trace INSTEAD of the per-property failure report this auditor
+// promises -- the same way a crash, rather than a verdict, is how a real failure
+// goes unexplained. Shape is therefore checked here, while a verdict can still
+// be recorded.
+const shapeProblems = [];
+{
+  // Not merely "some strings": the receipts are three distinct UUIDs the server
+  // generated and embedded in the payload. Without that, an expected-result.json
+  // whose markers were replaced by the cleanup receipt would satisfy both
+  // "every marker reported" and the cleanup regex while all three real receipts
+  // were absent -- payload_integrity passing on a payload nobody received.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const m = E_raw?.markers;
+  const text = E_raw?.result?.content?.[0]?.text;
+  if (!Array.isArray(m) || m.length !== 3 || !m.every(x => typeof x === 'string' && UUID.test(x))) {
+    shapeProblems.push('expected-result.json: markers must be exactly three UUID-shaped strings');
+  } else if (new Set(m).size !== 3) {
+    shapeProblems.push('expected-result.json: the three markers must be distinct');
+  } else if (typeof text === 'string' && !m.every(x => text.includes(x))) {
+    shapeProblems.push('expected-result.json: every marker must occur in the generated payload text');
+  }
+}
+if (typeof E_raw?.result?.content?.[0]?.text !== 'string') {
+  shapeProblems.push('expected-result.json: result.content[0].text must be a string');
+}
+if (typeof E_raw?.serialized_bytes !== 'number') {
+  shapeProblems.push('expected-result.json: serialized_bytes must be a number');
+}
+if (typeof S_raw?.session_id !== 'string' || typeof S_raw?.cwd !== 'string') {
+  shapeProblems.push('session.json: session_id and cwd must be strings');
+}
+if (!EV_raw.some(e => e?.event === 'server_start')) {
+  shapeProblems.push('events.jsonl: no server_start event (truncated or wrong run?)');
+}
+if (shapeProblems.length) {
+  record('evidence_complete', false, shapeProblems.join('; '));
+  emit();
+  process.exit(1);
+}
+record('evidence_complete', true, 'session.json, expected-result.json, events.jsonl, client-debug.log all present, parseable and structurally sound');
+
+const S = session.value, E = expected.value, EV = events.value;
+const debug = debugRead.raw.split(/\r?\n/);
+
+// The transcript is the only evidence the client itself writes. Derive it the
+// same way Claude Code encodes a project directory, unless told otherwise.
+const transcriptPath = argOf('transcript',
+  S.transcript_hint ?? path.join(os.homedir(), '.claude', 'projects',
+    String(S.cwd).replace(/\\/g, '/').replace(/[^A-Za-z0-9]/g, '-'), `${S.session_id}.jsonl`));
+
+let rows;
+if (!fs.existsSync(transcriptPath)) {
+  fail('transcript_present', `no transcript at ${transcriptPath}`);
+  emit(); process.exit(1);
+}
+try {
+  rows = fs.readFileSync(transcriptPath, 'utf8').trim().split(/\r?\n/).map(JSON.parse);
+} catch (e) {
+  fail('transcript_present', `transcript unparseable (truncated?): ${e.message}`);
+  emit(); process.exit(1);
+}
+{
+  // Same reason as parseJsonl: a null row is valid JSON and would throw later at
+  // row.message, replacing the verdict with a stack trace.
+  const badRow = rows.findIndex(r => r === null || typeof r !== 'object' || Array.isArray(r));
+  if (badRow !== -1) {
+    fail('transcript_present', `transcript line ${badRow + 1} is not a JSON object`);
+    emit(); process.exit(1);
+  }
+}
+record('transcript_present', true, `${rows.length} rows at ${transcriptPath}`);
+
+const blocks = rows.flatMap((row, index) => Array.isArray(row.message?.content)
+  ? row.message.content.map(b => ({ ...b, row: index, messageId: row.message.id })) : []);
+const calls = blocks.filter(b => b.type === 'tool_use');
+const results = blocks.filter(b => b.type === 'tool_result');
+const NAMES = ['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange'].map(n => 'mcp__aether-bridge__' + n);
+
+// ------------------------------------------------- P1 direct presentation
+// The 2.1.270 auditor asserted the literal string "0/386 deferred tools
+// included". That count is a property of that day's tool roster, not an
+// invariant -- it would fail on any machine with a different plugin set while
+// telling us nothing about the bridge. What actually matters is that the model
+// reached the three bridge tools DIRECTLY: called them, in order, with no
+// tool-search indirection and nothing else called.
+{
+  const called = calls.map(c => c.name);
+  const order = JSON.stringify(called) === JSON.stringify(NAMES);
+  const searchCalls = called.filter(n => /toolsearch|tool_search/i.test(n));
+  const foreign = called.filter(n => !NAMES.includes(n));
+  const loadingLines = debug.filter(l => /Dynamic tool loading:/.test(l));
+  record('direct_tool_presentation', order && searchCalls.length === 0 && foreign.length === 0, {
+    called_in_order: order,
+    tool_search_calls: searchCalls.length,
+    non_bridge_calls: foreign,
+    // Reported as evidence, never asserted against a fixed number.
+    dynamic_tool_loading: loadingLines.map(l => l.trim().slice(-120)),
+  });
+}
+
+// --------------------------------------------------- P2 exact preapproval
+// The property being gated is that --allowedTools STILL PREAPPROVES the three
+// bridge tools. Merely finding a numeric permissionDecisionMs does not show
+// that: if a client stopped honouring --allowedTools and the operator approved
+// each prompt by hand, every dispatch would still carry a number, and a check
+// that only asserts "is numeric" would pass exactly the regression it exists to
+// catch.
+//
+// The client emits no decision TYPE or reason -- permissionDecisionMs is the
+// only field on these lines -- so timing is the sole available discriminator.
+// It is therefore used as one, explicitly and with a stated threshold, rather
+// than left implicit. Preapproved decisions on 2.1.270 measured 1-2 ms; a
+// human reading a prompt and answering cannot land under PREAPPROVAL_MAX_MS.
+// This is a heuristic, named as one, and the raw values are always reported so
+// a reviewer can judge them directly.
+{
+  // A misspelled threshold must not quietly disable the check. Number('250ms')
+  // is NaN, and every `ms > NaN` is false, so `slow` would stay empty and three
+  // manually-approved dispatches would pass -- reintroducing the exact hole the
+  // threshold was added to close. Infinity disables it just as effectively.
+  const PREAPPROVAL_MAX_MS = Number(argOf('preapproval-max-ms', 250));
+  if (!Number.isFinite(PREAPPROVAL_MAX_MS) || PREAPPROVAL_MAX_MS < 0) {
+    console.error(`--preapproval-max-ms must be a finite, non-negative number (got ${argOf('preapproval-max-ms')})`);
+    process.exit(2);
+  }
+  const dispatch = debug.filter(l => /tool_dispatch_start .*tool=mcp__aether-bridge/.test(l));
+  const decisions = dispatch.map(l => {
+    const m = /permissionDecisionMs=(\d+)/.exec(l);
+    return { tool: (/tool=(\S+)/.exec(l) ?? [])[1] ?? null, ms: m ? Number(m[1]) : null };
+  });
+  const allTimed = decisions.length === 3 && decisions.every(d => d.ms !== null);
+  const slow = decisions.filter(d => d.ms === null || d.ms > PREAPPROVAL_MAX_MS);
+  const modes = [...new Set(rows.map(r => r.permissionMode).filter(Boolean))];
+  record('exact_preapproval', dispatch.length === 3 && allTimed && slow.length === 0, {
+    bridge_dispatches: dispatch.length,
+    decisions,
+    preapproval_max_ms: PREAPPROVAL_MAX_MS,
+    decisions_over_threshold: slow,
+    requested_permission_mode: S.requested_permission_mode ?? S.permission_mode ?? null,
+    effective_permission_modes_in_transcript: modes,
+    // Two limits, stated rather than inferred away.
+    caveat: 'Sub-threshold timing is strong evidence of preapproval but is a heuristic, not a decision-type assertion; and this run does not test negative permission boundaries (that unrelated tools stayed unapproved).',
+  });
+}
+
+// ---------------------------------------------------- P3 quiet inline get
+{
+  const starts = EV.filter(e => e.event === 'call_start').map(e => e.name);
+  const serverStart = EV.find(e => e.event === 'server_start') ?? {};
+  const expectedWait = Number(serverStart.quiet_wait_ms ?? 60_000);
+  const mcpTimeout = Number(serverStart.mcp_timeout_ms ?? S.mcp_timeout_ms ?? 90_000);
+  const wait = EV.find(e => e.event === 'call_end' && e.name === 'get_codex_exchange');
+  const get = calls[1];
+  const getResult = get ? results.find(b => b.tool_use_id === get.id) : undefined;
+  const intervening = get && getResult
+    ? rows.slice(get.row + 1, getResult.row).filter(r => r.type === 'assistant' && r.message?.id !== get.messageId).length
+    : -1;
+  const orderOk = JSON.stringify(starts) === JSON.stringify(['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange']);
+  const waitOk = !!wait && !wait.aborted && wait.elapsed_ms >= expectedWait && wait.elapsed_ms < mcpTimeout;
+  record('quiet_inline_get', orderOk && waitOk && intervening === 0, {
+    server_call_order: starts,
+    // Measured on the server, never read from the payload's nominal field.
+    measured_wait_ms: wait?.elapsed_ms ?? null,
+    required_at_least_ms: expectedWait,
+    must_stay_under_mcp_timeout_ms: mcpTimeout,
+    aborted: wait?.aborted ?? null,
+    intervening_model_responses: intervening,
+    background_ms: serverStart.background_ms ?? null,
+  });
+}
+
+// ------------------------------------------------- P4 payload integrity
+{
+  const get = calls[1];
+  const getResult = get ? results.find(b => b.tool_use_id === get.id) : undefined;
+  const received = getResult
+    ? (typeof getResult.content === 'string' ? getResult.content : (getResult.content ?? []).map(c => c.text ?? '').join(''))
+    : null;
+  const exactMatch = received !== null && received === E.result.content[0].text;
+  const limit = Number(E.envelope_limit_bytes ?? 32_768);
+  const withinEnvelope = E.serialized_bytes <= limit;
+  const finalText = blocks.filter(b => b.type === 'text' && rows[b.row].type === 'assistant').at(-1)?.text ?? '';
+  const markersReported = E.markers.filter(m => finalText.includes(m));
+  const cleanup = /(?:U0|COMPAT)-CLEANUP-OK/.test(finalText);
+  record('payload_integrity',
+    exactMatch && withinEnvelope && !getResult?.is_error && markersReported.length === E.markers.length && cleanup, {
+      exact_text_match: exactMatch,
+      result_is_error: getResult?.is_error ?? null,
+      serialized_bytes: E.serialized_bytes,
+      envelope_limit_bytes: limit,
+      text_chars: E.text_chars,
+      markers_reported: `${markersReported.length}/${E.markers.length}`,
+      cleanup_receipt_in_final_answer: cleanup,
+    });
+}
+
+// ------------------------------------------------------------ environment
+{
+  const s = EV.find(e => e.event === 'server_start') ?? {};
+  record('provider_isolation', s.api_key_present === false && s.auth_token_present === false, {
+    api_key_present: s.api_key_present ?? null,
+    auth_token_present: s.auth_token_present ?? null,
+    note: 'The synthetic server never launches Codex, so this run proves nothing about real provider cleanup.',
+  });
+}
+
+// ------------------------------------------------------------------ usage
+usage = { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 };
+const seen = new Set();
+for (const row of rows) {
+  const m = row.message;
+  if (!m?.usage || seen.has(m.id)) continue;
+  seen.add(m.id);
+  for (const k of Object.keys(usage)) usage[k] += m.usage[k] ?? 0;
+}
+
+function emit() {
+  const failed = properties.filter(p => p.verdict === 'Failed');
+  const report = {
+    verdict: failed.length === 0 ? 'Passed' : 'Failed',
+    failed_properties: failed.map(p => p.property),
+    run_dir: runDir,
+    // Read through the parse result, not the `S` alias: emit() also runs on the
+    // early evidence-missing exits, where `S` is still in its temporal dead zone.
+    session_id: (session.ok ? session.value?.session_id : null) ?? null,
+    client_version: (session.ok ? session.value?.version : null) ?? null,
+    properties,
+    usage: usage ?? undefined,
+  };
+  const out = argOf('out');
+  if (out) {
+    if (fs.existsSync(out)) { console.error(`refusing to overwrite existing report: ${out}`); process.exit(2); }
+    fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+    fs.writeFileSync(out, JSON.stringify(report, null, 2) + '\n');
+  }
+  console.log(JSON.stringify(report, null, 2));
+  return report;
+}
+
+const report = emit();
+process.exit(report.verdict === 'Passed' ? 0 : 1);
