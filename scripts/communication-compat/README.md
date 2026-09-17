@@ -65,7 +65,7 @@ It does **not** prove:
 | `prepare-run.mjs` | Creates a **fresh** run directory, resolves the client the way production does, and writes `mcp.json` + `session.json`. Refuses to reuse a directory. |
 | `run-probe.ps1` | The one model-bearing step. Launches an interactive session with production's argument shape. |
 | `audit.mjs` | Read-only auditor. Per-property verdicts; missing/truncated/mismatched evidence is a failure, never a skip. |
-| `verify-auditor.mjs` | Negative control: damages a copy of a known-good run fifteen ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
+| `verify-auditor.mjs` | Negative control: damages a copy of a known-good run sixteen ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
 | `check-server.mjs` | Protocol smoke test for the synthetic server. No model session. |
 
 Run directories are created **outside the repository** (under

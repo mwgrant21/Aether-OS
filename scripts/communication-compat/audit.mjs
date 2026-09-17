@@ -50,8 +50,17 @@ function parseJsonl(file) {
   if (!r.ok) return r;
   const rows = [];
   for (const [i, line] of r.raw.trim().split(/\r?\n/).entries()) {
-    try { rows.push(JSON.parse(line)); }
+    let value;
+    try { value = JSON.parse(line); }
     catch (e) { return { ok: false, reason: `${file} line ${i + 1} unparseable (truncated run?): ${e.message}` }; }
+    // null is valid JSON and sails through any `row?.field` guard here, only to
+    // throw further down where the optional chaining stops. Rows must be usable
+    // objects, not merely parseable ones.
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+      return { ok: false, reason: `${file} line ${i + 1} is not a JSON object (got ${kind})` };
+    }
+    rows.push(value);
   }
   return { ok: true, value: rows };
 }
@@ -120,6 +129,15 @@ try {
 } catch (e) {
   fail('transcript_present', `transcript unparseable (truncated?): ${e.message}`);
   emit(); process.exit(1);
+}
+{
+  // Same reason as parseJsonl: a null row is valid JSON and would throw later at
+  // row.message, replacing the verdict with a stack trace.
+  const badRow = rows.findIndex(r => r === null || typeof r !== 'object' || Array.isArray(r));
+  if (badRow !== -1) {
+    fail('transcript_present', `transcript line ${badRow + 1} is not a JSON object`);
+    emit(); process.exit(1);
+  }
 }
 record('transcript_present', true, `${rows.length} rows at ${transcriptPath}`);
 

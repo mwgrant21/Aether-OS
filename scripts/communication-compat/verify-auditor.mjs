@@ -35,12 +35,21 @@ const contains = (parent, child) => {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 };
-if (contains(scratchRootArg, referenceAbs) || contains(referenceAbs, scratchRootArg)) {
-  console.error(`refusing unsafe --scratch: ${scratchRootArg} overlaps the reference run ${referenceAbs}`);
+fs.mkdirSync(scratchRootArg, { recursive: true });
+
+// path.resolve is LEXICAL only. On Windows a junction (or a symlink anywhere)
+// named as --scratch can point straight at the reference run: a textual
+// comparison accepts it, mkdtemp then creates the working child INSIDE the
+// supposedly read-only reference, and cpSync copies the reference into its own
+// descendant. Canonicalize both sides with realpath -- after creating the root,
+// so it can be resolved -- and compare those.
+const scratchRootReal = fs.realpathSync(scratchRootArg);
+const referenceReal = fs.realpathSync(referenceAbs);
+if (contains(scratchRootReal, referenceReal) || contains(referenceReal, scratchRootReal)) {
+  console.error(`refusing unsafe --scratch: ${scratchRootReal} overlaps the reference run ${referenceReal}`);
   process.exit(2);
 }
-fs.mkdirSync(scratchRootArg, { recursive: true });
-const scratchRoot = fs.mkdtempSync(path.join(scratchRootArg, 'run-'));
+const scratchRoot = fs.mkdtempSync(path.join(scratchRootReal, 'run-'));
 
 function runAudit(dir, extra = []) {
   try {
@@ -82,6 +91,13 @@ const cases = [
     } },
   { name: 'expected-result-is-empty-object', property: 'evidence_complete',
     mutate: dir => fs.writeFileSync(path.join(dir, 'expected-result.json'), '{}') },
+  { name: 'null-event-row', property: 'evidence_complete',
+    // Valid JSON, unusable row: server_start is present so the shape check was
+    // satisfied, and the null threw only once dereferenced.
+    mutate: dir => {
+      const p = path.join(dir, 'events.jsonl');
+      fs.writeFileSync(p, fs.readFileSync(p, 'utf8').trimEnd() + '\nnull\n');
+    } },
   { name: 'altered-payload', property: 'payload_integrity',
     mutate: dir => {
       const p = path.join(dir, 'expected-result.json');
