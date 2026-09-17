@@ -255,6 +255,22 @@ and should never grow one.
   scale transform. Don't assume arbitrary viewport widths reflow the layout.
 
 <!-- token-tracker:begin -->
+- **Do not reintroduce "subtract the time we were blocked on the operator"
+  from dispatch durations.** It was built, shipped, and removed on 2026-09-16
+  (`src/shared/waitClock.ts`, deleted). Not abandoned half-finished --
+  removed because the attribution it needs does not exist: a subagent's tool
+  calls are written to NO transcript (measured: 0 `isSidechain:true` lines
+  across 570 transcripts / 549 MB, and a live probe dispatch's inner calls
+  appeared nowhere), so a prompt raised inside a dispatch can never be traced
+  back to it, while a prompt raised on the main thread does not block the
+  dispatch it would be subtracted from. Every correction the mechanism made
+  was therefore taken from a dispatch that had not waited, and it fed the
+  shared `narrationDurationBaseline`, so the error compounded silently in the
+  "looks fast" direction. The inflated-duration problem it aimed at is real
+  and currently unmitigated -- that is an accepted gap, not an oversight.
+  Full evidence and the measurements that would have to change first:
+  `docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md`.
+
 ## Token Tracker suggestions
 - Prefer Sonnet for short/trivial turns; reserve Opus for complex reasoning.
 - Pin frequently re-read files into context instead of re-reading them each turn.
