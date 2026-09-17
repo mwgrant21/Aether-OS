@@ -24,8 +24,11 @@ function arg(name, fallback = undefined) {
 }
 
 function resolveClient() {
+  // Always absolute. run-probe.ps1 does Set-Location into the workspace before
+  // invoking this path, so a relative --client that worked here would simply
+  // not be found there -- and only at the model-bearing step.
   const explicit = arg('client');
-  if (explicit) return explicit;
+  if (explicit) return resolve(explicit);
   // Mirror production's resolution (launchConfig.ts resolveClaude): the native
   // .exe as found on PATH, not a shell shim.
   const out = execFileSync('powershell.exe',
@@ -36,7 +39,7 @@ function resolveClient() {
   return out;
 }
 
-const client = resolveClient();
+const client = resolve(resolveClient());
 const versionOutput = execFileSync(client, ['--version'], { encoding: 'utf8', windowsHide: true, timeout: 10_000 }).trim();
 const expect = arg('expect-version');
 if (expect && !(versionOutput.startsWith(expect) && /\s/.test(versionOutput.slice(expect.length, expect.length + 1)))) {

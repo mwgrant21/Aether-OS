@@ -43,7 +43,9 @@ field on those lines -- so latency is the sole available discriminator, and it i
 used as one explicitly. Preapproved decisions on 2.1.270 measured 1-2 ms; a human
 reading a prompt cannot answer inside `--preapproval-max-ms` (default 250). This
 is a heuristic, named as one, and the raw per-tool values are always reported so
-a reviewer can judge them directly.
+a reviewer can judge them directly. A non-finite or negative threshold is
+refused rather than accepted: `Number('250ms')` is `NaN`, every `ms > NaN` is
+false, and a typo would otherwise disable the check without saying so.
 
 It does **not** prove:
 
@@ -63,7 +65,7 @@ It does **not** prove:
 | `prepare-run.mjs` | Creates a **fresh** run directory, resolves the client the way production does, and writes `mcp.json` + `session.json`. Refuses to reuse a directory. |
 | `run-probe.ps1` | The one model-bearing step. Launches an interactive session with production's argument shape. |
 | `audit.mjs` | Read-only auditor. Per-property verdicts; missing/truncated/mismatched evidence is a failure, never a skip. |
-| `verify-auditor.mjs` | Negative control: damages a copy of a known-good run eleven ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
+| `verify-auditor.mjs` | Negative control: damages a copy of a known-good run thirteen ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
 | `check-server.mjs` | Protocol smoke test for the synthetic server. No model session. |
 
 Run directories are created **outside the repository** (under

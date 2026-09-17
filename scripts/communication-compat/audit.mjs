@@ -136,7 +136,15 @@ const NAMES = ['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange'].map(n
 // This is a heuristic, named as one, and the raw values are always reported so
 // a reviewer can judge them directly.
 {
+  // A misspelled threshold must not quietly disable the check. Number('250ms')
+  // is NaN, and every `ms > NaN` is false, so `slow` would stay empty and three
+  // manually-approved dispatches would pass -- reintroducing the exact hole the
+  // threshold was added to close. Infinity disables it just as effectively.
   const PREAPPROVAL_MAX_MS = Number(argOf('preapproval-max-ms', 250));
+  if (!Number.isFinite(PREAPPROVAL_MAX_MS) || PREAPPROVAL_MAX_MS < 0) {
+    console.error(`--preapproval-max-ms must be a finite, non-negative number (got ${argOf('preapproval-max-ms')})`);
+    process.exit(2);
+  }
   const dispatch = debug.filter(l => /tool_dispatch_start .*tool=mcp__aether-bridge/.test(l));
   const decisions = dispatch.map(l => {
     const m = /permissionDecisionMs=(\d+)/.exec(l);

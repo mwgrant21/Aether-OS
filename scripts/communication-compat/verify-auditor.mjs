@@ -42,9 +42,9 @@ if (contains(scratchRootArg, referenceAbs) || contains(referenceAbs, scratchRoot
 fs.mkdirSync(scratchRootArg, { recursive: true });
 const scratchRoot = fs.mkdtempSync(path.join(scratchRootArg, 'run-'));
 
-function runAudit(dir) {
+function runAudit(dir, extra = []) {
   try {
-    const stdout = execFileSync(process.execPath, [AUDIT, '--run', dir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync(process.execPath, [AUDIT, '--run', dir, ...extra], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return { exit: 0, report: JSON.parse(stdout) };
   } catch (e) {
     let report = null;
@@ -106,6 +106,13 @@ const cases = [
       for (const r of rows) if (r.event === 'server_start') r.api_key_present = true;
       fs.writeFileSync(p, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
     } },
+  { name: 'invalid-threshold-refused', expectExit: 2, args: ['--preapproval-max-ms', '250ms'],
+    // Number('250ms') is NaN and every `ms > NaN` is false, so a typo would
+    // empty the slow list and wave through manually-approved dispatches --
+    // silently undoing the threshold. It must refuse instead.
+    mutate: () => {} },
+  { name: 'infinite-threshold-refused', expectExit: 2, args: ['--preapproval-max-ms', 'Infinity'],
+    mutate: () => {} },
   { name: 'manually-approved-prompts', property: 'exact_preapproval',
     // The regression Codex identified: --allowedTools stops preapproving, the
     // operator clicks through three prompts, and every line still carries a
@@ -128,10 +135,13 @@ const results = [];
 for (const c of cases) {
   const dir = freshCopy(c.name);
   c.mutate(dir);
-  const { exit, report } = runAudit(dir);
+  const { exit, report } = runAudit(dir, c.args ?? []);
   let ok;
   let note;
-  if (c.expectPass) {
+  if (c.expectExit !== undefined) {
+    ok = exit === c.expectExit;
+    note = ok ? `refused with exit ${exit}` : `expected exit ${c.expectExit}, got ${exit}`;
+  } else if (c.expectPass) {
     ok = exit === 0 && report?.verdict === 'Passed';
     note = ok ? 'passes unmodified' : `expected Passed, got ${report?.verdict ?? 'no report'}`;
   } else {
