@@ -5,7 +5,16 @@
 **Harness:** `scripts/communication-compat/` (committed, unlike the 2.1.270 probe's)
 **Supersedes the gate in:** [Task 9A: Claude 2.1.270 compatibility re-probe](2026-09-13-cross-check-task9a-results.md)
 
-Two real interactive Claude sessions against the synthetic bridge server. **Zero real
+> **Correction, same day.** The first two sessions ran with the harness declaring
+> `readOnlyHint: true, openWorldHint: false`, while the real bridge declares the
+> opposite (`mcpServer.ts:14`). Those annotations can influence permission
+> handling, so their `exact_preapproval` result described a tool shape production
+> never ships. Found by Codex review of the harness PR. A **third** session was run
+> with the annotations corrected; it is the authoritative one below, and
+> `compatHarnessParity.test.ts` now fails the build if the harness drifts from
+> `BRIDGE_TOOLS` again.
+
+Three real interactive Claude sessions against the synthetic bridge server. **Zero real
 Codex consultations.** Exactly three model-issued fake tool calls per session: ask, one
 get, one cancel.
 
@@ -38,6 +47,26 @@ approval source, exactly as the 2.1.270 probe did. No permission prompt appeared
 | `payload_integrity` | Passed | Passed |
 | `provider_isolation` | Passed | Passed |
 | **Verdict** | **Passed** | **Passed** |
+
+### Run 3 — corrected annotations (authoritative)
+
+Manual permission mode, tools declared exactly as production declares them
+(`readOnlyHint: false`, `openWorldHint: true` — the shape most likely to prompt).
+All seven properties **Passed**.
+
+| Measurement | Run 3 |
+| --- | --- |
+| requested / effective permission mode | `manual` / `default` |
+| permission decisions | 2 / 1 / 2 ms, no prompt |
+| tool-search calls / non-bridge tools | 0 / none |
+| quiet wait, server-measured | 60,048.203 ms |
+| aborted / intervening model responses | no / 0 |
+| serialized payload | 32,741 B (limit 32,768), exact text match |
+| receipt markers reported | 3/3 |
+| usage | 8 in / 79,839 cache-creation / 313,292 cache-read / 577 out |
+
+This is the only run whose `exact_preapproval` evidence describes the tools
+production actually ships. The pin bump rests on it.
 
 | Measurement | Run 1 | Run 2 |
 | --- | --- | --- |
