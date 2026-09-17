@@ -121,18 +121,39 @@ const NAMES = ['ask_codex', 'get_codex_exchange', 'cancel_codex_exchange'].map(n
 }
 
 // --------------------------------------------------- P2 exact preapproval
+// The property being gated is that --allowedTools STILL PREAPPROVES the three
+// bridge tools. Merely finding a numeric permissionDecisionMs does not show
+// that: if a client stopped honouring --allowedTools and the operator approved
+// each prompt by hand, every dispatch would still carry a number, and a check
+// that only asserts "is numeric" would pass exactly the regression it exists to
+// catch.
+//
+// The client emits no decision TYPE or reason -- permissionDecisionMs is the
+// only field on these lines -- so timing is the sole available discriminator.
+// It is therefore used as one, explicitly and with a stated threshold, rather
+// than left implicit. Preapproved decisions on 2.1.270 measured 1-2 ms; a
+// human reading a prompt and answering cannot land under PREAPPROVAL_MAX_MS.
+// This is a heuristic, named as one, and the raw values are always reported so
+// a reviewer can judge them directly.
 {
+  const PREAPPROVAL_MAX_MS = Number(argOf('preapproval-max-ms', 250));
   const dispatch = debug.filter(l => /tool_dispatch_start .*tool=mcp__aether-bridge/.test(l));
-  const timed = dispatch.filter(l => /permissionDecisionMs=\d+/.test(l));
+  const decisions = dispatch.map(l => {
+    const m = /permissionDecisionMs=(\d+)/.exec(l);
+    return { tool: (/tool=(\S+)/.exec(l) ?? [])[1] ?? null, ms: m ? Number(m[1]) : null };
+  });
+  const allTimed = decisions.length === 3 && decisions.every(d => d.ms !== null);
+  const slow = decisions.filter(d => d.ms === null || d.ms > PREAPPROVAL_MAX_MS);
   const modes = [...new Set(rows.map(r => r.permissionMode).filter(Boolean))];
-  record('exact_preapproval', dispatch.length === 3 && timed.length === 3, {
+  record('exact_preapproval', dispatch.length === 3 && allTimed && slow.length === 0, {
     bridge_dispatches: dispatch.length,
-    with_permission_decision: timed.length,
+    decisions,
+    preapproval_max_ms: PREAPPROVAL_MAX_MS,
+    decisions_over_threshold: slow,
     requested_permission_mode: S.requested_permission_mode ?? S.permission_mode ?? null,
     effective_permission_modes_in_transcript: modes,
-    // Fast decisions are consistent with preapproval but do not by themselves
-    // prove unrelated tools stayed unapproved. Stated, not inferred away.
-    caveat: 'Timing evidence only; this run does not test negative permission boundaries.',
+    // Two limits, stated rather than inferred away.
+    caveat: 'Sub-threshold timing is strong evidence of preapproval but is a heuristic, not a decision-type assertion; and this run does not test negative permission boundaries (that unrelated tools stayed unapproved).',
   });
 }
 

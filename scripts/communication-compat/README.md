@@ -26,9 +26,24 @@ Four behavioural properties, each reported separately:
 | Property | Question |
 | --- | --- |
 | `direct_tool_presentation` | Did the model reach all three bridge tools directly, in order, with no tool-search indirection and nothing else called? |
-| `exact_preapproval` | Were exactly three bridge dispatches preapproved, each with a recorded permission decision? |
+| `exact_preapproval` | Were exactly three bridge dispatches preapproved, each decided **faster than a human could answer a prompt**? |
 | `quiet_inline_get` | Did a long silent tool call stay inline — server-measured, not aborted, under the MCP timeout, with no intervening model response? |
 | `payload_integrity` | Did an escaping-heavy payload arrive byte-identical and within the envelope limit, with all receipt markers reported? |
+
+### How `exact_preapproval` discriminates
+
+The property being gated is that `--allowedTools` *still preapproves*. Simply
+finding a numeric `permissionDecisionMs` does not show that: if a client stopped
+honouring the flag and the operator approved three prompts by hand, every line
+would still carry a number. A check asserting only "is numeric" would pass
+exactly the regression it exists to catch.
+
+The client emits no decision type or reason -- `permissionDecisionMs` is the only
+field on those lines -- so latency is the sole available discriminator, and it is
+used as one explicitly. Preapproved decisions on 2.1.270 measured 1-2 ms; a human
+reading a prompt cannot answer inside `--preapproval-max-ms` (default 250). This
+is a heuristic, named as one, and the raw per-tool values are always reported so
+a reviewer can judge them directly.
 
 It does **not** prove:
 
@@ -48,7 +63,7 @@ It does **not** prove:
 | `prepare-run.mjs` | Creates a **fresh** run directory, resolves the client the way production does, and writes `mcp.json` + `session.json`. Refuses to reuse a directory. |
 | `run-probe.ps1` | The one model-bearing step. Launches an interactive session with production's argument shape. |
 | `audit.mjs` | Read-only auditor. Per-property verdicts; missing/truncated/mismatched evidence is a failure, never a skip. |
-| `verify-auditor.mjs` | Negative control: damages a copy of a known-good run nine ways and asserts the auditor fails on the right property each time. |
+| `verify-auditor.mjs` | Negative control: damages a copy of a known-good run eleven ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
 | `check-server.mjs` | Protocol smoke test for the synthetic server. No model session. |
 
 Run directories are created **outside the repository** (under
@@ -82,7 +97,7 @@ powershell -NoProfile -File scripts/communication-compat/run-probe.ps1 -RunDir <
 
 ```bash
 # 6. Audit. Read-only unless --out is given, and --out refuses to overwrite.
-node scripts/communication-compat/audit.mjs --run <run> [--out report.json]
+node scripts/communication-compat/audit.mjs --run <run> [--out report.json] [--preapproval-max-ms 250]
 ```
 
 Only after step 6 reports `"verdict": "Passed"` with every property passing

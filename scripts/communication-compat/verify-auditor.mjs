@@ -21,9 +21,26 @@ const argOf = (n, d) => { const i = process.argv.indexOf('--' + n); return i !==
 const reference = argOf('reference');
 if (!reference) { console.error('usage: node verify-auditor.mjs --reference <known-good run dir>'); process.exit(2); }
 
-const scratchRoot = argOf('scratch', path.join(os.tmpdir(), 'aether-compat-auditor-verify'));
-fs.rmSync(scratchRoot, { recursive: true, force: true });
-fs.mkdirSync(scratchRoot, { recursive: true });
+// A recursive delete of a caller-supplied path is how the known-good evidence
+// would get destroyed by the very script meant to protect it: point --scratch at
+// the reference run (or any ancestor of it) and the wipe lands on the reference.
+// So: never delete the supplied path. Treat it as a ROOT, refuse it if it
+// overlaps the reference in either direction, and work inside a unique child
+// that only this process created.
+const referenceAbs = path.resolve(reference);
+if (!fs.existsSync(referenceAbs)) { console.error(`reference run not found: ${referenceAbs}`); process.exit(2); }
+
+const scratchRootArg = path.resolve(argOf('scratch', path.join(os.tmpdir(), 'aether-compat-auditor-verify')));
+const contains = (parent, child) => {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+if (contains(scratchRootArg, referenceAbs) || contains(referenceAbs, scratchRootArg)) {
+  console.error(`refusing unsafe --scratch: ${scratchRootArg} overlaps the reference run ${referenceAbs}`);
+  process.exit(2);
+}
+fs.mkdirSync(scratchRootArg, { recursive: true });
+const scratchRoot = fs.mkdtempSync(path.join(scratchRootArg, 'run-'));
 
 function runAudit(dir) {
   try {
@@ -89,6 +106,14 @@ const cases = [
       for (const r of rows) if (r.event === 'server_start') r.api_key_present = true;
       fs.writeFileSync(p, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
     } },
+  { name: 'manually-approved-prompts', property: 'exact_preapproval',
+    // The regression Codex identified: --allowedTools stops preapproving, the
+    // operator clicks through three prompts, and every line still carries a
+    // numeric permissionDecisionMs. Only the latency gives it away.
+    mutate: dir => {
+      const p = path.join(dir, 'client-debug.log');
+      fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/permissionDecisionMs=\d+/g, 'permissionDecisionMs=4200'));
+    } },
   { name: 'missing-permission-evidence', property: 'exact_preapproval',
     mutate: dir => {
       const p = path.join(dir, 'client-debug.log');
@@ -119,6 +144,6 @@ for (const c of cases) {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(30)} ${note}`);
 }
 
-fs.rmSync(scratchRoot, { recursive: true, force: true });
+fs.rmSync(scratchRoot, { recursive: true, force: true }); // only our own mkdtemp child
 console.log(`\n${results.length - bad}/${results.length} auditor controls behaved correctly`);
 process.exit(bad === 0 ? 0 : 1);
