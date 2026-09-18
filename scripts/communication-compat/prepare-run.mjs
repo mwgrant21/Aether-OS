@@ -15,6 +15,7 @@ import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { trustWorkspace } from './trust-workspace.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -96,4 +97,15 @@ writeFileSync(join(runDir, 'session.json'), JSON.stringify({
     workspace.replace(/\\/g, '/').replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`),
 }, null, 2) + '\n');
 
-console.log(JSON.stringify({ run_dir: runDir, workspace, session_id: sessionId, client, version: versionOutput }, null, 2));
+// A fresh workspace means a fresh folder-trust dialog, and the client stops on
+// it before it ever reaches the MCP server -- which looks exactly like a harness
+// failure. Pre-accept it for this scratch directory only; see trust-workspace.mjs
+// for the backup/verify discipline around writing the operator's config.
+const trust = trustWorkspace(workspace);
+if (!trust.trusted) {
+  console.error(`WARNING: could not pre-accept the trust dialog (${trust.reason}).`);
+  console.error('The probe will stop on a trust screen; accept it in the console window.');
+}
+
+console.log(JSON.stringify({ run_dir: runDir, workspace, session_id: sessionId, client, version: versionOutput,
+  workspace_pre_trusted: trust.trusted, config_backup: trust.backup ?? null }, null, 2));
