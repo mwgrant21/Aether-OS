@@ -20,7 +20,11 @@ import { readFileSync, writeFileSync, renameSync, copyFileSync, existsSync, lsta
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
-export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.json')) {
+export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.json'), options = {}) {
+  // `beforePublish` exists so verify-trust-workspace.mjs can simulate another
+  // Claude process writing the config mid-sequence. Nothing in normal operation
+  // passes it.
+  const { beforePublish, attempt = 1 } = options;
   if (!existsSync(configPath)) return { trusted: false, reason: `no config at ${configPath}` };
   if (lstatSync(configPath).isSymbolicLink()) {
     return { trusted: false, reason: 'refusing to rewrite a symlinked ~/.claude.json' };
@@ -57,7 +61,40 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
   let after;
   try {
     copyFileSync(configPath, backup);
+
+    // Claude Code rewrites this file constantly (lastCost, lastDuration, and so
+    // on) and the operator runs several sessions, so another process can land a
+    // write between our read and this publish. `intended` would then be built on
+    // stale contents, and the rename would silently discard that update while
+    // this function reported success. The backup is taken from the CURRENT file,
+    // so comparing it against what we read is how we notice.
+    const atBackup = readFileSync(backup, 'utf8');
+    if (atBackup !== original) {
+      try { unlinkSync(backup); } catch { /* best effort */ }
+      if (attempt < 2) {
+        // Rebuild from the newer contents once; a second collision means the
+        // file is too busy to update safely from here.
+        return trustWorkspace(workspace, configPath, { ...options, attempt: attempt + 1 });
+      }
+      return { trusted: false,
+        reason: 'config changed concurrently while updating; not overwriting another process\'s write' };
+    }
+
+    if (beforePublish) beforePublish(configPath);
+
     writeFileSync(tmp, intended);
+
+    // Re-check immediately before the rename: the window between the backup and
+    // the publish is small but not zero.
+    const atPublish = readFileSync(configPath, 'utf8');
+    if (atPublish !== original) {
+      try { unlinkSync(tmp); } catch { /* best effort */ }
+      try { unlinkSync(backup); } catch { /* best effort */ }
+      if (attempt < 2) return trustWorkspace(workspace, configPath, { ...options, attempt: attempt + 1 });
+      return { trusted: false,
+        reason: 'config changed concurrently while updating; not overwriting another process\'s write' };
+    }
+
     renameSync(tmp, configPath);
     after = readFileSync(configPath, 'utf8');
   } catch (e) {

@@ -133,6 +133,33 @@ const require = createRequire(import.meta.url);
     readdirSync(dir).filter(f => f.includes('compat-tmp')).length === 0);
 }
 
+// --- 8. a concurrent write is not clobbered ---------------------------------
+{
+  // Simulates another Claude process rewriting the config after our read but
+  // before we publish. Without the guard, our stale serialization wins and the
+  // function still reports success.
+  const p = makeConfig('concurrent', { numStartups: 1, projects: {} });
+  let fired = 0;
+  const r = trustWorkspace(WS, p, {
+    beforePublish: (cfg) => {
+      if (fired++) return;                      // only the first attempt races
+      const other = JSON.parse(readFileSync(cfg, 'utf8'));
+      other.numStartups = 99;                   // the concurrent update
+      other.projects['C:/other/added-by-someone-else'] = { hasTrustDialogAccepted: true };
+      writeFileSync(cfg, JSON.stringify(other, null, 2) + '\n');
+    },
+  });
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('concurrent write survives', after.numStartups === 99, `numStartups=${after.numStartups}`);
+  check('the other project entry survives',
+    !!after.projects['C:/other/added-by-someone-else']);
+  // The retry rebuilds on the newer contents, so the trust flag should also land.
+  check('our change still applied after retry', r.trusted === true && after.projects[WS]?.hasTrustDialogAccepted === true,
+    r.trusted ? '' : r.reason ?? '');
+  check('no stray temp file after the race',
+    readdirSync(dirname(p)).filter(f => f.includes('compat-tmp')).length === 0);
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed === 0 ? '\nall trust-workspace checks passed (real ~/.claude.json never touched)' : `\n${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);
