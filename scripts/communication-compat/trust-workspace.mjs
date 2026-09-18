@@ -24,7 +24,7 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
   // `beforePublish` exists so verify-trust-workspace.mjs can simulate another
   // Claude process writing the config mid-sequence. Nothing in normal operation
   // passes it.
-  const { beforePublish, attempt = 1 } = options;
+  const { beforePublish, afterPublish, attempt = 1 } = options;
   if (!existsSync(configPath)) return { trusted: false, reason: `no config at ${configPath}` };
   if (lstatSync(configPath).isSymbolicLink()) {
     return { trusted: false, reason: 'refusing to rewrite a symlinked ~/.claude.json' };
@@ -96,6 +96,9 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
     }
 
     renameSync(tmp, configPath);
+    // Test-only: lets a control race the interval between publishing and
+    // reading back. beforePublish fires earlier and cannot reach this window.
+    if (afterPublish) afterPublish(configPath);
     after = readFileSync(configPath, 'utf8');
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best effort */ }
@@ -105,12 +108,24 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
     return { trusted: false, reason: `filesystem error while updating config: ${e.message}`,
       backup: existsSync(backup) ? backup : undefined };
   }
+  // Restore ONLY while the live file still holds exactly what we published. If it
+  // does not, someone wrote after our rename, and putting the backup back would
+  // discard their newer config.
+  const restoreIfStillOurs = (reason) => {
+    let live = null;
+    try { live = readFileSync(configPath, 'utf8'); } catch { /* treat as unreadable below */ }
+    if (live === intended) {
+      try { copyFileSync(backup, configPath); } catch { /* best effort */ }
+      return { trusted: false, reason: reason + '; original config restored from backup', backup };
+    }
+    return { trusted: false,
+      reason: reason + '; config was changed by another process after publishing, so it was left alone',
+      backup };
+  };
+
   const ok = after === intended
     && JSON.parse(after).projects?.[workspace]?.hasTrustDialogAccepted === true;
-  if (!ok) {
-    copyFileSync(backup, configPath);
-    return { trusted: false, reason: 'verification failed; original config restored from backup', backup };
-  }
+  if (!ok) return restoreIfStillOurs('verification failed');
 
   // Confirm the only difference is the intended one: every other project entry
   // and every top-level key must survive untouched.
@@ -121,8 +136,7 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
   delete strippedBefore.projects[workspace];
   delete strippedNow.projects[workspace];
   if (JSON.stringify(strippedBefore) !== JSON.stringify(strippedNow)) {
-    copyFileSync(backup, configPath);
-    return { trusted: false, reason: 'unintended change detected; original config restored from backup', backup };
+    return restoreIfStillOurs('unintended change detected');
   }
 
   return { trusted: true, backup };

@@ -160,6 +160,31 @@ const require = createRequire(import.meta.url);
     readdirSync(dirname(p)).filter(f => f.includes('compat-tmp')).length === 0);
 }
 
+// --- 9. a write landing AFTER the rename is not restored over ---------------
+{
+  // beforePublish cannot reach this window: it fires before the pre-rename
+  // check. This races the interval between publishing and reading back, where
+  // the old code would copy the backup over the newer config.
+  const p = makeConfig('post-rename', { numStartups: 1, projects: {} });
+  const r = trustWorkspace(WS, p, {
+    afterPublish: (cfg) => {
+      const o = JSON.parse(readFileSync(cfg, 'utf8'));
+      o.numStartups = 555;
+      o.projects['C:/other/written-after-rename'] = { hasTrustDialogAccepted: true };
+      writeFileSync(cfg, JSON.stringify(o, null, 2) + '\n');
+    },
+  });
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('post-rename write is not restored over', after.numStartups === 555,
+    'numStartups=' + after.numStartups);
+  check('project entry written after rename survives',
+    !!after.projects['C:/other/written-after-rename']);
+  check('reports failure rather than false success', r.trusted === false,
+    (r.reason || '').slice(0, 70));
+  check('reason names the concurrent change',
+    /changed by another process after publishing/.test(r.reason || ''), r.reason || '');
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed === 0 ? '\nall trust-workspace checks passed (real ~/.claude.json never touched)' : `\n${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);
