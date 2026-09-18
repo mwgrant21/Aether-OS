@@ -56,6 +56,11 @@ mkdirSync(runDir, { recursive: true });
 // The client's cwd during the probe. Kept separate from the run directory so
 // the transcript lands in a predictable project folder.
 const workspace = resolve(arg('workspace', join(runDir, 'workspace')));
+// Record whether WE created it. mkdirSync(recursive) succeeds either way, so
+// without this check a --workspace aimed at an existing directory would get its
+// folder-trust prompt permanently removed -- an arbitrary directory, not a
+// scratch one.
+const workspaceExisted = existsSync(workspace);
 mkdirSync(workspace, { recursive: true });
 
 const nodePath = process.execPath;
@@ -101,7 +106,9 @@ writeFileSync(join(runDir, 'session.json'), JSON.stringify({
 // it before it ever reaches the MCP server -- which looks exactly like a harness
 // failure. Pre-accept it for this scratch directory only; see trust-workspace.mjs
 // for the backup/verify discipline around writing the operator's config.
-const trust = trustWorkspace(workspace);
+const trust = workspaceExisted
+  ? { trusted: false, reason: 'workspace already existed; pre-trusting is limited to directories this run creates' }
+  : trustWorkspace(workspace);
 if (!trust.trusted) {
   console.error(`WARNING: could not pre-accept the trust dialog (${trust.reason}).`);
   console.error('The probe will stop on a trust screen; accept it in the console window.');

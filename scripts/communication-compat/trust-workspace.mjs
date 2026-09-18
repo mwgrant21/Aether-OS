@@ -26,7 +26,9 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
     return { trusted: false, reason: 'refusing to rewrite a symlinked ~/.claude.json' };
   }
 
-  const original = readFileSync(configPath, 'utf8');
+  let original;
+  try { original = readFileSync(configPath, 'utf8'); }
+  catch (e) { return { trusted: false, reason: `config is not readable: ${e.message}` }; }
   let config;
   try { config = JSON.parse(original); }
   catch (e) { return { trusted: false, reason: `config is not parseable JSON: ${e.message}` }; }
@@ -45,14 +47,27 @@ export function trustWorkspace(workspace, configPath = join(homedir(), '.claude.
 
   const intended = JSON.stringify(config, null, 2) + '\n';
   const backup = `${configPath}.compat-backup-${Date.now()}`;
-  copyFileSync(configPath, backup);
-
   const tmp = join(dirname(configPath), `.claude.json.compat-tmp-${process.pid}`);
-  writeFileSync(tmp, intended);
-  renameSync(tmp, configPath);
 
-  // Verify by reading back, not by trusting the write.
-  const after = readFileSync(configPath, 'utf8');
+  // Every step below can fail for reasons that have nothing to do with us: an
+  // unwritable directory, a full disk, or Windows briefly locking the
+  // destination during rename. None of those should abort the caller -- it has
+  // a documented fallback (warn, and let the operator answer the trust screen),
+  // and an exception would skip it after the run directory is already built.
+  let after;
+  try {
+    copyFileSync(configPath, backup);
+    writeFileSync(tmp, intended);
+    renameSync(tmp, configPath);
+    after = readFileSync(configPath, 'utf8');
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best effort */ }
+    // If the rename already landed, the config may be mid-change; put the
+    // backup back rather than leaving it in an unknown state.
+    try { if (existsSync(backup)) copyFileSync(backup, configPath); } catch { /* best effort */ }
+    return { trusted: false, reason: `filesystem error while updating config: ${e.message}`,
+      backup: existsSync(backup) ? backup : undefined };
+  }
   const ok = after === intended
     && JSON.parse(after).projects?.[workspace]?.hasTrustDialogAccepted === true;
   if (!ok) {

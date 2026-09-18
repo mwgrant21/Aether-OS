@@ -117,6 +117,22 @@ const require = createRequire(import.meta.url);
   check('missing config not created', !existsSync(p));
 }
 
+// --- 7. a filesystem failure becomes a reason, never a throw ----------------
+{
+  // configPath exists and is not a symlink, but is a DIRECTORY: readFileSync
+  // throws EISDIR. Before the fix this propagated out of trustWorkspace and
+  // aborted prepare-run after the run directory was already built, skipping the
+  // documented "warn and let the operator use the trust screen" fallback.
+  const dir = join(root, 'isdir');
+  require('node:fs').mkdirSync(join(dir, '.claude.json'), { recursive: true });
+  let threw = false;
+  let r;
+  try { r = trustWorkspace(WS, join(dir, '.claude.json')); } catch { threw = true; }
+  check('filesystem error returns a reason instead of throwing', !threw && r?.trusted === false, threw ? 'threw' : r?.reason ?? '');
+  check('no stray temp file left behind',
+    readdirSync(dir).filter(f => f.includes('compat-tmp')).length === 0);
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed === 0 ? '\nall trust-workspace checks passed (real ~/.claude.json never touched)' : `\n${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);
