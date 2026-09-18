@@ -63,6 +63,8 @@ It does **not** prove:
 | --- | --- |
 | `fake-bridge-server.mjs` | Synthetic stdio MCP server exposing the three bridge tool names. Writes evidence into `AETHER_COMPAT_RUN_DIR`. |
 | `prepare-run.mjs` | Creates a **fresh** run directory, resolves the client the way production does, and writes `mcp.json` + `session.json`. Refuses to reuse a directory. |
+| `trust-workspace.mjs` | Pre-accepts the folder-trust dialog for a scratch workspace this run created, so the probe does not park on a trust screen. Backs up `~/.claude.json`, changes exactly one key, publishes via tmp+rename, verifies, and restores only if the live file is still the one it published. Keys the entry with **forward slashes**, the spelling the client uses — a backslashed key writes an entry the client never reads. |
+| `verify-trust-workspace.mjs` | Twelve fixture-only controls for the above; never touches the real `~/.claude.json`. Covers the happy path, idempotency, symlink/unparseable/missing/EISDIR refusals, a pre-publish race, a post-rename race, path-spelling normalisation, and the quiescence gate. |
 | `run-probe.ps1` | The one model-bearing step. Launches an interactive session with production's argument shape. |
 | `audit.mjs` | Read-only auditor. Per-property verdicts; missing/truncated/mismatched evidence is a failure, never a skip. |
 | `verify-auditor.mjs` | Negative control: damages a copy of a known-good run sixteen ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
@@ -127,7 +129,17 @@ should `BRIDGE_CLAUDE_VERSION` change — together with the fixture version in
 
 ## Status
 
-The harness is recovered, generalized and self-verified. The **2.1.274
-behavioural probe has not been run** — `BRIDGE_CLAUDE_VERSION` is unchanged at
-`2.1.270`, and the bridge correctly refuses to launch against the installed
-2.1.274 client until a passing probe says otherwise.
+**Current pin: `2.1.274`.** Raised from `2.1.270` on 2026-09-17 after this
+harness probed it. Full evidence, including what the probe does *not* establish:
+[`docs/superpowers/plans/2026-09-16-bridge-claude-2.1.274-probe-results.md`](../../docs/superpowers/plans/2026-09-16-bridge-claude-2.1.274-probe-results.md).
+
+Two valid sessions backed that bump — one in `manual` mode (isolating
+`--allowedTools` as the only possible approver) and one in production's argument
+shape — both with tool annotations matching `BRIDGE_TOOLS`. Two earlier sessions
+were invalidated by an annotation mismatch and are recorded in that document
+rather than deleted.
+
+This section states the pin because a stale status here is worse than none: an
+operator reading "not yet probed" next to a pin that has already moved will
+either repeat the work or mistrust the evidence. **Update it in the same commit
+that changes `BRIDGE_CLAUDE_VERSION`.**

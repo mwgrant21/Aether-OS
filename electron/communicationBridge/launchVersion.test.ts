@@ -20,20 +20,20 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('native version gate through launch preflight', () => {
   it.each([
-    ['2.1.270 (Claude Code)', true],
-    [' \t2.1.270 (Claude Code)\r\n', true],
-    ['2.1.270\t(Claude Code)', true],
-    ['2.1.270\n(Claude Code)', true],
-    ['2.1.270\u00a0(Claude Code)', true],
-    ['2.1.270\u2028(Claude Code)', true],
-    ['2.1.270', false],
-    ['2.1.270 \t\r\n', false],
-    ['v2.1.270 (Claude Code)', false],
-    ['2.1.2700 (Claude Code)', false],
-    ['2.1.270-beta (Claude Code)', false],
-    ['2x1x270 (Claude Code)', false],
-    ['2.1.269 (Claude Code)', false],
-    ['2.1.270\u200b(Claude Code)', false],
+    ['2.1.274 (Claude Code)', true],
+    [' \t2.1.274 (Claude Code)\r\n', true],
+    ['2.1.274\t(Claude Code)', true],
+    ['2.1.274\n(Claude Code)', true],
+    ['2.1.274\u00a0(Claude Code)', true],
+    ['2.1.274\u2028(Claude Code)', true],
+    ['2.1.274', false],
+    ['2.1.274 \t\r\n', false],
+    ['v2.1.274 (Claude Code)', false],
+    ['2.1.2740 (Claude Code)', false],
+    ['2.1.274-beta (Claude Code)', false],
+    ['2x1x274 (Claude Code)', false],
+    ['2.1.270 (Claude Code)', false],
+    ['2.1.274\u200b(Claude Code)', false],
   ])('checks trimmed native output %j (accepted=%s)', async (stdout, accepted) => {
     commands.run.mockResolvedValueOnce({ stdout: '' }) // No managed registry policy.
       .mockResolvedValueOnce({ stdout: 'C:/fixture/claude.exe\r\n' })

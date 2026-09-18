@@ -66,7 +66,7 @@ class ConnectedClientFixture {
   }
   static void Main(string[] args) {
     if (args.Length == 1 && args[0] == "--version") {
-      Console.WriteLine("2.1.270 (Aether harmless native fixture)"); return;
+      Console.WriteLine("2.1.274 (Aether harmless native fixture)"); return;
     }
     var root = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
     var h = GetStdHandle(-11); uint mode;
