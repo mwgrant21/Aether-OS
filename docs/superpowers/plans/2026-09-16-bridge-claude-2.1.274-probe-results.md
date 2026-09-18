@@ -6,7 +6,7 @@
 **Harness:** `scripts/communication-compat/` (committed, unlike the 2.1.270 probe's)
 **Supersedes the gate in:** [Task 9A: Claude 2.1.270 compatibility re-probe](2026-09-13-cross-check-task9a-results.md)
 
-Four real interactive Claude sessions against the synthetic bridge server. **Zero real
+Six real interactive Claude sessions against the synthetic bridge server. **Zero real
 Codex consultations.** Exactly three model-issued fake tool calls per session: ask, one
 get, one cancel.
 
@@ -31,12 +31,22 @@ Two things independently affect how a client presents and approves these tools:
 Only a run with **correct annotations** is evidence at all, and both argument shapes
 must be covered. That takes two valid runs:
 
-| Run | Argument shape | Annotations | Status |
-| --- | --- | --- | --- |
-| 1 | production (no mode) | wrong | **invalidated** |
-| 2 | `manual` | wrong | **invalidated** |
-| 3 | `manual` | correct | **valid** — isolates `--allowedTools` |
-| 4 | production (no mode) | correct | **valid** — production's real launch |
+A third dimension turned up during review: the harness's tool **descriptions and
+inputSchemas** were simplified paraphrases of production's, missing `pattern`,
+`minLength`, the optional lookup keys and `wait_ms`. Any of those can change
+validation, presentation or deferred loading, so runs using them probed a
+surface production never exposes — the same failure as the annotations, one
+level deeper. The harness now serves `bridge-tools.json`, generated from
+`BRIDGE_TOOLS`, with no paraphrase left to drift.
+
+| Run | Argument shape | Annotations | Tool metadata | Status |
+| --- | --- | --- | --- | --- |
+| 1 | production (no mode) | wrong | simplified | **invalidated** |
+| 2 | `manual` | wrong | simplified | **invalidated** |
+| 3 | `manual` | correct | simplified | **superseded** |
+| 4 | production (no mode) | correct | simplified | **superseded** |
+| 5 | `manual` | correct | **production** | **valid** — isolates `--allowedTools` |
+| 6 | production (no mode) | correct | **production** | **valid** — production's real launch |
 
 Runs 1 and 2 are kept here rather than deleted, because the correction is part of the
 record. Their numbers are not evidence for anything.
@@ -50,32 +60,37 @@ fails the build if the harness drifts from `BRIDGE_TOOLS` again.
 
 All seven properties **Passed** in both.
 
-| Measurement | Run 3 (isolating) | Run 4 (production shape) |
+| Measurement | Run 5 (isolating) | Run 6 (production shape) |
 | --- | --- | --- |
 | annotations | `readOnlyHint: false`, `openWorldHint: true` | same |
+| tool metadata | generated from `BRIDGE_TOOLS` | same |
 | requested permission mode | `manual` | *(none — production)* |
 | effective mode in transcript | `default` | `auto` |
-| permission decisions | 2 / 1 / 2 ms, no prompt | 1 / 1 / 1 ms |
+| permission decisions | 2 / 1 / 1 ms, no prompt | 2 / 0 / 0 ms |
 | tool-search calls by the model | 0 | 0 |
 | non-bridge tools called | none | none |
-| quiet wait, server-measured | 60,048.203 ms | 60,068.125 ms |
+| quiet wait, server-measured | 60,060 ms | 60,068 ms |
 | aborted / intervening model responses | no / 0 | no / 0 |
 | serialized payload | 32,741 B (limit 32,768), exact match | same |
 | receipt markers reported | 3/3 | 3/3 |
 
-Run 3 is what shows `--allowedTools` still preapproves: with `manual` in force, it is the
-only possible approval source, and the tools were declared in the shape most likely to
-prompt (not read-only, open-world). No prompt appeared and dispatches stayed at 2/1/2 ms.
+Run 5 is what shows `--allowedTools` still preapproves: with `manual` in force, it is the
+only possible approval source, and the tools were declared exactly as production declares
+them — not read-only, open-world, with the real schemas. No prompt appeared.
 
-Run 4 is what shows production's actual launch works unchanged.
+Run 6 is what shows production's actual launch works unchanged.
+
+Runs 3 and 4 are superseded rather than invalidated: their annotations were right and
+their results were consistent with 5 and 6, but their tool metadata was still a
+paraphrase, so they are not the evidence this bump rests on.
 
 Usage, summed over unique response ids — a call budget, not a context budget, and not a
 dollar estimate:
 
 | | input | cache creation | cache read | output |
 | --- | --- | --- | --- | --- |
-| Run 3 | 8 | 79,839 | 313,292 | 577 |
-| Run 4 | 8 | 109,157 | 279,904 | 462 |
+| Run 5 | 8 | 108,582 | 284,562 | 829 |
+| Run 6 | 8 | 110,099 | 289,197 | 849 |
 
 ## Finding: 2.1.274 defers the tool roster
 
