@@ -185,6 +185,66 @@ const require = createRequire(import.meta.url);
     /changed by another process after publishing/.test(r.reason || ''), r.reason || '');
 }
 
+// --- 10. a Windows-spelled path is keyed the way the client keys it ----------
+{
+  // prepare-run hands us path.resolve() output, which is backslashed on Windows,
+  // while the client keys `projects` with forward slashes. Writing the raw
+  // spelling set the flag on an entry the client never reads, so the probe still
+  // stopped on the trust screen while this reported success.
+  const p = makeConfig('backslash-key', { numStartups: 1, projects: {} });
+  const windowsPath = 'C:\\scratch\\run-2026\\workspace';
+  const r = trustWorkspace(windowsPath, p);
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('trusts under the forward-slash key',
+    after.projects['C:/scratch/run-2026/workspace']?.hasTrustDialogAccepted === true);
+  check('does not create a backslash-spelled entry',
+    !Object.keys(after.projects).some(k => k.includes('\\')), Object.keys(after.projects).join(' | '));
+  check('exactly one project entry was added', Object.keys(after.projects).length === 1);
+  check('reports the key it wrote', r.projectKey === 'C:/scratch/run-2026/workspace', r.projectKey ?? '');
+  // The idempotency check must read the same key, or a second run re-adds it.
+  const again = trustWorkspace(windowsPath, p);
+  check('already-trusted recognised across spellings', again.alreadyTrusted === true);
+}
+
+// --- 11. an actively-rewritten config is not published into -----------------
+{
+  // The gate in front of the rename: if the file moves while we are watching
+  // it, a client is mid-rewrite and we abandon the publish rather than race it.
+  // This does NOT close the rename window itself -- nothing here can, since
+  // rename is not a compare-and-swap -- it reduces how often we enter it.
+  //
+  // Both attempts race, so the retry is exhausted and the refusal is final.
+  const p = makeConfig('busy-config', { numStartups: 1, projects: {} });
+  const r = trustWorkspace(WS, p, {
+    quiesceMs: 5,
+    duringQuiesce: (cfg) => {
+      const o = JSON.parse(readFileSync(cfg, 'utf8'));
+      o.numStartups += 1;
+      writeFileSync(cfg, JSON.stringify(o, null, 2) + '\n');
+    },
+  });
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('refuses to publish into an active write', r.trusted === false, (r.reason || '').slice(0, 60));
+  check('reason names the active write',
+    /being rewritten by another process/.test(r.reason || ''), r.reason || '');
+  check('the concurrent writer\'s change survives', after.numStartups > 1, `numStartups=${after.numStartups}`);
+  check('no trust entry was written', !after.projects[WS]);
+  check('no stray temp file after refusing',
+    readdirSync(dirname(p)).filter(f => f.includes('compat-tmp')).length === 0);
+  check('no stray backup after refusing',
+    readdirSync(dirname(p)).filter(f => f.includes('compat-backup')).length === 0);
+}
+
+// --- 12. a quiet config still publishes -------------------------------------
+{
+  // Guards the gate against the obvious failure mode: refusing everything.
+  const p = makeConfig('quiet-config', { numStartups: 1, projects: {} });
+  const r = trustWorkspace(WS, p, { quiesceMs: 5 });
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('quiet config still gets the flag',
+    r.trusted === true && after.projects[WS]?.hasTrustDialogAccepted === true, r.reason ?? '');
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed === 0 ? '\nall trust-workspace checks passed (real ~/.claude.json never touched)' : `\n${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);

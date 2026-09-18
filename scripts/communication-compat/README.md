@@ -63,6 +63,8 @@ It does **not** prove:
 | --- | --- |
 | `fake-bridge-server.mjs` | Synthetic stdio MCP server exposing the three bridge tool names. Writes evidence into `AETHER_COMPAT_RUN_DIR`. |
 | `prepare-run.mjs` | Creates a **fresh** run directory, resolves the client the way production does, and writes `mcp.json` + `session.json`. Refuses to reuse a directory. |
+| `trust-workspace.mjs` | Pre-accepts the folder-trust dialog for a scratch workspace this run created, so the probe does not park on a trust screen. Backs up `~/.claude.json`, changes exactly one key, publishes via tmp+rename, verifies, and restores only if the live file is still the one it published. Keys the entry with **forward slashes**, the spelling the client uses — a backslashed key writes an entry the client never reads. |
+| `verify-trust-workspace.mjs` | Twelve fixture-only controls for the above; never touches the real `~/.claude.json`. Covers the happy path, idempotency, symlink/unparseable/missing/EISDIR refusals, a pre-publish race, a post-rename race, path-spelling normalisation, and the quiescence gate. |
 | `run-probe.ps1` | The one model-bearing step. Launches an interactive session with production's argument shape. |
 | `audit.mjs` | Read-only auditor. Per-property verdicts; missing/truncated/mismatched evidence is a failure, never a skip. |
 | `verify-auditor.mjs` | Negative control: damages a copy of a known-good run sixteen ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
