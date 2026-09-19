@@ -69,8 +69,17 @@ src/
                  per-tick pure state transition, incl. alarmLevel derivation),
                  useRealAgentsSync.ts / useAlertSounds.ts (IPC-reactive hooks,
                  mounted bare as wrapper components in App.tsx), persistence.ts.
-  styles/        tokens.ts — the ColorPalette interface + `colors` (dark) and
-                 `colorsLight` (light) palettes, `fonts`, `radii`, `space`.
+  styles/        tokens.ts — the ColorPalette interface + the `colors` palette,
+                 `fonts`, `radii`, `space`, and `motion` (duration + easing).
+                 There is ONE palette: light mode was removed 2026-09-18 (it
+                 could not work — global.css hardcodes the dark values — and was
+                 unused). `useColors()` is retained as a hook so a future palette
+                 switch has a home without touching its 69 call sites.
+                 `motion.easing.standard`/`.emphasis` are intentionally the
+                 browser defaults: they are the slots for real curves, and the
+                 codebase has no cubic-bezier yet. `motion.easing.continuous`
+                 (linear) is NOT a taste slot — continuous rotations must stay
+                 linear or they surge and stall each cycle.
                  global.css for keyframes (`blink`, etc.) reused across components.
 electron/        Electron main process (Node). IPC handlers, pty, file/OS access.
   main.ts               app entry: window, IPC wiring, per-tick pushes to renderer.
