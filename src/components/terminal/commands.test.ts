@@ -21,6 +21,23 @@ describe('runCommand', () => {
     expect(result.patch).toBeUndefined();
   });
 
+  it('thememode is gone: light mode was removed, so it is an unknown command', () => {
+    // Removed 2026-09-18. It could never work - global.css hardcoded the dark
+    // palette, so the page background never followed the toggle - and it was
+    // unused. Guards against the command being reintroduced without the CSS
+    // half that would make it real.
+    const result = runCommand(initialState, 'thememode light');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines[1].t).toContain('unknown command: thememode');
+    expect(result.patch).toBeUndefined();
+  });
+
+  it('help no longer documents thememode', () => {
+    const result = runCommand(initialState, 'help');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    expect(result.lines.some((l) => l.t.includes('thememode'))).toBe(false);
+  });
+
   it('agents lists real agent dispatches, not a simulated roster', () => {
     const dispatch: RealAgentDispatch = {
       toolUseId: 'tu_1',

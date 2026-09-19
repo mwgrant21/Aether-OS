@@ -166,7 +166,6 @@ export interface Cfg {
   renderer: RendererMode;
   pulseMode: 'live' | 'ambient';
   theme: ThemeName;
-  themeMode: 'dark' | 'light';
   glow: number;
   glowFx: boolean;
   showReactorLegend: boolean;
