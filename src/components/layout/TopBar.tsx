@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { fonts, type ColorPalette } from '../../styles/tokens';
+import { fonts, motion, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
 import { resolveOperatorName } from '../../utils/format';
@@ -231,7 +231,7 @@ const opModeGroupStyle: CSSProperties = {
   border: '1px solid rgba(80,190,220,.25)',
   background: 'rgba(10,32,43,.6)',
 };
-function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): AppRegionStyle {
+export function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): AppRegionStyle {
   return {
     cursor: 'pointer',
     padding: '7px 11px',
@@ -239,7 +239,12 @@ function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): AppRegionS
     font: `600 10px/1 ${fonts.ui}`,
     letterSpacing: 1.5,
     whiteSpace: 'nowrap',
-    transition: 'all .15s',
+    // Explicit properties, not `all`: these four are what actually change with
+    // `on`, and `all` would also animate layout properties if any were added.
+    transition: [`color ${motion.duration.fast} ${motion.easing.standard}`,
+      `background ${motion.duration.fast} ${motion.easing.standard}`,
+      `box-shadow ${motion.duration.fast} ${motion.easing.standard}`,
+      `border-color ${motion.duration.fast} ${motion.easing.standard}`].join(', '),
     color: on ? (key === 'AUTO' ? '#1a1204' : '#04202b') : colors.textMuted,
     background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : colors.panelInset,
     boxShadow: on ? (key === 'AUTO' ? '0 0 12px rgba(245,198,107,.45)' : '0 0 12px rgba(95,220,255,.4)') : undefined,

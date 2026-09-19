@@ -69,3 +69,30 @@ export const space = {
   lg: 16,
   xl: 24,
 } as const;
+
+// Motion scale. Mirrors `space` above: a shared vocabulary so durations and
+// curves stop being retyped per component. Values here are EXACTLY what the
+// codebase already used when this was introduced (2026-09-18), so adopting a
+// token changes nothing visually - it only moves the decision to one place.
+//
+// `standard` and `emphasis` are deliberately the browser defaults. The codebase
+// contains zero cubic-bezier curves, which is the main reason transitions feel
+// flat rather than fluid; those two slots are where a designer's curves go, and
+// changing them there re-times every adopting call site at once.
+//
+// `continuous` is NOT a taste slot. Uninterrupted rotation and marquee-style
+// flow (spin, conduitFlow, dashFlow, scan) must stay linear - easing them makes
+// a constantly-rotating element visibly surge and stall each cycle.
+export const motion = {
+  duration: {
+    fast: '.15s',   // control state change (e.g. TopBar mode pills)
+    base: '.3s',
+    slow: '.5s',    // disclosure: height, stroke-dasharray
+    pulse: '2.4s',  // ambient breath; matches --pulse-dur's default
+  },
+  easing: {
+    standard: 'ease',
+    emphasis: 'ease-in-out',
+    continuous: 'linear',
+  },
+} as const;
