@@ -6,11 +6,13 @@ import type { RecapPayload } from '../../state/types';
 
 afterEach(cleanup);
 
-// RecapBanner calls useColors(), which reads state.cfg.themeMode from the
-// store context (see useColors.ts) -- every other card component in this
-// codebase (PostToolFlagCard.test.tsx, PermissionRequestCard.test.tsx) wraps
-// its render in AetherStoreProvider for the same reason; a bare render()
-// throws "useAetherStore must be used within AetherStoreProvider".
+// The AetherStoreProvider wrapper is VESTIGIAL for this component as of
+// 2026-09-18. RecapBanner's only store access was useColors(), which read
+// state.cfg.themeMode; light mode was removed and useColors now returns a
+// constant palette, so a bare render() would no longer throw. The wrapper is
+// kept because it costs nothing and matches every other card test here
+// (PostToolFlagCard.test.tsx, PermissionRequestCard.test.tsx) -- if RecapBanner
+// ever reaches the store again, the test does not need revisiting.
 function renderBanner(recap: RecapPayload | null, onDismiss: () => void) {
   return render(
     <AetherStoreProvider>
