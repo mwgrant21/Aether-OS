@@ -68,7 +68,7 @@ It does **not** prove:
 | `run-probe.ps1` | The one model-bearing step. Launches an interactive session with production's argument shape. |
 | `audit.mjs` | Read-only auditor. Per-property verdicts; missing/truncated/mismatched evidence is a failure, never a skip. |
 | `verify-auditor.mjs` | Negative control: damages a copy of a known-good run sixteen ways and asserts the auditor fails on the right property each time. Refuses a `--scratch` path that overlaps the reference run, and deletes only the unique child it created. |
-| `check-server.mjs` | Protocol smoke test for the synthetic server. No model session. |
+| `check-server.mjs` | Protocol smoke test for the synthetic server, three sessions (one server each, since the call budget is per process). No model session. Covers the handshake and tool roster, lookup by `exchange_id` **and** by `request_key` (the form production's schemas and instructions advertise), and production's exactly-one-lookup-key rule. |
 
 Run directories are created **outside the repository** (under
 `%LOCALAPPDATA%\aether-communication-compat\runs\<timestamp>` by default). They

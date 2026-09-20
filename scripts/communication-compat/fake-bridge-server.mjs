@@ -37,8 +37,25 @@ const log = (event, details = {}) =>
   appendFileSync(join(RUN_DIR, 'events.jsonl'), JSON.stringify({ at: new Date().toISOString(), event, ...details }) + '\n');
 
 const exchangeId = 'compat-' + randomUUID();
+let requestKey = null;
 let started = false;
 let calls = 0;
+
+// Production resolves get/cancel by EXACTLY ONE of exchange_id or request_key
+// (exchangeController.ts lookup()), and its served schemas and server
+// instructions advertise both forms. This server serves those same schemas
+// verbatim, so it has to honour both: a model that follows the instructions
+// and retrieves by its stable request_key must not be told UNKNOWN_EXCHANGE.
+function lookupError(input) {
+  const args = input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const hasId = 'exchange_id' in args;
+  const hasKey = 'request_key' in args;
+  if (hasId === hasKey) return 'INVALID_INPUT';
+  const matches = hasId
+    ? args.exchange_id === exchangeId
+    : requestKey !== null && args.request_key === requestKey;
+  return started && matches ? null : 'UNKNOWN_EXCHANGE';
+}
 
 // Production's tool metadata, verbatim: names, descriptions, inputSchemas,
 // annotations and _meta, generated from BRIDGE_TOOLS in
@@ -82,15 +99,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
 
   if (name === 'ask_codex') {
     started = true;
+    const key = req.params.arguments?.request_key;
+    requestKey = typeof key === 'string' ? key : null;
     const result = envelope({ exchange_id: exchangeId, state: 'accepted',
       guidance: 'Call get_codex_exchange now, then cancel_codex_exchange once. No other tools.' });
     log('call_end', { name, elapsed_ms: performance.now() - startedAt });
     return result;
   }
 
-  if (!started || req.params.arguments?.exchange_id !== exchangeId) {
-    return { ...envelope({ code: 'UNKNOWN_EXCHANGE' }), isError: true };
-  }
+  const lookupFailure = lookupError(req.params.arguments ?? {});
+  if (lookupFailure) return { ...envelope({ code: lookupFailure }), isError: true };
 
   if (name === 'get_codex_exchange') {
     let aborted = false;
