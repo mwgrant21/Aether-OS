@@ -340,6 +340,23 @@ const require = createRequire(import.meta.url);
     r.trusted === true && after.projects[WS]?.hasTrustDialogAccepted === true, r.reason ?? '');
 }
 
+// --- 17. a failing initial lstat becomes a reason, never a throw -------------
+{
+  // The race Codex named (the file replaced between existsSync and lstatSync)
+  // cannot be staged deterministically from a test. A path containing a NUL
+  // byte reaches the same branch: lstatSync rejects it with a non-ENOENT error
+  // before touching the filesystem, so this proves the catch is live and
+  // distinguishes "missing" from "could not be inspected". Against the old
+  // existsSync-first code this reported "no config", so the reason check
+  // discriminates.
+  const p = join(root, 'nul\0byte', '.claude.json');
+  let r;
+  let threw = false;
+  try { r = trustWorkspace(WS, p); } catch { threw = true; }
+  check('lstat failure returns a reason instead of throwing', !threw && r?.trusted === false, threw ? 'threw' : r?.reason ?? '');
+  check('reason says the config could not be inspected', /could not be inspected/.test(r?.reason || ''), r?.reason || '');
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed === 0 ? '\nall trust-workspace checks passed (real ~/.claude.json never touched)' : `\n${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);

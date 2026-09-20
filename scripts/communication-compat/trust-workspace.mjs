@@ -61,8 +61,17 @@ export function trustWorkspace(workspaceArg, configPath = join(homedir(), '.clau
   // passes it.
   const { beforePublish, afterPublish, duringQuiesce, quiesceMs = QUIESCE_MS, attempt = 1 } = options;
   const workspace = projectKeyFor(workspaceArg);
-  if (!existsSync(configPath)) return { trusted: false, reason: `no config at ${configPath}` };
-  if (lstatSync(configPath).isSymbolicLink()) {
+  // One guarded lstat rather than existsSync followed by lstatSync: the pair
+  // was a check-then-act window (another process replacing the file in between
+  // made the second call throw outside every handler) and the second call was
+  // the only filesystem operation in this function not wrapped.
+  let stat;
+  try { stat = lstatSync(configPath); }
+  catch (e) {
+    if (e.code === 'ENOENT') return { trusted: false, reason: `no config at ${configPath}` };
+    return { trusted: false, reason: `config could not be inspected: ${e.message}` };
+  }
+  if (stat.isSymbolicLink()) {
     return { trusted: false, reason: 'refusing to rewrite a symlinked ~/.claude.json' };
   }
 
