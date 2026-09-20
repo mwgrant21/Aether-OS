@@ -245,6 +245,101 @@ const require = createRequire(import.meta.url);
     r.trusted === true && after.projects[WS]?.hasTrustDialogAccepted === true, r.reason ?? '');
 }
 
+// --- 13. the error path does not restore over a post-rename write -----------
+{
+  // Control 9 covers the success path: after the rename, a concurrent write is
+  // detected at read-back and left alone. The catch block had no such guard --
+  // if anything threw after the rename (a transient lock on the read-back, for
+  // instance) it copied the backup over whatever was live, including a write
+  // that landed after our publish. Throwing from afterPublish reaches that
+  // catch with exactly that state on disk.
+  const p = makeConfig('error-after-rename', { numStartups: 1, projects: {} });
+  let r;
+  let threw = false;
+  try {
+    r = trustWorkspace(WS, p, {
+      afterPublish: (cfg) => {
+        const o = JSON.parse(readFileSync(cfg, 'utf8'));
+        o.numStartups = 777;
+        o.projects['C:/other/written-before-the-error'] = { hasTrustDialogAccepted: true };
+        writeFileSync(cfg, JSON.stringify(o, null, 2) + '\n');
+        throw new Error('simulated transient lock on read-back');
+      },
+    });
+  } catch { threw = true; }
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('error after rename still returns a reason, not a throw', !threw && r?.trusted === false, threw ? 'threw' : r?.reason ?? '');
+  check('post-rename write survives the error path', after.numStartups === 777, `numStartups=${after.numStartups}`);
+  check('project entry written before the error survives',
+    !!after.projects['C:/other/written-before-the-error']);
+  check('reason names the filesystem error', /filesystem error/.test(r?.reason || ''), r?.reason || '');
+  check('no stray temp file after the error',
+    readdirSync(dirname(p)).filter(f => f.includes('compat-tmp')).length === 0);
+}
+
+// --- 14. the error path still restores when the file is verifiably ours ------
+{
+  // Guards the fix above against over-correcting into "never restore". With no
+  // concurrent write, the live file after the rename is exactly what we
+  // published, so an error there should put the original back -- failure
+  // means no change.
+  const p = makeConfig('error-no-writer', { numStartups: 1, projects: {} });
+  const r = trustWorkspace(WS, p, {
+    afterPublish: () => { throw new Error('simulated transient lock on read-back'); },
+  });
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('error with no concurrent writer reports failure', r.trusted === false, r.reason ?? '');
+  check('original restored when the live file was ours', after.numStartups === 1 && !after.projects[WS],
+    `numStartups=${after.numStartups} ws=${JSON.stringify(after.projects[WS])}`);
+  check('reason says the backup was restored', /restored from backup/.test(r.reason || ''), r.reason || '');
+}
+
+// --- 15. a config with the wrong shape is refused before anything is touched -
+{
+  // Valid JSON is not the same as a usable config. A null or primitive root
+  // throws on `config.projects`, a primitive `projects` throws on the indexed
+  // assignment -- both outside the filesystem-error handler, so prepare-run
+  // aborted instead of warning and falling back to the trust screen. An array
+  // root or array `projects` does not throw, but JSON.stringify drops the
+  // non-index property, so the publish fails verification and leaves a backup
+  // behind for nothing.
+  const dir = join(root, 'wrong-shape');
+  require('node:fs').mkdirSync(dir, { recursive: true });
+  const cases = [
+    ['null root', 'null'],
+    ['primitive root', '5'],
+    ['array root', '[]'],
+    ['primitive projects', '{ "projects": 5 }'],
+    ['array projects', '{ "projects": [] }'],
+  ];
+  for (const [label, text] of cases) {
+    // Each case gets a clean directory, so a file leaked by one case cannot
+    // fail (or mask) the next case's "nothing created" check.
+    for (const f of readdirSync(dir)) rmSync(join(dir, f), { force: true });
+    const p = join(dir, '.claude.json');
+    writeFileSync(p, text);
+    let r;
+    let threw = false;
+    try { r = trustWorkspace(WS, p); } catch { threw = true; }
+    check(`${label}: refused with a reason, not a throw`, !threw && r?.trusted === false, threw ? 'threw' : r?.reason ?? '');
+    check(`${label}: reason names the shape`, /not an object/i.test(r?.reason || ''), r?.reason || '');
+    check(`${label}: config left byte-identical`, readFileSync(p, 'utf8') === text);
+    check(`${label}: no backup or temp file created`,
+      readdirSync(dir).filter(f => f.includes('compat-')).length === 0, readdirSync(dir).join(' | '));
+  }
+}
+
+// --- 16. a null `projects` is still filled in, not refused ------------------
+{
+  // Guards the shape check against over-tightening: `projects: null` was
+  // already handled by `??=` and must keep working.
+  const p = makeConfig('null-projects', { numStartups: 1, projects: null });
+  const r = trustWorkspace(WS, p);
+  const after = JSON.parse(readFileSync(p, 'utf8'));
+  check('null projects is filled in and trusted',
+    r.trusted === true && after.projects[WS]?.hasTrustDialogAccepted === true, r.reason ?? '');
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(failed === 0 ? '\nall trust-workspace checks passed (real ~/.claude.json never touched)' : `\n${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -73,6 +73,21 @@ export function trustWorkspace(workspaceArg, configPath = join(homedir(), '.clau
   try { config = JSON.parse(original); }
   catch (e) { return { trusted: false, reason: `config is not parseable JSON: ${e.message}` }; }
 
+  // Valid JSON is not the same as a usable config. A null or primitive root
+  // throws on the property access below, a primitive `projects` throws on the
+  // indexed assignment, and an array in either position serialises the new
+  // entry away (JSON.stringify drops non-index properties) so the publish fails
+  // verification and leaves a backup for nothing. Refuse all of them here,
+  // before anything is backed up or written.
+  const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const shapeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
+  if (!isPlainObject(config)) {
+    return { trusted: false, reason: `config root is not an object (${shapeOf(config)}); refusing to rewrite it` };
+  }
+  if (config.projects != null && !isPlainObject(config.projects)) {
+    return { trusted: false, reason: `config "projects" is not an object (${shapeOf(config.projects)}); refusing to rewrite it` };
+  }
+
   config.projects ??= {};
   const existing = config.projects[workspace];
   if (existing?.hasTrustDialogAccepted === true) return { trusted: true, alreadyTrusted: true, projectKey: workspace };
@@ -163,11 +178,28 @@ export function trustWorkspace(workspaceArg, configPath = join(homedir(), '.clau
     after = readFileSync(configPath, 'utf8');
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best effort */ }
-    // If the rename already landed, the config may be mid-change; put the
-    // backup back rather than leaving it in an unknown state.
-    try { if (existsSync(backup)) copyFileSync(backup, configPath); } catch { /* best effort */ }
-    return { trusted: false, reason: `filesystem error while updating config: ${e.message}`,
-      backup: existsSync(backup) ? backup : undefined };
+    // rename is atomic, so the live file is never torn: it is `original` (the
+    // rename never landed), `intended` (it landed and nothing wrote after), or
+    // another process's newer write. Only the middle case is ours to undo. The
+    // previous unconditional restore discarded the third case -- a write that
+    // landed after our publish, exactly the one the success path already
+    // guards against below.
+    let live = null;
+    try { live = readFileSync(configPath, 'utf8'); } catch { /* unreadable: leave it alone */ }
+    const hasBackup = existsSync(backup);
+    let outcome;
+    if (live === null) {
+      outcome = 'config could not be re-read, so it was left alone';
+    } else if (live === original) {
+      outcome = 'config left untouched';
+    } else if (hasBackup && live === intended) {
+      try { copyFileSync(backup, configPath); outcome = 'original config restored from backup'; }
+      catch { outcome = 'restore from backup also failed'; }
+    } else {
+      outcome = 'config was changed by another process, so it was left alone';
+    }
+    return { trusted: false, reason: `filesystem error while updating config: ${e.message}; ${outcome}`,
+      backup: hasBackup ? backup : undefined };
   }
   // Restore ONLY while the live file still holds exactly what we published. If it
   // does not, someone wrote after our rename, and putting the backup back would
