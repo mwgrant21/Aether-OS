@@ -11,8 +11,11 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { appendFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 import { randomUUID } from 'node:crypto';
 
 const RUN_DIR = process.env.AETHER_COMPAT_RUN_DIR;
@@ -34,29 +37,43 @@ const log = (event, details = {}) =>
   appendFileSync(join(RUN_DIR, 'events.jsonl'), JSON.stringify({ at: new Date().toISOString(), event, ...details }) + '\n');
 
 const exchangeId = 'compat-' + randomUUID();
+let requestKey = null;
 let started = false;
 let calls = 0;
 
-const tools = [
-  { name: 'ask_codex',
-    description: 'Synthetic compatibility check. No Codex and no external action. Start once, then get the synthetic answer, then cancel for cleanup. Required request_key and question.',
-    inputSchema: { type: 'object', properties: { request_key: { type: 'string' }, question: { type: 'string' } }, required: ['request_key', 'question'], additionalProperties: false } },
-  { name: 'get_codex_exchange',
-    description: 'Retrieve the fake answer. Waits quietly on the server. Use exchange_id from ask. Do not poll or sleep. Return the three receipt markers from the returned page in your final answer.',
-    inputSchema: { type: 'object', properties: { exchange_id: { type: 'string' } }, required: ['exchange_id'], additionalProperties: false } },
-  { name: 'cancel_codex_exchange',
-    description: 'Idempotent fake cleanup after retrieving the answer. Requires exchange_id. Returns a cleanup receipt. Does not start any model.',
-    inputSchema: { type: 'object', properties: { exchange_id: { type: 'string' } }, required: ['exchange_id'], additionalProperties: false } },
-].map(t => ({ ...t,
-  _meta: { 'anthropic/maxResultSizeChars': 40000 },
-  // MUST mirror BRIDGE_TOOLS' annotations in electron/communicationBridge/mcpServer.ts.
-  // These influence client presentation and permission handling, so a mismatch
-  // means the probe validates a tool shape production never ships: a client
-  // could preapprove synthetic read-only tools while prompting for the real
-  // open-world ones, and exact_preapproval would pass regardless. The 2.1.270
-  // harness had readOnlyHint/openWorldHint inverted and this one inherited it;
-  // compatHarnessParity.test.ts now fails the build if they drift again.
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }));
+// Production resolves get/cancel by EXACTLY ONE of exchange_id or request_key
+// (exchangeController.ts lookup()), and its served schemas and server
+// instructions advertise both forms. This server serves those same schemas
+// verbatim, so it has to honour both: a model that follows the instructions
+// and retrieves by its stable request_key must not be told UNKNOWN_EXCHANGE.
+function lookupError(input) {
+  const args = input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const hasId = 'exchange_id' in args;
+  const hasKey = 'request_key' in args;
+  if (hasId === hasKey) return 'INVALID_INPUT';
+  const matches = hasId
+    ? args.exchange_id === exchangeId
+    : requestKey !== null && args.request_key === requestKey;
+  return started && matches ? null : 'UNKNOWN_EXCHANGE';
+}
+
+// Production's tool metadata, verbatim: names, descriptions, inputSchemas,
+// annotations and _meta, generated from BRIDGE_TOOLS in
+// electron/communicationBridge/mcpServer.ts.
+//
+// The harness originally paraphrased all of this, and the paraphrase kept being
+// wrong in ways that mattered. First the annotations were inverted
+// (readOnlyHint/openWorldHint), so a client could preapprove synthetic
+// read-only tools while prompting for the real open-world ones. Then the
+// schemas turned out to be simplified -- no pattern, no minLength, no optional
+// lookup keys, no wait_ms -- any of which a client may treat differently for
+// validation, presentation or deferred loading. In both cases every property
+// would have passed while probing a surface production never exposes.
+//
+// So there is no paraphrase left to drift: compatHarnessParity.test.ts
+// deep-compares this file against BRIDGE_TOOLS and fails the build on any
+// difference. Regenerate it rather than editing it by hand.
+const tools = JSON.parse(readFileSync(join(HERE, 'bridge-tools.json'), 'utf8'));
 
 const server = new Server(
   { name: 'aether-compat-fake', version: '1.0.0' },
@@ -82,15 +99,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
 
   if (name === 'ask_codex') {
     started = true;
+    const key = req.params.arguments?.request_key;
+    requestKey = typeof key === 'string' ? key : null;
     const result = envelope({ exchange_id: exchangeId, state: 'accepted',
       guidance: 'Call get_codex_exchange now, then cancel_codex_exchange once. No other tools.' });
     log('call_end', { name, elapsed_ms: performance.now() - startedAt });
     return result;
   }
 
-  if (!started || req.params.arguments?.exchange_id !== exchangeId) {
-    return { ...envelope({ code: 'UNKNOWN_EXCHANGE' }), isError: true };
-  }
+  const lookupFailure = lookupError(req.params.arguments ?? {});
+  if (lookupFailure) return { ...envelope({ code: lookupFailure }), isError: true };
 
   if (name === 'get_codex_exchange') {
     let aborted = false;
