@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { resolveScopePillLabel, scopePillStyle } from './TopBar';
+import { resolveScopePillLabel, scopePillStyle, opModeStyle } from './TopBar';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
-import { colors } from '../../styles/tokens';
+import { colors, motion } from '../../styles/tokens';
 
 describe('resolveScopePillLabel', () => {
   const snapshot: ProjectsSnapshot = {
@@ -48,5 +48,23 @@ describe('scopePillStyle', () => {
   it('marks the pill as non-draggable so Electron treats clicks on it as clicks, not window-drag', () => {
     const style = scopePillStyle(colors);
     expect(style.WebkitAppRegion).toBe('no-drag');
+  });
+});
+
+describe('opModeStyle transition', () => {
+  // `all` animates every property that ever changes, including layout ones a
+  // future edit might add; these four are what actually vary with `on`.
+  it('names explicit properties instead of transitioning all', () => {
+    const t = String(opModeStyle(colors, true, 'AUTO').transition);
+    expect(t).not.toContain('all ');
+    ['color', 'background', 'box-shadow', 'border-color'].forEach((prop) =>
+      expect(t).toContain(prop),
+    );
+  });
+
+  it('uses the shared motion scale rather than a retyped duration', () => {
+    const t = String(opModeStyle(colors, false, 'PLAN').transition);
+    expect(t).toContain(motion.duration.fast);
+    expect(t).toContain(motion.easing.standard);
   });
 });
