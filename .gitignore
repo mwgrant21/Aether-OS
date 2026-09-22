@@ -24,3 +24,6 @@ collector/reports/
 
 # electron-builder output
 release/
+
+# archex project state
+.archex/

@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\Matt\\AppData\\Roaming\\uv\\tools\\archex\\Scripts\\python.exe",
+            "args": [
+              "-m",
+              "archex.integrations.hook"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
