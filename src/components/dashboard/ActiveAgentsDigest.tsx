@@ -17,7 +17,7 @@ export function ActiveAgentsDigest() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>ACTIVE AGENTS</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>ACTIVE AGENTS</h2>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 11, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {state.realAgents.map((a) => (
@@ -61,7 +61,7 @@ function avatarStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 7,
     display: 'grid',
     placeItems: 'center',
-    font: `700 10px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: colors.accentCyanSoft,
     background: 'rgba(127,216,239,0.12)',
     border: `1px solid ${colors.accentCyanSoft}`,

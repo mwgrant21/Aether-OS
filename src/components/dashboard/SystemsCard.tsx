@@ -22,7 +22,7 @@ export function SystemsCard() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>SYSTEMS</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>SYSTEMS</h2>
         <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Uplinks' })} style={viewAllStyle(colors)}>
           UPLINKS →
         </Button>
@@ -35,7 +35,7 @@ export function SystemsCard() {
           </div>
         ))}
       </div>
-      <div style={{ flex: 'none', font: `400 9px/1.5 ${fonts.mono}`, color: colors.textDim, paddingTop: 10, borderTop: `1px solid ${colors.chromeBorder}` }}>
+      <div style={{ flex: 'none', font: `400 11px/1.5 ${fonts.mono}`, color: colors.textDim, paddingTop: 10, borderTop: `1px solid ${colors.chromeBorder}` }}>
         CTRL+K jumps anywhere · state persists across reloads
       </div>
     </div>
@@ -49,5 +49,5 @@ function titleStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
 }
 function viewAllStyle(colors: ColorPalette): CSSProperties {
-  return { cursor: 'pointer', font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
+  return { cursor: 'pointer', font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
 }

@@ -9,10 +9,10 @@ export function RecentAlertsCard() {
   const alerts = state.notifs.slice(0, 8);
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>RECENT ALERTS</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>RECENT ALERTS</h2>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 11, display: 'flex', flexDirection: 'column', gap: 9 }}>
         {alerts.map((nf, idx) => (
-          <div key={idx} style={{ display: 'flex', gap: 9, font: `400 10.5px/1.5 ${fonts.mono}` }}>
+          <div key={idx} style={{ display: 'flex', gap: 9, font: `400 11px/1.5 ${fonts.mono}` }}>
             <span style={{ color: colors.textDim, flex: 'none' }}>{nf.t}</span>
             <span style={{ color: nf.c }}>{nf.m}</span>
           </div>
