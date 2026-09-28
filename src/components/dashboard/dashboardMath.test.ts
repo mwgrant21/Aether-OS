@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { NO_DATA, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive, sessionCommandHistory } from './dashboardMath';
+import {
+  NO_DATA,
+  computeDashKpis,
+  computeDashPulseMode,
+  computeDashStatus,
+  computeRateReadout,
+  computeSidebarReactorRate,
+  computeSidebarReactorStatus,
+  computeUsageRangeTotal,
+  isSessionLive,
+  sessionCommandHistory,
+} from './dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { reducer } from '../../state/reducer';
 import { initialState } from '../../state/initialState';
@@ -94,11 +105,48 @@ describe('computeRateReadout', () => {
 });
 
 describe('computeDashPulseMode', () => {
-  it('describes live-rate pulse with the active theme', () => {
-    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'live', theme: 'cyan' })).toBe('live-rate pulse · cyan core');
+  it('describes live-rate pulse with the active theme when live', () => {
+    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'live', theme: 'cyan' }, true)).toBe('live-rate pulse · cyan core');
   });
-  it('describes ambient pulse', () => {
-    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'ambient', theme: 'violet' })).toBe('ambient pulse · violet core');
+  it('describes ambient pulse when live', () => {
+    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'ambient', theme: 'violet' }, true)).toBe('ambient pulse · violet core');
+  });
+  it('says standby instead of naming the theme core when not live', () => {
+    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'live', theme: 'cyan' }, false)).toBe('live-rate pulse · standby');
+    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'ambient', theme: 'violet' }, false)).toBe('ambient pulse · standby');
+  });
+});
+
+describe('computeSidebarReactorRate', () => {
+  it('never prints the reactor visual rate (state.rate) as the legend rate', () => {
+    expect(computeSidebarReactorRate({ ...initialState, rate: 92000 }, false)).toBe(NO_DATA);
+  });
+  it('shows a dash when live but no transcript scan has landed', () => {
+    expect(computeSidebarReactorRate(initialState, true)).toBe(NO_DATA);
+  });
+  it('shows the compact real transcript burn rate when live and scanned', () => {
+    expect(computeSidebarReactorRate({ ...initialState, realUsage: { ...SCANNED, burnRatePerMin: 92000 } }, true)).toBe('92.0K');
+  });
+});
+
+describe('computeSidebarReactorStatus', () => {
+  it('reports the agent count as nominal when live', () => {
+    expect(computeSidebarReactorStatus(true, 3)).toBe('Reactor nominal — 3 agents drawing power.');
+  });
+  it('reads standby when not live, regardless of a stale agent count', () => {
+    expect(computeSidebarReactorStatus(false, 3)).toBe('Reactor on standby');
+  });
+});
+
+describe('computeUsageRangeTotal', () => {
+  it('renders NO_DATA before the first scan, never a confident 0', () => {
+    expect(computeUsageRangeTotal([0, 0, 0], false)).toBe(NO_DATA);
+  });
+  it('sums the values once scanned', () => {
+    expect(computeUsageRangeTotal([100, 200, 300], true)).toBe('600');
+  });
+  it('still renders a real 0 once scanned, distinct from NO_DATA', () => {
+    expect(computeUsageRangeTotal([0, 0, 0], true)).toBe('0');
   });
 });
 

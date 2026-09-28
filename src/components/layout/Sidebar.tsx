@@ -5,7 +5,7 @@ import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { VIEWS } from '../../viewRegistry';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
-import { short } from '../../utils/format';
+import { computeSidebarReactorRate, computeSidebarReactorStatus, isSessionLive } from '../dashboard/dashboardMath';
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
@@ -14,8 +14,10 @@ const IDLE_PULSE_IDS = new Set(['Terminal', 'Codex']);
 export function Sidebar() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
+  const live = isSessionLive(state, Date.now());
+  const onDashboard = state.activeTab === 'Dashboard';
   return (
-    <div style={rootStyle(colors)}>
+    <nav aria-label="Main" style={rootStyle(colors)}>
       <div style={scrollableNavStyle}>
         <div style={sectionLabelStyle(colors)}>NAVIGATION</div>
         <div data-testid="sidebar-nav" style={sidebarNavStyle}>
@@ -57,7 +59,11 @@ export function Sidebar() {
         {!state.realAgents.length && <div style={{ font: `400 11px/1 ${fonts.ui}`, color: colors.textDim, padding: '2px 10px' }}>no active agents</div>}
       </div>
 
-      <div style={reactorMiniWrapStyle}>
+      {/* The Dashboard tab shows the full reactor already; two at once is
+          redundant. visibility (not display/conditional render) keeps this
+          box's height in the layout so the nav items above never jump when
+          switching tabs. */}
+      <div style={{ ...reactorMiniWrapStyle, visibility: onDashboard ? 'hidden' : 'visible' }} aria-live="polite">
         <div style={reactorMiniScaleStyle}>
           <div style={reactorMiniInnerStyle(reactorNativeSize(state.cfg.renderer))}>
             <Reactor />
@@ -71,14 +77,29 @@ export function Sidebar() {
             </div>
           )}
         </div>
-        <div style={{ font: `700 11px/1 ${fonts.mono}`, letterSpacing: 1, color: colors.accentCyanSoft, textAlign: 'center', marginTop: 6 }}>
-          REACTOR · {short(state.rate)} TOK/MIN
+        <div
+          style={{
+            font: `700 11px/1 ${fonts.mono}`,
+            letterSpacing: 1,
+            color: live ? colors.accentCyanSoft : colors.textMuted,
+            textAlign: 'center',
+            marginTop: 6,
+          }}
+        >
+          REACTOR · {computeSidebarReactorRate(state, live)} TOK/MIN
         </div>
-        <div style={{ font: `400 10px/1.4 ${fonts.ui}`, color: colors.textDim, textAlign: 'center', marginTop: 3 }}>
-          Reactor nominal — {state.realAgents.length} agents drawing power.
+        <div
+          style={{
+            font: `400 11px/1.4 ${fonts.ui}`,
+            color: live ? colors.textDim : colors.textMuted,
+            textAlign: 'center',
+            marginTop: 3,
+          }}
+        >
+          {computeSidebarReactorStatus(live, state.realAgents.length)}
         </div>
       </div>
-    </div>
+    </nav>
   );
 }
 
@@ -108,7 +129,7 @@ const scrollableNavStyle: CSSProperties = {
 };
 const sidebarNavStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 };
 function sectionLabelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim, padding: '2px 10px 6px' };
 }
 function navItemStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
@@ -158,7 +179,7 @@ function recentAvatarStyle(ring: string): CSSProperties {
     border: `1px solid ${ring}`,
     display: 'grid',
     placeItems: 'center',
-    font: `700 10px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: ring,
   };
 }
@@ -185,7 +206,7 @@ function reactorLegendStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 6,
     background: colors.panelInset,
     border: `1px solid ${colors.chipBorder}`,
-    font: `600 8px/1.5 ${fonts.mono}`,
+    font: `600 11px/1.5 ${fonts.mono}`,
     letterSpacing: 0.5,
     color: colors.accentCyanSoft,
     pointerEvents: 'none',

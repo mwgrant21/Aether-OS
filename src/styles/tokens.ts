@@ -39,7 +39,12 @@ export const colors: ColorPalette = {
   textBody: '#d8f6ff',
   textSecondary: '#9fc4d1',
   textMuted: '#5f8a97',
-  textDim: '#4e7c8b',
+  // Raised from #4e7c8b (2026-09-28, polish pass 2, AC4): the original
+  // measured ~3.8-3.9:1 against the panel surface, below WCAG's 4.5:1 small-
+  // text minimum. Same hue/saturation (~195deg, ~28%), lightness raised from
+  // 42.5% to 46.7% -- see tokens.test.ts for the contrast proof against both
+  // bgBase and the panel surface, and for the "still dimmer than textMuted" check.
+  textDim: '#568898',
   accentCyan: '#7ef0ff',
   accentCyanDeep: '#17b8d8',
   accentCyanSoft: '#7fd8ef',

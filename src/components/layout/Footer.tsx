@@ -18,14 +18,14 @@ export function Footer() {
   }, []);
 
   return (
-    <div style={rootStyle(colors)}>
+    <footer style={rootStyle(colors)}>
       <span>◇ AETHER OS {version ? `v${version}` : ''}</span>
       <span style={{ marginLeft: 'auto' }}>Uptime {formatUptime(state.sessionStartedAt, new Date())}</span>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: c }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: c }} aria-live="polite">
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: `0 0 8px ${c}` }} />
         {label}
       </span>
-    </div>
+    </footer>
   );
 }
 

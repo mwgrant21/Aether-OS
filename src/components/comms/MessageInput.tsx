@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEvent } from 'react';
+import { useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 
@@ -20,6 +20,7 @@ interface MessageInputProps {
 // no-op beyond the live narrowing that already happened on change.
 export function MessageInput({ value, onChange, onSubmit, placeholder }: MessageInputProps) {
   const colors = useColors();
+  const [isFocused, setIsFocused] = useState(false);
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') onSubmit();
@@ -27,11 +28,13 @@ export function MessageInput({ value, onChange, onSubmit, placeholder }: Message
 
   return (
     <div style={barStyle}>
-      <div style={rowStyle(colors)}>
+      <div style={rowStyle(colors, isFocused)}>
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           placeholder={placeholder}
           spellCheck={false}
           style={inputStyle(colors)}
@@ -42,14 +45,19 @@ export function MessageInput({ value, onChange, onSubmit, placeholder }: Message
 }
 
 const barStyle: CSSProperties = { flex: 'none', paddingTop: 12 };
-function rowStyle(colors: ColorPalette): CSSProperties {
+// The border/ring live on this wrapping row, not the <input> itself, because
+// the input renders borderless by design (see inputStyle below) -- this is
+// where DESIGN.md's Inputs > Focus treatment (cyan border + translucent ring)
+// actually shows.
+function rowStyle(colors: ColorPalette, focused: boolean): CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
     padding: '10px 14px',
     borderRadius: 10,
-    border: `1px solid ${colors.chipBorder}`,
+    border: `1px solid ${focused ? colors.accentCyan : colors.chipBorder}`,
+    boxShadow: focused ? '0 0 0 3px rgba(126,240,255,.3)' : undefined,
     background: colors.panelInset,
   };
 }
@@ -60,6 +68,9 @@ function inputStyle(colors: ColorPalette): CSSProperties {
     color: colors.textBody,
     background: 'transparent',
     border: 'none',
+    // The native focus outline is suppressed in favor of rowStyle's cyan
+    // border + ring above -- this input has no border/background of its own,
+    // so the wrapping row is the correct place for the focus treatment.
     outline: 'none',
     caretColor: colors.accentCyan,
   };

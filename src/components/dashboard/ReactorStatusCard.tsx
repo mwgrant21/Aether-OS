@@ -78,8 +78,8 @@ export function ReactorStatusCard() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>REACTOR STATUS</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }}>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>REACTOR STATUS</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }} aria-live="polite">
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusC, boxShadow: `0 0 8px ${statusC}` }} />
           {computeDashStatus(state.alarmLevel, live)}
         </div>
@@ -93,7 +93,7 @@ export function ReactorStatusCard() {
         </div>
       </div>
       <div style={{ textAlign: 'center', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>
-        {computeRateReadout(state, live)} · {computeDashPulseMode(state.cfg)}
+        {computeRateReadout(state, live)} · {computeDashPulseMode(state.cfg, live)}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginTop: 16 }}>
@@ -108,7 +108,7 @@ export function ReactorStatusCard() {
           return (
             <div key={dk.k} style={kpiTileStyle(colors)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ font: `600 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
+                <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
                 {hasSourceChip && (
                   <span style={sourceChipStyle(colors, source)}>
                     {source === 'live' ? 'LIVE' : source === 'stale' ? 'STALE' : 'EST'}
@@ -116,7 +116,7 @@ export function ReactorStatusCard() {
                 )}
               </div>
               <div style={kpiValueStyle(colors, isWarn)}>{v}</div>
-              <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{s}</div>
+              <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{s}</div>
             </div>
           );
         })}
@@ -196,7 +196,7 @@ function kpiValueStyle(colors: ColorPalette, isWarn: boolean): CSSProperties {
 }
 function sourceChipStyle(colors: ColorPalette, source: TileSource): CSSProperties {
   return {
-    font: `700 8px/1 ${fonts.ui}`,
+    font: `700 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: source === 'live' ? colors.success : source === 'stale' ? colors.warn : colors.textMuted,
     border: `1px solid ${colors.chipBorder}`,

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { Button } from './Button';
 import { AetherStoreProvider } from '../../state/store';
+import { colors } from '../../styles/tokens';
 
 afterEach(cleanup);
 
@@ -29,5 +30,40 @@ describe('Button', () => {
   it('keeps RESET_STYLE cursor when the caller style explicitly sets an undefined cursor', () => {
     const { getByRole } = renderButton({ cursor: undefined });
     expect(getByRole('button').style.cursor).toBe('pointer');
+  });
+
+  // jsdom's `:focus-visible` heuristic does not distinguish input modality the
+  // way a real browser does (a probe confirmed it matches true even after a
+  // simulated mousedown-then-focus sequence), so these tests drive the gate
+  // directly by mocking `matches` -- exercising Button's OWN branching on the
+  // gate's result, not the browser's un-testable heuristic itself.
+  describe('keyboard focus ring', () => {
+    it('shows the ring and the lit hover treatment when :focus-visible matches', () => {
+      const { getByRole } = renderButton({ background: 'black' });
+      const btn = getByRole('button');
+      vi.spyOn(btn, 'matches').mockReturnValue(true);
+      fireEvent.focus(btn);
+      expect(btn.style.outline).toBe(`2px solid ${colors.textPrimary}`);
+      expect(btn.style.outlineOffset).toBe('3px');
+      expect(btn.style.filter).toBe('brightness(1.1)');
+    });
+
+    it('removes the ring and lit treatment on blur', () => {
+      const { getByRole } = renderButton({ background: 'black' });
+      const btn = getByRole('button');
+      vi.spyOn(btn, 'matches').mockReturnValue(true);
+      fireEvent.focus(btn);
+      fireEvent.blur(btn);
+      expect(btn.style.outline).toBe('');
+      expect(btn.style.filter).toBe('');
+    });
+
+    it('does not show the ring for a mouse-triggered focus (:focus-visible does not match)', () => {
+      const { getByRole } = renderButton({ background: 'black' });
+      const btn = getByRole('button');
+      vi.spyOn(btn, 'matches').mockReturnValue(false);
+      fireEvent.focus(btn);
+      expect(btn.style.outline).toBe('');
+    });
   });
 });

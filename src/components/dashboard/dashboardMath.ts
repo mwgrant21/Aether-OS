@@ -41,9 +41,10 @@ export function computeDashStatus(alarmLevel: AlarmLevel, live: boolean): string
   return live ? 'NOMINAL' : 'STANDBY';
 }
 
-export function computeDashPulseMode(cfg: Cfg): string {
+/** "cyan core" (or whichever theme) implies something is actually lit; idle must say so instead. */
+export function computeDashPulseMode(cfg: Cfg, live: boolean): string {
   const mode = cfg.pulseMode === 'ambient' ? 'ambient pulse' : 'live-rate pulse';
-  return `${mode} · ${cfg.theme} core`;
+  return `${mode} · ${live ? `${cfg.theme} core` : 'standby'}`;
 }
 
 /**
@@ -57,11 +58,38 @@ export function computeRateReadout(state: AetherState, live: boolean): string {
 }
 
 /**
+ * Sidebar's compact reactor legend -- same live/scanned gating and source
+ * (state.realUsage.burnRatePerMin) as computeRateReadout above, never
+ * state.rate, but the sidebar's own compact `short()` presentation rather
+ * than computeRateReadout's "N,NNN tok/min" string.
+ */
+export function computeSidebarReactorRate(state: AetherState, live: boolean): string {
+  if (!live || state.realUsage.lastScanAt === null) return NO_DATA;
+  return short(state.realUsage.burnRatePerMin);
+}
+
+/** Idle must read as idle, not as a stale "nominal" claim with a real agent count. */
+export function computeSidebarReactorStatus(live: boolean, agentCount: number): string {
+  return live ? `Reactor nominal — ${agentCount} agents drawing power.` : 'Reactor on standby';
+}
+
+/**
+ * TOKEN USAGE card's range total (BottomMetricsRow). Before the first scan,
+ * `values` is initialState's all-zero seed, which would otherwise render a
+ * confident "0" indistinguishable from a real zero-usage reading -- NO_DATA
+ * instead, matching the rest of the app's no-reading-yet convention.
+ */
+export function computeUsageRangeTotal(values: readonly number[], scanned: boolean): string {
+  if (!scanned) return NO_DATA;
+  return fmt(values.reduce((sum, v) => sum + v, 0));
+}
+
+/**
  * The commands run THIS session, so SESSION INFO's count and TOP COMMANDS read
  * one source. cmdHist persists across restarts and its entries carry no
  * timestamp; commandsRun does not persist, and RUN_COMMAND bumps both in the
- * same step, so the session's commands are exactly cmdHist's last commandsRun
- * entries (all of cmdHist once commandsRun passes its 30-entry cap).
+ * same step, so the session's commands are exactly the last min(commandsRun, 30)
+ * commands of this session.
  */
 export function sessionCommandHistory(state: Pick<AetherState, 'cmdHist' | 'commandsRun'>): string[] {
   if (state.commandsRun <= 0) return [];

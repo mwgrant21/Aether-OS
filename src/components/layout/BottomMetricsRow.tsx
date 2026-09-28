@@ -4,7 +4,7 @@ import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { fmt, formatUptime } from '../../utils/format';
-import { sessionCommandHistory } from '../dashboard/dashboardMath';
+import { NO_DATA, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { deriveContextWindowCard } from './contextWindowCard';
 
@@ -31,7 +31,7 @@ export function BottomMetricsRow() {
   const active = RANGE_CONFIG[range];
   const maxBar = Math.max(...active.values, 1); // avoid /0 before the first real scan completes
   const bars = active.values.map((v, i) => ({ d: active.bucket(i), h: Math.round(20 + (v / maxBar) * 52) }));
-  const rangeTotal = fmt(active.values.reduce((sum, v) => sum + v, 0));
+  const rangeTotal = computeUsageRangeTotal(active.values, state.realUsage.lastScanAt !== null);
 
   // Real Claude Code statusline data -- the same source ReactorStatusCard's
   // CONTEXT tile reads. See contextWindowCard.ts for why the window size,
@@ -47,14 +47,14 @@ export function BottomMetricsRow() {
     { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
     { k: 'Commands run', v: fmt(state.commandsRun) },
     { k: 'Agents active', v: String(state.realAgents.length) },
-    { k: 'Tokens used', v: state.realUsage.lastScanAt === null ? '—' : fmt(state.realUsage.usedThisMonth) },
+    { k: 'Tokens used', v: state.realUsage.lastScanAt === null ? NO_DATA : fmt(state.realUsage.usedThisMonth) },
   ];
 
   return (
     <div style={rootStyle}>
       <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={cardTitleStyle(colors)}>TOKEN USAGE</div>
+          <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>TOKEN USAGE</h2>
           <div style={{ display: 'flex', gap: 4 }}>
             {RANGES.map((r) => (
               <Button key={r} style={rangeChipStyle(colors, range === r)} onClick={() => setRange(r)}>
@@ -68,14 +68,14 @@ export function BottomMetricsRow() {
             {bars.map((w, i) => (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                 <div style={barStyle(w.h)} />
-                <span style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim }}>{w.d}</span>
+                <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>{w.d}</span>
               </div>
             ))}
           </div>
           <div style={{ flex: 'none', textAlign: 'right' }}>
-            <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{active.label}</div>
+            <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{active.label}</div>
             <div style={{ font: `700 24px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 6 }}>{rangeTotal}</div>
-            <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 4 }}>tokens</div>
+            <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 4 }}>tokens</div>
             {range === 'weekly' && state.realUsage.weekOverWeekPct !== null && (
               <div
                 style={{
@@ -92,7 +92,7 @@ export function BottomMetricsRow() {
       </div>
 
       <div style={cardStyle(colors)}>
-        <div style={cardTitleStyle(colors)}>CONTEXT WINDOW</div>
+        <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>CONTEXT WINDOW</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12 }}>
           <div style={{ position: 'relative', width: 96, height: 96, flex: 'none' }}>
             <svg viewBox="0 0 100 100" style={{ width: 96, height: 96, transform: 'rotate(-90deg)' }}>
@@ -114,7 +114,7 @@ export function BottomMetricsRow() {
                 <div style={{ font: `700 22px/1 ${fonts.mono}`, color: colors.textPrimary }}>
                   {ctx.available ? `${ctx.stale ? '~' : ''}${Math.round(ctx.pct as number)}%` : '--'}
                 </div>
-                <div style={{ font: `400 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, marginTop: 3 }}>USED</div>
+                <div style={{ font: `400 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, marginTop: 3 }}>USED</div>
               </div>
             </div>
           </div>
@@ -122,7 +122,7 @@ export function BottomMetricsRow() {
             <div style={{ font: `700 14px/1 ${fonts.mono}`, color: colors.textBody }}>
               {ctx.available ? fmt(ctx.usedTokens as number) : 'No reading yet'}
             </div>
-            <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>
+            <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>
               {ctx.available
                 ? `${ctx.windowSize !== null ? `/ ${fmt(ctx.windowSize)} tokens` : 'window size unreported'}${ctx.stale ? ' · stale' : ''}`
                 : 'awaiting the first statusline reading'}
@@ -141,8 +141,8 @@ export function BottomMetricsRow() {
 
       <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={cardTitleStyle(colors)}>TOP COMMANDS</div>
-          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>THIS SESSION</div>
+          <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>TOP COMMANDS</h2>
+          <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>THIS SESSION</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 13 }}>
           {topCommands.map((c, i) => (
@@ -168,7 +168,7 @@ export function BottomMetricsRow() {
       </div>
 
       <div style={cardStyle(colors)}>
-        <div style={cardTitleStyle(colors)}>SESSION INFO</div>
+        <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>SESSION INFO</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 13 }}>
           {session.map((s) => (
             <div key={s.k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -191,7 +191,7 @@ function cardTitleStyle(colors: ColorPalette): CSSProperties {
 }
 function rangeChipStyle(colors: ColorPalette, active: boolean): CSSProperties {
   return {
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     padding: '4px 8px',
     borderRadius: 5,

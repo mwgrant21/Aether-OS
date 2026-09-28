@@ -52,7 +52,7 @@ export function ChannelRail({
     <div style={railStyle(colors)}>
       <div ref={pickerRef}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={titleStyle(colors)}>CHANNELS</div>
+          <h2 style={{ ...titleStyle(colors), margin: 0 }}>CHANNELS</h2>
           <Button onClick={() => setPickerOpen((o) => !o)} style={newButtonStyle}>
             + NEW
           </Button>
@@ -62,7 +62,7 @@ export function ChannelRail({
           <div style={pickerStyle(colors)}>
             {poolable.length === 0 && <div style={pickerEmptyStyle(colors)}>no completed dispatches to start a channel for</div>}
             {poolable.map((d) => (
-              <div
+              <Button
                 key={d.toolUseId}
                 onClick={() => {
                   onCreateDispatchChannel(d.toolUseId);
@@ -72,55 +72,88 @@ export function ChannelRail({
               >
                 <div style={pickerNameStyle(colors)}>{d.description || d.subagentType}</div>
                 <div style={pickerTypeStyle(colors)}>{d.subagentType}</div>
-              </div>
+              </Button>
             ))}
           </div>
         )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {channels.map((c) => {
-          const on = c.id === activeChannelId;
-          const unread = unreadCounts[c.id] ?? 0;
-          return (
-            <div
-              key={c.id}
-              onClick={() => onSelect(c.id)}
-              onKeyDown={(e) => {
-                if (e.target !== e.currentTarget) return; // let the nested remove Button handle its own Enter/Space
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onSelect(c.id);
-                }
-              }}
-              tabIndex={0}
-              role="button"
-              aria-label={c.name}
-              style={rowStyle(on, c.archived)}
-            >
-              <span style={avatarStyle(c.hue)}>{c.initials}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={nameStyle(colors, c.archived)}>{c.name}</div>
-                {c.archived && <div style={terminatedTagStyle(colors)}>TERMINATED</div>}
-              </div>
-              {!!unread && <span style={unreadBadgeStyle(colors)}>{unread}</span>}
-              {c.kind === 'dispatch' && (
-                <span onClick={(e) => e.stopPropagation()}>
-                  <Button
-                    onClick={() => {
-                      if (confirm('Remove this dispatch channel?')) onRemoveDispatchChannel(c.toolUseId!);
-                    }}
-                    style={removeStyle(colors)}
-                    aria-label="Remove channel"
-                  >
-                    ×
-                  </Button>
-                </span>
-              )}
-            </div>
-          );
-        })}
+        {channels.map((c) => (
+          <ChannelRow
+            key={c.id}
+            channel={c}
+            on={c.id === activeChannelId}
+            unread={unreadCounts[c.id] ?? 0}
+            colors={colors}
+            onSelect={onSelect}
+            onRemoveDispatchChannel={onRemoveDispatchChannel}
+          />
+        ))}
       </div>
+    </div>
+  );
+}
+
+// A plain <button> can't contain another <button> (the "remove" action nested
+// inside), so this row stays a div[role=button] with a manual keyboard
+// handler rather than the Button primitive -- but it still needs its own
+// keyboard focus ring per DESIGN.md, so that state and the :focus-visible
+// gate are reproduced locally here (same pattern as Button.tsx).
+function ChannelRow({
+  channel: c,
+  on,
+  unread,
+  colors,
+  onSelect,
+  onRemoveDispatchChannel,
+}: {
+  channel: CommsChannel;
+  on: boolean;
+  unread: number;
+  colors: ColorPalette;
+  onSelect: (id: string) => void;
+  onRemoveDispatchChannel: (toolUseId: string) => void;
+}) {
+  const [isFocusVisible, setIsFocusVisible] = useState(false);
+  return (
+    <div
+      onClick={() => onSelect(c.id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return; // let the nested remove Button handle its own Enter/Space
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(c.id);
+        }
+      }}
+      onFocus={(e) => {
+        if (e.currentTarget.matches(':focus-visible')) setIsFocusVisible(true);
+      }}
+      onBlur={() => setIsFocusVisible(false)}
+      tabIndex={0}
+      role="button"
+      aria-label={c.name}
+      style={{ ...rowStyle(on, c.archived), ...(isFocusVisible ? { outline: `2px solid ${colors.textPrimary}`, outlineOffset: 3 } : {}) }}
+    >
+      <span style={avatarStyle(c.hue)}>{c.initials}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={nameStyle(colors, c.archived)}>{c.name}</div>
+        {c.archived && <div style={terminatedTagStyle(colors)}>TERMINATED</div>}
+      </div>
+      {!!unread && <span style={unreadBadgeStyle(colors)}>{unread}</span>}
+      {c.kind === 'dispatch' && (
+        <span onClick={(e) => e.stopPropagation()}>
+          <Button
+            onClick={() => {
+              if (confirm('Remove this dispatch channel?')) onRemoveDispatchChannel(c.toolUseId!);
+            }}
+            style={removeStyle(colors)}
+            aria-label="Remove channel"
+          >
+            ×
+          </Button>
+        </span>
+      )}
     </div>
   );
 }
@@ -143,7 +176,7 @@ function titleStyle(colors: ColorPalette): CSSProperties {
 }
 const newButtonStyle: CSSProperties = {
   cursor: 'pointer',
-  font: `600 9px/1 ${fonts.ui}`,
+  font: `600 11px/1 ${fonts.ui}`,
   letterSpacing: 1,
   padding: '5px 9px',
   borderRadius: 6,
@@ -163,7 +196,7 @@ function pickerStyle(colors: ColorPalette): CSSProperties {
   };
 }
 function pickerEmptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 10px/1.3 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
+  return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }
 const pickerRowStyle: CSSProperties = { cursor: 'pointer', padding: '5px 6px', borderRadius: 6 };
 function pickerNameStyle(colors: ColorPalette): CSSProperties {
@@ -176,7 +209,7 @@ function pickerNameStyle(colors: ColorPalette): CSSProperties {
   };
 }
 function pickerTypeStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 9px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 1 };
+  return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 1 };
 }
 function rowStyle(on: boolean, archived: boolean): CSSProperties {
   return {
@@ -201,7 +234,7 @@ function avatarStyle(hue: string): CSSProperties {
     border: `1px solid ${hue}`,
     display: 'grid',
     placeItems: 'center',
-    font: `700 10px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: hue,
   };
 }
@@ -215,7 +248,7 @@ function nameStyle(colors: ColorPalette, archived: boolean): CSSProperties {
   };
 }
 function terminatedTagStyle(colors: ColorPalette): CSSProperties {
-  return { marginTop: 2, font: `600 8px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textDim };
+  return { marginTop: 2, font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textDim };
 }
 function unreadBadgeStyle(colors: ColorPalette): CSSProperties {
   return {
@@ -226,7 +259,7 @@ function unreadBadgeStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 8,
     background: colors.accentCyanDeep,
     color: '#04202b',
-    font: `700 10px/16px ${fonts.mono}`,
+    font: `700 11px/16px ${fonts.mono}`,
     textAlign: 'center',
   };
 }
