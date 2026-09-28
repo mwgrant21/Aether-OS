@@ -62,12 +62,25 @@ export function Sidebar() {
       {/* The Dashboard tab shows the full reactor already; two at once is
           redundant. visibility (not display/conditional render) keeps this
           box's height in the layout so the nav items above never jump when
-          switching tabs. */}
-      <div style={{ ...reactorMiniWrapStyle, visibility: onDashboard ? 'hidden' : 'visible' }} aria-live="polite">
+          switching tabs. aria-live is NOT here on the wrapper -- it also
+          holds the ticking rate line, canvas and legend, so putting it here
+          would re-announce the whole block on every burn-rate tick AND on
+          every tab switch (the visibility flip). It's scoped to just the
+          status-line div below instead, the same pattern as TopBar's
+          approvals/notifications counts. */}
+      <div style={{ ...reactorMiniWrapStyle, visibility: onDashboard ? 'hidden' : 'visible' }}>
         <div style={reactorMiniScaleStyle}>
-          <div style={reactorMiniInnerStyle(reactorNativeSize(state.cfg.renderer))}>
-            <Reactor />
-          </div>
+          {/* A same-size empty placeholder while on Dashboard, instead of
+              <Reactor />, so this (invisible) sidebar copy stops animating --
+              the Dashboard's own full-size reactor is the one actually
+              shown, and running both canvases at once is wasted work. */}
+          {onDashboard ? (
+            <div style={reactorMiniPlaceholderStyle} />
+          ) : (
+            <div style={reactorMiniInnerStyle(reactorNativeSize(state.cfg.renderer))}>
+              <Reactor />
+            </div>
+          )}
           {state.cfg.showReactorLegend && (
             <div style={reactorLegendStyle(colors)}>
               <div>HUE = MODEL</div>
@@ -89,6 +102,8 @@ export function Sidebar() {
           REACTOR · {computeSidebarReactorRate(state, live)} TOK/MIN
         </div>
         <div
+          data-testid="sidebar-reactor-status"
+          aria-live="polite"
           style={{
             font: `400 11px/1.4 ${fonts.ui}`,
             color: live ? colors.textDim : colors.textMuted,
@@ -197,6 +212,11 @@ const reactorMiniScaleStyle: CSSProperties = {
   margin: '0 auto',
   overflow: 'hidden',
 };
+// Stands in for <Reactor /> on the Dashboard tab: fills the same
+// reactorMiniScaleStyle box (no transform/centering math needed, since
+// there's no native reactor size to center) so the box's footprint is
+// identical either way.
+const reactorMiniPlaceholderStyle: CSSProperties = { width: '100%', height: '100%' };
 function reactorLegendStyle(colors: ColorPalette): CSSProperties {
   return {
     position: 'absolute',

@@ -50,11 +50,15 @@ export function CommunicationIndicator() {
   };
   return <button type="button" style={style} title={description} aria-label={`Open communication. ${description}`}
     onClick={() => dispatch({ type: 'OPEN_COMMUNICATION_EXCHANGE', exchangeId: view.exchangeId })}>
-    <span style={{ display: 'block', fontWeight: 600 }}>{view.heading}
+    <span style={{ ...truncateLineStyle, fontWeight: 600 }}>{view.heading}
       {view.readyCount > 0 && <span style={{ marginLeft: 6, padding: '0 4px', borderRadius: 4,
         background: colors.accentCyanSoft, color: colors.chromeBg }}>{view.readyCount}</span>}
     </span>
-    <span style={{ display: 'block' }}>{view.detail}{view.delivery && ` · ${view.delivery}`}</span>
-    {view.health && <span style={{ display: 'block', color: colors.warn }}>{view.health}</span>}
+    <span style={truncateLineStyle}>{view.detail}{view.delivery && ` · ${view.delivery}`}</span>
+    {view.health && <span style={{ ...truncateLineStyle, color: colors.warn }}>{view.health}</span>}
   </button>;
 }
+
+// The chip sits at a hard 230px cap (see `style` above) -- truncate longer
+// copy with an ellipsis instead of letting it clip/overflow the box.
+const truncateLineStyle: CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
