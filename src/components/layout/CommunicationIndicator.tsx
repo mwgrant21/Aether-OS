@@ -45,8 +45,8 @@ export function CommunicationIndicator() {
   const style: CSSProperties & { WebkitAppRegion: 'no-drag' } = {
     WebkitAppRegion: 'no-drag', flex: '0 1 230px', minWidth: 145, maxWidth: 230,
     padding: '5px 9px', borderRadius: 8, border: `1px solid ${colors.chipBorder}`,
-    background: colors.panelInset, color: colors.textSecondary, font: `10px/1.25 ${fonts.ui}`,
-    textAlign: 'left', cursor: 'pointer', position: 'relative',
+    background: colors.panelInset, color: colors.textSecondary, font: `11px/1.25 ${fonts.ui}`,
+    letterSpacing: -0.2, textAlign: 'left', cursor: 'pointer', position: 'relative',
   };
   return <button type="button" style={style} title={description} aria-label={`Open communication. ${description}`}
     onClick={() => dispatch({ type: 'OPEN_COMMUNICATION_EXCHANGE', exchangeId: view.exchangeId })}>

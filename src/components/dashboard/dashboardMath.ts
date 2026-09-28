@@ -84,6 +84,25 @@ export function computeUsageRangeTotal(values: readonly number[], scanned: boole
   return fmt(values.reduce((sum, v) => sum + v, 0));
 }
 
+export interface UsageBar {
+  height: number;
+  /** True for a zero-value or pre-scan bar: render flat/dim, not a scaled real reading. */
+  baseline: boolean;
+}
+
+/**
+ * TOKEN USAGE bar height (BottomMetricsRow). The old formula
+ * (`20 + (v / maxBar) * 52`) floors EVERY bar at 20px, including zero-value
+ * and pre-scan ones, so an unscanned week rendered as 7 solid-looking cyan
+ * blocks -- indistinguishable from 7 small real readings. A zero/unscanned
+ * bar is a thin flat tick instead; only a real positive reading gets the
+ * scaled-height treatment.
+ */
+export function computeUsageBar(v: number, maxBar: number, scanned: boolean): UsageBar {
+  if (!scanned || v <= 0) return { height: 2, baseline: true };
+  return { height: Math.round(20 + (v / maxBar) * 52), baseline: false };
+}
+
 /**
  * The commands run THIS session, so SESSION INFO's count and TOP COMMANDS read
  * one source. cmdHist persists across restarts and its entries carry no

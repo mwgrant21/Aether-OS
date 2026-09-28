@@ -7,6 +7,7 @@ import {
   computeRateReadout,
   computeSidebarReactorRate,
   computeSidebarReactorStatus,
+  computeUsageBar,
   computeUsageRangeTotal,
   isSessionLive,
   sessionCommandHistory,
@@ -135,6 +136,21 @@ describe('computeSidebarReactorStatus', () => {
   });
   it('reads standby when not live, regardless of a stale agent count', () => {
     expect(computeSidebarReactorStatus(false, 3)).toBe('Reactor on standby');
+  });
+});
+
+describe('computeUsageBar', () => {
+  it('renders a flat 2px baseline tick for a zero value, even when scanned', () => {
+    expect(computeUsageBar(0, 100, true)).toEqual({ height: 2, baseline: true });
+  });
+  it('renders a flat 2px baseline tick for every bar when unscanned, regardless of value', () => {
+    expect(computeUsageBar(100, 100, false)).toEqual({ height: 2, baseline: true });
+  });
+  it('scales a real positive value up to the 72px max at maxBar', () => {
+    expect(computeUsageBar(100, 100, true)).toEqual({ height: 72, baseline: false });
+  });
+  it('scales a real positive value below maxBar proportionally', () => {
+    expect(computeUsageBar(50, 100, true)).toEqual({ height: 46, baseline: false });
   });
 });
 

@@ -28,7 +28,7 @@ export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) 
     const on = m.id === selectedId;
     return (
       <Button key={m.id} onClick={() => dispatch({ type: 'SELECT_MEMORY', id: m.id })} style={rowStyle(on)}>
-        <span style={kindBadgeStyle(colors, KIND_TIER_COLOR(m.kind))}>{m.kind}</span>
+        <span style={kindBadgeStyle(colors, KIND_TIER_COLOR(m.kind, colors))}>{m.kind}</span>
         <span style={nameStyle(colors)}>{m.content}</span>
         <span style={{ flex: 'none', font: `700 11px/1 ${fonts.mono}`, color: colors.textDim }}>{m.salience}</span>
       </Button>

@@ -70,8 +70,8 @@ export function ChannelRail({
                 }}
                 style={pickerRowStyle}
               >
-                <div style={pickerNameStyle(colors)}>{d.description || d.subagentType}</div>
-                <div style={pickerTypeStyle(colors)}>{d.subagentType}</div>
+                <span style={pickerNameStyle(colors)}>{d.description || d.subagentType}</span>
+                <span style={pickerTypeStyle(colors)}>{d.subagentType}</span>
               </Button>
             ))}
           </div>
@@ -199,8 +199,12 @@ function pickerEmptyStyle(colors: ColorPalette): CSSProperties {
   return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }
 const pickerRowStyle: CSSProperties = { cursor: 'pointer', padding: '5px 6px', borderRadius: 6 };
+// display: 'block' because these render as <span> inside a <Button> (a <div>
+// child would be invalid inside a real <button> element) but still need
+// block layout for ellipsis truncation / marginTop stacking.
 function pickerNameStyle(colors: ColorPalette): CSSProperties {
   return {
+    display: 'block',
     font: `600 11px/1.3 ${fonts.ui}`,
     color: colors.textPrimary,
     whiteSpace: 'nowrap',
@@ -209,7 +213,7 @@ function pickerNameStyle(colors: ColorPalette): CSSProperties {
   };
 }
 function pickerTypeStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 1 };
+  return { display: 'block', font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 1 };
 }
 function rowStyle(on: boolean, archived: boolean): CSSProperties {
   return {

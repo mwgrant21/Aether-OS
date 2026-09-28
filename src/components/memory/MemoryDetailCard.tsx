@@ -57,7 +57,7 @@ export function MemoryDetailCard({ memory, tombstone }: { memory: MemoryRow | nu
   }
 
   const m = memory as MemoryRow;
-  const kindColor = KIND_TIER_COLOR(m.kind);
+  const kindColor = KIND_TIER_COLOR(m.kind, colors);
 
   return (
     <div style={cardStyle(colors)}>

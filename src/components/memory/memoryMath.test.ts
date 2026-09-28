@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { MemoryRow } from '../../state/types';
 import { pickSelectedMemory, groupMemoriesByScope, KIND_TIER_COLOR } from './memoryMath';
+import { colors } from '../../styles/tokens';
 
 function row(overrides: Partial<MemoryRow> = {}): MemoryRow {
   return {
@@ -62,8 +63,16 @@ describe('KIND_TIER_COLOR', () => {
   it('returns a color for every MemoryKind without throwing', () => {
     const kinds: MemoryRow['kind'][] = ['decision', 'preference', 'overrule', 'habit', 'revision'];
     for (const kind of kinds) {
-      expect(typeof KIND_TIER_COLOR(kind)).toBe('string');
-      expect(KIND_TIER_COLOR(kind).length).toBeGreaterThan(0);
+      expect(typeof KIND_TIER_COLOR(kind, colors)).toBe('string');
+      expect(KIND_TIER_COLOR(kind, colors).length).toBeGreaterThan(0);
     }
+  });
+
+  // Regression guard: the habit/default tier used to hardcode the OLD
+  // textDim value ('#4e7c8b'), which meant the AC4 contrast fix on
+  // tokens.ts's colors.textDim never reached this tier. It must follow the
+  // live token, not a frozen duplicate of it.
+  it('follows colors.textDim for the habit tier, not a hardcoded duplicate', () => {
+    expect(KIND_TIER_COLOR('habit', colors)).toBe(colors.textDim);
   });
 });

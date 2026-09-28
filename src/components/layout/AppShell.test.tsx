@@ -53,6 +53,16 @@ describe('AppShell landmarks', () => {
     expect(main.id).toBe(MAIN_CONTENT_ID);
   });
 
+  it('is genuinely first in document order among focusable elements, not just visually first', () => {
+    renderShell();
+    // main's tabIndex={-1} makes it a valid fragment-navigation target without
+    // putting it in the Tab order, so ":not([tabindex=\"-1\"])" correctly
+    // excludes it here -- this asserts real DOM/tab order, not text position.
+    const focusable = document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    expect(focusable.length).toBeGreaterThan(1);
+    expect(focusable[0]).toBe(screen.getByText('Skip to content'));
+  });
+
   it('hides the skip link until it receives focus, then reveals it', () => {
     renderShell();
     const link = screen.getByText('Skip to content');

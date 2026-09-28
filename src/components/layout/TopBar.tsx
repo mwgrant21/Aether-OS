@@ -80,7 +80,7 @@ export function TopBar() {
         })}
       </div>
 
-      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }} aria-live="polite">
+      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Pending approvals"
           aria-label={`${pendingCount} pending approval${pendingCount === 1 ? '' : 's'}`}
@@ -90,6 +90,12 @@ export function TopBar() {
           ⛉
         </Button>
         {hasPending && <span style={apprBadgeStyle(colors)}>{pendingCount}</span>}
+        {/* aria-live scoped to just the count, not the whole wrapper below --
+            the wrapper also holds the approvals dropdown panel, and announcing
+            that on every open/close would be noise the count change isn't. */}
+        <span style={srOnlyStyle} aria-live="polite">
+          {pendingCount} pending approval{pendingCount === 1 ? '' : 's'}
+        </span>
         {state.apprOpen && (
           <div style={apprPanelStyle(colors)}>
             <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — real pending requests</div>
@@ -131,7 +137,7 @@ export function TopBar() {
         )}
       </div>
 
-      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }} aria-live="polite">
+      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Notifications"
           aria-label={`Notifications, ${state.unread} unread`}
@@ -141,6 +147,11 @@ export function TopBar() {
           ◈
         </Button>
         {state.unread > 0 && <span style={notifBadgeStyle(colors)}>{state.unread}</span>}
+        {/* Same reasoning as the approvals count above: scoped to just the
+            count, not the wrapper that also holds the notifications panel. */}
+        <span style={srOnlyStyle} aria-live="polite">
+          Notifications, {state.unread} unread
+        </span>
         {state.notifOpen && (
           <div style={notifPanelStyle(colors)}>
             <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
@@ -264,6 +275,20 @@ export function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): App
     WebkitAppRegion: 'no-drag',
   };
 }
+// Visually hidden but still reachable by assistive tech / aria-live -- the
+// standard clip-based pattern (not display:none, which would also hide it
+// from the accessibility tree).
+const srOnlyStyle: CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
 const iconButtonStyle: AppRegionStyle = {
   cursor: 'pointer',
   width: 36,

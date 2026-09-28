@@ -4,7 +4,7 @@ import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { fmt, formatUptime } from '../../utils/format';
-import { NO_DATA, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
+import { NO_DATA, computeUsageBar, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { deriveContextWindowCard } from './contextWindowCard';
 
@@ -29,9 +29,10 @@ export function BottomMetricsRow() {
   } as const;
 
   const active = RANGE_CONFIG[range];
+  const scanned = state.realUsage.lastScanAt !== null;
   const maxBar = Math.max(...active.values, 1); // avoid /0 before the first real scan completes
-  const bars = active.values.map((v, i) => ({ d: active.bucket(i), h: Math.round(20 + (v / maxBar) * 52) }));
-  const rangeTotal = computeUsageRangeTotal(active.values, state.realUsage.lastScanAt !== null);
+  const bars = active.values.map((v, i) => ({ d: active.bucket(i), ...computeUsageBar(v, maxBar, scanned) }));
+  const rangeTotal = computeUsageRangeTotal(active.values, scanned);
 
   // Real Claude Code statusline data -- the same source ReactorStatusCard's
   // CONTEXT tile reads. See contextWindowCard.ts for why the window size,
@@ -67,7 +68,7 @@ export function BottomMetricsRow() {
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 9, height: 74, flex: 1 }}>
             {bars.map((w, i) => (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <div style={barStyle(w.h)} />
+                <div style={barStyle(colors, w.height, w.baseline)} />
                 <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>{w.d}</span>
               </div>
             ))}
@@ -201,13 +202,16 @@ function rangeChipStyle(colors: ColorPalette, active: boolean): CSSProperties {
     userSelect: 'none',
   };
 }
-function barStyle(h: number): CSSProperties {
+// A baseline (zero-value or pre-scan) bar renders flat and dim -- no
+// gradient, no glow -- so it reads as "nothing observed", never as a small
+// real reading. See dashboardMath.ts's computeUsageBar.
+function barStyle(colors: ColorPalette, h: number, baseline: boolean): CSSProperties {
   return {
     width: '100%',
     borderRadius: '3px 3px 0 0',
     height: h,
-    background: 'linear-gradient(180deg,#7ef0ff,#17b8d8)',
-    boxShadow: '0 0 10px rgba(95,240,255,.4)',
+    background: baseline ? colors.chipBorder : 'linear-gradient(180deg,#7ef0ff,#17b8d8)',
+    boxShadow: baseline ? undefined : '0 0 10px rgba(95,240,255,.4)',
     transition: 'height .5s ease',
   };
 }
