@@ -26,7 +26,7 @@ colors:
   text-body: "#d8f6ff"
   text-secondary: "#9fc4d1"
   text-muted: "#5f8a97"
-  text-dim: "#4e7c8b"
+  text-dim: "#568898"
 typography:
   wordmark:
     fontFamily: "Rajdhani, sans-serif"
@@ -57,7 +57,7 @@ typography:
     lineHeight: 1.5
   label:
     fontFamily: "Rajdhani, sans-serif"
-    fontSize: "10px"
+    fontSize: "11px"
     fontWeight: 600
     lineHeight: 1
     letterSpacing: "2px"
@@ -195,7 +195,7 @@ A single cyan energy hue in three strengths, over a deep teal-black, with amber 
 - **Nav** (600, 14px): Sidebar navigation items.
 - **Panel heading** (600, 12px, 3px tracking, uppercase): Every panel's title (REACTOR STATUS, RECENT ALERTS). Also the button label style.
 - **Body** (400, 12px, 1.5 line height): Descriptions and explanatory copy.
-- **Label** (600, 10px, 2px tracking, uppercase): Stat captions and chip text.
+- **Label** (600, 11px, 2px tracking, uppercase): Stat captions and chip text. 11px is the floor for all functional text.
 - **Readout XL** (Space Mono 700, 32px): The one headline figure in a card (session cost).
 - **Readout** (Space Mono 700, 22px): Stat values in the bottom metrics row.
 - **Data** (Space Mono 400, 11px): Timestamps, IDs, table values, and the log.
@@ -239,7 +239,7 @@ Tactile and lit: buttons feel like switches that light up under your finger.
 - **Primary:** A vertical cyan gradient (`linear-gradient(180deg, #7ef0ff, #17b8d8)`) with Ink on Cyan text in the panel-heading style (tracked caps), resting with the active glow.
 - **Hover:** Brighter gradient, a stronger glow (around 0 0 24px at .65), and a 1px lift.
 - **Pressed:** The gradient darkens toward Deep Current and an inset shadow sinks the button.
-- **Keyboard focus:** A 2px Text Primary outline offset 3px, on top of whatever glow the state already has. Every interactive element gets this ring (see Known Gaps).
+- **Keyboard focus:** A 2px Text Primary outline offset 3px, on top of whatever glow the state already has, and keyboard focus also applies the same lit treatment as hover. The ring shows for keyboard focus only (gated on `:focus-visible`), never on a mouse click. Every interactive element gets it.
 - **Disabled:** Inset background, Text Dim label, no glow.
 - **Secondary:** Inset background, Reactor Cyan text, Active Edge border; on hover the border goes solid cyan and gains an outer and inner glow.
 - **Needs-you (amber):** A solid Needs-You Amber fill with Ink on Cyan text and the needs-you glow, used only for approve/review actions.
@@ -281,6 +281,15 @@ The heart of the product and its most distinctive element. A 268px (native) inst
 
 Under reduced motion the reactor keeps breathing at a calm, steady rate rather than freezing, because a frozen reactor reads as broken.
 
+**Placement.** Storm Core is the dashboard's centrepiece: it fills the REACTOR STATUS panel, scaled by its wrapper only. `storm` is the default renderer for new profiles (the Settings renderer choice still wins once saved). The sidebar miniature shows the reactor on every other view and is replaced by an empty, same-size placeholder on the Dashboard, so only one reactor animates at a time.
+
+**Standby: dark and cold.** When no Claude session is live (`isSessionLive` in `dashboardMath.ts`: a positive burn rate, an open dispatch while the terminal is alive, a fresh statusline, or a busy fleet session), the console goes to STANDBY:
+- The reactor dims through its own filter (brightness .45, saturate .35), fading over `motion.duration.slow`, and powers up visibly when a session starts.
+- Status text reads STANDBY in Text Muted, never cyan, in both the panel and the footer.
+- Readouts with no real source show `—`, never a simulated number or a zero.
+
+Only the storm renderer dims; the classic renderer keeps its per-frame filter.
+
 **The Living Core Rule.** Storm Core is the one place Aether is allowed to be spectacular. Everything around it stays disciplined so it stays the brightest, most alive thing on screen. Never place competing animated or glowing art near it, never recolour it for aesthetics, and never redesign it as part of a polish pass.
 
 ## Do's and Don'ts
@@ -305,12 +314,13 @@ Under reduced motion the reactor keeps breathing at a calm, steady rate rather t
 
 ## Known Gaps
 
-States and rules this document describes but the code does not yet fully meet, or that nobody has designed. Recorded 2026-09-28 against commit `a0f2fc7`.
+States and rules this document describes but the code does not yet fully meet, or that nobody has designed. Updated 2026-09-28 after polish passes 1 and 2. Closed by those passes: keyboard focus, landmarks and headings, the 11px type floor, Text Dim contrast (now 5.1:1 on Abyss, 4.6:1 on panels), the reactor's placement, and honest idle readouts.
 
-- **Keyboard focus is not implemented.** No component styles `:focus-visible`, and `MessageInput.tsx` and `OperatorCard.tsx` set `outline: none` with no replacement. The focus ring above was chosen on 2026-09-28 (the "Tactile and lit" prototype) but is not yet built.
-- **Token adoption is partial.** About 364 hardcoded colour literals across 47 files duplicate palette values; `radii` is used at 0 call sites and `space` at 3. Radii of 8px and 6px are widely used (32 and 22 sites) but are not tokens: either add them to `radii` or move those sites onto the existing steps.
-- **Small type.** Most text sits at 10–12px, and about 25 styles go down to 8–9px. Text Dim (#4e7c8b) is roughly 4:1 against Abyss, below the 4.5:1 minimum for small text. The type scale needs a readability pass.
+- **Token adoption is partial.** About 364 hardcoded colour literals across 47 files duplicate palette values (32 of them in shell chrome per the 2026-09-28 detector run); `radii` is used at 0 call sites and `space` at 3. Radii of 8px and 6px are widely used (32 and 22 sites) but are not tokens: either add them to `radii` or move those sites onto the existing steps.
 - **Motion has no easing curves.** `motion.easing.standard` and `emphasis` are still the browser defaults (`ease`, `ease-in-out`); the tactile hover, press and glow transitions need designed curves.
-- **Pressed state.** The pressed treatment above is chosen but not yet implemented in `Button` or `useHoverStyle`, which only handle hover.
-- **Empty, loading and error states** are not documented system-wide; each view handles them ad hoc (for example "no agents currently running").
-- **Percentages are not clamped everywhere.** A 2026-08-10 screenshot showed the context ring at "663% USED"; this may since be fixed and needs checking in the running app.
+- **Pressed state.** The pressed treatment above is chosen but not yet implemented in `Button` or `useHoverStyle`, which handle hover and keyboard focus only.
+- **Empty states.** Dashboard panels with no data show one dim line in a large panel. They need compact states with a next action (for example "No live session → Open Terminal"). Loading and error states are still handled ad hoc per view.
+- **Grid keyboard access.** The orchestration grid's SVG agent nodes (`<g onClick>`) can't be reached by keyboard.
+- **Known clipping.** The sidebar's RECENT AGENTS label is half-clipped by the reactor miniature, and the Settings left column is clipped under the bottom metrics row. Both predate the polish passes.
+- **Percentages are not verified clamped in live mode.** A 2026-08-10 screenshot showed the context ring at "663% USED". Browser mode now shows "—", but the live Electron path hasn't been checked since.
+- **Existing profiles keep their saved renderer.** `storm` is only the default for new profiles; a profile that saved `classic` keeps it until changed in Settings.
