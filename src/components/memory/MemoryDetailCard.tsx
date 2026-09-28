@@ -106,7 +106,7 @@ const emptyWrapStyle: CSSProperties = {
 function badgeStyle(_colors: ColorPalette, accent: string): CSSProperties {
   return {
     flex: 'none',
-    font: `600 8px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: accent,
     border: `1px solid ${accent}`,
@@ -120,5 +120,5 @@ function badgeStyle(_colors: ColorPalette, accent: string): CSSProperties {
   };
 }
 function sectionLabelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }

@@ -26,7 +26,7 @@ export function PlanPriceCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>PLAN PRICE</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>PLAN PRICE</h2>
 
       <div style={rowStyle}>
         <label style={labelStyle(colors)} htmlFor="plan-monthly-usd">
@@ -81,7 +81,7 @@ const rowStyle: CSSProperties = {
   gap: 12,
 };
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
 }
 function valueStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 11px/1 ${fonts.mono}`, color: colors.textSecondary, textAlign: 'right' };

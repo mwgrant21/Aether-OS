@@ -174,7 +174,7 @@ function headerNameStyle(colors: ColorPalette): CSSProperties {
 }
 function chipButtonStyle(colors: ColorPalette): CSSProperties {
   return {
-    font: `600 9px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 0.5,
     color: colors.textDim,
     background: 'transparent',
@@ -186,7 +186,7 @@ function chipButtonStyle(colors: ColorPalette): CSSProperties {
 }
 function statusPillStyle(colors: ColorPalette, label: string): CSSProperties {
   return {
-    font: `600 9px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: label === 'LIVE' ? colors.accentCyan : colors.textDim,
     border: `1px solid ${label === 'LIVE' ? colors.accentCyan : colors.chromeBorder}`,

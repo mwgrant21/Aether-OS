@@ -43,7 +43,7 @@ export function PricingBasisFooter() {
 }
 
 const footerStyle = (c: ColorPalette): CSSProperties => ({
-  font: `400 10px/1.6 ${fonts.ui}`,
+  font: `400 11px/1.6 ${fonts.ui}`,
   color: c.textDim,
   borderTop: `1px solid ${c.chromeBorder}`,
   paddingTop: 10,

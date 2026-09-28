@@ -123,7 +123,7 @@ function buttonStyle(colors: ColorPalette, enabled: boolean): CSSProperties {
   return {
     padding: '5px 10px',
     borderRadius: 6,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     cursor: enabled ? 'pointer' : 'not-allowed',
     color: enabled ? '#04202b' : colors.textMuted,
@@ -164,10 +164,10 @@ function findingItemStyle(colors: ColorPalette, severity: string): CSSProperties
   return { font: `500 11px/1.3 ${fonts.ui}`, color };
 }
 function findingLocationStyle(colors: ColorPalette): CSSProperties {
-  return { font: `500 10px/1 ${fonts.mono}`, color: colors.textMuted };
+  return { font: `500 11px/1 ${fonts.mono}`, color: colors.textMuted };
 }
 function evidenceTextStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 10px/1.3 ${fonts.mono}`, color: colors.textMuted };
+  return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textMuted };
 }
 function errorTextStyle(): CSSProperties {
   return { font: `500 11px/1.4 ${fonts.ui}`, color: '#ff6b6b' };

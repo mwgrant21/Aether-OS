@@ -17,7 +17,7 @@ export function ActiveAgentsCard() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flex: 'none' }}>
-        <div style={titleStyle(colors)}>ACTIVE AGENTS</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>ACTIVE AGENTS</h2>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 13 }}>
         {state.realAgents.map((a) => (

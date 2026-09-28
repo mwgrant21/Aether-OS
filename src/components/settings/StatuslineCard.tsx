@@ -88,7 +88,7 @@ export function StatuslineCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>STATUSLINE</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>STATUSLINE</h2>
 
       {!state && <div style={hintStyle(colors)}>Checking…</div>}
 
@@ -191,7 +191,7 @@ function titleStyle(colors: ColorPalette): CSSProperties {
   return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 function valueStyle(colors: ColorPalette, status: InstallStatus): CSSProperties {
   const color =

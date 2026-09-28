@@ -10,7 +10,7 @@ export function CostGuardCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>COST GUARD</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>COST GUARD</h2>
 
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>ANTHROPIC API</div>
@@ -61,7 +61,7 @@ function rowStyle(_colors: ColorPalette): CSSProperties {
   return { marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
 }
 function valueStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 11px/1 ${fonts.mono}`, color: colors.textSecondary, textAlign: 'right' };

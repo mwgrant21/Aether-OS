@@ -49,7 +49,7 @@ export function PlanUsageCard() {
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={titleStyle(colors)}>PLAN USAGE</div>
+          <h2 style={{ ...titleStyle(colors), margin: 0 }}>PLAN USAGE</h2>
           <span style={tierBadgeStyle(colors, tier?.tier ?? null)}>{tierLabel}</span>
         </div>
         <Button onClick={handleSync} disabled={!state.terminalAlive || syncState === 'syncing'} style={syncButtonStyle(colors)}>
@@ -77,7 +77,7 @@ export function PlanUsageCard() {
         )}
       </div>
 
-      {!tier?.weekModel && <div style={{ font: `400 10px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 2 }}>{freshnessLabel}</div>}
+      {!tier?.weekModel && <div style={{ font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 2 }}>{freshnessLabel}</div>}
     </div>
   );
 }
@@ -95,7 +95,7 @@ function titleStyle(colors: ColorPalette): CSSProperties {
 }
 function tierBadgeStyle(colors: ColorPalette, tier: 'pro' | 'max' | null): CSSProperties {
   return {
-    font: `700 9px/1 ${fonts.ui}`,
+    font: `700 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: tier === 'max' ? colors.accentCyanSoft : colors.textMuted,
     border: `1px solid ${colors.chipBorder}`,
@@ -106,7 +106,7 @@ function tierBadgeStyle(colors: ColorPalette, tier: 'pro' | 'max' | null): CSSPr
 function syncButtonStyle(colors: ColorPalette): CSSProperties {
   return {
     cursor: 'pointer',
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: colors.accentCyanSoft,
     padding: '4px 8px',
@@ -132,7 +132,7 @@ function UsageBar({
   if (!available || pct === null) {
     return (
       <div style={{ marginBottom: 10 }}>
-        <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textMuted }}>{label}</div>
+        <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textMuted }}>{label}</div>
         <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 4 }}>no reading yet</div>
       </div>
     );
@@ -142,7 +142,7 @@ function UsageBar({
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textMuted }}>{label}</span>
+        <span style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textMuted }}>{label}</span>
         <span style={{ font: `700 12px/1 ${fonts.mono}`, color: warn ? colors.warn : colors.textBody }}>
           {clamped}%{stale ? ' (stale)' : ''}
         </span>
@@ -150,7 +150,7 @@ function UsageBar({
       <div style={{ height: 5, borderRadius: 3, background: 'rgba(20,50,64,.7)', overflow: 'hidden', marginTop: 4 }}>
         <div style={{ height: '100%', width: `${clamped}%`, background: warn ? colors.warn : colors.accentCyanDeep }} />
       </div>
-      <div style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 3 }}>{resetLabel}</div>
+      <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 3 }}>{resetLabel}</div>
     </div>
   );
 }

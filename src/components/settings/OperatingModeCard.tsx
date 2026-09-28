@@ -25,7 +25,7 @@ export function OperatingModeCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>OPERATING MODE</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>OPERATING MODE</h2>
       <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
         {OP_MODES.map((om) => {
           const on = state.cfg.opMode === om.key;
@@ -106,7 +106,7 @@ function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): CSSPropert
   };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
@@ -115,7 +115,7 @@ function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
     cursor: 'pointer',
     padding: '6px 12px',
     borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: on ? '#04202b' : colors.textMuted,
     background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',

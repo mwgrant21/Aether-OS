@@ -81,7 +81,7 @@ function MessageRow({ message, channel, colors }: { message: DisplayMessage; cha
     <div style={rowStyle(message.role)}>
       <div style={metaRowStyle}>
         <span style={labelStyle(labelColor)}>{label}</span>
-        <span style={{ color: colors.textDim, font: `400 10px/1 ${fonts.mono}` }}>{new Date(message.atMs).toLocaleTimeString()}</span>
+        <span style={{ color: colors.textDim, font: `400 11px/1 ${fonts.mono}` }}>{new Date(message.atMs).toLocaleTimeString()}</span>
       </div>
       {message.text && <div style={textStyle(colors)}>{message.text}</div>}
       {message.toolCalls.map((tc, i) => (
@@ -117,7 +117,7 @@ function rowStyle(role: DisplayMessage['role']): CSSProperties {
 }
 const metaRowStyle: CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 8 };
 function labelStyle(color: string): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1.5, color };
 }
 function textStyle(colors: ColorPalette): CSSProperties {
   return {
@@ -155,7 +155,7 @@ const narrationRowStyle: CSSProperties = { display: 'flex', alignItems: 'baselin
 function narrationVoiceStyle(colors: ColorPalette, severity: number): CSSProperties {
   return {
     flex: 'none',
-    font: `700 10px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     letterSpacing: 1.5,
     color: severity >= 3 ? colors.warn : colors.textMuted,
   };
@@ -167,7 +167,7 @@ function sizeChipStyle(colors: ColorPalette): CSSProperties {
   return {
     marginLeft: 'auto',
     flex: 'none',
-    font: `600 9px/1 ${fonts.mono}`,
+    font: `600 11px/1 ${fonts.mono}`,
     color: colors.textDim,
     border: `1px solid ${colors.chipBorder}`,
     borderRadius: 5,

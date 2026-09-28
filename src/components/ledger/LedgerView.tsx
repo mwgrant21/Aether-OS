@@ -68,7 +68,7 @@ export function LedgerView() {
   return (
     <div style={rootStyle}>
       <div style={headerStyle}>
-        <div style={titleStyle(colors)}>▤ LEDGER</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>▤ LEDGER</h2>
         <div style={scopeStyle(colors)}>observed in this machine's Claude Code transcripts</div>
       </div>
 
@@ -364,6 +364,6 @@ const aetherLabelStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const aetherNoteStyle = (c: ColorPalette): CSSProperties => ({
-  font: `400 10px/1.5 ${fonts.ui}`,
+  font: `400 11px/1.5 ${fonts.ui}`,
   color: c.textDim,
 });

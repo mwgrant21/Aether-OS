@@ -12,7 +12,7 @@ export function TopCommandsCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>TOP COMMANDS</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>TOP COMMANDS</h2>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 9 }}>
         {rows.map((r, i) => (
           <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -95,7 +95,7 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
   if (rows.length === 0) {
     return (
       <div style={cardStyle(colors)}>
-        <div style={cardTitleStyle(colors)}>DISPATCHES</div>
+        <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>DISPATCHES</h2>
         <div style={emptyStyle(colors)}>No completed dispatches observed in this scan.</div>
       </div>
     );
@@ -104,7 +104,7 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
   return (
     <div style={cardStyle(colors)}>
       <div style={headerRowStyle}>
-        <div style={cardTitleStyle(colors)}>DISPATCHES</div>
+        <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>DISPATCHES</h2>
         <Button
           onClick={() => setDescending((v) => !v)}
           style={sortBtnStyle(colors)}
@@ -211,7 +211,7 @@ const cardTitleStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const sortBtnStyle = (c: ColorPalette): CSSProperties => ({
-  font: `500 10px/1 ${fonts.ui}`,
+  font: `500 11px/1 ${fonts.ui}`,
   letterSpacing: '.08em',
   color: c.textSecondary,
   background: c.panelInset,
@@ -228,7 +228,7 @@ const headRowStyle = (c: ColorPalette): CSSProperties => ({
   gap: 12,
   padding: '0 0 6px',
   borderBottom: `1px solid ${c.chromeBorder}`,
-  font: `500 10px/1.4 ${fonts.ui}`,
+  font: `500 11px/1.4 ${fonts.ui}`,
   letterSpacing: '.08em',
   color: c.textMuted,
 });
@@ -276,7 +276,7 @@ const assumedStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const flagStyle = (c: ColorPalette): CSSProperties => ({
-  font: `600 10px/1 ${fonts.ui}`,
+  font: `600 11px/1 ${fonts.ui}`,
   letterSpacing: '.06em',
   color: c.danger,
   marginLeft: 8,

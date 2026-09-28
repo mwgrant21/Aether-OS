@@ -19,7 +19,7 @@ export function AgentBreakdownCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>LONGEST-RUNNING AGENTS</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>LONGEST-RUNNING AGENTS</h2>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {rows.map((r) => (
           <div key={r.toolUseId} style={rowStyle}>
@@ -60,7 +60,7 @@ function avatarStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 7,
     display: 'grid',
     placeItems: 'center',
-    font: `700 10px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: colors.accentCyanSoft,
     background: 'rgba(127,216,239,0.12)',
     border: `1px solid ${colors.accentCyanSoft}`,

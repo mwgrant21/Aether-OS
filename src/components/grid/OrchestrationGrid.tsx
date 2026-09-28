@@ -208,7 +208,7 @@ function hubLabelWrapStyle(x: number, y: number, viewport: ViewportTransform): C
   };
 }
 const hubNameStyle: CSSProperties = { font: `700 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textPrimary };
-const hubRateStyle: CSSProperties = { marginTop: 4, font: `400 10px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
+const hubRateStyle: CSSProperties = { marginTop: 4, font: `400 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
 
 function agentLabelWrapStyle(node: RealAgentNode, viewport: ViewportTransform): CSSProperties {
   const { screenX, screenY } = toScreenPoint(node.x, node.y, viewport);
@@ -230,7 +230,7 @@ const agentNameStyle: CSSProperties = {
 };
 const agentRoleStyle: CSSProperties = {
   marginTop: 2,
-  font: `400 10px/1.3 ${fonts.ui}`,
+  font: `400 11px/1.3 ${fonts.ui}`,
   color: colors.textMuted,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
