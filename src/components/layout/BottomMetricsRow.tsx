@@ -3,8 +3,8 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
-import { fmt, formatUptime } from '../../utils/format';
-import { NO_DATA, computeUsageBar, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
+import { fmt } from '../../utils/format';
+import { computeContextReading, computeSessionInfoRows, computeUsageBar, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { deriveContextWindowCard } from './contextWindowCard';
 
@@ -38,18 +38,15 @@ export function BottomMetricsRow() {
   // CONTEXT tile reads. See contextWindowCard.ts for why the window size,
   // the input-only token sum and the per-part breakdown all come from the
   // payload rather than from constants and ratios (issue #20).
-  const ctx = deriveContextWindowCard(state.statusline);
+  // The ring and headline percentage come from computeContextReading, the
+  // same clamped reading the dashboard CONTEXT tile renders.
+  const ctx = deriveContextWindowCard(state.statusline, now.getTime());
+  const ctxReading = computeContextReading(state.statusline, now.getTime());
   const circ = 2 * Math.PI * 42;
-  const ctxDash = `${((circ * ctx.ringPct) / 100).toFixed(1)} ${circ.toFixed(1)}`;
+  const ctxDash = `${((circ * (ctxReading?.pct ?? 0)) / 100).toFixed(1)} ${circ.toFixed(1)}`;
   const PART_COLORS = [colors.accentCyanDeep, colors.warn, colors.success];
 
-  const session = [
-    { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
-    { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
-    { k: 'Commands run', v: fmt(state.commandsRun) },
-    { k: 'Agents active', v: String(state.realAgents.length) },
-    { k: 'Tokens used', v: state.realUsage.lastScanAt === null ? NO_DATA : fmt(state.realUsage.usedThisMonth) },
-  ];
+  const session = computeSessionInfoRows(state, now);
 
   return (
     <div style={rootStyle}>
@@ -113,7 +110,7 @@ export function BottomMetricsRow() {
             <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
               <div>
                 <div style={{ font: `700 22px/1 ${fonts.mono}`, color: colors.textPrimary }}>
-                  {ctx.available ? `${ctx.stale ? '~' : ''}${Math.round(ctx.pct as number)}%` : '--'}
+                  {ctxReading !== null ? ctxReading.pctLabel : '--'}
                 </div>
                 <div style={{ font: `400 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, marginTop: 3 }}>USED</div>
               </div>

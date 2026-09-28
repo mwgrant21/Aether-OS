@@ -3,8 +3,8 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
-import { fmtEta, short } from '../../utils/format';
-import { NO_DATA, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive } from './dashboardMath';
+import { fmtEta } from '../../utils/format';
+import { NO_DATA, computeContextReading, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive } from './dashboardMath';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { deriveDepletion, formatResetCountdown } from '../../shared/depletion';
 import type { AetherState } from '../../state/types';
@@ -12,8 +12,8 @@ import type { AetherState } from '../../state/types';
 type TileSource = 'live' | 'stale' | 'est';
 
 /**
- * DEPLETION ETA and CONTEXT are the two dashboard tiles with a real,
- * statusline-backed alternative to today's estimate/fictional value. This
+ * DEPLETION ETA and CONTEXT are the two dashboard tiles backed by the
+ * statusline, which is what earns them a LIVE/STALE source chip. This
  * derives the override (value/detail/source/stale) for those two tile keys
  * only; every other tile from computeDashKpis renders unchanged. Kept local
  * to the component (rather than folded into computeDashKpis) so the existing,
@@ -23,19 +23,19 @@ function deriveTileOverride(
   key: string,
   state: AetherState,
 ): { v: string; s: string; source: TileSource; stale: boolean } | null {
-  // Both tiles judge freshness off the same statusline capture, via
-  // deriveDepletion's stale computation (which is correct even when
-  // state.statusline.fiveHour is null) -- so a percentage captured hours ago
-  // can never render LIVE on one tile while the sibling tile (correctly)
-  // shows it as stale.
-  const stale = deriveDepletion(state.statusline, null, Date.now()).stale;
-
+  // Both tiles judge freshness off the same statusline capture with the same
+  // rule (capturedAtMs older than STATUSLINE_STALE_AFTER_MS: deriveDepletion
+  // here, deriveContextWindowCard via computeContextReading below) -- so a
+  // percentage captured hours ago can never render LIVE on one tile while the
+  // sibling tile (correctly) shows it as stale.
   if (key === 'DEPLETION ETA') {
     const depletion = deriveDepletion(state.statusline, null, Date.now());
+    const stale = depletion.stale;
     if (depletion.source !== 'statusline') return null; // fall back to today's estimate
     const etaPart =
-      depletion.msUntilDepleted === null ? '—' : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
-    const prefix = stale ? '~' : '';
+      depletion.msUntilDepleted === null ? NO_DATA : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
+    // `~` marks a stale value; with no value there is nothing to qualify.
+    const prefix = stale && etaPart !== NO_DATA ? '~' : '';
     return {
       v: `${prefix}${etaPart} · resets ${formatResetCountdown(depletion.msUntilReset)}`,
       s: 'server rate limit',
@@ -44,24 +44,10 @@ function deriveTileOverride(
     };
   }
   if (key === 'CONTEXT') {
-    const snap = state.statusline;
-    const pct = snap?.contextUsedPercentage ?? null;
-    if (pct === null) return null; // fall back to computeDashKpis' scan-based estimate, or NO_DATA
-    const usage = snap?.contextUsage ?? null;
-    const windowSize = snap?.contextWindowSize ?? null;
-    // Matches contextUsedPercentage's own input-only definition
-    // (input + cache-creation + cache-read tokens) -- outputTokens is
-    // deliberately excluded here, since including it would sum against a
-    // different basis than the headline percentage and the two would
-    // visibly disagree.
-    const detail =
-      usage === null
-        ? 'post-/compact snapshot'
-        : windowSize === null
-          ? short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)
-          : `${short(usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens)} / ${short(windowSize)}`;
-    const prefix = stale ? '~' : '';
-    return { v: `${prefix}${Math.round(pct)}%`, s: detail, source: stale ? 'stale' : 'live', stale };
+    // Same function computeDashKpis' CONTEXT tile and the footer card use.
+    const reading = computeContextReading(state.statusline, Date.now());
+    if (reading === null) return null; // computeDashKpis already renders NO_DATA
+    return { v: reading.pctLabel, s: reading.usedLabel, source: reading.stale ? 'stale' : 'live', stale: reading.stale };
   }
   return null;
 }

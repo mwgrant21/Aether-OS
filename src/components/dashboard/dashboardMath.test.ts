@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   NO_DATA,
+  computeContextReading,
   computeDashKpis,
   computeDashPulseMode,
   computeDashStatus,
   computeRateReadout,
+  computeSessionInfoRows,
   computeSidebarReactorRate,
   computeSidebarReactorStatus,
   computeUsageBar,
@@ -16,6 +18,8 @@ import { computeTopCommands } from '../analytics/analyticsMath';
 import { reducer } from '../../state/reducer';
 import { initialState } from '../../state/initialState';
 import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
+import { deriveContextWindowCard } from '../layout/contextWindowCard';
+import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import type { AetherState } from '../../state/types';
 
 const NOW = 1_800_000_000_000;
@@ -168,12 +172,15 @@ describe('computeUsageRangeTotal', () => {
 
 describe('computeDashKpis', () => {
   it('derives all four KPI tiles from a scanned state', () => {
-    const kpis = computeDashKpis({
-      ...initialState,
-      realUsage: { ...SCANNED, usedThisMonth: 24391, burnRatePerMin: 92000 },
-      ctxUsed: 78432,
-      cfg: { ...initialState.cfg, capM: 2.0 },
-    });
+    const kpis = computeDashKpis(
+      {
+        ...initialState,
+        realUsage: { ...SCANNED, usedThisMonth: 24391, burnRatePerMin: 92000 },
+        ctxUsed: 78432,
+        cfg: { ...initialState.cfg, capM: 2.0 },
+      },
+      NOW,
+    );
     expect(kpis).toHaveLength(4);
     // A monthly value is labelled as one.
     expect(kpis[0]).toEqual({ k: 'MONTH TOKENS', v: '24.4K', s: 'this month' });
@@ -182,8 +189,9 @@ describe('computeDashKpis', () => {
     expect(kpis[1].s).toBe('of 2.0M cap');
     expect(kpis[2].k).toBe('DEPLETION ETA');
     expect(kpis[2].v.startsWith('~')).toBe(true);
-    // 78432 / 200000 = 39%, an estimate against the assumed window, so it keeps `~`.
-    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: '~39%', s: '78.4K / 200K' });
+    // A scan alone is not a context reading: ctxUsed over an assumed 200K is
+    // no longer rendered (it read "~245%" on a 1M-context session).
+    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' });
   });
 
   it('renders a dash, never a seeded or zero value, before any scan', () => {
@@ -197,6 +205,16 @@ describe('computeDashKpis', () => {
     expect(kpis[2].v).toBe(NO_DATA);
   });
 
+  it('never renders "n/a" for DEPLETION ETA once the cap is already spent', () => {
+    const kpis = computeDashKpis({
+      ...initialState,
+      realUsage: { ...SCANNED, usedThisMonth: 11_534_188, burnRatePerMin: 5000 },
+      cfg: { ...initialState.cfg, capM: 2.0 },
+    });
+    expect(kpis[2].v).toBe('now');
+    expect(kpis.every((k) => !k.v.includes('n/a'))).toBe(true);
+  });
+
   it('clamps budget-left at 0% instead of going negative', () => {
     const kpis = computeDashKpis({
       ...initialState,
@@ -204,5 +222,63 @@ describe('computeDashKpis', () => {
       cfg: { ...initialState.cfg, capM: 2.0 },
     });
     expect(kpis[1].v).toBe('0.0%');
+  });
+});
+
+const ctxSnap = (over: Partial<StatuslineSnapshot> = {}): StatuslineSnapshot => ({
+  capturedAtMs: NOW,
+  sessionId: null,
+  modelId: null,
+  modelDisplayName: null,
+  fiveHour: null,
+  sevenDay: null,
+  contextUsedPercentage: 48,
+  contextWindowSize: 1_000_000,
+  contextUsage: { inputTokens: 1_000, outputTokens: 500, cacheCreationInputTokens: 9_000, cacheReadInputTokens: 470_000 },
+  totalCostUsd: null,
+  currentDir: null,
+  projectDir: null,
+  ...over,
+});
+
+describe('computeContextReading', () => {
+  it('is null with no statusline, and the CONTEXT tile shows NO_DATA', () => {
+    expect(computeContextReading(null, NOW)).toBeNull();
+    // Scanned with a large ctxUsed: the old path rendered "~245%" here.
+    const kpis = computeDashKpis({ ...initialState, realUsage: SCANNED, ctxUsed: 489_100 }, NOW);
+    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' });
+  });
+
+  it('gives the CONTEXT tile and the footer card the same reading', () => {
+    const snap = ctxSnap();
+    const reading = computeContextReading(snap, NOW);
+    expect(reading).toEqual({ pct: 48, pctLabel: '48%', usedLabel: '480.0K / 1.00M', stale: false });
+    const kpis = computeDashKpis({ ...initialState, realUsage: SCANNED, ctxUsed: 489_100, statusline: snap }, NOW);
+    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: reading!.pctLabel, s: reading!.usedLabel });
+    // The card's ring reads the same percentage.
+    expect(deriveContextWindowCard(snap, NOW).ringPct).toBe(reading!.pct);
+  });
+
+  it('clamps an over-100 raw percentage to 100', () => {
+    const reading = computeContextReading(ctxSnap({ contextUsedPercentage: 245 }), NOW);
+    expect(reading!.pct).toBe(100);
+    expect(reading!.pctLabel).toBe('100%');
+  });
+
+  it('marks a stale capture with `~`', () => {
+    const reading = computeContextReading(ctxSnap({ capturedAtMs: NOW - STATUSLINE_STALE_AFTER_MS - 1 }), NOW);
+    expect(reading!.pctLabel).toBe('~48%');
+    expect(reading!.stale).toBe(true);
+  });
+});
+
+describe('computeSessionInfoRows', () => {
+  it('has no month-scoped "Tokens used" row', () => {
+    const rows = computeSessionInfoRows(
+      { ...initialState, realUsage: { ...SCANNED, usedThisMonth: 11_534_188 } } as AetherState,
+      new Date(NOW),
+    );
+    expect(rows.map((r) => r.k)).toEqual(['Session start', 'Uptime', 'Commands run', 'Agents active']);
+    expect(rows.some((r) => r.v === '11,534,188')).toBe(false);
   });
 });

@@ -1,8 +1,8 @@
 import type { AetherState, AlarmLevel, Cfg } from '../../state/types';
 import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
-import { fmt, fmtEta, short } from '../../utils/format';
-
-const CONTEXT_WINDOW = 200000;
+import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
+import { fmt, fmtEta, formatUptime, short } from '../../utils/format';
+import { deriveContextWindowCard } from '../layout/contextWindowCard';
 
 /** Rendered wherever a readout has no real source. "No data" is never 0. */
 export const NO_DATA = '—';
@@ -121,10 +121,11 @@ export interface DashKpi {
   s: string;
 }
 
-export function computeDashKpis(state: AetherState): DashKpi[] {
-  // Every tile here derives from the transcript scan; before the first scan
-  // lands (and always in browser mode) there is no reading, so render NO_DATA
-  // rather than a 0 that reads as "nothing used".
+export function computeDashKpis(state: AetherState, nowMs: number = Date.now()): DashKpi[] {
+  // The first three tiles derive from the transcript scan; before the first
+  // scan lands (and always in browser mode) there is no reading, so render
+  // NO_DATA rather than a 0 that reads as "nothing used". CONTEXT reads the
+  // statusline instead (computeContextReading).
   const scanned = state.realUsage.lastScanAt !== null;
   const capTokens = state.cfg.capM * 1e6;
   const used = state.realUsage.usedThisMonth;
@@ -132,19 +133,71 @@ export function computeDashKpis(state: AetherState): DashKpi[] {
   const remaining = Math.max(0, capTokens - used);
   const burn = state.realUsage.burnRatePerMin;
   // An estimate keeps its `~`; with no draw there is nothing to project from.
-  const eta = scanned && burn > 0 ? `~${fmtEta(remaining / (burn / 60))}` : NO_DATA;
+  // A cap already spent is a fact, not a projection: fmtEta(0) would return
+  // 'n/a', which rendered as the "~n/a" readout.
+  const eta = !scanned || burn <= 0 ? NO_DATA : remaining <= 0 ? 'now' : `~${fmtEta(remaining / (burn / 60))}`;
+  const ctx = computeContextReading(state.statusline, nowMs);
 
   return [
     { k: 'MONTH TOKENS', v: scanned ? short(used) : NO_DATA, s: 'this month' },
     { k: 'BUDGET LEFT', v: scanned ? `${budgetLeftPct.toFixed(1)}%` : NO_DATA, s: `of ${state.cfg.capM.toFixed(1)}M cap` },
     { k: 'DEPLETION ETA', v: eta, s: 'at current draw' },
-    // Fallback for when no statusline capture exists (ReactorStatusCard's
-    // deriveTileOverride supersedes it once one does). ctxUsed is only real
-    // once a transcript scan has replaced initialState's seed; 200,000 is the
-    // assumed Claude Code window (see commands.ts / issue #20), so this is an
-    // estimate and keeps its `~`.
-    scanned
-      ? { k: 'CONTEXT', v: `~${Math.round((state.ctxUsed / CONTEXT_WINDOW) * 100)}%`, s: `${short(state.ctxUsed)} / 200K` }
-      : { k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' },
+    // The same reading the footer's CONTEXT WINDOW card renders, so the two
+    // cannot disagree. No statusline reading means no tile value.
+    ctx === null ? { k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' } : { k: 'CONTEXT', v: ctx.pctLabel, s: ctx.usedLabel },
+  ];
+}
+
+export interface ContextReading {
+  /** Clamped to 0-100: a ratio past full is a data defect, not a reading. */
+  pct: number;
+  /** The rendered percentage; `~` only when the statusline capture is stale. */
+  pctLabel: string;
+  /** Used tokens over the payload's own window size, e.g. "480.0K / 1.00M". */
+  usedLabel: string;
+  stale: boolean;
+}
+
+/**
+ * The one context-window reading, shared by the dashboard CONTEXT tile and the
+ * footer's CONTEXT WINDOW card. It comes from Claude Code's statusline payload
+ * (contextUsedPercentage and contextWindowSize) via deriveContextWindowCard,
+ * so it is a measured value, not an estimate. The tile used to divide the
+ * transcript-derived ctxUsed by an assumed 200K window, which rendered
+ * "~245%" on a 1M-context session while this card read 48%.
+ */
+export function computeContextReading(snap: StatuslineSnapshot | null, nowMs: number): ContextReading | null {
+  const card = deriveContextWindowCard(snap, nowMs);
+  if (!card.available || card.pct === null || card.usedTokens === null) return null;
+  const pct = Math.max(0, Math.min(100, card.pct));
+  const used = short(card.usedTokens);
+  return {
+    pct,
+    pctLabel: `${card.stale ? '~' : ''}${Math.round(pct)}%`,
+    usedLabel: card.windowSize === null ? used : `${used} / ${short(card.windowSize)}`,
+    stale: card.stale,
+  };
+}
+
+export interface SessionInfoRow {
+  k: string;
+  v: string;
+}
+
+/**
+ * SESSION INFO rows (BottomMetricsRow). There is no "Tokens used" row: state
+ * holds no session-scoped token total (realUsage.usedThisMonth is the month,
+ * already shown as MONTH TOKENS), and a month figure under "Session info"
+ * misreports it.
+ */
+export function computeSessionInfoRows(
+  state: Pick<AetherState, 'sessionStartedAt' | 'commandsRun' | 'realAgents'>,
+  now: Date,
+): SessionInfoRow[] {
+  return [
+    { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
+    { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
+    { k: 'Commands run', v: fmt(state.commandsRun) },
+    { k: 'Agents active', v: String(state.realAgents.length) },
   ];
 }
