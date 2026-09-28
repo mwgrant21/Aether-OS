@@ -3,7 +3,7 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { isSessionLive } from '../dashboard/dashboardMath';
-import { formatUptime } from './BottomMetricsRow';
+import { formatUptime } from '../../utils/format';
 
 export function Footer() {
   const colors = useColors();

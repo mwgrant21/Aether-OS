@@ -3,7 +3,8 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
-import { fmt } from '../../utils/format';
+import { fmt, formatUptime } from '../../utils/format';
+import { sessionCommandHistory } from '../dashboard/dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { deriveContextWindowCard } from './contextWindowCard';
 
@@ -11,20 +12,13 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 type UsageRange = 'live' | 'daily' | 'weekly';
 const RANGES: UsageRange[] = ['live', 'daily', 'weekly'];
 
-// The one uptime formatter: SESSION INFO and the footer both read
-// state.sessionStartedAt through it, so they cannot disagree.
-export function formatUptime(startedAt: string, now: Date): string {
-  const ms = Math.max(0, now.getTime() - new Date(startedAt).getTime());
-  const totalMin = Math.floor(ms / 60000);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  return `${h}h ${m}m`;
-}
-
 export function BottomMetricsRow() {
   const colors = useColors();
   const { state } = useAetherStore();
-  const topCommands = computeTopCommands(state.cmdHist);
+  // Session-scoped to match "Commands run" below (state.commandsRun): see
+  // sessionCommandHistory for why a restored cmdHist cannot leak in here.
+  const sessionCommands = sessionCommandHistory(state);
+  const topCommands = computeTopCommands(sessionCommands);
   const [range, setRange] = useState<UsageRange>('weekly');
   const now = new Date();
 
@@ -148,7 +142,7 @@ export function BottomMetricsRow() {
       <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={cardTitleStyle(colors)}>TOP COMMANDS</div>
-          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>RECENT</div>
+          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>THIS SESSION</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 13 }}>
           {topCommands.map((c, i) => (

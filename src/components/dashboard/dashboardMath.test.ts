@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { NO_DATA, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive } from './dashboardMath';
+import { NO_DATA, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive, sessionCommandHistory } from './dashboardMath';
+import { computeTopCommands } from '../analytics/analyticsMath';
+import { reducer } from '../../state/reducer';
 import { initialState } from '../../state/initialState';
 import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 import type { AetherState } from '../../state/types';
@@ -34,17 +36,48 @@ describe('isSessionLive', () => {
   });
   it('is live while a dispatch is running', () => {
     const agent = {} as AetherState['realAgents'][number];
-    expect(isSessionLive({ ...initialState, realAgents: [agent] }, NOW)).toBe(true);
+    expect(isSessionLive({ ...initialState, realAgents: [agent], terminalAlive: true }, NOW)).toBe(true);
+  });
+  it('is not live on a dispatch left open by a pty that has exited', () => {
+    const agent = {} as AetherState['realAgents'][number];
+    expect(isSessionLive({ ...initialState, realAgents: [agent], terminalAlive: false }, NOW)).toBe(false);
   });
   it('is live on a fresh statusline capture and not on a stale one', () => {
     const snap = (capturedAtMs: number) => ({ capturedAtMs }) as NonNullable<AetherState['statusline']>;
     expect(isSessionLive({ ...initialState, statusline: snap(NOW - STATUSLINE_STALE_AFTER_MS) }, NOW)).toBe(true);
     expect(isSessionLive({ ...initialState, statusline: snap(NOW - STATUSLINE_STALE_AFTER_MS - 1) }, NOW)).toBe(false);
   });
-  it('is live when the collector reports a running session, not on an empty fleet', () => {
+  it('is live when the collector reports a busy session, not on an empty fleet', () => {
     const row = { sessionId: 's', pid: 1, projectName: 'p', kind: 'interactive', status: 'busy', name: 'n', startedAtMs: 0 };
     expect(isSessionLive({ ...initialState, fleet: [row] }, NOW)).toBe(true);
     expect(isSessionLive({ ...initialState, fleet: [] }, NOW)).toBe(false);
+  });
+  it('is not live on an idle fleet session (open, waiting on input)', () => {
+    const row = { sessionId: 's', pid: 1, projectName: 'p', kind: 'interactive', status: 'idle', name: 'n', startedAtMs: 0 };
+    expect(isSessionLive({ ...initialState, fleet: [row] }, NOW)).toBe(false);
+  });
+});
+
+describe('sessionCommandHistory', () => {
+  // Mirrors store.tsx's hydration merge: cmdHist is persisted, commandsRun is not.
+  const hydrated = (): AetherState => ({ ...initialState, ...{ cmdHist: ['ls', 'ls', 'ls'] } });
+  const count = (st: AetherState) => computeTopCommands(sessionCommandHistory(st)).reduce((n, c) => n + c.count, 0);
+
+  it('keeps a restored cmdHist out of this session, so Commands run and TOP COMMANDS agree at 0', () => {
+    const st = hydrated();
+    expect(st.commandsRun).toBe(0);
+    expect(sessionCommandHistory(st)).toEqual([]);
+    expect(count(st)).toBe(st.commandsRun);
+  });
+  it('counts only commands run after the restore', () => {
+    const st = reducer(hydrated(), { type: 'RUN_COMMAND', raw: 'ls' });
+    expect(st.commandsRun).toBe(1);
+    expect(computeTopCommands(sessionCommandHistory(st))).toEqual([{ name: 'ls', count: 1 }]);
+    expect(count(st)).toBe(st.commandsRun);
+  });
+  it('returns the whole capped history once the session has outrun it', () => {
+    const cmdHist = new Array(30).fill('ls');
+    expect(sessionCommandHistory({ cmdHist, commandsRun: 45 })).toHaveLength(30);
   });
 });
 

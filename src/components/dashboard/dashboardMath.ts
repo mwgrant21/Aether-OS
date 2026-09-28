@@ -12,21 +12,25 @@ export const NO_DATA = '—';
  * existing IPC sync hooks already maintain (no channel of its own):
  * - realUsage.burnRatePerMin > 0: tokens landed in a transcript within the
  *   last 10 minutes (useRealUsageSync).
- * - realAgents non-empty: a dispatch is running right now (useRealAgentsSync).
+ * - realAgents non-empty AND terminalAlive: a dispatch is running right now
+ *   (useRealAgentsSync). realAgents is tailed from the embedded pty's
+ *   transcript and is not cleared when that pty exits, so without the
+ *   terminalAlive gate a crash mid-dispatch would read as live forever.
  * - a statusline capture younger than STATUSLINE_STALE_AFTER_MS: Claude Code
  *   rendered its status line recently (useStatuslineSync).
- * - fleet rows present: the collector sees a running Claude session
- *   (useFleetSync; null whenever the collector is absent or its heartbeat is
- *   stale).
- * The embedded terminal's pty (terminalAlive) is deliberately NOT a signal:
- * a shell being open is not a Claude session. Browser mode (plain vite) has
+ * - a fleet row with status 'busy': the collector sees a Claude session
+ *   working (useFleetSync; null whenever the collector is absent or its
+ *   heartbeat is stale). An 'idle' row is an open session waiting on input,
+ *   which is STANDBY, the same as an idle embedded session.
+ * terminalAlive on its own is NOT a signal: a shell being open is not a
+ * Claude session. Browser mode (plain vite) has
  * none of these feeds, so it always reads as not live.
  */
 export function isSessionLive(state: AetherState, nowMs: number): boolean {
   if (state.realUsage.burnRatePerMin > 0) return true;
-  if (state.realAgents.length > 0) return true;
+  if (state.realAgents.length > 0 && state.terminalAlive) return true;
   if (state.statusline !== null && nowMs - state.statusline.capturedAtMs <= STATUSLINE_STALE_AFTER_MS) return true;
-  if (state.fleet !== null && state.fleet.length > 0) return true;
+  if (state.fleet !== null && state.fleet.some((row) => row.status === 'busy')) return true;
   return false;
 }
 
@@ -50,6 +54,18 @@ export function computeDashPulseMode(cfg: Cfg): string {
 export function computeRateReadout(state: AetherState, live: boolean): string {
   if (!live || state.realUsage.lastScanAt === null) return `${NO_DATA} tok/min`;
   return `${fmt(state.realUsage.burnRatePerMin)} tok/min`;
+}
+
+/**
+ * The commands run THIS session, so SESSION INFO's count and TOP COMMANDS read
+ * one source. cmdHist persists across restarts and its entries carry no
+ * timestamp; commandsRun does not persist, and RUN_COMMAND bumps both in the
+ * same step, so the session's commands are exactly cmdHist's last commandsRun
+ * entries (all of cmdHist once commandsRun passes its 30-entry cap).
+ */
+export function sessionCommandHistory(state: Pick<AetherState, 'cmdHist' | 'commandsRun'>): string[] {
+  if (state.commandsRun <= 0) return [];
+  return state.cmdHist.slice(-state.commandsRun);
 }
 
 export interface DashKpi {
