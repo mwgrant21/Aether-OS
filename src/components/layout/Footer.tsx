@@ -2,13 +2,16 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
+import { isSessionLive } from '../dashboard/dashboardMath';
+import { formatUptime } from './BottomMetricsRow';
 
 export function Footer() {
   const colors = useColors();
   const { state } = useAetherStore();
   const [version, setVersion] = useState<string | null>(null);
-  const c = state.alarmLevel === 'crit' ? colors.danger : state.alarmLevel === 'warn' ? colors.warn : colors.success;
-  const label = state.alarmLevel === 'crit' ? 'BURN ALARM' : state.alarmLevel === 'warn' ? 'BURN ELEVATED' : 'ALL GOOD';
+  const live = isSessionLive(state, Date.now());
+  const c = state.alarmLevel === 'crit' ? colors.danger : state.alarmLevel === 'warn' ? colors.warn : live ? colors.success : colors.textMuted;
+  const label = state.alarmLevel === 'crit' ? 'BURN ALARM' : state.alarmLevel === 'warn' ? 'BURN ELEVATED' : live ? 'ALL GOOD' : 'STANDBY';
 
   useEffect(() => {
     window.aetherElectron?.app.getVersion().then(setVersion);
@@ -17,7 +20,7 @@ export function Footer() {
   return (
     <div style={rootStyle(colors)}>
       <span>◇ AETHER OS {version ? `v${version}` : ''}</span>
-      <span style={{ marginLeft: 'auto' }}>Uptime 3h 42m</span>
+      <span style={{ marginLeft: 'auto' }}>Uptime {formatUptime(state.sessionStartedAt, new Date())}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: c }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: `0 0 8px ${c}` }} />
         {label}

@@ -9,6 +9,8 @@ import {
   computeRateFromUsage,
   computeSurge,
   computeThemeFilter,
+  computeIdleDimFilter,
+  stepIdleLevel,
   computeThemeHueDeg,
 } from './reactorMath';
 
@@ -214,5 +216,35 @@ describe('effectivePulseDuration', () => {
     const reduced = effectivePulseDuration(0.8, true);
     expect(reduced).toBe(4.0);
     expect(reduced).toBeGreaterThan(2.9);
+  });
+});
+
+describe('computeIdleDimFilter', () => {
+  it('adds nothing when live, so the live filter is exactly computeThemeFilter', () => {
+    expect(computeIdleDimFilter(0)).toBe('');
+    expect(computeThemeFilter('cyan', 'ok', true) + computeIdleDimFilter(0)).toBe(computeThemeFilter('cyan', 'ok', true));
+  });
+  it('is dim and cold when fully idle', () => {
+    expect(computeIdleDimFilter(1)).toBe(' brightness(0.45) saturate(0.35)');
+  });
+  it('interpolates mid-fade and clamps out-of-range levels', () => {
+    expect(computeIdleDimFilter(0.5)).toBe(' brightness(0.725) saturate(0.675)');
+    expect(computeIdleDimFilter(2)).toBe(computeIdleDimFilter(1));
+    expect(computeIdleDimFilter(-1)).toBe('');
+  });
+});
+
+describe('stepIdleLevel', () => {
+  it('moves toward the target at a rate covering the range in durationMs', () => {
+    expect(stepIdleLevel(0, 1, 250, 500)).toBe(0.5);
+    expect(stepIdleLevel(1, 0, 125, 500)).toBe(0.75);
+  });
+  it('never overshoots the target', () => {
+    expect(stepIdleLevel(0.9, 1, 500, 500)).toBe(1);
+    expect(stepIdleLevel(0.1, 0, 500, 500)).toBe(0);
+  });
+  it('jumps straight to the target for a zero duration and ignores negative dt', () => {
+    expect(stepIdleLevel(0, 1, 16, 0)).toBe(1);
+    expect(stepIdleLevel(0.4, 1, -50, 500)).toBe(0.4);
   });
 });
