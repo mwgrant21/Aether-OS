@@ -150,6 +150,34 @@ an `.asar` path under `npm run electron:dev`, so Connect Codex and Verify
 Dispatch work there and break in every packaged build -- installed and
 `win-unpacked` alike. Found by review on PR #75, not by testing.
 
+## Versioning
+
+The version lives in one place, `package.json`, and everything else derives from
+it: the installer name (`Aether OS Setup <version>.exe`), `latest.yml`, the
+lockfile's two root `version` fields, and the `clientInfo` the Codex app-server
+client sends (#79). It only moves when someone moves it -- nothing in the merge
+flow asks for a bump -- so it once sat at 0.3.0 for 77 commits and at 0.4.0 for
+another 44. The ritual, when a batch of PRs is worth a number:
+
+```
+npm version 0.5.0 --no-git-tag-version   # bumps package.json + package-lock.json together
+# commit on a branch and open a PR: master requires CI, and admins are included
+# after the squash merge, tag the SQUASH commit on master, not the PR branch's commit:
+git fetch origin && git tag -a v0.5.0 -m "v0.5.0: <one line of what changed>" origin/master
+git push origin v0.5.0
+```
+
+Pre-1.0 semver as practised here: a minor bump (0.4 -> 0.5) for a batch that adds
+capability, a patch bump for fixes only. `git describe --tags` then answers
+"which build is this and how far past the last version is it" from any clone
+(`v0.4.0-44-g6b925c4` means 44 commits past v0.4.0). Tags v0.2.0, v0.2.1, v0.3.0
+and v0.4.0 (at #79, c313c12) were placed retroactively at their bump commits and
+first pushed on 2026-09-29.
+
+To tell whether an installed build is current, do not trust the version string:
+compare `resources\app.asar`'s timestamp under `%LOCALAPPDATA%\Programs\Aether OS`
+against the build, or search it for a string that only the newest PR added.
+
 ## Known limitations
 
 - **Unsigned.** SmartScreen warns on first run of a freshly built installer
