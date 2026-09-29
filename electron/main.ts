@@ -331,7 +331,7 @@ function createWindow(): void {
     const verdict = consoleLimiter.admit(Date.now());
     if (!verdict.allow) return;
     if (verdict.suppressedBefore > 0) {
-      diagLog.write(`[diag] renderer-console suppressed=${verdict.suppressedBefore}`);
+      diagLog.write(`[diag] renderer-console suppressed=${verdict.suppressedBefore} at=${new Date().toISOString()}`);
     }
     diagLog.write(formatConsoleLine(event.sourceId, event.lineNumber, event.message));
   });
