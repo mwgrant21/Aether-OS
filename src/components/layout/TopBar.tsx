@@ -6,6 +6,7 @@ import { resolveOperatorName } from '../../utils/format';
 import { maximizeGlyph, maximizeLabel } from './windowControls';
 import { useColors } from '../shared/useColors';
 import { EmptyState } from '../shared/EmptyState';
+import { alertToneColor } from '../dashboard/RecentAlertsCard';
 import { Button } from '../shared/Button';
 import { findProjectByKey } from '../projects/projectsMath';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
@@ -174,7 +175,7 @@ export function TopBar() {
             {state.notifs.map((nf, idx) => (
               <div key={idx} style={{ display: 'flex', gap: 8, font: `400 11px/1.5 ${fonts.mono}` }}>
                 <span style={{ color: colors.textDim, flex: 'none' }}>{nf.t}</span>
-                <span style={{ color: nf.c }}>{nf.m}</span>
+                <span style={{ color: alertToneColor(nf.c, colors) }}>{nf.m}</span>
               </div>
             ))}
             {!state.notifs.length && <EmptyState message="No alerts right now." />}

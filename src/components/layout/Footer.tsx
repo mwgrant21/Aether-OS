@@ -1,8 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { fonts, type ColorPalette } from '../../styles/tokens';
+import { dotGlow, fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
-import { isSessionLive } from '../dashboard/dashboardMath';
+import { isSessionLive, statusDotGlows } from '../dashboard/dashboardMath';
 import { formatUptime } from '../../utils/format';
 
 export function Footer() {
@@ -22,7 +22,11 @@ export function Footer() {
       <span>◇ AETHER OS {version ? `v${version}` : ''}</span>
       <span style={{ marginLeft: 'auto' }}>Uptime {formatUptime(state.sessionStartedAt, new Date())}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: c }} aria-live="polite">
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: `0 0 8px ${c}` }} />
+        {/* Glow-Is-State: same gate as the reactor card's dot -- flat at STANDBY. */}
+        <span
+          data-testid="footer-status-dot"
+          style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: statusDotGlows(state.alarmLevel, live) ? dotGlow(c) : undefined }}
+        />
         {label}
       </span>
     </footer>

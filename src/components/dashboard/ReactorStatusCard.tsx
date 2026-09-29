@@ -1,10 +1,9 @@
 import type { CSSProperties } from 'react';
-import { fonts, glows, type ColorPalette } from '../../styles/tokens';
+import { dotGlow, fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
-import { Button } from '../shared/Button';
 import { fmt, fmtEta } from '../../utils/format';
-import { NO_DATA, computeContextReading, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive } from './dashboardMath';
+import { NO_DATA, computeDashKpis, computeDashStatus, computeRateLine, isSessionLive, statusDotGlows } from './dashboardMath';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { deriveDepletion, formatResetCountdown } from '../../shared/depletion';
 import type { AetherState } from '../../state/types';
@@ -12,44 +11,26 @@ import type { AetherState } from '../../state/types';
 type TileSource = 'live' | 'stale' | 'est';
 
 /**
- * DEPLETION ETA and CONTEXT are the two dashboard tiles backed by the
- * statusline, which is what earns them a LIVE/STALE source chip. This
- * derives the override (value/detail/source/stale) for those two tile keys
- * only; every other tile from computeDashKpis renders unchanged. Kept local
- * to the component (rather than folded into computeDashKpis) so the existing,
- * already-tested `DashKpi[]` shape in dashboardMath.ts/.test.ts is untouched.
+ * DEPLETION ETA is the one dashboard tile backed by the statusline, which is
+ * what earns it a LIVE/STALE source chip. This derives its override
+ * (value/detail/source/stale); every other tile from computeDashKpis renders
+ * unchanged. Freshness is judged off the capture's age against
+ * STATUSLINE_STALE_AFTER_MS, the same rule the footer's CONTEXT WINDOW card uses.
  */
-function deriveTileOverride(
-  key: string,
-  state: AetherState,
-): { v: string; s: string; source: TileSource; stale: boolean } | null {
-  // Both tiles judge freshness off the same statusline capture with the same
-  // rule (capturedAtMs older than STATUSLINE_STALE_AFTER_MS: deriveDepletion
-  // here, deriveContextWindowCard via computeContextReading below) -- so a
-  // percentage captured hours ago can never render LIVE on one tile while the
-  // sibling tile (correctly) shows it as stale.
-  if (key === 'DEPLETION ETA') {
-    const depletion = deriveDepletion(state.statusline, null, Date.now());
-    const stale = depletion.stale;
-    if (depletion.source !== 'statusline') return null; // fall back to today's estimate
-    const etaPart =
-      depletion.msUntilDepleted === null ? NO_DATA : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
-    // `~` marks a stale value; with no value there is nothing to qualify.
-    const prefix = stale && etaPart !== NO_DATA ? '~' : '';
-    return {
-      v: `${prefix}${etaPart} · resets ${formatResetCountdown(depletion.msUntilReset)}`,
-      s: 'server rate limit',
-      source: stale ? 'stale' : 'live',
-      stale,
-    };
-  }
-  if (key === 'CONTEXT') {
-    // Same function computeDashKpis' CONTEXT tile and the footer card use.
-    const reading = computeContextReading(state.statusline, Date.now());
-    if (reading === null) return null; // computeDashKpis already renders NO_DATA
-    return { v: reading.pctLabel, s: reading.usedLabel, source: reading.stale ? 'stale' : 'live', stale: reading.stale };
-  }
-  return null;
+function deriveDepletionOverride(state: AetherState): { v: string; s: string; source: TileSource; stale: boolean } | null {
+  const depletion = deriveDepletion(state.statusline, null, Date.now());
+  const stale = depletion.stale;
+  if (depletion.source !== 'statusline') return null; // fall back to computeDashKpis's scan-based estimate
+  const etaPart =
+    depletion.msUntilDepleted === null ? NO_DATA : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
+  // `~` marks a stale value; with no value there is nothing to qualify.
+  const prefix = stale && etaPart !== NO_DATA ? '~' : '';
+  return {
+    v: `${prefix}${etaPart} · resets ${formatResetCountdown(depletion.msUntilReset)}`,
+    s: 'server rate limit',
+    source: stale ? 'stale' : 'live',
+    stale,
+  };
 }
 
 /**
@@ -59,10 +40,9 @@ function deriveTileOverride(
  * state.realUsage.burnRatePerMin under computeRateReadout's own gating (live
  * and scanned). Built from the field, not by re-parsing the printed readout.
  *
- * Not a live region. The card adds no aria-live of its own; the always-mounted
- * Footer carries the reactor status announcement. (The shell has other polite
- * regions -- TopBar's approvals and notifications counts, the Sidebar legend --
- * but none of them repeats this status.)
+ * Not a live region: the always-mounted Footer carries the single reactor
+ * status announcement, so a transition isn't announced twice while the
+ * Dashboard is open.
  */
 export function computeReactorAriaLabel(state: AetherState, live: boolean): string {
   const status = computeDashStatus(state.alarmLevel, live);
@@ -73,97 +53,81 @@ export function computeReactorAriaLabel(state: AetherState, live: boolean): stri
 
 export function ReactorStatusCard() {
   const colors = useColors();
-  const { state, dispatch } = useAetherStore();
+  const { state } = useAetherStore();
   const live = isSessionLive(state, Date.now());
   // Standby reads muted: a live colour on an idle console would claim a session (DESIGN.md).
   const statusC =
     state.alarmLevel === 'crit' ? colors.danger : state.alarmLevel === 'warn' ? colors.warn : live ? colors.success : colors.textMuted;
-  const dotGlows = live || state.alarmLevel === 'crit' || state.alarmLevel === 'warn';
   const kpis = computeDashKpis(state);
 
   return (
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ ...titleStyle(colors), margin: 0 }}>REACTOR STATUS</h2>
-        {/* Not aria-live: the always-mounted Footer carries the status
-            announcement, so a transition isn't announced twice while the
-            Dashboard is open. */}
+        {/* Not a live region: the Footer carries the status announcement. */}
         <div data-testid="reactor-status-label" style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }}>
-          {/* Glow-Is-State: the dot glows only when live or alarmed; flat at STANDBY. */}
+          {/* Glow-Is-State: the dot glows only when live or alarmed; flat at STANDBY. Same gate as the Footer's dot. */}
           <span
             data-testid="reactor-status-dot"
-            style={{ width: 7, height: 7, borderRadius: '50%', background: statusC, boxShadow: dotGlows ? `0 0 8px ${statusC}` : undefined }}
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: statusC,
+              boxShadow: statusDotGlows(state.alarmLevel, live) ? dotGlow(statusC) : undefined,
+            }}
           />
           {computeDashStatus(state.alarmLevel, live)}
         </div>
       </div>
 
       <div style={{ flex: 1, minHeight: DASH_REACTOR_SIZE, display: 'grid', placeItems: 'center', padding: '8px 0' }}>
-        <div
-          role="img"
-          aria-label={computeReactorAriaLabel(state, live)}
-          style={{ position: 'relative', width: DASH_REACTOR_SIZE, height: DASH_REACTOR_SIZE }}
-        >
+        <div role="img" aria-label={computeReactorAriaLabel(state, live)} style={{ position: 'relative', width: DASH_REACTOR_SIZE, height: DASH_REACTOR_SIZE }}>
           <div style={reactorInnerStyle(reactorNativeSize(state.cfg.renderer))}>
             <Reactor />
           </div>
         </div>
       </div>
-      <div style={{ textAlign: 'center', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>
-        {computeRateReadout(state, live)} · {computeDashPulseMode(state.cfg, live)}
+      <div data-testid="reactor-rate-line" style={{ textAlign: 'center', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>
+        {computeRateLine(state, live)}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginTop: 16 }}>
         {kpis.map((dk) => {
-          const override = dk.k === 'DEPLETION ETA' || dk.k === 'CONTEXT' ? deriveTileOverride(dk.k, state) : null;
+          const override = dk.k === 'DEPLETION ETA' ? deriveDepletionOverride(state) : null;
           const source: TileSource = override ? override.source : 'est';
           const v = override ? override.v : dk.v;
           const s = override ? override.s : dk.s;
           // A tile with no reading has nothing to attribute, so no source chip.
-          const hasSourceChip = (dk.k === 'DEPLETION ETA' || dk.k === 'CONTEXT') && v !== NO_DATA;
+          const hasSourceChip = dk.k === 'DEPLETION ETA' && v !== NO_DATA;
           const isWarn = override?.stale ?? false;
           return (
-            <div key={dk.k} style={kpiTileStyle(colors)}>
+            <div key={dk.k} data-testid="kpi-tile" data-kpi={dk.k} style={kpiTileStyle(colors)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{dk.k}</div>
                 {hasSourceChip && (
-                  <span style={sourceChipStyle(colors, source)}>
-                    {source === 'live' ? 'LIVE' : source === 'stale' ? 'STALE' : 'EST'}
-                  </span>
+                  <span style={sourceChipStyle(colors, source)}>{source === 'live' ? 'LIVE' : source === 'stale' ? 'STALE' : 'EST'}</span>
                 )}
               </div>
-              <div style={kpiValueStyle(colors, isWarn)}>{v}</div>
-              <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>{s}</div>
+              <div data-testid="kpi-value" style={kpiValueStyle(colors, isWarn)}>
+                {v}
+              </div>
+              <div data-testid="kpi-caption" style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, marginTop: 5 }}>
+                {s}
+              </div>
             </div>
           );
         })}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingTop: 14 }}>
-        <Button
-          onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })}
-          style={primaryActionStyle(colors, live)}
-          hoverStyle={primaryActionHoverStyle}
-        >
-          <span aria-hidden="true">⊕</span> OPEN TERMINAL
-        </Button>
-        <Button
-          onClick={() => {
-            dispatch({ type: 'RUN_COMMAND', raw: 'sweep' });
-            dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Memory' });
-          }}
-          style={secondaryActionStyle(colors)}
-        >
-          MEMORY SWEEP
-        </Button>
-      </div>
+      {/* No actions: OPEN TERMINAL lives under READINESS. */}
     </div>
   );
 }
 
+// No gridRow span: the Dashboard is two columns now and this card fills the left one.
 function cardStyle(colors: ColorPalette): CSSProperties {
   return {
-    gridRow: 'span 2',
     padding: 16,
     borderRadius: 14,
     border: `1px solid ${colors.panelBorder}`,
@@ -224,40 +188,5 @@ function sourceChipStyle(colors: ColorPalette, source: TileSource): CSSPropertie
     background: colors.panelInset,
     padding: '2px 5px',
     borderRadius: 4,
-  };
-}
-// Primary stays the filled cyan switch; per Glow-Is-State it only glows when
-// a session is live (the terminal it opens is doing work) or when hovered /
-// keyboard-focused (Button applies hoverStyle for both). Flat at STANDBY rest.
-function primaryActionStyle(colors: ColorPalette, live: boolean): CSSProperties {
-  return {
-    textAlign: 'center',
-    cursor: 'pointer',
-    font: `600 11px/1 ${fonts.ui}`,
-    letterSpacing: 1.5,
-    color: colors.inkOnCyan,
-    background: `linear-gradient(180deg, ${colors.accentCyan}, ${colors.accentCyanDeep})`,
-    padding: '10px 0',
-    borderRadius: 8,
-    boxShadow: live ? glows.active : undefined,
-  };
-}
-// DESIGN.md Buttons > Hover: brighter, a stronger glow, a 1px lift.
-const primaryActionHoverStyle: CSSProperties = {
-  filter: 'brightness(1.1)',
-  boxShadow: glows.primaryHover,
-  transform: 'translateY(-1px)',
-};
-function secondaryActionStyle(colors: ColorPalette): CSSProperties {
-  return {
-    textAlign: 'center',
-    cursor: 'pointer',
-    font: `600 11px/1 ${fonts.ui}`,
-    letterSpacing: 1.5,
-    color: colors.accentCyan,
-    border: `1px solid ${colors.activeBorder}`,
-    padding: '10px 0',
-    borderRadius: 8,
-    background: colors.panelInset,
   };
 }

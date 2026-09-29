@@ -82,4 +82,21 @@ describe('Button', () => {
     expect(pressed.getAttribute('aria-pressed')).toBe('true');
     expect(current.getAttribute('aria-current')).toBe('page');
   });
+
+  it('stays focusable but ignores activation while aria-disabled, and forwards aria-describedby', () => {
+    const onClick = vi.fn();
+    const { getByRole } = render(
+      <AetherStoreProvider>
+        <Button onClick={onClick} style={{}} aria-disabled aria-describedby="why">
+          label
+        </Button>
+      </AetherStoreProvider>,
+    );
+    const btn = getByRole('button');
+    expect(btn.getAttribute('aria-disabled')).toBe('true');
+    expect(btn.getAttribute('aria-describedby')).toBe('why');
+    expect(btn.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(btn);
+    expect(onClick).not.toHaveBeenCalled();
+  });
 });

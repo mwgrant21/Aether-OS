@@ -5,14 +5,18 @@ import {
   computeDashKpis,
   computeDashPulseMode,
   computeDashStatus,
+  computeRateLine,
   computeRateReadout,
   computeSessionInfoRows,
   computeSidebarReactorRate,
   computeSidebarReactorStatus,
+  computeTodayCost,
   computeUsageBar,
   computeUsageRangeTotal,
   isSessionLive,
   sessionCommandHistory,
+  statusDotGlows,
+  type DashKpi,
 } from './dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { reducer } from '../../state/reducer';
@@ -21,6 +25,7 @@ import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 import { deriveContextWindowCard } from '../layout/contextWindowCard';
 import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import type { AetherState } from '../../state/types';
+import { buildLedgerSnapshot, type LedgerSnapshot } from '../../shared/ledgerMath';
 
 const NOW = 1_800_000_000_000;
 const SCANNED = { ...initialState.realUsage, lastScanAt: '2026-09-28T12:00:00.000Z' };
@@ -116,9 +121,9 @@ describe('computeDashPulseMode', () => {
   it('describes ambient pulse when live', () => {
     expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'ambient', theme: 'violet' }, true)).toBe('ambient pulse · violet core');
   });
-  it('says standby instead of naming the theme core when not live', () => {
-    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'live', theme: 'cyan' }, false)).toBe('live-rate pulse · standby');
-    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'ambient', theme: 'violet' }, false)).toBe('ambient pulse · standby');
+  it('reads just "standby" when idle, so "live-rate pulse" never sits beside it', () => {
+    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'live', theme: 'cyan' }, false)).toBe('standby');
+    expect(computeDashPulseMode({ ...initialState.cfg, pulseMode: 'ambient', theme: 'violet' }, false)).toBe('standby');
   });
 });
 
@@ -170,58 +175,104 @@ describe('computeUsageRangeTotal', () => {
   });
 });
 
+const tile = (kpis: DashKpi[], k: string): DashKpi => kpis.find((x) => x.k === k)!;
+
 describe('computeDashKpis', () => {
-  it('derives all four KPI tiles from a scanned state', () => {
-    const kpis = computeDashKpis(
-      {
-        ...initialState,
-        realUsage: { ...SCANNED, usedThisMonth: 24391, burnRatePerMin: 92000 },
-        ctxUsed: 78432,
-        cfg: { ...initialState.cfg, capM: 2.0 },
-      },
-      NOW,
-    );
-    expect(kpis).toHaveLength(4);
-    // A monthly value is labelled as one.
-    expect(kpis[0]).toEqual({ k: 'MONTH TOKENS', v: '24.4K', s: 'this month' });
-    expect(kpis[1].k).toBe('BUDGET LEFT');
-    expect(kpis[1].v).toBe('98.8%');
-    expect(kpis[1].s).toBe('of 2.0M cap');
-    expect(kpis[2].k).toBe('DEPLETION ETA');
-    expect(kpis[2].v.startsWith('~')).toBe(true);
-    // A scan alone is not a context reading: ctxUsed over an assumed 200K is
-    // no longer rendered (it read "~245%" on a 1M-context session).
-    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' });
+  it('orders the tiles MONTH TOKENS, DEPLETION ETA, TODAY, BUDGET LEFT (context lives in the bottom row)', () => {
+    expect(computeDashKpis(initialState, NOW).map((x) => x.k)).toEqual(['MONTH TOKENS', 'DEPLETION ETA', 'TODAY', 'BUDGET LEFT']);
   });
 
-  it('renders a dash, never a seeded or zero value, before any scan', () => {
-    const kpis = computeDashKpis(initialState);
+  it('derives the scan-backed tiles from a scanned state', () => {
+    const kpis = computeDashKpis(
+      { ...initialState, realUsage: { ...SCANNED, usedThisMonth: 24391, burnRatePerMin: 92000 }, cfg: { ...initialState.cfg, capM: 2.0 } },
+      NOW,
+    );
+    expect(tile(kpis, 'MONTH TOKENS')).toEqual({ k: 'MONTH TOKENS', v: '24.4K', s: 'this month' });
+    expect(tile(kpis, 'BUDGET LEFT')).toEqual({ k: 'BUDGET LEFT', v: '98.8%', s: 'of 2.0M cap' });
+    expect(tile(kpis, 'DEPLETION ETA').v.startsWith('~')).toBe(true);
+  });
+
+  it('renders a dash, never a seeded or zero value, with no source', () => {
+    const kpis = computeDashKpis(initialState, NOW);
     expect(kpis.map((k) => k.v)).toEqual([NO_DATA, NO_DATA, NO_DATA, NO_DATA]);
-    expect(kpis[3].s).toBe('no reading yet');
+  });
+
+  it('captions TODAY with its API-rate basis', () => {
+    expect(tile(computeDashKpis(initialState, NOW), 'TODAY').s).toBe('API rate, not paid');
   });
 
   it('renders a dash for DEPLETION ETA when nothing is being drawn', () => {
-    const kpis = computeDashKpis({ ...initialState, realUsage: { ...SCANNED, burnRatePerMin: 0 } });
-    expect(kpis[2].v).toBe(NO_DATA);
+    const kpis = computeDashKpis({ ...initialState, realUsage: { ...SCANNED, burnRatePerMin: 0 } }, NOW);
+    expect(tile(kpis, 'DEPLETION ETA').v).toBe(NO_DATA);
   });
 
   it('never renders "n/a" for DEPLETION ETA once the cap is already spent', () => {
-    const kpis = computeDashKpis({
-      ...initialState,
-      realUsage: { ...SCANNED, usedThisMonth: 11_534_188, burnRatePerMin: 5000 },
-      cfg: { ...initialState.cfg, capM: 2.0 },
-    });
-    expect(kpis[2].v).toBe('now');
+    const kpis = computeDashKpis(
+      { ...initialState, realUsage: { ...SCANNED, usedThisMonth: 11_534_188, burnRatePerMin: 5000 }, cfg: { ...initialState.cfg, capM: 2.0 } },
+      NOW,
+    );
+    expect(tile(kpis, 'DEPLETION ETA').v).toBe('now');
     expect(kpis.every((k) => !k.v.includes('n/a'))).toBe(true);
   });
 
   it('clamps budget-left at 0% instead of going negative', () => {
-    const kpis = computeDashKpis({
-      ...initialState,
-      realUsage: { ...SCANNED, usedThisMonth: 5_000_000 },
-      cfg: { ...initialState.cfg, capM: 2.0 },
-    });
-    expect(kpis[1].v).toBe('0.0%');
+    const kpis = computeDashKpis(
+      { ...initialState, realUsage: { ...SCANNED, usedThisMonth: 5_000_000 }, cfg: { ...initialState.cfg, capM: 2.0 } },
+      NOW,
+    );
+    expect(tile(kpis, 'BUDGET LEFT').v).toBe('0.0%');
+  });
+});
+
+const ledgerWithToday = (today: number | null, computedAtMs: number = NOW): LedgerSnapshot => ({
+  ...buildLedgerSnapshot([], 'UTC', computedAtMs),
+  rollups: { today, week: today, month: today },
+});
+
+describe('computeTodayCost', () => {
+  it('is NO_DATA with no ledger or no priced activity today, never $0.00', () => {
+    expect(computeTodayCost(null, NOW)).toBe(NO_DATA);
+    expect(computeTodayCost(ledgerWithToday(null), NOW)).toBe(NO_DATA);
+  });
+
+  it('prints an exact figure with no ~', () => {
+    expect(computeTodayCost(ledgerWithToday(1.5), NOW)).toBe('$1.50');
+  });
+
+  it('keeps a real $0 day distinct from no data, and a sub-cent day off $0.00', () => {
+    expect(computeTodayCost(ledgerWithToday(0), NOW)).toBe('$0.00');
+    expect(computeTodayCost(ledgerWithToday(0.004), NOW)).toBe('<$0.01');
+  });
+
+  it('is NO_DATA when the ledger was computed on an earlier local day', () => {
+    expect(computeTodayCost(ledgerWithToday(3.25, NOW - 36 * 60 * 60 * 1000), NOW)).toBe(NO_DATA);
+  });
+
+  it('is NO_DATA for a snapshot only hours old if it was computed before local midnight', () => {
+    const justAfterMidnightUtc = Date.UTC(2027, 0, 15, 0, 30);
+    const twoHoursEarlier = justAfterMidnightUtc - 2 * 60 * 60 * 1000;
+    expect(computeTodayCost(ledgerWithToday(3.25, twoHoursEarlier), justAfterMidnightUtc)).toBe(NO_DATA);
+    expect(computeTodayCost(ledgerWithToday(3.25, justAfterMidnightUtc - 60 * 1000), justAfterMidnightUtc)).toBe('$3.25');
+  });
+});
+
+describe('computeRateLine', () => {
+  it('reads exactly "— tok/min · standby" when idle', () => {
+    expect(computeRateLine({ ...initialState, realUsage: { ...SCANNED, burnRatePerMin: 0 } }, false)).toBe('— tok/min · standby');
+  });
+
+  it('keeps the live rate and pulse mode when live', () => {
+    const state = { ...initialState, realUsage: { ...SCANNED, burnRatePerMin: 1234 }, cfg: { ...initialState.cfg, pulseMode: 'live' as const, theme: 'cyan' as const } };
+    expect(computeRateLine(state, true)).toBe('1,234 tok/min · live-rate pulse · cyan core');
+  });
+});
+
+describe('statusDotGlows', () => {
+  it('is flat only at STANDBY: lit when live or alarmed', () => {
+    expect(statusDotGlows('ok', false)).toBe(false);
+    expect(statusDotGlows('ok', true)).toBe(true);
+    expect(statusDotGlows('warn', false)).toBe(true);
+    expect(statusDotGlows('crit', false)).toBe(true);
   });
 });
 
@@ -242,20 +293,14 @@ const ctxSnap = (over: Partial<StatuslineSnapshot> = {}): StatuslineSnapshot => 
 });
 
 describe('computeContextReading', () => {
-  it('is null with no statusline, and the CONTEXT tile shows NO_DATA', () => {
+  it('is null with no statusline', () => {
     expect(computeContextReading(null, NOW)).toBeNull();
-    // Scanned with a large ctxUsed: the old path rendered "~245%" here.
-    const kpis = computeDashKpis({ ...initialState, realUsage: SCANNED, ctxUsed: 489_100 }, NOW);
-    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' });
   });
 
-  it('gives the CONTEXT tile and the footer card the same reading', () => {
+  it('gives the footer card a reading that matches its ring', () => {
     const snap = ctxSnap();
     const reading = computeContextReading(snap, NOW);
     expect(reading).toEqual({ pct: 48, pctLabel: '48%', usedLabel: '480.0K / 1.00M', stale: false });
-    const kpis = computeDashKpis({ ...initialState, realUsage: SCANNED, ctxUsed: 489_100, statusline: snap }, NOW);
-    expect(kpis[3]).toEqual({ k: 'CONTEXT', v: reading!.pctLabel, s: reading!.usedLabel });
-    // The card's ring reads the same percentage.
     expect(deriveContextWindowCard(snap, NOW).ringPct).toBe(reading!.pct);
   });
 

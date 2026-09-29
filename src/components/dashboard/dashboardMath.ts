@@ -3,6 +3,8 @@ import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import { fmt, fmtEta, formatUptime, short } from '../../utils/format';
 import { deriveContextWindowCard } from '../layout/contextWindowCard';
+import { isSameLocalDay, type LedgerSnapshot } from '../../shared/ledgerMath';
+import { usdPrecise } from '../ledger/format';
 
 /** Rendered wherever a readout has no real source. "No data" is never 0. */
 export const NO_DATA = '—';
@@ -41,10 +43,40 @@ export function computeDashStatus(alarmLevel: AlarmLevel, live: boolean): string
   return live ? 'NOMINAL' : 'STANDBY';
 }
 
-/** "cyan core" (or whichever theme) implies something is actually lit; idle must say so instead. */
+/**
+ * Live: which pulse the reactor follows and which core is lit. Idle: just
+ * "standby" -- "live-rate pulse" beside "standby" contradicted itself.
+ */
 export function computeDashPulseMode(cfg: Cfg, live: boolean): string {
+  if (!live) return 'standby';
   const mode = cfg.pulseMode === 'ambient' ? 'ambient pulse' : 'live-rate pulse';
-  return `${mode} · ${live ? `${cfg.theme} core` : 'standby'}`;
+  return `${mode} · ${cfg.theme} core`;
+}
+
+/** The line under the reactor. Idle it reads exactly "— tok/min · standby". */
+export function computeRateLine(state: AetherState, live: boolean): string {
+  return `${computeRateReadout(state, live)} · ${computeDashPulseMode(state.cfg, live)}`;
+}
+
+/**
+ * Glow-Is-State for the reactor card's and the footer's status dots: lit
+ * while a session is live or an alarm is up, flat at STANDBY. One gate, so
+ * the two dots cannot disagree.
+ */
+export function statusDotGlows(alarmLevel: AlarmLevel, live: boolean): boolean {
+  return live || alarmLevel !== 'ok';
+}
+
+/**
+ * The TODAY tile: today's cost at published API rates (ledger.rollups.today).
+ * Exact to the pricing table, so no `~`. `null` (no priced activity observed)
+ * is NO_DATA, never "$0.00"; a real zero day prints "$0.00". A snapshot
+ * computed on an earlier local day is not today's figure, so it is NO_DATA too.
+ */
+export function computeTodayCost(ledger: LedgerSnapshot | null, nowMs: number): string {
+  if (ledger === null || ledger.rollups.today === null) return NO_DATA;
+  if (!isSameLocalDay(new Date(ledger.computedAtMs).toISOString(), ledger.timeZone, nowMs)) return NO_DATA;
+  return usdPrecise(ledger.rollups.today);
 }
 
 /**
@@ -122,10 +154,7 @@ export interface DashKpi {
 }
 
 export function computeDashKpis(state: AetherState, nowMs: number = Date.now()): DashKpi[] {
-  // The first three tiles derive from the transcript scan; before the first
-  // scan lands (and always in browser mode) there is no reading, so render
-  // NO_DATA rather than a 0 that reads as "nothing used". CONTEXT reads the
-  // statusline instead (computeContextReading).
+  // MONTH TOKENS, DEPLETION ETA and BUDGET LEFT derive from the transcript scan; before the first scan lands (and always in browser mode) there is no reading, so render NO_DATA rather than a 0 that reads as "nothing used". TODAY reads the ledger.
   const scanned = state.realUsage.lastScanAt !== null;
   const capTokens = state.cfg.capM * 1e6;
   const used = state.realUsage.usedThisMonth;
@@ -136,15 +165,13 @@ export function computeDashKpis(state: AetherState, nowMs: number = Date.now()):
   // A cap already spent is a fact, not a projection: fmtEta(0) would return
   // 'n/a', which rendered as the "~n/a" readout.
   const eta = !scanned || burn <= 0 ? NO_DATA : remaining <= 0 ? 'now' : `~${fmtEta(remaining / (burn / 60))}`;
-  const ctx = computeContextReading(state.statusline, nowMs);
 
   return [
     { k: 'MONTH TOKENS', v: scanned ? short(used) : NO_DATA, s: 'this month' },
-    { k: 'BUDGET LEFT', v: scanned ? `${budgetLeftPct.toFixed(1)}%` : NO_DATA, s: `of ${state.cfg.capM.toFixed(1)}M cap` },
     { k: 'DEPLETION ETA', v: eta, s: 'at current draw' },
-    // The same reading the footer's CONTEXT WINDOW card renders, so the two
-    // cannot disagree. No statusline reading means no tile value.
-    ctx === null ? { k: 'CONTEXT', v: NO_DATA, s: 'no reading yet' } : { k: 'CONTEXT', v: ctx.pctLabel, s: ctx.usedLabel },
+    // Context moved to the bottom row's CONTEXT WINDOW card (the one source).
+    { k: 'TODAY', v: computeTodayCost(state.ledger, nowMs), s: 'API rate, not paid' },
+    { k: 'BUDGET LEFT', v: scanned ? `${budgetLeftPct.toFixed(1)}%` : NO_DATA, s: `of ${state.cfg.capM.toFixed(1)}M cap` },
   ];
 }
 

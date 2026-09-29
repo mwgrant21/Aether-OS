@@ -172,6 +172,19 @@ a:hover {
     opacity: 1;
   }
 }
+/* DigestSlot: a dashboard digest arriving. Transform/opacity only -- the
+   column reflows at once; height is never animated. */
+@keyframes digestEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 :root {
   --pulse-dur: 2.4s;
 }

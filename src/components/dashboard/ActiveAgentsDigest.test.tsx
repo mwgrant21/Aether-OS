@@ -6,13 +6,13 @@ import { ActiveAgentsDigest } from './ActiveAgentsDigest';
 afterEach(cleanup);
 
 describe('ActiveAgentsDigest empty state', () => {
-  it('says what will appear, with no action of its own (the Reactor card owns OPEN TERMINAL)', () => {
+  it('uses the same no-agents sentence as the Agents and Terminal views, with no action of its own', () => {
     render(
       <AetherStoreProvider>
         <ActiveAgentsDigest />
       </AetherStoreProvider>,
     );
-    expect(screen.getByText('Agents dispatched from the Terminal will appear here.')).toBeTruthy();
+    expect(screen.getByText('No agents are running.')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
   });
 });

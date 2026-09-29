@@ -17,6 +17,14 @@ interface ButtonProps {
   'aria-expanded'?: AriaAttributes['aria-expanded'];
   /** id of the element this button controls, set while it is rendered. */
   'aria-controls'?: string;
+  /**
+   * Disabled but still focusable, so assistive tech can reach it and read why
+   * (pair with aria-describedby). Clicks, including keyboard Enter/Space, are
+   * ignored while set. Use this instead of `disabled` when the reason matters.
+   */
+  'aria-disabled'?: AriaAttributes['aria-disabled'];
+  /** id of the element that explains this button, e.g. why it is disabled. */
+  'aria-describedby'?: string;
   children: ReactNode;
 }
 
@@ -51,9 +59,12 @@ export function Button({
   'aria-current': ariaCurrent,
   'aria-expanded': ariaExpanded,
   'aria-controls': ariaControls,
+  'aria-disabled': ariaDisabled,
+  'aria-describedby': ariaDescribedby,
   children,
 }: ButtonProps) {
   const colors = useColors();
+  const inert = ariaDisabled === true || ariaDisabled === 'true';
   // Tracks keyboard focus only (DESIGN.md's ring is a keyboard-focus affordance,
   // not a mouse-click one): gated on the native :focus-visible heuristic so a
   // mouse click that focuses the button never shows the ring.
@@ -73,7 +84,7 @@ export function Button({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={inert ? undefined : onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onFocus={onFocus}
@@ -86,6 +97,8 @@ export function Button({
       aria-current={ariaCurrent}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
+      aria-disabled={ariaDisabled}
+      aria-describedby={ariaDescribedby}
     >
       {children}
     </button>
