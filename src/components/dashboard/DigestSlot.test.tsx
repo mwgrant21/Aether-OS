@@ -65,6 +65,28 @@ describe('DigestSlot', () => {
     expect(el.getAttribute('aria-hidden')).toBe('true');
   });
 
+  it('pins the leaving slot at its measured top and height so it fades in place', () => {
+    stubReducedMotion(false);
+    const top = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', { configurable: true, get: () => 120 });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 200 });
+    try {
+      const { rerender } = render(slot(true));
+      rerender(slot(false));
+      const el = screen.getByTestId('digest-slot');
+      expect(el.style.top).toBe('120px');
+      expect(el.style.height).toBe('200px');
+      rerender(slot(true));
+      expect(screen.getByTestId('digest-slot').style.top).toBe('');
+    } finally {
+      for (const [k, d] of [['offsetTop', top], ['offsetHeight', height]] as const) {
+        if (d) Object.defineProperty(HTMLElement.prototype, k, d);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[k];
+      }
+    }
+  });
+
   it('under reduced motion appears and disappears without animating', () => {
     stubReducedMotion(true);
     const { rerender } = render(slot(false));
