@@ -74,6 +74,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createDiagLog } from './diagLog';
+import { runRendererProbe, createConsoleLimiter, formatConsoleLine } from './rendererProbe';
 import type { DatabaseSync } from 'node:sqlite';
 import { CodexVerifier } from './crossEngine/codexVerifier';
 import { AcpClient } from './crossEngine/acpClient';
@@ -185,6 +186,10 @@ app.whenReady().then(() => {
     // union loop variable matches none of them; the cast is typing-only.
     powerMonitor.on(evt as 'suspend', () => {
       diagLog.write(`[diag] powerMonitor ${evt} at=${new Date().toISOString()}`);
+      if (evt === 'unlock-screen' || evt === 'resume') {
+        // Let the renderer settle, then record what DevTools would show.
+        setTimeout(() => void runRendererProbe(mainWindow, evt, (l) => diagLog.write(l)), 2000);
+      }
     });
   }
 });
@@ -318,6 +323,24 @@ function createWindow(): void {
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     diagLog.write(`[diag] did-fail-load code=${code} desc=${desc} url=${url} at=${new Date().toISOString()}`);
   });
+
+  // Renderer errors, forwarded so a JS-side failure is visible without DevTools.
+  const consoleLimiter = createConsoleLimiter();
+  win.webContents.on('console-message', (event) => {
+    if (event.level !== 'error') return;
+    const verdict = consoleLimiter.admit(Date.now());
+    if (!verdict.allow) return;
+    if (verdict.suppressedBefore > 0) {
+      diagLog.write(`[diag] renderer-console suppressed=${verdict.suppressedBefore}`);
+    }
+    diagLog.write(formatConsoleLine(event.sourceId, event.lineNumber, event.message));
+  });
+  if (process.env['AETHER_DIAG_PROBE_ON_START'] === '1') {
+    // Test hook, off by default.
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(() => void runRendererProbe(win, 'start', (l) => diagLog.write(l)), 5000);
+    });
+  }
 
   win.webContents.on('before-input-event', (_event, input) => {
     if (input.type !== 'keyDown') return;

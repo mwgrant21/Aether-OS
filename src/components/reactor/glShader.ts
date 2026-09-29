@@ -28,6 +28,15 @@ const FRAGMENT_SHADER =
   'float ca=a*u_clarity;gl_FragColor=vec4(col*ca,ca);}';
 
 export function initGL(el: HTMLCanvasElement): GLProgram | null {
+  // Issue #22 diagnosis only: flag a lost context so the main-process probe can count it.
+  // No preventDefault and no recovery here.
+  el.addEventListener('webglcontextlost', () => {
+    el.dataset.glLost = '1';
+    console.error('[diag] webgl context lost');
+  });
+  el.addEventListener('webglcontextrestored', () => {
+    delete el.dataset.glLost;
+  });
   const gl = el.getContext('webgl', { alpha: true, premultipliedAlpha: true });
   if (!gl) return null;
   const mk = (type: number, src: string) => {
