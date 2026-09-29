@@ -138,9 +138,10 @@ describe('ReadinessCard', () => {
     expect(desktopCmd.textContent).toBe('npm run electron:dev');
     expect(desktopCmd.style.fontFamily).toBe(cssFontFamily(fonts.mono));
     // The collector hint names two commands (`npm run build`, then `npm start`);
-    // both must render as <code>, so check the last one specifically.
-    const collectorCodes = hint('collector')!.querySelectorAll('code');
-    expect(collectorCodes[collectorCodes.length - 1].textContent).toBe('npm start');
+    // both must render as <code>, in the mono font, in order.
+    const collectorCodes = [...hint('collector')!.querySelectorAll('code')];
+    expect(collectorCodes.map((c) => c.textContent)).toEqual(['npm run build', 'npm start']);
+    for (const c of collectorCodes) expect((c as HTMLElement).style.fontFamily).toBe(cssFontFamily(fonts.mono));
     expect(hint('terminal')!.querySelector('code')).toBeNull();
   });
 

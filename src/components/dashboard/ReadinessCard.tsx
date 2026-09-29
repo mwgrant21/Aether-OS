@@ -14,11 +14,13 @@ import { OpenTerminalButton } from './OpenTerminalButton';
  * only while the session is live (Glow Is State). No live-region
  * announcements here: the Footer is the one status announcement.
  *
- * The card fills the right column beside the reactor (flex: 1). The rows keep
- * their rhythm at the top; the stretch goes between the last row and OPEN
+ * The card fills the right column beside the reactor (flex: 1) only when no
+ * digest panel is present -- with one up, an equal share just moves dead
+ * space into READINESS and steals it from the digest. The rows keep their
+ * rhythm at the top; the stretch goes between the last row and OPEN
  * TERMINAL, which is pinned to the card's bottom edge.
  */
-export function ReadinessCard() {
+export function ReadinessCard({ fill = true }: { fill?: boolean } = {}) {
   const colors = useColors();
   const { state } = useAetherStore();
   const headingId = useId();
@@ -26,7 +28,7 @@ export function ReadinessCard() {
   const live = isSessionLive(state, now);
   const rows = computeReadiness(state, hasDesktopApp(), now);
   return (
-    <section aria-labelledby={headingId} style={cardStyle(colors)}>
+    <section aria-labelledby={headingId} style={cardStyle(colors, fill)}>
       <h2 id={headingId} style={{ ...titleStyle(colors), margin: 0 }}>
         READINESS
       </h2>
@@ -60,9 +62,9 @@ export function ReadinessCard() {
   );
 }
 
-function cardStyle(colors: ColorPalette): CSSProperties {
+function cardStyle(colors: ColorPalette, fill: boolean): CSSProperties {
   return {
-    flex: 1,
+    flex: fill ? 1 : 'none',
     padding: 15,
     borderRadius: radii.panel,
     border: `1px solid ${colors.panelBorder}`,

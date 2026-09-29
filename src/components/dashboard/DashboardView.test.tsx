@@ -62,6 +62,18 @@ describe('DashboardView layout', () => {
     expect(screen.queryByRole('button', { name: 'Alerts 0' })).toBeNull();
   });
 
+  it('gives READINESS the flex-grow share at a cold STANDBY (no digest present)', () => {
+    renderDashboard();
+    const readiness = screen.getByRole('heading', { name: 'READINESS' }).closest('section')!;
+    expect(readiness.style.flexGrow).toBe('1');
+  });
+
+  it('drops READINESS out of the flex-grow share once a digest panel is present', () => {
+    renderDashboard([{ type: 'SET_TERMINAL_ALIVE', alive: true }, { type: 'SET_REAL_AGENTS', agents: [AGENT] }]);
+    const readiness = screen.getByRole('heading', { name: 'READINESS' }).closest('section')!;
+    expect(readiness.style.flexGrow).toBe('0');
+  });
+
   it('shows exactly one OPEN TERMINAL, under READINESS', () => {
     vi.stubGlobal('aetherElectron', {});
     renderDashboard();
