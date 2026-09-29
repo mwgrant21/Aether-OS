@@ -322,8 +322,26 @@ describe('computeSessionInfoRows', () => {
     const rows = computeSessionInfoRows(
       { ...initialState, realUsage: { ...SCANNED, usedThisMonth: 11_534_188 } } as AetherState,
       new Date(NOW),
+      true,
     );
     expect(rows.map((r) => r.k)).toEqual(['Session start', 'Uptime', 'Commands run', 'Agents active']);
     expect(rows.some((r) => r.v === '11,534,188')).toBe(false);
+  });
+
+  const started = { ...initialState, sessionStartedAt: new Date(NOW - 3_600_000).toISOString() };
+  const value = (rows: ReturnType<typeof computeSessionInfoRows>, k: string) => rows.find((r) => r.k === k)!.v;
+
+  it('shows the no-data mark for Session start and Uptime at STANDBY, and real values while live', () => {
+    const idle = computeSessionInfoRows(started, new Date(NOW), false);
+    expect(value(idle, 'Session start')).toBe(NO_DATA);
+    expect(value(idle, 'Uptime')).toBe(NO_DATA);
+    expect(value(idle, 'Commands run')).toBe('0');
+    const live = computeSessionInfoRows(started, new Date(NOW), true);
+    expect(value(live, 'Session start')).not.toBe(NO_DATA);
+    expect(value(live, 'Uptime')).not.toBe(NO_DATA);
+  });
+
+  it('does not tick at STANDBY: a minute later the rows are identical', () => {
+    expect(computeSessionInfoRows(started, new Date(NOW + 60_000), false)).toEqual(computeSessionInfoRows(started, new Date(NOW), false));
   });
 });
