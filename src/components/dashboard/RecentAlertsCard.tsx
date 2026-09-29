@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { fonts, type ColorPalette } from '../../styles/tokens';
+import { colors as paletteTokens, fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { Notif } from '../../state/types';
 import { useColors } from '../shared/useColors';
@@ -18,6 +18,23 @@ export function notifKeys(notifs: readonly Notif[]): string[] {
   });
 }
 
+// Notifs persist the colour string they were raised with (Notif.c), so old
+// rows and new ones both carry raw values. Key the known tones by the palette
+// tokens they were raised from, and map them onto the live palette at render
+// time; anything else -- the cyan info rows, legacy values -- reads as neutral
+// text rather than an arbitrary colour.
+const TONE_BY_STORED_COLOUR: Record<string, 'success' | 'warn' | 'danger'> = {
+  [paletteTokens.success.toLowerCase()]: 'success',
+  [paletteTokens.warn.toLowerCase()]: 'warn',
+  [paletteTokens.danger.toLowerCase()]: 'danger',
+  [paletteTokens.dangerSoft.toLowerCase()]: 'danger',
+};
+
+export function alertToneColor(c: string, colors: ColorPalette): string {
+  const tone = TONE_BY_STORED_COLOUR[c.toLowerCase()];
+  return tone ? colors[tone] : colors.textSecondary;
+}
+
 export function RecentAlertsCard() {
   const colors = useColors();
   const { state } = useAetherStore();
@@ -30,7 +47,7 @@ export function RecentAlertsCard() {
         {alerts.map((nf, idx) => (
           <div key={keys[idx]} style={{ display: 'flex', gap: 9, font: `400 11px/1.5 ${fonts.mono}` }}>
             <span style={{ color: colors.textDim, flex: 'none' }}>{nf.t}</span>
-            <span style={{ color: nf.c }}>{nf.m}</span>
+            <span style={{ color: alertToneColor(nf.c, colors) }}>{nf.m}</span>
           </div>
         ))}
         {!alerts.length && <EmptyState message="Anomalies and budget warnings will appear here." />}

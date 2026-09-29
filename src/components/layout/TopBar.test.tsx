@@ -2,8 +2,16 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { TopBar } from './TopBar';
 import { AetherStoreProvider } from '../../state/store';
+import { colors } from '../../styles/tokens';
 
 afterEach(cleanup);
+
+// jsdom normalizes colours (hex -> rgb), so compare through the same parser.
+function cssColor(value: string): string {
+  const el = document.createElement('span');
+  el.style.color = value;
+  return el.style.color;
+}
 
 function renderTopBar() {
   return render(
@@ -72,5 +80,15 @@ describe('TopBar dropdowns', () => {
     const conflicts = err.mock.calls.filter((c) => String(c[0]).includes('conflicting property'));
     err.mockRestore();
     expect(conflicts).toHaveLength(0);
+  });
+});
+
+describe('TopBar notifications dropdown', () => {
+  it('paints alert rows from tone tokens, not the stored notif colour', () => {
+    renderTopBar();
+    fireEvent.click(screen.getByRole('button', { name: 'AUTO' })); // pushes "Operating mode set to AUTO", c: '#7fd8ef'
+    fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }));
+    // getAll: earlier tests in this file also switch to AUTO.
+    expect(screen.getAllByText('Operating mode set to AUTO')[0].style.color).toBe(cssColor(colors.textSecondary));
   });
 });

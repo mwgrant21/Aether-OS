@@ -29,9 +29,10 @@ export function ActiveAgentsDigest() {
           </div>
         ))}
         {state.realAgents.length === 0 && (
-          // No action here: the Reactor card's OPEN TERMINAL is the one primary CTA on
-          // the Dashboard, and a second copy would compete with it.
-          <EmptyState message="Agents dispatched from the Terminal will appear here." />
+          // Shown only while the panel fades out on the Dashboard (DigestSlot);
+          // the same sentence the Agents and Terminal views use. No action: the
+          // Dashboard's OPEN TERMINAL lives in the reactor card and READINESS.
+          <EmptyState message="No agents are running." />
         )}
       </div>
     </div>

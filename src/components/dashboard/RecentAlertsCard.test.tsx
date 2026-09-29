@@ -2,9 +2,17 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
-import { RecentAlertsCard, notifKeys } from './RecentAlertsCard';
+import { RecentAlertsCard, alertToneColor, notifKeys } from './RecentAlertsCard';
+import { colors } from '../../styles/tokens';
 
 afterEach(cleanup);
+
+// jsdom normalizes colours (hex -> rgb), so compare through the same parser.
+function cssColor(value: string): string {
+  const el = document.createElement('span');
+  el.style.color = value;
+  return el.style.color;
+}
 
 let setMode: (mode: OpMode) => void = () => {};
 function DispatchProbe() {
@@ -44,5 +52,26 @@ describe('RecentAlertsCard', () => {
     act(() => setMode('AUTO'));
     expect(screen.getByText('Operating mode set to AUTO')).toBeTruthy();
     expect(screen.getByText('Operating mode set to EDITS').parentElement).toBe(row);
+  });
+
+  it('maps an alert to the success/warn/danger tokens, and anything else to neutral text', () => {
+    expect(alertToneColor('#3be0a0', colors)).toBe(colors.success);
+    expect(alertToneColor('#F5C66B', colors)).toBe(colors.warn);
+    expect(alertToneColor('#ff6b7a', colors)).toBe(colors.danger);
+    expect(alertToneColor('#ff9d9d', colors)).toBe(colors.danger);
+    expect(alertToneColor('#7fd8ef', colors)).toBe(colors.textSecondary);
+    expect(alertToneColor('#8ab6ff', colors)).toBe(colors.textSecondary);
+  });
+
+  it('paints a row in its tone token, not the colour stored on the notif', () => {
+    render(
+      <AetherStoreProvider>
+        <DispatchProbe />
+        <RecentAlertsCard />
+      </AetherStoreProvider>,
+    );
+    act(() => setMode('EDITS')); // stored with c: '#7fd8ef'
+    // getAll: an earlier test in this file may have raised the same message.
+    expect(screen.getAllByText('Operating mode set to EDITS')[0].style.color).toBe(cssColor(colors.textSecondary));
   });
 });
