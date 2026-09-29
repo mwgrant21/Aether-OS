@@ -212,6 +212,7 @@ designed as such:
   handlers; there is no Aether API-key input path. Subscription adapter credentials remain
   subject to their explicit provider boundaries below.
 - Spool files are deleted after consumption, not left to accumulate as a second copy of the data.
+- `~/.aether-os/diag.log` (plus one rotated `diag.log.1`, about 2 MB total at most) records `[diag]` lifecycle lines for crash and white-screen diagnosis: timestamps, event names, reasons and exit codes only. It holds no content, prompts or commands. `did-fail-load` includes the URL, which is always the app's own page (the dev server or the bundled `index.html`), never user content.
 
 ---
 
