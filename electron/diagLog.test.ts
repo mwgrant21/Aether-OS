@@ -4,6 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDiagLog } from './diagLog';
 
+const renameFail = vi.hoisted(() => ({ on: false }));
+vi.mock('node:fs', async (orig) => {
+  const actual = await orig<typeof import('node:fs')>();
+  return {
+    ...actual,
+    renameSync: (...a: Parameters<typeof actual.renameSync>) => {
+      if (renameFail.on) throw new Error('EBUSY');
+      return actual.renameSync(...a);
+    },
+  };
+});
+
 let root: string;
 let errSpy: ReturnType<typeof vi.spyOn>;
 
@@ -12,6 +24,7 @@ beforeEach(() => {
   errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => {
+  renameFail.on = false;
   errSpy.mockRestore();
   rmSync(root, { recursive: true, force: true });
 });
@@ -54,6 +67,19 @@ describe('createDiagLog', () => {
       log.write('two');
       log.write('three');
     }).not.toThrow();
+    const failures = errSpy.mock.calls.filter((c) => String(c[0]).includes('diag.log write failed'));
+    expect(failures).toHaveLength(1);
+  });
+
+  it('still appends when the rotation rename fails, and reports it once', () => {
+    const log = createDiagLog({ dir: root, maxBytes: 5 });
+    log.write('first-line');
+    renameFail.on = true;
+    expect(() => {
+      log.write('second-line');
+      log.write('third-line');
+    }).not.toThrow();
+    expect(readFileSync(join(root, 'diag.log'), 'utf8')).toBe('first-line\nsecond-line\nthird-line\n');
     const failures = errSpy.mock.calls.filter((c) => String(c[0]).includes('diag.log write failed'));
     expect(failures).toHaveLength(1);
   });

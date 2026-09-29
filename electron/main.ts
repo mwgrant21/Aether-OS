@@ -333,7 +333,7 @@ function createWindow(): void {
     if (verdict.suppressedBefore > 0) {
       diagLog.write(`[diag] renderer-console suppressed=${verdict.suppressedBefore} at=${new Date().toISOString()}`);
     }
-    diagLog.write(formatConsoleLine(event.sourceId, event.lineNumber, event.message));
+    diagLog.write(formatConsoleLine(event.sourceId, event.lineNumber, event.message, new Date().toISOString()));
   });
   if (process.env['AETHER_DIAG_PROBE_ON_START'] === '1') {
     // Test hook, off by default.

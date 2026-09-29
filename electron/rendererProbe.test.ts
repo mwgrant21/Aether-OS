@@ -61,8 +61,9 @@ describe('createConsoleLimiter', () => {
 
 describe('formatConsoleLine', () => {
   it('uses basename, flattens newlines, caps at 300', () => {
-    const line = formatConsoleLine('file:///C:/app/out/renderer/x.js', 12, 'a\nb' + 'z'.repeat(400));
+    const line = formatConsoleLine('file:///C:/app/out/renderer/x.js', 12, 'a\nb' + 'z'.repeat(400), 'T');
     expect(line.startsWith('[diag] renderer-console level=error src=x.js:12 msg=a b')).toBe(true);
-    expect(line.split('msg=')[1].length).toBe(300);
+    expect(line.endsWith(' at=T')).toBe(true);
+    expect(line.split('msg=')[1].slice(0, -' at=T'.length).length).toBe(300);
   });
 });

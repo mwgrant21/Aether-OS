@@ -83,6 +83,8 @@ export function createConsoleLimiter(max = 20, windowMs = 60_000) {
   let stamps: number[] = [];
   let suppressed = 0;
   return {
+    // The suppressed count is reported only when a later error is admitted: a burst
+    // followed by silence never reports its drops (accepted; no timer).
     /** allow=false means drop; suppressedBefore is the drop count to report once when admission resumes. */
     admit(now: number): { allow: boolean; suppressedBefore: number } {
       stamps = stamps.filter((t) => now - t < windowMs);
@@ -98,10 +100,10 @@ export function createConsoleLimiter(max = 20, windowMs = 60_000) {
   };
 }
 
-export function formatConsoleLine(sourceId: string, lineNumber: number, message: string): string {
+export function formatConsoleLine(sourceId: string, lineNumber: number, message: string, at: string): string {
   const base = sourceId.split(/[\\/]/).pop() ?? '';
   const msg = message.replace(/[\r\n]+/g, ' ').slice(0, 300);
-  return `[diag] renderer-console level=error src=${base}:${lineNumber} msg=${msg}`;
+  return `[diag] renderer-console level=error src=${base}:${lineNumber} msg=${msg} at=${at}`;
 }
 
 export async function runRendererProbe(
