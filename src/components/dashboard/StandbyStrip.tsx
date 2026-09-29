@@ -10,8 +10,11 @@ const TAB_BY_KEY: Record<Exclude<StripItemKey, 'alerts'>, string> = { agents: 'A
 
 /**
  * One thin line for every digest with nothing to show, so an idle console
- * doesn't draw empty panels. Each count links to where that data will live.
- * Hidden once every digest has its own panel.
+ * doesn't draw empty panels. Each count links to where that data will live;
+ * Alerts toggles the top bar's notifications dropdown (a second trigger for
+ * it: TopBar's useDropdownFocus moves focus in and back, and treats this item
+ * as inside, via the data-notif-trigger wrapper). Hidden once every digest
+ * has its own panel.
  */
 export function StandbyStrip() {
   const colors = useColors();
@@ -22,7 +25,7 @@ export function StandbyStrip() {
 
   function go(key: StripItemKey) {
     if (key === 'alerts') {
-      if (!state.notifOpen) dispatch({ type: 'TOGGLE_NOTIFS' });
+      dispatch({ type: 'TOGGLE_NOTIFS' });
       return;
     }
     dispatch({ type: 'SET_ACTIVE_TAB', tab: TAB_BY_KEY[key] });
@@ -33,15 +36,13 @@ export function StandbyStrip() {
       <h2 id={headingId} style={srOnlyStyle}>
         Standby
       </h2>
-      {items.map((it, i) => (
-        <Fragment key={it.key}>
-          {i > 0 && (
-            <span aria-hidden="true" style={sepStyle(colors)}>
-              ·
+      {items.map((it, i) => {
+        const button = (
+          <Button onClick={() => go(it.key)} style={itemStyle} aria-expanded={it.key === 'alerts' ? state.notifOpen : undefined}>
+            <span style={labelStyle(colors)}>{it.label}</span>{' '}
+            <span data-testid={`strip-count-${it.key}`} style={countStyle(colors, it.count)}>
+              {it.count}
             </span>
-          )}
-          <Button onClick={() => go(it.key)} style={itemStyle}>
-            <span style={labelStyle(colors)}>{it.label}</span> <span style={countStyle(colors)}>{it.count}</span>
             {it.unit !== null && (
               <>
                 {' '}
@@ -49,8 +50,24 @@ export function StandbyStrip() {
               </>
             )}
           </Button>
-        </Fragment>
-      ))}
+        );
+        return (
+          <Fragment key={it.key}>
+            {i > 0 && (
+              <span aria-hidden="true" style={sepStyle(colors)}>
+                ·
+              </span>
+            )}
+            {it.key === 'alerts' ? (
+              <span data-notif-trigger="" style={triggerWrapStyle}>
+                {button}
+              </span>
+            ) : (
+              button
+            )}
+          </Fragment>
+        );
+      })}
     </section>
   );
 }
@@ -68,13 +85,16 @@ function stripStyle(colors: ColorPalette): CSSProperties {
     background: colors.panelGradient,
   };
 }
+// display: contents keeps the marker out of the flex layout: the button stays a direct flex item.
+const triggerWrapStyle: CSSProperties = { display: 'contents' };
 const itemStyle: CSSProperties = { cursor: 'pointer', padding: '4px 6px', borderRadius: radii.chip };
 function labelStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textSecondary };
 }
-// Numbers Are Mono; counts use Soft Signal.
-function countStyle(colors: ColorPalette): CSSProperties {
-  return { font: `700 12px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
+// Numbers Are Mono. A zero is a resting fact in Text Muted; Soft Signal only
+// for a count above 0, so an idle strip does not read as cyan activity.
+function countStyle(colors: ColorPalette, count: number): CSSProperties {
+  return { font: `700 12px/1 ${fonts.mono}`, color: count > 0 ? colors.accentCyanSoft : colors.textMuted };
 }
 function sepStyle(colors: ColorPalette): CSSProperties {
   return { font: `400 12px/1 ${fonts.mono}`, color: colors.textDim };

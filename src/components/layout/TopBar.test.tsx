@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { TopBar } from './TopBar';
 import { AetherStoreProvider } from '../../state/store';
 import { colors } from '../../styles/tokens';
+import { NOTIF_TRIGGER_ATTR } from './useDropdownFocus';
 
 afterEach(cleanup);
 
@@ -90,5 +91,77 @@ describe('TopBar notifications dropdown', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }));
     // getAll: earlier tests in this file also switch to AUTO.
     expect(screen.getAllByText('Operating mode set to AUTO')[0].style.color).toBe(cssColor(colors.textSecondary));
+  });
+});
+
+describe('TopBar notifications focus', () => {
+  const bell = () => screen.getByRole('button', { name: /^Notifications/ });
+  const appr = () => screen.getByRole('button', { name: /pending approval/ });
+  const panel = () => document.getElementById(bell().getAttribute('aria-controls')!)!;
+  function openFromBell() {
+    bell().focus();
+    fireEvent.click(bell());
+  }
+
+  it('marks the bell as a notifications trigger', () => {
+    renderTopBar();
+    expect(bell().closest(`[${NOTIF_TRIGGER_ATTR}]`)).not.toBeNull();
+  });
+
+  it('moves focus into the panel on open, and back to the bell on Escape', () => {
+    renderTopBar();
+    openFromBell();
+    expect(panel().getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement).toBe(panel());
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(bell().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(bell());
+  });
+
+  it('gives the focused panel an accessible identity: a region named by its heading', () => {
+    renderTopBar();
+    openFromBell();
+    const region = screen.getByRole('region', { name: 'NOTIFICATIONS' });
+    expect(region).toBe(panel());
+    expect(document.activeElement).toBe(region);
+    expect(within(region).getByRole('heading', { level: 2, name: 'NOTIFICATIONS' })).toBeTruthy();
+  });
+
+  it('closes on a pointer-down outside the panel and its trigger, not on one inside the panel', () => {
+    renderTopBar();
+    openFromBell();
+    fireEvent.pointerDown(panel());
+    expect(bell().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.pointerDown(document.body);
+    expect(bell().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(bell());
+  });
+
+  it('closes, not close-then-reopens, when the bell is pressed while open', () => {
+    renderTopBar();
+    openFromBell();
+    fireEvent.pointerDown(bell());
+    fireEvent.click(bell());
+    expect(bell().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps approvals and notifications exclusive under real pointer input', () => {
+    renderTopBar();
+    openFromBell();
+    fireEvent.pointerDown(appr());
+    appr().focus();
+    fireEvent.click(appr());
+    expect(bell().getAttribute('aria-expanded')).toBe('false');
+    expect(appr().getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(appr());
+  });
+
+  it('does not pull focus off the approvals button when opening approvals closes notifications', () => {
+    renderTopBar();
+    openFromBell();
+    appr().focus(); // keyboard: Tab to approvals, then Enter
+    fireEvent.click(appr());
+    expect(bell().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(appr());
   });
 });

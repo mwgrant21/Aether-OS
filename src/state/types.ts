@@ -222,6 +222,11 @@ export interface AetherState {
   // no "reconnect" action -- the app has exactly one embedded terminal, not
   // a connection you can retry from the Uplinks view.
   terminalAlive: boolean;
+  // When the current pty became alive (Date.now() at SET_TERMINAL_ALIVE's
+  // dead->alive edge), for READINESS's "Terminal: open since HH:MM.". Null
+  // whenever terminalAlive is false. main re-sends pty:alive for a running pty
+  // on every pty:start, so a repeat alive keeps the original stamp.
+  terminalOpenedAtMs: number | null;
   // Same pattern as terminalAlive, but for the independent Codex pty
   // (electron/codexPtyManager.ts). No pty exists at launch -- driven
   // entirely by useCodexTerminalAliveSync's codexPty:alive/codexPty:exit
