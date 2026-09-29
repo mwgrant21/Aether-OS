@@ -45,7 +45,7 @@ describe('issue #22 white-screen diagnostics stay wired', () => {
     // "The last logged event was a full page reload at 10:38:32" was the single
     // most useful fact in the original report. Correlating a white screen with
     // a lock or a GPU death needs times on both sides, not just one.
-    const diagLogs = mainSrc.match(/console\.error\([^;]*\[diag\][^;]*\)/gs) ?? [];
+    const diagLogs = mainSrc.match(/(?:console\.error|diagLog\.write)\([^;]*\[diag\][^;]*\)/gs) ?? [];
     expect(diagLogs.length).toBeGreaterThanOrEqual(5);
     for (const line of diagLogs) {
       expect(line).toMatch(/new Date\(\)\.toISOString\(\)/);
