@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { AppShell, MAIN_CONTENT_ID } from './AppShell';
 import { AetherStoreProvider } from '../../state/store';
 
@@ -71,5 +71,28 @@ describe('AppShell landmarks', () => {
     expect(link.style.top).toBe('8px');
     fireEvent.blur(link);
     expect(Number(link.style.top.replace('px', ''))).toBeLessThan(0);
+  });
+
+  it('starts the heading outline with one h1 naming the current view', () => {
+    renderShell();
+    const h1s = document.querySelectorAll('h1');
+    expect(h1s).toHaveLength(1);
+    expect(h1s[0].closest('main')).not.toBeNull();
+    expect(h1s[0].textContent).toContain('Aether OS');
+  });
+
+  it('names the active tab in the h1 and follows a tab switch', () => {
+    renderShell();
+    const h1 = () => document.querySelector('h1')!;
+    const current = screen.getByRole('navigation', { name: 'Main' }).querySelector('[aria-current="page"]')!;
+    const before = current.textContent!.trim();
+    expect(before).not.toBe('');
+    expect(h1().textContent).toContain(before);
+
+    const nav = screen.getByRole('navigation', { name: 'Main' });
+    const target = before === 'Settings' ? 'Analytics' : 'Settings';
+    fireEvent.click(within(nav).getByRole('button', { name: new RegExp(target) }));
+    expect(h1().textContent).toContain(target);
+    expect(h1().textContent).not.toContain(before);
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { fmtElapsed } from '../../utils/format';
 
 export function ActiveAgentsCard() {
@@ -32,7 +33,7 @@ export function ActiveAgentsCard() {
             </div>
           </div>
         ))}
-        {state.realAgents.length === 0 && <div style={emptyStyle(colors)}>no agents currently running</div>}
+        {state.realAgents.length === 0 && <EmptyState message="No agents are running." />}
       </div>
     </div>
   );
@@ -84,10 +85,3 @@ function taskStyle(colors: ColorPalette): CSSProperties {
   };
 }
 
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return {
-    font: `500 12px/1.4 ${fonts.ui}`,
-    color: colors.textDim,
-    padding: '8px 2px',
-  };
-}

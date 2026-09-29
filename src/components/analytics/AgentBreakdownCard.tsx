@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { useAetherStore } from '../../state/store';
 import { fmtElapsed } from '../../utils/format';
 import { computeRealAgentBreakdown } from './analyticsMath';
@@ -31,7 +32,7 @@ export function AgentBreakdownCard() {
             <span style={{ flex: 'none', font: `700 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{fmtElapsed(r.elapsedMs)}</span>
           </div>
         ))}
-        {!rows.length && <div style={emptyStyle(colors)}>no agents currently running</div>}
+        {!rows.length && <EmptyState message="No agents are running." />}
       </div>
     </div>
   );
@@ -84,7 +85,4 @@ function descStyle(colors: ColorPalette): CSSProperties {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   };
-}
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }

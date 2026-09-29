@@ -23,14 +23,16 @@ function dispatch(base: Pick<DispatchRow, 'toolUseId' | 'tokens' | 'toolUses' | 
 }
 
 describe('DispatchTimeline', () => {
-  it('shows "collector isn\'t running" when diagnostics is null', () => {
-    render(<DispatchTimeline diagnostics={null} />);
-    expect(screen.getByText(/collector isn't running/i)).toBeTruthy();
+  it('shows the collector-unavailable sentence through the shared EmptyState when diagnostics is null', () => {
+    const { container } = render(<DispatchTimeline diagnostics={null} />);
+    const empty = container.querySelector('[data-empty-state]');
+    expect(empty).not.toBeNull();
+    expect(empty!.textContent).toBe("Dispatch diagnostics are unavailable because the collector isn't running.");
   });
 
-  it('shows "No recent activity" when diagnostics is an empty snapshot', () => {
-    render(<DispatchTimeline diagnostics={{ toolCalls: [], dispatches: [], anomalies: [] }} />);
-    expect(screen.getByText(/no recent activity/i)).toBeTruthy();
+  it('shows "No recent activity" through the shared EmptyState when diagnostics is an empty snapshot', () => {
+    const { container } = render(<DispatchTimeline diagnostics={{ toolCalls: [], dispatches: [], anomalies: [] }} />);
+    expect(container.querySelector('[data-empty-state]')?.textContent).toMatch(/no recent activity/i);
   });
 
   it('renders a basename-only file path, never the full relative path with directories collapsed away from view', () => {

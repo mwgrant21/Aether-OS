@@ -7,6 +7,7 @@ colors:
   accent-cyan-soft: "#7fd8ef"
   success: "#3be0a0"
   warn: "#f5c66b"
+  warn-deep: "#d9a13f"
   danger: "#ff6b7a"
   danger-soft: "#ff9d9d"
   bg-base: "#020a10"
@@ -22,6 +23,7 @@ colors:
   chip-border: "rgba(80,190,220,.25)"
   active-border: "rgba(95,220,255,.4)"
   ink-on-cyan: "#04202b"
+  ink-on-amber: "#1a1204"
   text-primary: "#eafcff"
   text-body: "#d8f6ff"
   text-secondary: "#9fc4d1"
@@ -159,7 +161,7 @@ A single cyan energy hue in three strengths, over a deep teal-black, with amber 
 - **Soft Signal** (accent-cyan-soft): Links, secondary readouts, and agent hue accents; cyan at conversational volume.
 
 ### Secondary
-- **Needs-You Amber** (warn): Pending approvals, stale data, depletion warnings, and the reactor's anomaly flicker. Amber is a request for the operator's attention and nothing else.
+- **Needs-You Amber** (warn / warn-deep): Pending approvals, stale data, depletion warnings, and the reactor's anomaly flicker. Amber is a request for the operator's attention and nothing else. Warn is the upper stop of the amber pill gradient (the AUTO mode pill) and warn-deep (`#d9a13f`) the lower.
 - **Nominal Green** (success): System-healthy states: NOMINAL, ONLINE, ALL GOOD, budget remaining.
 
 ### Tertiary
@@ -172,7 +174,7 @@ A single cyan energy hue in three strengths, over a deep teal-black, with amber 
 - **Inset** (panel-inset): Quiet chips, inactive nav items, secondary buttons, and input fields: surfaces set *into* a panel.
 - **Hairlines** (panel-border, chrome-border, chip-border): Panel edges, top bar and sidebar dividers, and chip outlines, from strongest to faintest.
 - **Active Edge** (active-border): The border of anything hovered or active, and also the colour of its glow.
-- **Ink on Cyan** (ink-on-cyan): Text on filled cyan and amber buttons.
+- **Ink on Cyan** (ink-on-cyan): Text on filled cyan buttons. **Ink on Amber** (ink-on-amber, `#1a1204`) is its counterpart for filled amber: the AUTO pill and the approvals badge.
 - **Text ladder** (text-primary → text-body → text-secondary → text-muted → text-dim): Headlines and values, body, labels, meta, and disabled, in that order.
 
 ### Named Rules
@@ -218,6 +220,8 @@ Spacing uses a 4px-based scale (xs 4, sm 8, md 12, lg 16, xl 24). Panels sit 16p
 Aether OS is **light-lit, not shadow-lifted.** Depth comes from layering: translucent gradient panels float over the radial page glow, and inset surfaces sit darker within them. There are no ambient drop shadows on resting surfaces. The one large dark shadow (`0 20px 60px rgba(0,0,0,.6)`) is reserved for overlays and modals that lift above the whole frame.
 
 ### Shadow Vocabulary
+Implemented as the `glows` token group in `src/styles/tokens.ts` (`active`, `hot`, `needsYou`, `innerCharge`, `primaryHover`, `overlayLift`); use the token, not the literal.
+
 - **Active glow** (`0 0 10px rgba(95,220,255,.4)`): An active mode pill, the selected nav item, a lit control.
 - **Hot glow** (`0 0 8px rgba(95,240,255,.8)`): Small live indicators and dots.
 - **Needs-you glow** (`0 0 12px rgba(245,198,107,.45)`): An amber control that is waiting on the operator.
@@ -242,11 +246,15 @@ Tactile and lit: buttons feel like switches that light up under your finger.
 - **Keyboard focus:** A 2px Text Primary outline offset 3px, on top of whatever glow the state already has, and keyboard focus also applies the same lit treatment as hover. The ring shows for keyboard focus only (gated on `:focus-visible`), never on a mouse click. Every interactive element gets it.
 - **Disabled:** Inset background, Text Dim label, no glow.
 - **Secondary:** Inset background, Reactor Cyan text, Active Edge border; on hover the border goes solid cyan and gains an outer and inner glow.
-- **Needs-you (amber):** A solid Needs-You Amber fill with Ink on Cyan text and the needs-you glow, used only for approve/review actions.
+- **Needs-you (amber):** A solid Needs-You Amber fill with Ink on Amber text and the needs-you glow, used only for approve/review actions. The AUTO mode pill is the segmented-control form: a warn to warn-deep gradient, Ink on Amber text, and the needs-you glow, from one shared `opModeOnSkin` (`src/components/shared/opModes.ts`).
+- **Motion:** Bars and arcs that report a changing reading settle on `motion.easing.decelerate` (`cubic-bezier(0.16, 1, 0.3, 1)`), an exponential ease-out, so a value arrives instead of sliding at constant speed.
 - **Implementation:** Always the `Button` primitive (`src/components/shared/Button.tsx`), never a clickable `div`/`span`; hover comes from `useHoverStyle()`.
 
 ### Mode Pills
-A segmented control (PLAN / EDITS / AUTO) inside an inset tray with a chip border. The active segment takes the primary gradient and active glow; inactive segments are Text Muted on nothing.
+A segmented control (PLAN / EDITS / AUTO) inside an inset tray with a chip border. The active segment takes the primary gradient and active glow, except AUTO, which takes the needs-you amber fill and glow because it auto-approves; inactive segments are Text Muted on nothing.
+
+### Empty States
+The shared `EmptyState` (`src/components/shared/EmptyState.tsx`) is the one voice for a view or panel with nothing to show: a single plain sentence in Rajdhani 12px Text Muted, sentence case, saying what will appear and where it comes from, and at most one secondary action (the Secondary button treatment). It is flat at rest; only the action lights, on hover or keyboard focus. When it holds an action, its root reserves 6px on every side so the 5px focus ring is never clipped by an `overflow: auto` list; a message-only empty state takes no padding, so its sentence aligns with the panel heading. The reactor card holds the one primary action, OPEN TERMINAL, at STANDBY, so an empty panel elsewhere on the Dashboard never competes with it.
 
 ### Chips
 - **Quiet chip:** Inset background with a chip border, the established pair for inactive tabs, small overlays and persistent badges.
@@ -314,12 +322,13 @@ Only the storm renderer dims; the classic renderer keeps its per-frame filter.
 
 ## Known Gaps
 
-States and rules this document describes but the code does not yet fully meet, or that nobody has designed. Updated 2026-09-28 after polish passes 1 and 2. Closed by those passes: keyboard focus, landmarks and headings, the 11px type floor, Text Dim contrast (now 5.1:1 on Abyss, 4.6:1 on panels), the reactor's placement, and honest idle readouts.
+States and rules this document describes but the code does not yet fully meet, or that nobody has designed. Updated 2026-09-28 after polish passes 1 and 2. Closed by those passes: keyboard focus, landmarks and headings, the 11px type floor, Text Dim contrast (now 5.1:1 on Abyss, 4.6:1 on panels), the reactor's placement, and honest idle readouts. Screen-reader state also closed: `aria-pressed` on the operating-mode pills and the usage-range chips, `aria-current` on the active nav item, the reactor exposed as `role="img"` with a state label, and a screen-reader-only `h1` per view.
 
 - **Token adoption is partial.** About 364 hardcoded colour literals across 47 files duplicate palette values (32 of them in shell chrome per the 2026-09-28 detector run); `radii` is used at 0 call sites and `space` at 3. Radii of 8px and 6px are widely used (32 and 22 sites) but are not tokens: either add them to `radii` or move those sites onto the existing steps.
-- **Motion has no easing curves.** `motion.easing.standard` and `emphasis` are still the browser defaults (`ease`, `ease-in-out`); the tactile hover, press and glow transitions need designed curves.
-- **Pressed state.** The pressed treatment above is chosen but not yet implemented in `Button` or `useHoverStyle`, which handle hover and keyboard focus only.
-- **Empty states.** Dashboard panels with no data show one dim line in a large panel. They need compact states with a next action (for example "No live session → Open Terminal"). Loading and error states are still handled ad hoc per view.
+- **Motion is only partly curved.** `motion.easing.decelerate` now exists and drives bars and arcs, but `standard` and `emphasis` are still the browser defaults (`ease`, `ease-in-out`); the tactile hover, press and glow transitions need designed curves.
+- **Pressed state.** The pressed treatment above is chosen but still unimplemented in `Button` or `useHoverStyle`, which handle hover and keyboard focus only.
+- **Loading and error states.** Empty states are done through the shared `EmptyState` for the dashboard, agents, analytics, projects, terminal, files, comms and the top-bar dropdowns. Loading and error states are still handled ad hoc per view.
+- **Settings toggles lack pressed state.** The ON/OFF switches and the permission, narration and density segmented buttons in Settings don't expose `aria-pressed` yet; only the operating-mode pills and usage-range chips do.
 - **Grid keyboard access.** The orchestration grid's SVG agent nodes (`<g onClick>`) can't be reached by keyboard.
 - **Known clipping.** The sidebar's RECENT AGENTS label is half-clipped by the reactor miniature, and the Settings left column is clipped under the bottom metrics row. Both predate the polish passes.
 - **Percentages are not verified clamped in live mode.** A 2026-08-10 screenshot showed the context ring at "663% USED". Browser mode now shows "—", but the live Electron path hasn't been checked since.

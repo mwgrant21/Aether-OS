@@ -5,12 +5,15 @@ import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { Footer } from './Footer';
 import { useViewportScale } from './useViewportScale';
+import { useAetherStore } from '../../state/store';
+import { srOnlyStyle } from '../shared/srOnly';
 
 export const MAIN_CONTENT_ID = 'main-content';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const scale = useViewportScale();
   const colors = useColors();
+  const { state } = useAetherStore();
   return (
     <div style={pageStyle(colors)}>
       <div style={{ ...frameStyle, transform: `scale(${scale})`, transformOrigin: 'center center' }}>
@@ -21,6 +24,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* tabIndex=-1 makes this a valid fragment-navigation focus target
               without adding it to the normal Tab order. */}
           <main id={MAIN_CONTENT_ID} tabIndex={-1} style={contentStyle}>
+            {/* The page's one h1, visually hidden: every view's panels start at
+                h2, and a heading outline needs a root that names where you are. */}
+            <h1 style={srOnlyStyle}>Aether OS — {state.activeTab}</h1>
             {children}
           </main>
         </div>

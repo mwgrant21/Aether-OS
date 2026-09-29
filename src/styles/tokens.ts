@@ -9,6 +9,8 @@ export interface ColorPalette {
   chipBorder: string;
   activeBorder: string;
   bgTerminal: string;
+  /** Text on filled cyan surfaces: DESIGN.md's Ink on Cyan. Filled amber uses inkOnAmber. */
+  inkOnCyan: string;
   textPrimary: string;
   textBody: string;
   textSecondary: string;
@@ -19,6 +21,10 @@ export interface ColorPalette {
   accentCyanSoft: string;
   success: string;
   warn: string;
+  /** Lower stop of the amber (AUTO) pill gradient; warn is the upper stop. */
+  warnDeep: string;
+  /** Text on filled amber surfaces: the dark counterpart of inkOnCyan. */
+  inkOnAmber: string;
   danger: string;
   dangerSoft: string;
   agentHues: readonly string[];
@@ -35,6 +41,7 @@ export const colors: ColorPalette = {
   chipBorder: 'rgba(80,190,220,.25)',
   activeBorder: 'rgba(95,220,255,.4)',
   bgTerminal: '#06141c',
+  inkOnCyan: '#04202b',
   textPrimary: '#eafcff',
   textBody: '#d8f6ff',
   textSecondary: '#9fc4d1',
@@ -50,6 +57,8 @@ export const colors: ColorPalette = {
   accentCyanSoft: '#7fd8ef',
   success: '#3be0a0',
   warn: '#f5c66b',
+  warnDeep: '#d9a13f',
+  inkOnAmber: '#1a1204',
   danger: '#ff6b7a',
   dangerSoft: '#ff9d9d',
   agentHues: ['#7ef0ff', '#8ab6ff', '#5fffe0', '#7fd8ef', '#9bd0ff'],
@@ -99,5 +108,27 @@ export const motion = {
     standard: 'ease',
     emphasis: 'ease-in-out',
     continuous: 'linear',
+    // Exponential ease-out: a value settles into place instead of sliding at
+    // constant speed. For readings that change (usage bars, the context arc).
+    // A new named curve, not a redefinition of `standard`/`emphasis`.
+    decelerate: 'cubic-bezier(0.16, 1, 0.3, 1)',
   },
+} as const;
+
+// DESIGN.md "Shadow Vocabulary", verbatim. Glow is state (Glow-Is-State): apply
+// one of these only to something live, active, hovered, focused or waiting on
+// the operator, never to a resting surface.
+export const glows = {
+  /** An active mode pill, the selected nav item, a lit control at rest. */
+  active: '0 0 10px rgba(95,220,255,.4)',
+  /** Small live indicators and dots. */
+  hot: '0 0 8px rgba(95,240,255,.8)',
+  /** An amber control waiting on the operator. */
+  needsYou: '0 0 12px rgba(245,198,107,.45)',
+  /** A lit surface glowing from inside, e.g. a hovered secondary button. */
+  innerCharge: 'inset 0 0 14px rgba(95,240,255,.12)',
+  /** DESIGN.md Buttons > Hover: the primary button's stronger hover glow. */
+  primaryHover: '0 0 24px rgba(95,240,255,.65)',
+  /** Modals and floating panels only. */
+  overlayLift: '0 20px 60px rgba(0,0,0,.6)',
 } as const;

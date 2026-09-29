@@ -130,3 +130,13 @@ describe('Sidebar reactor legend aria-live scoping', () => {
     expect(container.querySelector('canvas')).not.toBeNull();
   });
 });
+
+describe('Sidebar active item exposure', () => {
+  it('marks only the active nav item with aria-current="page"', () => {
+    renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Terminal' }]);
+    const current = screen.getByTestId('sidebar-nav').querySelectorAll('[aria-current]');
+    expect(current).toHaveLength(1);
+    expect(current[0].getAttribute('aria-current')).toBe('page');
+    expect(current[0].textContent).toContain('Terminal');
+  });
+});

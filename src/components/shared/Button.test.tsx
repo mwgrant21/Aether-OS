@@ -66,4 +66,20 @@ describe('Button', () => {
       expect(btn.style.outline).toBe('');
     });
   });
+
+  it('forwards aria-pressed and aria-current to the rendered button', () => {
+    const { getAllByRole } = render(
+      <AetherStoreProvider>
+        <Button onClick={vi.fn()} style={{}} aria-pressed={true}>
+          pressed
+        </Button>
+        <Button onClick={vi.fn()} style={{}} aria-current="page">
+          current
+        </Button>
+      </AetherStoreProvider>,
+    );
+    const [pressed, current] = getAllByRole('button');
+    expect(pressed.getAttribute('aria-pressed')).toBe('true');
+    expect(current.getAttribute('aria-current')).toBe('page');
+  });
 });

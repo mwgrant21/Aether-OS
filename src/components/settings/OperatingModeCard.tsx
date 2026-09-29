@@ -4,12 +4,9 @@ import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
+import { OP_MODES, opModeOnSkin } from '../shared/opModes';
 
-const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
-  { key: 'PLAN', label: '◇ PLAN', tip: 'Brainstorm & plan — throttled burn, everything queued for approval' },
-  { key: 'EDITS', label: '✎ EDITS', tip: 'Accept edits — agents work, risky actions queue for approval' },
-  { key: 'AUTO', label: '⚡ AUTO', tip: 'Full auto — low/med actions auto-approved, max burn' },
-];
+export const SETTINGS_OP_MODE_GROUP_LABEL = 'Operating mode (synced with top bar)';
 
 export function OperatingModeCard() {
   const colors = useColors();
@@ -26,12 +23,23 @@ export function OperatingModeCard() {
   return (
     <div style={cardStyle(colors)}>
       <h2 style={{ ...titleStyle(colors), margin: 0 }}>OPERATING MODE</h2>
-      <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+      {/* Same pattern as the TopBar pills: toggle buttons in a labelled group,
+          each its own Tab stop, glyph hidden so the name is just the mode.
+          Both groups set the same cfg.opMode (SET_OP_MODE), so this one is not
+          a separate "default"; its name says it mirrors the top bar so a
+          screen reader never hears two identical "Operating mode" groups. */}
+      <div role="group" aria-label={SETTINGS_OP_MODE_GROUP_LABEL} style={{ display: 'flex', gap: 6, marginTop: 12 }}>
         {OP_MODES.map((om) => {
           const on = state.cfg.opMode === om.key;
           return (
-            <Button key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(colors, on, om.key)}>
-              {om.label}
+            <Button
+              key={om.key}
+              title={om.meaning}
+              onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })}
+              style={opModeStyle(colors, on, om.key)}
+              aria-pressed={on}
+            >
+              <span aria-hidden="true">{om.glyph}</span> {om.label}
             </Button>
           );
         })}
@@ -99,9 +107,7 @@ function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): CSSPropert
     borderRadius: 8,
     font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1.5,
-    color: on ? (key === 'AUTO' ? '#1a1204' : '#04202b') : colors.textMuted,
-    background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : 'rgba(10,32,43,.6)',
-    boxShadow: on ? (key === 'AUTO' ? '0 0 12px rgba(245,198,107,.45)' : '0 0 12px rgba(95,220,255,.4)') : undefined,
+    ...(on ? opModeOnSkin(colors, key) : { color: colors.textMuted, background: 'rgba(10,32,43,.6)' }),
     border: on ? 'none' : '1px solid rgba(80,190,220,.25)',
   };
 }

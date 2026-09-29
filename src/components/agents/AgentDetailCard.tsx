@@ -5,6 +5,7 @@ import { useAetherStore } from '../../state/store';
 import { fmtElapsed } from '../../utils/format';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 import { applyDensity } from '../../shared/transcriptDensity';
+import { EmptyState } from '../shared/EmptyState';
 
 export function AgentDetailCard({ agent }: { agent: RealAgentDispatch | null }) {
   const colors = useColors();
@@ -19,11 +20,9 @@ export function AgentDetailCard({ agent }: { agent: RealAgentDispatch | null }) 
   if (!agent) {
     return (
       <div style={cardStyle(colors)}>
-        <div style={emptyWrapStyle}>
-          <div style={{ font: `600 13px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textSecondary }}>NO AGENT SELECTED</div>
-          <div style={{ marginTop: 8, font: `400 12px/1.5 ${fonts.ui}`, color: colors.textMuted }}>
-            No agent dispatches are currently running.
-          </div>
+        <h2 style={emptyTitleStyle(colors)}>AGENT DETAIL</h2>
+        <div style={{ marginTop: 12 }}>
+          <EmptyState message="A running agent's prompt and elapsed time will appear here." />
         </div>
       </div>
     );
@@ -60,7 +59,7 @@ function cardStyle(colors: ColorPalette): CSSProperties {
     flex: 1,
     minWidth: 0,
     minHeight: 0,
-    padding: 18,
+    padding: 15,
     borderRadius: 14,
     border: `1px solid ${colors.panelBorder}`,
     background: colors.panelGradient,
@@ -69,14 +68,9 @@ function cardStyle(colors: ColorPalette): CSSProperties {
   };
 }
 
-const emptyWrapStyle: CSSProperties = {
-  flex: 1,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  textAlign: 'center',
-};
+function emptyTitleStyle(colors: ColorPalette): CSSProperties {
+  return { margin: 0, font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
+}
 
 function avatarStyle(colors: ColorPalette): CSSProperties {
   return {

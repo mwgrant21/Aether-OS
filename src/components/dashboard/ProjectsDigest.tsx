@@ -4,6 +4,7 @@ import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { usdPrecise } from '../ledger/format';
 import { Button } from '../shared/Button';
+import { EmptyState } from '../shared/EmptyState';
 
 export function ProjectsDigest() {
   const colors = useColors();
@@ -19,7 +20,9 @@ export function ProjectsDigest() {
         </Button>
       </div>
       {top.length === 0 ? (
-        <div style={emptyStyle(colors)}>No projects observed yet.</div>
+        <div style={emptySlotStyle}>
+          <EmptyState message="Projects appear once a session writes a transcript." />
+        </div>
       ) : (
         top.map((p) => (
           <div key={p.key} style={rowStyle}>
@@ -38,9 +41,7 @@ function cardStyle(colors: ColorPalette): CSSProperties {
 function titleStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
 }
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { marginTop: 11, font: `500 12px/1.4 ${fonts.ui}`, color: colors.textDim };
-}
+const emptySlotStyle: CSSProperties = { marginTop: 11 };
 const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 };
 function nameStyle(colors: ColorPalette): CSSProperties {
   return { flex: 1, font: `600 13px/1 ${fonts.ui}`, color: colors.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };

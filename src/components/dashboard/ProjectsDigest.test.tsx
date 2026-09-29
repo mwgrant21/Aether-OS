@@ -60,3 +60,10 @@ describe('ProjectsDigest', () => {
     expect(screen.getByText(/view all/i)).toBeTruthy();
   });
 });
+
+describe('ProjectsDigest empty state', () => {
+  it('explains when projects will appear, without inventing any', () => {
+    renderWithSnapshot(null);
+    expect(screen.getByText('Projects appear once a session writes a transcript.')).toBeTruthy();
+  });
+});

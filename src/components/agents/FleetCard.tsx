@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { Button } from '../shared/Button';
 import { fmtElapsed } from '../../utils/format';
 import type { ColorPalette } from '../../styles/tokens';
@@ -29,8 +30,8 @@ export function FleetCard() {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {sortedFleet === null && <div style={emptyStyle(colors)}>collector isn&apos;t running -- fleet data unavailable</div>}
-        {sortedFleet !== null && sortedFleet.length === 0 && <div style={emptyStyle(colors)}>No other sessions detected</div>}
+        {sortedFleet === null && <EmptyState message="Fleet data is unavailable because the collector isn't running." />}
+        {sortedFleet !== null && sortedFleet.length === 0 && <EmptyState message="No other sessions detected." />}
         {sortedFleet?.map((row) => (
           <FleetRow
             key={row.sessionId}
@@ -133,7 +134,4 @@ function statusChipStyle(colors: ColorPalette, status: string): CSSProperties {
     padding: '1px 4px',
     borderRadius: 4,
   };
-}
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }

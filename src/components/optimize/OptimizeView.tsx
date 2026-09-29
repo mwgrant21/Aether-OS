@@ -3,6 +3,7 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
 import { Button } from '../shared/Button';
+import { TEXT_BOLT } from '../shared/opModes';
 import { appliedSummary } from '../../shared/optimizeGrade';
 import type { OptimizeFinding, OptimizeSummary } from '../../shared/optimizeRules';
 import type { GradeRow } from '../../shared/optimizeGrade';
@@ -46,7 +47,9 @@ export function OptimizeView() {
   return (
     <div style={rootStyle}>
       <div style={headerRowStyle()}>
-        <h2 style={{ ...titleStyle(colors), margin: 0 }}>⚡ OPTIMIZE</h2>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>
+          <span aria-hidden="true">{TEXT_BOLT}</span> OPTIMIZE
+        </h2>
         <div style={summaryLineStyle(colors)}>
           {applied.count > 0
             ? `${applied.count} applied · saving ~$${applied.totalPerWeek.toFixed(2)}/wk`
