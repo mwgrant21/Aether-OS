@@ -38,7 +38,10 @@ function allMet() {
   act(() => {
     dispatchRef!({ type: 'SET_TERMINAL_ALIVE', alive: true });
     dispatchRef!({ type: 'SET_STATUSLINE', snapshot: freshStatusline() });
-    dispatchRef!({ type: 'SET_DIAGNOSTICS', diagnostics: { toolCalls: [], dispatches: [], anomalies: [] } });
+    dispatchRef!({
+      type: 'SET_DIAGNOSTICS',
+      diagnostics: { toolCalls: [], dispatches: [], anomalies: [{ kind: 'k', toolUseId: 't', detail: 'd', detectedAtMs: Date.now() }] },
+    });
   });
 }
 const rowText = (key: string) => screen.getByTestId(`readiness-${key}`).textContent;
@@ -59,10 +62,11 @@ describe('ReadinessCard', () => {
 
   it('reads the cold browser-mode sentences', () => {
     renderCard();
-    expect(rowText('desktop')).toBe(`Desktop app: not running. ${DESKTOP_APP_REASON}`);
+    expect(rowText('desktop')).toBe('Desktop app: not running.');
+    expect(rowText('desktop')).not.toContain(DESKTOP_APP_REASON);
     expect(rowText('terminal')).toBe('Terminal: no session yet.');
     expect(rowText('statusline')).toBe('Statusline: no reading yet.');
-    expect(rowText('collector')).toBe('Collector: not running.');
+    expect(rowText('collector')).toBe('Collector: no events in the last 24h.');
   });
 
   it('reads all four met sentences in the desktop app with a session, a statusline and the collector', () => {
@@ -70,15 +74,15 @@ describe('ReadinessCard', () => {
     renderCard();
     allMet();
     expect(rowText('desktop')).toBe('Desktop app: running.');
-    expect(rowText('terminal')).toBe('Terminal: open.');
-    expect(rowText('statusline')).toBe('Statusline: live.');
-    expect(rowText('collector')).toBe('Collector: running.');
+    expect(rowText('terminal')).toMatch(/^Terminal: open since \d{2}:\d{2}\.$/);
+    expect(rowText('statusline')).toMatch(/^Statusline: live, \d{2}:\d{2}\.$/);
+    expect(rowText('collector')).toMatch(/^Collector: last event \d{2}:\d{2}\.$/);
   });
 
   it('updates a row within one store update', () => {
     renderCard();
     act(() => dispatchRef!({ type: 'SET_TERMINAL_ALIVE', alive: true }));
-    expect(rowText('terminal')).toBe('Terminal: open.');
+    expect(rowText('terminal')).toMatch(/^Terminal: open since \d{2}:\d{2}\.$/);
   });
 
   it('lights only the live signals: Terminal and Statusline glow, Desktop app and Collector stay flat', () => {
@@ -94,7 +98,7 @@ describe('ReadinessCard', () => {
   it('keeps a met Terminal dot flat green while the console is idle (STANDBY)', () => {
     renderCard();
     act(() => dispatchRef!({ type: 'SET_TERMINAL_ALIVE', alive: true }));
-    expect(rowText('terminal')).toBe('Terminal: open.');
+    expect(rowText('terminal')).toMatch(/^Terminal: open since \d{2}:\d{2}\.$/);
     expect(dot('terminal').style.background).not.toBe('transparent');
     expect(dot('terminal').style.boxShadow).toBe('');
   });
