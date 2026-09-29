@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDiagLog } from './diagLog';
 
-
 let root: string;
 let errSpy: ReturnType<typeof vi.spyOn>;
 
