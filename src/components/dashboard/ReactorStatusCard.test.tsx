@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { ReactorStatusCard } from './ReactorStatusCard';
 import { Footer } from '../layout/Footer';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
 import { initialState } from '../../state/initialState';
+import { buildLedgerSnapshot } from '../../shared/ledgerMath';
 
 // ReactorStatusCard renders <Reactor>, which calls useReducedMotion() -> window.matchMedia.
 beforeEach(() => {
@@ -58,6 +59,8 @@ describe('ReactorStatusCard accessibility', () => {
 });
 
 describe('ReactorStatusCard live state', () => {
+  // A live session implies the desktop app; without it OPEN TERMINAL is aria-disabled and never glows.
+  beforeEach(() => vi.stubGlobal('aetherElectron', {}));
   let dispatchRef: ReturnType<typeof useAetherStore>['dispatch'] | null = null;
   function DispatchProbe() {
     dispatchRef = useAetherStore().dispatch;
@@ -104,5 +107,52 @@ describe('ReactorStatusCard live state', () => {
     unmount();
     renderLive(1234);
     expect(screen.getByTestId('reactor-status-dot').style.boxShadow).not.toBe('');
+  });
+});
+
+describe('ReactorStatusCard idle composition', () => {
+  let dispatchRef: ReturnType<typeof useAetherStore>['dispatch'] | null = null;
+  function DispatchProbe() {
+    dispatchRef = useAetherStore().dispatch;
+    return null;
+  }
+  function renderCard() {
+    return render(
+      <AetherStoreProvider>
+        <DispatchProbe />
+        <ReactorStatusCard />
+      </AetherStoreProvider>,
+    );
+  }
+  const tile = (k: string) => screen.getAllByTestId('kpi-tile').find((t) => t.dataset.kpi === k)!;
+
+  it('orders the tiles MONTH TOKENS, DEPLETION ETA, TODAY, BUDGET LEFT, each — with no source', () => {
+    renderCard();
+    const tiles = screen.getAllByTestId('kpi-tile');
+    expect(tiles.map((t) => t.dataset.kpi)).toEqual(['MONTH TOKENS', 'DEPLETION ETA', 'TODAY', 'BUDGET LEFT']);
+    expect(tiles.map((t) => within(t).getByTestId('kpi-value').textContent)).toEqual(['—', '—', '—', '—']);
+  });
+
+  it("shows TODAY as today's exact API-rate cost with its caption", () => {
+    renderCard();
+    act(() =>
+      dispatchRef!({
+        type: 'SET_LEDGER',
+        ledger: { ...buildLedgerSnapshot([], 'UTC', Date.now()), rollups: { today: 1.5, week: 1.5, month: 1.5 } },
+      }),
+    );
+    expect(within(tile('TODAY')).getByTestId('kpi-value').textContent).toBe('$1.50');
+    expect(within(tile('TODAY')).getByTestId('kpi-caption').textContent).toBe('API rate, not paid');
+  });
+
+  it('reads exactly "— tok/min · standby" under the reactor when idle', () => {
+    renderCard();
+    expect(screen.getByTestId('reactor-rate-line').textContent).toBe('— tok/min · standby');
+  });
+
+  it('offers OPEN TERMINAL as its only action (MEMORY SWEEP is gone)', () => {
+    renderCard();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'OPEN TERMINAL' })).toBeTruthy();
   });
 });
