@@ -65,7 +65,9 @@ export function ReactorStatusCard() {
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ ...titleStyle(colors), margin: 0 }}>REACTOR STATUS</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }} aria-live="polite">
+        {/* Not aria-live: the always-mounted Footer status is the one live region,
+            so a transition isn't announced twice while the Dashboard is open. */}
+        <div data-testid="reactor-status-label" style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusC, boxShadow: `0 0 8px ${statusC}` }} />
           {computeDashStatus(state.alarmLevel, live)}
         </div>

@@ -45,7 +45,7 @@ Known flaky/environmental: `electron/communicationBridge/launchConfig.test.ts` "
 
 ## Still open (also in DESIGN.md → Known Gaps)
 1. **Re-run the critique** to measure the change: `/impeccable critique` on `src/components/dashboard/DashboardView.tsx` (baseline 22/40).
-2. **Duplicate STANDBY announcement**: the dashboard status card has two `aria-live="polite"` STANDBY elements (a DIV and a SPAN). Keep one.
+2. ~~**Duplicate STANDBY announcement**~~ **DONE 2026-09-28** (Codex P2 on PR #90): the two `aria-live="polite"` regions were the ReactorStatusCard DIV and the always-mounted Footer SPAN, not two elements in the card. The card's region is removed; the Footer is the one live region (`ReactorStatusCard.test.tsx`). The sidebar legend keeps its own scoped region ("Reactor on standby").
 3. **Empty states** (was P2): panels with no data are one dim line in a big box. Add compact states with a next action.
 4. **Token drift**: ~32 hardcoded colours in the shell chrome (TopBar 9, Sidebar 5, BottomMetricsRow 4); `radii`/`space` tokens barely used.
 5. **Motion**: no designed easing curves yet (`motion.easing.standard`/`emphasis` are browser defaults), and the pressed state isn't implemented.
