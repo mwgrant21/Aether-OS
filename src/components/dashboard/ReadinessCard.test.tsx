@@ -89,7 +89,7 @@ describe('ReadinessCard', () => {
     expect(text('desktop')).toBe('Desktop app: not running.');
     expect(text('terminal')).toBe('Terminal: no session yet.');
     expect(text('statusline')).toBe('Statusline: no reading yet.');
-    expect(text('collector')).toBe('Collector: no events in the last 24h.');
+    expect(text('collector')).toBe('Collector: not running.');
     expect(within(card()).getAllByText(DESKTOP_APP_REASON)).toHaveLength(1);
   });
 
@@ -115,7 +115,7 @@ describe('ReadinessCard', () => {
     expect(text('desktop')).toBe('Desktop app: running.');
     expect(text('terminal')).toMatch(/^Terminal: open since \d{2}:\d{2}\.$/);
     expect(text('statusline')).toMatch(/^Statusline: live, \d{2}:\d{2}\.$/);
-    expect(text('collector')).toMatch(/^Collector: last event \d{2}:\d{2}\.$/);
+    expect(text('collector')).toMatch(/^Collector: running, last event \d{2}:\d{2}\.$/);
     for (const key of KEYS) expect(hint(key)).toBeNull();
   });
 

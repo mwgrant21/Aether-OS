@@ -20,9 +20,6 @@ export interface ReadinessRow {
 /** Printed once, under a disabled OPEN TERMINAL (OpenTerminalButton). The Desktop row no longer repeats it. */
 export const DESKTOP_APP_REASON = 'The Terminal and live tracking need the desktop app.';
 
-/** A collector whose newest recorded event is older than this reads as not ready. */
-export const COLLECTOR_STALE_AFTER_MS = 10 * 60 * 1000;
-
 /** The commands a hint may name; ReadinessCard sets these in the mono font. */
 export const HINT_COMMANDS = ['npm run electron:dev', 'npm run build', 'npm start'] as const;
 
@@ -56,8 +53,9 @@ export function formatReadinessTime(atMs: number, nowMs: number): string {
 
 /**
  * The newest event the collector recorded, across tool calls, dispatches and
- * anomalies. This is what the app can observe about the collector: it never
- * starts or watches the collector process, so it cannot claim "running".
+ * anomalies. Used only for the {t} in the Collector row's met text -- whether
+ * the row is met at all comes from readDiagnostics' own heartbeat gate (see
+ * computeReadiness below), not from this value's age.
  */
 export function newestCollectorEventMs(diagnostics: AetherState['diagnostics']): number | null {
   if (diagnostics === null) return null;
@@ -69,11 +67,6 @@ export function newestCollectorEventMs(diagnostics: AetherState['diagnostics']):
   ];
   for (const ms of stamps) if (newest === null || ms > newest) newest = ms;
   return newest;
-}
-
-/** Same `<=` comparison as isStatuslineFresh. */
-export function isCollectorFresh(newestMs: number | null, nowMs: number): boolean {
-  return newestMs !== null && nowMs - newestMs <= COLLECTOR_STALE_AFTER_MS;
 }
 
 export interface HintPart {
@@ -106,7 +99,7 @@ export function computeReadiness(
   const time = (ms: number) => formatReadinessTime(ms, nowMs);
   const statuslineFresh = isStatuslineFresh(state.statusline, nowMs);
   const newest = newestCollectorEventMs(state.diagnostics);
-  const collectorFresh = isCollectorFresh(newest, nowMs);
+  const collectorRunning = state.diagnostics !== null;
   return [
     {
       key: 'desktop',
@@ -141,15 +134,14 @@ export function computeReadiness(
     },
     {
       key: 'collector',
-      met: collectorFresh,
+      met: collectorRunning,
       glows: false,
-      text:
-        newest === null
-          ? 'Collector: no events in the last 24h.'
-          : collectorFresh
-            ? `Collector: last event ${time(newest)}.`
-            : `Collector: no events since ${time(newest)}.`,
-      hint: collectorFresh ? null : 'Build and start it in collector/: npm run build, then npm start.',
+      text: !collectorRunning
+        ? 'Collector: not running.'
+        : newest === null
+          ? 'Collector: running, no events in the last 24h.'
+          : `Collector: running, last event ${time(newest)}.`,
+      hint: collectorRunning ? null : 'Build and start it in collector/: npm run build, then npm start.',
     },
   ];
 }
