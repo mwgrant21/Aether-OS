@@ -19,12 +19,20 @@ export interface DropdownFocusOptions {
   /** Where focus returns when the trigger that opened the panel has unmounted. */
   fallbackTrigger: () => HTMLElement | null;
   close: () => void;
+  /**
+   * Where focus lands on open. 'first' (default): the panel's first focusable
+   * element, else the panel. 'panel': always the panel itself, for panels whose
+   * first control is consequential -- the approvals queue's first control is
+   * APPROVE, and a stray Enter must not approve a request.
+   */
+  initialFocus?: 'first' | 'panel';
 }
 
 /**
  * Focus management for a disclosure panel with more than one trigger.
  * - Open: remember the focused trigger, then focus the panel's first focusable
- *   element, else the panel itself (give it tabIndex={-1}).
+ *   element, else the panel itself (give it tabIndex={-1}). With
+ *   initialFocus: 'panel', always the panel itself.
  * - Close: return focus to that trigger (or fallbackTrigger() if it has gone),
  *   but only when focus would otherwise be lost (on <body> or detached, as
  *   when the panel that held it unmounts). If the user activated another
@@ -33,7 +41,7 @@ export interface DropdownFocusOptions {
  * - While open: Escape closes; a pointer-down outside the panel and outside
  *   every triggerAttr element closes.
  */
-export function useDropdownFocus({ open, panelRef, triggerAttr, fallbackTrigger, close }: DropdownFocusOptions): void {
+export function useDropdownFocus({ open, panelRef, triggerAttr, fallbackTrigger, close, initialFocus = 'first' }: DropdownFocusOptions): void {
   const openerRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
 
@@ -45,7 +53,7 @@ export function useDropdownFocus({ open, panelRef, triggerAttr, fallbackTrigger,
       const active = document.activeElement;
       openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
       const panel = panelRef.current;
-      if (panel) (panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel).focus();
+      if (panel) ((initialFocus === 'first' ? panel.querySelector<HTMLElement>(FOCUSABLE) : null) ?? panel).focus();
       return;
     }
     const opener = openerRef.current;
@@ -55,7 +63,7 @@ export function useDropdownFocus({ open, panelRef, triggerAttr, fallbackTrigger,
     if (!focusLost) return;
     const target = opener !== null && opener.isConnected ? opener : fallbackTrigger();
     target?.focus();
-  }, [open, panelRef, fallbackTrigger]);
+  }, [open, panelRef, fallbackTrigger, initialFocus]);
 
   useEffect(() => {
     if (!open) return;

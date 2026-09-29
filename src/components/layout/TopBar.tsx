@@ -15,6 +15,9 @@ import { srOnlyStyle } from '../shared/srOnly';
 import { OP_MODES, opModeOnSkin } from '../shared/opModes';
 import { NOTIF_TRIGGER_ATTR, useDropdownFocus } from './useDropdownFocus';
 
+/** Marks the approvals button's wrapper, its only trigger (see NOTIF_TRIGGER_ATTR). */
+const APPR_TRIGGER_ATTR = 'data-appr-trigger';
+
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
 
@@ -50,6 +53,21 @@ export function TopBar() {
   const closeNotifs = useCallback(() => dispatch({ type: 'TOGGLE_NOTIFS' }), [dispatch]);
   const notifBell = useCallback(() => notifWrapRef.current?.querySelector<HTMLElement>('button') ?? null, []);
   useDropdownFocus({ open: state.notifOpen, panelRef: notifPanelRef, triggerAttr: NOTIF_TRIGGER_ATTR, fallbackTrigger: notifBell, close: closeNotifs });
+  // Approvals: the same behaviour, one trigger. Focus lands on the panel, not
+  // its first control -- that is APPROVE, and a stray Enter must not approve.
+  const apprWrapRef = useRef<HTMLDivElement>(null);
+  const apprPanelRef = useRef<HTMLDivElement>(null);
+  const apprTitleId = useId();
+  const closeApprovals = useCallback(() => dispatch({ type: 'TOGGLE_APPROVALS' }), [dispatch]);
+  const apprButton = useCallback(() => apprWrapRef.current?.querySelector<HTMLElement>('button') ?? null, []);
+  useDropdownFocus({
+    open: state.apprOpen,
+    panelRef: apprPanelRef,
+    triggerAttr: APPR_TRIGGER_ATTR,
+    fallbackTrigger: apprButton,
+    close: closeApprovals,
+    initialFocus: 'panel',
+  });
 
   return (
     <header style={rootStyle(colors)}>
@@ -101,7 +119,7 @@ export function TopBar() {
         })}
       </div>
 
-      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
+      <div ref={apprWrapRef} data-appr-trigger="" style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Pending approvals"
           aria-label={`${pendingCount} pending approval${pendingCount === 1 ? '' : 's'}`}
@@ -122,8 +140,17 @@ export function TopBar() {
           {pendingCount} pending approval{pendingCount === 1 ? '' : 's'}
         </span>
         {state.apprOpen && (
-          <div id={apprPanelId} style={apprPanelStyle(colors)}>
-            <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — real pending requests</div>
+          <div
+            id={apprPanelId}
+            ref={apprPanelRef}
+            tabIndex={-1}
+            role="region"
+            aria-labelledby={apprTitleId}
+            style={apprPanelStyle(colors)}
+          >
+            <h2 id={apprTitleId} style={{ ...panelTitleStyle(colors), margin: 0 }}>
+              <span aria-hidden="true">⛉</span> APPROVAL QUEUE — real pending requests
+            </h2>
             {pendingReal.map((p) => (
               <div key={p.req.requestId} style={apprRowStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
