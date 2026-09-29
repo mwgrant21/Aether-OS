@@ -36,8 +36,8 @@ export interface DropdownFocusOptions {
  * - Close: return focus to that trigger (or fallbackTrigger() if it has gone),
  *   but only when focus would otherwise be lost (on <body> or detached, as
  *   when the panel that held it unmounts). If the user activated another
- *   control -- e.g. the approvals button, whose TOGGLE_APPROVALS closes this
- *   panel -- focus stays there.
+ *   control (e.g. the approvals button, whose TOGGLE_APPROVALS closes this
+ *   panel), focus is left for that control's own handling.
  * - While open: Escape closes; a pointer-down outside the panel and outside
  *   every triggerAttr element closes.
  */

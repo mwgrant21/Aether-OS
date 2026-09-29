@@ -155,10 +155,12 @@ describe('TopBar notifications focus', () => {
     fireEvent.click(appr());
     expect(bell().getAttribute('aria-expanded')).toBe('false');
     expect(appr().getAttribute('aria-expanded')).toBe('true');
-    // Approvals now manages its own focus: it lands in the approvals panel,
-    // and closing notifications does not drag it back to the bell.
     expect(document.activeElement).toBe(screen.getByRole('region', { name: /APPROVAL QUEUE/ }));
-    expect(document.activeElement).not.toBe(bell());
+    // Approvals recorded its own button as the opener, so Escape returns there.
+    // (The explicit appr().focus() above stands in for mousedown's focus move,
+    // so this path cannot see a wrong bell focus; the keyboard test below can.)
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.activeElement).toBe(appr());
   });
 
   it('does not pull focus back to the bell when opening approvals closes notifications', () => {
@@ -168,7 +170,10 @@ describe('TopBar notifications focus', () => {
     fireEvent.click(appr());
     expect(bell().getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(screen.getByRole('region', { name: /APPROVAL QUEUE/ }));
-    expect(document.activeElement).not.toBe(bell());
+    // Escape returns to the approvals button, proving the notifications close
+    // did not pull focus to the bell before approvals took it.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.activeElement).toBe(appr());
   });
 });
 
@@ -196,6 +201,11 @@ describe('TopBar approvals focus', () => {
     appr().focus();
     fireEvent.click(appr());
   }
+
+  it('marks the approvals button as its trigger', () => {
+    renderWithPending();
+    expect(appr().closest('[data-appr-trigger]')).not.toBeNull();
+  });
 
   it('focuses the panel, never APPROVE, so a stray Enter cannot approve a request', () => {
     renderWithPending();
