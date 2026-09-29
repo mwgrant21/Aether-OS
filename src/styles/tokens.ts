@@ -132,3 +132,12 @@ export const glows = {
   /** Modals and floating panels only. */
   overlayLift: '0 20px 60px rgba(0,0,0,.6)',
 } as const;
+
+/**
+ * A small status dot's glow in its own state colour (the reactor status dot,
+ * the footer dot, READINESS dots). Glow-Is-State: apply it only while the dot
+ * reports a live or alarmed signal; a resting dot is flat.
+ */
+export function dotGlow(color: string): string {
+  return `0 0 8px ${color}`;
+}
