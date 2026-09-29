@@ -35,6 +35,21 @@ describe('useHoverStyle', () => {
     expect(result.current.style.border).toBe(`1px solid ${colors.activeBorder}`);
   });
 
+  it('applies the hover ("lit") style when forceActive is true, without a real hover', () => {
+    const { result } = renderHook(() => useHoverStyle({ color: 'red' }, { color: 'blue' }, true), { wrapper });
+    expect(result.current.style).toEqual({ color: 'blue' });
+  });
+
+  it('reverts to base style when forceActive drops back to false', () => {
+    const { result, rerender } = renderHook(({ force }) => useHoverStyle({ color: 'red' }, { color: 'blue' }, force), {
+      wrapper,
+      initialProps: { force: true },
+    });
+    expect(result.current.style).toEqual({ color: 'blue' });
+    rerender({ force: false });
+    expect(result.current.style).toEqual({ color: 'red' });
+  });
+
   it('does not mix border shorthand and longhand with a base style that sets border', () => {
     // Regression check for the "mixing shorthand and non-shorthand properties"
     // React warning: a base style using the `border` shorthand (this repo's

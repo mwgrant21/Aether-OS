@@ -40,8 +40,9 @@ const UNAVAILABLE: ContextWindowCard = {
  *    Input as `ctxUsed * 0.58` and Output as `ctxUsed * 0.42` -- invented
  *    numbers shown as measured.
  *
- * `pct` stays truthful even above 100 so a future data defect stays visible;
- * only `ringPct` is clamped, because a ring cannot render more than full.
+ * `pct` is the raw payload value, even above 100; the rendered percentage is
+ * clamped (`ringPct` here, and computeContextReading in dashboardMath.ts,
+ * which the card's headline and the dashboard CONTEXT tile both render).
  */
 export function deriveContextWindowCard(
   snap: StatuslineSnapshot | null,

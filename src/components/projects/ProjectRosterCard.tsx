@@ -20,7 +20,7 @@ export function ProjectRosterCard({
   if (!snapshot || (snapshot.roots.length === 0 && !snapshot.unscoped)) {
     return (
       <div style={cardStyle(colors)}>
-        <div style={titleStyle(colors)}>PROJECTS</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>PROJECTS</h2>
         <div style={emptyStyle(colors)}>No projects observed yet.</div>
       </div>
     );
@@ -36,7 +36,7 @@ export function ProjectRosterCard({
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>PROJECTS</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>PROJECTS</h2>
 
       {snapshot.roots.map((root) => {
         // Only offer disclosure when there is genuinely more than one checkout;

@@ -42,7 +42,7 @@ export function TopBar() {
   const scopeLabel = resolveScopePillLabel(state);
 
   return (
-    <div style={rootStyle(colors)}>
+    <header style={rootStyle(colors)}>
       <div style={logoWrapStyle}>
         <div className="pulse-anim" style={logoDotStyle} />
         <div style={logoTextStyle(colors)}>
@@ -83,12 +83,19 @@ export function TopBar() {
       <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Pending approvals"
+          aria-label={`${pendingCount} pending approval${pendingCount === 1 ? '' : 's'}`}
           onClick={() => dispatch({ type: 'TOGGLE_APPROVALS' })}
           style={{ ...iconButtonStyle, borderColor: apprBtnBorder, color: apprBtnC }}
         >
           ⛉
         </Button>
         {hasPending && <span style={apprBadgeStyle(colors)}>{pendingCount}</span>}
+        {/* aria-live scoped to just the count, not the whole wrapper below --
+            the wrapper also holds the approvals dropdown panel, and announcing
+            that on every open/close would be noise the count change isn't. */}
+        <span style={srOnlyStyle} aria-live="polite">
+          {pendingCount} pending approval{pendingCount === 1 ? '' : 's'}
+        </span>
         {state.apprOpen && (
           <div style={apprPanelStyle(colors)}>
             <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — real pending requests</div>
@@ -131,15 +138,25 @@ export function TopBar() {
       </div>
 
       <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
-        <Button title="Notifications" onClick={() => dispatch({ type: 'TOGGLE_NOTIFS' })} style={{ ...iconButtonStyle, color: colors.accentCyanSoft }}>
+        <Button
+          title="Notifications"
+          aria-label={`Notifications, ${state.unread} unread`}
+          onClick={() => dispatch({ type: 'TOGGLE_NOTIFS' })}
+          style={{ ...iconButtonStyle, color: colors.accentCyanSoft }}
+        >
           ◈
         </Button>
         {state.unread > 0 && <span style={notifBadgeStyle(colors)}>{state.unread}</span>}
+        {/* Same reasoning as the approvals count above: scoped to just the
+            count, not the wrapper that also holds the notifications panel. */}
+        <span style={srOnlyStyle} aria-live="polite">
+          Notifications, {state.unread} unread
+        </span>
         {state.notifOpen && (
           <div style={notifPanelStyle(colors)}>
-            <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
+            <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
             {state.notifs.map((nf, idx) => (
-              <div key={idx} style={{ display: 'flex', gap: 8, font: `400 10.5px/1.5 ${fonts.mono}` }}>
+              <div key={idx} style={{ display: 'flex', gap: 8, font: `400 11px/1.5 ${fonts.mono}` }}>
                 <span style={{ color: colors.textDim, flex: 'none' }}>{nf.t}</span>
                 <span style={{ color: nf.c }}>{nf.m}</span>
               </div>
@@ -153,12 +170,12 @@ export function TopBar() {
         <div style={operatorAvatarStyle} />
         <div>
           <div style={{ font: `600 13px/1 ${fonts.ui}`, letterSpacing: 1, color: colors.textPrimary }}>{resolveOperatorName(state.operatorName)}</div>
-          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>COMMAND DECK</div>
+          <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>COMMAND DECK</div>
         </div>
       </div>
 
       <WindowControls />
-    </div>
+    </header>
   );
 }
 
@@ -177,14 +194,20 @@ function WindowControls() {
 
   return (
     <div style={windowControlsGroupStyle}>
-      <Button title="Minimize" onClick={() => bridge.window.minimize()} style={windowControlBtnStyle(colors)}>
+      <Button title="Minimize" aria-label="Minimize" onClick={() => bridge.window.minimize()} style={windowControlBtnStyle(colors)}>
         &#x2013;
       </Button>
-      <Button title={maximizeLabel(isMaximized)} onClick={() => bridge.window.toggleMaximize()} style={windowControlBtnStyle(colors)}>
+      <Button
+        title={maximizeLabel(isMaximized)}
+        aria-label={maximizeLabel(isMaximized)}
+        onClick={() => bridge.window.toggleMaximize()}
+        style={windowControlBtnStyle(colors)}
+      >
         {maximizeGlyph(isMaximized)}
       </Button>
       <Button
         title="Close"
+        aria-label="Close"
         onClick={() => bridge.window.close()}
         style={{ ...windowControlBtnStyle(colors), ...windowCloseBtnStyle(colors) }}
         hoverStyle={{ background: colors.danger, color: colors.textPrimary }}
@@ -236,7 +259,7 @@ export function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): App
     cursor: 'pointer',
     padding: '7px 11px',
     borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1.5,
     whiteSpace: 'nowrap',
     // Explicit properties, not `all`: these four are what actually change with
@@ -252,6 +275,20 @@ export function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): App
     WebkitAppRegion: 'no-drag',
   };
 }
+// Visually hidden but still reachable by assistive tech / aria-live -- the
+// standard clip-based pattern (not display:none, which would also hide it
+// from the accessibility tree).
+const srOnlyStyle: CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
 const iconButtonStyle: AppRegionStyle = {
   cursor: 'pointer',
   width: 36,
@@ -289,7 +326,7 @@ function apprBadgeStyle(colors: ColorPalette): CSSProperties {
     boxShadow: '0 0 10px rgba(245,198,107,.7)',
     display: 'grid',
     placeItems: 'center',
-    font: `700 9px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: '#1a1204',
     padding: '0 4px',
   };
@@ -306,7 +343,7 @@ function notifBadgeStyle(colors: ColorPalette): CSSProperties {
     boxShadow: '0 0 10px rgba(255,107,122,.7)',
     display: 'grid',
     placeItems: 'center',
-    font: `700 9px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: '#1a0508',
     padding: '0 4px',
   };
@@ -348,7 +385,7 @@ function notifPanelStyle(colors: ColorPalette): AppRegionStyle {
   };
 }
 function panelTitleStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.warn };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.warn };
 }
 const apprRowStyle: CSSProperties = {
   padding: '10px 11px',
@@ -364,17 +401,17 @@ function apprActionStyle(colors: ColorPalette): CSSProperties {
 }
 function riskBadgeStyle(colors: ColorPalette, risk: 'HIGH' | 'MED' | 'LOW'): CSSProperties {
   const c = risk === 'HIGH' ? colors.danger : risk === 'MED' ? colors.warn : colors.success;
-  return { flex: 'none', font: `600 8px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '3px 6px', borderRadius: 4 };
+  return { flex: 'none', font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '3px 6px', borderRadius: 4 };
 }
 function apprDetailStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 10px/1.5 ${fonts.mono}`, color: colors.textMuted };
+  return { font: `400 11px/1.5 ${fonts.mono}`, color: colors.textMuted };
 }
 function approveBtnStyle(colors: ColorPalette): CSSProperties {
   return {
     flex: 1,
     textAlign: 'center',
     cursor: 'pointer',
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1.5,
     color: colors.success,
     border: '1px solid rgba(59,224,160,.45)',
@@ -388,7 +425,7 @@ function denyBtnStyle(colors: ColorPalette): CSSProperties {
     flex: 1,
     textAlign: 'center',
     cursor: 'pointer',
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1.5,
     color: colors.dangerSoft,
     border: '1px solid rgba(255,120,120,.4)',

@@ -4,6 +4,7 @@ import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { fmt } from '../../utils/format';
+import { computeContextReading, computeSessionInfoRows, computeUsageBar, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { deriveContextWindowCard } from './contextWindowCard';
 
@@ -11,18 +12,13 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 type UsageRange = 'live' | 'daily' | 'weekly';
 const RANGES: UsageRange[] = ['live', 'daily', 'weekly'];
 
-function formatUptime(startedAt: string, now: Date): string {
-  const ms = Math.max(0, now.getTime() - new Date(startedAt).getTime());
-  const totalMin = Math.floor(ms / 60000);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  return `${h}h ${m}m`;
-}
-
 export function BottomMetricsRow() {
   const colors = useColors();
   const { state } = useAetherStore();
-  const topCommands = computeTopCommands(state.cmdHist);
+  // Session-scoped to match "Commands run" below (state.commandsRun): see
+  // sessionCommandHistory for why a restored cmdHist cannot leak in here.
+  const sessionCommands = sessionCommandHistory(state);
+  const topCommands = computeTopCommands(sessionCommands);
   const [range, setRange] = useState<UsageRange>('weekly');
   const now = new Date();
 
@@ -33,32 +29,30 @@ export function BottomMetricsRow() {
   } as const;
 
   const active = RANGE_CONFIG[range];
+  const scanned = state.realUsage.lastScanAt !== null;
   const maxBar = Math.max(...active.values, 1); // avoid /0 before the first real scan completes
-  const bars = active.values.map((v, i) => ({ d: active.bucket(i), h: Math.round(20 + (v / maxBar) * 52) }));
-  const rangeTotal = fmt(active.values.reduce((sum, v) => sum + v, 0));
+  const bars = active.values.map((v, i) => ({ d: active.bucket(i), ...computeUsageBar(v, maxBar, scanned) }));
+  const rangeTotal = computeUsageRangeTotal(active.values, scanned);
 
   // Real Claude Code statusline data -- the same source ReactorStatusCard's
   // CONTEXT tile reads. See contextWindowCard.ts for why the window size,
   // the input-only token sum and the per-part breakdown all come from the
   // payload rather than from constants and ratios (issue #20).
-  const ctx = deriveContextWindowCard(state.statusline);
+  // The ring and headline percentage come from computeContextReading, the
+  // same clamped reading the dashboard CONTEXT tile renders.
+  const ctx = deriveContextWindowCard(state.statusline, now.getTime());
+  const ctxReading = computeContextReading(state.statusline, now.getTime());
   const circ = 2 * Math.PI * 42;
-  const ctxDash = `${((circ * ctx.ringPct) / 100).toFixed(1)} ${circ.toFixed(1)}`;
+  const ctxDash = `${((circ * (ctxReading?.pct ?? 0)) / 100).toFixed(1)} ${circ.toFixed(1)}`;
   const PART_COLORS = [colors.accentCyanDeep, colors.warn, colors.success];
 
-  const session = [
-    { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
-    { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
-    { k: 'Commands run', v: fmt(state.commandsRun) },
-    { k: 'Agents active', v: String(state.realAgents.length) },
-    { k: 'Tokens used', v: fmt(state.realUsage.usedThisMonth) },
-  ];
+  const session = computeSessionInfoRows(state, now);
 
   return (
     <div style={rootStyle}>
       <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={cardTitleStyle(colors)}>TOKEN USAGE</div>
+          <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>TOKEN USAGE</h2>
           <div style={{ display: 'flex', gap: 4 }}>
             {RANGES.map((r) => (
               <Button key={r} style={rangeChipStyle(colors, range === r)} onClick={() => setRange(r)}>
@@ -71,15 +65,15 @@ export function BottomMetricsRow() {
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 9, height: 74, flex: 1 }}>
             {bars.map((w, i) => (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <div style={barStyle(w.h)} />
-                <span style={{ font: `400 9px/1 ${fonts.mono}`, color: colors.textDim }}>{w.d}</span>
+                <div style={barStyle(colors, w.height, w.baseline)} />
+                <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>{w.d}</span>
               </div>
             ))}
           </div>
           <div style={{ flex: 'none', textAlign: 'right' }}>
-            <div style={{ font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{active.label}</div>
+            <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>{active.label}</div>
             <div style={{ font: `700 24px/1 ${fonts.mono}`, color: colors.textPrimary, marginTop: 6 }}>{rangeTotal}</div>
-            <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 4 }}>tokens</div>
+            <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 4 }}>tokens</div>
             {range === 'weekly' && state.realUsage.weekOverWeekPct !== null && (
               <div
                 style={{
@@ -96,7 +90,7 @@ export function BottomMetricsRow() {
       </div>
 
       <div style={cardStyle(colors)}>
-        <div style={cardTitleStyle(colors)}>CONTEXT WINDOW</div>
+        <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>CONTEXT WINDOW</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12 }}>
           <div style={{ position: 'relative', width: 96, height: 96, flex: 'none' }}>
             <svg viewBox="0 0 100 100" style={{ width: 96, height: 96, transform: 'rotate(-90deg)' }}>
@@ -116,9 +110,9 @@ export function BottomMetricsRow() {
             <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
               <div>
                 <div style={{ font: `700 22px/1 ${fonts.mono}`, color: colors.textPrimary }}>
-                  {ctx.available ? `${ctx.stale ? '~' : ''}${Math.round(ctx.pct as number)}%` : '--'}
+                  {ctxReading !== null ? ctxReading.pctLabel : '--'}
                 </div>
-                <div style={{ font: `400 9px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, marginTop: 3 }}>USED</div>
+                <div style={{ font: `400 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, marginTop: 3 }}>USED</div>
               </div>
             </div>
           </div>
@@ -126,7 +120,7 @@ export function BottomMetricsRow() {
             <div style={{ font: `700 14px/1 ${fonts.mono}`, color: colors.textBody }}>
               {ctx.available ? fmt(ctx.usedTokens as number) : 'No reading yet'}
             </div>
-            <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>
+            <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textMuted, marginTop: 3 }}>
               {ctx.available
                 ? `${ctx.windowSize !== null ? `/ ${fmt(ctx.windowSize)} tokens` : 'window size unreported'}${ctx.stale ? ' · stale' : ''}`
                 : 'awaiting the first statusline reading'}
@@ -145,8 +139,8 @@ export function BottomMetricsRow() {
 
       <div style={cardStyle(colors)}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={cardTitleStyle(colors)}>TOP COMMANDS</div>
-          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>RECENT</div>
+          <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>TOP COMMANDS</h2>
+          <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>THIS SESSION</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 13 }}>
           {topCommands.map((c, i) => (
@@ -172,7 +166,7 @@ export function BottomMetricsRow() {
       </div>
 
       <div style={cardStyle(colors)}>
-        <div style={cardTitleStyle(colors)}>SESSION INFO</div>
+        <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>SESSION INFO</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 13 }}>
           {session.map((s) => (
             <div key={s.k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -195,7 +189,7 @@ function cardTitleStyle(colors: ColorPalette): CSSProperties {
 }
 function rangeChipStyle(colors: ColorPalette, active: boolean): CSSProperties {
   return {
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     padding: '4px 8px',
     borderRadius: 5,
@@ -205,13 +199,16 @@ function rangeChipStyle(colors: ColorPalette, active: boolean): CSSProperties {
     userSelect: 'none',
   };
 }
-function barStyle(h: number): CSSProperties {
+// A baseline (zero-value or pre-scan) bar renders flat and dim -- no
+// gradient, no glow -- so it reads as "nothing observed", never as a small
+// real reading. See dashboardMath.ts's computeUsageBar.
+function barStyle(colors: ColorPalette, h: number, baseline: boolean): CSSProperties {
   return {
     width: '100%',
     borderRadius: '3px 3px 0 0',
     height: h,
-    background: 'linear-gradient(180deg,#7ef0ff,#17b8d8)',
-    boxShadow: '0 0 10px rgba(95,240,255,.4)',
+    background: baseline ? colors.chipBorder : 'linear-gradient(180deg,#7ef0ff,#17b8d8)',
+    boxShadow: baseline ? undefined : '0 0 10px rgba(95,240,255,.4)',
     transition: 'height .5s ease',
   };
 }

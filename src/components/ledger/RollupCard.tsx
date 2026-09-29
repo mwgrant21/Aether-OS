@@ -19,7 +19,7 @@ export function RollupCard({ rollups }: { rollups: RollupBuckets }) {
       {/* Same API-rate basis as the total above, so it carries the same
           marker (whole-branch review, FIX 4). Two dollar models sit side by
           side in this view and only the smaller one was labelled. */}
-      <div style={cardTitleStyle(colors)}>ROLLUP — API RATE (NOT PAID)</div>
+      <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>ROLLUP — API RATE (NOT PAID)</h2>
       <div style={rowsStyle}>
         <Bucket label="Today" value={rollups.today} colors={colors} />
         <Bucket label="Last 7 days" value={rollups.week} colors={colors} />
@@ -89,7 +89,7 @@ const noDataStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const noteStyle = (c: ColorPalette): CSSProperties => ({
-  font: `400 10px/1.4 ${fonts.ui}`,
+  font: `400 11px/1.4 ${fonts.ui}`,
   color: c.textDim,
   marginTop: 12,
 });

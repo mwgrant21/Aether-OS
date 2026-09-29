@@ -5,7 +5,7 @@ export const initialState: AetherState = {
   rate: 92000,
   momentum: 92000,
   ctxUsed: 78432,
-  commandsRun: 163,
+  commandsRun: 0,
   sessionStartedAt: new Date().toISOString(),
   activeTab: 'Terminal',
   selectedProject: null,
@@ -19,7 +19,7 @@ export const initialState: AetherState = {
   apprOpen: false,
   cfg: {
     opMode: 'EDITS',
-    renderer: 'classic',
+    renderer: 'storm',
     pulseMode: 'live',
     theme: 'cyan',
     glow: 70,

@@ -11,14 +11,14 @@ export function LiveOutputCard() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 'none' }}>
-        <div style={titleStyle(colors)}>LIVE OUTPUT</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>LIVE OUTPUT</h2>
         {isActive ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 10px/1 ${fonts.mono}`, color: colors.accentCyan }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: colors.accentCyan }}>
             <span style={blinkDotStyle(colors)} />
             STREAMING
           </div>
         ) : (
-          <div style={{ font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>IDLE</div>
+          <div style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>IDLE</div>
         )}
       </div>
       <div style={logListStyle}>
@@ -66,7 +66,7 @@ const logListStyle: CSSProperties = {
   flexDirection: 'column',
   justifyContent: 'flex-end',
   marginTop: 7,
-  font: `400 10.5px/1.7 ${fonts.mono}`,
+  font: `400 11px/1.7 ${fonts.mono}`,
 };
 function emptyStyle(colors: ColorPalette): CSSProperties {
   return {

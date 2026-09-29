@@ -10,7 +10,10 @@ afterEach(() => {
 });
 
 function crossEngineRow() {
-  return screen.getByText('CROSS-ENGINE VERIFICATION').closest('div')!.parentElement!;
+  // The title is now a real <h2> (pass 2's AC2), so its own parent is the
+  // flex header row -- .closest('div') would climb one level too high (the
+  // card root) and re-admit the Codex terminal sub-panel's own ENABLE button.
+  return screen.getByText('CROSS-ENGINE VERIFICATION').parentElement!;
 }
 
 describe('CostGuardCard', () => {

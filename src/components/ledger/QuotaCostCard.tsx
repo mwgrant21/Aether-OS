@@ -165,7 +165,7 @@ const rowStyle: CSSProperties = {
   gap: 12,
 };
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted, flexShrink: 0 };
 }
 function valueStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 11px/1 ${fonts.mono}`, color: colors.textSecondary, textAlign: 'right' };

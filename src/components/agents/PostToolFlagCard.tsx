@@ -64,7 +64,7 @@ function PostToolFlagCardInner({
   return (
     <div style={cardStyle(colors, topOffset)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>FLAGGED TOOL USE</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>FLAGGED TOOL USE</h2>
         <span style={anomalyBadgeStyle(colors)}>{request.anomalyKind}</span>
       </div>
 
@@ -130,7 +130,7 @@ function inputStyle(colors: ColorPalette): CSSProperties {
 }
 function anomalyBadgeStyle(colors: ColorPalette): CSSProperties {
   return {
-    font: `700 10px/1 ${fonts.ui}`,
+    font: `700 11px/1 ${fonts.ui}`,
     letterSpacing: 0.5,
     color: colors.warn,
     border: `1px solid ${colors.chipBorder}`,

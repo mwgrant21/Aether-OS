@@ -1,5 +1,6 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type FocusEvent, type ReactNode } from 'react';
 import { useHoverStyle } from './useHoverStyle';
+import { useColors } from './useColors';
 
 interface ButtonProps {
   onClick: () => void;
@@ -32,16 +33,32 @@ function withoutUndefined(style: CSSProperties): CSSProperties {
 }
 
 export function Button({ onClick, style, hoverStyle, title, disabled, 'aria-label': ariaLabel, children }: ButtonProps) {
+  const colors = useColors();
+  // Tracks keyboard focus only (DESIGN.md's ring is a keyboard-focus affordance,
+  // not a mouse-click one): gated on the native :focus-visible heuristic so a
+  // mouse click that focuses the button never shows the ring.
+  const [isFocusVisible, setIsFocusVisible] = useState(false);
   const mergedStyle = { ...RESET_STYLE, ...withoutUndefined(style) };
   const mergedHoverStyle = hoverStyle && { ...mergedStyle, ...withoutUndefined(hoverStyle) };
-  const { style: hoveredStyle, onMouseEnter, onMouseLeave } = useHoverStyle(mergedStyle, mergedHoverStyle);
+  const { style: hoveredStyle, onMouseEnter, onMouseLeave } = useHoverStyle(mergedStyle, mergedHoverStyle, isFocusVisible);
+  const focusRingStyle: CSSProperties = isFocusVisible ? { outline: `2px solid ${colors.textPrimary}`, outlineOffset: 3 } : {};
+
+  function onFocus(e: FocusEvent<HTMLButtonElement>) {
+    if (e.currentTarget.matches(':focus-visible')) setIsFocusVisible(true);
+  }
+  function onBlur() {
+    setIsFocusVisible(false);
+  }
+
   return (
     <button
       type="button"
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      style={hoveredStyle}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      style={{ ...hoveredStyle, ...focusRingStyle }}
       title={title}
       disabled={disabled}
       aria-label={ariaLabel}

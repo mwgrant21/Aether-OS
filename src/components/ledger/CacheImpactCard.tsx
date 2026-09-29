@@ -18,7 +18,7 @@ export function CacheImpactCard({ cache, hitRatio }: { cache: CacheImpact; hitRa
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={cardTitleStyle(colors)}>CACHE IMPACT</div>
+      <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>CACHE IMPACT</h2>
 
       {cache.cacheReadTokens === 0 ? (
         <div style={emptyStyle(colors)}>No cache reads observed.</div>
@@ -82,7 +82,7 @@ const ratioRowStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const ratioLabelStyle = (c: ColorPalette): CSSProperties => ({
-  font: `500 10px/1 ${fonts.ui}`,
+  font: `500 11px/1 ${fonts.ui}`,
   letterSpacing: '.08em',
   color: c.textMuted,
 });

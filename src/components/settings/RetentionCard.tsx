@@ -44,7 +44,7 @@ export function RetentionCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>RETENTION &amp; PURGE</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>RETENTION &amp; PURGE</h2>
 
       {!status && <div style={hintStyle(colors)}>Checking…</div>}
 
@@ -136,7 +136,7 @@ function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
     cursor: 'pointer',
     padding: '6px 12px',
     borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: on ? '#04202b' : colors.textMuted,
     background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',
@@ -160,7 +160,7 @@ function rowStyle(_colors: ColorPalette): CSSProperties {
   return { marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 function valueStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 11px/1 ${fonts.mono}`, color: colors.textSecondary };

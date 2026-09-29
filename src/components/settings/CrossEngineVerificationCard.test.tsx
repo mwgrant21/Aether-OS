@@ -13,7 +13,11 @@ afterEach(() => {
 // showing "ENABLE" text, so every existing test below must scope its query
 // to the cross-engine row specifically rather than a bare screen.getByText.
 function crossEngineRow() {
-  return screen.getByText('CROSS-ENGINE VERIFICATION').closest('div')!.parentElement!;
+  // The title is now a real <h2> (pass 2's AC2), so its own parent is the
+  // flex header row -- no need to climb via .closest('div') first, which
+  // would land one level too high (the card root) and re-admit the Codex
+  // terminal sub-panel's own ENABLE/DISABLE button into scope.
+  return screen.getByText('CROSS-ENGINE VERIFICATION').parentElement!;
 }
 
 describe('CrossEngineVerificationCard', () => {
@@ -173,8 +177,9 @@ describe('CrossEngineVerificationCard', () => {
         <CrossEngineVerificationCard />
       </AetherStoreProvider>,
     );
-    const codexSection = screen.getByText('CODEX TERMINAL').closest('div')!;
-    const codexRow = codexSection.parentElement!;
+    // Same fix as crossEngineRow() above: the title is now an <h2>, so its
+    // own parent is already the flex header row containing the toggle.
+    const codexRow = screen.getByText('CODEX TERMINAL').parentElement!;
     expect(within(codexRow).getByText('ENABLE')).toBeTruthy();
 
     fireEvent.click(within(codexRow).getByText('ENABLE'));

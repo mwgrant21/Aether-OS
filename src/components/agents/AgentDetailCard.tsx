@@ -107,7 +107,7 @@ function descStyle(colors: ColorPalette): CSSProperties {
 function modelBadgeStyle(colors: ColorPalette): CSSProperties {
   return {
     flex: 'none',
-    font: `600 9px/1 ${fonts.mono}`,
+    font: `600 11px/1 ${fonts.mono}`,
     letterSpacing: 0.5,
     color: colors.textMuted,
     border: `1px solid ${colors.chipBorder}`,
@@ -117,7 +117,7 @@ function modelBadgeStyle(colors: ColorPalette): CSSProperties {
 }
 
 function sectionLabelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 
 const promptWrapStyle: CSSProperties = { marginTop: 20, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' };

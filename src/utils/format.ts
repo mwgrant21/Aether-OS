@@ -50,3 +50,13 @@ export function nowShort(): string {
 export function resolveOperatorName(name: string): string {
   return name.trim() || 'Operator';
 }
+
+// The one uptime formatter: SESSION INFO and the footer both read
+// state.sessionStartedAt through it, so they cannot disagree.
+export function formatUptime(startedAt: string, now: Date): string {
+  const ms = Math.max(0, now.getTime() - new Date(startedAt).getTime());
+  const totalMin = Math.floor(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}h ${m}m`;
+}

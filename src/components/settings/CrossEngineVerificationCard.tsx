@@ -66,7 +66,7 @@ export function CrossEngineVerificationCard() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>CROSS-ENGINE VERIFICATION</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>CROSS-ENGINE VERIFICATION</h2>
         <Button onClick={toggle} style={toggleStyle(colors, enabled)}>
           {enabled ? 'DISABLE' : 'ENABLE'}
         </Button>
@@ -110,7 +110,7 @@ export function CrossEngineVerificationCard() {
 
       <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${colors.chipBorder}` }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={titleStyle(colors)}>CODEX TERMINAL</div>
+          <h2 style={{ ...titleStyle(colors), margin: 0 }}>CODEX TERMINAL</h2>
           <Button
             onClick={() => dispatch({ type: 'SET_CODEX_TERMINAL_CFG', cfg: { enabled: !state.codexTerminalCfg.enabled } })}
             style={toggleStyle(colors, state.codexTerminalCfg.enabled)}
@@ -152,7 +152,7 @@ function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
     cursor: 'pointer',
     padding: '6px 12px',
     borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: on ? '#04202b' : colors.textMuted,
     background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',
@@ -176,7 +176,7 @@ function rowStyle(_colors: ColorPalette): CSSProperties {
   return { marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 function valueStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 11px/1 ${fonts.mono}`, color: colors.textSecondary };

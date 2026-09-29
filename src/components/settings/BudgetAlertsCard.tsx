@@ -12,7 +12,7 @@ export function BudgetAlertsCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>BUDGET &amp; ALERTS</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>BUDGET &amp; ALERTS</h2>
 
       <div style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -95,7 +95,7 @@ function titleStyle(colors: ColorPalette): CSSProperties {
   return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 function valueStyle(colors: ColorPalette): CSSProperties {
   return { font: `700 11px/1 ${fonts.mono}`, color: colors.textBody };
@@ -110,7 +110,7 @@ function toggleStyle(colors: ColorPalette, on: boolean): CSSProperties {
     cursor: 'pointer',
     padding: '6px 12px',
     borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: on ? '#04202b' : colors.textMuted,
     background: on ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',

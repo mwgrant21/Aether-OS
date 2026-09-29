@@ -101,3 +101,32 @@ describe('Sidebar idle indicator', () => {
     expect(screen.getByText('Codex').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 });
+
+describe('Sidebar reactor legend aria-live scoping', () => {
+  it('puts aria-live only on the status-line element, never on the wrapper', () => {
+    renderSidebar();
+    const status = screen.getByTestId('sidebar-reactor-status');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    // The wrapper is the status element's grandparent (status -> reactorMiniWrap's
+    // direct child column -> reactorMiniWrap itself) -- walk up and confirm
+    // nothing above the status line carries aria-live, so a burn-rate tick or
+    // a Dashboard-tab visibility flip doesn't re-announce the whole block.
+    let el: HTMLElement | null = status.parentElement;
+    while (el) {
+      expect(el.getAttribute('aria-live')).toBeNull();
+      el = el.parentElement;
+    }
+  });
+
+  it('swaps the mini reactor for a same-size placeholder while on Dashboard', () => {
+    const { container } = renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Dashboard' }]);
+    // No canvas-bearing Reactor markup should mount in the sidebar while its
+    // (invisible) copy is redundant with the Dashboard's own full-size one.
+    expect(container.querySelector('canvas')).toBeNull();
+  });
+
+  it('mounts the mini reactor again off the Dashboard tab', () => {
+    const { container } = renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Agents' }]);
+    expect(container.querySelector('canvas')).not.toBeNull();
+  });
+});

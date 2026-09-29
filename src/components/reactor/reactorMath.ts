@@ -99,3 +99,25 @@ export function computeDispatchIntensity(realAgentCount: number): DispatchIntens
   const overload = realAgentCount >= 3;
   return { overdrive, overload, glowMultiplier: overload ? 1.25 : 1 };
 }
+
+// "Dark and cold" standby: with no live Claude session the reactor idles dim and
+// desaturated, and powers back up when one starts. idleLevel runs 0 (live) to 1
+// (fully idle); at 0 the suffix is empty, so a live reactor's filter string is
+// exactly what computeThemeFilter alone produces.
+const IDLE_BRIGHTNESS = 0.45;
+const IDLE_SATURATE = 0.35;
+
+export function computeIdleDimFilter(idleLevel: number): string {
+  const t = Math.max(0, Math.min(1, idleLevel));
+  if (t === 0) return '';
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+  return ` brightness(${round(1 - t * (1 - IDLE_BRIGHTNESS))}) saturate(${round(1 - t * (1 - IDLE_SATURATE))})`;
+}
+
+/** Moves idleLevel toward target (0 or 1) at a rate that covers the full range in durationMs. */
+export function stepIdleLevel(current: number, target: number, dtMs: number, durationMs: number): number {
+  if (durationMs <= 0) return target;
+  const step = Math.max(0, dtMs) / durationMs;
+  if (current < target) return Math.min(target, current + step);
+  return Math.max(target, current - step);
+}

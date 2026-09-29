@@ -46,7 +46,7 @@ export function OptimizeView() {
   return (
     <div style={rootStyle}>
       <div style={headerRowStyle()}>
-        <div style={titleStyle(colors)}>⚡ OPTIMIZE</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>⚡ OPTIMIZE</h2>
         <div style={summaryLineStyle(colors)}>
           {applied.count > 0
             ? `${applied.count} applied · saving ~$${applied.totalPerWeek.toFixed(2)}/wk`
@@ -130,7 +130,7 @@ function FindingCard({
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={cardTitleStyle(colors)}>{finding.title}</div>
+      <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>{finding.title}</h2>
       <div style={cardDetailStyle(colors)}>{finding.detail}</div>
       {finding.recurring && <div style={recurringLineStyle(colors)}>Still happening despite guidance</div>}
       <div style={cardFooterStyle}>
@@ -201,7 +201,7 @@ function breakdownPanelStyle(colors: ColorPalette): CSSProperties {
 const breakdownRowStyle: CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 8 };
 function statusGlyphStyle(colors: ColorPalette, status: 'good' | 'warn' | 'bad'): CSSProperties {
   const color = status === 'good' ? colors.success : status === 'warn' ? colors.warn : colors.danger;
-  return { color, font: `700 10px/1.4 ${fonts.mono}` };
+  return { color, font: `700 11px/1.4 ${fonts.mono}` };
 }
 function breakdownLabelStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 12px/1 ${fonts.ui}`, color: colors.textPrimary };

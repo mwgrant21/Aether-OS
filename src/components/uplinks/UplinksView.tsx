@@ -77,7 +77,7 @@ export function UplinksView() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>UPLINKS</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>UPLINKS</h2>
       <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm, marginTop: space.md }}>
         <div style={rowStyle(colors, state.terminalAlive)}>
           <span style={dotStyle(colors, state.terminalAlive)} />
@@ -166,14 +166,14 @@ function nameStyle(colors: ColorPalette): CSSProperties {
 }
 function badgeStyle(colors: ColorPalette, online: boolean): CSSProperties {
   const c = online ? colors.success : colors.textDim;
-  return { flex: 'none', font: `600 9px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '4px 8px', borderRadius: 4 };
+  return { flex: 'none', font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1, color: c, border: `1px solid ${c}55`, padding: '4px 8px', borderRadius: 4 };
 }
 function disabledButtonStyle(colors: ColorPalette): CSSProperties {
   return {
     flex: 'none',
     cursor: 'not-allowed',
     textAlign: 'center',
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     padding: '6px 12px',
     borderRadius: 7,
@@ -187,7 +187,7 @@ function toggleButtonStyle(colors: ColorPalette, online: boolean): CSSProperties
     flex: 'none',
     cursor: 'pointer',
     textAlign: 'center',
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     padding: '6px 12px',
     borderRadius: 7,

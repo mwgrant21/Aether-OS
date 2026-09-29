@@ -18,7 +18,7 @@ export function NarrationVerbosityCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>NARRATION</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>NARRATION</h2>
       <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
         {LEVELS.map((l) => (
           <Button
@@ -59,7 +59,7 @@ function levelButtonStyle(colors: ColorPalette, active: boolean): CSSProperties 
     cursor: 'pointer',
     padding: '6px 12px',
     borderRadius: 7,
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: active ? '#04202b' : colors.textMuted,
     background: active ? 'linear-gradient(180deg,#7ef0ff,#17b8d8)' : 'rgba(10,32,43,.6)',

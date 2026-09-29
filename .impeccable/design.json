@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-28T16:00:00Z",
+  "title": "Design System: Aether OS",
+  "extensions": {
+    "colorMeta": {
+      "accent-cyan": { "role": "primary", "displayName": "Reactor Cyan" },
+      "accent-cyan-deep": { "role": "primary", "displayName": "Deep Current" },
+      "accent-cyan-soft": { "role": "primary", "displayName": "Soft Signal" },
+      "warn": { "role": "secondary", "displayName": "Needs-You Amber" },
+      "success": { "role": "secondary", "displayName": "Nominal Green" },
+      "danger": { "role": "tertiary", "displayName": "Breach Red" },
+      "bg-base": { "role": "neutral", "displayName": "Abyss" },
+      "panel-top": { "role": "neutral", "displayName": "Teal Glass (top stop)" },
+      "panel-inset": { "role": "neutral", "displayName": "Inset" },
+      "active-border": { "role": "neutral", "displayName": "Active Edge" },
+      "ink-on-cyan": { "role": "neutral", "displayName": "Ink on Cyan" }
+    },
+    "typographyMeta": {
+      "panel-heading": { "displayName": "Panel heading", "purpose": "Every panel title and every button label; uppercase." },
+      "readout": { "displayName": "Readout", "purpose": "Stat values; every number is Space Mono." }
+    },
+    "gradients": [
+      { "name": "page-radial", "value": "radial-gradient(1400px 900px at 60% -10%, #0a2634 0%, #04121a 55%, #020a10 100%)", "purpose": "The page glow behind the whole frame." },
+      { "name": "panel-gradient", "value": "linear-gradient(180deg, rgba(9,28,38,.8), rgba(6,18,26,.8))", "purpose": "Every panel surface." },
+      { "name": "primary-fill", "value": "linear-gradient(180deg, #7ef0ff, #17b8d8)", "purpose": "Primary buttons and the active mode pill." }
+    ],
+    "shadows": [
+      { "name": "active-glow", "value": "0 0 10px rgba(95,220,255,.4)", "purpose": "Active pill, selected nav item, lit control." },
+      { "name": "hot-glow", "value": "0 0 8px rgba(95,240,255,.8)", "purpose": "Small live indicators and dots." },
+      { "name": "needs-you-glow", "value": "0 0 12px rgba(245,198,107,.45)", "purpose": "An amber control waiting on the operator." },
+      { "name": "inner-charge", "value": "inset 0 0 14px rgba(95,240,255,.12)", "purpose": "A surface lit from inside (hovered secondary)." },
+      { "name": "overlay-lift", "value": "0 20px 60px rgba(0,0,0,.6)", "purpose": "Modals and floating panels only." }
+    ],
+    "motion": [
+      { "name": "duration-fast", "value": ".15s", "purpose": "Control state change." },
+      { "name": "duration-base", "value": ".3s", "purpose": "Default transition." },
+      { "name": "duration-slow", "value": ".5s", "purpose": "Disclosure: height, stroke-dasharray." },
+      { "name": "pulse", "value": "2.4s", "purpose": "Reactor breath (--pulse-dur); kept alive under reduced motion." },
+      { "name": "ease-standard", "value": "ease", "purpose": "Placeholder: designed curve pending (Known Gaps)." },
+      { "name": "ease-continuous", "value": "linear", "purpose": "Uninterrupted rotation and flow only; never eased." }
+    ],
+    "canvas": { "width": 1536, "height": 1024, "behavior": "Fixed design canvas, uniformly scaled to the window; no reflow." }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Tactile and lit: the main action on a panel.",
+      "html": "<button class=\"ds-btn-primary\">SPAWN AGENT</button>",
+      "css": ".ds-btn-primary { font: 700 12px/1 Rajdhani, sans-serif; letter-spacing: 3px; color: #04202b; background: linear-gradient(180deg, #7ef0ff, #17b8d8); border: none; border-radius: 9px; padding: 14px 22px; box-shadow: 0 0 12px rgba(95,220,255,.4); cursor: pointer; transition: box-shadow .15s ease, transform .15s ease, filter .15s ease; } .ds-btn-primary:hover { filter: brightness(1.15); box-shadow: 0 0 24px rgba(95,220,255,.65); transform: translateY(-1px); } .ds-btn-primary:active { background: linear-gradient(180deg, #17b8d8, #0f8fa8); box-shadow: inset 0 2px 6px rgba(0,0,0,.35); transform: none; } .ds-btn-primary:focus-visible { outline: 2px solid #eafcff; outline-offset: 3px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting actions beside a primary.",
+      "html": "<button class=\"ds-btn-secondary\">MEMORY SWEEP</button>",
+      "css": ".ds-btn-secondary { font: 700 12px/1 Rajdhani, sans-serif; letter-spacing: 3px; color: #7ef0ff; background: rgba(6,20,28,.7); border: 1px solid rgba(95,220,255,.4); border-radius: 9px; padding: 14px 22px; cursor: pointer; transition: box-shadow .15s ease, border-color .15s ease; } .ds-btn-secondary:hover { color: #eafcff; border-color: #7ef0ff; box-shadow: 0 0 14px rgba(95,220,255,.35), inset 0 0 14px rgba(95,240,255,.12); } .ds-btn-secondary:focus-visible { outline: 2px solid #eafcff; outline-offset: 3px; }"
+    },
+    {
+      "name": "Mode Pills",
+      "kind": "nav",
+      "refersTo": "button-primary",
+      "description": "PLAN / EDITS / AUTO segmented control.",
+      "html": "<div class=\"ds-pills\"><button class=\"ds-pill\">PLAN</button><button class=\"ds-pill ds-pill-on\">EDITS</button><button class=\"ds-pill\">AUTO</button></div>",
+      "css": ".ds-pills { display: inline-flex; gap: 4px; padding: 3px; border: 1px solid rgba(80,190,220,.25); border-radius: 9px; background: rgba(6,20,28,.7); } .ds-pill { font: 600 11px/1 Rajdhani, sans-serif; letter-spacing: 2px; color: #5f8a97; background: none; border: none; padding: 9px 14px; border-radius: 7px; cursor: pointer; } .ds-pill:hover { color: #9fc4d1; } .ds-pill-on { color: #04202b; background: linear-gradient(180deg, #7ef0ff, #17b8d8); box-shadow: 0 0 10px rgba(95,220,255,.4); } .ds-pill:focus-visible { outline: 2px solid #eafcff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Boxed sidebar item; active state shown.",
+      "html": "<button class=\"ds-nav ds-nav-on\"><span class=\"ds-nav-dot\"></span>Dashboard</button>",
+      "css": ".ds-nav { display: flex; align-items: center; gap: 12px; width: 200px; font: 600 14px/1 Rajdhani, sans-serif; letter-spacing: 1px; color: #9fc4d1; background: rgba(6,20,28,.7); border: 1px solid rgba(70,180,215,.16); border-radius: 9px; padding: 11px 12px; text-align: left; cursor: pointer; } .ds-nav:hover { color: #d8f6ff; border-color: rgba(95,220,255,.4); } .ds-nav-dot { width: 8px; height: 8px; border-radius: 2px; background: #123f4e; } .ds-nav-on { color: #eafcff; background: rgba(23,184,216,.14); border-color: rgba(95,220,255,.4); box-shadow: 0 0 10px rgba(95,220,255,.25); } .ds-nav-on .ds-nav-dot { background: #7ef0ff; box-shadow: 0 0 8px rgba(95,240,255,.8); } .ds-nav:focus-visible { outline: 2px solid #eafcff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "chip-quiet",
+      "description": "Inset field with cyan focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Mission name\" aria-label=\"Mission name\">",
+      "css": ".ds-input { font: 400 13px/1 'Space Mono', monospace; color: #d8f6ff; background: rgba(6,20,28,.7); border: 1px solid rgba(80,190,220,.25); border-radius: 9px; padding: 13px; width: 240px; } .ds-input::placeholder { color: #5f8a97; } .ds-input:hover { border-color: rgba(95,220,255,.4); } .ds-input:focus-visible { outline: none; border-color: #7ef0ff; box-shadow: 0 0 0 3px rgba(126,240,255,.2), 0 0 16px rgba(95,220,255,.3); }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Teal-glass panel with a tracked heading.",
+      "html": "<section class=\"ds-panel\"><h2 class=\"ds-panel-h\">RECENT ALERTS</h2><p class=\"ds-panel-b\">10:34 Code Builder requests approval</p></section>",
+      "css": ".ds-panel { width: 320px; border-radius: 14px; border: 1px solid rgba(70,180,215,.24); background: linear-gradient(180deg, rgba(9,28,38,.8), rgba(6,18,26,.8)); padding: 20px; } .ds-panel-h { margin: 0 0 12px; font: 600 12px/1 Rajdhani, sans-serif; letter-spacing: 3px; color: #9fc4d1; } .ds-panel-b { margin: 0; font: 400 12px/1.5 'Space Mono', monospace; color: #f5c66b; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Reactor Console",
+    "overview": "Aether OS is a control room built around a live core. The storm reactor sits at the centre of the dashboard as an instrument, not an illustration: its brightness, discharge rate and hue report what Claude Code is doing right now. Everything else is framed around it. Panels are translucent teal glass floating over a deep radial glow, and light in this system is always *energy*: a control glows because it is live, a number glows because it is moving, the core glows because work is happening.",
+    "keyCharacteristics": [
+      "One signature: the StormCore reactor, a living, procedurally animated instrument at the centre.",
+      "Cyan light means live or active; amber means it needs the operator; red means something failed.",
+      "Translucent gradient panels over a radial page glow; depth comes from light, not drop shadows.",
+      "Tactile, lit controls: primary actions are filled cyan and answer touch with more light.",
+      "Rajdhani for words, Space Mono for every number.",
+      "Dark-only, as an invariant."
+    ],
+    "rules": [
+      { "name": "The Light Is Energy Rule", "body": "Glow is state, never decoration. An element glows because it is live, active, hovered or focused; a static element never glows.", "section": "colors" },
+      { "name": "The Amber Means You Rule", "body": "Amber appears only where the operator is needed (an approval, a stale value, an anomaly). It is never used for emphasis or decoration.", "section": "colors" },
+      { "name": "The Signal-Not-Theme Rule", "body": "The reactor, the orchestration grid and their hue shifts are signals driven by live state (burn rate, alarm level, overload). They are deliberately excluded from theming and never recoloured for aesthetics.", "section": "colors" },
+      { "name": "The Numbers Are Mono Rule", "body": "Every number the operator reads (tokens, dollars, percentages, times, counts) is set in Space Mono. Words are Rajdhani.", "section": "typography" },
+      { "name": "The Caps Are Labels Rule", "body": "Tracked-out capitals are for labels, headings and button text: short, scannable taxonomy. Sentences stay in sentence case.", "section": "typography" },
+      { "name": "The Glow-Is-State Rule", "body": "A surface is flat at rest. Glow appears only in response to state: active, hovered, focused, live, or needing the operator.", "section": "elevation" },
+      { "name": "The Living Core Rule", "body": "Storm Core is the one place Aether is allowed to be spectacular. Everything around it stays disciplined so it stays the brightest, most alive thing on screen. Never place competing animated or glowing art near it, never recolour it for aesthetics, and never redesign it as part of a polish pass.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do read colours through `useColors()` and pass `colors: ColorPalette` into style functions; never import the static palette into a themed component.",
+      "Do use the `Button` primitive and `useHoverStyle()` for every interactive element.",
+      "Do give every interactive element the keyboard focus ring (2px Text Primary outline, 3px offset).",
+      "Do set every number in Space Mono, and every label and heading in tracked Rajdhani capitals.",
+      "Do mark an estimated figure with a `~` and name its basis; never mark an exact one. Render \"no data\" differently from zero.",
+      "Do keep Storm Core as the brightest, most animated element on the dashboard.",
+      "Do keep uninterrupted rotation and flow (spin, conduit flow, dash flow, scan) on linear easing."
+    ],
+    "donts": [
+      "Don't add a light theme. Aether OS is dark-only by rule; a light mode would be a redesign, not a variant.",
+      "Don't add glow to anything that isn't live, active, hovered, focused or waiting on the operator.",
+      "Don't use amber for emphasis or decoration.",
+      "Don't theme or recolour the reactor or the orchestration grid; their colour is data.",
+      "Don't set `outline: none` without replacing it with a visible focus treatment.",
+      "Don't retype token values as literals (`#7ef0ff`, `rgba(95,220,255,.4)`); use the token.",
+      "Don't use grey borders or grey surfaces; every neutral here is tinted teal."
+    ]
+  }
+}

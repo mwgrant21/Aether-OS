@@ -23,7 +23,7 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>AGENT ROSTER</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>AGENT ROSTER</h2>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -106,7 +106,7 @@ function glyphStyle(colors: ColorPalette, hasAnomaly: boolean): CSSProperties {
   };
 }
 function groupHeaderStyle(colors: ColorPalette): CSSProperties {
-  return { font: `700 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.textMuted, margin: '10px 0 4px' };
+  return { font: `700 11px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.textMuted, margin: '10px 0 4px' };
 }
 function nameStyle(colors: ColorPalette): CSSProperties {
   return {
@@ -130,7 +130,7 @@ function descStyle(colors: ColorPalette): CSSProperties {
 function narrationStyle(colors: ColorPalette): CSSProperties {
   return {
     marginTop: 2,
-    font: `500 10px/1.4 ${fonts.mono}`,
+    font: `500 11px/1.4 ${fonts.mono}`,
     color: colors.textMuted,
     fontStyle: 'italic',
   };

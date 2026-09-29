@@ -70,7 +70,7 @@ function PermissionRequestCardInner({
   return (
     <div ref={measureRef} style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>PERMISSION REQUEST</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>PERMISSION REQUEST</h2>
         <span style={riskBadgeStyle(colors, request.risk)}>{request.risk}</span>
       </div>
 
@@ -130,7 +130,7 @@ function toolNameStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 15px/1.4 ${fonts.ui}`, color: colors.textPrimary, marginTop: 8 };
 }
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 10px/1.4 ${fonts.ui}`, color: colors.textDim, display: 'block', marginBottom: 3 };
+  return { font: `400 11px/1.4 ${fonts.ui}`, color: colors.textDim, display: 'block', marginBottom: 3 };
 }
 function inputStyle(colors: ColorPalette): CSSProperties {
   return {
@@ -146,7 +146,7 @@ function inputStyle(colors: ColorPalette): CSSProperties {
 }
 function riskBadgeStyle(colors: ColorPalette, risk: PermissionRequestUI['risk']): CSSProperties {
   return {
-    font: `700 10px/1 ${fonts.ui}`,
+    font: `700 11px/1 ${fonts.ui}`,
     letterSpacing: 0.5,
     color: risk === 'HIGH' ? colors.danger : risk === 'MED' ? colors.warn : colors.success,
     border: `1px solid ${colors.chipBorder}`,

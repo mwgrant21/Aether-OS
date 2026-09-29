@@ -25,7 +25,7 @@ export function FleetCard() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>FLEET</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>FLEET</h2>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -121,11 +121,11 @@ function descStyle(colors: ColorPalette): CSSProperties {
   return { font: `400 11px/1.3 ${fonts.ui}`, color: colors.textDim, marginTop: 3 };
 }
 function detailStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 10px/1.4 ${fonts.mono}`, color: colors.textDim, marginTop: 5 };
+  return { font: `400 11px/1.4 ${fonts.mono}`, color: colors.textDim, marginTop: 5 };
 }
 function statusChipStyle(colors: ColorPalette, status: string): CSSProperties {
   return {
-    font: `700 9px/1 ${fonts.ui}`,
+    font: `700 11px/1 ${fonts.ui}`,
     letterSpacing: 0.5,
     color: status === 'busy' ? colors.success : colors.textMuted,
     border: `1px solid ${colors.chipBorder}`,

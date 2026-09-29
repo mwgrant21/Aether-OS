@@ -56,7 +56,7 @@ export function FilesView() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>ATTACHMENTS</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>ATTACHMENTS</h2>
         <Button onClick={addFile} style={addButtonStyle}>+ ADD FILE</Button>
       </div>
 
@@ -110,7 +110,7 @@ function titleStyle(colors: ColorPalette): CSSProperties {
 }
 const addButtonStyle: CSSProperties = {
   cursor: 'pointer',
-  font: `600 10px/1 ${fonts.ui}`,
+  font: `600 11px/1 ${fonts.ui}`,
   letterSpacing: 1,
   padding: '7px 14px',
   borderRadius: 7,
@@ -141,7 +141,7 @@ function thumbStyle(colors: ColorPalette): CSSProperties {
     border: `1px solid ${colors.accentCyanSoft}`,
     display: 'grid',
     placeItems: 'center',
-    font: `700 9px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: colors.accentCyanSoft,
   };
 }
@@ -157,7 +157,7 @@ function nameStyle(colors: ColorPalette): CSSProperties {
   };
 }
 function sizeStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 10px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 2 };
+  return { font: `400 11px/1.3 ${fonts.mono}`, color: colors.textDim, marginTop: 2 };
 }
 function deleteStyle(colors: ColorPalette): CSSProperties {
   return {

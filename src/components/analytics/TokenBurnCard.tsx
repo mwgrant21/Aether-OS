@@ -12,7 +12,7 @@ export function TokenBurnCard() {
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>REAL TOKEN BURN</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>REAL TOKEN BURN</h2>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {rows.map((r) => (
           <div key={r.toolUseId} style={rowStyle}>
@@ -23,7 +23,7 @@ export function TokenBurnCard() {
             </div>
             <div style={{ flex: 'none', textAlign: 'right' }}>
               <div style={{ font: `700 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{short(r.tokens)} tok</div>
-              <div style={{ marginTop: 2, font: `400 10px/1 ${fonts.mono}`, color: colors.textDim }}>
+              <div style={{ marginTop: 2, font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>
                 {r.toolUses} calls · {fmtElapsed(r.durationMs)}
               </div>
             </div>
@@ -58,7 +58,7 @@ function avatarStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 7,
     display: 'grid',
     placeItems: 'center',
-    font: `700 10px/1 ${fonts.mono}`,
+    font: `700 11px/1 ${fonts.mono}`,
     color: colors.accentCyanSoft,
     background: 'rgba(127,216,239,0.12)',
     border: `1px solid ${colors.accentCyanSoft}`,

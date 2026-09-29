@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
@@ -6,10 +6,11 @@ import { useColors } from '../shared/useColors';
 export function OperatorCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
+  const [isFocused, setIsFocused] = useState(false);
 
   return (
     <div style={cardStyle(colors)}>
-      <div style={titleStyle(colors)}>IDENTITY</div>
+      <h2 style={{ ...titleStyle(colors), margin: 0 }}>IDENTITY</h2>
       <div style={{ marginTop: 12 }}>
         <div style={labelStyle(colors)}>YOUR NAME</div>
         <input
@@ -17,8 +18,10 @@ export function OperatorCard() {
           maxLength={24}
           value={state.operatorName}
           onChange={(e) => dispatch({ type: 'SET_OPERATOR_NAME', name: e.target.value })}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           placeholder="Operator"
-          style={inputStyle(colors)}
+          style={inputStyle(colors, isFocused)}
         />
       </div>
     </div>
@@ -43,19 +46,21 @@ function titleStyle(colors: ColorPalette): CSSProperties {
 }
 
 function labelStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted };
 }
 
-function inputStyle(colors: ColorPalette): CSSProperties {
+function inputStyle(colors: ColorPalette, focused: boolean): CSSProperties {
   return {
     width: '100%',
     marginTop: 8,
     padding: '9px 12px',
     borderRadius: 8,
-    border: `1px solid ${colors.chipBorder}`,
+    border: `1px solid ${focused ? colors.accentCyan : colors.chipBorder}`,
+    boxShadow: focused ? '0 0 0 3px rgba(126,240,255,.3)' : undefined,
     background: 'rgba(10,32,43,.6)',
     color: colors.textPrimary,
     font: `600 13px/1 ${fonts.ui}`,
+    // Native focus outline suppressed in favor of the cyan border + ring above.
     outline: 'none',
   };
 }

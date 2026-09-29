@@ -28,7 +28,7 @@ export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) 
     const on = m.id === selectedId;
     return (
       <Button key={m.id} onClick={() => dispatch({ type: 'SELECT_MEMORY', id: m.id })} style={rowStyle(on)}>
-        <span style={kindBadgeStyle(colors, KIND_TIER_COLOR(m.kind))}>{m.kind}</span>
+        <span style={kindBadgeStyle(colors, KIND_TIER_COLOR(m.kind, colors))}>{m.kind}</span>
         <span style={nameStyle(colors)}>{m.content}</span>
         <span style={{ flex: 'none', font: `700 11px/1 ${fonts.mono}`, color: colors.textDim }}>{m.salience}</span>
       </Button>
@@ -41,7 +41,7 @@ export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) 
       <Button key={t.id} onClick={() => dispatch({ type: 'SELECT_MEMORY', id: t.id })} style={rowStyle(on)}>
         <span style={kindBadgeStyle(colors, colors.textDim)}>{t.scope}</span>
         <span style={nameStyle(colors)}>{t.content}</span>
-        <span style={{ flex: 'none', font: `600 9px/1 ${fonts.mono}`, color: colors.textDim }}>{t.cause}</span>
+        <span style={{ flex: 'none', font: `600 11px/1 ${fonts.mono}`, color: colors.textDim }}>{t.cause}</span>
       </Button>
     );
   };
@@ -49,7 +49,7 @@ export function MemoryRosterCard({ selectedId }: { selectedId: number | null }) 
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none' }}>
-        <div style={titleStyle(colors)}>MEMORY</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>MEMORY</h2>
       </div>
 
       <div style={{ flex: 'none', display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
@@ -118,7 +118,7 @@ function titleStyle(colors: ColorPalette): CSSProperties {
   return { font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
 }
 function groupHeaderStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 10px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim };
+  return { font: `600 11px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textDim };
 }
 function rowStyle(on: boolean): CSSProperties {
   return {
@@ -145,7 +145,7 @@ function nameStyle(colors: ColorPalette): CSSProperties {
 function kindBadgeStyle(_colors: ColorPalette, accent: string): CSSProperties {
   return {
     flex: 'none',
-    font: `600 8px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 1,
     color: accent,
     border: `1px solid ${accent}`,
@@ -165,7 +165,7 @@ function filterButtonStyle(colors: ColorPalette, on: boolean): CSSProperties {
   return {
     flex: 'none',
     cursor: 'pointer',
-    font: `600 10px/1 ${fonts.ui}`,
+    font: `600 11px/1 ${fonts.ui}`,
     letterSpacing: 0.5,
     color: on ? colors.accentCyanSoft : colors.textDim,
     border: `1px solid ${on ? 'rgba(95,220,255,.5)' : 'rgba(80,190,220,.25)'}`,

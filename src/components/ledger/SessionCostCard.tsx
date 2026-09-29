@@ -24,7 +24,7 @@ export function SessionCostCard({ total, tiers }: { total: ExactCost; tiers: Pri
           SESSION COST" while showing an all-projects, all-history total --
           caught by the whole-branch review. A figure that large under the word
           "session" is misread by exactly the operator this view is for. */}
-      <div style={cardTitleStyle(colors)}>OBSERVED TOTAL — ALL TRANSCRIPTS</div>
+      <h2 style={{ ...cardTitleStyle(colors), margin: 0 }}>OBSERVED TOTAL — ALL TRANSCRIPTS</h2>
       <div style={totalStyle(colors)}>{usd(total.usd)}</div>
       {/* The whole-branch review's FIX 4: this is the largest number in the
           view, it is priced at published API rates, and a subscription account
@@ -81,7 +81,7 @@ const totalStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const notPaidStyle = (c: ColorPalette): CSSProperties => ({
-  font: `600 10px/1.4 ${fonts.ui}`,
+  font: `600 11px/1.4 ${fonts.ui}`,
   letterSpacing: '.08em',
   textTransform: 'uppercase',
   color: c.warn,
@@ -95,7 +95,7 @@ const tierLineStyle = (c: ColorPalette): CSSProperties => ({
 });
 
 const windowNoteStyle = (c: ColorPalette): CSSProperties => ({
-  font: `400 10px/1.5 ${fonts.ui}`,
+  font: `400 11px/1.5 ${fonts.ui}`,
   color: c.textDim,
   marginTop: 6,
   maxWidth: 420,
@@ -111,7 +111,7 @@ const breakdownStyle: CSSProperties = {
 const partStyle: CSSProperties = { minWidth: 88 };
 
 const partLabelStyle = (c: ColorPalette): CSSProperties => ({
-  font: `500 10px/1.4 ${fonts.ui}`,
+  font: `500 11px/1.4 ${fonts.ui}`,
   letterSpacing: '.08em',
   color: c.textMuted,
 });

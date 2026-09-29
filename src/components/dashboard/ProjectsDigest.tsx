@@ -13,7 +13,7 @@ export function ProjectsDigest() {
   return (
     <div style={cardStyle(colors)}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={titleStyle(colors)}>PROJECTS</div>
+        <h2 style={{ ...titleStyle(colors), margin: 0 }}>PROJECTS</h2>
         <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Projects' })} style={viewAllStyle(colors)}>
           VIEW ALL →
         </Button>
@@ -49,5 +49,5 @@ function costStyle(colors: ColorPalette): CSSProperties {
   return { flex: 'none', font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft };
 }
 function viewAllStyle(colors: ColorPalette): CSSProperties {
-  return { cursor: 'pointer', font: `600 10px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
+  return { cursor: 'pointer', font: `600 11px/1 ${fonts.ui}`, letterSpacing: 1.5, color: colors.accentCyanSoft };
 }
