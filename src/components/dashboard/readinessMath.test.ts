@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COLLECTOR_STALE_AFTER_MS,
   DESKTOP_APP_REASON,
+  HINT_COMMANDS,
   computeDigestPresence,
   computeReadiness,
   computeStripItems,
+  formatReadinessTime,
+  isCollectorFresh,
+  newestCollectorEventMs,
+  splitHintCommands,
   type ReadinessKey,
+  type ReadinessRow,
 } from './readinessMath';
 import { isSessionLive } from './dashboardMath';
 import { initialState } from '../../state/initialState';
@@ -12,7 +19,10 @@ import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import type { AetherState } from '../../state/types';
 
-const NOW = 1_800_000_000_000;
+// Every instant is built from LOCAL wall-clock parts, so '14:30' is the
+// expected output in any timezone. Never use an epoch literal or ISO string here.
+const at = (y: number, mo: number, d: number, h: number, mi: number) => new Date(y, mo, d, h, mi).getTime();
+const NOW = at(2026, 8, 29, 14, 30); // Sep 29 2026, 14:30 local
 const snap = (capturedAtMs: number): StatuslineSnapshot => ({
   capturedAtMs,
   sessionId: null,
@@ -27,57 +37,193 @@ const snap = (capturedAtMs: number): StatuslineSnapshot => ({
   currentDir: null,
   projectDir: null,
 });
-const DIAG: AetherState['diagnostics'] = { toolCalls: [], dispatches: [], anomalies: [] };
-const row = (rows: ReturnType<typeof computeReadiness>, key: ReadinessKey) => rows.find((r) => r.key === key)!;
+type Diag = NonNullable<AetherState['diagnostics']>;
+const EMPTY_DIAG: AetherState['diagnostics'] = { toolCalls: [], dispatches: [], anomalies: [] };
+const anomalyAt = (detectedAtMs: number): AetherState['diagnostics'] => ({
+  toolCalls: [],
+  dispatches: [],
+  anomalies: [{ kind: 'k', toolUseId: 't', detail: 'd', detectedAtMs }],
+});
+const COLD = { ...initialState, terminalOpenedAtMs: null };
+const row = (rows: ReadinessRow[], key: ReadinessKey) => rows.find((r) => r.key === key)!;
+
+describe('formatReadinessTime', () => {
+  it('prints zero-padded 24-hour HH:MM for an instant on the same local day', () => {
+    expect(formatReadinessTime(at(2026, 8, 29, 9, 5), NOW)).toBe('09:05');
+    expect(formatReadinessTime(at(2026, 8, 29, 0, 0), NOW)).toBe('00:00');
+    expect(formatReadinessTime(at(2026, 8, 29, 23, 59), NOW)).toBe('23:59');
+  });
+
+  it('prefixes the short date for an earlier local day', () => {
+    expect(formatReadinessTime(at(2026, 8, 28, 14, 2), NOW)).toBe('Sep 28 14:02');
+    expect(formatReadinessTime(at(2026, 8, 5, 7, 0), NOW)).toBe('Sep 5 07:00');
+  });
+
+  it('rolls over at local midnight', () => {
+    const justAfterMidnight = at(2026, 8, 30, 0, 1);
+    expect(formatReadinessTime(at(2026, 8, 29, 23, 59), justAfterMidnight)).toBe('Sep 29 23:59');
+    expect(formatReadinessTime(at(2026, 8, 30, 0, 0), justAfterMidnight)).toBe('00:00');
+  });
+
+  it('prefixes the date for the same day-of-month in another month or year', () => {
+    expect(formatReadinessTime(at(2026, 7, 29, 14, 2), NOW)).toBe('Aug 29 14:02');
+    expect(formatReadinessTime(at(2025, 8, 29, 14, 2), NOW)).toBe('Sep 29 14:02');
+  });
+});
+
+describe('collector freshness', () => {
+  it('finds the newest event across tool calls, dispatches and anomalies', () => {
+    const diag: Diag = {
+      toolCalls: [{ toolUseId: 'a', toolName: 'Read', filePathRel: null, startedAtMs: 1, closedAtMs: 50 }],
+      dispatches: [{ endedAtMs: 70 } as Diag['dispatches'][number]],
+      anomalies: [{ kind: 'k', toolUseId: 't', detail: 'd', detectedAtMs: 60 }],
+    };
+    expect(newestCollectorEventMs(diag)).toBe(70);
+    expect(newestCollectorEventMs({ ...diag, dispatches: [] })).toBe(60);
+  });
+
+  it('has no newest event with no snapshot or an empty one', () => {
+    expect(newestCollectorEventMs(null)).toBeNull();
+    expect(newestCollectorEventMs(EMPTY_DIAG)).toBeNull();
+  });
+
+  it('is fresh at exactly COLLECTOR_STALE_AFTER_MS and stale 1ms later', () => {
+    expect(COLLECTOR_STALE_AFTER_MS).toBe(10 * 60 * 1000);
+    expect(isCollectorFresh(NOW - COLLECTOR_STALE_AFTER_MS, NOW)).toBe(true);
+    expect(isCollectorFresh(NOW - COLLECTOR_STALE_AFTER_MS - 1, NOW)).toBe(false);
+    expect(isCollectorFresh(null, NOW)).toBe(false);
+  });
+});
+
+describe('splitHintCommands', () => {
+  it('marks exactly the known commands so the card can set them in mono', () => {
+    expect(HINT_COMMANDS).toEqual(['npm run electron:dev', 'npm run build', 'npm start']);
+    expect(splitHintCommands('Start it with npm run electron:dev.')).toEqual([
+      { text: 'Start it with ', command: false },
+      { text: 'npm run electron:dev', command: true },
+      { text: '.', command: false },
+    ]);
+    expect(splitHintCommands('Build and start it in collector/: npm run build, then npm start.')).toEqual([
+      { text: 'Build and start it in collector/: ', command: false },
+      { text: 'npm run build', command: true },
+      { text: ', then ', command: false },
+      { text: 'npm start', command: true },
+      { text: '.', command: false },
+    ]);
+    expect(splitHintCommands('Needs the desktop app.')).toEqual([{ text: 'Needs the desktop app.', command: false }]);
+  });
+});
 
 describe('computeReadiness', () => {
   it('lists Desktop app, Terminal, Statusline, Collector in that order', () => {
-    expect(computeReadiness(initialState, false, NOW).map((r) => r.key)).toEqual(['desktop', 'terminal', 'statusline', 'collector']);
+    expect(computeReadiness(COLD, false, NOW).map((r) => r.key)).toEqual(['desktop', 'terminal', 'statusline', 'collector']);
   });
 
-  it('Desktop app: met copy in Electron, unmet copy with the reason in the browser', () => {
-    expect(row(computeReadiness(initialState, true, NOW), 'desktop')).toMatchObject({ met: true, text: 'Desktop app: running.' });
-    expect(row(computeReadiness(initialState, false, NOW), 'desktop')).toMatchObject({
-      met: false,
-      text: `Desktop app: not running. ${DESKTOP_APP_REASON}`,
+  it('Desktop app: states the fact once, with no appended reason, and hints how to start it', () => {
+    expect(row(computeReadiness(COLD, true, NOW), 'desktop')).toMatchObject({ met: true, text: 'Desktop app: running.', hint: null });
+    const unmet = row(computeReadiness(COLD, false, NOW), 'desktop');
+    expect(unmet).toMatchObject({ met: false, text: 'Desktop app: not running.', hint: 'Start it with npm run electron:dev.' });
+    expect(unmet.text).not.toContain(DESKTOP_APP_REASON);
+  });
+
+  it('Terminal: open since the stamped time; defensive "open." when unstamped', () => {
+    const open = { ...COLD, terminalAlive: true, terminalOpenedAtMs: at(2026, 8, 29, 14, 2) };
+    expect(row(computeReadiness(open, true, NOW), 'terminal')).toMatchObject({ met: true, text: 'Terminal: open since 14:02.', hint: null });
+    const yesterday = { ...open, terminalOpenedAtMs: at(2026, 8, 28, 22, 15) };
+    expect(row(computeReadiness(yesterday, true, NOW), 'terminal').text).toBe('Terminal: open since Sep 28 22:15.');
+    expect(row(computeReadiness({ ...COLD, terminalAlive: true }, true, NOW), 'terminal')).toMatchObject({ met: true, text: 'Terminal: open.' });
+  });
+
+  it('Terminal: with no session, points at OPEN TERMINAL only in the desktop app', () => {
+    expect(row(computeReadiness(COLD, true, NOW), 'terminal')).toMatchObject({ met: false, text: 'Terminal: no session yet.', hint: 'Use OPEN TERMINAL below.' });
+    expect(row(computeReadiness(COLD, false, NOW), 'terminal')).toMatchObject({ met: false, text: 'Terminal: no session yet.', hint: 'Needs the desktop app.' });
+  });
+
+  it('Statusline: live with its capture time, no reading yet, or stale with its last time', () => {
+    expect(row(computeReadiness({ ...COLD, statusline: snap(at(2026, 8, 29, 14, 29)) }, true, NOW), 'statusline')).toMatchObject({
+      met: true,
+      text: 'Statusline: live, 14:29.',
+      hint: null,
     });
-    expect(DESKTOP_APP_REASON).toBe('The Terminal and live tracking need the desktop app.');
+    expect(row(computeReadiness(COLD, true, NOW), 'statusline')).toMatchObject({
+      met: false,
+      text: 'Statusline: no reading yet.',
+      hint: 'Install it in Settings, then run a Claude Code turn.',
+    });
+    expect(row(computeReadiness({ ...COLD, statusline: snap(at(2026, 8, 28, 14, 2)) }, true, NOW), 'statusline')).toMatchObject({
+      met: false,
+      text: 'Statusline: last reading Sep 28 14:02.',
+      hint: 'Refreshes on each Claude Code turn.',
+    });
   });
 
-  it('Terminal: met when the pty is alive', () => {
-    expect(row(computeReadiness({ ...initialState, terminalAlive: true }, true, NOW), 'terminal')).toMatchObject({ met: true, text: 'Terminal: open.' });
-    expect(row(computeReadiness(initialState, true, NOW), 'terminal')).toMatchObject({ met: false, text: 'Terminal: no session yet.' });
+  it('Collector: last event when fresh, no events since when stale, no events in the last 24h when empty or absent', () => {
+    const hint = 'Build and start it in collector/: npm run build, then npm start.';
+    expect(row(computeReadiness({ ...COLD, diagnostics: anomalyAt(at(2026, 8, 29, 14, 25)) }, true, NOW), 'collector')).toMatchObject({
+      met: true,
+      text: 'Collector: last event 14:25.',
+      hint: null,
+    });
+    expect(row(computeReadiness({ ...COLD, diagnostics: anomalyAt(at(2026, 8, 29, 13, 0)) }, true, NOW), 'collector')).toMatchObject({
+      met: false,
+      text: 'Collector: no events since 13:00.',
+      hint,
+    });
+    expect(row(computeReadiness({ ...COLD, diagnostics: EMPTY_DIAG }, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events in the last 24h.', hint });
+    expect(row(computeReadiness(COLD, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events in the last 24h.', hint });
   });
 
-  it('Statusline: live, no reading yet, or stale', () => {
-    expect(row(computeReadiness({ ...initialState, statusline: snap(NOW) }, true, NOW), 'statusline')).toMatchObject({ met: true, text: 'Statusline: live.' });
-    expect(row(computeReadiness(initialState, true, NOW), 'statusline')).toMatchObject({ met: false, text: 'Statusline: no reading yet.' });
-    expect(
-      row(computeReadiness({ ...initialState, statusline: snap(NOW - STATUSLINE_STALE_AFTER_MS - 1) }, true, NOW), 'statusline'),
-    ).toMatchObject({ met: false, text: 'Statusline: last reading is stale.' });
-  });
-
-  it('Collector: met when a diagnostics snapshot has arrived', () => {
-    expect(row(computeReadiness({ ...initialState, diagnostics: DIAG }, true, NOW), 'collector')).toMatchObject({ met: true, text: 'Collector: running.' });
-    expect(row(computeReadiness(initialState, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: not running.' });
+  it('Collector row is met at exactly COLLECTOR_STALE_AFTER_MS and unmet 1ms later', () => {
+    const met = (age: number) => row(computeReadiness({ ...COLD, diagnostics: anomalyAt(NOW - age) }, true, NOW), 'collector').met;
+    expect(met(COLLECTOR_STALE_AFTER_MS)).toBe(true);
+    expect(met(COLLECTOR_STALE_AFTER_MS + 1)).toBe(false);
   });
 
   it('lets only met live signals glow: Terminal and Statusline, never Desktop app or Collector', () => {
-    const rows = computeReadiness({ ...initialState, terminalAlive: true, statusline: snap(NOW), diagnostics: DIAG }, true, NOW);
+    const rows = computeReadiness(
+      { ...COLD, terminalAlive: true, terminalOpenedAtMs: NOW, statusline: snap(NOW), diagnostics: anomalyAt(NOW) },
+      true,
+      NOW,
+    );
     expect(rows.map((r) => [r.key, r.glows])).toEqual([
       ['desktop', false],
       ['terminal', true],
       ['statusline', true],
       ['collector', false],
     ]);
-    expect(computeReadiness(initialState, false, NOW).some((r) => r.glows)).toBe(false);
+    expect(computeReadiness(COLD, false, NOW).some((r) => r.glows)).toBe(false);
   });
 
   it('agrees with isSessionLive at the statusline freshness boundary', () => {
     for (const age of [STATUSLINE_STALE_AFTER_MS, STATUSLINE_STALE_AFTER_MS + 1]) {
-      const state = { ...initialState, statusline: snap(NOW - age) };
+      const state = { ...COLD, statusline: snap(NOW - age) };
       expect(row(computeReadiness(state, true, NOW), 'statusline').met).toBe(isSessionLive(state, NOW));
     }
+  });
+});
+
+describe('READINESS honesty rules', () => {
+  const cases: { desktop: boolean; rows: ReadinessRow[] }[] = [];
+  for (const desktop of [false, true])
+    for (const terminalAlive of [false, true])
+      for (const statusline of [null, snap(NOW), snap(NOW - STATUSLINE_STALE_AFTER_MS - 1)])
+        for (const diagnostics of [null, EMPTY_DIAG, anomalyAt(NOW), anomalyAt(NOW - COLLECTOR_STALE_AFTER_MS - 1)])
+          cases.push({
+            desktop,
+            rows: computeReadiness({ terminalAlive, terminalOpenedAtMs: terminalAlive ? NOW : null, statusline, diagnostics }, desktop, NOW),
+          });
+
+  it('rule 1: names OPEN TERMINAL in a hint only when the desktop app is present', () => {
+    for (const { desktop, rows } of cases) for (const r of rows) if (r.hint?.includes('OPEN TERMINAL')) expect(desktop).toBe(true);
+    expect(cases.some(({ rows }) => rows.some((r) => r.hint === 'Use OPEN TERMINAL below.'))).toBe(true);
+  });
+
+  it('rule 2: the collector copy never says "running"', () => {
+    for (const { rows } of cases) expect(row(rows, 'collector').text.toLowerCase()).not.toContain('running');
+  });
+
+  it('rule 4: a met row never has a hint, an unmet row always does', () => {
+    for (const { rows } of cases) for (const r of rows) expect(r.hint === null).toBe(r.met);
   });
 });
 
