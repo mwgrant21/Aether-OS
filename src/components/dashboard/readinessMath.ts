@@ -51,7 +51,7 @@ export function computeReadiness(
       key: 'terminal',
       met: state.terminalAlive,
       glows: state.terminalAlive,
-      text: state.terminalAlive ? 'Terminal: session running.' : 'Terminal: no session yet.',
+      text: state.terminalAlive ? 'Terminal: open.' : 'Terminal: no session yet.',
     },
     {
       key: 'statusline',

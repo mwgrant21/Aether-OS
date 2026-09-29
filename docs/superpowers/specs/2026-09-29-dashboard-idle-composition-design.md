@@ -136,3 +136,5 @@ The feature is done when the acceptance narrative at the bottom could be filmed 
 
 Amendment (approved 2026-09-29): the tile narrated as "SESSION COST" is built as **TODAY** (`API rate, not
 paid`), because no session-scoped cost exists in the store.
+
+Amendment (2026-09-29): per the narration, OPEN TERMINAL appears once, under READINESS; the reactor card has no actions. The READINESS Terminal row reads "Terminal: open." when met (not "session running."), so it never contradicts STANDBY.

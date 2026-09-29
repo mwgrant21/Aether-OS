@@ -1280,7 +1280,7 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
   // The renderer only ever learns a request EXISTS from this channel, so it
   // also has to learn from it that the request is done -- otherwise
   // state.pendingPermissionRequest stays non-null forever and every surface
-  // reading it (TopBar badge, SystemsCard tile, Terminal `approvals`,
+  // reading it (TopBar badge, Terminal `approvals`,
   // localResponder's pending count) sticks at >=1 for the rest of the session.
   sendToWindow('permission:request', null);
 });

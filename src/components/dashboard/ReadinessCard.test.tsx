@@ -70,7 +70,7 @@ describe('ReadinessCard', () => {
     renderCard();
     allMet();
     expect(rowText('desktop')).toBe('Desktop app: running.');
-    expect(rowText('terminal')).toBe('Terminal: session running.');
+    expect(rowText('terminal')).toBe('Terminal: open.');
     expect(rowText('statusline')).toBe('Statusline: live.');
     expect(rowText('collector')).toBe('Collector: running.');
   });
@@ -78,7 +78,7 @@ describe('ReadinessCard', () => {
   it('updates a row within one store update', () => {
     renderCard();
     act(() => dispatchRef!({ type: 'SET_TERMINAL_ALIVE', alive: true }));
-    expect(rowText('terminal')).toBe('Terminal: session running.');
+    expect(rowText('terminal')).toBe('Terminal: open.');
   });
 
   it('lights only the live signals: Terminal and Statusline glow, Desktop app and Collector stay flat', () => {
@@ -94,7 +94,7 @@ describe('ReadinessCard', () => {
   it('keeps a met Terminal dot flat green while the console is idle (STANDBY)', () => {
     renderCard();
     act(() => dispatchRef!({ type: 'SET_TERMINAL_ALIVE', alive: true }));
-    expect(rowText('terminal')).toBe('Terminal: session running.');
+    expect(rowText('terminal')).toBe('Terminal: open.');
     expect(dot('terminal').style.background).not.toBe('transparent');
     expect(dot('terminal').style.boxShadow).toBe('');
   });

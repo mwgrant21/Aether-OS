@@ -50,17 +50,9 @@ describe('ReactorStatusCard accessibility', () => {
     renderCard();
     expect(screen.getByRole('img', { name: 'Reactor: STANDBY, no live rate' })).toBeTruthy();
   });
-
-  it('keeps OPEN TERMINAL flat (no glow) at STANDBY rest', () => {
-    renderCard();
-    const btn = screen.getByRole('button', { name: /OPEN TERMINAL/ });
-    expect(btn.style.boxShadow).toBe('');
-  });
 });
 
 describe('ReactorStatusCard live state', () => {
-  // A live session implies the desktop app; without it OPEN TERMINAL is aria-disabled and never glows.
-  beforeEach(() => vi.stubGlobal('aetherElectron', {}));
   let dispatchRef: ReturnType<typeof useAetherStore>['dispatch'] | null = null;
   function DispatchProbe() {
     dispatchRef = useAetherStore().dispatch;
@@ -89,12 +81,6 @@ describe('ReactorStatusCard live state', () => {
   it('labels the live reactor NOMINAL with the burn rate in tokens per minute', () => {
     renderLive(1234);
     expect(screen.getByRole('img', { name: 'Reactor: NOMINAL, 1,234 tokens per minute' })).toBeTruthy();
-  });
-
-  it('gives OPEN TERMINAL its resting active glow while a session is live', () => {
-    renderLive(1234);
-    const btn = screen.getByRole('button', { name: 'OPEN TERMINAL' });
-    expect(btn.style.boxShadow).not.toBe('');
   });
 
   it('keeps the status dot flat at STANDBY and lit when live', () => {
@@ -150,9 +136,8 @@ describe('ReactorStatusCard idle composition', () => {
     expect(screen.getByTestId('reactor-rate-line').textContent).toBe('— tok/min · standby');
   });
 
-  it('offers OPEN TERMINAL as its only action (MEMORY SWEEP is gone)', () => {
+  it('has no actions (OPEN TERMINAL lives under READINESS)', () => {
     renderCard();
-    expect(screen.getAllByRole('button')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'OPEN TERMINAL' })).toBeTruthy();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 });

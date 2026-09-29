@@ -45,7 +45,7 @@ describe('computeReadiness', () => {
   });
 
   it('Terminal: met when the pty is alive', () => {
-    expect(row(computeReadiness({ ...initialState, terminalAlive: true }, true, NOW), 'terminal')).toMatchObject({ met: true, text: 'Terminal: session running.' });
+    expect(row(computeReadiness({ ...initialState, terminalAlive: true }, true, NOW), 'terminal')).toMatchObject({ met: true, text: 'Terminal: open.' });
     expect(row(computeReadiness(initialState, true, NOW), 'terminal')).toMatchObject({ met: false, text: 'Terminal: no session yet.' });
   });
 

@@ -7,7 +7,6 @@ import { NO_DATA, computeDashKpis, computeDashStatus, computeRateLine, isSession
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { deriveDepletion, formatResetCountdown } from '../../shared/depletion';
 import type { AetherState } from '../../state/types';
-import { OpenTerminalButton } from './OpenTerminalButton';
 
 type TileSource = 'live' | 'stale' | 'est';
 
@@ -21,7 +20,7 @@ type TileSource = 'live' | 'stale' | 'est';
 function deriveDepletionOverride(state: AetherState): { v: string; s: string; source: TileSource; stale: boolean } | null {
   const depletion = deriveDepletion(state.statusline, null, Date.now());
   const stale = depletion.stale;
-  if (depletion.source !== 'statusline') return null; // fall back to today's estimate
+  if (depletion.source !== 'statusline') return null; // fall back to computeDashKpis's scan-based estimate
   const etaPart =
     depletion.msUntilDepleted === null ? NO_DATA : depletion.msUntilDepleted <= 0 ? 'now' : fmtEta(depletion.msUntilDepleted / 1000);
   // `~` marks a stale value; with no value there is nothing to qualify.
@@ -121,8 +120,7 @@ export function ReactorStatusCard() {
         })}
       </div>
 
-      {/* MEMORY SWEEP was removed; OPEN TERMINAL is the card's only action. */}
-      <OpenTerminalButton live={live} />
+      {/* No actions: OPEN TERMINAL lives under READINESS. */}
     </div>
   );
 }

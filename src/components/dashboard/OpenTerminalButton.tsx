@@ -6,8 +6,8 @@ import { Button } from '../shared/Button';
 import { DESKTOP_APP_REASON, hasDesktopApp } from './readinessMath';
 
 /**
- * The Dashboard's one primary action, shared by the reactor card and
- * READINESS. In browser mode there is no pty to open, so it stays in place,
+ * The Dashboard's one primary action, under READINESS. In browser mode there
+ * is no pty to open, so it stays in place,
  * aria-disabled (still focusable, so a screen reader reaches it and hears
  * why), with the Desktop-app reason directly beneath it. Nothing about it
  * reads as an error.

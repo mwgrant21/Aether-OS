@@ -31,7 +31,7 @@ export function ActiveAgentsDigest() {
         {state.realAgents.length === 0 && (
           // Shown only while the panel fades out on the Dashboard (DigestSlot);
           // the same sentence the Agents and Terminal views use. No action: the
-          // Dashboard's OPEN TERMINAL lives in the reactor card and READINESS.
+          // Dashboard's OPEN TERMINAL lives under READINESS.
           <EmptyState message="No agents are running." />
         )}
       </div>

@@ -247,6 +247,13 @@ describe('computeTodayCost', () => {
   it('is NO_DATA when the ledger was computed on an earlier local day', () => {
     expect(computeTodayCost(ledgerWithToday(3.25, NOW - 36 * 60 * 60 * 1000), NOW)).toBe(NO_DATA);
   });
+
+  it('is NO_DATA for a snapshot only hours old if it was computed before local midnight', () => {
+    const justAfterMidnightUtc = Date.UTC(2027, 0, 15, 0, 30);
+    const twoHoursEarlier = justAfterMidnightUtc - 2 * 60 * 60 * 1000;
+    expect(computeTodayCost(ledgerWithToday(3.25, twoHoursEarlier), justAfterMidnightUtc)).toBe(NO_DATA);
+    expect(computeTodayCost(ledgerWithToday(3.25, justAfterMidnightUtc - 60 * 1000), justAfterMidnightUtc)).toBe('$3.25');
+  });
 });
 
 describe('computeRateLine', () => {

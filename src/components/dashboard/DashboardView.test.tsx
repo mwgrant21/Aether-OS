@@ -53,4 +53,21 @@ describe('DashboardView layout', () => {
     expect(screen.getByRole('button', { name: 'Projects 0' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Alerts 0' })).toBeTruthy();
   });
+
+  it('puts a lone alert in RECENT ALERTS, leaving Projects in the strip', () => {
+    renderDashboard([{ type: 'SET_OP_MODE', mode: 'EDITS' }]); // pushes a notif
+    expect(screen.getByRole('heading', { name: 'RECENT ALERTS' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'PROJECTS' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Projects 0' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Alerts 0' })).toBeNull();
+  });
+
+  it('shows exactly one OPEN TERMINAL, under READINESS', () => {
+    vi.stubGlobal('aetherElectron', {});
+    renderDashboard();
+    const buttons = screen.getAllByRole('button', { name: 'OPEN TERMINAL' });
+    expect(buttons).toHaveLength(1);
+    const readiness = screen.getByRole('heading', { name: 'READINESS' }).closest('section')!;
+    expect(within(readiness).getByRole('button', { name: 'OPEN TERMINAL' })).toBe(buttons[0]);
+  });
 });
