@@ -41,6 +41,7 @@ export function TopBar() {
   const scopeLabel = resolveScopePillLabel(state);
   const apprPanelId = useId();
   const notifPanelId = useId();
+  const notifTitleId = useId();
   // Notifications: focus in on open, back to the opener on close, Escape and
   // outside pointer-down close it. The STANDBY STRIP's Alerts item is the
   // second trigger (StandbyStrip.tsx); both carry NOTIF_TRIGGER_ATTR.
@@ -179,8 +180,19 @@ export function TopBar() {
           Notifications, {state.unread} unread
         </span>
         {state.notifOpen && (
-          <div id={notifPanelId} ref={notifPanelRef} tabIndex={-1} style={notifPanelStyle(colors)}>
-            <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
+          // useDropdownFocus focuses the panel itself (it has no focusable
+          // children), so it must say what it is: a region named by its heading.
+          <div
+            id={notifPanelId}
+            ref={notifPanelRef}
+            tabIndex={-1}
+            role="region"
+            aria-labelledby={notifTitleId}
+            style={notifPanelStyle(colors)}
+          >
+            <h2 id={notifTitleId} style={{ margin: 0, font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>
+              NOTIFICATIONS
+            </h2>
             {state.notifs.map((nf, idx) => (
               <div key={idx} style={{ display: 'flex', gap: 8, font: `400 11px/1.5 ${fonts.mono}` }}>
                 <span style={{ color: colors.textDim, flex: 'none' }}>{nf.t}</span>

@@ -118,6 +118,15 @@ describe('TopBar notifications focus', () => {
     expect(document.activeElement).toBe(bell());
   });
 
+  it('gives the focused panel an accessible identity: a region named by its heading', () => {
+    renderTopBar();
+    openFromBell();
+    const region = screen.getByRole('region', { name: 'NOTIFICATIONS' });
+    expect(region).toBe(panel());
+    expect(document.activeElement).toBe(region);
+    expect(within(region).getByRole('heading', { level: 2, name: 'NOTIFICATIONS' })).toBeTruthy();
+  });
+
   it('closes on a pointer-down outside the panel and its trigger, not on one inside the panel', () => {
     renderTopBar();
     openFromBell();
