@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 
 export function LiveOutputCard() {
   const colors = useColors();
@@ -27,7 +28,7 @@ export function LiveOutputCard() {
             <span style={{ color: colors.textDim }}>[{l.t}]</span> <span style={{ color: l.c }}>{l.m}</span>
           </div>
         ))}
-        {!isActive && <div style={emptyStyle(colors)}>no activity yet</div>}
+        {!isActive && <EmptyState message="No activity yet." />}
       </div>
     </div>
   );
@@ -68,10 +69,3 @@ const logListStyle: CSSProperties = {
   marginTop: 7,
   font: `400 11px/1.7 ${fonts.mono}`,
 };
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return {
-    font: `500 12px/1.4 ${fonts.ui}`,
-    color: colors.textDim,
-    padding: '8px 2px',
-  };
-}

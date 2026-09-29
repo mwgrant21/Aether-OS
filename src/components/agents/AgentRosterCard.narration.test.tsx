@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useEffect } from 'react';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
 import { AgentRosterCard } from './AgentRosterCard';
@@ -114,5 +114,30 @@ describe('AgentRosterCard real severity reaches the verbosity floor', () => {
       </AetherStoreProvider>,
     );
     expect(screen.getByText('high sev narration')).toBeTruthy();
+  });
+});
+
+describe('AgentRosterCard empty state', () => {
+  // Starts on Agents (the view this card lives in), so the click has to move it.
+  function TabProbe() {
+    const { state, dispatch } = useAetherStore();
+    useEffect(() => {
+      dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Agents' });
+    }, [dispatch]);
+    return <div data-testid="active-tab">{state.activeTab}</div>;
+  }
+
+  it('says no agents are running and offers OPEN TERMINAL, which switches to the Terminal tab', () => {
+    render(
+      <AetherStoreProvider>
+        <Setter agents={[]} narrations={{}} />
+        <TabProbe />
+        <AgentRosterCard selectedToolUseId={null} />
+      </AetherStoreProvider>,
+    );
+    expect(screen.getByTestId('active-tab').textContent).toBe('Agents');
+    expect(screen.getByText('No agents are running.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'OPEN TERMINAL' }));
+    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
   });
 });

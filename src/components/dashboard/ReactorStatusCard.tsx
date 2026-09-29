@@ -1,9 +1,9 @@
 import type { CSSProperties } from 'react';
-import { fonts, type ColorPalette } from '../../styles/tokens';
+import { fonts, glows, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
-import { fmtEta } from '../../utils/format';
+import { fmt, fmtEta } from '../../utils/format';
 import { NO_DATA, computeContextReading, computeDashKpis, computeDashPulseMode, computeDashStatus, computeRateReadout, isSessionLive } from './dashboardMath';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { deriveDepletion, formatResetCountdown } from '../../shared/depletion';
@@ -52,6 +52,25 @@ function deriveTileOverride(
   return null;
 }
 
+/**
+ * The reactor is a canvas instrument, so assistive tech gets its reading as a
+ * static image label built from the same status and source the card prints:
+ * the status from computeDashStatus, the rate from
+ * state.realUsage.burnRatePerMin under computeRateReadout's own gating (live
+ * and scanned). Built from the field, not by re-parsing the printed readout.
+ *
+ * Not a live region. The card adds no aria-live of its own; the always-mounted
+ * Footer carries the reactor status announcement. (The shell has other polite
+ * regions -- TopBar's approvals and notifications counts, the Sidebar legend --
+ * but none of them repeats this status.)
+ */
+export function computeReactorAriaLabel(state: AetherState, live: boolean): string {
+  const status = computeDashStatus(state.alarmLevel, live);
+  const hasRate = live && state.realUsage.lastScanAt !== null;
+  const rate = hasRate ? `${fmt(state.realUsage.burnRatePerMin)} tokens per minute` : 'no live rate';
+  return `Reactor: ${status}, ${rate}`;
+}
+
 export function ReactorStatusCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
@@ -59,22 +78,32 @@ export function ReactorStatusCard() {
   // Standby reads muted: a live colour on an idle console would claim a session (DESIGN.md).
   const statusC =
     state.alarmLevel === 'crit' ? colors.danger : state.alarmLevel === 'warn' ? colors.warn : live ? colors.success : colors.textMuted;
+  const dotGlows = live || state.alarmLevel === 'crit' || state.alarmLevel === 'warn';
   const kpis = computeDashKpis(state);
 
   return (
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ ...titleStyle(colors), margin: 0 }}>REACTOR STATUS</h2>
-        {/* Not aria-live: the always-mounted Footer status is the one live region,
-            so a transition isn't announced twice while the Dashboard is open. */}
+        {/* Not aria-live: the always-mounted Footer carries the status
+            announcement, so a transition isn't announced twice while the
+            Dashboard is open. */}
         <div data-testid="reactor-status-label" style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px/1 ${fonts.mono}`, color: statusC }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusC, boxShadow: `0 0 8px ${statusC}` }} />
+          {/* Glow-Is-State: the dot glows only when live or alarmed; flat at STANDBY. */}
+          <span
+            data-testid="reactor-status-dot"
+            style={{ width: 7, height: 7, borderRadius: '50%', background: statusC, boxShadow: dotGlows ? `0 0 8px ${statusC}` : undefined }}
+          />
           {computeDashStatus(state.alarmLevel, live)}
         </div>
       </div>
 
       <div style={{ flex: 1, minHeight: DASH_REACTOR_SIZE, display: 'grid', placeItems: 'center', padding: '8px 0' }}>
-        <div style={{ position: 'relative', width: DASH_REACTOR_SIZE, height: DASH_REACTOR_SIZE }}>
+        <div
+          role="img"
+          aria-label={computeReactorAriaLabel(state, live)}
+          style={{ position: 'relative', width: DASH_REACTOR_SIZE, height: DASH_REACTOR_SIZE }}
+        >
           <div style={reactorInnerStyle(reactorNativeSize(state.cfg.renderer))}>
             <Reactor />
           </div>
@@ -111,15 +140,19 @@ export function ReactorStatusCard() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingTop: 14 }}>
-        <Button onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })} style={primaryActionStyle}>
-          ⊕ OPEN TERMINAL
+        <Button
+          onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })}
+          style={primaryActionStyle(colors, live)}
+          hoverStyle={primaryActionHoverStyle}
+        >
+          <span aria-hidden="true">⊕</span> OPEN TERMINAL
         </Button>
         <Button
           onClick={() => {
             dispatch({ type: 'RUN_COMMAND', raw: 'sweep' });
             dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Memory' });
           }}
-          style={secondaryActionStyle}
+          style={secondaryActionStyle(colors)}
         >
           MEMORY SWEEP
         </Button>
@@ -193,25 +226,38 @@ function sourceChipStyle(colors: ColorPalette, source: TileSource): CSSPropertie
     borderRadius: 4,
   };
 }
-const primaryActionStyle: CSSProperties = {
-  textAlign: 'center',
-  cursor: 'pointer',
-  font: `600 11px/1 ${fonts.ui}`,
-  letterSpacing: 1.5,
-  color: '#04202b',
-  background: 'linear-gradient(180deg,#7ef0ff,#17b8d8)',
-  padding: '10px 0',
-  borderRadius: 8,
-  boxShadow: '0 0 14px rgba(95,240,255,.4)',
+// Primary stays the filled cyan switch; per Glow-Is-State it only glows when
+// a session is live (the terminal it opens is doing work) or when hovered /
+// keyboard-focused (Button applies hoverStyle for both). Flat at STANDBY rest.
+function primaryActionStyle(colors: ColorPalette, live: boolean): CSSProperties {
+  return {
+    textAlign: 'center',
+    cursor: 'pointer',
+    font: `600 11px/1 ${fonts.ui}`,
+    letterSpacing: 1.5,
+    color: colors.inkOnCyan,
+    background: `linear-gradient(180deg, ${colors.accentCyan}, ${colors.accentCyanDeep})`,
+    padding: '10px 0',
+    borderRadius: 8,
+    boxShadow: live ? glows.active : undefined,
+  };
+}
+// DESIGN.md Buttons > Hover: brighter, a stronger glow, a 1px lift.
+const primaryActionHoverStyle: CSSProperties = {
+  filter: 'brightness(1.1)',
+  boxShadow: glows.primaryHover,
+  transform: 'translateY(-1px)',
 };
-const secondaryActionStyle: CSSProperties = {
-  textAlign: 'center',
-  cursor: 'pointer',
-  font: `600 11px/1 ${fonts.ui}`,
-  letterSpacing: 1.5,
-  color: '#bff4ff',
-  border: '1px solid rgba(95,220,255,.45)',
-  padding: '10px 0',
-  borderRadius: 8,
-  background: 'rgba(23,184,216,.1)',
-};
+function secondaryActionStyle(colors: ColorPalette): CSSProperties {
+  return {
+    textAlign: 'center',
+    cursor: 'pointer',
+    font: `600 11px/1 ${fonts.ui}`,
+    letterSpacing: 1.5,
+    color: colors.accentCyan,
+    border: `1px solid ${colors.activeBorder}`,
+    padding: '10px 0',
+    borderRadius: 8,
+    background: colors.panelInset,
+  };
+}

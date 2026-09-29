@@ -1,13 +1,22 @@
 import type { DiagnosticsSnapshot } from '../../../electron/collectorStore';
+import { EmptyState } from '../shared/EmptyState';
 
 export function DispatchTimeline({ diagnostics }: { diagnostics: DiagnosticsSnapshot | null }) {
   if (diagnostics === null) {
-    return <div className="dispatch-timeline dispatch-timeline--unavailable">collector isn&apos;t running -- diagnostics unavailable</div>;
+    return (
+      <div className="dispatch-timeline dispatch-timeline--unavailable">
+        <EmptyState message="Dispatch diagnostics are unavailable because the collector isn't running." />
+      </div>
+    );
   }
 
   const isEmpty = diagnostics.toolCalls.length === 0 && diagnostics.dispatches.length === 0 && diagnostics.anomalies.length === 0;
   if (isEmpty) {
-    return <div className="dispatch-timeline dispatch-timeline--empty">No recent activity</div>;
+    return (
+      <div className="dispatch-timeline dispatch-timeline--empty">
+        <EmptyState message="No recent activity from tool calls, dispatches or anomalies." />
+      </div>
+    );
   }
 
   const items = [

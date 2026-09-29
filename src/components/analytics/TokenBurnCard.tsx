@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { useAetherStore } from '../../state/store';
 import { short, fmtElapsed } from '../../utils/format';
 import { computeCompletedDispatchBurn } from './analyticsMath';
@@ -29,7 +30,7 @@ export function TokenBurnCard() {
             </div>
           </div>
         ))}
-        {!rows.length && <div style={emptyStyle(colors)}>no completed dispatches with real usage data yet</div>}
+        {!rows.length && <EmptyState message="No completed dispatches with real usage data yet." />}
       </div>
     </div>
   );
@@ -82,7 +83,4 @@ function descStyle(colors: ColorPalette): CSSProperties {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   };
-}
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }

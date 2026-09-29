@@ -32,7 +32,12 @@ export function Sidebar() {
             const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
             const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
             return (
-              <Button key={label} onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })} style={navItemStyle(colors, on)}>
+              <Button
+                key={label}
+                onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: label })}
+                style={navItemStyle(colors, on)}
+                aria-current={on ? 'page' : undefined}
+              >
                 <span style={navDotWrapStyle(on)}>
                   <span style={navDotStyle(colors, on, showIdlePulse)} data-idle-pulse={showIdlePulse ? 'true' : undefined} />
                 </span>

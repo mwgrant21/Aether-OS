@@ -3,6 +3,7 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { formatFileSize, isImageExtension, type AttachmentInfo } from './attachmentsMath';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
+import { EmptyState } from '../shared/EmptyState';
 
 export function FilesView() {
   const colors = useColors();
@@ -61,7 +62,7 @@ export function FilesView() {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {loading && <div style={emptyStyle(colors)}>loading…</div>}
+        {loading && <div style={loadingStyle(colors)}>Loading attachments.</div>}
         {files.map((f) => (
           <div key={f.name} style={rowStyle(colors)}>
             <Button onClick={() => openFile(f.name)} style={thumbStyle(colors)} title={f.name}>
@@ -82,7 +83,7 @@ export function FilesView() {
             </Button>
           </div>
         ))}
-        {!loading && !files.length && <div style={emptyStyle(colors)}>no files attached yet — click + ADD FILE to attach a screenshot or document</div>}
+        {!loading && !files.length && <EmptyState message={'Screenshots and documents you attach with +\u00A0ADD\u00A0FILE will be listed here.'} />}
       </div>
     </div>
   );
@@ -168,6 +169,6 @@ function deleteStyle(colors: ColorPalette): CSSProperties {
     padding: '2px 6px',
   };
 }
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
+function loadingStyle(colors: ColorPalette): CSSProperties {
+  return { font: `400 12px/1.5 ${fonts.ui}`, color: colors.textMuted, padding: '6px' };
 }

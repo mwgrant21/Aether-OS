@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FocusEvent, type ReactNode } from 'react';
+import { useState, type AriaAttributes, type CSSProperties, type FocusEvent, type ReactNode } from 'react';
 import { useHoverStyle } from './useHoverStyle';
 import { useColors } from './useColors';
 
@@ -9,6 +9,14 @@ interface ButtonProps {
   title?: string;
   disabled?: boolean;
   'aria-label'?: string;
+  /** Toggle state for a two-state or one-of-N control (mode pills, range chips). */
+  'aria-pressed'?: AriaAttributes['aria-pressed'];
+  /** The current item in a set, e.g. `"page"` on the active nav item. */
+  'aria-current'?: AriaAttributes['aria-current'];
+  /** Open state of the panel this button discloses (top-bar dropdowns). */
+  'aria-expanded'?: AriaAttributes['aria-expanded'];
+  /** id of the element this button controls, set while it is rendered. */
+  'aria-controls'?: string;
   children: ReactNode;
 }
 
@@ -32,7 +40,19 @@ function withoutUndefined(style: CSSProperties): CSSProperties {
   return Object.fromEntries(Object.entries(style).filter(([, value]) => value !== undefined)) as CSSProperties;
 }
 
-export function Button({ onClick, style, hoverStyle, title, disabled, 'aria-label': ariaLabel, children }: ButtonProps) {
+export function Button({
+  onClick,
+  style,
+  hoverStyle,
+  title,
+  disabled,
+  'aria-label': ariaLabel,
+  'aria-pressed': ariaPressed,
+  'aria-current': ariaCurrent,
+  'aria-expanded': ariaExpanded,
+  'aria-controls': ariaControls,
+  children,
+}: ButtonProps) {
   const colors = useColors();
   // Tracks keyboard focus only (DESIGN.md's ring is a keyboard-focus affordance,
   // not a mouse-click one): gated on the native :focus-visible heuristic so a
@@ -62,6 +82,10 @@ export function Button({ onClick, style, hoverStyle, title, disabled, 'aria-labe
       title={title}
       disabled={disabled}
       aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
+      aria-current={ariaCurrent}
+      aria-expanded={ariaExpanded}
+      aria-controls={ariaControls}
     >
       {children}
     </button>

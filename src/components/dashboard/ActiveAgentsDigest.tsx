@@ -1,8 +1,9 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { fonts, type ColorPalette } from '../../styles/tokens';
+import { fonts, radii, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { fmtElapsed } from '../../utils/format';
+import { EmptyState } from '../shared/EmptyState';
 
 export function ActiveAgentsDigest() {
   const colors = useColors();
@@ -27,7 +28,11 @@ export function ActiveAgentsDigest() {
             <span style={{ flex: 'none', font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>{fmtElapsed(now - new Date(a.startedAt).getTime())}</span>
           </div>
         ))}
-        {state.realAgents.length === 0 && <div style={emptyStyle(colors)}>no agents currently running</div>}
+        {state.realAgents.length === 0 && (
+          // No action here: the Reactor card's OPEN TERMINAL is the one primary CTA on
+          // the Dashboard, and a second copy would compete with it.
+          <EmptyState message="Agents dispatched from the Terminal will appear here." />
+        )}
       </div>
     </div>
   );
@@ -38,18 +43,19 @@ function cardStyle(colors: ColorPalette): CSSProperties {
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    padding: 14,
-    background: 'rgba(10,22,26,0.55)',
+    minHeight: 0,
+    padding: 15,
+    background: colors.panelGradient,
     border: `1px solid ${colors.panelBorder}`,
-    borderRadius: 10,
+    borderRadius: radii.panel,
   };
 }
 
 function titleStyle(colors: ColorPalette): CSSProperties {
   return {
-    font: `700 11px/1 ${fonts.ui}`,
-    letterSpacing: 1.2,
-    color: colors.textMuted,
+    font: `600 12px/1 ${fonts.ui}`,
+    letterSpacing: 3,
+    color: colors.textSecondary,
   };
 }
 
@@ -77,13 +83,5 @@ function nameStyle(colors: ColorPalette): CSSProperties {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-  };
-}
-
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return {
-    font: `500 12px/1.4 ${fonts.ui}`,
-    color: colors.textDim,
-    padding: '8px 2px',
   };
 }

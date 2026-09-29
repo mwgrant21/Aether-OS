@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { useAetherStore } from '../../state/store';
 import { computeTopCommands } from './analyticsMath';
 
@@ -32,7 +33,7 @@ export function TopCommandsCard() {
             <span style={{ font: `700 11px/1 ${fonts.mono}`, color: colors.accentCyanSoft, width: 34, textAlign: 'right' }}>{r.count}×</span>
           </div>
         ))}
-        {!rows.length && <div style={emptyStyle(colors)}>no commands run yet</div>}
+        {!rows.length && <EmptyState message="No commands run yet." />}
       </div>
     </div>
   );
@@ -43,7 +44,4 @@ function cardStyle(colors: ColorPalette): CSSProperties {
 }
 function titleStyle(colors: ColorPalette): CSSProperties {
   return { flex: 'none', font: `600 12px/1 ${fonts.ui}`, letterSpacing: 3, color: colors.textSecondary };
-}
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }

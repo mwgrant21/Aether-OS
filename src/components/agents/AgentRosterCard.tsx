@@ -3,6 +3,7 @@ import { fonts } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { fmtElapsed } from '../../utils/format';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { Button } from '../shared/Button';
 import type { ColorPalette } from '../../styles/tokens';
 import { groupDispatches } from './rosterGrouping';
@@ -61,7 +62,7 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
             </div>
           )
         ))}
-        {!state.realAgents.length && <div style={emptyStyle(colors)}>no agents currently running</div>}
+        {!state.realAgents.length && <EmptyState message="No agents are running." action={{ label: 'OPEN TERMINAL', onClick: () => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' }) }} />}
       </div>
     </div>
   );
@@ -134,7 +135,4 @@ function narrationStyle(colors: ColorPalette): CSSProperties {
     color: colors.textMuted,
     fontStyle: 'italic',
   };
-}
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim, padding: '4px 2px' };
 }

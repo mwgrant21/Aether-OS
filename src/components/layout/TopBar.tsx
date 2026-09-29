@@ -1,23 +1,20 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState, type CSSProperties } from 'react';
 import { fonts, motion, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
 import { resolveOperatorName } from '../../utils/format';
 import { maximizeGlyph, maximizeLabel } from './windowControls';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { Button } from '../shared/Button';
 import { findProjectByKey } from '../projects/projectsMath';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { CommunicationIndicator } from './CommunicationIndicator';
+import { srOnlyStyle } from '../shared/srOnly';
+import { OP_MODES, opModeOnSkin } from '../shared/opModes';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
-
-const OP_MODES: { key: OpMode; label: string; tip: string }[] = [
-  { key: 'PLAN', label: '◇ PLAN', tip: 'Brainstorm & plan — throttled burn, everything queued for approval' },
-  { key: 'EDITS', label: '✎ EDITS', tip: 'Accept edits — agents work, risky actions queue for approval' },
-  { key: 'AUTO', label: '⚡ AUTO', tip: 'Full auto — low/med actions auto-approved, max burn' },
-];
 
 export function resolveScopePillLabel(state: {
   selectedProject: string | null;
@@ -40,6 +37,8 @@ export function TopBar() {
   const apprBtnC = hasPending ? colors.warn : colors.accentCyanSoft;
   const apprBtnBorder = hasPending ? 'rgba(245,198,107,.5)' : 'rgba(80,190,220,.25)';
   const scopeLabel = resolveScopePillLabel(state);
+  const apprPanelId = useId();
+  const notifPanelId = useId();
 
   return (
     <header style={rootStyle(colors)}>
@@ -69,12 +68,23 @@ export function TopBar() {
         </Button>
       )}
 
-      <div style={opModeGroupStyle}>
+      {/* Toggle buttons (aria-pressed) in a labelled group, not a radiogroup:
+          each pill stays its own Tab stop and activates on Enter/Space, which
+          is what the Button primitive already provides. A radiogroup would
+          promise arrow-key roving focus that this control doesn't implement. */}
+      <div role="group" aria-label="Operating mode" style={opModeGroupStyle}>
         {OP_MODES.map((om) => {
           const on = state.cfg.opMode === om.key;
           return (
-            <Button key={om.key} title={om.tip} onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })} style={opModeStyle(colors, on, om.key)}>
-              {om.label}
+            <Button
+              key={om.key}
+              title={om.meaning}
+              onClick={() => dispatch({ type: 'SET_OP_MODE', mode: om.key })}
+              style={opModeStyle(colors, on, om.key)}
+              aria-pressed={on}
+            >
+              {/* The glyph is decoration; the accessible name is just the mode. */}
+              <span aria-hidden="true">{om.glyph}</span> {om.label}
             </Button>
           );
         })}
@@ -84,8 +94,12 @@ export function TopBar() {
         <Button
           title="Pending approvals"
           aria-label={`${pendingCount} pending approval${pendingCount === 1 ? '' : 's'}`}
+          aria-expanded={state.apprOpen}
+          aria-controls={state.apprOpen ? apprPanelId : undefined}
           onClick={() => dispatch({ type: 'TOGGLE_APPROVALS' })}
-          style={{ ...iconButtonStyle, borderColor: apprBtnBorder, color: apprBtnC }}
+          // Full `border` shorthand, never `borderColor`: the default hover style
+          // sets `border`, and mixing the two across renders makes React warn.
+          style={{ ...iconButtonStyle, border: `1px solid ${apprBtnBorder}`, color: apprBtnC }}
         >
           ⛉
         </Button>
@@ -97,7 +111,7 @@ export function TopBar() {
           {pendingCount} pending approval{pendingCount === 1 ? '' : 's'}
         </span>
         {state.apprOpen && (
-          <div style={apprPanelStyle(colors)}>
+          <div id={apprPanelId} style={apprPanelStyle(colors)}>
             <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — real pending requests</div>
             {pendingReal.map((p) => (
               <div key={p.req.requestId} style={apprRowStyle}>
@@ -132,7 +146,7 @@ export function TopBar() {
                 </div>
               </div>
             ))}
-            {!pendingReal.length && <div style={emptyStateStyle(colors)}>queue clear — no requests awaiting authorization</div>}
+            {!pendingReal.length && <EmptyState message="No requests are waiting for approval." />}
           </div>
         )}
       </div>
@@ -141,6 +155,8 @@ export function TopBar() {
         <Button
           title="Notifications"
           aria-label={`Notifications, ${state.unread} unread`}
+          aria-expanded={state.notifOpen}
+          aria-controls={state.notifOpen ? notifPanelId : undefined}
           onClick={() => dispatch({ type: 'TOGGLE_NOTIFS' })}
           style={{ ...iconButtonStyle, color: colors.accentCyanSoft }}
         >
@@ -153,7 +169,7 @@ export function TopBar() {
           Notifications, {state.unread} unread
         </span>
         {state.notifOpen && (
-          <div style={notifPanelStyle(colors)}>
+          <div id={notifPanelId} style={notifPanelStyle(colors)}>
             <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
             {state.notifs.map((nf, idx) => (
               <div key={idx} style={{ display: 'flex', gap: 8, font: `400 11px/1.5 ${fonts.mono}` }}>
@@ -161,7 +177,7 @@ export function TopBar() {
                 <span style={{ color: nf.c }}>{nf.m}</span>
               </div>
             ))}
-            {!state.notifs.length && <div style={emptyStateStyle(colors)}>no alerts — reactor calm</div>}
+            {!state.notifs.length && <EmptyState message="No alerts right now." />}
           </div>
         )}
       </div>
@@ -268,27 +284,11 @@ export function opModeStyle(colors: ColorPalette, on: boolean, key: OpMode): App
       `background ${motion.duration.fast} ${motion.easing.standard}`,
       `box-shadow ${motion.duration.fast} ${motion.easing.standard}`,
       `border-color ${motion.duration.fast} ${motion.easing.standard}`].join(', '),
-    color: on ? (key === 'AUTO' ? '#1a1204' : '#04202b') : colors.textMuted,
-    background: on ? (key === 'AUTO' ? 'linear-gradient(180deg,#f5c66b,#d9a13f)' : 'linear-gradient(180deg,#7ef0ff,#17b8d8)') : colors.panelInset,
-    boxShadow: on ? (key === 'AUTO' ? '0 0 12px rgba(245,198,107,.45)' : '0 0 12px rgba(95,220,255,.4)') : undefined,
+    ...(on ? opModeOnSkin(colors, key) : { color: colors.textMuted, background: colors.panelInset }),
     border: on ? undefined : `1px solid ${colors.chipBorder}`,
     WebkitAppRegion: 'no-drag',
   };
 }
-// Visually hidden but still reachable by assistive tech / aria-live -- the
-// standard clip-based pattern (not display:none, which would also hide it
-// from the accessibility tree).
-const srOnlyStyle: CSSProperties = {
-  position: 'absolute',
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: 'hidden',
-  clip: 'rect(0, 0, 0, 0)',
-  whiteSpace: 'nowrap',
-  border: 0,
-};
 const iconButtonStyle: AppRegionStyle = {
   cursor: 'pointer',
   width: 36,
@@ -327,7 +327,7 @@ function apprBadgeStyle(colors: ColorPalette): CSSProperties {
     display: 'grid',
     placeItems: 'center',
     font: `700 11px/1 ${fonts.mono}`,
-    color: '#1a1204',
+    color: colors.inkOnAmber,
     padding: '0 4px',
   };
 }
@@ -433,9 +433,6 @@ function denyBtnStyle(colors: ColorPalette): CSSProperties {
     borderRadius: 6,
     background: 'rgba(255,90,90,.06)',
   };
-}
-function emptyStateStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 11px/1 ${fonts.mono}`, color: colors.textDim };
 }
 const operatorChipStyle: CSSProperties = {
   display: 'flex',

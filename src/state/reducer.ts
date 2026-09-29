@@ -129,10 +129,12 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, activeTab: action.tab };
 
     case 'TOGGLE_APPROVALS':
-      return { ...state, apprOpen: !state.apprOpen };
+      // The two top-bar dropdowns share one anchor row and overlap, so opening
+      // one always closes the other.
+      return { ...state, apprOpen: !state.apprOpen, notifOpen: false };
 
     case 'TOGGLE_NOTIFS':
-      return { ...state, notifOpen: !state.notifOpen, unread: 0 };
+      return { ...state, notifOpen: !state.notifOpen, apprOpen: false, unread: 0 };
 
     case 'SELECT_PROJECT':
       return { ...state, selectedProject: action.key };

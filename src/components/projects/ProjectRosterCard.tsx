@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import { Button } from '../shared/Button';
 import { usdPrecise } from '../ledger/format';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
@@ -21,7 +22,7 @@ export function ProjectRosterCard({
     return (
       <div style={cardStyle(colors)}>
         <h2 style={{ ...titleStyle(colors), margin: 0 }}>PROJECTS</h2>
-        <div style={emptyStyle(colors)}>No projects observed yet.</div>
+        <EmptyState message="No projects observed yet." />
       </div>
     );
   }
@@ -196,8 +197,3 @@ const unscopedNameStyle = (c: ColorPalette): CSSProperties => ({
   color: c.textMuted,
 });
 
-const emptyStyle = (c: ColorPalette): CSSProperties => ({
-  font: `400 11px/1.4 ${fonts.ui}`,
-  color: c.textDim,
-  padding: '12px 0',
-});

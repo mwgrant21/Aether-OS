@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { EmptyState } from '../shared/EmptyState';
 import type { CommsChannel } from './commsChannels';
 import type { DisplayMessage } from './transcriptFilter';
 import type { NarrationMessage } from '../../state/types';
@@ -44,11 +45,13 @@ export function MessageThread({ channel, messages, narrationMessages = [] }: Mes
   return (
     <div ref={scrollRef} style={threadStyle}>
       {!items.length && (
-        <div style={emptyStyle(colors)}>
-          {channel.transcriptSourceId
-            ? `No messages match — waiting on ${channel.name} or its filter.`
-            : `${channel.name} has no backing transcript to display.`}
-        </div>
+        <EmptyState
+          message={
+            channel.transcriptSourceId
+              ? `Messages will appear here when ${channel.name} speaks and they match the filter.`
+              : `${channel.name} has no transcript to show.`
+          }
+        />
       )}
       {items.map((item) =>
         item.kind === 'transcript' ? (
@@ -109,9 +112,6 @@ function MessageRow({ message, channel, colors }: { message: DisplayMessage; cha
 }
 
 const threadStyle: CSSProperties = { flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 2px', display: 'flex', flexDirection: 'column', gap: 12 };
-function emptyStyle(colors: ColorPalette): CSSProperties {
-  return { font: `400 12px/1.6 ${fonts.ui}`, color: colors.textMuted, padding: '8px 2px' };
-}
 function rowStyle(role: DisplayMessage['role']): CSSProperties {
   return { display: 'flex', flexDirection: 'column', alignItems: role === 'human' ? 'flex-end' : 'flex-start', gap: 5 };
 }

@@ -78,7 +78,22 @@ describe('MessageThread', () => {
 
   it('shows an empty-state message when there are no messages', () => {
     const { container } = renderThread([]);
-    expect(container.textContent).toMatch(/waiting on|backing transcript/i);
+    expect(container.textContent).toBe('Messages will appear here when AETHER speaks and they match the filter.');
+  });
+
+  it('renders the empty state through the shared EmptyState, with no action', () => {
+    const { container, queryByRole } = renderThread([]);
+    expect(container.querySelector('[data-empty-state]')).not.toBeNull();
+    expect(queryByRole('button')).toBeNull();
+  });
+
+  it('says so plainly when the channel has no backing transcript', () => {
+    const { container } = render(
+      <AetherStoreProvider>
+        <MessageThread channel={{ ...channel, transcriptSourceId: null }} messages={[]} />
+      </AetherStoreProvider>,
+    );
+    expect(container.textContent).toBe('AETHER has no transcript to show.');
   });
 
   // Post-hoc fix (final review, findings 1/2): built from the REAL
