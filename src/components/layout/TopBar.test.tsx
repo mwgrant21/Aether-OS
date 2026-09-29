@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { useEffect } from 'react';
 import { TopBar } from './TopBar';
-import { AetherStoreProvider } from '../../state/store';
+import { AetherStoreProvider, useAetherStore } from '../../state/store';
+import type { PermissionRequestUI } from '../../state/types';
 import { colors } from '../../styles/tokens';
 import { NOTIF_TRIGGER_ATTR } from './useDropdownFocus';
 
@@ -153,15 +155,101 @@ describe('TopBar notifications focus', () => {
     fireEvent.click(appr());
     expect(bell().getAttribute('aria-expanded')).toBe('false');
     expect(appr().getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: /APPROVAL QUEUE/ }));
+    // Approvals recorded its own button as the opener, so Escape returns there.
+    // (The explicit appr().focus() above stands in for mousedown's focus move,
+    // so this path cannot see a wrong bell focus; the keyboard test below can.)
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(document.activeElement).toBe(appr());
   });
 
-  it('does not pull focus off the approvals button when opening approvals closes notifications', () => {
+  it('does not pull focus back to the bell when opening approvals closes notifications', () => {
     renderTopBar();
     openFromBell();
     appr().focus(); // keyboard: Tab to approvals, then Enter
     fireEvent.click(appr());
     expect(bell().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: /APPROVAL QUEUE/ }));
+    // Escape returns to the approvals button, proving the notifications close
+    // did not pull focus to the bell before approvals took it.
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(document.activeElement).toBe(appr());
+  });
+});
+
+describe('TopBar approvals focus', () => {
+  const PENDING: PermissionRequestUI = { requestId: 'r1', toolName: 'Bash', toolInput: { command: 'ls' }, risk: 'HIGH', editableField: null };
+  function SeedPending() {
+    const { dispatch } = useAetherStore();
+    useEffect(() => {
+      dispatch({ type: 'SET_PENDING_PERMISSION_REQUEST', request: PENDING });
+    }, [dispatch]);
+    return null;
+  }
+  function renderWithPending() {
+    return render(
+      <AetherStoreProvider>
+        <SeedPending />
+        <TopBar />
+      </AetherStoreProvider>,
+    );
+  }
+  const appr = () => screen.getByRole('button', { name: /pending approval/ });
+  const bell = () => screen.getByRole('button', { name: /^Notifications/ });
+  const panel = () => document.getElementById(appr().getAttribute('aria-controls')!)!;
+  function openFromButton() {
+    appr().focus();
+    fireEvent.click(appr());
+  }
+
+  it('marks the approvals button as its trigger', () => {
+    renderWithPending();
+    expect(appr().closest('[data-appr-trigger]')).not.toBeNull();
+  });
+
+  it('focuses the panel, never APPROVE, so a stray Enter cannot approve a request', () => {
+    renderWithPending();
+    openFromButton();
+    const region = screen.getByRole('region', { name: /APPROVAL QUEUE/ });
+    expect(region).toBe(panel());
+    expect(within(region).getByRole('button', { name: 'APPROVE' })).toBeTruthy();
+    expect(document.activeElement).toBe(region);
+    expect(within(region).getByRole('heading', { level: 2, name: /APPROVAL QUEUE/ })).toBeTruthy();
+  });
+
+  it('closes on Escape and returns focus to the approvals button', () => {
+    renderWithPending();
+    openFromButton();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(appr().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(appr());
+  });
+
+  it('closes on a pointer-down outside the panel and its button, not on one inside the panel', () => {
+    renderWithPending();
+    openFromButton();
+    fireEvent.pointerDown(panel());
+    expect(appr().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.pointerDown(document.body);
+    expect(appr().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('closes, not close-then-reopens, when its button is pressed while open', () => {
+    renderWithPending();
+    openFromButton();
+    fireEvent.pointerDown(appr());
+    fireEvent.click(appr());
+    expect(appr().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('hands over to Notifications: the bell closes Approvals and focus moves into the notifications panel', () => {
+    renderWithPending();
+    openFromButton();
+    bell().focus();
+    fireEvent.pointerDown(bell());
+    fireEvent.click(bell());
+    expect(appr().getAttribute('aria-expanded')).toBe('false');
+    expect(bell().getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: 'NOTIFICATIONS' }));
   });
 });
