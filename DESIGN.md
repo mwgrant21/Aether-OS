@@ -211,7 +211,7 @@ A single cyan energy hue in three strengths, over a deep teal-black, with amber 
 
 The app is a **fixed 1536×1024 design canvas** that scales uniformly to fit the window (`useViewportScale.ts` / `frameScale.ts`); it does not reflow. Every layout is designed at that one size.
 
-The frame is a top bar (wordmark, mode pills, approvals, operator), a left sidebar (navigation, recent agents, a reactor miniature), a main area, and a thin status footer. The dashboard's main area is a panel grid: reactor status leads at the top left, with agents, projects, alerts and systems around it and a row of metric cards along the bottom.
+The frame is a top bar (wordmark, mode pills, approvals, operator), a left sidebar (navigation, recent agents, a reactor miniature), a main area, and a thin status footer. The dashboard's main area is two columns. REACTOR STATUS fills the left half. The right half is READINESS on top, then a panel for each digest that has data (ACTIVE AGENTS, PROJECTS, RECENT ALERTS), then the STANDBY STRIP, which lists the digests that don't. At a cold STANDBY the right half is just READINESS and the strip, so an idle console draws no empty boxes, and a live console with no alerts shows no empty alerts panel. A row of metric cards runs along the bottom.
 
 Spacing uses a 4px-based scale (xs 4, sm 8, md 12, lg 16, xl 24). Panels sit 16px apart; panel padding is around 20px.
 
@@ -254,7 +254,14 @@ Tactile and lit: buttons feel like switches that light up under your finger.
 A segmented control (PLAN / EDITS / AUTO) inside an inset tray with a chip border. The active segment takes the primary gradient and active glow, except AUTO, which takes the needs-you amber fill and glow because it auto-approves; inactive segments are Text Muted on nothing.
 
 ### Empty States
-The shared `EmptyState` (`src/components/shared/EmptyState.tsx`) is the one voice for a view or panel with nothing to show: a single plain sentence in Rajdhani 12px Text Muted, sentence case, saying what will appear and where it comes from, and at most one secondary action (the Secondary button treatment). It is flat at rest; only the action lights, on hover or keyboard focus. When it holds an action, its root reserves 6px on every side so the 5px focus ring is never clipped by an `overflow: auto` list; a message-only empty state takes no padding, so its sentence aligns with the panel heading. The reactor card holds the one primary action, OPEN TERMINAL, at STANDBY, so an empty panel elsewhere on the Dashboard never competes with it.
+The shared `EmptyState` (`src/components/shared/EmptyState.tsx`) is the one voice for a view or panel with nothing to show: a single plain sentence in Rajdhani 12px Text Muted, sentence case, saying what will appear and where it comes from, and at most one secondary action (the Secondary button treatment). It is flat at rest; only the action lights, on hover or keyboard focus. When it holds an action, its root reserves 6px on every side so the 5px focus ring is never clipped by an `overflow: auto` list; a message-only empty state takes no padding, so its sentence aligns with the panel heading. On the Dashboard a digest with nothing to show is not drawn as an empty panel at all: it becomes an item in the STANDBY STRIP. OPEN TERMINAL, in the reactor card and in READINESS, is the Dashboard's only primary action.
+
+### Readiness and Standby Strip
+The idle dashboard's right column (`src/components/dashboard/`).
+- **READINESS** (`ReadinessCard.tsx`): an `h2` and a list of four rows, each a status dot and one plain sentence: Desktop app, Terminal, Statusline, Collector (copy in `readinessMath.ts`). A met row's dot is filled Nominal Green; only the live signals (Terminal, Statusline) glow, and only while a session is live, so a met row at STANDBY is flat green. Desktop app and Collector are static facts and never glow. An unmet row is a hollow Text Muted ring. **No amber:** none of these asks the operator for anything. OPEN TERMINAL sits under the list.
+- **OPEN TERMINAL** (`OpenTerminalButton.tsx`): the primary button. In browser mode it stays in place, `aria-disabled` (still focusable) in the disabled treatment, with the Desktop-app reason directly beneath it in Rajdhani 12px Text Muted, so it reads as unavailable, not broken.
+- **STANDBY STRIP** (`StandbyStrip.tsx`): one thin panel with a visually hidden `h2`. It holds one link-style button per digest without data, then `Memory N engrams`, separated by `·`. Labels are Rajdhani Text Secondary; counts are Space Mono Soft Signal. Each item opens its view (the alerts item opens the notifications dropdown). It is hidden once every digest has a panel.
+- **Digest arrival** (`DigestSlot.tsx`): a digest that gains data rises in on opacity and an 8px `translateY` over `motion.duration.slow` with `motion.easing.decelerate`; one that loses data fades the same way, then unmounts. Height is never animated (the column reflows at once), and under reduced motion it appears and disappears without animation.
 
 ### Chips
 - **Quiet chip:** Inset background with a chip border, the established pair for inactive tabs, small overlays and persistent badges.
@@ -289,12 +296,13 @@ The heart of the product and its most distinctive element. A 268px (native) inst
 
 Under reduced motion the reactor keeps breathing at a calm, steady rate rather than freezing, because a frozen reactor reads as broken.
 
-**Placement.** Storm Core is the dashboard's centrepiece: it fills the REACTOR STATUS panel, scaled by its wrapper only. `storm` is the default renderer for new profiles (the Settings renderer choice still wins once saved). The sidebar miniature shows the reactor on every other view and is replaced by an empty, same-size placeholder on the Dashboard, so only one reactor animates at a time.
+**Placement.** Storm Core is the dashboard's centrepiece: it fills the REACTOR STATUS panel, which takes the left half of the dashboard's main area; the reactor itself stays 360px, scaled by its wrapper only. `storm` is the default renderer for new profiles (the Settings renderer choice still wins once saved). The sidebar miniature shows the reactor on every other view and is replaced by an empty, same-size placeholder on the Dashboard, so only one reactor animates at a time.
 
 **Standby: dark and cold.** When no Claude session is live (`isSessionLive` in `dashboardMath.ts`: a positive burn rate, an open dispatch while the terminal is alive, a fresh statusline, or a busy fleet session), the console goes to STANDBY:
 - The reactor dims through its own filter (brightness .45, saturate .35), fading over `motion.duration.slow`, and powers up visibly when a session starts.
-- Status text reads STANDBY in Text Muted, never cyan, in both the panel and the footer.
-- Readouts with no real source show `—`, never a simulated number or a zero.
+- Status text reads STANDBY in Text Muted, never cyan, in both the panel and the footer, and both status dots are flat until a session is live or an alarm is up (`statusDotGlows`).
+- The line under the reactor reads exactly `— tok/min · standby`; the Terminal view's prompt line reads `standby` instead of `session active`.
+- Readouts with no real source show `—`, never a simulated number or a zero. The KPI tiles are MONTH TOKENS, DEPLETION ETA, TODAY and BUDGET LEFT; TODAY is today's cost at API rates (`API rate, not paid`), exact (no `~`), and `—` when no priced activity was observed.
 
 Only the storm renderer dims; the classic renderer keeps its per-frame filter.
 
@@ -322,7 +330,7 @@ Only the storm renderer dims; the classic renderer keeps its per-frame filter.
 
 ## Known Gaps
 
-States and rules this document describes but the code does not yet fully meet, or that nobody has designed. Updated 2026-09-28 after polish passes 1 and 2. Closed by those passes: keyboard focus, landmarks and headings, the 11px type floor, Text Dim contrast (now 5.1:1 on Abyss, 4.6:1 on panels), the reactor's placement, and honest idle readouts. Screen-reader state also closed: `aria-pressed` on the operating-mode pills and the usage-range chips, `aria-current` on the active nav item, the reactor exposed as `role="img"` with a state label, and a screen-reader-only `h1` per view.
+States and rules this document describes but the code does not yet fully meet, or that nobody has designed. Updated 2026-09-29 after the idle composition. Closed by those passes: keyboard focus, landmarks and headings, the 11px type floor, Text Dim contrast (now 5.1:1 on Abyss, 4.6:1 on panels), the reactor's placement, and honest idle readouts. Screen-reader state also closed: `aria-pressed` on the operating-mode pills and the usage-range chips, `aria-current` on the active nav item, the reactor exposed as `role="img"` with a state label, and a screen-reader-only `h1` per view. The idle composition closed the idle dashboard's empty digest panels (now READINESS and the STANDBY STRIP), the contradictory standby signals (rate line, footer dot, Terminal header), and the stray `#8ab6ff`.
 
 - **Token adoption is partial.** About 364 hardcoded colour literals across 47 files duplicate palette values (32 of them in shell chrome per the 2026-09-28 detector run); `radii` is used at 0 call sites and `space` at 3. Radii of 8px and 6px are widely used (32 and 22 sites) but are not tokens: either add them to `radii` or move those sites onto the existing steps.
 - **Motion is only partly curved.** `motion.easing.decelerate` now exists and drives bars and arcs, but `standard` and `emphasis` are still the browser defaults (`ease`, `ease-in-out`); the tactile hover, press and glow transitions need designed curves.
@@ -332,4 +340,5 @@ States and rules this document describes but the code does not yet fully meet, o
 - **Grid keyboard access.** The orchestration grid's SVG agent nodes (`<g onClick>`) can't be reached by keyboard.
 - **Known clipping.** The sidebar's RECENT AGENTS label is half-clipped by the reactor miniature, and the Settings left column is clipped under the bottom metrics row. Both predate the polish passes.
 - **Percentages are not verified clamped in live mode.** A 2026-08-10 screenshot showed the context ring at "663% USED". Browser mode now shows "—", but the live Electron path hasn't been checked since.
+- **No command palette.** The retired SYSTEMS card advertised "CTRL+K jumps anywhere", but no palette or shortcut exists in the code (no key handler, no Electron accelerator). The hint was removed rather than moved to the top bar. A palette needs its own spec before a keycap chip can point at it.
 - **Existing profiles keep their saved renderer.** `storm` is only the default for new profiles; a profile that saved `classic` keeps it until changed in Settings.
