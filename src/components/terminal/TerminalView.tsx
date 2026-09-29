@@ -1,5 +1,7 @@
 import type { CSSProperties } from 'react';
-import { fonts, type ColorPalette } from '../../styles/tokens';
+import { fonts, glows, type ColorPalette } from '../../styles/tokens';
+import { useAetherStore } from '../../state/store';
+import { isSessionLive } from '../dashboard/dashboardMath';
 import { useColors } from '../shared/useColors';
 import { ActiveAgentsCard } from './ActiveAgentsCard';
 import { LiveOutputCard } from './LiveOutputCard';
@@ -12,14 +14,19 @@ import { useCrossCheckComposer } from './CrossCheckComposer';
 export function TerminalView() {
   const colors = useColors();
   const composer = useCrossCheckComposer();
+  const { state } = useAetherStore();
+  // Same signal as the dashboard: an open pty is a shell, not a Claude session.
+  const live = isSessionLive(state, Date.now());
   return (
     <div style={rootStyle}>
       <div style={terminalCardStyle(colors)}>
         <div style={scanSweepStyle} />
         <div style={headerStyle(colors)}>
-          <span style={liveDotStyle(colors)} />
+          <span data-testid="terminal-session-dot" style={liveDotStyle(colors, live)} />
           <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>operator@aether-core</span>
-          <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.textDim }}>:~$ session active</span>
+          <span data-testid="terminal-session-status" style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.textDim }}>
+            :~$ {live ? 'session active' : 'standby'}
+          </span>
           <Button onClick={composer.open} style={{ marginLeft: 'auto', padding: '5px 8px', borderRadius: 6,
             border: `1px solid ${colors.panelBorder}`, color: colors.accentCyanSoft, font: `400 11px/1 ${fonts.mono}` }}>
             Cross-check with Codex
@@ -76,8 +83,9 @@ function headerStyle(colors: ColorPalette): CSSProperties {
     borderBottom: `1px solid ${colors.chromeBorder}`,
   };
 }
-function liveDotStyle(colors: ColorPalette): CSSProperties {
-  return { width: 10, height: 10, borderRadius: '50%', background: colors.accentCyanDeep, boxShadow: '0 0 8px rgba(95,240,255,.8)' };
+// Glow-Is-State: lit only while a session is live; flat and muted at standby.
+function liveDotStyle(colors: ColorPalette, live: boolean): CSSProperties {
+  return { width: 10, height: 10, borderRadius: '50%', background: live ? colors.accentCyanDeep : colors.textMuted, boxShadow: live ? glows.hot : undefined };
 }
 const termHostStyle: CSSProperties = { flex: 1, minHeight: 0, position: 'relative' };
 const railStyle: CSSProperties = { width: 332, flex: 'none', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 };
