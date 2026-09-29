@@ -1,20 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDiagLog } from './diagLog';
 
-const renameFail = vi.hoisted(() => ({ on: false }));
-vi.mock('node:fs', async (orig) => {
-  const actual = await orig<typeof import('node:fs')>();
-  return {
-    ...actual,
-    renameSync: (...a: Parameters<typeof actual.renameSync>) => {
-      if (renameFail.on) throw new Error('EBUSY');
-      return actual.renameSync(...a);
-    },
-  };
-});
 
 let root: string;
 let errSpy: ReturnType<typeof vi.spyOn>;
@@ -24,7 +13,6 @@ beforeEach(() => {
   errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => {
-  renameFail.on = false;
   errSpy.mockRestore();
   rmSync(root, { recursive: true, force: true });
 });
@@ -74,7 +62,8 @@ describe('createDiagLog', () => {
   it('still appends when the rotation rename fails, and reports it once', () => {
     const log = createDiagLog({ dir: root, maxBytes: 5 });
     log.write('first-line');
-    renameFail.on = true;
+    // A directory squatting on diag.log.1 makes the rotation rename fail.
+    mkdirSync(join(root, 'diag.log.1'));
     expect(() => {
       log.write('second-line');
       log.write('third-line');
