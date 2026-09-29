@@ -1,7 +1,9 @@
 import { afterEach, describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { cleanup, render, screen, fireEvent } from '@testing-library/react';
-import { AetherStoreProvider } from '../../state/store';
+import { useEffect } from 'react';
+import { AetherStoreProvider, useAetherStore } from '../../state/store';
+import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import { BAR_MAX_HEIGHT, BAR_TRACK_CLIP, BottomMetricsRow, MIN_BAR_WIDTH, usageBarGap } from './BottomMetricsRow';
 import { NO_DATA } from '../dashboard/dashboardMath';
 
@@ -106,5 +108,44 @@ describe('BottomMetricsRow', () => {
   it('hides the decorative context ring SVG from assistive tech', () => {
     const { container } = renderRow();
     expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('reads — for Session start and Uptime at STANDBY, and real values once a session is live', () => {
+    const value = (k: string) => screen.getByText(k).nextElementSibling!.textContent;
+    const { unmount } = renderRow();
+    expect(value('Session start')).toBe(NO_DATA);
+    expect(value('Uptime')).toBe(NO_DATA);
+    unmount();
+
+    // A fresh statusline capture is one of isSessionLive's signals.
+    const fresh: StatuslineSnapshot = {
+      capturedAtMs: Date.now(),
+      sessionId: null,
+      modelId: null,
+      modelDisplayName: null,
+      fiveHour: null,
+      sevenDay: null,
+      contextUsedPercentage: null,
+      contextWindowSize: null,
+      contextUsage: null,
+      totalCostUsd: null,
+      currentDir: null,
+      projectDir: null,
+    };
+    function GoLive() {
+      const { dispatch } = useAetherStore();
+      useEffect(() => {
+        dispatch({ type: 'SET_STATUSLINE', snapshot: fresh });
+      }, [dispatch]);
+      return null;
+    }
+    render(
+      <AetherStoreProvider>
+        <GoLive />
+        <BottomMetricsRow />
+      </AetherStoreProvider>,
+    );
+    expect(value('Session start')).not.toBe(NO_DATA);
+    expect(value('Uptime')).not.toBe(NO_DATA);
   });
 });

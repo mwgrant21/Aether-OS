@@ -215,15 +215,17 @@ export interface SessionInfoRow {
  * SESSION INFO rows (BottomMetricsRow). There is no "Tokens used" row: state
  * holds no session-scoped token total (realUsage.usedThisMonth is the month,
  * already shown as MONTH TOKENS), and a month figure under "Session info"
- * misreports it.
+ * misreports it. At STANDBY (`live` false, i.e. !isSessionLive) there is no
+ * session to date, so Session start and Uptime read NO_DATA and do not tick.
  */
 export function computeSessionInfoRows(
   state: Pick<AetherState, 'sessionStartedAt' | 'commandsRun' | 'realAgents'>,
   now: Date,
+  live: boolean,
 ): SessionInfoRow[] {
   return [
-    { k: 'Session start', v: new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) },
-    { k: 'Uptime', v: formatUptime(state.sessionStartedAt, now) },
+    { k: 'Session start', v: live ? new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : NO_DATA },
+    { k: 'Uptime', v: live ? formatUptime(state.sessionStartedAt, now) : NO_DATA },
     { k: 'Commands run', v: fmt(state.commandsRun) },
     { k: 'Agents active', v: String(state.realAgents.length) },
   ];
