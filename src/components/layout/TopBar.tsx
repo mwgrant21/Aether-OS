@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { fonts, motion, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
@@ -13,6 +13,7 @@ import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { CommunicationIndicator } from './CommunicationIndicator';
 import { srOnlyStyle } from '../shared/srOnly';
 import { OP_MODES, opModeOnSkin } from '../shared/opModes';
+import { NOTIF_TRIGGER_ATTR, useDropdownFocus } from './useDropdownFocus';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
@@ -40,6 +41,14 @@ export function TopBar() {
   const scopeLabel = resolveScopePillLabel(state);
   const apprPanelId = useId();
   const notifPanelId = useId();
+  // Notifications: focus in on open, back to the opener on close, Escape and
+  // outside pointer-down close it. The STANDBY STRIP's Alerts item is the
+  // second trigger (StandbyStrip.tsx); both carry NOTIF_TRIGGER_ATTR.
+  const notifWrapRef = useRef<HTMLDivElement>(null);
+  const notifPanelRef = useRef<HTMLDivElement>(null);
+  const closeNotifs = useCallback(() => dispatch({ type: 'TOGGLE_NOTIFS' }), [dispatch]);
+  const notifBell = useCallback(() => notifWrapRef.current?.querySelector<HTMLElement>('button') ?? null, []);
+  useDropdownFocus({ open: state.notifOpen, panelRef: notifPanelRef, triggerAttr: NOTIF_TRIGGER_ATTR, fallbackTrigger: notifBell, close: closeNotifs });
 
   return (
     <header style={rootStyle(colors)}>
@@ -152,7 +161,7 @@ export function TopBar() {
         )}
       </div>
 
-      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
+      <div ref={notifWrapRef} data-notif-trigger="" style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Notifications"
           aria-label={`Notifications, ${state.unread} unread`}
@@ -170,7 +179,7 @@ export function TopBar() {
           Notifications, {state.unread} unread
         </span>
         {state.notifOpen && (
-          <div id={notifPanelId} style={notifPanelStyle(colors)}>
+          <div id={notifPanelId} ref={notifPanelRef} tabIndex={-1} style={notifPanelStyle(colors)}>
             <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
             {state.notifs.map((nf, idx) => (
               <div key={idx} style={{ display: 'flex', gap: 8, font: `400 11px/1.5 ${fonts.mono}` }}>
