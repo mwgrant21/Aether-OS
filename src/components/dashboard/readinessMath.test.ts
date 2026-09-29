@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  COLLECTOR_STALE_AFTER_MS,
   DESKTOP_APP_REASON,
   HINT_COMMANDS,
   computeDigestPresence,
   computeReadiness,
   computeStripItems,
   formatReadinessTime,
-  isCollectorFresh,
   newestCollectorEventMs,
   splitHintCommands,
   type ReadinessKey,
@@ -71,7 +69,7 @@ describe('formatReadinessTime', () => {
   });
 });
 
-describe('collector freshness', () => {
+describe('newestCollectorEventMs', () => {
   it('finds the newest event across tool calls, dispatches and anomalies', () => {
     const diag: Diag = {
       toolCalls: [{ toolUseId: 'a', toolName: 'Read', filePathRel: null, startedAtMs: 1, closedAtMs: 50 }],
@@ -85,13 +83,6 @@ describe('collector freshness', () => {
   it('has no newest event with no snapshot or an empty one', () => {
     expect(newestCollectorEventMs(null)).toBeNull();
     expect(newestCollectorEventMs(EMPTY_DIAG)).toBeNull();
-  });
-
-  it('is fresh at exactly COLLECTOR_STALE_AFTER_MS and stale 1ms later', () => {
-    expect(COLLECTOR_STALE_AFTER_MS).toBe(10 * 60 * 1000);
-    expect(isCollectorFresh(NOW - COLLECTOR_STALE_AFTER_MS, NOW)).toBe(true);
-    expect(isCollectorFresh(NOW - COLLECTOR_STALE_AFTER_MS - 1, NOW)).toBe(false);
-    expect(isCollectorFresh(null, NOW)).toBe(false);
   });
 });
 
@@ -157,26 +148,22 @@ describe('computeReadiness', () => {
     });
   });
 
-  it('Collector: last event when fresh, no events since when stale, no events in the last 24h when empty or absent', () => {
+  it('Collector: met (diagnostics non-null) is running with the newest event or "no events"; unmet (null) is not running', () => {
     const hint = 'Build and start it in collector/: npm run build, then npm start.';
+    // met, has an event
     expect(row(computeReadiness({ ...COLD, diagnostics: anomalyAt(at(2026, 8, 29, 14, 25)) }, true, NOW), 'collector')).toMatchObject({
       met: true,
-      text: 'Collector: last event 14:25.',
+      text: 'Collector: running, last event 14:25.',
       hint: null,
     });
-    expect(row(computeReadiness({ ...COLD, diagnostics: anomalyAt(at(2026, 8, 29, 13, 0)) }, true, NOW), 'collector')).toMatchObject({
-      met: false,
-      text: 'Collector: no events since 13:00.',
-      hint,
+    // met, no events yet (EMPTY_DIAG is non-null: the heartbeat-gated diagnostics snapshot exists)
+    expect(row(computeReadiness({ ...COLD, diagnostics: EMPTY_DIAG }, true, NOW), 'collector')).toMatchObject({
+      met: true,
+      text: 'Collector: running, no events in the last 24h.',
+      hint: null,
     });
-    expect(row(computeReadiness({ ...COLD, diagnostics: EMPTY_DIAG }, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events in the last 24h.', hint });
-    expect(row(computeReadiness(COLD, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events in the last 24h.', hint });
-  });
-
-  it('Collector row is met at exactly COLLECTOR_STALE_AFTER_MS and unmet 1ms later', () => {
-    const met = (age: number) => row(computeReadiness({ ...COLD, diagnostics: anomalyAt(NOW - age) }, true, NOW), 'collector').met;
-    expect(met(COLLECTOR_STALE_AFTER_MS)).toBe(true);
-    expect(met(COLLECTOR_STALE_AFTER_MS + 1)).toBe(false);
+    // unmet: diagnostics null means readDiagnostics' heartbeat gate rejected it
+    expect(row(computeReadiness(COLD, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: not running.', hint });
   });
 
   it('lets only met live signals glow: Terminal and Statusline, never Desktop app or Collector', () => {
@@ -203,13 +190,14 @@ describe('computeReadiness', () => {
 });
 
 describe('READINESS honesty rules', () => {
-  const cases: { desktop: boolean; rows: ReadinessRow[] }[] = [];
+  const cases: { desktop: boolean; diagnostics: AetherState['diagnostics']; rows: ReadinessRow[] }[] = [];
   for (const desktop of [false, true])
     for (const terminalAlive of [false, true])
       for (const statusline of [null, snap(NOW), snap(NOW - STATUSLINE_STALE_AFTER_MS - 1)])
-        for (const diagnostics of [null, EMPTY_DIAG, anomalyAt(NOW), anomalyAt(NOW - COLLECTOR_STALE_AFTER_MS - 1)])
+        for (const diagnostics of [null, EMPTY_DIAG, anomalyAt(NOW), anomalyAt(NOW - 24 * 60 * 60 * 1000)])
           cases.push({
             desktop,
+            diagnostics,
             rows: computeReadiness({ terminalAlive, terminalOpenedAtMs: terminalAlive ? NOW : null, statusline, diagnostics }, desktop, NOW),
           });
 
@@ -218,8 +206,8 @@ describe('READINESS honesty rules', () => {
     expect(cases.some(({ rows }) => rows.some((r) => r.hint === 'Use OPEN TERMINAL below.'))).toBe(true);
   });
 
-  it('rule 2: the collector copy never says "running"', () => {
-    for (const { rows } of cases) expect(row(rows, 'collector').text.toLowerCase()).not.toContain('running');
+  it('rule 2: the collector row is met exactly when diagnostics is non-null', () => {
+    for (const { diagnostics, rows } of cases) expect(row(rows, 'collector').met).toBe(diagnostics !== null);
   });
 
   it('rule 4: a met row never has a hint, an unmet row always does', () => {

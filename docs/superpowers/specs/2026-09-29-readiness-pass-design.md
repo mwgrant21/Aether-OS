@@ -140,3 +140,25 @@ carry-overs in the handoff. Starting the collector from the app stays unbuilt.
 - A live check in `npm run electron:dev` at STANDBY and with a terminal open:
   the READINESS card height matches the reactor card, the button sits level with
   its base, and Alerts focus, Escape and outside-click behave as above.
+
+## Amendment (2026-09-29, final review)
+
+The honesty finding behind the Collector row's original copy ("the app never
+starts or watches the collector process, so it cannot claim running") was
+wrong. `electron/collectorStore.ts:210-211`'s `readDiagnostics` already gates
+on the collector's own `transcript_last_scan_ms` heartbeat and returns `null`
+once it goes stale (`DIAGNOSTICS_HEARTBEAT_STALE_MS`), so `state.diagnostics
+!== null` already proves a live, scanning collector -- introduced at commit
+c2d8b6c. The 10-minute event-freshness window this spec's Collector row used
+in its place was a second, redundant and looser liveness check layered on top
+of a heartbeat gate that already exists.
+
+The operator chose heartbeat-based copy for the Collector row. The three
+sentences:
+
+- Met, with an event: `Collector: running, last event {t}.`
+- Met, no events yet: `Collector: running, no events in the last 24h.`
+- Unmet (diagnostics null): `Collector: not running.`
+
+The 10-minute `COLLECTOR_STALE_AFTER_MS` window and the "collector copy never
+says running" rule are withdrawn.
