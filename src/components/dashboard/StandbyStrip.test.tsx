@@ -43,13 +43,19 @@ describe('StandbyStrip', () => {
   });
 
   it('drops the Agents item while an agent is running', () => {
-    renderStrip([{ type: 'SET_REAL_AGENTS', agents: [AGENT] }]);
+    renderStrip([{ type: 'SET_TERMINAL_ALIVE', alive: true }, { type: 'SET_REAL_AGENTS', agents: [AGENT] }]);
     expect(screen.queryByRole('button', { name: 'Agents 0' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Projects 0' })).toBeTruthy();
   });
 
+  it('keeps the Agents item when agents are retained but the terminal is dead', () => {
+    renderStrip([{ type: 'SET_REAL_AGENTS', agents: [AGENT] }]);
+    expect(screen.getByRole('button', { name: 'Agents 0' })).toBeTruthy();
+  });
+
   it('is hidden when agents, projects and alerts all have data', () => {
     renderStrip([
+      { type: 'SET_TERMINAL_ALIVE', alive: true },
       { type: 'SET_REAL_AGENTS', agents: [AGENT] },
       { type: 'SET_PROJECTS_SNAPSHOT', snapshot: PROJECTS },
       { type: 'SET_OP_MODE', mode: 'EDITS' }, // pushes a notif

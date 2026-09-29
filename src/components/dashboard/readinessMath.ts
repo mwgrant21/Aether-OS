@@ -73,10 +73,14 @@ export interface DigestPresence {
   readonly alerts: boolean;
 }
 
-/** A digest earns a panel only when it has something to show. */
-export function computeDigestPresence(state: Pick<AetherState, 'realAgents' | 'projectsSnapshot' | 'notifs'>): DigestPresence {
+/**
+ * A digest earns a panel only when it has something to show. Agents also need
+ * a live terminal (the same gate as isSessionLive): the tracker retains its
+ * open dispatches after the PTY dies.
+ */
+export function computeDigestPresence(state: Pick<AetherState, 'realAgents' | 'terminalAlive' | 'projectsSnapshot' | 'notifs'>): DigestPresence {
   return {
-    agents: state.realAgents.length > 0,
+    agents: state.realAgents.length > 0 && state.terminalAlive,
     projects: (state.projectsSnapshot?.roots.length ?? 0) > 0,
     alerts: state.notifs.length > 0,
   };

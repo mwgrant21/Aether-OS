@@ -89,10 +89,12 @@ describe('computeDigestPresence', () => {
     expect(
       computeDigestPresence({
         realAgents: [agent],
+        terminalAlive: true,
         projectsSnapshot: { roots: [root], unscoped: null, computedAtMs: NOW },
         notifs: [{ t: '10:00', m: 'x', c: '#3be0a0' }],
       }),
     ).toEqual({ agents: true, projects: true, alerts: true });
+    expect(computeDigestPresence({ ...initialState, realAgents: [agent], terminalAlive: false }).agents).toBe(false);
     expect(computeDigestPresence({ ...initialState, projectsSnapshot: { roots: [], unscoped: null, computedAtMs: NOW } }).projects).toBe(false);
   });
 });

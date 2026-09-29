@@ -55,6 +55,16 @@ describe('DigestSlot', () => {
     expect(screen.queryByText('panel')).toBeNull();
   });
 
+  it('releases its flex share while leaving, and holds flex 1 1 0 while steady', () => {
+    stubReducedMotion(false);
+    const { rerender } = render(slot(true));
+    expect(screen.getByTestId('digest-slot').style.flex).toBe('1 1 0px');
+    rerender(slot(false));
+    const el = screen.getByTestId('digest-slot');
+    expect(el.style.position).toBe('absolute');
+    expect(el.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('under reduced motion appears and disappears without animating', () => {
     stubReducedMotion(true);
     const { rerender } = render(slot(false));

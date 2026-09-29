@@ -10,8 +10,8 @@ export const DIGEST_EXIT_MS = parseFloat(motion.duration.slow) * 1000;
 /**
  * Wraps one dashboard digest. A digest is drawn only while it has data;
  * gaining data brings it in (opacity + a short rise), losing data fades it
- * out before it unmounts. Transform/opacity only (the column reflows at
- * once), and under reduced motion it simply appears and disappears.
+ * out before it unmounts. Transform/opacity only (a leaving slot leaves
+ * the flex flow, so the column reflows at once), and under reduced motion it simply appears and disappears.
  */
 export function DigestSlot({ present, children }: { present: boolean; children: ReactNode }) {
   const reduced = useReducedMotion();
@@ -59,8 +59,13 @@ function slotStyle(phase: Phase): CSSProperties {
   const base: CSSProperties = { flex: '1 1 0', minHeight: 0, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)' };
   if (phase === 'entering') return { ...base, animation: `digestEnter ${motion.duration.slow} ${EASE} both` };
   if (phase === 'leaving') {
+    // Out of flex flow (absolute in the positioned column) so siblings reflow
+    // at once while the ghost fades where it stood.
     return {
       ...base,
+      position: 'absolute',
+      left: 0,
+      right: 0,
       opacity: 0,
       transform: 'translateY(8px)',
       pointerEvents: 'none',

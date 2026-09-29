@@ -46,7 +46,7 @@ describe('DashboardView layout', () => {
   });
 
   it('turns a digest with data into a panel in the right column and drops it from the strip', () => {
-    renderDashboard([{ type: 'SET_REAL_AGENTS', agents: [AGENT] }]);
+    renderDashboard([{ type: 'SET_TERMINAL_ALIVE', alive: true }, { type: 'SET_REAL_AGENTS', agents: [AGENT] }]);
     const right = screen.getByTestId('dashboard-right-column');
     expect(within(right).getByRole('heading', { name: 'ACTIVE AGENTS' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Agents 0' })).toBeNull();

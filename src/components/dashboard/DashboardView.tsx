@@ -45,4 +45,4 @@ const gridStyle: CSSProperties = {
   gridTemplateRows: 'minmax(0, 1fr)',
   gap: 14,
 };
-const rightColumnStyle: CSSProperties = { minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 };
+const rightColumnStyle: CSSProperties = { position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 };
