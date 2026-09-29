@@ -99,7 +99,9 @@ export function computeReadiness(
   const time = (ms: number) => formatReadinessTime(ms, nowMs);
   const statuslineFresh = isStatuslineFresh(state.statusline, nowMs);
   const newest = newestCollectorEventMs(state.diagnostics);
-  const collectorRunning = state.diagnostics !== null;
+  // Only the desktop app reads the collector's heartbeat-gated snapshot; in the
+  // browser `diagnostics` is always null, which says nothing about the collector.
+  const collectorRunning = desktop && state.diagnostics !== null;
   return [
     {
       key: 'desktop',
@@ -136,12 +138,18 @@ export function computeReadiness(
       key: 'collector',
       met: collectorRunning,
       glows: false,
-      text: !collectorRunning
-        ? 'Collector: not running.'
-        : newest === null
-          ? 'Collector: running, no events in the last 24h.'
-          : `Collector: running, last event ${time(newest)}.`,
-      hint: collectorRunning ? null : 'Build and start it in collector/: npm run build, then npm start.',
+      text: !desktop
+        ? 'Collector: not visible from the browser.'
+        : !collectorRunning
+          ? 'Collector: not running.'
+          : newest === null
+            ? 'Collector: running, no events in the last 24h.'
+            : `Collector: running, last event ${time(newest)}.`,
+      hint: collectorRunning
+        ? null
+        : desktop
+          ? 'Build and start it in collector/: npm run build, then npm start.'
+          : 'Needs the desktop app.',
     },
   ];
 }

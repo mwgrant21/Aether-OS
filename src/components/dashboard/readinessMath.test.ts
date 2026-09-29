@@ -206,8 +206,17 @@ describe('READINESS honesty rules', () => {
     expect(cases.some(({ rows }) => rows.some((r) => r.hint === 'Use OPEN TERMINAL below.'))).toBe(true);
   });
 
-  it('rule 2: the collector row is met exactly when diagnostics is non-null', () => {
-    for (const { diagnostics, rows } of cases) expect(row(rows, 'collector').met).toBe(diagnostics !== null);
+  it('rule 2: the collector row is met exactly when the desktop app reads non-null diagnostics', () => {
+    for (const { desktop, diagnostics, rows } of cases) expect(row(rows, 'collector').met).toBe(desktop && diagnostics !== null);
+  });
+
+  it('rule 6: in the browser the collector row claims nothing about the collector, and points at the desktop app', () => {
+    for (const { desktop, rows } of cases) {
+      if (desktop) continue;
+      const r = row(rows, 'collector');
+      expect(r.text).toBe('Collector: not visible from the browser.');
+      expect(r.hint).toBe('Needs the desktop app.');
+    }
   });
 
   it('rule 4: a met row never has a hint, an unmet row always does', () => {

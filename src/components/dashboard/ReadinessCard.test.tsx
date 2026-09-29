@@ -89,7 +89,7 @@ describe('ReadinessCard', () => {
     expect(text('desktop')).toBe('Desktop app: not running.');
     expect(text('terminal')).toBe('Terminal: no session yet.');
     expect(text('statusline')).toBe('Statusline: no reading yet.');
-    expect(text('collector')).toBe('Collector: not running.');
+    expect(text('collector')).toBe('Collector: not visible from the browser.');
     expect(within(card()).getAllByText(DESKTOP_APP_REASON)).toHaveLength(1);
   });
 
@@ -98,14 +98,16 @@ describe('ReadinessCard', () => {
     expect(hint('desktop')!.textContent).toBe('Start it with npm run electron:dev.');
     expect(hint('terminal')!.textContent).toBe('Needs the desktop app.');
     expect(hint('statusline')!.textContent).toBe('Install it in Settings, then run a Claude Code turn.');
-    expect(hint('collector')!.textContent).toBe('Build and start it in collector/: npm run build, then npm start.');
+    expect(hint('collector')!.textContent).toBe('Needs the desktop app.');
   });
 
-  it('in the desktop app points the Terminal hint at OPEN TERMINAL and drops the Desktop hint', () => {
+  it('in the desktop app points the Terminal hint at OPEN TERMINAL, drops the Desktop hint, and says how to start the collector', () => {
     vi.stubGlobal('aetherElectron', {});
     renderCard();
     expect(hint('desktop')).toBeNull();
     expect(hint('terminal')!.textContent).toBe('Use OPEN TERMINAL below.');
+    expect(text('collector')).toBe('Collector: not running.');
+    expect(hint('collector')!.textContent).toBe('Build and start it in collector/: npm run build, then npm start.');
   });
 
   it('reads all four met sentences with absolute times, and no hints', () => {
@@ -132,11 +134,18 @@ describe('ReadinessCard', () => {
     expect(h.style.fontFamily).toBe(cssFontFamily(fonts.ui));
   });
 
-  it('sets command text in the mono font, and only command text', () => {
+  it('sets command text in the mono font, and only command text (browser mode)', () => {
     renderCard();
     const desktopCmd = hint('desktop')!.querySelector('code')!;
     expect(desktopCmd.textContent).toBe('npm run electron:dev');
     expect(desktopCmd.style.fontFamily).toBe(cssFontFamily(fonts.mono));
+    expect(hint('terminal')!.querySelector('code')).toBeNull();
+    expect(hint('collector')!.querySelector('code')).toBeNull();
+  });
+
+  it('sets both collector commands in the mono font, in order (desktop app, collector not running)', () => {
+    vi.stubGlobal('aetherElectron', {});
+    renderCard();
     // The collector hint names two commands (`npm run build`, then `npm start`);
     // both must render as <code>, in the mono font, in order.
     const collectorCodes = [...hint('collector')!.querySelectorAll('code')];
