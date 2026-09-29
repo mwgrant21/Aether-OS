@@ -284,3 +284,21 @@ and should never grow one.
 - Prefer Sonnet for short/trivial turns; reserve Opus for complex reasoning.
 - Pin frequently re-read files into context instead of re-reading them each turn.
 <!-- token-tracker:end -->
+
+<!-- archex:mcp-guidance start -->
+## Repository context via archex (hook, not MCP)
+archex runs as a per-machine `PreToolUse` hook on `Grep`/`Glob`, configured in
+the untracked `.claude/settings.local.json` (it needs an absolute path to the
+local archex install, so it is not committed). Where it is set up, grep/glob
+calls are enriched with ranked archex context. In a fresh clone or on another
+machine it is absent until you add that file yourself.
+
+For a full ranked context bundle on an open-ended question ("how does X
+work", "what depends on Y") beyond what a single grep augments, use the CLI
+directly — the `archex-query` skill covers this. **Do not use the archex MCP
+tools** (`context`/`query_repo`) — confirmed to hang indefinitely on real
+queries (2026-08-07).
+
+Treat archex output as context selection, not proof — verify with reads/tests
+before editing.
+<!-- archex:mcp-guidance end -->
