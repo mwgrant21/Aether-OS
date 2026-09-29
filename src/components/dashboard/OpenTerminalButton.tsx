@@ -9,10 +9,14 @@ export type OpenTerminalVariant = 'primary' | 'secondary';
 
 /**
  * The one OPEN TERMINAL in the app; openTerminalLiteral.test.ts fails if any
- * other file carries the label. `primary` is the Dashboard's action under
- * READINESS; `secondary` (DESIGN.md Buttons > Secondary) is for empty states
- * such as the Agents roster. In browser mode there is no pty to open, so
- * either variant stays in place, aria-disabled (still focusable, so a screen
+ * other file carries a string/JSX-text literal matching the label, allowing
+ * decoration (icons, arrows) on either side -- see that file's isLabel for
+ * exactly what counts as a match, and its header comment for what a plain
+ * literal scan cannot catch (a JSX-split label, a template with `${}`,
+ * concatenation). `primary` is the Dashboard's action under READINESS;
+ * `secondary` (DESIGN.md Buttons > Secondary) is for empty states such as
+ * the Agents roster. In browser mode there is no pty to open, so either
+ * variant stays in place, aria-disabled (still focusable, so a screen
  * reader reaches it and hears why), with the Desktop-app reason directly
  * beneath it. Nothing about it reads as an error.
  */
