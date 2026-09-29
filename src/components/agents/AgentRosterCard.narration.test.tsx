@@ -1,11 +1,15 @@
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useEffect } from 'react';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
 import { AgentRosterCard } from './AgentRosterCard';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
+import { DESKTOP_APP_REASON } from '../dashboard/readinessMath';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function Setter({ agents, narrations }: { agents: RealAgentDispatch[]; narrations: Record<string, string> }) {
   const { dispatch } = useAetherStore();
@@ -128,6 +132,7 @@ describe('AgentRosterCard empty state', () => {
   }
 
   it('says no agents are running and offers OPEN TERMINAL, which switches to the Terminal tab', () => {
+    vi.stubGlobal('aetherElectron', {});
     render(
       <AetherStoreProvider>
         <Setter agents={[]} narrations={{}} />
@@ -139,5 +144,20 @@ describe('AgentRosterCard empty state', () => {
     expect(screen.getByText('No agents are running.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'OPEN TERMINAL' }));
     expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
+  });
+
+  it('renders OPEN TERMINAL through the shared button, so browser mode gets aria-disabled and the reason', () => {
+    render(
+      <AetherStoreProvider>
+        <Setter agents={[]} narrations={{}} />
+        <TabProbe />
+        <AgentRosterCard selectedToolUseId={null} />
+      </AetherStoreProvider>,
+    );
+    const btn = screen.getByRole('button', { name: 'OPEN TERMINAL' });
+    expect(btn.getAttribute('aria-disabled')).toBe('true');
+    expect(btn.getAttribute('aria-describedby')).toBe(screen.getByText(DESKTOP_APP_REASON).id);
+    fireEvent.click(btn);
+    expect(screen.getByTestId('active-tab').textContent).toBe('Agents');
   });
 });
