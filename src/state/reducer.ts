@@ -172,7 +172,14 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, cfg: { ...state.cfg, ...action.patch } };
 
     case 'SET_TERMINAL_ALIVE':
-      return { ...state, terminalAlive: action.alive };
+      if (!action.alive) return { ...state, terminalAlive: false, terminalOpenedAtMs: null };
+      // Only a dead->alive edge restamps: electron/main.ts re-sends pty:alive
+      // for an already-running pty on every pty:start (each Terminal mount).
+      return {
+        ...state,
+        terminalAlive: true,
+        terminalOpenedAtMs: state.terminalAlive && state.terminalOpenedAtMs !== null ? state.terminalOpenedAtMs : Date.now(),
+      };
 
     case 'SET_CODEX_TERMINAL_ALIVE':
       return { ...state, codexTerminalAlive: action.alive };

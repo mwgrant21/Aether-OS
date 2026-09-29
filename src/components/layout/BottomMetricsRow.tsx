@@ -4,7 +4,7 @@ import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { fmt } from '../../utils/format';
-import { NO_DATA, computeContextReading, computeSessionInfoRows, computeUsageBar, computeUsageRangeTotal, sessionCommandHistory } from '../dashboard/dashboardMath';
+import { NO_DATA, computeContextReading, computeSessionInfoRows, computeUsageBar, computeUsageRangeTotal, isSessionLive, sessionCommandHistory } from '../dashboard/dashboardMath';
 import { computeTopCommands } from '../analytics/analyticsMath';
 import { deriveContextWindowCard } from './contextWindowCard';
 import { EmptyState } from '../shared/EmptyState';
@@ -51,7 +51,7 @@ export function BottomMetricsRow() {
   const ctxDash = `${((circ * (ctxReading?.pct ?? 0)) / 100).toFixed(1)} ${circ.toFixed(1)}`;
   const PART_COLORS = [colors.accentCyanDeep, colors.warn, colors.success];
 
-  const session = computeSessionInfoRows(state, now);
+  const session = computeSessionInfoRows(state, now, isSessionLive(state, now.getTime()));
 
   return (
     <div style={rootStyle}>

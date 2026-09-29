@@ -17,11 +17,12 @@ import { computeDigestPresence } from './readinessMath';
 export function DashboardView() {
   const { state } = useAetherStore();
   const presence = computeDigestPresence(state);
+  const anyDigest = presence.agents || presence.projects || presence.alerts;
   return (
     <div style={gridStyle}>
       <ReactorStatusCard />
       <div data-testid="dashboard-right-column" style={rightColumnStyle}>
-        <ReadinessCard />
+        <ReadinessCard fill={!anyDigest} />
         <DigestSlot present={presence.agents}>
           <ActiveAgentsDigest />
         </DigestSlot>

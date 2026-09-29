@@ -28,4 +28,12 @@ describe('EmptyState', () => {
     fireEvent.click(screen.getByRole('button', { name: 'OPEN TERMINAL' }));
     expect(onClick).toHaveBeenCalledOnce();
   });
+
+  it('takes a ready-made action in actionSlot and reserves the same focus-ring room for it', () => {
+    const { container } = render(<EmptyState message="No agents are running." actionSlot={<button type="button">GO</button>} />);
+    const root = container.querySelector<HTMLElement>('[data-empty-state]')!;
+    expect(root.style.padding).toBe(`${FOCUS_RING_CLEARANCE}px`);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'GO' })).toBeTruthy();
+  });
 });

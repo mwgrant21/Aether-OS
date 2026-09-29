@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { fonts, glows, radii, type ColorPalette } from '../../styles/tokens';
 import { useColors } from './useColors';
 import { Button } from './Button';
@@ -8,25 +8,29 @@ interface EmptyStateAction {
   onClick: () => void;
 }
 
-interface EmptyStateProps {
-  message: string;
-  action?: EmptyStateAction;
-}
+// At most one action: a label + handler rendered as the Secondary button, or a
+// ready-made control in `actionSlot` (the Agents roster's OpenTerminalButton,
+// which carries its own desktop-app check).
+type EmptyStateProps =
+  | { message: string; action?: EmptyStateAction; actionSlot?: never }
+  | { message: string; action?: never; actionSlot: ReactNode };
 
 // The one empty-state voice across views: a single plain sentence saying what
 // will appear and where it comes from, plus at most one next action. Flat at
 // rest (Glow-Is-State): only the action lights, and only on hover or keyboard
 // focus.
-export function EmptyState({ message, action }: EmptyStateProps) {
+export function EmptyState({ message, action, actionSlot }: EmptyStateProps) {
   const colors = useColors();
+  const hasAction = action !== undefined || actionSlot !== undefined;
   return (
-    <div data-empty-state="true" style={action ? rootWithActionStyle : rootStyle}>
+    <div data-empty-state="true" style={hasAction ? rootWithActionStyle : rootStyle}>
       <p style={messageStyle(colors)}>{message}</p>
       {action && (
         <Button onClick={action.onClick} style={actionStyle(colors)} hoverStyle={actionHoverStyle(colors)}>
           {action.label}
         </Button>
       )}
+      {actionSlot}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { fonts, motion, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import type { OpMode } from '../../state/types';
@@ -13,6 +13,10 @@ import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { CommunicationIndicator } from './CommunicationIndicator';
 import { srOnlyStyle } from '../shared/srOnly';
 import { OP_MODES, opModeOnSkin } from '../shared/opModes';
+import { NOTIF_TRIGGER_ATTR, useDropdownFocus } from './useDropdownFocus';
+
+/** Marks the approvals button's wrapper, its only trigger (see NOTIF_TRIGGER_ATTR). */
+const APPR_TRIGGER_ATTR = 'data-appr-trigger';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
@@ -40,6 +44,30 @@ export function TopBar() {
   const scopeLabel = resolveScopePillLabel(state);
   const apprPanelId = useId();
   const notifPanelId = useId();
+  const notifTitleId = useId();
+  // Notifications: focus in on open, back to the opener on close, Escape and
+  // outside pointer-down close it. The STANDBY STRIP's Alerts item is the
+  // second trigger (StandbyStrip.tsx); both carry NOTIF_TRIGGER_ATTR.
+  const notifWrapRef = useRef<HTMLDivElement>(null);
+  const notifPanelRef = useRef<HTMLDivElement>(null);
+  const closeNotifs = useCallback(() => dispatch({ type: 'TOGGLE_NOTIFS' }), [dispatch]);
+  const notifBell = useCallback(() => notifWrapRef.current?.querySelector<HTMLElement>('button') ?? null, []);
+  useDropdownFocus({ open: state.notifOpen, panelRef: notifPanelRef, triggerAttr: NOTIF_TRIGGER_ATTR, fallbackTrigger: notifBell, close: closeNotifs });
+  // Approvals: the same behaviour, one trigger. Focus lands on the panel, not
+  // its first control -- that is APPROVE, and a stray Enter must not approve.
+  const apprWrapRef = useRef<HTMLDivElement>(null);
+  const apprPanelRef = useRef<HTMLDivElement>(null);
+  const apprTitleId = useId();
+  const closeApprovals = useCallback(() => dispatch({ type: 'TOGGLE_APPROVALS' }), [dispatch]);
+  const apprButton = useCallback(() => apprWrapRef.current?.querySelector<HTMLElement>('button') ?? null, []);
+  useDropdownFocus({
+    open: state.apprOpen,
+    panelRef: apprPanelRef,
+    triggerAttr: APPR_TRIGGER_ATTR,
+    fallbackTrigger: apprButton,
+    close: closeApprovals,
+    initialFocus: 'panel',
+  });
 
   return (
     <header style={rootStyle(colors)}>
@@ -91,7 +119,7 @@ export function TopBar() {
         })}
       </div>
 
-      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
+      <div ref={apprWrapRef} data-appr-trigger="" style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Pending approvals"
           aria-label={`${pendingCount} pending approval${pendingCount === 1 ? '' : 's'}`}
@@ -112,8 +140,17 @@ export function TopBar() {
           {pendingCount} pending approval{pendingCount === 1 ? '' : 's'}
         </span>
         {state.apprOpen && (
-          <div id={apprPanelId} style={apprPanelStyle(colors)}>
-            <div style={panelTitleStyle(colors)}>⛉ APPROVAL QUEUE — real pending requests</div>
+          <div
+            id={apprPanelId}
+            ref={apprPanelRef}
+            tabIndex={-1}
+            role="region"
+            aria-labelledby={apprTitleId}
+            style={apprPanelStyle(colors)}
+          >
+            <h2 id={apprTitleId} style={{ ...panelTitleStyle(colors), margin: 0 }}>
+              <span aria-hidden="true">⛉</span> APPROVAL QUEUE — real pending requests
+            </h2>
             {pendingReal.map((p) => (
               <div key={p.req.requestId} style={apprRowStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -152,7 +189,7 @@ export function TopBar() {
         )}
       </div>
 
-      <div style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
+      <div ref={notifWrapRef} data-notif-trigger="" style={{ position: 'relative', flex: 'none', marginRight: 10 }}>
         <Button
           title="Notifications"
           aria-label={`Notifications, ${state.unread} unread`}
@@ -170,8 +207,19 @@ export function TopBar() {
           Notifications, {state.unread} unread
         </span>
         {state.notifOpen && (
-          <div id={notifPanelId} style={notifPanelStyle(colors)}>
-            <div style={{ font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>NOTIFICATIONS</div>
+          // useDropdownFocus focuses the panel itself (it has no focusable
+          // children), so it must say what it is: a region named by its heading.
+          <div
+            id={notifPanelId}
+            ref={notifPanelRef}
+            tabIndex={-1}
+            role="region"
+            aria-labelledby={notifTitleId}
+            style={notifPanelStyle(colors)}
+          >
+            <h2 id={notifTitleId} style={{ margin: 0, font: `600 11px/1 ${fonts.ui}`, letterSpacing: 2, color: colors.textMuted }}>
+              NOTIFICATIONS
+            </h2>
             {state.notifs.map((nf, idx) => (
               <div key={idx} style={{ display: 'flex', gap: 8, font: `400 11px/1.5 ${fonts.mono}` }}>
                 <span style={{ color: colors.textDim, flex: 'none' }}>{nf.t}</span>

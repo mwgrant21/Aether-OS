@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reducer } from './reducer';
 import { initialState } from './initialState';
 import type { RealAgentDispatch } from './liveAgentsMath';
@@ -787,5 +787,38 @@ describe('reducer — real notifications for anomalies and completed dispatches'
       expect(next.rate).toBe(initialState.rate);
       expect(next.statusline).toBe(initialState.statusline);
     });
+  });
+});
+
+describe('reducer — terminalOpenedAtMs', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('starts null', () => {
+    expect(initialState.terminalOpenedAtMs).toBeNull();
+  });
+
+  it('stamps Date.now() when the pty reports alive', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const next = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(next.terminalAlive).toBe(true);
+    expect(next.terminalOpenedAtMs).toBe(1_000);
+  });
+
+  it('keeps the first stamp when main re-announces pty:alive for the same pty', () => {
+    // electron/main.ts re-sends pty:alive on every pty:start while a pty is running.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const open = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    now.mockReturnValue(9_000);
+    expect(reducer(open, { type: 'SET_TERMINAL_ALIVE', alive: true }).terminalOpenedAtMs).toBe(1_000);
+  });
+
+  it('clears on pty exit and restamps for the next pty', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const open = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    const closed = reducer(open, { type: 'SET_TERMINAL_ALIVE', alive: false });
+    expect(closed.terminalAlive).toBe(false);
+    expect(closed.terminalOpenedAtMs).toBeNull();
+    now.mockReturnValue(5_000);
+    expect(reducer(closed, { type: 'SET_TERMINAL_ALIVE', alive: true }).terminalOpenedAtMs).toBe(5_000);
   });
 });
