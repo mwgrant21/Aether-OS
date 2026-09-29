@@ -27,3 +27,6 @@ release/
 
 # archex project state
 .archex/
+
+# per-machine Claude Code settings (absolute tool paths, e.g. the archex hook)
+.claude/settings.local.json

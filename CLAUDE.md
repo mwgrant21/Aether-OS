@@ -287,9 +287,11 @@ and should never grow one.
 
 <!-- archex:mcp-guidance start -->
 ## Repository context via archex (hook, not MCP)
-archex is wired into `.claude/settings.json` as a `PreToolUse` hook on
-`Grep`/`Glob` — every grep/glob call is silently enriched with ranked archex
-context. No action needed to use it; it's automatic.
+archex runs as a per-machine `PreToolUse` hook on `Grep`/`Glob`, configured in
+the untracked `.claude/settings.local.json` (it needs an absolute path to the
+local archex install, so it is not committed). Where it is set up, grep/glob
+calls are enriched with ranked archex context. In a fresh clone or on another
+machine it is absent until you add that file yourself.
 
 For a full ranked context bundle on an open-ended question ("how does X
 work", "what depends on Y") beyond what a single grep augments, use the CLI
