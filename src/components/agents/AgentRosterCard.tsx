@@ -5,6 +5,7 @@ import { fmtElapsed } from '../../utils/format';
 import { useColors } from '../shared/useColors';
 import { EmptyState } from '../shared/EmptyState';
 import { Button } from '../shared/Button';
+import { OpenTerminalButton } from '../dashboard/OpenTerminalButton';
 import type { ColorPalette } from '../../styles/tokens';
 import { groupDispatches } from './rosterGrouping';
 import { applyNarrationVerbosity } from '../../shared/narrationVerbosity';
@@ -62,7 +63,7 @@ export function AgentRosterCard({ selectedToolUseId }: { selectedToolUseId: stri
             </div>
           )
         ))}
-        {!state.realAgents.length && <EmptyState message="No agents are running." action={{ label: 'OPEN TERMINAL', onClick: () => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' }) }} />}
+        {!state.realAgents.length && <EmptyState message="No agents are running." actionSlot={<OpenTerminalButton variant="secondary" />} />}
       </div>
     </div>
   );
