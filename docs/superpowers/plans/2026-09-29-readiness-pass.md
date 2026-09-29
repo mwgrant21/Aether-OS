@@ -28,9 +28,9 @@
   - Desktop: `Desktop app: running.` / `Desktop app: not running.`; hint `Start it with npm run electron:dev.`
   - Terminal: `Terminal: open since {t}.` (defensive `Terminal: open.` when alive but unstamped) / `Terminal: no session yet.`; hint `Use OPEN TERMINAL below.` (desktop) or `Needs the desktop app.` (browser)
   - Statusline: `Statusline: live, {t}.` / `Statusline: no reading yet.` / `Statusline: last reading {t}.`; hints `Install it in Settings, then run a Claude Code turn.` (no snapshot) / `Refreshes on each Claude Code turn.` (stale)
-  - Collector: `Collector: last event {t}.` / `Collector: no events since {t}.` / `Collector: no events recorded.`; hint `Start it from the checkout: npm start in collector/.`
+  - Collector: `Collector: last event {t}.` / `Collector: no events since {t}.` / `Collector: no events in the last 24h.`; hint `Build and start it in collector/: npm run build, then npm start.`
 - `COLLECTOR_STALE_AFTER_MS = 10 * 60 * 1000`, with the same `<=` comparison as `isStatuslineFresh`.
-- **Hint line:** under its row's sentence, indented to the sentence's left edge (clear of the dot), `400 11px/1.5` UI font, `textMuted`; command text (`npm run electron:dev`, `npm start`) in `fonts.mono`. 11px is the floor.
+- **Hint line:** under its row's sentence, indented to the sentence's left edge (clear of the dot), `400 11px/1.5` UI font, `textMuted`; command text (`npm run electron:dev`, `npm run build`, `npm start`) in `fonts.mono`. 11px is the floor.
 - **Numbers Are Mono; tokens, not literals:** colours via `useColors()`; no new hex/rgba literals in touched code.
 - **Button primitive** for every interactive element. `Button` takes no `ref`, no `data-*` props and no `tabIndex`: put refs and data attributes on a wrapper element.
 - **The Footer is the only status announcement.** Add no `aria-live`.
@@ -46,7 +46,7 @@
 7. **`EmptyState` gains `actionSlot?: ReactNode`**, so the Agents empty state keeps its 6px focus-ring clearance (`FOCUS_RING_CLEARANCE`) while rendering `OpenTerminalButton`. The `secondary` variant keeps the `⊕` glyph, so every OPEN TERMINAL looks alike. In browser mode the Agents view's button is now aria-disabled with the reason, which is the intended shared check.
 8. **Short date format** is `Mon D HH:MM`: a 3-letter English month, an unpadded day, no year, and 24-hour zero-padded time. An instant from another year on the same month and day still gets the prefix.
 9. **SESSION INFO's live gate is `isSessionLive`**, the same predicate that decides STANDBY. Out of scope, recorded as a Known Gap in Task 6: the Footer's `Uptime` (`src/components/layout/Footer.tsx:23`) still ticks at STANDBY. `src/utils/format.ts:55`'s "so they cannot disagree" is no longer true at STANDBY.
-10. **The Collector row can only see 24h.** `electron/main.ts:602` reads diagnostics for the last 24h, so a collector whose newest event is older than that reads `Collector: no events recorded.`, not `no events since {t}`. This is the spec's copy; flagged, not changed.
+10. **The Collector row can only see 24h.** `electron/main.ts:602` reads diagnostics for the last 24h, so a collector whose newest event is older than that reads `Collector: no events in the last 24h.`, not `no events since {t}`. This is the spec's copy; flagged, not changed.
 11. **Not on this branch:** the handoff that the spec sources (`docs/superpowers/plans/2026-09-29-idle-composition-handoff.md`, PR #93, commit `385a9fa`) is not merged into `e9e2aca`. The plan does not need it.
 12. **The critique baseline** is `.impeccable/critique/2026-09-29T07-50-27Z__src-components-dashboard-dashboardview-tsx.md` (`total_score: 22`), the latest snapshot and the one taken after #92. An older 22/40 (`2026-09-28T20-35-01Z`) exists; do not compare against it.
 
@@ -120,7 +120,7 @@ Only one pair of tasks touches the same file: Task 1 and Task 2 both edit `Readi
   - `COLLECTOR_STALE_AFTER_MS: number` (= 600000)
   - `newestCollectorEventMs(diagnostics: AetherState['diagnostics']): number | null`
   - `isCollectorFresh(newestMs: number | null, nowMs: number): boolean`
-  - `HINT_COMMANDS: readonly ['npm run electron:dev', 'npm start']`
+  - `HINT_COMMANDS: readonly ['npm run electron:dev', 'npm run build', 'npm start']`
   - `interface HintPart { readonly text: string; readonly command: boolean }` and `splitHintCommands(hint: string): HintPart[]`
   - `DESKTOP_APP_REASON` unchanged (name and value); the Desktop row stops using it.
 
@@ -263,16 +263,18 @@ describe('collector freshness', () => {
 
 describe('splitHintCommands', () => {
   it('marks exactly the known commands so the card can set them in mono', () => {
-    expect(HINT_COMMANDS).toEqual(['npm run electron:dev', 'npm start']);
+    expect(HINT_COMMANDS).toEqual(['npm run electron:dev', 'npm run build', 'npm start']);
     expect(splitHintCommands('Start it with npm run electron:dev.')).toEqual([
       { text: 'Start it with ', command: false },
       { text: 'npm run electron:dev', command: true },
       { text: '.', command: false },
     ]);
-    expect(splitHintCommands('Start it from the checkout: npm start in collector/.')).toEqual([
-      { text: 'Start it from the checkout: ', command: false },
+    expect(splitHintCommands('Build and start it in collector/: npm run build, then npm start.')).toEqual([
+      { text: 'Build and start it in collector/: ', command: false },
+      { text: 'npm run build', command: true },
+      { text: ', then ', command: false },
       { text: 'npm start', command: true },
-      { text: ' in collector/.', command: false },
+      { text: '.', command: false },
     ]);
     expect(splitHintCommands('Needs the desktop app.')).toEqual([{ text: 'Needs the desktop app.', command: false }]);
   });
@@ -321,8 +323,8 @@ describe('computeReadiness', () => {
     });
   });
 
-  it('Collector: last event when fresh, no events since when stale, no events recorded when empty or absent', () => {
-    const hint = 'Start it from the checkout: npm start in collector/.';
+  it('Collector: last event when fresh, no events since when stale, no events in the last 24h when empty or absent', () => {
+    const hint = 'Build and start it in collector/: npm run build, then npm start.';
     expect(row(computeReadiness({ ...COLD, diagnostics: anomalyAt(at(2026, 8, 29, 14, 25)) }, true, NOW), 'collector')).toMatchObject({
       met: true,
       text: 'Collector: last event 14:25.',
@@ -333,8 +335,8 @@ describe('computeReadiness', () => {
       text: 'Collector: no events since 13:00.',
       hint,
     });
-    expect(row(computeReadiness({ ...COLD, diagnostics: EMPTY_DIAG }, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events recorded.', hint });
-    expect(row(computeReadiness(COLD, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events recorded.', hint });
+    expect(row(computeReadiness({ ...COLD, diagnostics: EMPTY_DIAG }, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events in the last 24h.', hint });
+    expect(row(computeReadiness(COLD, true, NOW), 'collector')).toMatchObject({ met: false, text: 'Collector: no events in the last 24h.', hint });
   });
 
   it('Collector row is met at exactly COLLECTOR_STALE_AFTER_MS and unmet 1ms later', () => {
@@ -464,7 +466,7 @@ export const DESKTOP_APP_REASON = 'The Terminal and live tracking need the deskt
 export const COLLECTOR_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /** The commands a hint may name; ReadinessCard sets these in the mono font. */
-export const HINT_COMMANDS = ['npm run electron:dev', 'npm start'] as const;
+export const HINT_COMMANDS = ['npm run electron:dev', 'npm run build', 'npm start'] as const;
 
 /** True inside Electron, where preload exposes window.aetherElectron; plain `npm run dev` has none. */
 export function hasDesktopApp(): boolean {
@@ -585,11 +587,11 @@ export function computeReadiness(
       glows: false,
       text:
         newest === null
-          ? 'Collector: no events recorded.'
+          ? 'Collector: no events in the last 24h.'
           : collectorFresh
             ? `Collector: last event ${time(newest)}.`
             : `Collector: no events since ${time(newest)}.`,
-      hint: collectorFresh ? null : 'Start it from the checkout: npm start in collector/.',
+      hint: collectorFresh ? null : 'Build and start it in collector/: npm run build, then npm start.',
     },
   ];
 }
@@ -614,7 +616,7 @@ export function computeReadiness(
     expect(rowText('desktop')).not.toContain(DESKTOP_APP_REASON);
     expect(rowText('terminal')).toBe('Terminal: no session yet.');
     expect(rowText('statusline')).toBe('Statusline: no reading yet.');
-    expect(rowText('collector')).toBe('Collector: no events recorded.');
+    expect(rowText('collector')).toBe('Collector: no events in the last 24h.');
 ```
 
 (c) In `it('reads all four met sentences ...')`, replace the four `expect` lines with:
@@ -750,7 +752,7 @@ describe('ReadinessCard', () => {
     expect(text('desktop')).toBe('Desktop app: not running.');
     expect(text('terminal')).toBe('Terminal: no session yet.');
     expect(text('statusline')).toBe('Statusline: no reading yet.');
-    expect(text('collector')).toBe('Collector: no events recorded.');
+    expect(text('collector')).toBe('Collector: no events in the last 24h.');
     expect(within(card()).getAllByText(DESKTOP_APP_REASON)).toHaveLength(1);
   });
 
@@ -759,7 +761,7 @@ describe('ReadinessCard', () => {
     expect(hint('desktop')!.textContent).toBe('Start it with npm run electron:dev.');
     expect(hint('terminal')!.textContent).toBe('Needs the desktop app.');
     expect(hint('statusline')!.textContent).toBe('Install it in Settings, then run a Claude Code turn.');
-    expect(hint('collector')!.textContent).toBe('Start it from the checkout: npm start in collector/.');
+    expect(hint('collector')!.textContent).toBe('Build and start it in collector/: npm run build, then npm start.');
   });
 
   it('in the desktop app points the Terminal hint at OPEN TERMINAL and drops the Desktop hint', () => {
@@ -2052,7 +2054,7 @@ The Agents view's `No agents are running.` state takes its OPEN TERMINAL from `O
 (b) Replace the **READINESS** bullet (line 261) with:
 
 ```markdown
-- **READINESS** (`ReadinessCard.tsx`): an `h2` and a list of four rows, each a status dot and one plain sentence: Desktop app, Terminal, Statusline, Collector (copy in `readinessMath.ts`). A met row says when it was last true, as an absolute local `HH:MM` (prefixed with the short date, `Sep 28 14:02`, when not today; never a relative time). An unmet row adds one hint line under its sentence, indented clear of the dot, in Rajdhani 11px Text Muted, with commands (`npm run electron:dev`, `npm start`) in Space Mono; a met row has no hint. The Collector row reports the newest event the collector recorded (ready within 10 minutes), never that it is "running": the app does not start or watch the collector process. A met row's dot is filled Nominal Green; only the live signals (Terminal, Statusline) glow, and only while a session is live, so a met row at STANDBY is flat green. Desktop app and Collector are static facts and never glow. An unmet row is a hollow Text Muted ring. **No amber:** none of these asks the operator for anything. The card fills the right column beside the reactor; the rows keep their rhythm at the top and OPEN TERMINAL is pinned to the card's bottom edge, level with the reactor's base.
+- **READINESS** (`ReadinessCard.tsx`): an `h2` and a list of four rows, each a status dot and one plain sentence: Desktop app, Terminal, Statusline, Collector (copy in `readinessMath.ts`). A met row says when it was last true, as an absolute local `HH:MM` (prefixed with the short date, `Sep 28 14:02`, when not today; never a relative time). An unmet row adds one hint line under its sentence, indented clear of the dot, in Rajdhani 11px Text Muted, with commands (`npm run electron:dev`, `npm run build`, `npm start`) in Space Mono; a met row has no hint. The Collector row reports the newest event the collector recorded (ready within 10 minutes), never that it is "running": the app does not start or watch the collector process. A met row's dot is filled Nominal Green; only the live signals (Terminal, Statusline) glow, and only while a session is live, so a met row at STANDBY is flat green. Desktop app and Collector are static facts and never glow. An unmet row is a hollow Text Muted ring. **No amber:** none of these asks the operator for anything. The card fills the right column beside the reactor; the rows keep their rhythm at the top and OPEN TERMINAL is pinned to the card's bottom edge, level with the reactor's base.
 ```
 
 (c) In the **OPEN TERMINAL** bullet (line 262), append:

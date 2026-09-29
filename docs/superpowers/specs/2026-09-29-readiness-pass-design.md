@@ -39,7 +39,7 @@ current local day, prefix the short date: `Sep 28 14:02`. No relative times
 | desktop | `Desktop app: running.` (no time: a static fact) | `Desktop app: not running.` | `Start it with npm run electron:dev.` |
 | terminal | `Terminal: open since {t}.` | `Terminal: no session yet.` | desktop present: `Use OPEN TERMINAL below.` / browser: `Needs the desktop app.` |
 | statusline | `Statusline: live, {t}.` (t = `capturedAtMs`) | no snapshot: `Statusline: no reading yet.` / stale: `Statusline: last reading {t}.` | no snapshot: `Install it in Settings, then run a Claude Code turn.` / stale: `Refreshes on each Claude Code turn.` |
-| collector | `Collector: last event {t}.` | has events, stale: `Collector: no events since {t}.` / none: `Collector: no events recorded.` | `Start it from the checkout: npm start in collector/.` |
+| collector | `Collector: last event {t}.` | has events, stale: `Collector: no events since {t}.` / none: `Collector: no events in the last 24h.` | `Build and start it in collector/: npm run build, then npm start.` |
 
 Met rows have no hint. The Desktop row no longer appends `DESKTOP_APP_REASON`
 (see item 3).
@@ -75,7 +75,7 @@ Met rows have no hint. The Desktop row no longer appends `DESKTOP_APP_REASON`
 - `StandbyStrip` stays content-height (`flex: none`) below READINESS.
 - Hint line: under its row's sentence, indented to the sentence's left edge
   (clear of the dot), `400 11px/1.5` UI font, `textMuted`. 11px is the floor.
-  Command text (`npm run electron:dev`, `npm start`) in the mono font token.
+  Command text (`npm run electron:dev`, `npm run build`, `npm start`) in the mono font token.
 
 ### Honesty rules (each becomes a test)
 
