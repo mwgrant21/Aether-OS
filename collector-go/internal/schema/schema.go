@@ -18,7 +18,7 @@ import (
 // SchemaVersion mirrors schema.ts's SCHEMA_VERSION. Both collectors write
 // the SAME database, so these MUST move together -- see issue #31 and
 // internal/schema/parity_test.go.
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 // tableColumns returns the columns physically present on a table, regardless
 // of what schema_meta claims. Migrations are driven off THIS, not off the
@@ -58,6 +58,64 @@ func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
 	}
 	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + ddl)
 	return err
+}
+
+const dispatchColumnsV9 = "tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval"
+
+func dispatchUsageIsNotNull(db *sql.DB) (bool, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('dispatches')
+		WHERE name IN ('tokens','tool_uses','duration_ms') AND "notnull" = 1`).Scan(&n)
+	return n > 0, err
+}
+
+func rebuildDispatchesWithNullableUsage(db *sql.DB) error {
+	for _, c := range [][2]string{
+		{"agent_id", "agent_id TEXT"},
+		{"task_kind", "task_kind TEXT"},
+		{"session_id", "session_id TEXT"},
+		{"retries", "retries INTEGER NOT NULL DEFAULT 0"},
+		{"exit_state", "exit_state TEXT NOT NULL DEFAULT 'ok'"},
+		{"severity", "severity INTEGER"},
+		{"median_ms_at_eval", "median_ms_at_eval INTEGER"},
+	} {
+		if err := addColumnIfMissing(db, "dispatches", c[0], c[1]); err != nil {
+			return err
+		}
+	}
+	// Only the tx is used inside: the caller may set SetMaxOpenConns(1), and a
+	// db.Exec while this tx holds the one connection would deadlock.
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS dispatches_v9`,
+		`CREATE TABLE dispatches_v9 (
+			tool_use_id TEXT PRIMARY KEY,
+			tokens INTEGER,
+			tool_uses INTEGER,
+			duration_ms INTEGER,
+			started_at_ms INTEGER NOT NULL,
+			ended_at_ms INTEGER NOT NULL,
+			agent_id TEXT,
+			task_kind TEXT,
+			session_id TEXT,
+			retries INTEGER NOT NULL DEFAULT 0,
+			exit_state TEXT NOT NULL DEFAULT 'ok',
+			severity INTEGER,
+			median_ms_at_eval INTEGER
+		)`,
+		`INSERT INTO dispatches_v9 (` + dispatchColumnsV9 + `) SELECT ` + dispatchColumnsV9 + ` FROM dispatches`,
+		`DROP TABLE dispatches`,
+		`ALTER TABLE dispatches_v9 RENAME TO dispatches`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // OpenDatabase opens (creating if necessary) the SQLite database at dbPath,
@@ -157,9 +215,9 @@ func Migrate(db *sql.DB) error {
 	);
 	CREATE TABLE IF NOT EXISTS dispatches (
 		tool_use_id TEXT PRIMARY KEY,
-		tokens INTEGER NOT NULL,
-		tool_uses INTEGER NOT NULL,
-		duration_ms INTEGER NOT NULL,
+		tokens INTEGER,
+		tool_uses INTEGER,
+		duration_ms INTEGER,
 		started_at_ms INTEGER NOT NULL,
 		ended_at_ms INTEGER NOT NULL
 	);
@@ -257,6 +315,19 @@ func Migrate(db *sql.DB) error {
 			`INSERT INTO schema_meta (key, value) VALUES ('subagent_usage_backfill_pending', '0')
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		); err != nil {
+			return err
+		}
+	}
+
+	// v9: dispatches usage columns become NULLABLE, mirroring schema.ts's v9
+	// block. Column-driven (pragma notnull), not version-gated, so a database
+	// stamped 9 by the Node collector but created NOT NULL here still heals.
+	notNull, err := dispatchUsageIsNotNull(db)
+	if err != nil {
+		return err
+	}
+	if notNull {
+		if err := rebuildDispatchesWithNullableUsage(db); err != nil {
 			return err
 		}
 	}

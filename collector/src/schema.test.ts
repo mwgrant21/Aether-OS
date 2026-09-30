@@ -386,13 +386,13 @@ describe('schema', () => {
 });
 
 describe('schema version pin', () => {
-  it('SCHEMA_VERSION is 8 -- bumping it must be deliberate', () => {
+  it('SCHEMA_VERSION is 9 -- bumping it must be deliberate', () => {
     // Every other version assertion in this file now compares against
     // SCHEMA_VERSION, so a bump does not break seven call sites. This one
     // test pins the literal, so the bump is still a conscious edit in exactly
     // one place rather than something that rides along unnoticed.
     // Bumping it means adding the matching migration block in schema.ts.
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBe(9);
   });
 });
 
@@ -416,6 +416,60 @@ describe('healing an already-downgraded database', () => {
     const cols = (db.prepare("SELECT name FROM pragma_table_info('dispatches')").all() as { name: string }[]).map((r) => r.name);
     expect(cols.filter((c) => c === 'agent_id')).toHaveLength(1);
     expect(cols).toContain('median_ms_at_eval');
+    db.close();
+  });
+});
+
+describe('v9: dispatches usage columns are nullable', () => {
+  function usageNotNull(db: ReturnType<typeof openDatabase>): Record<string, number> {
+    const rows = db.prepare(`SELECT name, "notnull" AS nn FROM pragma_table_info('dispatches')`).all() as { name: string; nn: number }[];
+    return Object.fromEntries(rows.filter((r) => ['tokens', 'tool_uses', 'duration_ms'].includes(r.name)).map((r) => [r.name, r.nn]));
+  }
+  const V8_DISPATCHES = `CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL, agent_id TEXT, task_kind TEXT,
+    session_id TEXT, retries INTEGER NOT NULL DEFAULT 0, exit_state TEXT NOT NULL DEFAULT 'ok', severity INTEGER, median_ms_at_eval INTEGER)`;
+  function v8Db() {
+    const db = openDatabase(join(mkdtempSync(join(tmpdir(), 'aether-schema-v9-')), 't.db'));
+    migrate(db);
+    db.exec(`DROP TABLE dispatches; ${V8_DISPATCHES};`);
+    db.prepare("UPDATE schema_meta SET value = '8' WHERE key = 'version'").run();
+    db.prepare(`INSERT INTO dispatches VALUES ('tu_a', 1200, 7, 65000, 1000, 66000, 'code-reviewer', 'code-reviewer', 's1', 0, 'ok', 1, NULL)`).run();
+    db.prepare(`INSERT INTO dispatches VALUES ('tu_b', 0, 0, 1800000, 5, 1800005, 'general-purpose', 'general-purpose', 's1', 0, 'fatal', 4, NULL)`).run();
+    return db;
+  }
+
+  it('SCHEMA_VERSION is 9', () => {
+    expect(SCHEMA_VERSION).toBe(9);
+  });
+
+  it('a fresh database has nullable usage columns', () => {
+    const db = openDatabase(join(mkdtempSync(join(tmpdir(), 'aether-schema-v9-')), 't.db'));
+    migrate(db);
+    expect(usageNotNull(db)).toEqual({ tokens: 0, tool_uses: 0, duration_ms: 0 });
+    db.close();
+  });
+
+  // Review Focus 3
+  it('upgrades a v8 database preserving every row and value, and is idempotent', () => {
+    const db = v8Db();
+    const before = db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all();
+    migrate(db);
+    migrate(db);
+    expect(usageNotNull(db)).toEqual({ tokens: 0, tool_uses: 0, duration_ms: 0 });
+    expect(db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all()).toEqual(before);
+    expect(getSchemaVersion(db)).toBe(9);
+    db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, exit_state)
+                VALUES ('tu_null', NULL, NULL, NULL, 1, 2, 'error')`).run();
+    expect(db.prepare("SELECT tokens FROM dispatches WHERE tool_use_id = 'tu_null'").get()).toEqual({ tokens: null });
+    db.close();
+  });
+
+  it('heals a database stamped 9 that is physically still NOT NULL (e.g. created by an older Go collector)', () => {
+    const db = v8Db();
+    db.prepare("UPDATE schema_meta SET value = '9' WHERE key = 'version'").run();
+    migrate(db);
+    expect(usageNotNull(db)).toEqual({ tokens: 0, tool_uses: 0, duration_ms: 0 });
+    expect((db.prepare('SELECT COUNT(*) AS n FROM dispatches').get() as { n: number }).n).toBe(2);
     db.close();
   });
 });
