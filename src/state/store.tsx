@@ -20,7 +20,9 @@ export function AetherStoreProvider({ children }: { children: ReactNode }) {
     // entry) is missing newer Cfg fields like autoHeadlines/narrationVerbosity,
     // and `{ ...init, ...persisted }` alone lets persisted.cfg replace
     // init.cfg outright, leaving those fields undefined for existing users.
-    return { ...init, ...persisted, cfg: { ...init.cfg, ...persisted.cfg } };
+    // activeTab is deliberately NOT restored: every launch opens on Dashboard,
+    // so it is applied after the persisted spread (stale saved values ignored).
+    return { ...init, ...persisted, cfg: { ...init.cfg, ...persisted.cfg }, activeTab: init.activeTab };
   });
 
   useEffect(() => {

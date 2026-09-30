@@ -76,7 +76,7 @@ it('persists normal store state but never the prepared draft or content-derived 
   await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledOnce());
   await new Promise(resolve => setTimeout(resolve, 700));
   const persisted = localStorage.getItem('aetheros-v1');
-  expect(persisted).not.toBeNull(); expect(persisted).toContain('"activeTab":"Terminal"');
+  expect(persisted).not.toBeNull(); expect(persisted).toContain('"activeTab":"Dashboard"');
   expect(persisted).not.toContain(question); expect(persisted).not.toContain(context); expect(persisted).not.toContain(requestKey);
   expect(screen.getByTestId('state-json').textContent).not.toContain('persistence-canary');
 });

@@ -7,7 +7,7 @@ export const initialState: AetherState = {
   ctxUsed: 78432,
   commandsRun: 0,
   sessionStartedAt: new Date().toISOString(),
-  activeTab: 'Terminal',
+  activeTab: 'Dashboard',
   selectedProject: null,
   selectedMemory: null,
   selectedRealAgent: null,
