@@ -1,5 +1,6 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { PurgeResult } from './retentionStore';
 
 export interface DiagLogOptions {
   dir: string;
@@ -9,6 +10,8 @@ export interface DiagLogOptions {
 
 export interface DiagLog {
   write(line: string): void;
+  /** Settings → Purge: delete diag.log and diag.log.1. Never throws. */
+  purge(): PurgeResult;
 }
 
 /**
@@ -76,6 +79,19 @@ export function createDiagLog(opts: DiagLogOptions): DiagLog {
       } catch (err) {
         reportFailure(err);
       }
+    },
+    purge(): PurgeResult {
+      // Renderer error text can carry content, so the privacy control has to
+      // reach these files too. Try both; report every failure, keep going.
+      const errors: string[] = [];
+      for (const f of [file, rotated]) {
+        try {
+          rmSync(f, { force: true });
+        } catch (err) {
+          errors.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      return errors.length ? { ok: false, error: errors.join('; ') } : { ok: true };
     },
   };
 }

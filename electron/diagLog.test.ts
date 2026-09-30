@@ -72,6 +72,26 @@ describe('createDiagLog', () => {
     expect(failures).toHaveLength(1);
   });
 
+  it('purge deletes diag.log and diag.log.1, and logging carries on afterwards', () => {
+    const log = createDiagLog({ dir: root, maxBytes: 5 });
+    log.write('first-line');
+    log.write('second');
+    expect(log.purge()).toEqual({ ok: true });
+    expect(existsSync(join(root, 'diag.log'))).toBe(false);
+    expect(existsSync(join(root, 'diag.log.1'))).toBe(false);
+    log.write('after');
+    expect(readFileSync(join(root, 'diag.log'), 'utf8')).toBe('after\n');
+  });
+
+  it('purge with nothing on disk is ok, and a failure is reported, not thrown', () => {
+    expect(createDiagLog({ dir: join(root, 'never-written') }).purge()).toEqual({ ok: true });
+    // A non-empty directory squatting on diag.log cannot be removed as a file.
+    mkdirSync(join(root, 'diag.log', 'x'), { recursive: true });
+    const r = createDiagLog({ dir: root }).purge();
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/diag\.log/);
+  });
+
   // Privacy doc §7: ~/.aether-os is user-only. POSIX modes only; Windows
   // ignores them and relies on the profile ACL.
   const posixOnly = it.skipIf(process.platform === 'win32');
