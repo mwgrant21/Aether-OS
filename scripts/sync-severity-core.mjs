@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const CORE_FILES = ['parseDispatchOutcome.ts', 'computeSeverity.ts', 'isStalled.ts', 'baselineMath.ts'];
+export const CORE_FILES = ['parseDispatchOutcome.ts', 'computeSeverity.ts', 'isStalled.ts', 'baselineMath.ts', 'subagentLink.ts'];
 
 // Group 2 of each pattern is the module specifier. A match counts only when its
 // keyword sits in code (not inside a comment or string literal), judged by

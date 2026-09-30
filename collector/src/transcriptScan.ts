@@ -9,6 +9,7 @@ import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
 import { extractDispatchResultText } from './dispatchResultText.js';
 import type { MemoryExtractQueue } from './memoryExtractQueue.js';
+import { createSubagentLinkIndex } from './severity/subagentLink.js';
 
 function getLastOffset(db: DatabaseSync, filePath: string): number {
   const row = db.prepare('SELECT last_offset FROM transcript_files WHERE file_path = ?').get(filePath) as
@@ -81,6 +82,11 @@ export function scanTranscriptsOnce(
     return { filesScanned: 0, eventsIngested: 0, toolCallsIngested: 0, anomaliesIngested: 0 };
   }
 
+  // One parent/subagent index per scan pass: a dispatch's subagent files can
+  // live under a different project dir than its parent transcript, and this
+  // keeps that lookup from rescanning every project dir per dispatch.
+  const linkIndex = createSubagentLinkIndex(projectsRoot);
+
   let filesScanned = 0;
   let eventsIngested = 0;
   let toolCallsIngested = 0;
@@ -103,6 +109,8 @@ export function scanTranscriptsOnce(
       // containing the home directory/username.
       const filePath = join(dirPath, file);
       const relativePath = join(dirName, file);
+      const sessionBase = file.replace(/\.jsonl$/, '');
+      const subagentProbe = linkIndex.probeFor(sessionBase);
       const offset = getLastOffset(db, relativePath);
       let lines: string[];
       let newOffset: number;
@@ -138,7 +146,9 @@ export function scanTranscriptsOnce(
       // updateHistory never closes an Agent entry via a normal tool_result, so
       // the open entry survives into anomalyResult.history either way.
       for (const event of parsedEvents) {
-        ingestDispatchEvent(db, anomalyResult.history, event);
+        ingestDispatchEvent(db, anomalyResult.history, event, {
+          toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
+        });
       }
 
       // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
@@ -189,7 +199,7 @@ export function scanTranscriptsOnce(
       // staleDispatchSweep.ts) that prevents that already-completed dispatch
       // from being re-flagged as fatal -- that guard is load-bearing, not
       // redundant.
-      sweepStaleDispatches(db, anomalyResult.history, nowMs);
+      sweepStaleDispatches(db, anomalyResult.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
 
       filesScanned += 1;
       recordOffset(db, relativePath, newOffset, nowMs);
@@ -197,7 +207,6 @@ export function scanTranscriptsOnce(
       // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
       // dispatch's own tool calls live in a separate file this loop
       // otherwise never visits. See the reconciliation note §1.
-      const sessionBase = file.replace(/\.jsonl$/, '');
       const subagentsDir = join(dirPath, sessionBase, 'subagents');
       let subagentFiles: string[];
       try {

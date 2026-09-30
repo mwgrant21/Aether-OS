@@ -66,3 +66,20 @@ describe('computeSeverity (spec section 3 table)', () => {
     expect(r).toEqual({ severity: 2, exitState: 'ok', elapsedMs: 840000, medianMs: 240000 });
   });
 });
+
+import { TOOL_ERROR_FLOOR } from './computeSeverity';
+describe('tool-error floor (spike GO)', () => {
+  it('completed with >= 3 tool errors -> floor 3; 2 errors -> no floor', () => {
+    expect(TOOL_ERROR_FLOOR).toBe(3);
+    expect(computeSeverity({ exit: 'ok', elapsedMs: 1, medianMsAtEval: null, toolErrors: 3 }).severity).toBe(3);
+    expect(computeSeverity({ exit: 'ok', elapsedMs: 1, medianMsAtEval: null, toolErrors: 2 }).severity).toBe(1);
+    expect(computeSeverity({ exit: 'ok', elapsedMs: 1, medianMsAtEval: null, toolErrors: null }).severity).toBe(1);
+  });
+  it('never lifts killed above 2, never lowers failed', () => {
+    expect(computeSeverity({ exit: 'killed', elapsedMs: 1, medianMsAtEval: null, toolErrors: 9 }).severity).toBe(2);
+    expect(computeSeverity({ exit: 'error', elapsedMs: 1, medianMsAtEval: null, toolErrors: 9 }).severity).toBe(4);
+  });
+  it('ignores non-finite toolErrors', () => {
+    expect(computeSeverity({ exit: 'ok', elapsedMs: 1, medianMsAtEval: null, toolErrors: Number.NaN }).severity).toBe(1);
+  });
+});

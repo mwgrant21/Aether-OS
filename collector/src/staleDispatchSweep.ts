@@ -36,7 +36,8 @@ const SESSION_STALE_MS = 30000;
 export function sweepStaleDispatches(
   db: DatabaseSync,
   history: ToolCallHistory,
-  nowMs: number
+  nowMs: number,
+  lastProgressFor?: (toolUseId: string) => number | null
 ): { staleFound: number } {
   const sessionLookup = db.prepare('SELECT last_seen_ms FROM fleet_sessions WHERE session_id = ?');
   // updateHistory only closes an open entry via a normal tool_result; an
@@ -78,9 +79,12 @@ export function sweepStaleDispatches(
       sessionEnded = !row || nowMs - row.last_seen_ms > SESSION_STALE_MS;
     }
 
-    // Spec 5 measures inactivity from the last subagent progress. Until Tasks
-    // 8/9 add subagent progress, inactivity is measured from dispatch start.
-    if (!isStalled({ lastProgressMs: open.startedAt, sessionEnded }, nowMs)) continue;
+    // Spec 5 measures inactivity from the last subagent progress: the mtime of
+    // the dispatch's own subagent transcript, via lastProgressFor. Until that
+    // exists (no link, no file, no probe), inactivity is measured from dispatch
+    // start.
+    const lastProgressMs = Math.max(open.startedAt, lastProgressFor?.(toolUseId) ?? open.startedAt);
+    if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
 
     const durationMs = ageMs;
     const severity = computeSeverity({

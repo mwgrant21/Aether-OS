@@ -160,3 +160,37 @@ describe('sweepStaleDispatches', () => {
     db.close();
   });
 });
+
+describe('sweepStaleDispatches -- subagent progress (F15)', () => {
+  function setup() {
+    const db = freshDb();
+    const nowMs = THIRTY_MIN * 2;
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES ('s1', NULL, 'proj', 'agent', 'running', 'agent', 0, ?)`
+    ).run(nowMs - 1000);
+    return { db, nowMs };
+  }
+
+  it('recent subagent-file progress keeps a long dispatch from stalling', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_p', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - 60_000).staleFound).toBe(0);
+    expect(sweepStaleDispatches(db, h, nowMs).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('a probe with no data for the dispatch falls back to dispatch start', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_q', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => null).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('old subagent progress (past the stall window) still stalls', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_r', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - THIRTY_MIN - 1).staleFound).toBe(1);
+    db.close();
+  });
+});

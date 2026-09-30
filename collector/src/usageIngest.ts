@@ -45,6 +45,9 @@ export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent, sourc
 export interface DispatchIngestOptions {
   diag?: (line: string) => void;
   reportedStatusTags?: Set<string>;
+  // Tool-error count from the dispatch's own subagent transcript (counts only,
+  // never text). Consulted for <status>completed</status> only; null = unknown.
+  toolErrorsFor?: (toolUseId: string) => number | null;
 }
 
 const reportedStatusTagsForProcess = new Set<string>();
@@ -99,6 +102,7 @@ export function ingestDispatchEvent(
     exit: exitStateForStatus(outcome.status),
     elapsedMs: outcome.usage?.durationMs ?? 0,
     medianMsAtEval: medianDurationMsFor(db, open.subagentType, dispatchToolUseId, endedAtMs),
+    toolErrors: outcome.status === 'completed' ? (options.toolErrorsFor?.(dispatchToolUseId) ?? null) : null,
   });
 
   db.prepare(

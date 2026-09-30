@@ -24,12 +24,16 @@ export type ExitState =
 
 export const SLOW_FACTOR = 3;
 export const SLOWNESS_CAP = 2;
+export const TOOL_ERROR_FLOOR = 3;
 
 export interface SeverityInput {
   exit: ExitState;
   elapsedMs: number;
   medianMsAtEval: number | null;
   findingWeights?: readonly Severity[];
+  // Tool-error count from the dispatch's own subagent transcript. Callers pass
+  // it only for <status>completed</status>; null/absent means unknown.
+  toolErrors?: number | null;
 }
 
 export interface SeverityResult {
@@ -46,13 +50,20 @@ export function exitStateForStatus(status: DispatchStatus): ExitState {
 }
 
 export function computeSeverity(input: SeverityInput): SeverityResult {
-  const { exit, elapsedMs, findingWeights = [] } = input;
+  const { exit, elapsedMs, findingWeights = [], toolErrors } = input;
   const m = input.medianMsAtEval;
   const medianMs = typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : null;
 
   let sev = 1;
   if (medianMs !== null && Number.isFinite(elapsedMs) && elapsedMs > SLOW_FACTOR * medianMs) {
     sev = Math.min(sev + 1, SLOWNESS_CAP);
+  }
+
+  // Spec section 3 (spike GO): a completed run with >= TOOL_ERROR_FLOOR tool
+  // errors in its own subagent transcript is a floor of 3. killed is still
+  // forced to 2 below, and error/fatal are already >= 4.
+  if (exit === 'ok' && typeof toolErrors === 'number' && Number.isFinite(toolErrors) && toolErrors >= TOOL_ERROR_FLOOR) {
+    sev = Math.max(sev, 3);
   }
 
   if (exit === 'partial') sev = Math.max(sev, 2);

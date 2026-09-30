@@ -362,3 +362,32 @@ describe('ingestDispatchEvent -- real outcomes (spec 2026-09-30 sections 3, 6, 7
     db.close();
   });
 });
+
+describe('ingestDispatchEvent -- tool-error floor (spike GO)', () => {
+  const quiet = () => ({ diag: () => {}, reportedStatusTags: new Set<string>() });
+  const notify = (id: string, endedAtMs: number, body: string) => ({
+    ...completionEvent(id, endedAtMs),
+    humanText: `<tool-use-id>${id}</tool-use-id>${body}`,
+  });
+
+  it('completed with 3 tool errors in its subagent file -> ok, severity 3', () => {
+    const db = freshDb();
+    ingestDispatchEvent(db, openDispatch('tu_t', 1000), notify('tu_t', 5000, '<status>completed</status>'), {
+      ...quiet(),
+      toolErrorsFor: (id) => (id === 'tu_t' ? 3 : null),
+    });
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_t');
+    expect(row).toMatchObject({ exit_state: 'ok', severity: 3 });
+    db.close();
+  });
+
+  it('failed stays 4 and killed stays 2 whatever the tool-error count', () => {
+    const db = freshDb();
+    ingestDispatchEvent(db, openDispatch('tu_u', 1000), notify('tu_u', 5000, '<status>failed</status>'), { ...quiet(), toolErrorsFor: () => 9 });
+    ingestDispatchEvent(db, openDispatch('tu_v', 1000), notify('tu_v', 5000, '<status>killed</status>'), { ...quiet(), toolErrorsFor: () => 9 });
+    const u: any = db.prepare('SELECT severity FROM dispatches WHERE tool_use_id = ?').get('tu_u');
+    const v: any = db.prepare('SELECT severity FROM dispatches WHERE tool_use_id = ?').get('tu_v');
+    expect([u.severity, v.severity]).toEqual([4, 2]);
+    db.close();
+  });
+});

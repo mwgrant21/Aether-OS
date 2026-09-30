@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, statSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, statSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
@@ -524,4 +524,109 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
     db.close();
   });
 
+});
+
+describe('scanTranscriptsOnce -- tool-error floor and subagent progress (spike GO)', () => {
+  const errLine = () =>
+    JSON.stringify({
+      type: 'user',
+      sessionId: 'S1',
+      timestamp: '2026-07-08T09:00:05Z',
+      isSidechain: true,
+      message: { content: [{ type: 'tool_result', tool_use_id: 'x', is_error: true, content: 'SECRET-ERROR-TEXT' }] },
+    });
+  const parentLines = (id: string) => [
+    agentToolUseLine(id, '2026-07-08T09:00:00Z'),
+    taskNotificationLine(id, '2026-07-08T09:00:12Z', { durationMs: 12000 }),
+  ];
+  function withStatus(line: string): string {
+    return line.replace('</tool-use-id>', '</tool-use-id><status>completed</status>');
+  }
+  function sub(root: string, proj: string, session: string, meta: string | null, lines: string[]) {
+    const d = join(root, proj, session, 'subagents');
+    mkdirSync(d, { recursive: true });
+    if (meta !== null) writeFileSync(join(d, 'agent-a.meta.json'), meta);
+    writeFileSync(join(d, 'agent-a.jsonl'), lines.join('\n') + '\n', 'utf8');
+  }
+  const run = (root: string) => {
+    const db = freshDb();
+    scanTranscriptsOnce(db, root, Date.UTC(2026, 6, 8, 9, 0, 30), new Map());
+    return db;
+  };
+  const severityOf = (db: ReturnType<typeof freshDb>, id: string) =>
+    (db.prepare('SELECT severity, exit_state FROM dispatches WHERE tool_use_id = ?').get(id) as any);
+
+  it('meta.json link plus 3 tool errors in the subagent file stores severity 3 (F3)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    mkdirSync(join(root, 'projA'));
+    const [a, n] = parentLines('toolu_E');
+    writeFileSync(join(root, 'projA', 'S1.jsonl'), [a, withStatus(n)].join('\n') + '\n', 'utf8');
+    sub(root, 'projA', 'S1', '{"toolUseId":"toolu_E"}', [errLine(), errLine(), errLine()]);
+    const db = run(root);
+    expect(severityOf(db, 'toolu_E')).toMatchObject({ severity: 3, exit_state: 'ok' });
+    const dump = JSON.stringify(db.prepare('SELECT * FROM dispatches').all());
+    expect(dump).not.toContain('SECRET-ERROR-TEXT');
+    db.close();
+  });
+
+  it('2 tool errors, or no meta.json, or malformed meta.json -> severity from status alone (1)', () => {
+    for (const [meta, n] of [['{"toolUseId":"toolu_E"}', 2], [null, 3], ['{oops', 3], ['{"toolUseId":7}', 3]] as const) {
+      const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+      mkdirSync(join(root, 'projA'));
+      const [a, nt] = parentLines('toolu_E');
+      writeFileSync(join(root, 'projA', 'S1.jsonl'), [a, withStatus(nt)].join('\n') + '\n', 'utf8');
+      sub(root, 'projA', 'S1', meta, Array.from({ length: n }, errLine));
+      const db = run(root);
+      expect(severityOf(db, 'toolu_E').severity).toBe(1);
+      db.close();
+    }
+  });
+
+  it('links across project dirs: subagent dir in projA, parent transcript in projB', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    mkdirSync(join(root, 'projB'));
+    const [a, n] = parentLines('toolu_X');
+    writeFileSync(join(root, 'projB', 'S1.jsonl'), [a, withStatus(n)].join('\n') + '\n', 'utf8');
+    sub(root, 'projA', 'S1', '{"toolUseId":"toolu_X"}', [errLine(), errLine(), errLine()]);
+    const db = run(root);
+    expect(severityOf(db, 'toolu_X').severity).toBe(3);
+    db.close();
+  });
+
+  it('F12: the subagent transcript itself is still ingested under its own path after sessionBase moved', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    mkdirSync(join(root, 'projA'));
+    writeFileSync(join(root, 'projA', 'S1.jsonl'), agentToolUseLine('toolu_F', '2026-07-08T09:00:00Z') + '\n', 'utf8');
+    const readUse = JSON.stringify({
+      type: 'assistant', sessionId: 'S1', timestamp: '2026-07-08T09:00:02Z',
+      message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id: 'tu_s', name: 'Read', input: { file_path: 'a.ts' } }] },
+    });
+    const readDone = JSON.stringify({
+      type: 'user', sessionId: 'S1', timestamp: '2026-07-08T09:00:03Z',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu_s', content: 'ok' }] },
+    });
+    sub(root, 'projA', 'S1', '{"toolUseId":"toolu_F"}', [readUse, readDone]);
+    const db = run(root);
+    const rows = db.prepare('SELECT tool_use_id FROM tool_calls WHERE source_file_rel = ?').all(join('projA', 'S1', 'subagents', 'agent-a.jsonl'));
+    expect(rows).toHaveLength(1);
+    db.close();
+  });
+
+  it('a never-completed dispatch with recent subagent-file writes is not swept as fatal (F15)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    mkdirSync(join(root, 'projA'));
+    writeFileSync(join(root, 'projA', 'S1.jsonl'), agentToolUseLine('toolu_P', '2026-07-08T08:00:00Z') + '\n', 'utf8');
+    sub(root, 'projA', 'S1', '{"toolUseId":"toolu_P"}', [errLine()]);
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+    const f = join(root, 'projA', 'S1', 'subagents', 'agent-a.jsonl');
+    utimesSync(f, (nowMs - 60_000) / 1000, (nowMs - 60_000) / 1000);
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES ('s1', NULL, 'proj', 'agent', 'running', 'agent', 0, ?)`,
+    ).run(nowMs - 1000);
+    scanTranscriptsOnce(db, root, nowMs, new Map());
+    expect(db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('toolu_P')).toBeUndefined();
+    db.close();
+  });
 });
