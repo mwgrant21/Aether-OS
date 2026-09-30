@@ -29,6 +29,12 @@ export interface RetentionStatus {
   fileSizeBytes: number;
   oldestRetainedAtMs: number | null;
   rowCounts: RetentionRowCounts;
+  // Bytes in ~/.aether-os/diag.log + diag.log.1 (issue #22). Independent of
+  // collector.db: the log grows with no collector at all, so the purge control
+  // must not hide behind `exists && readable`. Filled in by main.ts's
+  // retention:status handler, not by readRetentionStatus (which only knows the
+  // DB); absent reads as 0.
+  diagLogBytes?: number;
 }
 
 export interface PurgeResult {

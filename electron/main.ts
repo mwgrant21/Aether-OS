@@ -12,7 +12,7 @@ import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
-import { readRetentionStatus, purgeCollectedData } from './retentionStore';
+import { readRetentionStatus, purgeCollectedData, type PurgeResult } from './retentionStore';
 import { chooseUsageSource } from './collectorFreshness';
 import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
 import { readMemories, readMemoryTombstones } from './memoryStore';
@@ -73,6 +73,8 @@ import { renderNotificationBadge } from './notificationBadge';
 import net from 'node:net';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { createDiagLog } from './diagLog';
+import { runRendererProbe, createConsoleLimiter, formatConsoleLine } from './rendererProbe';
 import type { DatabaseSync } from 'node:sqlite';
 import { CodexVerifier } from './crossEngine/codexVerifier';
 import { AcpClient } from './crossEngine/acpClient';
@@ -155,6 +157,9 @@ app.on('second-instance', () => {
   }
 });
 
+// Built at module top (not from aetherOsDir, defined further down) so the earliest [diag] site can use it.
+const diagLog = createDiagLog({ dir: join(os.homedir(), '.aether-os') });
+
 // Issue #22 diagnostics, app-level half (per-window half is in createWindow).
 // The stated hypothesis is that a Windows session lock tears down the GPU
 // process's context and the renderer never recovers, painting white while the
@@ -167,7 +172,7 @@ app.on('second-instance', () => {
 // neither logged rules it out and points elsewhere. Cheap, always-on, and it
 // costs nothing when nothing goes wrong.
 app.on('child-process-gone', (_event, details) => {
-  console.error(
+  diagLog.write(
     `[diag] child-process-gone type=${details.type} reason=${details.reason} ` +
       `exitCode=${details.exitCode} at=${new Date().toISOString()}`
   );
@@ -180,7 +185,11 @@ app.whenReady().then(() => {
     // powerMonitor.on is typed as one overload per event literal, so a
     // union loop variable matches none of them; the cast is typing-only.
     powerMonitor.on(evt as 'suspend', () => {
-      console.error(`[diag] powerMonitor ${evt} at=${new Date().toISOString()}`);
+      diagLog.write(`[diag] powerMonitor ${evt} at=${new Date().toISOString()}`);
+      if (evt === 'unlock-screen' || evt === 'resume') {
+        // Let the renderer settle, then record what DevTools would show.
+        setTimeout(() => void runRendererProbe(mainWindow, evt, (l) => diagLog.write(l)), 2000);
+      }
     });
   }
 });
@@ -285,7 +294,7 @@ function createWindow(): void {
   });
 
   win.webContents.on('render-process-gone', (_event, details) => {
-    console.error(
+    diagLog.write(
       `[diag] render-process-gone reason=${details.reason} exitCode=${details.exitCode} at=${new Date().toISOString()}`
     );
     if (mainWindow === win) mainWindow = null;
@@ -306,14 +315,32 @@ function createWindow(): void {
   // hypothesis. If a white screen recurs and none of these fired, that is
   // itself informative -- it rules out all three.
   win.on('unresponsive', () => {
-    console.error(`[diag] window unresponsive at=${new Date().toISOString()}`);
+    diagLog.write(`[diag] window unresponsive at=${new Date().toISOString()}`);
   });
   win.on('responsive', () => {
-    console.error(`[diag] window responsive again at=${new Date().toISOString()}`);
+    diagLog.write(`[diag] window responsive again at=${new Date().toISOString()}`);
   });
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    console.error(`[diag] did-fail-load code=${code} desc=${desc} url=${url} at=${new Date().toISOString()}`);
+    diagLog.write(`[diag] did-fail-load code=${code} desc=${desc} url=${url} at=${new Date().toISOString()}`);
   });
+
+  // Renderer errors, forwarded so a JS-side failure is visible without DevTools.
+  const consoleLimiter = createConsoleLimiter();
+  win.webContents.on('console-message', (event) => {
+    if (event.level !== 'error') return;
+    const verdict = consoleLimiter.admit(Date.now());
+    if (!verdict.allow) return;
+    if (verdict.suppressedBefore > 0) {
+      diagLog.write(`[diag] renderer-console suppressed=${verdict.suppressedBefore} at=${new Date().toISOString()}`);
+    }
+    diagLog.write(formatConsoleLine(event.sourceId, event.lineNumber, event.message, new Date().toISOString()));
+  });
+  if (process.env['AETHER_DIAG_PROBE_ON_START'] === '1') {
+    // Test hook, off by default.
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(() => void runRendererProbe(win, 'start', (l) => diagLog.write(l)), 5000);
+    });
+  }
 
   win.webContents.on('before-input-event', (_event, input) => {
     if (input.type !== 'keyDown') return;
@@ -758,6 +785,9 @@ app.whenReady().then(async () => {
   // repaired. Returning here is what stops a window from flashing up (and the
   // whole app from booting) in the middle of a Windows uninstall.
   if (isStatuslineUninstallRun) return;
+  diagLog.write(
+    `[diag] start version=${app.getVersion()} electron=${process.versions.electron} chrome=${process.versions.chrome} packaged=${app.isPackaged} at=${new Date().toISOString()}`
+  );
 
   // A previous install's script path can outlive the install itself. An update
   // may be placed in a DIFFERENT directory -- electron-builder.yml sets
@@ -822,7 +852,7 @@ app.whenReady().then(async () => {
         quotaSampleRejectedSinceLastAccepted = false;
       } else if (!quotaSampleRejectedSinceLastAccepted) {
         quotaSampleRejectedSinceLastAccepted = true;
-        console.error(
+        diagLog.write(
           `[diag] quota sample rejected atMs=${snapshot.capturedAtMs} lastAcceptedAtMs=${lastAccepted?.atMs ?? 'none'} at=${new Date().toISOString()}`
         );
       }
@@ -978,8 +1008,17 @@ function openCollectorDbReadOnly(): DatabaseSync | null {
   }
 }
 
-ipcMain.handle('retention:status', () => readRetentionStatus(collectorDbPath));
-ipcMain.handle('retention:purge', () => purgeCollectedData(collectorDbPath));
+ipcMain.handle('retention:status', () => ({
+  ...readRetentionStatus(collectorDbPath),
+  diagLogBytes: diagLog.sizeBytes(),
+}));
+// Purge covers diag.log too: its forwarded renderer error text can carry
+// content (Codex P2 on #98). Both always run; either failing fails the purge.
+ipcMain.handle('retention:purge', (): PurgeResult => {
+  const results = [purgeCollectedData(collectorDbPath), diagLog.purge()];
+  const errors = results.flatMap((r) => (r.ok ? [] : [r.error ?? 'unknown error']));
+  return errors.length ? { ok: false, error: errors.join('; ') } : { ok: true };
+});
 
 ipcMain.handle('crossEngine:status', async (): Promise<VerifierStatus> => {
   if (!crossEngineFeatureEnabled) return 'disabled';
