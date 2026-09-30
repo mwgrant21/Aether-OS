@@ -136,6 +136,7 @@ describe('BottomMetricsRow', () => {
       const { dispatch } = useAetherStore();
       useEffect(() => {
         dispatch({ type: 'SET_STATUSLINE', snapshot: fresh });
+        dispatch({ type: 'SET_TERMINAL_ALIVE', alive: true }); // stamps sessionStartedAt
       }, [dispatch]);
       return null;
     }
