@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensurePrivateDir, parseWindowsOutput } from './privateDir';
@@ -61,6 +61,25 @@ describe('ensurePrivateDir', () => {
     // Still granted afterwards.
     expect(ps(`icacls '${dir}'`)).toMatch(/Users:\(OI\)\(CI\)\(M\)/);
   }, 60_000);
+
+  winOnly('secures the target of a relocated (junctioned) directory', async () => {
+    const real = join(base, 'real-aether');
+    mkdirSync(real);
+    symlinkSync(real, dir, 'junction');
+
+    expect((await ensurePrivateDir(dir)).changed).toBe(true);
+    expect(ps(`[IO.Directory]::GetAccessControl('${real}').AreAccessRulesProtected`).trim()).toBe('True');
+  }, 60_000);
+
+  posixOnly('secures the target of a relocated (symlinked) directory', async () => {
+    const real = join(base, 'real-aether');
+    mkdirSync(real);
+    chmodSync(real, 0o755);
+    symlinkSync(real, dir);
+
+    expect((await ensurePrivateDir(dir)).changed).toBe(true);
+    expect(statSync(real).mode & 0o777).toBe(0o700);
+  });
 
   posixOnly('tightens the directory to 0700 and its top-level entries to 0700/0600', async () => {
     mkdirSync(join(dir, 'spool'), { recursive: true });

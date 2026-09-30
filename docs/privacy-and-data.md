@@ -212,7 +212,9 @@ designed as such:
   entry is recorded as a `[diag] private-dir extra` line in `diag.log` (entry name, account name,
   allow/deny, rights). Stripping it silently could break that tool; tolerating it silently would
   make the promise here unverifiable. On POSIX the directory is set to 0700 and its top-level
-  files and directories to 0600/0700 (symlinks are skipped). A failure is logged, not fatal.
+  files and directories to 0600/0700 (symlinked entries are skipped). If `~/.aether-os` itself is a
+  symlink (or a junction on Windows), its real target is what gets secured. A failure is logged,
+  not fatal.
 - The SQLite store is **not** encrypted, and the README should say so plainly rather than implying
   otherwise. Given §4, its contents are paths, names, timestamps and integers — the honest position
   is "here is exactly what is in it," not a security claim the implementation does not back.

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmod, lstat, mkdir, readdir } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const run = promisify(execFile);
@@ -89,8 +89,9 @@ async function ensureWindows(dir: string): Promise<PrivateDirReport> {
 }
 
 // POSIX: 0700 on the directory, then 0700/0600 on its top-level entries so a
-// file an older build left at the umask default is tightened too. Symlinks are
-// skipped: chmod would follow them out of the directory.
+// file an older build left at the umask default is tightened too. `dir` is
+// already the resolved target; symlinked entries inside it are skipped, since
+// chmod would follow them out of the directory.
 async function ensurePosix(dir: string): Promise<PrivateDirReport> {
   let changed = false;
   const tighten = async (path: string, mode: number) => {
@@ -110,5 +111,9 @@ async function ensurePosix(dir: string): Promise<PrivateDirReport> {
 /** Creates `dir` if needed and makes it user-only. Throws on failure; callers log it. */
 export async function ensurePrivateDir(dir: string, platform: NodeJS.Platform = process.platform): Promise<PrivateDirReport> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  return platform === 'win32' ? ensureWindows(dir) : ensurePosix(dir);
+  // A relocated ~/.aether-os (symlink, or a junction on Windows) is secured at
+  // its real target: every read and write goes through the link to it, and
+  // securing the link alone leaves the target reachable by its real path.
+  const target = await realpath(dir);
+  return platform === 'win32' ? ensureWindows(target) : ensurePosix(target);
 }
