@@ -10,12 +10,15 @@ import {
   type RealAgentDispatch,
   type CompletedDispatchUsage,
   type RealActiveWork,
+  type TrackedOutcome,
 } from '../src/state/liveAgentsMath';
 import { cwdToProjectDirName } from '../src/state/projectDirName';
 
 export interface LiveAgentTick {
   open: RealAgentDispatch[];
   completed: CompletedDispatchUsage[];
+  /** Parsed outcome per entry in `completed`, keyed by toolUseId. */
+  outcomes?: ReadonlyMap<string, TrackedOutcome>;
   work: RealActiveWork[];
   anomalies: Anomaly[];
   cacheHitRatio: number;
@@ -93,7 +96,8 @@ export function createLiveAgentTracker(homeDir: string) {
         .filter((e): e is TranscriptEvent => e !== null);
 
       const completed: CompletedDispatchUsage[] = [];
-      currentOpen = applyLinesToOpenDispatches(currentOpen, events, completed);
+      const outcomes = new Map<string, TrackedOutcome>();
+      currentOpen = applyLinesToOpenDispatches(currentOpen, events, completed, outcomes);
       currentWork = applyLinesToOpenWork(currentWork, events);
       history = updateHistory(history, events, Date.now());
 
@@ -116,7 +120,7 @@ export function createLiveAgentTracker(homeDir: string) {
       const tokensUsedForBurn = cumulativeInput;
       const anomalies = detectAnomalies(history, currentWork, tokensUsedForBurn, Date.now());
 
-      return { open: currentOpen, completed, work: currentWork, anomalies, cacheHitRatio };
+      return { open: currentOpen, completed, outcomes, work: currentWork, anomalies, cacheHitRatio };
     },
   };
 }

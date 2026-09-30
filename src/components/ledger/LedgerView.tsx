@@ -10,7 +10,7 @@ import {
   type EstimatedCost,
   type LedgerSnapshot,
 } from '../../shared/ledgerMath';
-import type { CompletedDispatchUsage } from '../../state/liveAgentsMath';
+import type { CompletedDispatchWithUsage } from '../../state/liveAgentsMath';
 import { findProjectByKey } from '../projects/projectsMath';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { SessionCostCard } from './SessionCostCard';
@@ -203,28 +203,24 @@ export function buildDispatchRows(
 
   return state.recentCompletedDispatches.map((d) => {
     const usage = state.dispatchUsage[d.toolUseId];
-    const completed: CompletedDispatchUsage = {
-      ...d,
-      // A dispatch whose completion notification carried no usage estimates at
-      // zero rather than being dropped -- the row still tells the operator the
-      // dispatch happened, which a missing row would not.
-      tokens: usage?.tokens ?? 0,
-      toolUses: usage?.toolUses ?? 0,
-      durationMs: usage?.durationMs ?? 0,
-    };
     const t = telemetry.get(d.toolUseId);
-    // Collector NULL tokens means the notification carried no usage block. The live
-    // parser still fills 0/0/0 for it, so the collector's NULL wins: every
-    // usage-derived field is null (rendered as a dash), never a fabricated zero.
-    const noUsage = t?.tokens === null;
+    // A dispatch with no usage is kept rather than dropped -- the row still
+    // tells the operator the dispatch happened, which a missing row would not
+    // -- but every usage-derived field is null (rendered as a dash), never a
+    // fabricated zero. Two ways to have no usage: no live dispatchUsage entry
+    // (the live parser records none for a notification without a usage
+    // block), or collector NULL tokens, which wins over any live zeros (an
+    // entry persisted before the live parser stopped filling 0/0/0).
+    const noUsage = usage === undefined || t?.tokens === null;
+    const completed: CompletedDispatchWithUsage | null = noUsage ? null : { ...d, ...usage };
     // Derived, not persisted: startedAt + the completed dispatch's own
     // duration. Falls back to startedAt (an instant, not a span) when
-    // durationMs or startedAt itself is unavailable/unparsable, so a
+    // usage or startedAt itself is unavailable/unparsable, so a
     // dispatch missing usage still participates in the "starts today"
     // half of the spans-today test rather than being silently dropped.
     const startedMs = new Date(d.startedAt).getTime();
     const endedAt =
-      !Number.isNaN(startedMs) && completed.durationMs > 0
+      completed && !Number.isNaN(startedMs) && completed.durationMs > 0
         ? new Date(startedMs + completed.durationMs).toISOString()
         : d.startedAt;
     return {
@@ -233,23 +229,22 @@ export function buildDispatchRows(
       endedAt,
       description: d.description,
       subagentType: d.subagentType,
-      durationMs: noUsage ? null : completed.durationMs,
-      toolUses: noUsage ? null : completed.toolUses,
-      estimate: noUsage ? null : estimateDispatchCost(completed),
+      durationMs: completed ? completed.durationMs : null,
+      toolUses: completed ? completed.toolUses : null,
+      estimate: completed ? estimateDispatchCost(completed) : null,
       // Two independent reasons this figure can be unknowable, and both must
       // render as an em dash rather than a dollar amount:
       //   - no RATE yet (tokensPerPoint null while the fit forms) becomes 0
       //     here, which quotaCostForTokens turns into 0 points and quotaCell
       //     renders as an em dash -- "not yet knowable", never "free".
-      //   - no TOKENS reported for this dispatch at all. `completed.tokens`
-      //     defaults to 0 above so the row still renders, but 0 is a real
-      //     number to quotaCostForTokens: with a fit and a plan price present
-      //     it returns `{ points: 0, usdPlan: 0 }` and the cell printed
-      //     "$0.00" for work whose token count was never measured. `usage`
-      //     being undefined -- not `completed.tokens === 0`, which a dispatch
-      //     may genuinely report -- is what distinguishes the two.
+      //   - no TOKENS reported for this dispatch at all (noUsage above). 0 is
+      //     a real number to quotaCostForTokens: with a fit and a plan price
+      //     present it returns `{ points: 0, usdPlan: 0 }` and the cell
+      //     printed "$0.00" for work whose token count was never measured.
+      //     Absent usage -- not `tokens === 0`, which a dispatch may genuinely
+      //     report -- is what distinguishes the two.
       quota:
-        usage === undefined || noUsage
+        completed === null
           ? null
           : quotaCostForTokens(
               completed.tokens,

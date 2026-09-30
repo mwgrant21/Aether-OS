@@ -52,7 +52,7 @@ const MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE = 6;
  * Ledger does: `exitState` and `retries` are what make the dispatch table a
  * cost-of-failure view rather than a cost-of-work one.
  *
- * Every telemetry field, and the three usage fields above, is nullable, and
+ * Every telemetry field, and the usage fields (tokens/toolUses/durationMs), is nullable, and
  * null means "not available" -- either the database predates v5, or the
  * column is genuinely null for this row.
  * Callers must not read null as a zero or an 'ok'.

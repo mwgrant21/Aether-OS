@@ -1,4 +1,5 @@
 import type { TranscriptEvent } from '../../electron/transcriptParser';
+import { parseDispatchOutcome, unrecognisedStatusTag, type DispatchOutcome } from '../../electron/severity/parseDispatchOutcome';
 
 export interface RealAgentDispatch {
   toolUseId: string;
@@ -9,10 +10,22 @@ export interface RealAgentDispatch {
   model: string | null;
 }
 
+// The three usage numbers are all present or all absent. Absent means the
+// notification carried no (trustworthy) usage block: spec
+// 2026-09-30-real-severity-design.md section 2, "usage: undefined, never
+// zeros". Consumers render a dash or skip; they never read absent as 0.
 export interface CompletedDispatchUsage extends RealAgentDispatch {
-  tokens: number;
-  toolUses: number;
-  durationMs: number;
+  tokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
+export type CompletedDispatchWithUsage = CompletedDispatchUsage & { tokens: number; toolUses: number; durationMs: number };
+
+export interface TrackedOutcome {
+  outcome: DispatchOutcome;
+  /** Set only when outcome.status is 'unknown': a sanitised tag for the one-per-value [diag] line. */
+  unknownStatusTag: string | null;
 }
 
 function isoOrEpoch(timestamp: Date | null): string {
@@ -25,6 +38,7 @@ export function applyLinesToOpenDispatches(
   currentOpen: RealAgentDispatch[],
   events: TranscriptEvent[],
   completedOut?: CompletedDispatchUsage[],
+  outcomesOut?: Map<string, TrackedOutcome>,
 ): RealAgentDispatch[] {
   const open = new Map(currentOpen.map((d) => [d.toolUseId, d]));
 
@@ -51,15 +65,13 @@ export function applyLinesToOpenDispatches(
       const match = content.match(/<tool-use-id>(.*?)<\/tool-use-id>/);
       if (match) {
         const dispatch = open.get(match[1]);
-        if (dispatch && completedOut) {
-          const tokensMatch = content.match(/<subagent_tokens>(\d+)<\/subagent_tokens>/);
-          const toolUsesMatch = content.match(/<tool_uses>(\d+)<\/tool_uses>/);
-          const durationMatch = content.match(/<duration_ms>(\d+)<\/duration_ms>/);
-          completedOut.push({
-            ...dispatch,
-            tokens: tokensMatch ? Number(tokensMatch[1]) : 0,
-            toolUses: toolUsesMatch ? Number(toolUsesMatch[1]) : 0,
-            durationMs: durationMatch ? Number(durationMatch[1]) : 0,
+        if (dispatch) {
+          const outcome = parseDispatchOutcome(content);
+          // usage is all-or-nothing from the parser; absent stays absent.
+          completedOut?.push(outcome.usage ? { ...dispatch, ...outcome.usage } : { ...dispatch });
+          outcomesOut?.set(dispatch.toolUseId, {
+            outcome,
+            unknownStatusTag: outcome.status === 'unknown' ? unrecognisedStatusTag(content) : null,
           });
         }
         open.delete(match[1]);

@@ -47,7 +47,8 @@ export function accumulate(
   for (const d of nextTick.completed) {
     if (!prevCompletedIds.has(d.toolUseId)) {
       entries.push(completedEntry(d, nowMs));
-      tokensBurned += d.tokens;
+      // No usage block: nothing measured, so nothing is added (never NaN).
+      if (d.tokens !== undefined) tokensBurned += d.tokens;
     }
   }
 

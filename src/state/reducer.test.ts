@@ -458,6 +458,24 @@ describe('reducer', () => {
       expect(next.dispatchUsage['tu_1']).toEqual({ tokens: 1234, toolUses: 5, durationMs: 6789 });
     });
 
+    // Spec section 2: a notification with no usage block is "usage: undefined,
+    // never zeros". No dispatchUsage entry (so the Ledger and Roster render a
+    // dash) and no "0 tok" / "0s" / NaN in the log or notification line.
+    it('records no dispatchUsage entry and no fabricated numbers for a completion without usage', () => {
+      const next = reducer(initialState, {
+        type: 'RECORD_DISPATCH_USAGE',
+        completed: [
+          { toolUseId: 'tu_n', subagentType: 'general-purpose', description: 'desc', startedAt: '2026-07-20T10:00:00.000Z', prompt: '', model: null },
+        ],
+      });
+      expect(next.dispatchUsage).toEqual(initialState.dispatchUsage);
+      expect('tu_n' in next.dispatchUsage).toBe(false);
+      const line = next.logs[next.logs.length - 1].m;
+      expect(line).toBe('general-purpose: finished, usage not reported');
+      expect(next.notifs[0].m).toBe(line);
+      expect(next.unread).toBe(initialState.unread + 1);
+    });
+
     it('merges multiple completions in one action, preserving existing entries', () => {
       const withOne = { ...initialState, dispatchUsage: { tu_0: { tokens: 1, toolUses: 1, durationMs: 1 } } };
       const next = reducer(withOne, {

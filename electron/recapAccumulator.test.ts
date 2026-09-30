@@ -23,6 +23,15 @@ describe('recapAccumulator.accumulate', () => {
     expect(acc.tokensBurned).toBe(500);
   });
 
+  it('a completion with no usage block adds nothing to tokensBurned (never NaN, never a fabricated 0)', () => {
+    const nextTick = tick({
+      completed: [{ toolUseId: 't2', subagentType: 'general-purpose', description: 'no usage', startedAt: '2026-01-01T00:00:00.000Z', prompt: 'x', model: null }],
+    });
+    const acc = accumulate({ entries: [], tokensBurned: 40 }, nextTick, tick(), Date.now());
+    expect(acc.tokensBurned).toBe(40);
+    expect(acc.entries).toEqual([{ kind: 'dispatchCompleted', detail: 'general-purpose: no usage', atMs: expect.any(Number) }]);
+  });
+
   it('records an anomalyDetected entry for a newly-seen anomaly toolUseId', () => {
     const prevTick = tick();
     const nextTick = tick({ anomalies: [{ kind: 'reReadLoop', toolUseId: 'a1', detail: 'foo.ts read 3 times' }] });

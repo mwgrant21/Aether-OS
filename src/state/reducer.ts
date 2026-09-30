@@ -450,8 +450,13 @@ export function reducer(state: AetherState, action: Action): AetherState {
       let notifs = state.notifs;
       let unread = state.unread;
       for (const c of action.completed) {
-        dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
-        const summary = `${c.subagentType}: ${short(c.tokens)} tok · ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} · ${fmtElapsed(c.durationMs)}`;
+        // No usage block: no entry (Ledger/Roster render a dash), and the line
+        // says so rather than printing a fabricated "0 tok" / "0s".
+        let summary = `${c.subagentType}: finished, usage not reported`;
+        if (c.tokens !== undefined && c.toolUses !== undefined && c.durationMs !== undefined) {
+          dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
+          summary = `${c.subagentType}: ${short(c.tokens)} tok \u00b7 ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} \u00b7 ${fmtElapsed(c.durationMs)}`;
+        }
         logs = logs.concat({ t: nowLong(), m: summary, c: '#3be0a0' }).slice(-14);
         notifs = [{ t: nowShort(), m: summary, c: '#3be0a0' }, ...notifs].slice(0, 12);
         unread += 1;

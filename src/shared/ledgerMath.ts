@@ -1,5 +1,5 @@
 import type { TranscriptEvent } from '../../electron/transcriptParser';
-import type { CompletedDispatchUsage } from '../state/liveAgentsMath';
+import type { CompletedDispatchWithUsage } from '../state/liveAgentsMath';
 import { computeCacheHitRate } from './cacheHitRate';
 import {
   costForEvent,
@@ -238,7 +238,9 @@ export function tiersInSession(events: TranscriptEvent[]): PricingTier[] {
 // Tier 2 -- estimated
 // ---------------------------------------------------------------------------
 
-export function estimateDispatchCost(dispatch: CompletedDispatchUsage): EstimatedCost {
+// Requires the usage numbers: a dispatch with no usage block has no estimate
+// (callers render a dash), not a $0 one.
+export function estimateDispatchCost(dispatch: CompletedDispatchWithUsage): EstimatedCost {
   const tokens = Number.isFinite(dispatch.tokens) && dispatch.tokens > 0 ? dispatch.tokens : 0;
   const tier = pricingTierForModel(dispatch.model);
   return {
