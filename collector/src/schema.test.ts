@@ -465,7 +465,7 @@ describe('v9: dispatches usage columns are nullable', () => {
     // Simulate an auto-rollback (IOERR/FULL): roll back, then fail the exec.
     const proxy = new Proxy(db, {
       get(target, prop) {
-        const v = (target as never)[prop];
+        const v = (target as unknown as Record<PropertyKey, unknown>)[prop];
         if (prop === 'exec') {
           return (sql: string) => {
             if (sql.includes('ALTER TABLE dispatches_v9')) {
@@ -475,7 +475,7 @@ describe('v9: dispatches usage columns are nullable', () => {
             return target.exec(sql);
           };
         }
-        return typeof v === 'function' ? v.bind(target) : v;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
       },
     });
     expect(() => migrate(proxy)).toThrow('simulated IOERR');
