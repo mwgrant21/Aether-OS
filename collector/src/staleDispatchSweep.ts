@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ToolCallHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
 
 // Grace period before a dispatch's session liveness is even checked: an entry
 // that opened moments ago may simply predate the first fleet poll ever seeing
@@ -87,10 +87,9 @@ export function sweepStaleDispatches(
     const durationMs = ageMs;
     const severity = computeSeverity({
       exit: 'fatal',
-      retries: 0,
       elapsedMs: durationMs,
       medianMsAtEval: null,
-    });
+    }).severity;
 
     upsert.run(
       toolUseId, 0, 0, durationMs, open.startedAt, nowMs,

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { TranscriptEvent } from './transcriptParser.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
 
 /**
  * sourceFileRel is the project-relative transcript this turn was read from
@@ -62,10 +62,9 @@ export function ingestDispatchEvent(
 
   const severity = computeSeverity({
     exit: 'ok',
-    retries: 0,
     elapsedMs: durationMs,
     medianMsAtEval: null,
-  });
+  }).severity;
 
   db.prepare(
     `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,

@@ -6,7 +6,7 @@ import { openDatabase, migrate } from './schema.js';
 import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import type { TranscriptEvent } from './transcriptParser.js';
 import { createEmptyHistory, updateHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-usageingest-'));
@@ -235,10 +235,9 @@ describe('ingestDispatchEvent', () => {
     expect(row.median_ms_at_eval).toBeNull();
     const expectedSeverity = computeSeverity({
       exit: 'ok',
-      retries: 0,
       elapsedMs: 4321,
       medianMsAtEval: null,
-    });
+    }).severity;
     expect(row.severity).toBe(expectedSeverity);
     expect(expectedSeverity).toBe(1);
     db.close();

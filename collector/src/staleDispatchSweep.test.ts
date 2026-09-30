@@ -5,7 +5,7 @@ import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-stale-sweep-'));
@@ -138,7 +138,7 @@ describe('sweepStaleDispatches', () => {
     sweepStaleDispatches(db, history, nowMs);
 
     const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu7');
-    const expectedSeverity = computeSeverity({ exit: 'fatal', retries: 0, elapsedMs: nowMs - startedAt, medianMsAtEval: null });
+    const expectedSeverity = computeSeverity({ exit: 'fatal', elapsedMs: nowMs - startedAt, medianMsAtEval: null }).severity;
     expect(expectedSeverity).toBe(4);
     expect(row.severity).toBe(4);
     expect(row.duration_ms).toBe(nowMs - startedAt);
