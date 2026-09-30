@@ -36,7 +36,28 @@ describe('liveAgentTracker.tick() -> outcomes (end to end)', () => {
     const tracked = result.outcomes.get('tu_e2e');
     expect(tracked).toEqual({ outcome: { status: 'failed' }, unknownStatusTag: null });
     const narrator = createLiveSeverityNarrator({ baseline: { medianFor: () => null, record: () => true }, narrate: narrationLine });
-    expect(narrator.onCompleted(result.completed[0], tracked)).toEqual({ toolUseId: 'tu_e2e', severity: 4, final: true, narration: narrationLine('code-reviewer', 4) });
+    expect(narrator.onCompleted(result.completed[0], tracked)).toEqual({ toolUseId: 'tu_e2e', severity: 4, subagentType: 'code-reviewer', final: true, narration: narrationLine('code-reviewer', 4) });
+  });
+
+  // main.ts calls tick() from the periodic agent tick AND from onPostToolUse,
+  // with no shared guard. Two overlapping calls must not both read from the
+  // same offset (double narration, double baseline sample, double
+  // agents:completed) or write back a smaller offset (re-read).
+  it('two concurrent tick() calls yield exactly one completion in total, and the offset never regresses', async () => {
+    const home = homeWithSession([
+      { type: 'assistant', timestamp: '2026-09-30T10:00:00.000Z', message: { content: [{ type: 'tool_use', id: 'tu_c', name: 'Agent', input: { subagent_type: 'code-reviewer' } }] } },
+      { type: 'user', timestamp: '2026-09-30T10:02:00.000Z', origin: { kind: 'task-notification' }, message: { content: '<task-notification><tool-use-id>tu_c</tool-use-id><status>completed</status><summary>x</summary></task-notification>' } },
+    ]);
+    const tracker = createLiveAgentTracker(home);
+    tracker.notifyPtySpawned(0);
+    const [a, b] = await Promise.all([tracker.tick(), tracker.tick()]);
+    expect([...a.completed, ...b.completed].map((c) => c.toolUseId)).toEqual(['tu_c']);
+    expect(a.outcomes.size + b.outcomes.size).toBe(1);
+    // A regressed offset would re-read the file: the dispatch would open and
+    // complete again on the next tick.
+    const c = await tracker.tick();
+    expect(c.completed).toEqual([]);
+    expect(c.open).toEqual([]);
   });
 
   it('an idle tick (nothing pinned yet) still carries an empty outcomes map', async () => {

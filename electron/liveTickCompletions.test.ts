@@ -45,11 +45,11 @@ describe('createTickCompletionHandler (shared by both liveAgentTracker.tick() ca
     // Main tick: flagged as stalled.
     const stall = h.narrator.checkStalls(open, T0 + STALL_MS + 1, false);
     expect(stall).toHaveLength(1);
-    expect(stall[0]).toMatchObject({ severity: 4, final: false });
+    expect(stall[0]).toMatchObject({ severity: 4, subagentType: 'code-reviewer', final: false });
     // The second tick site consumes the completion.
     h.handle(tickFrom([notification('tu_s', 'completed', USAGE)], open));
     expect(h.narrations).toEqual([
-      { toolUseId: 'tu_s', severity: 1, final: true, narration: `${RECOVERED_PREFIX}${narrationLine('code-reviewer', 1)}` },
+      { toolUseId: 'tu_s', severity: 1, subagentType: 'code-reviewer', final: true, narration: `${RECOVERED_PREFIX}${narrationLine('code-reviewer', 1)}` },
     ]);
     expect(h.completedBatches).toHaveLength(1);
     expect(h.completedBatches[0]).toEqual([expect.objectContaining({ toolUseId: 'tu_s', tokens: 700, toolUses: 3, durationMs: 4000 })]);
@@ -60,7 +60,7 @@ describe('createTickCompletionHandler (shared by both liveAgentTracker.tick() ca
   it('a failed completion is narrated at 4 (final), and an unrecognised status tag is reported', () => {
     const h = harness();
     h.handle(tickFrom([notification('tu_s', 'failed')]));
-    expect(h.narrations).toEqual([{ toolUseId: 'tu_s', severity: 4, final: true, narration: narrationLine('code-reviewer', 4) }]);
+    expect(h.narrations).toEqual([{ toolUseId: 'tu_s', severity: 4, subagentType: 'code-reviewer', final: true, narration: narrationLine('code-reviewer', 4) }]);
     expect(h.diag).toEqual([null]);
     const h2 = harness();
     h2.handle(tickFrom([notification('tu_s', 'running')]));

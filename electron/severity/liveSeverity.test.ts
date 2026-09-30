@@ -40,7 +40,7 @@ describe('live severity: integration from transcript lines', () => {
     applyLinesToOpenDispatches([], events, done, outcomes);
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     const payload = n.onCompleted(done[0], outcomes.get('tu_f'));
-    expect(payload).toEqual({ toolUseId: 'tu_f', severity: 4, final: true, narration: formatNarration({ subagentType: 'code-reviewer' }, 4)!.narration });
+    expect(payload).toEqual({ toolUseId: 'tu_f', severity: 4, subagentType: 'code-reviewer', final: true, narration: formatNarration({ subagentType: 'code-reviewer' }, 4)!.narration });
   });
 });
 
@@ -69,7 +69,7 @@ describe('createLiveSeverityNarrator', () => {
     expect(n.checkStalls(d, T0 + STALL_MS, false)).toEqual([]);
     const first = n.checkStalls(d, T0 + STALL_MS + 1, false);
     expect(first).toHaveLength(1);
-    expect(first[0]).toMatchObject({ toolUseId: 's', severity: 4, final: false });
+    expect(first[0]).toMatchObject({ toolUseId: 's', severity: 4, subagentType: 'code-reviewer', final: false });
     expect(n.checkStalls(d, T0 + STALL_MS + 30_000, false)).toEqual([]);
     expect(n.checkStalls(d, T0 + 5 * STALL_MS, true)).toEqual([]);
   });
@@ -86,7 +86,7 @@ describe('createLiveSeverityNarrator', () => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     n.checkStalls([open('r')], T0 + STALL_MS + 1, false);
     const p = n.onCompleted(completed('r'), tracked('completed', 5000))!;
-    expect(p).toEqual({ toolUseId: 'r', severity: 1, final: true, narration: `${RECOVERED_PREFIX}${narrate('code-reviewer', 1)}` });
+    expect(p).toEqual({ toolUseId: 'r', severity: 1, subagentType: 'code-reviewer', final: true, narration: `${RECOVERED_PREFIX}${narrate('code-reviewer', 1)}` });
     const again = n.onCompleted(completed('r'), tracked('completed', 5000));
     expect(again === null || !again.narration.startsWith(RECOVERED_PREFIX)).toBe(true);
   });
@@ -94,7 +94,7 @@ describe('createLiveSeverityNarrator', () => {
   it('a recovered FORGE dispatch at severity 1 (no sample) still gets the single Recovered line', () => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     n.checkStalls([open('g', new Date(T0).toISOString(), 'general-purpose')], T0 + STALL_MS + 1, false);
-    expect(n.onCompleted(completed('g', 'general-purpose'), tracked('completed', 5000))).toEqual({ toolUseId: 'g', narration: 'Recovered.', severity: 1, final: true });
+    expect(n.onCompleted(completed('g', 'general-purpose'), tracked('completed', 5000))).toEqual({ toolUseId: 'g', narration: 'Recovered.', severity: 1, subagentType: 'general-purpose', final: true });
   });
 
   // Ruling 1: the prefix is for a real success only.
@@ -105,7 +105,7 @@ describe('createLiveSeverityNarrator', () => {
   ] as const)('a stalled dispatch that later ends %s is narrated from that outcome, with no Recovered prefix', (status, severity) => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     n.checkStalls([open('p')], T0 + STALL_MS + 1, false);
-    expect(n.onCompleted(completed('p'), tracked(status))).toEqual({ toolUseId: 'p', severity, final: true, narration: narrate('code-reviewer', severity) });
+    expect(n.onCompleted(completed('p'), tracked(status))).toEqual({ toolUseId: 'p', severity, subagentType: 'code-reviewer', final: true, narration: narrate('code-reviewer', severity) });
   });
 
   it('a stalled FORGE dispatch that later ends unknown stays silent (severity 1 heartbeat, no Recovered line)', () => {
@@ -127,7 +127,7 @@ describe('createLiveSeverityNarrator', () => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     expect(n.checkStalls([open('w')], T0 + STALL_MS, false)).toEqual([]);
     const p = n.onCompleted(completed('w'), tracked('completed', 1000));
-    expect(p).toEqual({ toolUseId: 'w', severity: 1, final: true, narration: narrate('code-reviewer', 1) });
+    expect(p).toEqual({ toolUseId: 'w', severity: 1, subagentType: 'code-reviewer', final: true, narration: narrate('code-reviewer', 1) });
     expect(n.checkStalls([], T0 + STALL_MS + 1, false)).toEqual([]);
   });
 
@@ -147,11 +147,11 @@ describe('createLiveSeverityNarrator', () => {
     expect(n.checkStalls(d, T0 + STALL_MS + 1, false)).toHaveLength(1);
   });
 
-  it('payloads carry only toolUseId, narration, severity, final', () => {
+  it('payloads carry only toolUseId, narration, severity, final, subagentType', () => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     const p = n.onCompleted(completed('k'), tracked('failed'))!;
     // final: true = the dispatch really ended (Comms completion); false = stall line (roster only).
-    expect(Object.keys(p).sort()).toEqual(['final', 'narration', 'severity', 'toolUseId']);
+    expect(Object.keys(p).sort()).toEqual(['final', 'narration', 'severity', 'subagentType', 'toolUseId']);
   });
 });
 

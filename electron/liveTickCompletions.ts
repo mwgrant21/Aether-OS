@@ -19,6 +19,20 @@ export interface TickCompletionDeps {
 export function createTickCompletionHandler(deps: TickCompletionDeps): (result: Pick<LiveAgentTick, 'completed' | 'outcomes'>) => void {
   return (result) => {
     for (const c of result.completed) {
+      // WALL CLOCK, deliberately. This used to subtract the time the app spent
+      // blocked on an approval prompt, on the theory that a dispatch which sat
+      // waiting for the operator should not read as "slower than usual".
+      //
+      // That subtraction was removed because it could not be made correct. Read
+      // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
+      // BEFORE attempting to reintroduce it -- the short version is that a
+      // subagent's tool calls are not written to the transcript at all, so a
+      // prompt raised inside a dispatch can never be attributed back to it, and
+      // a prompt raised on the main thread does not block the dispatch it would
+      // have been subtracted from. Every correction it made was therefore taken
+      // from a dispatch that had not waited. (Here: outcome.usage.durationMs, the
+      // notification's own <duration_ms>, fed to onCompleted as is.)
+      //
       // liveSeverity.onCompleted snapshots the baseline BEFORE recording this
       // run, so a run is never compared against a baseline it contributed to.
       const tracked = result.outcomes.get(c.toolUseId);

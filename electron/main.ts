@@ -453,7 +453,7 @@ const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDeci
 // matching cleanup so a stale entry can't outlive the server-side timeout
 // that already made it moot. Its optional `onExpire` hook is currently unused:
 // it existed to force-close a user-wait interval for an abandoned prompt, and
-// that subtraction has been removed (see the comment at the narration loop).
+// that subtraction has been removed (see the WALL CLOCK comment in liveTickCompletions.ts).
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
@@ -765,19 +765,8 @@ async function tickAndPushAgents(): Promise<void> {
     // Unlike the headline loop above (which re-renders periodically for
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
-    //
-    // WALL CLOCK, deliberately. This used to subtract the time the app spent
-    // blocked on an approval prompt, on the theory that a dispatch which sat
-    // waiting for the operator should not read as "slower than usual".
-    //
-    // That subtraction was removed because it could not be made correct. Read
-    // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
-    // BEFORE attempting to reintroduce it -- the short version is that a
-    // subagent's tool calls are not written to the transcript at all, so a
-    // prompt raised inside a dispatch can never be attributed back to it, and
-    // a prompt raised on the main thread does not block the dispatch it would
-    // have been subtracted from. Every correction it made was therefore taken
-    // from a dispatch that had not waited.
+    // Durations are WALL CLOCK, deliberately: see the comment in
+    // liveTickCompletions.ts before changing that.
     // Also sends agents:completed for this tick's completions.
     handleTickCompletions(result);
 

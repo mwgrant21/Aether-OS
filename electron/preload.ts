@@ -126,8 +126,8 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('agents:headline', listener);
       return () => ipcRenderer.removeListener('agents:headline', listener);
     },
-    onNarration: (callback: (payload: { toolUseId: string; narration: string; severity: number; final: boolean }) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; narration: string; severity: number; final: boolean }) => callback(payload);
+    onNarration: (callback: (payload: { toolUseId: string; narration: string; severity: number; subagentType: string; final: boolean }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { toolUseId: string; narration: string; severity: number; subagentType: string; final: boolean }) => callback(payload);
       ipcRenderer.on('agents:narration', listener);
       return () => ipcRenderer.removeListener('agents:narration', listener);
     },
