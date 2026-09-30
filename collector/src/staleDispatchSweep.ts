@@ -13,6 +13,9 @@ const SESSION_CHECK_MIN_AGE_MS = 15000;
 // this old -- matches fleetPoll.ts's own STALE_MS (twice the poll interval).
 const SESSION_STALE_MS = 30000;
 
+// How far past nowMs a subagent file's mtime may sit and still count as progress.
+const FUTURE_MTIME_TOLERANCE_MS = 5 * 60 * 1000;
+
 /**
  * Detects 'Agent'-named open dispatches that never received a completion
  * event (see usageIngest.ts#ingestDispatchEvent) and writes them into
@@ -83,10 +86,15 @@ export function sweepStaleDispatches(
     // the dispatch's own subagent transcript, via lastProgressFor. Until that
     // exists (no link, no file, no probe), inactivity is measured from dispatch
     // start.
-    // A future mtime (clock skew) is not evidence of progress: ignore it, so it
-    // cannot hold off a stall.
+    // nowMs is taken at scan start and the stat happens later, so a live
+    // subagent's mtime is routinely a little ahead of nowMs: within
+    // FUTURE_MTIME_TOLERANCE_MS it counts as progress now (clamped to nowMs).
+    // Further ahead it is clock skew, not evidence of progress: ignored.
     const progress = lastProgressFor?.(toolUseId);
-    const lastProgressMs = typeof progress === 'number' && progress <= nowMs ? Math.max(open.startedAt, progress) : open.startedAt;
+    const lastProgressMs =
+      typeof progress === 'number' && progress <= nowMs + FUTURE_MTIME_TOLERANCE_MS
+        ? Math.max(open.startedAt, Math.min(progress, nowMs))
+        : open.startedAt;
     if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
 
     const durationMs = ageMs;

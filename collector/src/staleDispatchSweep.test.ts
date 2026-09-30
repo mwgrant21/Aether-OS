@@ -187,10 +187,26 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
     db.close();
   });
 
-  it('a future mtime (clock skew) does not hold off a real stall', () => {
+  it('a far-future mtime (+5h, clock skew) is ignored and does not hold off a real stall', () => {
     const { db, nowMs } = setup();
     const h = historyWithOpen('tu_f', { startedAt: 0 });
-    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + 10 * THIRTY_MIN).staleFound).toBe(1);
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + 5 * 60 * 60 * 1000).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('a live dispatch (40 min old) whose mtime is slightly ahead of nowMs is not stale', () => {
+    for (const ahead of [1, 1000, 4 * 60 * 1000]) {
+      const { db, nowMs } = setup();
+      const h = historyWithOpen('tu_live', { startedAt: nowMs - 40 * 60 * 1000 });
+      expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + ahead).staleFound).toBe(0);
+      db.close();
+    }
+  });
+
+  it('an mtime 31 min in the past on a 40 min old dispatch stalls', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_idle', { startedAt: nowMs - 40 * 60 * 1000 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - 31 * 60 * 1000).staleFound).toBe(1);
     db.close();
   });
 
