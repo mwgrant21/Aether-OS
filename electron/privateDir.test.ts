@@ -56,8 +56,10 @@ describe('ensurePrivateDir', () => {
 
     const report = await ensurePrivateDir(dir);
     expect(report.changed).toBe(true);
-    expect(report.extras.map((e) => e.path).sort()).toEqual(['.', 'statusline.json']);
-    expect(report.extras.every((e) => /Users$/.test(e.who) && e.type === 'Allow')).toBe(true);
+    // One line per ACE: a grant can be stored as more than one ACE (the CI
+    // runner reports two for '.'), so assert which paths carry it, not a count.
+    expect([...new Set(report.extras.map((e) => e.path))].sort()).toEqual(['.', 'statusline.json']);
+    for (const e of report.extras) expect(e, JSON.stringify(report.extras)).toMatchObject({ who: expect.stringMatching(/Users$/), type: 'Allow' });
     // Still granted afterwards.
     expect(ps(`icacls '${dir}'`)).toMatch(/Users:\(OI\)\(CI\)\(M\)/);
   }, 60_000);
