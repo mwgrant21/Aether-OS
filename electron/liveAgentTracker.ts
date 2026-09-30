@@ -31,8 +31,17 @@ export interface LiveAgentTick {
 // active Claude Code session (even an unrelated background one) can win --
 // this tracker is pinned to the specific file created by this app's own pty
 // spawn, and only that file is ever tailed until the pty respawns.
-export function createLiveAgentTracker(homeDir: string) {
+// Filesystem seams, injectable so tests can hold an await open and land a
+// respawn inside it deterministically. Production uses the real ones.
+export interface LiveAgentTrackerFs {
+  findSessionFile?: (dir: string, sinceMs: number) => Promise<string | null>;
+  readLines?: (file: string, offset: number) => Promise<{ lines: string[]; newOffset: number }>;
+}
+
+export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs = {}) {
   const sessionDir = path.join(homeDir, '.claude', 'projects', cwdToProjectDirName(homeDir));
+  const findSessionFile = fs.findSessionFile ?? findSessionFileCreatedAfter;
+  const readLines = fs.readLines ?? readNewLines;
 
   let spawnedAtMs: number | null = null;
   let pinnedFile: string | null = null;
@@ -42,6 +51,13 @@ export function createLiveAgentTracker(homeDir: string) {
   let history: ToolCallHistory = createEmptyHistory();
   let cumulativeCacheRead = 0;
   let cumulativeInput = 0;
+  // Bumped by every notifyPtySpawned. A tick captures it at start and re-checks
+  // it after EVERY await: a respawn that lands mid-tick makes that tick stale,
+  // and a stale tick returns emptyTick() and writes NO state (no pinnedFile,
+  // offset, open/work lists, history or counters). Otherwise it would feed the
+  // old file's events into the new session's history and counters, or pin the
+  // previous session's file found with the old spawnedAtMs.
+  let generation = 0;
 
   function emptyTick(): LiveAgentTick {
     const cacheHitRatio =
@@ -64,9 +80,11 @@ export function createLiveAgentTracker(homeDir: string) {
   let tickChain: Promise<unknown> = Promise.resolve();
 
   async function runTick(): Promise<LiveAgentTick> {
+    const gen = generation;
     if (!pinnedFile) {
       if (spawnedAtMs === null) return emptyTick();
-      const found = await findSessionFileCreatedAfter(sessionDir, spawnedAtMs);
+      const found = await findSessionFile(sessionDir, spawnedAtMs);
+      if (gen !== generation) return emptyTick();
       if (!found) return emptyTick();
       pinnedFile = found;
       currentOffset = 0;
@@ -79,7 +97,8 @@ export function createLiveAgentTracker(homeDir: string) {
       // touched them yet.
     }
 
-    const { lines, newOffset } = await readNewLines(pinnedFile, currentOffset);
+    const { lines, newOffset } = await readLines(pinnedFile, currentOffset);
+    if (gen !== generation) return emptyTick();
     if (lines.length === 0) return emptyTick();
     currentOffset = newOffset;
 
@@ -121,6 +140,7 @@ export function createLiveAgentTracker(homeDir: string) {
     },
 
     notifyPtySpawned(atMs: number): void {
+      generation += 1;
       spawnedAtMs = atMs;
       pinnedFile = null;
       currentOffset = 0;
