@@ -131,4 +131,56 @@ describe('loadDurationBaseline', () => {
     await expect(b.flush()).resolves.toBeUndefined();
     expect(diag.some((l) => l.includes('write failed'))).toBe(true);
   });
+
+  it('a BOM-prefixed valid file loads with no diag, and the writer never emits a BOM', async () => {
+    const filePath = tempFile();
+    writeFileSync(filePath, '﻿{"version":1,"samples":{"x":[1,2,3,4,5]}}', 'utf8');
+    const diag: string[] = [];
+    const b = loadDurationBaseline({ filePath, diag: (l) => diag.push(l) });
+    expect(diag).toEqual([]);
+    expect(b.medianFor('x')).toBe(3);
+    b.record('x', done(9));
+    await b.flush();
+    const bytes = readFileSync(filePath);
+    expect([bytes[0], bytes[1], bytes[2]]).not.toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  it('a throwing diag never rejects flush() and later writes still run', async () => {
+    let writes = 0;
+    const b = loadDurationBaseline({
+      filePath: tempFile(),
+      diag: () => { throw new Error('diag down'); },
+      writeFile: async () => { writes++; if (writes === 1) throw Object.assign(new Error('x'), { code: 'EPERM' }); },
+    });
+    b.record('x', done(5));
+    b.record('x', done(6));
+    await expect(b.flush()).resolves.toBeUndefined();
+    expect(writes).toBe(2);
+  });
+
+  it('a persistent write failure logs once per distinct code; success re-arms', async () => {
+    const diag: string[] = [];
+    let code = 'EPERM';
+    let fail = true;
+    const b = loadDurationBaseline({
+      filePath: tempFile(),
+      diag: (l) => diag.push(l),
+      writeFile: async () => { if (fail) throw Object.assign(new Error('x'), { code }); },
+    });
+    for (let i = 0; i < 5; i++) b.record('x', done(5));
+    await b.flush();
+    expect(diag).toHaveLength(1);
+    code = 'ENOSPC';
+    b.record('x', done(5));
+    await b.flush();
+    expect(diag).toHaveLength(2);
+    fail = false;
+    b.record('x', done(5));
+    await b.flush();
+    fail = true;
+    code = 'ENOSPC';
+    b.record('x', done(5));
+    await b.flush();
+    expect(diag).toHaveLength(3);
+  });
 });

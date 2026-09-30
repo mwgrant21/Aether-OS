@@ -1,8 +1,8 @@
 // electron/severity/durationBaseline.ts
 // Per-subagentType duration baseline for live narration, persisted to
 // ~/.aether-os/duration-baseline.json (spec 2026-09-30-real-severity-design.md
-// section 6). Replaces electron/durationBaseline.ts, which was in-memory,
-// lost everything on restart and had no minimum. Holds numbers only, keyed by
+// section 6). Will replace electron/durationBaseline.ts (wired in Task 7), which is in-memory,
+// loses everything on restart and has no minimum. Holds numbers only, keyed by
 // agent type, in a Map so a key like __proto__ is plain data. Written through
 // atomicWrite.ts so it inherits the #99 user-only directory ACL. A corrupt,
 // wrong-shape or unreadable file starts empty with one [diag] line; a missing
@@ -34,7 +34,7 @@ export interface DurationBaselineOptions {
 function parseSamples(raw: string): Map<string, number[]> | null {
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    json = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch {
     return null;
   }
@@ -75,12 +75,25 @@ export function loadDurationBaseline(opts: DurationBaselineOptions): DurationBas
   }
 
   let pending: Promise<void> = Promise.resolve();
+  // Last write-failure code already reported; cleared by a successful write so
+  // a persistent failure logs once per distinct code, not once per record().
+  let reportedFailure: string | null = null;
   function persist(): void {
     const content = JSON.stringify({ version: FILE_VERSION, samples: Object.fromEntries(samples) });
     pending = pending
       .then(() => writeFile(opts.filePath, content))
+      .then(() => {
+        reportedFailure = null;
+      })
       .catch((err) => {
-        opts.diag(`[diag] duration-baseline write failed code=${errCode(err)} at=${new Date().toISOString()}`);
+        const code = errCode(err);
+        if (code === reportedFailure) return;
+        reportedFailure = code;
+        try {
+          opts.diag(`[diag] duration-baseline write failed code=${code} at=${new Date().toISOString()}`);
+        } catch {
+          // diag must never break the write chain or reject flush().
+        }
       });
   }
 

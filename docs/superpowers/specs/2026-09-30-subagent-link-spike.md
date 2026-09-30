@@ -32,7 +32,7 @@ Link is `<session>/subagents/agent-<agentId>.meta.json` string `toolUseId` == pa
 - toolUseIdIsParentAgentCall / metaHasToolUseId = 199 / 211 = 94.3%
 - parentAgentIdAgrees (parent tool_result carries the same agentId) = 199 / 211 = 94.3%
 
-The same 199 match on both checks. The 12 misses (5.7%) are unexplained by this spike; likely the parent transcript is absent or does not hold the Agent call in the `"id":..."name":"Agent"` shape the regex expects (for example the tool_use key order, or the dispatch was made from a different session file). Not investigated further within the time box.
+The same 199 match on both checks. The 12 misses (5.7%) were explained in the Round 2 and fix-round findings below: after widening the parent lookup all 214 recent metas link; 8 parents live in another project dir and 4 are nested dispatches.
 
 ## Tool errors
 
