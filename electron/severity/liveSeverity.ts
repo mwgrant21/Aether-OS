@@ -21,6 +21,9 @@ export interface LiveNarrationPayload {
   toolUseId: string;
   narration: string;
   severity: Severity;
+  // true: the dispatch really ended (renderer adds a Comms completion).
+  // false: a stall line for a still-open dispatch (roster only).
+  final: boolean;
 }
 
 export interface LiveSeverityDeps {
@@ -53,9 +56,9 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
       const wasStalled = stalled.delete(c.toolUseId);
       const text = deps.narrate(c.subagentType, result.severity);
       if (wasStalled && outcome.status === 'completed') {
-        return { toolUseId: c.toolUseId, narration: text ? `${RECOVERED_PREFIX}${text}` : RECOVERED_PREFIX.trim(), severity: result.severity };
+        return { toolUseId: c.toolUseId, narration: text ? `${RECOVERED_PREFIX}${text}` : RECOVERED_PREFIX.trim(), severity: result.severity, final: true };
       }
-      return text ? { toolUseId: c.toolUseId, narration: text, severity: result.severity } : null;
+      return text ? { toolUseId: c.toolUseId, narration: text, severity: result.severity, final: true } : null;
     },
 
     checkStalls(open, nowMs, sessionEnded) {
@@ -78,7 +81,7 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
         stalled.add(d.toolUseId);
         const result = computeSeverity({ exit: 'fatal', elapsedMs: nowMs - lastProgressMs, medianMsAtEval: deps.baseline.medianFor(d.subagentType) });
         const text = deps.narrate(d.subagentType, result.severity);
-        if (text) out.push({ toolUseId: d.toolUseId, narration: text, severity: result.severity });
+        if (text) out.push({ toolUseId: d.toolUseId, narration: text, severity: result.severity, final: false });
       }
       return out;
     },

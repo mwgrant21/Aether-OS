@@ -3,7 +3,7 @@ import { createEmptyAccumulator, accumulate } from './recapAccumulator';
 import type { LiveAgentTick } from './liveAgentTracker';
 
 function tick(overrides: Partial<LiveAgentTick> = {}): LiveAgentTick {
-  return { open: [], completed: [], work: [], anomalies: [], cacheHitRatio: 1, ...overrides };
+  return { open: [], completed: [], outcomes: new Map(), work: [], anomalies: [], cacheHitRatio: 1, ...overrides };
 }
 
 describe('recapAccumulator.accumulate', () => {

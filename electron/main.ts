@@ -52,6 +52,8 @@ import {
 import { narrationLine } from './narrationGenerator';
 import { loadDurationBaseline, DURATION_BASELINE_FILE } from './severity/durationBaseline';
 import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INTERVAL_MS } from './severity/liveSeverity';
+import { createTickCompletionHandler } from './liveTickCompletions';
+import { createFlushQuitGate } from './flushQuitGate';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
@@ -658,7 +660,17 @@ const narrationDurationBaseline = loadDurationBaseline({
   diag: (line) => diagLog.write(line),
 });
 const liveSeverity = createLiveSeverityNarrator({ baseline: narrationDurationBaseline, narrate: narrationLine });
-const reportUnseenStatus = createUnseenStatusReporter((line) => diagLog.write(line));
+// Shared by BOTH liveAgentTracker.tick() call sites (the agent tick and
+// onPostToolUse): each tick consumes the lines it reads, so either one may be
+// the only one to see a completion. See liveTickCompletions.ts.
+const handleTickCompletions = createTickCompletionHandler({
+  narrator: liveSeverity,
+  reportUnseenStatus: createUnseenStatusReporter((line) => diagLog.write(line)),
+  sendNarration: (payload) => sendToWindow('agents:narration', payload),
+  sendCompleted: (done) => sendToWindow('agents:completed', done),
+});
+// First quit is held once (bounded to 500 ms) so a baseline write in flight lands.
+const baselineQuitGate = createFlushQuitGate(() => narrationDurationBaseline.flush(), () => app.quit(), 500);
 let lastStallCheckMs = 0;
 // "The owning session has ended" on the live path = the pinned pty exited.
 let pinnedPtyExited = false;
@@ -717,7 +729,7 @@ async function tickAndPushAgents(): Promise<void> {
   agentTickInFlight = true;
   try {
     const result = await liveAgentTracker.tick();
-    const { open, completed, work, anomalies, cacheHitRatio } = result;
+    const { open, work, anomalies, cacheHitRatio } = result;
 
     if (!isWindowFocused) {
       recapAcc = accumulate(recapAcc, result, lastTickResult ?? result, Date.now());
@@ -753,26 +765,21 @@ async function tickAndPushAgents(): Promise<void> {
     // Unlike the headline loop above (which re-renders periodically for
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
-    for (const c of result.completed) {
-      // WALL CLOCK, deliberately. This used to subtract the time the app spent
-      // blocked on an approval prompt, on the theory that a dispatch which sat
-      // waiting for the operator should not read as "slower than usual".
-      //
-      // That subtraction was removed because it could not be made correct. Read
-      // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
-      // BEFORE attempting to reintroduce it -- the short version is that a
-      // subagent's tool calls are not written to the transcript at all, so a
-      // prompt raised inside a dispatch can never be attributed back to it, and
-      // a prompt raised on the main thread does not block the dispatch it would
-      // have been subtracted from. Every correction it made was therefore taken
-      // from a dispatch that had not waited.
-      // liveSeverity.onCompleted snapshots the baseline BEFORE recording this
-      // run, so a run is never compared against a baseline it contributed to.
-      const tracked = result.outcomes?.get(c.toolUseId);
-      reportUnseenStatus(tracked?.unknownStatusTag ?? null);
-      const payload = liveSeverity.onCompleted(c, tracked);
-      if (payload) sendToWindow('agents:narration', payload);
-    }
+    //
+    // WALL CLOCK, deliberately. This used to subtract the time the app spent
+    // blocked on an approval prompt, on the theory that a dispatch which sat
+    // waiting for the operator should not read as "slower than usual".
+    //
+    // That subtraction was removed because it could not be made correct. Read
+    // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
+    // BEFORE attempting to reintroduce it -- the short version is that a
+    // subagent's tool calls are not written to the transcript at all, so a
+    // prompt raised inside a dispatch can never be attributed back to it, and
+    // a prompt raised on the main thread does not block the dispatch it would
+    // have been subtracted from. Every correction it made was therefore taken
+    // from a dispatch that had not waited.
+    // Also sends agents:completed for this tick's completions.
+    handleTickCompletions(result);
 
     // Stall check, ~every 30 s, AFTER completions (liveSeverity.ts contract).
     const stallNowMs = Date.now();
@@ -790,7 +797,6 @@ async function tickAndPushAgents(): Promise<void> {
     }
 
     sendToWindow('agents:snapshot', open);
-    if (completed.length) sendToWindow('agents:completed', completed);
     sendToWindow('agents:activeWork', work);
     sendToWindow('agents:anomalies', anomalies);
     sendToWindow('agents:cacheHitRatio', cacheHitRatio);
@@ -930,6 +936,7 @@ app.whenReady().then(async () => {
       // for this specific tool_use_id -- everything else falls through to an
       // immediate, unblocked allow.
       const tick = await liveAgentTracker.tick();
+      handleTickCompletions(tick);
       const tripped = tick.anomalies.find((a) => a.toolUseId === req.toolUseId);
       if (!tripped) return { block: false };
       if (!mainWindow) return { block: false, reason: 'no window available to prompt for flag review' };
@@ -1001,6 +1008,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
+  if (!baselineQuitGate(event)) return;
   isQuitting = true;
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();

@@ -18,7 +18,7 @@ export interface LiveAgentTick {
   open: RealAgentDispatch[];
   completed: CompletedDispatchUsage[];
   /** Parsed outcome per entry in `completed`, keyed by toolUseId. */
-  outcomes?: ReadonlyMap<string, TrackedOutcome>;
+  outcomes: ReadonlyMap<string, TrackedOutcome>;
   work: RealActiveWork[];
   anomalies: Anomaly[];
   cacheHitRatio: number;
@@ -52,7 +52,7 @@ export function createLiveAgentTracker(homeDir: string) {
     // lines) unreachable, and caused Grid rings/reactor anomaly state to flicker
     // with transcript activity instead of tracking real anomaly state.
     const anomalies = detectAnomalies(history, currentWork, cumulativeInput, Date.now());
-    return { open: currentOpen, completed: [], work: currentWork, anomalies, cacheHitRatio };
+    return { open: currentOpen, completed: [], outcomes: new Map(), work: currentWork, anomalies, cacheHitRatio };
   }
 
   return {

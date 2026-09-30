@@ -5,13 +5,13 @@ import type { AetherState } from './types';
 
 describe('SET_DISPATCH_NARRATION', () => {
   it('adds a narration and severity keyed by toolUseId', () => {
-    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'Done. Four files touched.', severity: 2 });
+    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'Done. Four files touched.', severity: 2, final: true });
     expect(state.dispatchNarrations['tu-1']).toEqual({ narration: 'Done. Four files touched.', severity: 2 });
   });
 
   it('overwrites an existing narration for the same toolUseId', () => {
-    let state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'first', severity: 1 });
-    state = reducer(state, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'second', severity: 4 });
+    let state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'first', severity: 1, final: true });
+    state = reducer(state, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'second', severity: 4, final: true });
     expect(state.dispatchNarrations['tu-1']).toEqual({ narration: 'second', severity: 4 });
   });
 });
@@ -32,15 +32,48 @@ describe('narrationMessages wiring', () => {
 
   it('SET_DISPATCH_NARRATION appends a narrationFeed line to the dispatch channel when the dispatch is known', () => {
     const seeded = withCompletedDispatch('tu-1', 'code-reviewer');
-    const state = reducer(seeded, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'irrelevant here', severity: 4 });
+    const state = reducer(seeded, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'irrelevant here', severity: 4, final: true });
     const messages = state.narrationMessages['dispatch:tu-1'];
     expect(messages).toBeDefined();
     expect(messages[0].role).toBe('CINDER');
     expect(messages[0].text.startsWith("Oh. That's actually interesting.")).toBe(true);
   });
 
+  // Orchestrator ruling (Task 7 fix round 1): a stall line is for the roster
+  // only. With auto channels on, the open dispatch has a channel stub, and a
+  // stall must not show in Comms as a sev-4 "completion" of work still running.
+  function withOpenChannel(toolUseId: string, subagentType: string): AetherState {
+    return {
+      ...initialState,
+      dispatchChannels: [
+        { toolUseId, subagentType, description: 'x', prompt: 'x', model: null, startedAt: new Date().toISOString(), createdAt: '10:00' },
+      ],
+    };
+  }
+
+  it('a stall narration (final: false) for an open dispatch updates dispatchNarrations but adds no Comms completion', () => {
+    const seeded = withOpenChannel('tu-s', 'code-reviewer');
+    const state = reducer(seeded, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-s', narration: 'stalled line', severity: 4, final: false });
+    expect(state.dispatchNarrations['tu-s']).toEqual({ narration: 'stalled line', severity: 4 });
+    expect(state.narrationMessages).toEqual(seeded.narrationMessages);
+    expect(state.narrationBudgets).toEqual(seeded.narrationBudgets);
+  });
+
+  it('a stall then its recovery adds exactly one Comms completion', () => {
+    const seeded = withOpenChannel('tu-r', 'code-reviewer');
+    let state = reducer(seeded, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-r', narration: 'stalled line', severity: 4, final: false });
+    state = reducer(state, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-r', narration: 'Recovered.', severity: 1, final: true });
+    expect(state.narrationMessages['dispatch:tu-r']).toHaveLength(1);
+    expect(state.dispatchNarrations['tu-r']).toEqual({ narration: 'Recovered.', severity: 1 });
+  });
+
+  it('a real completion (final: true) adds exactly one Comms completion', () => {
+    const state = reducer(withOpenChannel('tu-c', 'code-reviewer'), { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-c', narration: 'done', severity: 4, final: true });
+    expect(state.narrationMessages['dispatch:tu-c']).toHaveLength(1);
+  });
+
   it('SET_DISPATCH_NARRATION is a no-op for narrationMessages when the dispatch is unknown', () => {
-    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-unknown', narration: 'x', severity: 4 });
+    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-unknown', narration: 'x', severity: 4, final: true });
     expect(state.narrationMessages).toEqual({});
   });
 
