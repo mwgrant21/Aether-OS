@@ -190,3 +190,23 @@ describe('status context line', () => {
     expect(line).toContain('1,070');
   });
 });
+
+describe('runCommand budget', () => {
+  const budgetText = (state: typeof initialState) => {
+    const result = runCommand(state, 'budget');
+    if (result.kind !== 'append') throw new Error('unreachable');
+    return result.lines.map((l) => l.t).join(' | ');
+  };
+
+  it('never says "n/a" and explains when there is no current draw', () => {
+    const text = budgetText({ ...initialState, rate: 0 });
+    expect(text).not.toContain('n/a');
+    expect(text).toContain('no depletion estimate');
+  });
+
+  it('says the cap is already spent instead of "depletes in n/a"', () => {
+    const text = budgetText({ ...initialState, used: initialState.cfg.capM * 1e6 });
+    expect(text).not.toContain('n/a');
+    expect(text).toContain('already spent');
+  });
+});

@@ -15,6 +15,14 @@ export function fmtEta(sec: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+/** The depletion clause for prose. Never contains "n/a". */
+export function depletionPhrase(remainingTokens: number, ratePerMin: number): string {
+  if (remainingTokens <= 0) return 'the cap is already spent';
+  const sec = remainingTokens / (ratePerMin / 60);
+  if (!(ratePerMin > 0) || !(sec > 0) || !isFinite(sec)) return 'no depletion estimate without a current draw';
+  return `depletes in ${fmtEta(sec)} at the current draw`;
+}
+
 export function fmtElapsed(ms: number): string {
   if (!isFinite(ms) || ms < 0) return '0s';
   const totalSec = Math.floor(ms / 1000);
