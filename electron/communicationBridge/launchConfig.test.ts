@@ -322,8 +322,21 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       await vi.waitFor(() => expect(() => process.kill(nativePid!, 0)).toThrow(), LOCAL_WAIT);
       await vi.waitFor(() => expect(stripVt(output.slice(sinceInterrupt))).toMatch(PROMPT), SHELL_WAIT);
       expect(exited).toBe(false);
-      terminal.write('ls env:*AUTO_B*|fl\r');
-      await vi.waitFor(() => expect(stripVt(output)).toMatch(/Name\s*:\s*CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS\s+Value\s*:\s*902(?!\d)/), SHELL_WAIT);
+      // ConsoleHost.HandleBreak calls FlushConsoleInputBuffer on its own thread, unordered against the prompt draw, so under load
+      // it can wipe keys typed after the prompt. Nothing in the output marks that flush, so detect a dropped line and retype it.
+      const typeUntil = async (line: string, done: RegExp, attempts = 3) => {
+        for (let i = 0; i < attempts; i++) {
+          const mark = output.length;
+          terminal.write((i ? '\r' : '') + line);
+          try {
+            await vi.waitFor(() => expect(stripVt(output.slice(mark))).toContain('env:'), { timeout: 5000, interval: 50 });
+            await vi.waitFor(() => expect(stripVt(output.slice(mark))).toMatch(done), SHELL_WAIT);
+            return;
+          } catch { /* dropped or unfinished: retry */ }
+        }
+        throw new Error('typed line was never executed after ' + attempts + ' attempts');
+      };
+      await typeUntil('ls env:*AUTO_B*|fl\r', /Name\s*:\s*CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS\s+Value\s*:\s*902(?!\d)/);
       expect(output).not.toContain(options.manifest.capability);
       terminal.write('exit\r');
       await vi.waitFor(() => expect(exited).toBe(true), SHELL_WAIT);
