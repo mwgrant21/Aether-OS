@@ -629,4 +629,42 @@ describe('scanTranscriptsOnce -- tool-error floor and subagent progress (spike G
     expect(db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('toolu_P')).toBeUndefined();
     db.close();
   });
+
+  function nestedLayout(root: string, parentNotifies: boolean, nestedLines: string[]) {
+    mkdirSync(join(root, 'projA'));
+    const [a, n] = parentLines('toolu_P');
+    writeFileSync(join(root, 'projA', 'S1.jsonl'), [a, withStatus(n)].join('\n') + '\n', 'utf8');
+    const d = join(root, 'projA', 'S1', 'subagents');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'agent-p.meta.json'), '{"toolUseId":"toolu_P"}');
+    writeFileSync(join(d, 'agent-p.jsonl'), nestedLines.join('\n') + '\n', 'utf8');
+    writeFileSync(join(d, 'agent-n.meta.json'), '{"toolUseId":"toolu_N"}');
+    writeFileSync(join(d, 'agent-n.jsonl'), [errLine(), errLine(), errLine()].join('\n') + '\n', 'utf8');
+    return parentNotifies;
+  }
+
+  it('nested (depth-2) dispatch: tool_use and task-notification in a sibling subagent file get a row, severity 3 from its own errors', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    nestedLayout(root, true, [
+      agentToolUseLine('toolu_N', '2026-07-08T09:00:01Z'),
+      withStatus(taskNotificationLine('toolu_N', '2026-07-08T09:00:10Z')),
+    ]);
+    const db = run(root);
+    expect(severityOf(db, 'toolu_P')).toMatchObject({ severity: 1, exit_state: 'ok' });
+    expect(severityOf(db, 'toolu_N')).toMatchObject({ severity: 3, exit_state: 'ok' });
+    db.close();
+  });
+
+  it('nested dispatch that closes by tool_result only is never stored as fatal, even 30+ min later', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const toolResult = JSON.stringify({
+      type: 'user', sessionId: 'S1', timestamp: '2026-07-08T09:00:10Z',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_N', content: 'done' }] },
+    });
+    nestedLayout(root, true, [agentToolUseLine('toolu_N', '2026-07-08T09:00:01Z'), toolResult]);
+    const db = freshDb();
+    scanTranscriptsOnce(db, root, Date.UTC(2026, 6, 8, 10, 30, 0), new Map());
+    expect(db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('toolu_N')).toBeUndefined();
+    db.close();
+  });
 });

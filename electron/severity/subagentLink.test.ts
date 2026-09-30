@@ -40,6 +40,17 @@ describe('subagentLink', () => {
     expect(p.toolErrorsFor('toolu_missing')).toBeNull();
     expect(createSubagentFileProbe(join(dir, 'nope')).toolErrorsFor('toolu_A')).toBeNull();
   });
+  it('probe skips a meta.json over 64 KB (no link, no throw)', () => {
+    const dir = join(tmp(), 'subagents');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'agent-big.meta.json'), JSON.stringify({ toolUseId: 'toolu_B', pad: 'x'.repeat(70 * 1024) }));
+    writeFileSync(join(dir, 'agent-big.jsonl'), result(true));
+    writeFileSync(join(dir, 'agent-ok.meta.json'), '{"toolUseId":"toolu_OK"}');
+    writeFileSync(join(dir, 'agent-ok.jsonl'), result(true));
+    const p = createSubagentFileProbe(dir);
+    expect(p.toolErrorsFor('toolu_B')).toBeNull();
+    expect(p.toolErrorsFor('toolu_OK')).toBe(1);
+  });
   it('probe accepts several dirs (same session split across projects)', () => {
     const root = tmp();
     const d1 = join(root, 'a', 'subagents');
@@ -122,6 +133,14 @@ describe('createSubagentLinkIndex: parent lookup (spike: 202 own + 8 cross-proje
     expect(idx.probeFor('S8').toolErrorsFor('toolu_e')).toBe(3);
     expect(idx.probeFor('S8').toolErrorsFor('toolu_f')).toBe(1);
     expect(idx.probeFor('nope').toolErrorsFor('toolu_e')).toBeNull();
+  });
+  it('probeFor is lazy: nothing is resolved until the first lookup', () => {
+    const root = layout();
+    const idx = createSubagentLinkIndex(root);
+    const p = idx.probeFor('S9');
+    // Created after probeFor() returned: only a lazy probe can see it.
+    addSub(root, 'projA', 'S9', 'a', 'toolu_late', [result(true), result(true)]);
+    expect(p.toolErrorsFor('toolu_late')).toBe(2);
   });
   it('unreadable projects root never throws', () => {
     const idx = createSubagentLinkIndex(join(tmp(), 'missing'));

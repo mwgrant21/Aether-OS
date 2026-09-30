@@ -245,6 +245,17 @@ export function scanTranscriptsOnce(
         historyByFile.set(subRelativePath, subAnomalyResult.history);
         toolCallsIngested += subAnomalyResult.toolCallsIngested;
         anomaliesIngested += subAnomalyResult.anomaliesIngested;
+
+        // Nested (spawnDepth-2) dispatches: the Agent tool_use and its
+        // task-notification sit in a subagent transcript. Record their outcome
+        // here, but NEVER offer this history to sweepStaleDispatches: most
+        // nested Agent calls close by tool_result, not task-notification, so
+        // their entries stay open forever and a sweep would mark them all fatal.
+        for (const event of subParsedEvents) {
+          ingestDispatchEvent(db, subAnomalyResult.history, event, {
+            toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
+          });
+        }
         recordOffset(db, subRelativePath, subNewOffset, nowMs);
       }
     }

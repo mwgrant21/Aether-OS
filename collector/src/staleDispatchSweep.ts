@@ -83,7 +83,10 @@ export function sweepStaleDispatches(
     // the dispatch's own subagent transcript, via lastProgressFor. Until that
     // exists (no link, no file, no probe), inactivity is measured from dispatch
     // start.
-    const lastProgressMs = Math.max(open.startedAt, lastProgressFor?.(toolUseId) ?? open.startedAt);
+    // A future mtime (clock skew) is not evidence of progress: ignore it, so it
+    // cannot hold off a stall.
+    const progress = lastProgressFor?.(toolUseId);
+    const lastProgressMs = typeof progress === 'number' && progress <= nowMs ? Math.max(open.startedAt, progress) : open.startedAt;
     if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
 
     const durationMs = ageMs;

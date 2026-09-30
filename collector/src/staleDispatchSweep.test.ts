@@ -187,6 +187,13 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
     db.close();
   });
 
+  it('a future mtime (clock skew) does not hold off a real stall', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_f', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + 10 * THIRTY_MIN).staleFound).toBe(1);
+    db.close();
+  });
+
   it('old subagent progress (past the stall window) still stalls', () => {
     const { db, nowMs } = setup();
     const h = historyWithOpen('tu_r', { startedAt: 0 });

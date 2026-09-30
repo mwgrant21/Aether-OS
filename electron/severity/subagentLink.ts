@@ -57,7 +57,7 @@ export function countToolErrors(lines: readonly string[]): number {
   return n;
 }
 
-const NULL_PROBE: SubagentFileProbe = { toolErrorsFor: () => null, lastWriteMsFor: () => null };
+const MAX_META_BYTES = 64 * 1024;
 
 export function createSubagentFileProbe(subagentsDirs: string | readonly string[]): SubagentFileProbe {
   const dirs = typeof subagentsDirs === 'string' ? [subagentsDirs] : subagentsDirs;
@@ -74,6 +74,8 @@ export function createSubagentFileProbe(subagentsDirs: string | readonly string[
         }
         for (const meta of names) {
           try {
+            // meta.json is a few dozen bytes; a big one is not one of ours.
+            if (statSync(join(dir, meta)).size > MAX_META_BYTES) continue;
             const id = toolUseIdFromSubagentMeta(readFileSync(join(dir, meta), 'utf8'));
             if (id && !built.has(id)) built.set(id, join(dir, meta.replace(/\.meta\.json$/, '.jsonl')));
           } catch {
@@ -179,14 +181,18 @@ export function createSubagentLinkIndex(projectsRoot: string): SubagentLinkIndex
 
   return {
     subagentsDirsFor,
+    // Lazy: nothing is resolved or read until the first lookup, so a session
+    // that never asks costs no filesystem access.
     probeFor(sessionId) {
-      const dirs = subagentsDirsFor(sessionId);
-      if (dirs.length === 0) return NULL_PROBE;
       let p = probes.get(sessionId);
-      if (!p) {
-        p = createSubagentFileProbe(dirs);
-        probes.set(sessionId, p);
-      }
+      if (p) return p;
+      let inner: SubagentFileProbe | null = null;
+      const get = (): SubagentFileProbe => (inner ??= createSubagentFileProbe(subagentsDirsFor(sessionId)));
+      p = {
+        toolErrorsFor: (id) => get().toolErrorsFor(id),
+        lastWriteMsFor: (id) => get().lastWriteMsFor(id),
+      };
+      probes.set(sessionId, p);
       return p;
     },
     resolveParent(sessionId, toolUseId) {
