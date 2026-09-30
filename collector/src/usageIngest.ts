@@ -1,7 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { TranscriptEvent } from './transcriptParser.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
-import { computeSeverity } from './severity/computeSeverity.js';
+import { parseDispatchOutcome, unrecognisedStatusTag } from './severity/parseDispatchOutcome.js';
+import { computeSeverity, exitStateForStatus } from './severity/computeSeverity.js';
+import { medianOf, BASELINE_WINDOW } from './severity/baselineMath.js';
 
 /**
  * sourceFileRel is the project-relative transcript this turn was read from
@@ -36,12 +38,39 @@ export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent, sourc
 //     tags that Claude Code computes itself.
 // The tool-use-id is an exact correlation id, so one completion event closes
 // exactly one dispatch -- never a fan-out over everything currently open -- and
-// the token/tool-use/duration values are real, not estimated. The notification
-// text is read here and discarded; only the extracted numbers are persisted.
+// the token/tool-use/duration values are real, not estimated, and are NULL when
+// the notification carries no usage block (failed/killed). The status comes from
+// <status> via parseDispatchOutcome. The notification text is read here and
+// discarded; only the extracted numbers and the status are persisted.
+export interface DispatchIngestOptions {
+  diag?: (line: string) => void;
+  reportedStatusTags?: Set<string>;
+}
+
+const reportedStatusTagsForProcess = new Set<string>();
+
+// Spec section 6: median of this agent type's own successful history, the
+// same rules as the live baseline (ok rows, duration_ms > 0, last 20,
+// minimum 5). duration_ms > 0 also skips NULL and the historic failures that
+// were stored as ok with 0 ms. The row being ingested is excluded, so a
+// re-ingest never compares a run against itself.
+export function medianDurationMsFor(db: DatabaseSync, agentId: string | null, excludeToolUseId: string): number | null {
+  if (agentId === null) return null;
+  const rows = db
+    .prepare(
+      `SELECT duration_ms FROM dispatches
+        WHERE agent_id = ? AND exit_state = 'ok' AND duration_ms > 0 AND tool_use_id != ?
+        ORDER BY ended_at_ms DESC LIMIT ?`,
+    )
+    .all(agentId, excludeToolUseId, BASELINE_WINDOW) as { duration_ms: number }[];
+  return medianOf(rows.map((r) => r.duration_ms).reverse());
+}
+
 export function ingestDispatchEvent(
   db: DatabaseSync,
   history: ToolCallHistory,
   event: TranscriptEvent,
+  options: DispatchIngestOptions = {},
 ): boolean {
   if (event.kind !== 'user' || event.originKind !== 'task-notification') return false;
   const content = event.humanText || '';
@@ -52,19 +81,23 @@ export function ingestDispatchEvent(
   if (!open || open.toolName !== 'Agent') return false;
   if (event.timestamp === null) return false;
 
-  const tokensMatch = content.match(/<subagent_tokens>(\d+)<\/subagent_tokens>/);
-  const toolUsesMatch = content.match(/<tool_uses>(\d+)<\/tool_uses>/);
-  const durationMatch = content.match(/<duration_ms>(\d+)<\/duration_ms>/);
-  const tokens = tokensMatch ? Number(tokensMatch[1]) : 0;
-  const toolUses = toolUsesMatch ? Number(toolUsesMatch[1]) : 0;
-  const durationMs = durationMatch ? Number(durationMatch[1]) : 0;
+  const outcome = parseDispatchOutcome(content);
+  if (outcome.status === 'unknown') {
+    const tag = unrecognisedStatusTag(content);
+    const seen = options.reportedStatusTags ?? reportedStatusTagsForProcess;
+    if (tag !== null && !seen.has(tag)) {
+      seen.add(tag);
+      (options.diag ?? ((l: string) => console.error(l)))(
+        `[aether-collector] [diag] dispatch status not recognised tag=${tag}; stored as ok`,
+      );
+    }
+  }
   const endedAtMs = event.timestamp.getTime();
-
-  const severity = computeSeverity({
-    exit: 'ok',
-    elapsedMs: durationMs,
-    medianMsAtEval: null,
-  }).severity;
+  const result = computeSeverity({
+    exit: exitStateForStatus(outcome.status),
+    elapsedMs: outcome.usage?.durationMs ?? 0,
+    medianMsAtEval: medianDurationMsFor(db, open.subagentType, dispatchToolUseId),
+  });
 
   db.prepare(
     `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
@@ -76,8 +109,9 @@ export function ingestDispatchEvent(
        retries = excluded.retries, exit_state = excluded.exit_state, severity = excluded.severity,
        median_ms_at_eval = excluded.median_ms_at_eval`
   ).run(
-    dispatchToolUseId, tokens, toolUses, durationMs, open.startedAt, endedAtMs,
-    open.subagentType, open.subagentType, open.sessionId, 0, 'ok', severity, null
+    dispatchToolUseId, outcome.usage?.tokens ?? null, outcome.usage?.toolUses ?? null, outcome.usage?.durationMs ?? null,
+    open.startedAt, endedAtMs,
+    open.subagentType, open.subagentType, open.sessionId, 0, result.exitState, result.severity, result.medianMs
   );
   return true;
 }

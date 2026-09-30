@@ -412,6 +412,25 @@ function taskNotificationLine(
 }
 
 describe('scanTranscriptsOnce -- memory extraction queueing', () => {
+  it('does not queue failed or killed dispatches, even substantive ones with usage', () => {
+    for (const status of ['failed', 'killed']) {
+      const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+      const projDir = join(projectsRoot, 'my-project');
+      mkdirSync(projDir);
+      const content =
+        '<task-notification>\n<tool-use-id>tu_x</tool-use-id>\n' +
+        `<status>${status}</status>\n<result>Did a lot of work.</result>\n` +
+        '<subagent_tokens>100</subagent_tokens>\n<tool_uses>9</tool_uses>\n<duration_ms>90000</duration_ms>\n</task-notification>';
+      const notification = JSON.stringify({ type: 'user', sessionId: 's1', timestamp: '2026-07-08T09:01:30Z', origin: { kind: 'task-notification' }, message: { content } });
+      writeFileSync(join(projDir, 'session.jsonl'), `${agentToolUseLine('tu_x', '2026-07-08T09:00:00Z')}\n${notification}\n`, 'utf8');
+      const db = freshDb();
+      const queue = createMemoryExtractQueue();
+      scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+      expect(queue.size()).toBe(0);
+      db.close();
+    }
+  });
+
   it('queues a closed, substantive Agent dispatch for extraction when a queue is provided', () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
     const projDir = join(projectsRoot, 'my-project');

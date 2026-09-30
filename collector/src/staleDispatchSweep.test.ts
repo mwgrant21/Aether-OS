@@ -143,8 +143,20 @@ describe('sweepStaleDispatches', () => {
     expect(row.severity).toBe(4);
     expect(row.duration_ms).toBe(nowMs - startedAt);
     expect(row.ended_at_ms).toBe(nowMs);
-    expect(row.tokens).toBe(0);
-    expect(row.tool_uses).toBe(0);
+    expect(row.tokens).toBeNull();
+    expect(row.tool_uses).toBeNull();
+    db.close();
+  });
+
+  it('stall boundary: exactly STALL_MS of inactivity is not stalled, one ms more is', () => {
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES ('s1', NULL, 'proj', 'agent', 'running', 'agent', 0, ?)`
+    ).run(THIRTY_MIN);
+    expect(sweepStaleDispatches(db, historyWithOpen('tu_b', { startedAt: 0 }), THIRTY_MIN).staleFound).toBe(0);
+    db.prepare("UPDATE fleet_sessions SET last_seen_ms = ? WHERE session_id = 's1'").run(THIRTY_MIN + 1);
+    expect(sweepStaleDispatches(db, historyWithOpen('tu_b', { startedAt: 0 }), THIRTY_MIN + 1).staleFound).toBe(1);
     db.close();
   });
 });

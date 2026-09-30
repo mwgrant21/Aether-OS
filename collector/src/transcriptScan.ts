@@ -159,10 +159,11 @@ export function scanTranscriptsOnce(
               'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
             )
             .get(toolUseId) as
-            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number; tool_uses: number; exit_state: string }
+            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number | null; tool_uses: number | null; exit_state: string }
             | undefined;
           if (!row || !row.agent_id) continue;
           if (row.exit_state !== 'ok') continue;
+          if (row.duration_ms === null || row.tool_uses === null) continue;
           if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
 
           const runSummary = extractDispatchResultText(event.humanText);
