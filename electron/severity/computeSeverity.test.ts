@@ -41,8 +41,17 @@ describe('computeSeverity (spec section 3 table)', () => {
     expect(computeSeverity({ exit: 'timeout', ...base }).severity).toBe(3);
     expect(computeSeverity({ exit: 'blocked', ...base }).severity).toBe(4);
   });
-  it('negative elapsed (clock skew) gives no slowness bump', () => {
-    expect(computeSeverity({ exit: 'ok', elapsedMs: -5000, medianMsAtEval: 100 }).severity).toBe(1);
+  it('a non-finite or negative elapsed (clock skew, bad subtraction) gives no slowness bump', () => {
+    // Infinity > 3 * median is true on its own, so only the isFinite guard keeps this at 1.
+    for (const e of [Number.POSITIVE_INFINITY, Number.NaN, -5000]) {
+      expect(computeSeverity({ exit: 'ok', elapsedMs: e, medianMsAtEval: 100 }).severity).toBe(1);
+    }
+  });
+  it('findingWeights: a 3 floors at 3, a 4 at 4, 1s and 2s do nothing, [] equals omitted', () => {
+    expect(computeSeverity({ exit: 'ok', ...base, findingWeights: [1, 3] }).severity).toBe(3);
+    expect(computeSeverity({ exit: 'ok', ...base, findingWeights: [4] }).severity).toBe(4);
+    expect(computeSeverity({ exit: 'ok', ...base, findingWeights: [1, 2] }).severity).toBe(1);
+    expect(computeSeverity({ exit: 'ok', ...base, findingWeights: [] })).toEqual(computeSeverity({ exit: 'ok', ...base }));
   });
   it('an unusable median (0, negative, NaN) is treated as unestablished', () => {
     for (const m of [0, -1, Number.NaN]) {

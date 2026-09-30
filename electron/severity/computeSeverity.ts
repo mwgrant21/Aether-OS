@@ -49,7 +49,7 @@ export function computeSeverity(input: SeverityInput): SeverityResult {
   const medianMs = typeof m === 'number' && Number.isFinite(m) && m > 0 ? m : null;
 
   let sev = 1;
-  if (medianMs !== null && Number.isFinite(elapsedMs) && elapsedMs > 0 && elapsedMs > SLOW_FACTOR * medianMs) {
+  if (medianMs !== null && Number.isFinite(elapsedMs) && elapsedMs > SLOW_FACTOR * medianMs) {
     sev = Math.min(sev + 1, SLOWNESS_CAP);
   }
 

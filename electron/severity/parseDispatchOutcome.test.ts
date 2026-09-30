@@ -101,8 +101,21 @@ describe('parseDispatchOutcome', () => {
     expect(parseDispatchOutcome(text)).toEqual({ status: 'completed' });
   });
 
+  it('D2: a truncated notification quoting </result> does not yield usage', () => {
+    const text =
+      '<task-notification><status>completed</status><summary>s</summary><result>see: </result>' +
+      '<subagent_tokens>1</subagent_tokens><tool_uses>1</tool_uses><duration_ms>999999999</duration_ms> and more';
+    expect(parseDispatchOutcome(text)).toEqual({ status: 'completed' });
+  });
+
+  it('a well-formed wrapped notification still yields full usage', () => {
+    const text = note('completed', { tokens: 5, toolUses: 2, durationMs: 1234 });
+    expect(parseDispatchOutcome(text)).toEqual({ status: 'completed', usage: { tokens: 5, toolUses: 2, durationMs: 1234 } });
+  });
+
   it('result carries no string field other than status', () => {
     const inputs = [
+      note('secret source code'),
       note('completed', { tokens: 1, toolUses: 1, durationMs: 1 }, '<result>secret source code</result>'),
       note('failed', undefined, '<result>stack trace here</result>'),
       note('weird'),
@@ -114,6 +127,8 @@ describe('parseDispatchOutcome', () => {
         expect(Object.values(r.usage as object).every((v) => typeof v === 'number')).toBe(true);
       }
       expect(JSON.stringify(r)).not.toMatch(/secret|stack trace/);
+      expect(['completed', 'failed', 'killed', 'unknown']).toContain(r.status);
+      expect(Object.keys(r).length).toBeLessThanOrEqual(2);
     }
   });
 });

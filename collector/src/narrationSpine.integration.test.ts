@@ -7,8 +7,8 @@ import { scanTranscriptsOnce } from './transcriptScan.js';
 import { computeSeverity } from './severity/computeSeverity.js';
 
 // Acceptance gate for Tasks 1-5: proves the two real severity outcomes that
-// fall out of the actual pipeline (schema v5 columns -> personalitySpine's
-// computeSeverity -> toolCallHistory's dispatch-open capture -> usageIngest's
+// fall out of the actual pipeline (schema v5 columns ->
+// severity/computeSeverity -> toolCallHistory's dispatch-open capture -> usageIngest's
 // real-completion write / staleDispatchSweep's fatal-via-staleness write),
 // driven end to end through scanTranscriptsOnce -- the same orchestrator
 // harness pattern already used in transcriptScan.test.ts (mkdtemp projects

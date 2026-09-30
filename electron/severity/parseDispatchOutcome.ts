@@ -38,14 +38,19 @@ function headPart(text: string): string {
 }
 
 // Text after the last content close tag, or null when that tail still holds
-// an opening tag (truncated body: nothing after it can be trusted).
+// an opening tag, or when a <task-notification> opener has no closer
+// (truncated body: nothing after it can be trusted).
 function usagePart(text: string): string | null {
   const end = Math.max(
     text.lastIndexOf('</result>') < 0 ? -1 : text.lastIndexOf('</result>') + 9,
     text.lastIndexOf('</summary>') < 0 ? -1 : text.lastIndexOf('</summary>') + 10,
   );
   const tail = end < 0 ? text : text.slice(end);
-  return CONTENT_OPEN.test(tail) ? null : tail;
+  if (CONTENT_OPEN.test(tail)) return null;
+  // A wrapped notification is trusted only if it is closed: a cut-off body that
+  // quotes </result> must not lend its trailing text to the usage block.
+  if (text.includes('<task-notification>') && !text.includes('</task-notification>')) return null;
+  return tail;
 }
 
 function recognised(raw: string): raw is 'completed' | 'failed' | 'killed' {
