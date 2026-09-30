@@ -37,7 +37,7 @@ export interface DispatchCompletedEvent {
   // needs only role + severity, so it fires for real without these.
   toolUses?: Array<{ name: string }>;
   toolResults?: Array<{ resultLength: number }>;
-  exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | null;
+  exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | 'killed' | null;
 }
 
 export interface AnomalyDetectedEvent {

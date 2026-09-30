@@ -57,9 +57,9 @@ const MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE = 6;
  */
 export interface DispatchRow {
   toolUseId: string;
-  tokens: number;
-  toolUses: number;
-  durationMs: number;
+  tokens: number | null;
+  toolUses: number | null;
+  durationMs: number | null;
   startedAtMs: number;
   endedAtMs: number;
   agentId: string | null;
@@ -101,6 +101,7 @@ const EXIT_STATES: ReadonlySet<string> = new Set<ExitState>([
   'fatal',
   'timeout',
   'blocked',
+  'killed',
 ]);
 
 function asExitState(value: unknown): ExitState | null {
@@ -248,9 +249,9 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
       dispatches: dispatchRows.map(
         (r): DispatchRow => ({
           toolUseId: r.tool_use_id as string,
-          tokens: r.tokens as number,
-          toolUses: r.tool_uses as number,
-          durationMs: r.duration_ms as number,
+          tokens: asNullableNumber(r.tokens),
+          toolUses: asNullableNumber(r.tool_uses),
+          durationMs: asNullableNumber(r.duration_ms),
           startedAtMs: r.started_at_ms as number,
           endedAtMs: r.ended_at_ms as number,
           // On a pre-v5 database these keys are absent from the row object, so

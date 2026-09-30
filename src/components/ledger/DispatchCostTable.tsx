@@ -132,16 +132,19 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
           // 'error' (recoverable), 'timeout' and 'blocked' -- a dispatch that
           // burned 80k tokens and exited 'error' is exactly the cost-of-failure
           // case this table exists to surface, and it was rendering clean.
-          const failed = row.exitState !== null && row.exitState !== 'ok' && row.exitState !== 'partial';
+          // 'killed' is informational (almost always a deliberate stop, spec
+          // 2026-09-30-real-severity-design.md section 3): labelled, never styled as trouble.
+          const killed = row.exitState === 'killed';
+          const failed = row.exitState !== null && row.exitState !== 'ok' && row.exitState !== 'partial' && !killed;
           const troubled = failed || (row.retries !== null && row.retries > 0);
           return (
             <div role="row" key={row.toolUseId} style={bodyRowStyle(colors, troubled)}>
               <span role="cell" style={{ ...colDesc, ...descCellStyle(colors) }} title={row.description}>
                 {row.description}
-                {troubled && (
-                  <span style={flagStyle(colors)}>
-                    {failed ? row.exitState : null}
-                    {failed && row.retries ? ' · ' : null}
+                {(troubled || killed) && (
+                  <span style={killed && !failed ? killedLabelStyle(colors) : flagStyle(colors)}>
+                    {failed || killed ? row.exitState : null}
+                    {(failed || killed) && row.retries ? ' \u00b7 ' : null}
                     {row.retries ? `${row.retries} ${row.retries === 1 ? 'retry' : 'retries'}` : null}
                   </span>
                 )}
@@ -279,6 +282,15 @@ const flagStyle = (c: ColorPalette): CSSProperties => ({
   font: `600 11px/1 ${fonts.ui}`,
   letterSpacing: '.06em',
   color: c.danger,
+  marginLeft: 8,
+});
+
+// Neutral label for a 'killed' exit: same type as flagStyle but the muted text
+// colour, because a kill is informational, not a failure (user decision F1).
+const killedLabelStyle = (c: ColorPalette): CSSProperties => ({
+  font: `600 11px/1 ${fonts.ui}`,
+  letterSpacing: '.06em',
+  color: c.textDim,
   marginLeft: 8,
 });
 

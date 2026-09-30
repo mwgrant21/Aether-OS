@@ -233,6 +233,10 @@ describe('detectEventKind', () => {
   });
 
   describe('no_signal (ASSAY)', () => {
+    it('does not fire for a killed dispatch (a kill is deliberate, not "no signal")', () => {
+      expect(detectEventKind({ dispatch: { subagentType: 'pr-test-analyzer', severity: 2, completed: true, toolUses: [], exitState: 'killed' } })).not.toBe('no_signal');
+    });
+
     it('fires when exit_state is fatal', () => {
       const input: FrozenPhraseInput = {
         dispatch: {

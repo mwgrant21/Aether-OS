@@ -39,9 +39,9 @@ export function DispatchTimeline({ diagnostics }: { diagnostics: DiagnosticsSnap
         ) : item.kind === 'dispatch' ? (
           <div key={`dp-${i}`} className="dispatch-timeline__row dispatch-timeline__row--dispatch">
             <span>Agent</span>
-            <span>{item.data.tokens} tokens</span>
-            <span>{item.data.toolUses} tool uses</span>
-            <span>{Math.round(item.data.durationMs / 1000)}s</span>
+            <span>{item.data.tokens ?? '\u2014'} tokens</span>
+            <span>{item.data.toolUses ?? '\u2014'} tool uses</span>
+            <span>{item.data.durationMs === null ? '\u2014' : `${Math.round(item.data.durationMs / 1000)}s`}</span>
           </div>
         ) : (
           <div key={`an-${i}`} className="dispatch-timeline__row dispatch-timeline__row--anomaly">

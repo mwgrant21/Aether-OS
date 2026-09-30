@@ -184,4 +184,22 @@ describe('DispatchCostTable', () => {
     expect(screen.getByText('$0.00')).toBeTruthy();
     expect(screen.queryByText('3.0 pts')).toBeNull();
   });
+
+  it('labels a killed dispatch without failure styling', () => {
+    render(
+      <DispatchCostTable
+        rows={[row({ toolUseId: 'k', exitState: 'killed' }), row({ toolUseId: 'c', exitState: 'ok' }), row({ toolUseId: 'f', exitState: 'fatal' })]}
+      />,
+    );
+    const killedLabel = screen.getByText(/killed/);
+    const fatalLabel = screen.getByText(/fatal/);
+    const rows = screen.getAllByRole('row').slice(1);
+    const killedRow = rows.find((r) => r.textContent!.includes('killed'))!;
+    const cleanRow = rows.find((r) => !r.textContent!.includes('killed') && !r.textContent!.includes('fatal'))!;
+    // Not the failure (danger) colour, and the row is not given trouble styling.
+    expect(fatalLabel.style.color).not.toBe('');
+    expect(killedLabel.style.color).not.toBe('');
+    expect(killedLabel.style.color).not.toBe(fatalLabel.style.color);
+    expect(killedRow.getAttribute('style')).toBe(cleanRow.getAttribute('style'));
+  });
 });
