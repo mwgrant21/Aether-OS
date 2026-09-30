@@ -49,8 +49,9 @@ import {
   createPeriodicContentCache,
   isNewPeriodicContent,
 } from './headlineGenerator';
-import { formatNarration } from './narrationGenerator';
-import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
+import { narrationLine } from './narrationGenerator';
+import { loadDurationBaseline, DURATION_BASELINE_FILE } from './severity/durationBaseline';
+import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INTERVAL_MS } from './severity/liveSeverity';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
@@ -123,7 +124,6 @@ let recapAcc: RecapAccumulator = createEmptyAccumulator();
 // the blocked-trigger headline, without calling tracker.tick() a second time.
 let lastTickResult: LiveAgentTick | null = null;
 const headlineThrottle = createHeadlineThrottle();
-const narrationDurationBaseline = createDurationBaseline();
 const periodicContentCache = createPeriodicContentCache();
 
 const DEFAULT_WIDTH = 1400;
@@ -651,6 +651,17 @@ function optimizeProjectTargetPath(events: TranscriptEvent[]): string | null {
 }
 
 const liveAgentTracker = createLiveAgentTracker(os.homedir());
+// Real severity (docs/superpowers/specs/2026-09-30-real-severity-design.md).
+// Persisted per-agent baseline; corrupt/unreadable -> empty + one [diag].
+const narrationDurationBaseline = loadDurationBaseline({
+  filePath: join(aetherOsDir, DURATION_BASELINE_FILE),
+  diag: (line) => diagLog.write(line),
+});
+const liveSeverity = createLiveSeverityNarrator({ baseline: narrationDurationBaseline, narrate: narrationLine });
+const reportUnseenStatus = createUnseenStatusReporter((line) => diagLog.write(line));
+let lastStallCheckMs = 0;
+// "The owning session has ended" on the live path = the pinned pty exited.
+let pinnedPtyExited = false;
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 let lastWrittenOwnSessionId: string | null | undefined = undefined;
@@ -737,7 +748,8 @@ async function tickAndPushAgents(): Promise<void> {
     }
 
     // Narration: for each dispatch that completed this tick, render a
-    // role-based voice line -- no model call (see narrationGenerator.ts).
+    // role-based voice line at the severity computed from the real outcome
+    // (electron/severity/liveSeverity.ts) -- no model call.
     // Unlike the headline loop above (which re-renders periodically for
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
@@ -754,14 +766,20 @@ async function tickAndPushAgents(): Promise<void> {
       // a prompt raised on the main thread does not block the dispatch it would
       // have been subtracted from. Every correction it made was therefore taken
       // from a dispatch that had not waited.
-      const measuredMs = c.durationMs;
-      // Snapshot the baseline BEFORE recording this run -- a run must never
-      // be compared against a baseline it has already contributed to.
-      const medianMsAtEval = getMedianMs(narrationDurationBaseline, c.subagentType);
-      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: measuredMs }, medianMsAtEval);
-      recordDuration(narrationDurationBaseline, c.subagentType, measuredMs);
-      if (narrated) {
-        sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration: narrated.narration, severity: narrated.severity });
+      // liveSeverity.onCompleted snapshots the baseline BEFORE recording this
+      // run, so a run is never compared against a baseline it contributed to.
+      const tracked = result.outcomes?.get(c.toolUseId);
+      reportUnseenStatus(tracked?.unknownStatusTag ?? null);
+      const payload = liveSeverity.onCompleted(c, tracked);
+      if (payload) sendToWindow('agents:narration', payload);
+    }
+
+    // Stall check, ~every 30 s, AFTER completions (liveSeverity.ts contract).
+    const stallNowMs = Date.now();
+    if (stallNowMs - lastStallCheckMs >= STALL_CHECK_INTERVAL_MS) {
+      lastStallCheckMs = stallNowMs;
+      for (const payload of liveSeverity.checkStalls(result.open, stallNowMs, pinnedPtyExited)) {
+        sendToWindow('agents:narration', payload);
       }
     }
 
@@ -1182,8 +1200,9 @@ const communicationSessions = new CommunicationSessionControl({
     connectedPromptObserver.start(launchId, dimensions, () => spawnPty(dimensions.cols, dimensions.rows, bundle), {
       onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
-      onExit: () => { onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
+      onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
     });
+    pinnedPtyExited = false;
     liveAgentTracker.notifyPtySpawned(Date.now());
   },
 });
@@ -1217,12 +1236,14 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
     // turns it on; pty:exit turns it back off.
     onAlive: () => sendToWindow('pty:alive', undefined),
     onExit: () => {
+      pinnedPtyExited = true;
       sendToWindow('pty:exit', undefined);
       planUsageScraper.reset(); // a new pty means a fresh /usage read next time
     },
   });
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
+  pinnedPtyExited = false;
   liveAgentTracker.notifyPtySpawned(Date.now());
 });
 

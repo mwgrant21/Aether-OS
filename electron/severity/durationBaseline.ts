@@ -1,8 +1,9 @@
 // electron/severity/durationBaseline.ts
 // Per-subagentType duration baseline for live narration, persisted to
 // ~/.aether-os/duration-baseline.json (spec 2026-09-30-real-severity-design.md
-// section 6). Will replace electron/durationBaseline.ts (wired in Task 7), which is in-memory,
-// loses everything on restart and has no minimum. Holds numbers only, keyed by
+// section 6). Wired into main.ts's live narration via liveSeverity.ts; it
+// replaced the deleted electron/durationBaseline.ts, which was in-memory, lost
+// everything on restart and had no minimum. Holds numbers only, keyed by
 // agent type, in a Map so a key like __proto__ is plain data. Written through
 // atomicWrite.ts so it inherits the #99 user-only directory ACL. A corrupt,
 // wrong-shape or unreadable file starts empty with one [diag] line; a missing
