@@ -268,10 +268,15 @@ and should never grow one.
   from dispatch durations.** It was built, shipped, and removed on 2026-09-16
   (`src/shared/waitClock.ts`, deleted). Not abandoned half-finished --
   removed because the attribution it needs does not exist: a subagent's tool
-  calls are written to NO transcript (measured: 0 `isSidechain:true` lines
-  across 570 transcripts / 549 MB, and a live probe dispatch's inner calls
-  appeared nowhere), so a prompt raised inside a dispatch can never be traced
-  back to it, while a prompt raised on the main thread does not block the
+  calls are NOT in the parent transcript (corrected 2026-09-30: they ARE
+  written, to `<session>/subagents/agent-<id>.jsonl` with `isSidechain:true`,
+  26274 lines across 212 files in 30 days on this machine, linked to the
+  dispatch by `agent-<id>.meta.json`'s `toolUseId`; the earlier "0 lines" count
+  scanned only parent transcripts; see
+  `docs/superpowers/specs/2026-09-30-subagent-link-spike.md`), so a prompt
+  raised inside a dispatch can never be traced back to it from the parent
+  transcript -- approval-wait attribution via subagent files is not
+  re-evaluated by this change, and the removal stands, while a prompt raised on the main thread does not block the
   dispatch it would be subtracted from. Every correction the mechanism made
   was therefore taken from a dispatch that had not waited, and it fed the
   shared `narrationDurationBaseline`, so the error compounded silently in the

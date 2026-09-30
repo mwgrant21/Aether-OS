@@ -28,10 +28,11 @@ export function createTickCompletionHandler(deps: TickCompletionDeps): (result: 
       // That subtraction was removed because it could not be made correct. Read
       // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
       // BEFORE attempting to reintroduce it -- the short version is that a
-      // subagent's tool calls are not written to the transcript at all, so a
-      // prompt raised inside a dispatch can never be attributed back to it, and
-      // a prompt raised on the main thread does not block the dispatch it would
-      // have been subtracted from. Every correction it made was therefore taken
+      // subagent's tool calls are not in the PARENT transcript (they live in
+      // per-dispatch subagent jsonl files, see 2026-09-30-subagent-link-spike.md),
+      // so a prompt raised inside a dispatch can never be attributed back to it
+      // from the parent transcript, and a prompt raised on the main thread does
+      // not block the dispatch it would have been subtracted from. Every correction it made was therefore taken
       // from a dispatch that had not waited. (Here: outcome.usage.durationMs, the
       // notification's own <duration_ms>, fed to onCompleted as is.)
       //

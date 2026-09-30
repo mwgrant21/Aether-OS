@@ -7,7 +7,7 @@
 // SET_ANOMALIES, SET_PENDING_PERMISSION_REQUEST, and SET_PENDING_POST_TOOL_FLAG
 // cases for where these events originate.
 //
-// Distinct from the model-written `dispatchNarrations` (electron/narrationGenerator.ts,
+// Distinct from the deterministic `dispatchNarrations` (electron/narrationGenerator.ts, no model call,
 // rendered on AgentRosterCard): that path always calls renderNarration(pack, severity, null)
 // -- eventKind is always null there, so the four frozen phrases are unreachable through it.
 // This feed is the actual consumer of Task 4's detectEventKind, passing the real eventKind

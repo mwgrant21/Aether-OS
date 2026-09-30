@@ -402,7 +402,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
         dispatchNarrations = Object.fromEntries(Object.entries(dispatchNarrations).filter(([k]) => !toEvict.has(k)));
       }
       // Give the completed dispatch a voice-pack line in its Comms channel too
-      // (distinct from `dispatchNarrations` above, the roster card's model-written
+      // (distinct from `dispatchNarrations` above, the roster card's deterministic (electron/narrationGenerator.ts, no model call)
       // line). subagentType comes on the action itself: main.ts sends the
       // narration BEFORE the snapshot that moves the dispatch into
       // recentCompletedDispatches / dispatchChannels, and its onPostToolUse tick

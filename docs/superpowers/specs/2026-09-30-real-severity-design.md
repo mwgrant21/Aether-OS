@@ -84,7 +84,7 @@ Three pure units form one source of truth.
 ## 7. Collector changes
 
 - `usageIngest` uses the shared parser. `failed` → `exit_state 'error'` and `killed` → `'killed'`, with severity from §3.
-- When the usage block is missing, tokens, tool uses and duration are stored as **NULL, not 0**. **Spec-writer check:** if those `dispatches` columns are `NOT NULL`, this needs a schema v6 migration. Specify it; do not work around it.
+- When the usage block is missing, tokens, tool uses and duration are stored as **NULL, not 0**. **Spec-writer check:** if those `dispatches` columns are `NOT NULL`, this needs a schema v9 migration (the base was v8; shipped as v9). Specify it; do not work around it.
 - **The Ledger must render `killed`** (it reads `exit_state` and `retries`). **Spec-writer check:** every consumer of `exit_state` must handle the new value.
 - **Memory extraction interaction:** `transcriptScan.ts:165` sends only `exit_state === 'ok'` dispatches to extraction. With real outcomes, failed and killed runs stop being sent. This is intended, and it is related to #104.
 - **The Go collector** (`collector-go/`) has its own ingest. It is out of scope unless an existing parity test forces it in. If it stays out, file an issue next to #65.
