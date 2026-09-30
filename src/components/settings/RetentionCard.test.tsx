@@ -185,4 +185,38 @@ describe('RetentionCard', () => {
     expect(screen.queryByText(/disk full/i)).toBeNull();
     expect(screen.getByText(/cannot be undone/i)).toBeTruthy();
   });
+
+  // Codex P2 on #98: diag.log grows whether or not the collector exists, so
+  // its purge must not hide behind a readable collector.db.
+  const NO_DB = {
+    exists: false, readable: true, fileSizeBytes: 0, oldestRetainedAtMs: null,
+    rowCounts: { events: 0, dailyRollups: 0, usageEvents: 0, toolCalls: 0, dispatches: 0, anomalies: 0, dailyAnomalyRollups: 0, driftLog: 0, fleetSessions: 0 },
+  };
+
+  it('offers purge for the diagnostic log when there is no collector store', async () => {
+    const { purge } = mockRetention({ status: vi.fn().mockResolvedValue({ ...NO_DB, diagLogBytes: 48_000 }) });
+    render(
+      <AetherStoreProvider>
+        <RetentionCard />
+      </AetherStoreProvider>,
+    );
+    await waitFor(() => expect(screen.getByText(/no collector data yet/i)).toBeTruthy());
+    expect(screen.getByText('DIAGNOSTIC LOG')).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/purge all collected data/i));
+    fireEvent.click(screen.getByText(/I UNDERSTAND, PURGE/i));
+    await waitFor(() => expect(purge).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows no purge control when neither store has anything', async () => {
+    mockRetention({ status: vi.fn().mockResolvedValue({ ...NO_DB, diagLogBytes: 0 }) });
+    render(
+      <AetherStoreProvider>
+        <RetentionCard />
+      </AetherStoreProvider>,
+    );
+    await waitFor(() => expect(screen.getByText(/no collector data yet/i)).toBeTruthy());
+    expect(screen.queryByText(/purge all collected data/i)).toBeNull();
+    expect(screen.queryByText('DIAGNOSTIC LOG')).toBeNull();
+  });
 });

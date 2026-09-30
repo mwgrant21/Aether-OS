@@ -92,6 +92,14 @@ describe('createDiagLog', () => {
     expect(r.error).toMatch(/diag\.log/);
   });
 
+  it('sizeBytes sums diag.log and diag.log.1, and is 0 with nothing on disk', () => {
+    expect(createDiagLog({ dir: join(root, 'none') }).sizeBytes()).toBe(0);
+    const log = createDiagLog({ dir: root, maxBytes: 5 });
+    log.write('first-line'); // 11 bytes, rotated to .1 by the next write
+    log.write('second'); // 7 bytes
+    expect(log.sizeBytes()).toBe(18);
+  });
+
   // Privacy doc §7: ~/.aether-os is user-only. POSIX modes only; Windows
   // ignores them and relies on the profile ACL.
   const posixOnly = it.skipIf(process.platform === 'win32');

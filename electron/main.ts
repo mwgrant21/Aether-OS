@@ -1008,7 +1008,10 @@ function openCollectorDbReadOnly(): DatabaseSync | null {
   }
 }
 
-ipcMain.handle('retention:status', () => readRetentionStatus(collectorDbPath));
+ipcMain.handle('retention:status', () => ({
+  ...readRetentionStatus(collectorDbPath),
+  diagLogBytes: diagLog.sizeBytes(),
+}));
 // Purge covers diag.log too: its forwarded renderer error text can carry
 // content (Codex P2 on #98). Both always run; either failing fails the purge.
 ipcMain.handle('retention:purge', (): PurgeResult => {

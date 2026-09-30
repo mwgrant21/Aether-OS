@@ -26,6 +26,9 @@ export function RetentionCard() {
   const totalRows = status
     ? Object.values(status.rowCounts).reduce((sum, n) => sum + n, 0)
     : 0;
+  const collectorReadable = !!status && status.exists && status.readable;
+  // diag.log exists independently of collector.db, so its purge must too.
+  const diagLogBytes = status?.diagLogBytes ?? 0;
 
   async function runPurge() {
     const retention = window.aetherElectron?.retention;
@@ -56,7 +59,7 @@ export function RetentionCard() {
         </div>
       )}
 
-      {status && status.exists && status.readable && (
+      {collectorReadable && (
         <>
           <div style={rowStyle(colors)}>
             <div style={labelStyle(colors)}>STORE SIZE</div>
@@ -72,7 +75,18 @@ export function RetentionCard() {
               {status.oldestRetainedAtMs === null ? '—' : new Date(status.oldestRetainedAtMs).toLocaleString()}
             </div>
           </div>
+        </>
+      )}
 
+      {status && diagLogBytes > 0 && (
+        <div style={rowStyle(colors)}>
+          <div style={labelStyle(colors)}>DIAGNOSTIC LOG</div>
+          <div style={valueStyle(colors)}>{formatFileSize(diagLogBytes)}</div>
+        </div>
+      )}
+
+      {status && (collectorReadable || diagLogBytes > 0) && (
+        <>
           <Button
             onClick={() => {
               setErrorMsg(null);
@@ -86,16 +100,28 @@ export function RetentionCard() {
 
           {confirming && (
             <div style={confirmWrapStyle(colors)}>
-              <p style={disclosureStyle(colors)}>
-                Permanently deletes everything the collector has observed on this machine — every
-                event, dispatch, tool call, anomaly, and rollup — including the daily rollups that
-                normally survive automatic 30-day retention. This cannot be undone. Memory decisions
-                (`memory.db`) are a separate store and are not affected.
-              </p>
-              <p style={disclosureStyle(colors)}>
-                Deleting {formatFileSize(status.fileSizeBytes)} across {totalRows} rows, oldest from{' '}
-                {status.oldestRetainedAtMs === null ? 'n/a' : new Date(status.oldestRetainedAtMs).toLocaleDateString()}.
-              </p>
+              {collectorReadable && (
+                <>
+                  <p style={disclosureStyle(colors)}>
+                    Permanently deletes everything the collector has observed on this machine — every
+                    event, dispatch, tool call, anomaly, and rollup — including the daily rollups that
+                    normally survive automatic 30-day retention. This cannot be undone. Memory decisions
+                    (`memory.db`) are a separate store and are not affected.
+                  </p>
+                  <p style={disclosureStyle(colors)}>
+                    Deleting {formatFileSize(status.fileSizeBytes)} across {totalRows} rows, oldest from{' '}
+                    {status.oldestRetainedAtMs === null ? 'n/a' : new Date(status.oldestRetainedAtMs).toLocaleDateString()}.
+                  </p>
+                </>
+              )}
+              {diagLogBytes > 0 && (
+                <p style={disclosureStyle(colors)}>
+                  {collectorReadable ? 'Also deletes' : 'Permanently deletes'} the diagnostic log (
+                  {formatFileSize(diagLogBytes)}, `diag.log` and its rotated copy): lifecycle lines and
+                  forwarded renderer errors kept for white-screen diagnosis. Logging starts a fresh file
+                  afterwards.
+                </p>
+              )}
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <Button onClick={runPurge} disabled={busy} style={toggleStyle(colors, true)}>
                   {busy ? 'PURGING…' : 'I UNDERSTAND, PURGE'}

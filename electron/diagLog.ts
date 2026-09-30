@@ -12,6 +12,8 @@ export interface DiagLog {
   write(line: string): void;
   /** Settings → Purge: delete diag.log and diag.log.1. Never throws. */
   purge(): PurgeResult;
+  /** Bytes on disk across diag.log and diag.log.1; 0 when absent. Never throws. */
+  sizeBytes(): number;
 }
 
 /**
@@ -92,6 +94,17 @@ export function createDiagLog(opts: DiagLogOptions): DiagLog {
         }
       }
       return errors.length ? { ok: false, error: errors.join('; ') } : { ok: true };
+    },
+    sizeBytes(): number {
+      let total = 0;
+      for (const f of [file, rotated]) {
+        try {
+          total += statSync(f).size;
+        } catch {
+          // absent or unreadable: contributes nothing
+        }
+      }
+      return total;
     },
   };
 }
