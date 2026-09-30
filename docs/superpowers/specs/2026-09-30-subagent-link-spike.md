@@ -42,7 +42,7 @@ The same 199 match on both checks. The 12 misses (5.7%) are unexplained by this 
 
 Task-notification `<status>` counts (all parent transcripts): completed 2102, failed 105, killed 22. The literal `<status>running</status>` occurs 6 times in 4 files, but in none of them inside a `<task-notification>` block (0 notification ids carry `running`), so there is no running-then-final sequence to reconcile. Follow-up result: 0 running notifications, 0 superseded.
 
-## Decision: GO
+## Decision: NO-GO
 
 Rule: withMeta/recent >= 95% (99.5%, pass) AND toolUseIdIsParentAgentCall/metaHasToolUseId >= 95% (94.3%, FAIL by 0.7 points) AND isErrorResults > 0 (191, pass).
 
