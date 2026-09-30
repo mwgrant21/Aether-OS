@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatReadinessTime } from './readinessMath';
 import {
   NO_DATA,
   computeContextReading,
@@ -201,6 +202,12 @@ describe('computeDashKpis', () => {
     expect(tile(computeDashKpis(initialState, NOW), 'TODAY').s).toBe('API rate, not paid');
   });
 
+  it('renders a dash for DEPLETION ETA when the burn rate is NaN, never "n/a"', () => {
+    const kpis = computeDashKpis({ ...initialState, realUsage: { ...SCANNED, burnRatePerMin: NaN } }, NOW);
+    expect(tile(kpis, 'DEPLETION ETA').v).toBe(NO_DATA);
+    expect(kpis.every((k) => !k.v.includes('n/a'))).toBe(true);
+  });
+
   it('renders a dash for DEPLETION ETA when nothing is being drawn', () => {
     const kpis = computeDashKpis({ ...initialState, realUsage: { ...SCANNED, burnRatePerMin: 0 } }, NOW);
     expect(tile(kpis, 'DEPLETION ETA').v).toBe(NO_DATA);
@@ -339,6 +346,23 @@ describe('computeSessionInfoRows', () => {
     const live = computeSessionInfoRows(started, new Date(NOW), true);
     expect(value(live, 'Session start')).not.toBe(NO_DATA);
     expect(value(live, 'Uptime')).not.toBe(NO_DATA);
+  });
+
+  // Local-constructor instants keep these timezone-independent.
+  const sessionStart = (startedAt: Date, now: Date) =>
+    value(computeSessionInfoRows({ ...initialState, sessionStartedAt: startedAt.toISOString() }, now, true), 'Session start');
+
+  it('formats Session start as 24-hour HH:MM on the same local day', () => {
+    expect(sessionStart(new Date(2026, 8, 29, 9, 5), new Date(2026, 8, 29, 14, 30))).toBe('09:05');
+  });
+
+  it('prefixes the date when the session started on a previous local day', () => {
+    expect(sessionStart(new Date(2026, 8, 28, 23, 50), new Date(2026, 8, 29, 0, 10))).toBe('Sep 28 23:50');
+  });
+
+  it('matches the READINESS time format for the same instants', () => {
+    const s = new Date(2026, 8, 27, 7, 3), n = new Date(2026, 8, 29, 12, 0);
+    expect(sessionStart(s, n)).toBe(formatReadinessTime(s.getTime(), n.getTime()));
   });
 
   it('does not tick at STANDBY: a minute later the rows are identical', () => {

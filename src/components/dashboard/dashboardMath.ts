@@ -2,6 +2,7 @@ import type { AetherState, AlarmLevel, Cfg } from '../../state/types';
 import { STATUSLINE_STALE_AFTER_MS } from '../../shared/depletion';
 import type { StatuslineSnapshot } from '../../shared/statuslinePayload';
 import { fmt, fmtEta, formatUptime, short } from '../../utils/format';
+import { formatReadinessTime } from './readinessMath';
 import { deriveContextWindowCard } from '../layout/contextWindowCard';
 import { isSameLocalDay, type LedgerSnapshot } from '../../shared/ledgerMath';
 import { usdPrecise } from '../ledger/format';
@@ -161,10 +162,10 @@ export function computeDashKpis(state: AetherState, nowMs: number = Date.now()):
   const budgetLeftPct = Math.max(0, 100 - (used / capTokens) * 100);
   const remaining = Math.max(0, capTokens - used);
   const burn = state.realUsage.burnRatePerMin;
-  // An estimate keeps its `~`; with no draw there is nothing to project from.
+  // An estimate keeps its `~`; with no draw (or a NaN rate, hence `!(burn > 0)`) there is nothing to project from.
   // A cap already spent is a fact, not a projection: fmtEta(0) would return
   // 'n/a', which rendered as the "~n/a" readout.
-  const eta = !scanned || burn <= 0 ? NO_DATA : remaining <= 0 ? 'now' : `~${fmtEta(remaining / (burn / 60))}`;
+  const eta = !scanned || !(burn > 0) ? NO_DATA : remaining <= 0 ? 'now' : `~${fmtEta(remaining / (burn / 60))}`;
 
   return [
     { k: 'MONTH TOKENS', v: scanned ? short(used) : NO_DATA, s: 'this month' },
@@ -224,7 +225,7 @@ export function computeSessionInfoRows(
   live: boolean,
 ): SessionInfoRow[] {
   return [
-    { k: 'Session start', v: live ? new Date(state.sessionStartedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : NO_DATA },
+    { k: 'Session start', v: live ? formatReadinessTime(new Date(state.sessionStartedAt).getTime(), now.getTime()) : NO_DATA },
     { k: 'Uptime', v: live ? formatUptime(state.sessionStartedAt, now) : NO_DATA },
     { k: 'Commands run', v: fmt(state.commandsRun) },
     { k: 'Agents active', v: String(state.realAgents.length) },
