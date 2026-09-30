@@ -412,7 +412,8 @@ export function reducer(state: AetherState, action: Action): AetherState {
       // never shows in Comms as a completion of running work.
       let narrationMessages = state.narrationMessages;
       let narrationBudgets = state.narrationBudgets;
-      if (action.final) {
+      // An empty narration only clears a stall line: no Comms completion.
+      if (action.final && action.narration !== '') {
         const applied = applyNarrationEvent(
           { kind: 'dispatchCompleted', toolUseId: action.toolUseId, subagentType: action.subagentType, severity: action.severity as 0 | 1 | 2 | 3 | 4 },
           state,

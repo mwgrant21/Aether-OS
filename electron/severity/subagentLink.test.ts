@@ -12,8 +12,6 @@ import {
 
 const result = (isError: boolean) =>
   JSON.stringify({ type: 'user', isSidechain: true, message: { content: [{ type: 'tool_result', tool_use_id: 't', is_error: isError, content: 'x' }] } });
-const agentUse = (id: string, name = 'Agent') =>
-  JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: {} }] } });
 const tmp = () => mkdtempSync(join(tmpdir(), 'aether-sub-'));
 
 describe('subagentLink', () => {
@@ -26,6 +24,16 @@ describe('subagentLink', () => {
   });
   it('counts is_error:true tool_results, ignores malformed lines', () => {
     expect(countToolErrors([result(true), result(false), result(true), '{bad', '', result(true)])).toBe(3);
+  });
+  it('countToolErrors pre-filter never changes the count (mixed lines)', () => {
+    const spaced = '{"type":"user","message":{"content":[{"type":"tool_result","is_error": true,"content":"x"}]}}';
+    // Matches the pre-filter regex but is malformed JSON: parse rejects it.
+    const matchesButBroken = '{"note":"mentions "is_error": true inside" ';
+    // Valid JSON the regex matches, but no tool_result carries it.
+    const matchesNotToolResult = JSON.stringify({ type: 'user', is_error: true, message: { content: [{ type: 'text', text: 'is_error' }] } });
+    // Text that only mentions is_error inside a string (escaped quotes): never matches.
+    const mention = JSON.stringify({ message: { content: [{ type: 'tool_result', is_error: false, content: 'set "is_error": true to fail' }] } });
+    expect(countToolErrors([spaced, matchesButBroken, matchesNotToolResult, mention, result(true), result(false), '', '{bad'])).toBe(2);
   });
   it('probe links a dispatch to its subagent file via meta.json', () => {
     const dir = join(tmp(), 'subagents');
@@ -63,7 +71,7 @@ describe('subagentLink', () => {
   });
 });
 
-describe('createSubagentLinkIndex: parent lookup (spike: 202 own + 8 cross-project + 4 sibling)', () => {
+describe('createSubagentLinkIndex', () => {
   function layout() {
     const root = tmp();
     mkdirSync(join(root, 'projA'));
@@ -77,54 +85,6 @@ describe('createSubagentLinkIndex: parent lookup (spike: 202 own + 8 cross-proje
     writeFileSync(join(d, `agent-${agent}.jsonl`), lines.join('\n'));
   }
 
-  it('path 1: parent transcript in the subagent own project dir', () => {
-    const root = layout();
-    writeFileSync(join(root, 'projA', 'S1.jsonl'), agentUse('toolu_own') + '\n');
-    addSub(root, 'projA', 'S1', 'a', 'toolu_own');
-    const link = createSubagentLinkIndex(root).resolveParent('S1', 'toolu_own');
-    expect(link).toEqual({ via: 'parent', file: join(root, 'projA', 'S1.jsonl') });
-  });
-  it('path 1: parent in ANOTHER project dir than the subagent', () => {
-    const root = layout();
-    writeFileSync(join(root, 'projB', 'S2.jsonl'), agentUse('toolu_x', 'Task') + '\n');
-    addSub(root, 'projA', 'S2', 'a', 'toolu_x');
-    const idx = createSubagentLinkIndex(root);
-    expect(idx.resolveParent('S2', 'toolu_x')).toEqual({ via: 'parent', file: join(root, 'projB', 'S2.jsonl') });
-    expect(idx.subagentsDirsFor('S2')).toEqual([join(root, 'projA', 'S2', 'subagents')]);
-  });
-  it('path 2: nested dispatch whose Agent tool_use lives in a sibling subagent jsonl', () => {
-    const root = layout();
-    writeFileSync(join(root, 'projA', 'S3.jsonl'), agentUse('toolu_top') + '\n');
-    addSub(root, 'projA', 'S3', 'a', 'toolu_top', [agentUse('toolu_nested')]);
-    addSub(root, 'projA', 'S3', 'b', 'toolu_nested');
-    const link = createSubagentLinkIndex(root).resolveParent('S3', 'toolu_nested');
-    expect(link).toEqual({ via: 'sibling', file: join(root, 'projA', 'S3', 'subagents', 'agent-a.jsonl') });
-  });
-  it('path 3: degrades to null when the tool_use is nowhere, or the parent is missing', () => {
-    const root = layout();
-    writeFileSync(join(root, 'projA', 'S4.jsonl'), agentUse('toolu_other') + '\n');
-    addSub(root, 'projA', 'S4', 'a', 'toolu_ghost');
-    addSub(root, 'projA', 'S5', 'a', 'toolu_ghost2');
-    const idx = createSubagentLinkIndex(root);
-    expect(idx.resolveParent('S4', 'toolu_ghost')).toBeNull();
-    expect(idx.resolveParent('S5', 'toolu_ghost2')).toBeNull();
-    expect(idx.resolveParent('S-none', 'toolu_ghost')).toBeNull();
-  });
-  it('does not match a non-Agent tool_use or a bare substring', () => {
-    const root = layout();
-    writeFileSync(join(root, 'projA', 'S6.jsonl'), agentUse('toolu_b', 'Bash') + '\n' + JSON.stringify({ note: 'toolu_c' }) + '\n');
-    const idx = createSubagentLinkIndex(root);
-    expect(idx.resolveParent('S6', 'toolu_b')).toBeNull();
-    expect(idx.resolveParent('S6', 'toolu_c')).toBeNull();
-  });
-  it('builds its directory index once (no rescan per lookup)', () => {
-    const root = layout();
-    writeFileSync(join(root, 'projA', 'S7.jsonl'), agentUse('toolu_q') + '\n');
-    const idx = createSubagentLinkIndex(root);
-    expect(idx.resolveParent('S7', 'toolu_q')).not.toBeNull();
-    writeFileSync(join(root, 'projA', 'late.jsonl'), agentUse('toolu_late') + '\n');
-    expect(idx.resolveParent('late', 'toolu_late')).toBeNull();
-  });
   it('probeFor(session) reads subagent files across project dirs; unknown session gives a null probe', () => {
     const root = layout();
     addSub(root, 'projA', 'S8', 'a', 'toolu_e', [result(true), result(true), result(true)]);
@@ -144,7 +104,6 @@ describe('createSubagentLinkIndex: parent lookup (spike: 202 own + 8 cross-proje
   });
   it('unreadable projects root never throws', () => {
     const idx = createSubagentLinkIndex(join(tmp(), 'missing'));
-    expect(idx.resolveParent('S', 't')).toBeNull();
     expect(idx.subagentsDirsFor('S')).toEqual([]);
   });
 });

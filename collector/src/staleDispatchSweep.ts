@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { computeSeverity } from './severity/computeSeverity.js';
-import { isStalled, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
+import { isStalled, STALL_MS, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
 
 // Grace period before a dispatch's session liveness is even checked: an entry
 // that opened moments ago may simply predate the first fleet poll ever seeing
@@ -28,7 +28,8 @@ const SESSION_STALE_MS = 30000;
  *       last_seen_ms is older than SESSION_STALE_MS -- but only checked once
  *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old.
  *   (b) no progress for longer than STALL_MS (./severity/isStalled.js, 30 min),
- *       measured from the entry's start, regardless of session liveness.
+ *       measured from lastProgressFor (the dispatch's subagent file mtime),
+ *       falling back to the entry's start, regardless of session liveness.
  *
  * Only 'Agent'-named open entries are ever swept; any other tool call is left
  * untouched regardless of age.
@@ -84,7 +85,9 @@ export function sweepStaleDispatches(
     // exists (no link, no file, no probe), inactivity is measured from dispatch
     // start.
     // The future-mtime rule lives in ./severity/isStalled.js (shared with the live path).
-    const lastProgressMs = resolveLastProgressMs(open.startedAt, lastProgressFor?.(toolUseId), nowMs);
+    // A dispatch younger than STALL_MS cannot be stalled on inactivity, so the
+    // probe (a stat) is skipped; only a session-ended entry can still be stale.
+    const lastProgressMs = ageMs <= STALL_MS ? open.startedAt : resolveLastProgressMs(open.startedAt, lastProgressFor?.(toolUseId), nowMs);
     if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
 
     const durationMs = ageMs;

@@ -31,10 +31,11 @@ export function createTickCompletionHandler(deps: TickCompletionDeps): (result: 
       // subagent's tool calls are not in the PARENT transcript (they live in
       // per-dispatch subagent jsonl files, see 2026-09-30-subagent-link-spike.md),
       // so a prompt raised inside a dispatch can never be attributed back to it
-      // from the parent transcript, and a prompt raised on the main thread does
-      // not block the dispatch it would have been subtracted from. Every correction it made was therefore taken
-      // from a dispatch that had not waited. (Here: outcome.usage.durationMs, the
-      // notification's own <duration_ms>, fed to onCompleted as is.)
+      // from the parent transcript. Separately, a prompt raised on the main
+      // thread does not block the dispatch it would have been subtracted from.
+      // Every correction it made was therefore taken from a dispatch that had
+      // not waited. (Here: outcome.usage.durationMs, the notification's own
+      // <duration_ms>, fed to onCompleted as is.)
       //
       // liveSeverity.onCompleted snapshots the baseline BEFORE recording this
       // run, so a run is never compared against a baseline it contributed to.

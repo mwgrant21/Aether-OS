@@ -64,7 +64,10 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
       if (wasStalled && outcome.status === 'completed') {
         return { toolUseId: c.toolUseId, narration: text ? `${RECOVERED_PREFIX}${text}` : RECOVERED_PREFIX.trim(), severity: result.severity, subagentType: c.subagentType, final: true };
       }
-      return text ? { toolUseId: c.toolUseId, narration: text, severity: result.severity, subagentType: c.subagentType, final: true } : null;
+      if (text) return { toolUseId: c.toolUseId, narration: text, severity: result.severity, subagentType: c.subagentType, final: true };
+      // A stalled dispatch that ended with nothing to say: an empty narration
+      // clears the stall line from the roster (and adds no Comms line).
+      return wasStalled ? { toolUseId: c.toolUseId, narration: '', severity: result.severity, subagentType: c.subagentType, final: true } : null;
     },
 
     checkStalls(open, nowMs, sessionEnded, lastWriteFor) {
@@ -89,7 +92,7 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
         const lastProgressMs = resolveLastProgressMs(baseMs, lastWriteFor?.(d.toolUseId), nowMs);
         if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
         stalled.add(d.toolUseId);
-        const result = computeSeverity({ exit: 'fatal', elapsedMs: nowMs - lastProgressMs, medianMsAtEval: deps.baseline.medianFor(d.subagentType) });
+        const result = computeSeverity({ exit: 'fatal', elapsedMs: nowMs - baseMs, medianMsAtEval: deps.baseline.medianFor(d.subagentType) });
         const text = deps.narrate(d.subagentType, result.severity);
         if (text) out.push({ toolUseId: d.toolUseId, narration: text, severity: result.severity, subagentType: d.subagentType, final: false });
       }

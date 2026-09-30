@@ -26,6 +26,8 @@ export function createLiveSubagentProgress(projectsRoot: string, now: () => numb
 
   function build(sessionId: string): { probe: SubagentFileProbe; builtAtMs: number } {
     const entry = { probe: createSubagentLinkIndex(projectsRoot).probeFor(sessionId), builtAtMs: now() };
+    // Only the current session is kept: a session change evicts the rest.
+    sessions.clear();
     sessions.set(sessionId, entry);
     return entry;
   }

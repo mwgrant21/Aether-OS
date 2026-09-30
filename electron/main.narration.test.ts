@@ -13,7 +13,7 @@ function narrator(median: number | null = null) {
   return createLiveSeverityNarrator({ baseline: { medianFor: () => median, record: () => false }, narrate: narrationLine });
 }
 
-describe('main.ts narration wiring', () => {
+describe('live narration composition (the parts main.ts wires)', () => {
   it('a failed outcome is narrated at severity 4 with the role line for 4', () => {
     const p = narrator().onCompleted(dispatch, { outcome: { status: 'failed' }, unknownStatusTag: null });
     expect(p).toEqual({ toolUseId: 'tu_1', severity: 4, subagentType: 'code-reviewer', final: true, narration: formatNarration({ subagentType: 'code-reviewer' }, 4)!.narration });

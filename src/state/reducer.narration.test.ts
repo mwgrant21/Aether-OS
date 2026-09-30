@@ -42,6 +42,14 @@ describe('narrationMessages wiring', () => {
     expect(messages[0].text.startsWith("Oh. That's actually interesting.")).toBe(true);
   });
 
+  it('a stall line then a final empty narration clears the roster line and adds no Comms line', () => {
+    let state = reducer(withOpen(), narration('Stalled. Nothing for 31 minutes.', 4, false));
+    expect(state.dispatchNarrations['tu-1'].narration).not.toBe('');
+    state = reducer(state, narration('', 1, true));
+    expect(state.dispatchNarrations['tu-1'].narration).toBe('');
+    expect(state.narrationMessages['dispatch:tu-1']).toBeUndefined();
+  });
+
   it('onPostToolUse order: open, narration (final), no snapshot -> exactly one Comms line', () => {
     const state = reducer(withOpen(), narration('done', 1, true));
     expect(state.narrationMessages['dispatch:tu-1']).toHaveLength(1);

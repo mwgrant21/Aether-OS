@@ -276,11 +276,12 @@ and should never grow one.
   `docs/superpowers/specs/2026-09-30-subagent-link-spike.md`), so a prompt
   raised inside a dispatch can never be traced back to it from the parent
   transcript -- approval-wait attribution via subagent files is not
-  re-evaluated by this change, and the removal stands, while a prompt raised on the main thread does not block the
-  dispatch it would be subtracted from. Every correction the mechanism made
-  was therefore taken from a dispatch that had not waited, and it fed the
-  shared `narrationDurationBaseline`, so the error compounded silently in the
-  "looks fast" direction. The inflated-duration problem it aimed at is real
+  re-evaluated by this change, and the removal stands. Separately, a prompt
+  raised on the main thread does not block the dispatch it would be subtracted
+  from. Every correction the mechanism made was therefore taken from a
+  dispatch that had not waited, and it fed the shared
+  `narrationDurationBaseline`, so the error compounded silently in the "looks
+  fast" direction. The inflated-duration problem it aimed at is real
   and currently unmitigated -- that is an accepted gap, not an oversight.
   Full evidence and the measurements that would have to change first:
   `docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md`.

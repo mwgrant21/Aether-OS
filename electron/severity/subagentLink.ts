@@ -15,20 +15,11 @@ export interface SubagentFileProbe {
   lastWriteMsFor(toolUseId: string): number | null;
 }
 
-export type ParentLink = { via: 'parent' | 'sibling'; file: string };
-
 export interface SubagentLinkIndex {
   /** Existing <project>/<sessionId>/subagents dirs, across ALL project dirs. */
   subagentsDirsFor(sessionId: string): string[];
   /** Probe over every subagents dir of the session (cross-project). */
   probeFor(sessionId: string): SubagentFileProbe;
-  /**
-   * Where the Agent/Task tool_use with this id lives: 1) the session's parent
-   * transcript, found by session id in any project dir; 2) a sibling subagent
-   * transcript of the same session (nested dispatch); 3) null, meaning no link
-   * (severity then comes from status alone, never a guess).
-   */
-  resolveParent(sessionId: string, toolUseId: string): ParentLink | null;
 }
 
 export function toolUseIdFromSubagentMeta(metaJson: string): string | null {
@@ -40,10 +31,14 @@ export function toolUseIdFromSubagentMeta(metaJson: string): string | null {
   }
 }
 
+const IS_ERROR_TRUE = /"is_error"\s*:\s*true/;
+
 export function countToolErrors(lines: readonly string[]): number {
   let n = 0;
   for (const line of lines) {
-    if (!line) continue;
+    // Cheap pre-filter: skip the JSON.parse for lines that cannot hold
+    // is_error:true (the parse below still decides, so the count is unchanged).
+    if (!line || !IS_ERROR_TRUE.test(line)) continue;
     try {
       const content = (JSON.parse(line) as { message?: { content?: unknown } } | null)?.message?.content;
       if (!Array.isArray(content)) continue;
@@ -109,44 +104,16 @@ export function createSubagentFileProbe(subagentsDirs: string | readonly string[
   };
 }
 
-// True when the file holds an Agent/Task tool_use with this id. The cheap
-// substring test only skips lines; the match itself is a parsed one.
-function fileHasAgentToolUse(file: string, toolUseId: string): boolean {
-  let text: string;
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch {
-    return false;
-  }
-  for (const line of text.split('\n')) {
-    if (!line.includes(toolUseId)) continue;
-    try {
-      const content = (JSON.parse(line) as { message?: { content?: unknown } } | null)?.message?.content;
-      if (!Array.isArray(content)) continue;
-      for (const item of content) {
-        const b = item as { type?: unknown; name?: unknown; id?: unknown } | null;
-        if (b && b.type === 'tool_use' && (b.name === 'Agent' || b.name === 'Task') && b.id === toolUseId) return true;
-      }
-    } catch {
-      // malformed line
-    }
-  }
-  return false;
-}
-
 /**
  * Indexes <projectsRoot> once (one readdir per project dir, lazily on first
- * use): session id -> parent transcript path, and session id -> candidate
- * subagents dirs. Build one per scan pass so a dispatch lookup never rescans
+ * use): session id -> candidate subagents dirs. Build one per scan pass so a dispatch lookup never rescans
  * every project dir.
  */
 export function createSubagentLinkIndex(projectsRoot: string): SubagentLinkIndex {
-  let parents: Map<string, string> | null = null;
   let subDirs: Map<string, string[]> | null = null;
   const probes = new Map<string, SubagentFileProbe>();
 
   function build(): void {
-    parents = new Map();
     subDirs = new Map();
     let projects: string[] = [];
     try {
@@ -166,9 +133,6 @@ export function createSubagentLinkIndex(projectsRoot: string): SubagentLinkIndex
           const list = subDirs.get(e.name) ?? [];
           list.push(join(projectsRoot, proj, e.name, 'subagents'));
           subDirs.set(e.name, list);
-        } else if (e.name.endsWith('.jsonl')) {
-          const session = e.name.replace(/\.jsonl$/, '');
-          if (!parents.has(session)) parents.set(session, join(projectsRoot, proj, e.name));
         }
       }
     }
@@ -194,24 +158,6 @@ export function createSubagentLinkIndex(projectsRoot: string): SubagentLinkIndex
       };
       probes.set(sessionId, p);
       return p;
-    },
-    resolveParent(sessionId, toolUseId) {
-      if (parents === null) build();
-      const parent = parents?.get(sessionId);
-      if (parent && fileHasAgentToolUse(parent, toolUseId)) return { via: 'parent', file: parent };
-      for (const dir of subagentsDirsFor(sessionId)) {
-        let names: string[] = [];
-        try {
-          names = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
-        } catch {
-          continue;
-        }
-        for (const n of names) {
-          const f = join(dir, n);
-          if (fileHasAgentToolUse(f, toolUseId)) return { via: 'sibling', file: f };
-        }
-      }
-      return null;
     },
   };
 }

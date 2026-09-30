@@ -222,6 +222,17 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
     db.close();
   });
 
+  it('does not call lastProgressFor for an entry no older than STALL_MS; calls it once past it', () => {
+    const { db, nowMs } = setup();
+    const calls: string[] = [];
+    const spy = (id: string) => { calls.push(id); return null; };
+    sweepStaleDispatches(db, historyWithOpen('tu_young', { startedAt: nowMs - THIRTY_MIN }), nowMs, spy);
+    expect(calls).toEqual([]);
+    sweepStaleDispatches(db, historyWithOpen('tu_old', { startedAt: nowMs - THIRTY_MIN - 1 }), nowMs, spy);
+    expect(calls).toEqual(['tu_old']);
+    db.close();
+  });
+
   it('old subagent progress (past the stall window) still stalls', () => {
     const { db, nowMs } = setup();
     const h = historyWithOpen('tu_r', { startedAt: 0 });

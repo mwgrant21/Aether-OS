@@ -108,10 +108,15 @@ describe('createLiveSeverityNarrator', () => {
     expect(n.onCompleted(completed('p'), tracked(status))).toEqual({ toolUseId: 'p', severity, subagentType: 'code-reviewer', final: true, narration: narrate('code-reviewer', severity) });
   });
 
-  it('a stalled FORGE dispatch that later ends unknown stays silent (severity 1 heartbeat, no Recovered line)', () => {
+  it('a stalled FORGE dispatch that later ends unknown clears the stall line: final payload with empty narration, no Recovered line', () => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     n.checkStalls([open('u', new Date(T0).toISOString(), 'general-purpose')], T0 + STALL_MS + 1, false);
-    expect(n.onCompleted(completed('u', 'general-purpose'), tracked('unknown'))).toBeNull();
+    expect(n.onCompleted(completed('u', 'general-purpose'), tracked('unknown'))).toEqual({ toolUseId: 'u', narration: '', severity: 1, subagentType: 'general-purpose', final: true });
+  });
+
+  it('a silent unknown outcome with NO prior stall still returns null', () => {
+    const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
+    expect(n.onCompleted(completed('v', 'general-purpose'), tracked('unknown'))).toBeNull();
   });
 
   // Review Focus 5

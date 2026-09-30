@@ -89,6 +89,20 @@ describe('live stall progress from the subagent file', () => {
   });
 });
 
+describe('session eviction', () => {
+  it('two sessions in turn leave one entry: the first session is rebuilt when asked again', () => {
+    const root = projectsRoot();
+    addSub(root, 'proj-a', 'sess-1', 'a1', 'toolu_1', 1);
+    addSub(root, 'proj-a', 'sess-2', 'b1', 'toolu_2', 1);
+    const prog = createLiveSubagentProgress(root);
+    expect(prog.toolErrorsFor('sess-1', 'toolu_1')).toBe(1);
+    expect(prog.toolErrorsFor('sess-2', 'toolu_2')).toBe(1);
+    // A file added to sess-1 after eviction is visible only if sess-1 was rebuilt.
+    addSub(root, 'proj-a', 'sess-1', 'a2', 'toolu_3', 2);
+    expect(prog.toolErrorsFor('sess-1', 'toolu_3')).toBe(2);
+  });
+});
+
 describe('probe caching', () => {
   it('a miss rescans at most once per refresh window; a late meta.json is picked up after it', () => {
     const root = projectsRoot();
