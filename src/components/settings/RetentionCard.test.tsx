@@ -208,6 +208,54 @@ describe('RetentionCard', () => {
     await waitFor(() => expect(purge).toHaveBeenCalledTimes(1));
   });
 
+  it('refreshes after a partial purge failure, and keeps the error visible', async () => {
+    // Codex P2 on #98 (round 4): the DB purge committed, then deleting a
+    // diag.log held open elsewhere failed. The card kept showing rows that
+    // were already gone because it only refreshed on full success.
+    const status = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exists: true, readable: true, fileSizeBytes: 2_400_000, oldestRetainedAtMs: Date.UTC(2026, 6, 1),
+        rowCounts: { events: 120, dailyRollups: 8, usageEvents: 40, toolCalls: 55, dispatches: 12, anomalies: 3, dailyAnomalyRollups: 2, driftLog: 0, fleetSessions: 1 },
+        diagLogBytes: 48_000,
+      })
+      .mockResolvedValueOnce({ ...NO_DB, exists: true, fileSizeBytes: 4096, diagLogBytes: 48_000 });
+    mockRetention({ status, purge: vi.fn().mockResolvedValue({ ok: false, error: 'diag.log: EBUSY' }) });
+    render(
+      <AetherStoreProvider>
+        <RetentionCard />
+      </AetherStoreProvider>,
+    );
+    await waitFor(() => expect(screen.getByText('2.4 MB')).toBeTruthy());
+
+    fireEvent.click(screen.getByText(/purge all collected data/i));
+    fireEvent.click(screen.getByText(/I UNDERSTAND, PURGE/i));
+
+    await waitFor(() => expect(screen.getByText('4.1 KB')).toBeTruthy());
+    expect(screen.getByText(/EBUSY/)).toBeTruthy();
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a purge error visible even when the refresh leaves nothing to purge', async () => {
+    const status = vi
+      .fn()
+      .mockResolvedValueOnce({ ...NO_DB, diagLogBytes: 48_000 })
+      .mockResolvedValueOnce({ ...NO_DB, exists: true, readable: false, diagLogBytes: 0 });
+    mockRetention({ status, purge: vi.fn().mockResolvedValue({ ok: false, error: 'collector.db: unreadable' }) });
+    render(
+      <AetherStoreProvider>
+        <RetentionCard />
+      </AetherStoreProvider>,
+    );
+    await waitFor(() => expect(screen.getByText('DIAGNOSTIC LOG')).toBeTruthy());
+
+    fireEvent.click(screen.getByText(/purge all collected data/i));
+    fireEvent.click(screen.getByText(/I UNDERSTAND, PURGE/i));
+
+    await waitFor(() => expect(screen.getByText(/store present but could not be read/i)).toBeTruthy());
+    expect(screen.getByText(/collector\.db: unreadable/)).toBeTruthy();
+  });
+
   it('shows no purge control when neither store has anything', async () => {
     mockRetention({ status: vi.fn().mockResolvedValue({ ...NO_DB, diagLogBytes: 0 }) });
     render(

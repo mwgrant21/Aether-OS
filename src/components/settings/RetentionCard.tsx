@@ -38,10 +38,9 @@ export function RetentionCard() {
     const result = await retention.purge();
     setBusy(false);
     setConfirming(false);
-    if (!result.ok) {
-      setErrorMsg(result.error || 'Purge failed');
-      return;
-    }
+    if (!result.ok) setErrorMsg(result.error || 'Purge failed');
+    // Refresh after every attempt: purge covers two stores, and one can
+    // succeed while the other fails, so a failure does not mean nothing moved.
     await refresh();
   }
 
@@ -133,9 +132,12 @@ export function RetentionCard() {
             </div>
           )}
 
-          {errorMsg && <p style={{ ...hintStyle(colors), color: colors.danger }}>{errorMsg}</p>}
         </>
       )}
+
+      {/* Outside the purge block: a refresh after a failed purge can leave
+          nothing purgeable, and the error must not vanish with the button. */}
+      {errorMsg && <p style={{ ...hintStyle(colors), color: colors.danger }}>{errorMsg}</p>}
     </div>
   );
 }
