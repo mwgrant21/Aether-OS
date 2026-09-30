@@ -1,9 +1,16 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { render as rtlRender, screen, within, cleanup } from '@testing-library/react';
+import { render as rtlRender, screen, within, cleanup, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { AetherStoreProvider } from '../../state/store';
 import { DispatchCostTable, type DispatchCostRow } from './DispatchCostTable';
 import { ESTIMATE_BASIS_TOOLTIP } from './format';
+import { colors } from '../../styles/tokens';
+
+// jsdom normalises inline colours to rgb(...), so compare against that form.
+function hexToRgb(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}
 
 // useColors() reads the theme from the store, so every themed component needs
 // the provider -- the established convention in this repo's component tests.
@@ -201,5 +208,48 @@ describe('DispatchCostTable', () => {
     expect(killedLabel.style.color).not.toBe('');
     expect(killedLabel.style.color).not.toBe(fatalLabel.style.color);
     expect(killedRow.getAttribute('style')).toBe(cleanRow.getAttribute('style'));
+  });
+
+  it('pins the killed label to the muted text colour, not danger or warn', () => {
+    render(<DispatchCostTable rows={[row({ toolUseId: 'k', exitState: 'killed' })]} />);
+    expect(screen.getByText(/killed/).style.color).toBe(hexToRgb(colors.textDim));
+  });
+
+  it('a killed row with retries gets trouble row styling from the retries but keeps the muted label', () => {
+    render(
+      <DispatchCostTable rows={[row({ toolUseId: 'k', exitState: 'killed', retries: 2 }), row({ toolUseId: 'c', exitState: 'ok' })]} />,
+    );
+    const rows = screen.getAllByRole('row').slice(1);
+    const killedRow = rows.find((r) => r.textContent!.includes('killed'))!;
+    const cleanRow = rows.find((r) => !r.textContent!.includes('killed'))!;
+    expect(killedRow.getAttribute('style')).not.toBe(cleanRow.getAttribute('style'));
+    expect(screen.getByText(/killed/).style.color).toBe(hexToRgb(colors.textDim));
+  });
+
+  it('renders dashes, never fabricated zeros, for a row with no usage', () => {
+    const { container } = render(
+      <DispatchCostTable rows={[row({ toolUseId: 'k', exitState: 'killed', durationMs: null, toolUses: null, estimate: null, quota: null })]} />,
+    );
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent!.trim());
+    expect(cells.slice(2, 7)).toEqual(['\u2014', '\u2014', '\u2014', '\u2014', '\u2014']);
+    expect(container.textContent).not.toContain('$0.00');
+    expect(container.textContent).not.toContain('0ms');
+    expect(container.textContent).not.toContain('~$0.00');
+  });
+
+  it('sorts rows with no estimate last in both directions', () => {
+    render(
+      <DispatchCostTable
+        rows={[
+          row({ toolUseId: 'n', description: 'none', estimate: null, quota: null }),
+          row({ toolUseId: 'a', description: 'cheap', usdApprox: 1 }),
+          row({ toolUseId: 'b', description: 'dear', usdApprox: 5 }),
+        ]}
+      />,
+    );
+    const order = () => screen.getAllByRole('row').slice(1).map((r) => r.textContent!.match(/none|cheap|dear/)![0]);
+    expect(order()).toEqual(['dear', 'cheap', 'none']);
+    fireEvent.click(screen.getByRole('button', { name: /toggle cost sort/i }));
+    expect(order()).toEqual(['cheap', 'dear', 'none']);
   });
 });

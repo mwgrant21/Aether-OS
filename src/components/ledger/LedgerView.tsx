@@ -61,7 +61,7 @@ export function LedgerView() {
   // residual caveat text below already tells the operator these are
   // approximate, tracked-dispatch figures.
   const todaysRows = selectTodaysRows(rows, ledger);
-  const todaysEstimates: EstimatedCost[] = todaysRows.map((r) => r.estimate);
+  const todaysEstimates: EstimatedCost[] = todaysRows.flatMap((r) => (r.estimate === null ? [] : [r.estimate]));
   const reconciliation =
     ledger && ledger.rollups.today !== null ? reconcile(ledger.rollups.today, todaysEstimates) : null;
 
@@ -195,7 +195,7 @@ export function buildDispatchRows(
   state: {
     recentCompletedDispatches: { toolUseId: string; subagentType: string; description: string; startedAt: string; prompt: string; model: string | null }[];
     dispatchUsage: Record<string, { tokens: number; toolUses: number; durationMs: number }>;
-    diagnostics: { dispatches: { toolUseId: string; exitState: string | null; retries: number | null }[] } | null;
+    diagnostics: { dispatches: { toolUseId: string; exitState: string | null; retries: number | null; tokens?: number | null }[] } | null;
   },
   quotaInputs: { tokensPerPoint: number | null; planMonthlyUsd: number | null },
 ): DispatchCostRow[] {
@@ -213,6 +213,10 @@ export function buildDispatchRows(
       durationMs: usage?.durationMs ?? 0,
     };
     const t = telemetry.get(d.toolUseId);
+    // Collector NULL tokens means the notification carried no usage block. The live
+    // parser still fills 0/0/0 for it, so the collector's NULL wins: every
+    // usage-derived field is null (rendered as a dash), never a fabricated zero.
+    const noUsage = t?.tokens === null;
     // Derived, not persisted: startedAt + the completed dispatch's own
     // duration. Falls back to startedAt (an instant, not a span) when
     // durationMs or startedAt itself is unavailable/unparsable, so a
@@ -229,9 +233,9 @@ export function buildDispatchRows(
       endedAt,
       description: d.description,
       subagentType: d.subagentType,
-      durationMs: completed.durationMs,
-      toolUses: completed.toolUses,
-      estimate: estimateDispatchCost(completed),
+      durationMs: noUsage ? null : completed.durationMs,
+      toolUses: noUsage ? null : completed.toolUses,
+      estimate: noUsage ? null : estimateDispatchCost(completed),
       // Two independent reasons this figure can be unknowable, and both must
       // render as an em dash rather than a dollar amount:
       //   - no RATE yet (tokensPerPoint null while the fit forms) becomes 0
@@ -245,7 +249,7 @@ export function buildDispatchRows(
       //     being undefined -- not `completed.tokens === 0`, which a dispatch
       //     may genuinely report -- is what distinguishes the two.
       quota:
-        usage === undefined
+        usage === undefined || noUsage
           ? null
           : quotaCostForTokens(
               completed.tokens,

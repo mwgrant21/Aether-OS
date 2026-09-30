@@ -28,9 +28,11 @@ export interface DispatchCostRow {
   endedAt: string;
   description: string;
   subagentType: string;
-  durationMs: number;
-  toolUses: number;
-  estimate: EstimatedCost;
+  /** null when the collector recorded no usage for this dispatch: render a dash, never 0. */
+  durationMs: number | null;
+  toolUses: number | null;
+  /** null under the same condition as durationMs; such rows sort last. */
+  estimate: EstimatedCost | null;
   /**
    * What this dispatch took out of the subscription quota, or `null` when the
    * dispatch's completion notification carried NO usage at all.
@@ -88,9 +90,13 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
   const colors = useColors();
   const [descending, setDescending] = useState(true);
 
-  const sorted = [...rows].sort((a, b) =>
-    descending ? b.estimate.usdApprox - a.estimate.usdApprox : a.estimate.usdApprox - b.estimate.usdApprox,
-  );
+  // Rows with no estimate (no usage reported) sort last in either direction.
+  const sorted = [...rows].sort((a, b) => {
+    if (a.estimate === null || b.estimate === null) {
+      return a.estimate === b.estimate ? 0 : a.estimate === null ? 1 : -1;
+    }
+    return descending ? b.estimate.usdApprox - a.estimate.usdApprox : a.estimate.usdApprox - b.estimate.usdApprox;
+  });
 
   if (rows.length === 0) {
     return (
@@ -150,9 +156,9 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
                 )}
               </span>
               <span role="cell" style={{ ...colType, ...cellStyle(colors) }}>{row.subagentType}</span>
-              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{fmtDuration(row.durationMs)}</span>
-              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.toolUses}</span>
-              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{fmtTokens(row.estimate.tokens)}</span>
+              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.durationMs === null ? '\u2014' : fmtDuration(row.durationMs)}</span>
+              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.toolUses ?? '\u2014'}</span>
+              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.estimate === null ? '\u2014' : fmtTokens(row.estimate.tokens)}</span>
               <span role="cell" style={{ ...colNum, ...cellStyle(colors) }} title={QUOTA_BASIS_TOOLTIP}>
                 {quotaCell(row.quota)}
               </span>
@@ -160,17 +166,19 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
                 role="cell"
                 style={{ ...colNum, ...estCellStyle(colors) }}
                 title={
-                  row.estimate.tierSource === 'defaulted'
+                  row.estimate === null
+                    ? ESTIMATE_BASIS_TOOLTIP
+                    : row.estimate.tierSource === 'defaulted'
                     ? `${ESTIMATE_BASIS_TOOLTIP}. This dispatch recorded no model, so the ${row.estimate.tier} rate was assumed — if it actually ran on a costlier tier this figure is low.`
                     : `${ESTIMATE_BASIS_TOOLTIP}. Priced at the ${row.estimate.tier} rate.`
                 }
               >
-                {approxUsd(row.estimate.usdApprox)}
+                {row.estimate === null ? '\u2014' : approxUsd(row.estimate.usdApprox)}
                 {/* The Agent tool's `model` is an optional override omitted on
                     most dispatches, so a defaulted tier is the common case, not
                     the edge one. Unmarked, it is a silent ~40% undercount on
                     any run that was really Opus. */}
-                {row.estimate.tierSource === 'defaulted' && <span style={assumedStyle(colors)}>?</span>}
+                {row.estimate !== null && row.estimate.tierSource === 'defaulted' && <span style={assumedStyle(colors)}>?</span>}
               </span>
               {row.exitState === 'ok' && (
                 <span role="cell" style={colVerify}>
