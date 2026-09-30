@@ -22,7 +22,8 @@ export function AetherStoreProvider({ children }: { children: ReactNode }) {
     // init.cfg outright, leaving those fields undefined for existing users.
     // activeTab is deliberately NOT restored: every launch opens on Dashboard,
     // so it is applied after the persisted spread (stale saved values ignored).
-    return { ...init, ...persisted, cfg: { ...init.cfg, ...persisted.cfg }, activeTab: init.activeTab };
+    // Same for sessionStartedAt: only this run's terminal may stamp it.
+    return { ...init, ...persisted, cfg: { ...init.cfg, ...persisted.cfg }, activeTab: init.activeTab, sessionStartedAt: init.sessionStartedAt };
   });
 
   useEffect(() => {

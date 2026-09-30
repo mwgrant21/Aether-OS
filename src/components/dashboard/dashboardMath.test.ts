@@ -348,6 +348,19 @@ describe('computeSessionInfoRows', () => {
     expect(value(live, 'Uptime')).not.toBe(NO_DATA);
   });
 
+  it('shows the no-data mark for Session start and Uptime before any session has started', () => {
+    const rows = computeSessionInfoRows({ ...initialState, sessionStartedAt: null }, new Date(NOW), true);
+    expect(value(rows, 'Session start')).toBe(NO_DATA);
+    expect(value(rows, 'Uptime')).toBe(NO_DATA);
+  });
+
+  it('counts Uptime from the session start, not app load', () => {
+    const t = new Date(2026, 8, 30, 14, 30);
+    const rows = computeSessionInfoRows({ ...initialState, sessionStartedAt: t.toISOString() }, new Date(2026, 8, 30, 16, 5), true);
+    expect(value(rows, 'Session start')).toBe('14:30');
+    expect(value(rows, 'Uptime')).toBe('1h 35m');
+  });
+
   // Local-constructor instants keep these timezone-independent.
   const sessionStart = (startedAt: Date, now: Date) =>
     value(computeSessionInfoRows({ ...initialState, sessionStartedAt: startedAt.toISOString() }, now, true), 'Session start');

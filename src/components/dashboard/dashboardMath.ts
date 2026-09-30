@@ -224,9 +224,10 @@ export function computeSessionInfoRows(
   now: Date,
   live: boolean,
 ): SessionInfoRow[] {
+  const started = state.sessionStartedAt;
   return [
-    { k: 'Session start', v: live ? formatReadinessTime(new Date(state.sessionStartedAt).getTime(), now.getTime()) : NO_DATA },
-    { k: 'Uptime', v: live ? formatUptime(state.sessionStartedAt, now) : NO_DATA },
+    { k: 'Session start', v: live && started !== null ? formatReadinessTime(new Date(started).getTime(), now.getTime()) : NO_DATA },
+    { k: 'Uptime', v: live && started !== null ? formatUptime(started, now) : NO_DATA },
     { k: 'Commands run', v: fmt(state.commandsRun) },
     { k: 'Agents active', v: String(state.realAgents.length) },
   ];

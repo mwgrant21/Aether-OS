@@ -6,7 +6,7 @@ export const initialState: AetherState = {
   momentum: 92000,
   ctxUsed: 78432,
   commandsRun: 0,
-  sessionStartedAt: new Date().toISOString(),
+  sessionStartedAt: null,
   activeTab: 'Dashboard',
   selectedProject: null,
   selectedMemory: null,

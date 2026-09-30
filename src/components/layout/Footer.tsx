@@ -20,7 +20,7 @@ export function Footer() {
   return (
     <footer style={rootStyle(colors)}>
       <span>â—‡ AETHER OS {version ? `v${version}` : ''}</span>
-      <span style={{ marginLeft: 'auto' }}>Uptime {formatUptime(state.sessionStartedAt, new Date())}</span>
+      <span style={{ marginLeft: 'auto' }}>Uptime {state.sessionStartedAt === null ? '—' : formatUptime(state.sessionStartedAt, new Date())}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: c }} aria-live="polite">
         {/* Glow-Is-State: same gate as the reactor card's dot -- flat at STANDBY. */}
         <span
