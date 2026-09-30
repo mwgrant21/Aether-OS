@@ -69,6 +69,30 @@ describe('severity core: generated collector copy', () => {
     expect(importSpecifiers("const d = 1; // then import('./c')")).toEqual([]);
   });
 
+  it('scans code after a closed block comment on the same line', () => {
+    const src = "/* c */ import('./w');\n/* c */ import './w2';\n/* c */ /* d */ export { y } from './w3';\n";
+    expect(importSpecifiers(src)).toEqual(['./w', './w2', './w3']);
+    const out = renderCollectorCopy(src, 'x.ts');
+    expect(out).toContain("/* c */ import('./w.js');");
+    expect(out).toContain("/* c */ import './w2.js';");
+    expect(out).toContain("from './w3.js'");
+  });
+
+  it('skips imports inside single-line and multi-line block comments', () => {
+    const src = "/* import('./a') */\n/* import './b' */ const k = 1;\n/*\n import('./c');\n import './d';\n export { z } from './e';\n*/\nconst real = 1;\n";
+    expect(importSpecifiers(src)).toEqual([]);
+    const out = renderCollectorCopy(src, 'x.ts');
+    expect(out).not.toContain('.js');
+  });
+
+  it('finds code after a multi-line block comment closes on the same line', () => {
+    const src = "/* open\n still open */ import('./z');\n/* again\n */ import './z2';\n";
+    expect(importSpecifiers(src)).toEqual(['./z', './z2']);
+    const out = renderCollectorCopy(src, 'x.ts');
+    expect(out).toContain("import('./z.js')");
+    expect(out).toContain("import './z2.js'");
+  });
+
   it('rewrites side-effect, re-export and dynamic imports, leaving comments and strings alone', () => {
     const src = [
       "import './side';",

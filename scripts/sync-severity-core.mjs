@@ -10,69 +10,91 @@ import { fileURLToPath } from 'node:url';
 
 export const CORE_FILES = ['parseDispatchOutcome.ts', 'computeSeverity.ts', 'isStalled.ts', 'baselineMath.ts'];
 
-// Group 2 of each pattern is the module specifier.
-// Static forms are line-anchored, so a match inside a comment or a string
-// literal is never seen:
+// Group 2 of each pattern is the module specifier. A match counts only when its
+// keyword sits in code (not inside a comment or string literal), judged by
+// codeMask() over the whole source:
 //   import x from 'm' / export * from 'm' (may span lines; no quote before 'from')
 //   import 'm' (side-effect)
-// The dynamic form import('m') cannot be line-anchored, so it is checked
-// against comment prefixes and open string literals on its own line.
-const STATEMENT_FROM = /^([ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*['"])([^'"\n]+)(['"])/gm;
-const STATEMENT_SIDE = /^([ \t]*import\s*['"])([^'"\n]+)(['"])/gm;
+// Those two must also start a line, ignoring whitespace and comments before them
+// (so code after a closed /* */ on the same line is still found).
+//   import('m') (dynamic; anywhere in code)
+const STATEMENT_FROM = /((?:import|export)\b[^;'"`]*?\bfrom\s*['"])([^'"\n]+)(['"])/g;
+const STATEMENT_SIDE = /(import\s*['"])([^'"\n]+)(['"])/g;
 const DYNAMIC = /(\bimport\s*\(\s*['"`])([^'"`\n]+)(['"`]\s*\))/g;
 
-// True when offset sits inside a comment or string literal, judged from the
-// start of its line. Scans left to right so a // inside a string (a URL) does
-// not count as a comment start.
-function inCommentOrString(source, offset) {
-  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-  const before = source.slice(lineStart, offset);
-  if (/^\s*\*/.test(before)) return true;
-  let quote = null;
-  for (let i = 0; i < before.length; i++) {
-    const c = before[i];
-    if (quote) {
-      if (c === '\\') i++;
-      else if (c === quote) quote = null;
+// mask[i] is 1 where source[i] is code, 0 inside a comment or string literal.
+// Scans left to right, so a // inside a string (a URL) is not a comment start
+// and a block comment may span lines.
+function codeMask(source) {
+  const mask = new Uint8Array(source.length);
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    const n = source[i + 1];
+    if (c === '/' && n === '/') {
+      while (i < source.length && source[i] !== '\n') i++;
+    } else if (c === '/' && n === '*') {
+      const close = source.indexOf('*/', i + 2);
+      i = close < 0 ? source.length : close + 2;
     } else if (c === "'" || c === '"' || c === '`') {
-      quote = c;
-    } else if (c === '/' && (before[i + 1] === '/' || before[i + 1] === '*')) {
-      return true;
+      i++;
+      while (i < source.length && source[i] !== c && (c === '`' || source[i] !== '\n')) {
+        i += source[i] === '\\' ? 2 : 1;
+      }
+      i++;
+    } else {
+      mask[i++] = 1;
     }
   }
-  return quote !== null;
+  return mask;
+}
+
+// Only whitespace or comment characters between the line start and index.
+function startsLine(source, mask, index) {
+  for (let j = index - 1; j >= 0 && source[j] !== '\n'; j--) {
+    if (mask[j] === 1 && !/\s/.test(source[j])) return false;
+  }
+  return true;
 }
 
 function assertCheckable(spec) {
   if (spec.includes('$' + '{')) throw new Error('sync-severity-core: computed import specifier cannot be checked: ' + spec);
 }
 
+// [{ at, start, spec }] in source order: start is where the specifier begins.
+function findSpecifiers(source) {
+  const mask = codeMask(source);
+  const hits = new Map();
+  for (const re of [STATEMENT_FROM, STATEMENT_SIDE, DYNAMIC]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      const ok = mask[m.index] === 1 && (re === DYNAMIC || startsLine(source, mask, m.index));
+      if (!ok) {
+        // A match that starts in a comment must not swallow a real one after it.
+        re.lastIndex = m.index + 1;
+        continue;
+      }
+      assertCheckable(m[2]);
+      hits.set(m.index + m[1].length, { at: m.index, start: m.index + m[1].length, spec: m[2] });
+    }
+  }
+  return [...hits.values()].sort((a, b) => a.start - b.start);
+}
+
 // Calls fn(spec) for every specifier; a string result replaces it.
 function mapSpecifiers(source, fn) {
-  const swap = (match, head, spec, tail) => {
-    assertCheckable(spec);
-    const next = fn(spec);
-    return typeof next === 'string' ? head + next + tail : match;
-  };
-  return source
-    .replace(STATEMENT_FROM, swap)
-    .replace(STATEMENT_SIDE, swap)
-    .replace(DYNAMIC, (match, head, spec, tail, offset, whole) =>
-      inCommentOrString(whole, offset) ? match : swap(match, head, spec, tail),
-    );
+  let out = source;
+  for (const h of findSpecifiers(source).reverse()) {
+    const next = fn(h.spec);
+    if (typeof next === 'string') out = out.slice(0, h.start) + next + out.slice(h.start + h.spec.length);
+  }
+  return out;
 }
 
 // Every import specifier in source order (relative or not).
 export function importSpecifiers(source) {
-  const hits = [];
-  for (const re of [STATEMENT_FROM, STATEMENT_SIDE, DYNAMIC]) {
-    for (const m of source.matchAll(re)) {
-      if (re === DYNAMIC && inCommentOrString(source, m.index)) continue;
-      assertCheckable(m[2]);
-      hits.push({ at: m.index, spec: m[2] });
-    }
-  }
-  return hits.sort((a, b) => a.at - b.at).map((h) => h.spec);
+  return findSpecifiers(source).map((h) => h.spec);
 }
 
 export function renderCollectorCopy(source, fileName) {
