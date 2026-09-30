@@ -6,6 +6,7 @@ import { openDatabase, migrate } from './schema.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { computeSeverity } from './severity/computeSeverity.js';
+import { FUTURE_MTIME_TOLERANCE_MS } from './severity/isStalled.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-stale-sweep-'));
@@ -201,6 +202,17 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
       expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + ahead).staleFound).toBe(0);
       db.close();
     }
+  });
+
+  it('future-mtime tolerance boundary: exactly +tolerance counts as progress, +1 ms is ignored', () => {
+    const at = setup();
+    const hAt = historyWithOpen('tu_edge_at', { startedAt: at.nowMs - 40 * 60 * 1000 });
+    expect(sweepStaleDispatches(at.db, hAt, at.nowMs, () => at.nowMs + FUTURE_MTIME_TOLERANCE_MS).staleFound).toBe(0);
+    at.db.close();
+    const over = setup();
+    const hOver = historyWithOpen('tu_edge_over', { startedAt: over.nowMs - 40 * 60 * 1000 });
+    expect(sweepStaleDispatches(over.db, hOver, over.nowMs, () => over.nowMs + FUTURE_MTIME_TOLERANCE_MS + 1).staleFound).toBe(1);
+    over.db.close();
   });
 
   it('an mtime 31 min in the past on a 40 min old dispatch stalls', () => {
