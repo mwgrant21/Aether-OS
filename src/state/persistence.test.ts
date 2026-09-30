@@ -24,6 +24,11 @@ beforeEach(() => {
 });
 
 describe('persistence', () => {
+  it('never writes sessionStartedAt', () => {
+    savePersisted({ ...initialState, sessionStartedAt: '2026-09-30T14:30:00.000Z' });
+    expect(localStorage.getItem('aetheros-v1')).not.toContain('sessionStartedAt');
+  });
+
   it('round-trips a whitelisted slice of state through localStorage', () => {
     savePersisted({ ...initialState, activeTab: 'Grid', unread: 5 });
     const loaded = loadPersisted();

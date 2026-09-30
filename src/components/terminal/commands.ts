@@ -1,5 +1,5 @@
 import type { AetherState, CommandResult, TermLine, ThemeName, RendererMode } from '../../state/types';
-import { fmt, fmtEta, fmtElapsed } from '../../utils/format';
+import { fmt, depletionPhrase, fmtElapsed } from '../../utils/format';
 import { deriveContextWindowCard } from '../layout/contextWindowCard';
 
 /**
@@ -79,7 +79,7 @@ export function runCommand(state: AetherState, raw: string): CommandResult {
       out.push(
         line(`  monthly cap  ${state.cfg.capM.toFixed(1)}M tokens`),
         line(`  used         ${fmt(state.used)} ($${(state.used * 0.000018).toFixed(2)})`),
-        line(`  remaining    ${fmt(rem)} — depletes in ${fmtEta(rem / (state.rate / 60))}`),
+        line(`  remaining    ${fmt(rem)} — ${depletionPhrase(rem, state.rate)}`),
       );
       return { kind: 'append', lines: out };
     }

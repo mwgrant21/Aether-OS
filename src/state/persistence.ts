@@ -17,7 +17,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   momentum: 'a live pulse-momentum value overwritten by every real-usage snapshot (SET_REAL_USAGE); a persisted number would show a stale/wrong momentum reading until the first real snapshot lands',
   ctxUsed: "the current terminal session's context-window usage, replaced by the first real-usage snapshot; a new session starts with a fresh context window, so a persisted value would misrepresent it",
   commandsRun: 'a per-session counter (shown as "Commands run" in the session metrics row); persisting it would carry a stale count into a new session and misrepresent commands run in the current one',
-  sessionStartedAt: "the timestamp the current session began, used to compute the footer's Session start/Uptime; persisting it would show a previous session's start time as if it belonged to this session",
+  sessionStartedAt: "the timestamp the current session began, used to compute the footer's Session start/Uptime; null until this run's terminal goes alive (stamped by SET_TERMINAL_ALIVE); persisting it would show a previous session's start time as if it belonged to this session",
   selectedRealAgent: 'keyed on a toolUseId that will not exist in a new session',
   notifOpen: 'a transient dropdown open/closed UI flag; restoring "open" would pop the notifications panel open on launch with no user action prompting it',
   apprOpen: 'a transient dropdown open/closed UI flag; restoring "open" would pop the approvals panel open on launch with no user action prompting it',

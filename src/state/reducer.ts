@@ -172,13 +172,18 @@ export function reducer(state: AetherState, action: Action): AetherState {
       return { ...state, cfg: { ...state.cfg, ...action.patch } };
 
     case 'SET_TERMINAL_ALIVE':
-      if (!action.alive) return { ...state, terminalAlive: false, terminalOpenedAtMs: null };
+      // The session clock dies with the pty: an exited terminal has no start/uptime.
+      if (!action.alive) return { ...state, terminalAlive: false, terminalOpenedAtMs: null, sessionStartedAt: null };
+      const openedAt = state.terminalAlive && state.terminalOpenedAtMs !== null ? state.terminalOpenedAtMs : Date.now();
       // Only a dead->alive edge restamps: electron/main.ts re-sends pty:alive
       // for an already-running pty on every pty:start (each Terminal mount).
       return {
         ...state,
         terminalAlive: true,
-        terminalOpenedAtMs: state.terminalAlive && state.terminalOpenedAtMs !== null ? state.terminalOpenedAtMs : Date.now(),
+        terminalOpenedAtMs: openedAt,
+        // A restart in the same app run re-stamps: "Session start" is the
+        // current terminal session, matching terminalOpenedAtMs.
+        sessionStartedAt: state.terminalAlive && state.sessionStartedAt !== null ? state.sessionStartedAt : new Date(openedAt).toISOString(),
       };
 
     case 'SET_CODEX_TERMINAL_ALIVE':

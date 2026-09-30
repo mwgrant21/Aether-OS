@@ -7,9 +7,8 @@ import { useAetherStore } from './store';
  *
  *  terminalAlive starts FALSE in initialState, because nothing starts a pty
  *  at launch: PtyTerminal.tsx's module-level getOrCreateHost() only runs when
- *  the Terminal tab is actually mounted, so a launch that restores a different
- *  persisted activeTab (or a renderer running outside Electron at all) never
- *  spawns one. Liveness is therefore driven entirely by the two push events
+ *  the Terminal tab is actually mounted, so a renderer running outside
+ *  Electron at all never spawns one. Liveness is therefore driven entirely by the two push events
  *  main.ts sends: `pty:alive` when a pty is successfully spawned and wired,
  *  and `pty:exit` when the current one dies. There is no mount-time pull
  *  (unlike ledger/projects' `.current()`) -- main re-announces `pty:alive`

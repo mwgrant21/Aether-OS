@@ -822,3 +822,41 @@ describe('reducer — terminalOpenedAtMs', () => {
     expect(reducer(closed, { type: 'SET_TERMINAL_ALIVE', alive: true }).terminalOpenedAtMs).toBe(5_000);
   });
 });
+
+describe('sessionStartedAt (session clock)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('is null before any terminal session has started', () => {
+    expect(initialState.sessionStartedAt).toBeNull();
+  });
+
+  it('stamps the moment the terminal goes alive, not app load', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 30, 14, 30));
+    const next = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(next.sessionStartedAt).toBe(new Date(2026, 8, 30, 14, 30).toISOString());
+  });
+
+  it('keeps the stamp when pty:alive is re-sent for an already-alive pty', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 30, 14, 30));
+    const first = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    vi.setSystemTime(new Date(2026, 8, 30, 15, 0));
+    expect(reducer(first, { type: 'SET_TERMINAL_ALIVE', alive: true }).sessionStartedAt).toBe(first.sessionStartedAt);
+  });
+
+  it('clears the stamp when the terminal exits', () => {
+    const alive = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(alive.sessionStartedAt).not.toBeNull();
+    expect(reducer(alive, { type: 'SET_TERMINAL_ALIVE', alive: false }).sessionStartedAt).toBeNull();
+  });
+
+  it('re-stamps when the terminal restarts in the same app run', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 30, 14, 30));
+    const first = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    const dead = reducer(first, { type: 'SET_TERMINAL_ALIVE', alive: false });
+    vi.setSystemTime(new Date(2026, 8, 30, 16, 0));
+    expect(reducer(dead, { type: 'SET_TERMINAL_ALIVE', alive: true }).sessionStartedAt).toBe(new Date(2026, 8, 30, 16, 0).toISOString());
+  });
+});

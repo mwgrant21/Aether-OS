@@ -27,6 +27,13 @@ describe('localResponder — AETHER channel', () => {
   it('reports remaining budget against the configured cap', () => {
     const reply = localResponder(aether, "how's our budget looking", initialState);
     expect(reply).toContain('2.0M cap');
+    expect(reply).toContain('depletes in');
+  });
+
+  it('never says "n/a" when there is no current draw', () => {
+    const reply = localResponder(aether, 'budget', { ...initialState, rate: 0 });
+    expect(reply).not.toContain('n/a');
+    expect(reply).toContain('no depletion estimate');
   });
 
   it('reports a nominal reactor status with the pending approval count', () => {

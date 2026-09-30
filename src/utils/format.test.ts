@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmt, fmtElapsed, fmtEta, nowLong, nowShort, resolveOperatorName, short, spark } from './format';
+import { depletionPhrase, fmt, fmtElapsed, fmtEta, nowLong, nowShort, resolveOperatorName, short, spark } from './format';
 
 describe('fmt', () => {
   it('adds thousands separators to a rounded integer', () => {
@@ -76,5 +76,24 @@ describe('fmtElapsed', () => {
   it('returns 0s for zero or negative elapsed time', () => {
     expect(fmtElapsed(0)).toBe('0s');
     expect(fmtElapsed(-500)).toBe('0s');
+  });
+});
+
+describe('depletionPhrase', () => {
+  it('states the ETA at the current draw', () => {
+    expect(depletionPhrase((5400 * 1000) / 60, 1000)).toBe('depletes in 1h 30m at the current draw');
+  });
+
+  it.each([
+    ['rate 0', 1000, 0, 'no depletion estimate without a current draw'],
+    ['rate NaN', 1000, NaN, 'no depletion estimate without a current draw'],
+    ['rate Infinity', 1000, Infinity, 'no depletion estimate without a current draw'],
+    ['remaining NaN', NaN, 1000, 'no depletion estimate without a current draw'],
+    ['remaining 0', 0, 1000, 'the cap is already spent'],
+    ['remaining negative', -5, 1000, 'the cap is already spent'],
+  ])('%s never contains "n/a"', (_name, remaining, rate, expected) => {
+    const out = depletionPhrase(remaining, rate);
+    expect(out).toBe(expected);
+    expect(out).not.toContain('n/a');
   });
 });

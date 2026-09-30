@@ -1,6 +1,6 @@
 import type { AetherState } from '../../state/types';
 import type { CommsChannel } from './commsChannels';
-import { fmt, fmtEta } from '../../utils/format';
+import { fmt, depletionPhrase } from '../../utils/format';
 
 // The one piece of "interesting" logic in Phase 1: a keyword-driven,
 // state-aware canned responder, in the same spirit as
@@ -16,7 +16,7 @@ function aetherReply(text: string, state: AetherState): string {
 
   if (/budget|spend|\bcap\b|cost/.test(t)) {
     const remaining = Math.max(0, state.cfg.capM * 1e6 - state.used);
-    return `${fmt(remaining)} tokens remain of the ${state.cfg.capM.toFixed(1)}M cap — depletes in ${fmtEta(remaining / (state.rate / 60))} at the current draw.`;
+    return `${fmt(remaining)} tokens remain of the ${state.cfg.capM.toFixed(1)}M cap — ${depletionPhrase(remaining, state.rate)}.`;
   }
   if (/burn|\brate\b|\btok/.test(t)) {
     return `Burn rate holding at ${fmt(state.rate)} tok/min across ${agentCount} active agent${agentCount === 1 ? '' : 's'}.`;
