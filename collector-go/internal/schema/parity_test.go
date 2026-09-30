@@ -1,9 +1,14 @@
 package schema
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -253,5 +258,83 @@ func TestMigrateHealsStamped9NotNullDispatches(t *testing.T) {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM dispatches`).Scan(&n); err != nil || n != 1 {
 		t.Errorf("rows = %d err=%v, want 1", n, err)
+	}
+}
+
+// faultConn wraps a real driver conn and fails chosen statements, to drive the
+// rebuild's rollback-failure path. Kept minimal: only Exec is intercepted.
+type faultConn struct {
+	driver.Conn
+	closes *int32
+}
+
+func (c *faultConn) Close() error {
+	atomic.AddInt32(c.closes, 1)
+	return c.Conn.Close()
+}
+
+var errInjected = errors.New("injected INSERT failure")
+
+func (c *faultConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	switch {
+	case strings.HasPrefix(q, "INSERT INTO dispatches_v9"):
+		return nil, errInjected
+	case q == "ROLLBACK":
+		return nil, errors.New("injected ROLLBACK failure")
+	}
+	return c.Conn.(driver.ExecerContext).ExecContext(ctx, q, args)
+}
+
+type faultConnector struct {
+	drv    driver.Driver
+	path   string
+	closes *int32
+}
+
+func (f faultConnector) Connect(context.Context) (driver.Conn, error) {
+	c, err := f.drv.Open(f.path)
+	if err != nil {
+		return nil, err
+	}
+	return &faultConn{Conn: c, closes: f.closes}, nil
+}
+func (f faultConnector) Driver() driver.Driver { return f.drv }
+
+func TestRebuildRollbackFailureReturnsOriginalErrorAndDiscardsConn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.db")
+	seed, err := OpenDatabase(path)
+	if err != nil {
+		t.Fatalf("OpenDatabase: %v", err)
+	}
+	if err := Migrate(seed); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	for _, stmt := range []string{
+		`DROP TABLE dispatches`,
+		`CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER NOT NULL, tool_uses INTEGER NOT NULL,
+		duration_ms INTEGER NOT NULL, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL, agent_id TEXT, task_kind TEXT,
+		session_id TEXT, retries INTEGER NOT NULL DEFAULT 0, exit_state TEXT NOT NULL DEFAULT 'ok', severity INTEGER, median_ms_at_eval INTEGER)`,
+	} {
+		if _, err := seed.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	drv := seed.Driver()
+	seed.Close()
+
+	var closes int32
+	db := sql.OpenDB(faultConnector{drv: drv, path: path, closes: &closes})
+	t.Cleanup(func() { db.Close() })
+
+	got := rebuildDispatchesWithNullableUsage(db)
+	if !errors.Is(got, errInjected) {
+		t.Fatalf("returned %v, want the original injected error", got)
+	}
+	// Discard is synchronous in database/sql (putConn with ErrBadConn closes the
+	// driver conn inline), so the driver-level Close count is deterministic: the
+	// one pooled conn was reused as the pinned conn, and must have been closed.
+	if n := atomic.LoadInt32(&closes); n != 1 {
+		t.Errorf("driver Close calls = %d, want 1 (poisoned conn discarded, not pooled)", n)
 	}
 }
