@@ -134,7 +134,7 @@ describe('loadDurationBaseline', () => {
 
   it('a BOM-prefixed valid file loads with no diag, and the writer never emits a BOM', async () => {
     const filePath = tempFile();
-    writeFileSync(filePath, '﻿{"version":1,"samples":{"x":[1,2,3,4,5]}}', 'utf8');
+    writeFileSync(filePath, 'FEFF{"version":1,"samples":{"x":[1,2,3,4,5]}}', 'utf8');
     const diag: string[] = [];
     const b = loadDurationBaseline({ filePath, diag: (l) => diag.push(l) });
     expect(diag).toEqual([]);
