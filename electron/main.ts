@@ -74,6 +74,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createDiagLog } from './diagLog';
+import { ensurePrivateDir } from './privateDir';
 import { runRendererProbe, createConsoleLimiter, formatConsoleLine } from './rendererProbe';
 import type { DatabaseSync } from 'node:sqlite';
 import { CodexVerifier } from './crossEngine/codexVerifier';
@@ -811,6 +812,25 @@ app.whenReady().then(async () => {
     })
     .catch((err) => {
       console.error('[statusline] migration failed:', err?.message ?? String(err));
+    });
+
+  // docs/privacy-and-data.md §7 (issue #99): ~/.aether-os is user-only by an
+  // explicit ACL, not by the profile's inherited one. Fire-and-forget like the
+  // migration above: a slow or failing PowerShell must not delay the window.
+  // Grants someone else added are kept and logged, never stripped.
+  void ensurePrivateDir(aetherOsDir)
+    .then(({ changed, extras }) => {
+      diagLog.write(`[diag] private-dir changed=${changed} extras=${extras.length} at=${new Date().toISOString()}`);
+      for (const e of extras) {
+        diagLog.write(
+          `[diag] private-dir extra path=${e.path} who=${e.who} type=${e.type} rights=${e.rights} at=${new Date().toISOString()}`
+        );
+      }
+    })
+    .catch((err) => {
+      diagLog.write(
+        `[diag] private-dir failed: ${err instanceof Error ? err.message : String(err)} at=${new Date().toISOString()}`
+      );
     });
 
   Menu.setApplicationMenu(null);
