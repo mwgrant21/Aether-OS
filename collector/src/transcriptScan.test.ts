@@ -412,6 +412,24 @@ function taskNotificationLine(
 }
 
 describe('scanTranscriptsOnce -- memory extraction queueing', () => {
+  it('does not queue an ok dispatch that has no usage block (NULL usage)', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const content =
+      '<task-notification>\n<tool-use-id>tu_n</tool-use-id>\n<status>completed</status>\n' +
+      '<result>Did a lot of work.</result>\n</task-notification>';
+    const notification = JSON.stringify({ type: 'user', sessionId: 's1', timestamp: '2026-07-08T09:01:30Z', origin: { kind: 'task-notification' }, message: { content } });
+    writeFileSync(join(projDir, 'session.jsonl'), `${agentToolUseLine('tu_n', '2026-07-08T09:00:00Z')}\n${notification}\n`, 'utf8');
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+    const row: any = db.prepare('SELECT exit_state, duration_ms FROM dispatches WHERE tool_use_id = ?').get('tu_n');
+    expect(row).toEqual({ exit_state: 'ok', duration_ms: null });
+    expect(queue.size()).toBe(0);
+    db.close();
+  });
+
   it('does not queue failed or killed dispatches, even substantive ones with usage', () => {
     for (const status of ['failed', 'killed']) {
       const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-mem-projects-'));

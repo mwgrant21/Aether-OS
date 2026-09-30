@@ -325,10 +325,10 @@ describe('ingestDispatchEvent -- real outcomes (spec 2026-09-30 sections 3, 6, 7
     for (let i = 0; i < 10; i++) ins.run(`z${i}`, 0, i, 'ok');
     for (let i = 0; i < 4; i++) ins.run(`g${i}`, 500, 100 + i, 'ok');
     ins.run('e0', 99999, 200, 'error');
-    expect(medianDurationMsFor(db, 'general-purpose', 'none')).toBeNull();
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBeNull();
     ins.run('g4', 500, 300, 'ok');
-    expect(medianDurationMsFor(db, 'general-purpose', 'none')).toBe(500);
-    expect(medianDurationMsFor(db, null, 'none')).toBeNull();
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBe(500);
+    expect(medianDurationMsFor(db, null, 'none', 1e9)).toBeNull();
     db.close();
   });
 
@@ -339,6 +339,26 @@ describe('ingestDispatchEvent -- real outcomes (spec 2026-09-30 sections 3, 6, 7
     ingestDispatchEvent(db, openDispatch('tu_late', 1000), notify('tu_late', 1900000, '<status>completed</status><subagent_tokens>5</subagent_tokens><tool_uses>2</tool_uses><duration_ms>1899000</duration_ms>'), quiet());
     const row: any = db.prepare('SELECT exit_state, severity, duration_ms FROM dispatches WHERE tool_use_id = ?').get('tu_late');
     expect(row).toEqual({ exit_state: 'ok', severity: 1, duration_ms: 1899000 });
+    db.close();
+  });
+
+  it('the median only sees history that ended before the row; a re-ingest is stable', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (d: number) => `<status>completed</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    const seed = db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, exit_state)
+                            VALUES (?, 1, 1, ?, 0, ?, 'general-purpose', 'general-purpose', 'ok')`);
+    for (let k = 0; k < 5; k++) seed.run(`h${k}`, 1000, 100 + k);
+    const history = openDispatch('tu_new', 1000);
+    const ev = notify('tu_new', 5000, usage(3500));
+    ingestDispatchEvent(db, history, ev, opts);
+    const first: any = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_new');
+    expect(first).toEqual({ severity: 2, median_ms_at_eval: 1000 });
+    for (let k = 0; k < 6; k++) seed.run(`later${k}`, 9999999, 9000 + k);
+    expect(medianDurationMsFor(db, 'general-purpose', 'tu_new', 5000)).toBe(1000);
+    ingestDispatchEvent(db, history, ev, opts);
+    const again: any = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_new');
+    expect(again).toEqual(first);
     db.close();
   });
 });

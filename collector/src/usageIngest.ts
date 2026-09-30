@@ -53,16 +53,18 @@ const reportedStatusTagsForProcess = new Set<string>();
 // same rules as the live baseline (ok rows, duration_ms > 0, last 20,
 // minimum 5). duration_ms > 0 also skips NULL and the historic failures that
 // were stored as ok with 0 ms. The row being ingested is excluded, so a
-// re-ingest never compares a run against itself.
-export function medianDurationMsFor(db: DatabaseSync, agentId: string | null, excludeToolUseId: string): number | null {
+// re-ingest never compares a run against itself. Only rows that ended before
+// beforeMs count, so a row is scored against its own past, never the future
+// (a backfill in directory order, or a re-ingest, gives the same answer).
+export function medianDurationMsFor(db: DatabaseSync, agentId: string | null, excludeToolUseId: string, beforeMs: number): number | null {
   if (agentId === null) return null;
   const rows = db
     .prepare(
       `SELECT duration_ms FROM dispatches
-        WHERE agent_id = ? AND exit_state = 'ok' AND duration_ms > 0 AND tool_use_id != ?
+        WHERE agent_id = ? AND exit_state = 'ok' AND duration_ms > 0 AND tool_use_id != ? AND ended_at_ms < ?
         ORDER BY ended_at_ms DESC LIMIT ?`,
     )
-    .all(agentId, excludeToolUseId, BASELINE_WINDOW) as { duration_ms: number }[];
+    .all(agentId, excludeToolUseId, beforeMs, BASELINE_WINDOW) as { duration_ms: number }[];
   return medianOf(rows.map((r) => r.duration_ms).reverse());
 }
 
@@ -96,7 +98,7 @@ export function ingestDispatchEvent(
   const result = computeSeverity({
     exit: exitStateForStatus(outcome.status),
     elapsedMs: outcome.usage?.durationMs ?? 0,
-    medianMsAtEval: medianDurationMsFor(db, open.subagentType, dispatchToolUseId),
+    medianMsAtEval: medianDurationMsFor(db, open.subagentType, dispatchToolUseId, endedAtMs),
   });
 
   db.prepare(
