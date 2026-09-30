@@ -199,7 +199,8 @@ export interface AetherState {
   ctxUsed: number;
   commandsRun: number;
   // ISO instant the current terminal session went alive (SET_TERMINAL_ALIVE's
-  // dead->alive edge); null until one has, so STANDBY shows no start/uptime.
+  // dead->alive edge); null until one has and again after it exits, so
+  // STANDBY shows no start/uptime.
   sessionStartedAt: string | null;
   activeTab: string;
   selectedProject: string | null;

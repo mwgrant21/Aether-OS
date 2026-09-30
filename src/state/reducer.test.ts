@@ -845,6 +845,12 @@ describe('sessionStartedAt (session clock)', () => {
     expect(reducer(first, { type: 'SET_TERMINAL_ALIVE', alive: true }).sessionStartedAt).toBe(first.sessionStartedAt);
   });
 
+  it('clears the stamp when the terminal exits', () => {
+    const alive = reducer(initialState, { type: 'SET_TERMINAL_ALIVE', alive: true });
+    expect(alive.sessionStartedAt).not.toBeNull();
+    expect(reducer(alive, { type: 'SET_TERMINAL_ALIVE', alive: false }).sessionStartedAt).toBeNull();
+  });
+
   it('re-stamps when the terminal restarts in the same app run', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 8, 30, 14, 30));
