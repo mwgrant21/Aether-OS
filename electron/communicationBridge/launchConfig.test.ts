@@ -24,6 +24,9 @@ import { spawnPty } from '../ptyManager';
 // a PR that had changed nothing in this file (#82).
 const LOCAL_WAIT = { timeout: 5000, interval: 50 };
 const SHELL_WAIT = { timeout: 15000, interval: 50 };
+// Typeahead sent after a Ctrl+C or a child exit and before PowerShell redraws its prompt is dropped, so wait for the prompt in VT-stripped output.
+const stripVt = (s: string) => s.replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+const PROMPT = /PS [^\r\n]*> $/;
 
 const directories: string[] = [];
 afterEach(async () => { for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true }); });
@@ -283,7 +286,9 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     try {
       await vi.waitFor(() => expect(output).toContain('NATIVE_READY'), SHELL_WAIT);
       terminal.write('x');
+      const sinceExit = output.length;
       await vi.waitFor(async () => expect(await launch.completion()).toBe('exited'), SHELL_WAIT);
+      await vi.waitFor(() => expect(stripVt(output.slice(sinceExit))).toMatch(PROMPT), SHELL_WAIT);
       expect(exited).toBe(false);
       expect(JSON.parse(await readFile(observedPath, 'utf8'))).toEqual({ input: 'x', tty: true, threshold: '120000' });
       terminal.write("Get-History | ConvertTo-Json -Compress\r");
@@ -311,12 +316,14 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       await vi.waitFor(() => expect(output).toContain('INTERRUPT_READY'), SHELL_WAIT);
       await vi.waitFor(async () => expect(await launch.completion()).toBe('running'), SHELL_WAIT);
       nativePid = JSON.parse(await readFile(join(launch.directory, 'started.json'), 'utf8')).pid;
+      const sinceInterrupt = output.length;
       terminal.write('\x03');
       await vi.waitFor(async () => expect(await launch.completion()).not.toBe('running'), SHELL_WAIT);
       await vi.waitFor(() => expect(() => process.kill(nativePid!, 0)).toThrow(), LOCAL_WAIT);
+      await vi.waitFor(() => expect(stripVt(output.slice(sinceInterrupt))).toMatch(PROMPT), SHELL_WAIT);
       expect(exited).toBe(false);
-      terminal.write("Write-Output ('INTERRUPT_RESTORED=' + $env:CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS)\r");
-      await vi.waitFor(() => expect(output).toContain('INTERRUPT_RESTORED=902'), SHELL_WAIT);
+      terminal.write('ls env:*AUTO_B*|fl\r');
+      await vi.waitFor(() => expect(stripVt(output)).toMatch(/Name\s*:\s*CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS\s+Value\s*:\s*902(?!\d)/), SHELL_WAIT);
       expect(output).not.toContain(options.manifest.capability);
       terminal.write('exit\r');
       await vi.waitFor(() => expect(exited).toBe(true), SHELL_WAIT);
