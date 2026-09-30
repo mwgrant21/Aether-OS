@@ -8,6 +8,7 @@ package schema
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -103,7 +104,13 @@ func rebuildDispatchesWithNullableUsage(db *sql.DB) error {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, `ROLLBACK`) // may already be rolled back; original error wins
+			// ROLLBACK may fail because SQLite already rolled back (harmless).
+			// If it fails with the tx still open, do not return a poisoned
+			// connection to the pool: mark it bad so database/sql discards it.
+			// The original error is what the caller sees either way.
+			if _, rbErr := conn.ExecContext(ctx, `ROLLBACK`); rbErr != nil {
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			}
 		}
 	}()
 	for _, stmt := range []string{
