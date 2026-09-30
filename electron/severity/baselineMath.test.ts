@@ -17,6 +17,9 @@ describe('medianOf', () => {
     expect(medianOf([0, 0, 0, -5, Number.NaN, 10, 20, 30, 40])).toBeNull();
     expect(medianOf([0, 10, 20, 30, 40, 50])).toBe(30);
   });
+  it('F: filters invalid entries before taking the last 20', () => {
+    expect(medianOf([...Array(20).fill(1000), ...Array(5).fill(10), ...Array(15).fill(0)])).toBe(1000);
+  });
   it('even count averages the middle pair', () => {
     expect(medianOf([10, 20, 30, 40, 50, 60])).toBe(35);
   });
