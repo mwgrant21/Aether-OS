@@ -155,3 +155,27 @@ describe('liveAgentTracker: respawn while a tick is in flight', () => {
     expect(tracker.getPinnedSessionId()).toBe('old');
   });
 });
+
+describe('nested dispatches are not stalled on the live path', () => {
+  it('a nested Agent tool_use that lives only in a subagent file never reaches open, so a 31 min check flags nothing for it', async () => {
+    const home = homeWithSession([
+      { type: 'assistant', timestamp: '2026-09-30T10:00:00.000Z', message: { content: [{ type: 'tool_use', id: 'tu_top', name: 'Agent', input: { subagent_type: 'code-reviewer' } }] } },
+    ]);
+    const sessionDir = path.join(home, '.claude', 'projects', cwdToProjectDirName(home));
+    const subDir = path.join(sessionDir, 'synthetic-session', 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(path.join(subDir, 'agent-top.meta.json'), JSON.stringify({ toolUseId: 'tu_top' }));
+    writeFileSync(
+      path.join(subDir, 'agent-top.jsonl'),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-09-30T10:00:05.000Z', message: { content: [{ type: 'tool_use', id: 'tu_nested', name: 'Agent', input: { subagent_type: 'code-reviewer' } }] } }) + '\n',
+    );
+    const tracker = createLiveAgentTracker(home);
+    tracker.notifyPtySpawned(0);
+    const result = await tracker.tick();
+    expect(result.open.map((d) => d.toolUseId)).toEqual(['tu_top']);
+    const narrator = createLiveSeverityNarrator({ baseline: { medianFor: () => null, record: () => true }, narrate: narrationLine });
+    const late = Date.parse('2026-09-30T10:31:00.000Z');
+    const flagged = narrator.checkStalls(result.open, late, false, () => null).map((p) => p.toolUseId);
+    expect(flagged).toEqual(['tu_top']);
+  });
+});

@@ -53,6 +53,7 @@ import { narrationLine } from './narrationGenerator';
 import { loadDurationBaseline, DURATION_BASELINE_FILE } from './severity/durationBaseline';
 import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INTERVAL_MS } from './severity/liveSeverity';
 import { createTickCompletionHandler } from './liveTickCompletions';
+import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
 import { createFlushQuitGate } from './flushQuitGate';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
@@ -663,11 +664,16 @@ const liveSeverity = createLiveSeverityNarrator({ baseline: narrationDurationBas
 // Shared by BOTH liveAgentTracker.tick() call sites (the agent tick and
 // onPostToolUse): each tick consumes the lines it reads, so either one may be
 // the only one to see a completion. See liveTickCompletions.ts.
+const liveSubagentProgress = createLiveSubagentProgress(join(os.homedir(), '.claude', 'projects'));
 const handleTickCompletions = createTickCompletionHandler({
   narrator: liveSeverity,
   reportUnseenStatus: createUnseenStatusReporter((line) => diagLog.write(line)),
   sendNarration: (payload) => sendToWindow('agents:narration', payload),
   sendCompleted: (done) => sendToWindow('agents:completed', done),
+  toolErrorsFor: (id) => {
+    const sid = liveAgentTracker.getPinnedSessionId();
+    return sid ? liveSubagentProgress.toolErrorsFor(sid, id) : null;
+  },
 });
 // First quit is held once (bounded to 500 ms) so a baseline write in flight lands.
 const baselineQuitGate = createFlushQuitGate(() => narrationDurationBaseline.flush(), () => app.quit(), 500);
@@ -774,7 +780,10 @@ async function tickAndPushAgents(): Promise<void> {
     const stallNowMs = Date.now();
     if (stallNowMs - lastStallCheckMs >= STALL_CHECK_INTERVAL_MS) {
       lastStallCheckMs = stallNowMs;
-      for (const payload of liveSeverity.checkStalls(result.open, stallNowMs, pinnedPtyExited)) {
+      for (const payload of liveSeverity.checkStalls(result.open, stallNowMs, pinnedPtyExited, (id) => {
+        const sid = liveAgentTracker.getPinnedSessionId();
+        return sid ? liveSubagentProgress.lastWriteMsFor(sid, id) : null;
+      })) {
         sendToWindow('agents:narration', payload);
       }
     }

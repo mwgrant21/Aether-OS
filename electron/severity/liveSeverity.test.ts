@@ -185,3 +185,29 @@ describe('createUnseenStatusReporter (one [diag] line per previously unseen stat
     expect(lines).toEqual([]);
   });
 });
+
+describe('live tool-error floor and subagent progress (spike GO)', () => {
+  it('completed with 3 tool errors -> severity 3; 2 errors -> 1; killed with 5 -> 2; failed stays 4', () => {
+    const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
+    expect(n.onCompleted(completed('t1'), tracked('completed', 1000), 3)!.severity).toBe(3);
+    expect(n.onCompleted(completed('t0'), tracked('completed', 1000), 2)!.severity).toBe(1);
+    expect(n.onCompleted(completed('t2'), tracked('killed'), 5)!.severity).toBe(2);
+    expect(n.onCompleted(completed('t3'), tracked('failed'), 0)!.severity).toBe(4);
+    expect(n.onCompleted(completed('t4'), tracked('completed', 1000), null)!.severity).toBe(1);
+  });
+
+  it('a recent subagent-file write is progress; a quiet file is not (31 min)', () => {
+    const now = T0 + 2 * STALL_MS;
+    const mk = () => createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
+    expect(mk().checkStalls([open('p')], now, false, () => now - 60_000)).toEqual([]);
+    expect(mk().checkStalls([open('p')], now, false, () => now - 31 * 60_000)).toHaveLength(1);
+    expect(mk().checkStalls([open('p')], now, false, () => null)).toHaveLength(1);
+  });
+
+  it('future mtime: within 5 min counts as progress, beyond 5 min is ignored', () => {
+    const now = T0 + 2 * STALL_MS;
+    const mk = () => createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
+    expect(mk().checkStalls([open('p')], now, false, () => now + 4 * 60_000)).toEqual([]);
+    expect(mk().checkStalls([open('p')], now, false, () => now + 6 * 60_000)).toHaveLength(1);
+  });
+});

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { computeSeverity } from './severity/computeSeverity.js';
-import { isStalled } from './severity/isStalled.js';
+import { isStalled, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
 
 // Grace period before a dispatch's session liveness is even checked: an entry
 // that opened moments ago may simply predate the first fleet poll ever seeing
@@ -12,9 +12,6 @@ const SESSION_CHECK_MIN_AGE_MS = 15000;
 // A session's fleet_sessions row is considered gone once its last_seen_ms is
 // this old -- matches fleetPoll.ts's own STALE_MS (twice the poll interval).
 const SESSION_STALE_MS = 30000;
-
-// How far past nowMs a subagent file's mtime may sit and still count as progress.
-const FUTURE_MTIME_TOLERANCE_MS = 5 * 60 * 1000;
 
 /**
  * Detects 'Agent'-named open dispatches that never received a completion
@@ -86,15 +83,8 @@ export function sweepStaleDispatches(
     // the dispatch's own subagent transcript, via lastProgressFor. Until that
     // exists (no link, no file, no probe), inactivity is measured from dispatch
     // start.
-    // nowMs is taken at scan start and the stat happens later, so a live
-    // subagent's mtime is routinely a little ahead of nowMs: within
-    // FUTURE_MTIME_TOLERANCE_MS it counts as progress now (clamped to nowMs).
-    // Further ahead it is clock skew, not evidence of progress: ignored.
-    const progress = lastProgressFor?.(toolUseId);
-    const lastProgressMs =
-      typeof progress === 'number' && progress <= nowMs + FUTURE_MTIME_TOLERANCE_MS
-        ? Math.max(open.startedAt, Math.min(progress, nowMs))
-        : open.startedAt;
+    // The future-mtime rule lives in ./severity/isStalled.js (shared with the live path).
+    const lastProgressMs = resolveLastProgressMs(open.startedAt, lastProgressFor?.(toolUseId), nowMs);
     if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
 
     const durationMs = ageMs;

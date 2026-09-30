@@ -14,6 +14,8 @@ export interface TickCompletionDeps {
   reportUnseenStatus: (tag: string | null) => void;
   sendNarration: (payload: LiveNarrationPayload) => void;
   sendCompleted: (completed: CompletedDispatchUsage[]) => void;
+  /** Tool-error count from the dispatch's subagent file (counts only); null = no link. */
+  toolErrorsFor?: (toolUseId: string) => number | null;
 }
 
 export function createTickCompletionHandler(deps: TickCompletionDeps): (result: Pick<LiveAgentTick, 'completed' | 'outcomes'>) => void {
@@ -37,7 +39,9 @@ export function createTickCompletionHandler(deps: TickCompletionDeps): (result: 
       // run, so a run is never compared against a baseline it contributed to.
       const tracked = result.outcomes.get(c.toolUseId);
       deps.reportUnseenStatus(tracked?.unknownStatusTag ?? null);
-      const payload = deps.narrator.onCompleted(c, tracked);
+      // Only a completed outcome uses the count, so skip the file read otherwise.
+      const toolErrors = tracked?.outcome.status === 'completed' ? deps.toolErrorsFor?.(c.toolUseId) ?? null : null;
+      const payload = deps.narrator.onCompleted(c, tracked, toolErrors);
       if (payload) deps.sendNarration(payload);
     }
     if (result.completed.length) deps.sendCompleted(result.completed);

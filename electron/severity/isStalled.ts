@@ -17,3 +17,20 @@ export function isStalled(probe: StallProbe, nowMs: number): boolean {
   if (!Number.isFinite(probe.lastProgressMs) || !Number.isFinite(nowMs)) return false;
   return nowMs - probe.lastProgressMs > STALL_MS;
 }
+
+// How far past nowMs a subagent file's mtime may sit and still count as
+// progress. Shared by the collector sweep and the live stall check so the two
+// paths cannot differ.
+export const FUTURE_MTIME_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Last-progress time for a dispatch: its subagent file's mtime when usable,
+ * else its start. nowMs is taken before the stat, so a live subagent's mtime is
+ * routinely a little ahead of it: within FUTURE_MTIME_TOLERANCE_MS it counts as
+ * progress now (clamped to nowMs); further ahead it is clock skew and ignored.
+ */
+export function lastProgressMs(startedMs: number, fileMtimeMs: number | null | undefined, nowMs: number): number {
+  return typeof fileMtimeMs === 'number' && fileMtimeMs <= nowMs + FUTURE_MTIME_TOLERANCE_MS
+    ? Math.max(startedMs, Math.min(fileMtimeMs, nowMs))
+    : startedMs;
+}

@@ -11,7 +11,7 @@
 // Live path only: NOT in scripts/sync-severity-core.mjs CORE_FILES.
 import type { CompletedDispatchUsage, RealAgentDispatch, TrackedOutcome } from '../../src/state/liveAgentsMath';
 import { computeSeverity, exitStateForStatus, type Severity } from './computeSeverity';
-import { isStalled } from './isStalled';
+import { isStalled, lastProgressMs as resolveLastProgressMs } from './isStalled';
 import type { DurationBaselineStore } from './durationBaseline';
 
 export const STALL_CHECK_INTERVAL_MS = 30_000;
@@ -35,8 +35,10 @@ export interface LiveSeverityDeps {
 }
 
 export interface LiveSeverityNarrator {
-  onCompleted(completed: CompletedDispatchUsage, tracked: TrackedOutcome | undefined): LiveNarrationPayload | null;
-  checkStalls(open: readonly RealAgentDispatch[], nowMs: number, sessionEnded: boolean): LiveNarrationPayload[];
+  /** toolErrors: count from the dispatch's subagent file; null = unknown. Only a completed outcome uses it. */
+  onCompleted(completed: CompletedDispatchUsage, tracked: TrackedOutcome | undefined, toolErrors?: number | null): LiveNarrationPayload | null;
+  /** lastWriteFor: the dispatch's subagent-file mtime, or null (no link); dispatch start is the fallback. */
+  checkStalls(open: readonly RealAgentDispatch[], nowMs: number, sessionEnded: boolean, lastWriteFor?: (toolUseId: string) => number | null): LiveNarrationPayload[];
 }
 
 export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverityNarrator {
@@ -44,7 +46,7 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
   const firstSeenMs = new Map<string, number>();
 
   return {
-    onCompleted(c, tracked) {
+    onCompleted(c, tracked, toolErrors = null) {
       const outcome = tracked?.outcome ?? { status: 'unknown' as const };
       const medianMsAtEval = deps.baseline.medianFor(c.subagentType);
       const result = computeSeverity({
@@ -53,6 +55,7 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
         // computeSeverity's isFinite guard treats as "no slowness bump".
         elapsedMs: outcome.usage ? outcome.usage.durationMs : Number.NaN,
         medianMsAtEval,
+        toolErrors: outcome.status === 'completed' ? toolErrors : null,
       });
       deps.baseline.record(c.subagentType, outcome);
       firstSeenMs.delete(c.toolUseId);
@@ -64,7 +67,7 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
       return text ? { toolUseId: c.toolUseId, narration: text, severity: result.severity, subagentType: c.subagentType, final: true } : null;
     },
 
-    checkStalls(open, nowMs, sessionEnded) {
+    checkStalls(open, nowMs, sessionEnded, lastWriteFor) {
       const openIds = new Set(open.map((d) => d.toolUseId));
       for (const id of [...firstSeenMs.keys()]) if (!openIds.has(id)) firstSeenMs.delete(id);
       for (const id of [...stalled]) if (!openIds.has(id)) stalled.delete(id);
@@ -73,13 +76,17 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
       for (const d of open) {
         if (!firstSeenMs.has(d.toolUseId)) firstSeenMs.set(d.toolUseId, nowMs);
         if (stalled.has(d.toolUseId)) continue;
-        // Accepted deviation from spec section 5 (F15): until Tasks 8/9 feed
-        // subagent progress, "no progress" is measured from dispatch start,
-        // not from the dispatch's last activity.
+        // Spec section 5 / F15: progress is the last write to the dispatch's
+        // own subagent file (future-mtime rule shared with the collector via
+        // isStalled.ts), with dispatch start as the fallback when there is no
+        // link or file. The open list only ever holds top-level dispatches
+        // (the tracker tails the pinned parent transcript); nested ones close
+        // by tool_result and are never swept here, as in the collector.
         // liveAgentsMath turns a missing timestamp into the 1970 epoch; that
         // is "unknown", so measure from when this narrator first saw it.
         const startedMs = Date.parse(d.startedAt);
-        const lastProgressMs = Number.isFinite(startedMs) && startedMs > 0 ? startedMs : firstSeenMs.get(d.toolUseId) ?? nowMs;
+        const baseMs = Number.isFinite(startedMs) && startedMs > 0 ? startedMs : firstSeenMs.get(d.toolUseId) ?? nowMs;
+        const lastProgressMs = resolveLastProgressMs(baseMs, lastWriteFor?.(d.toolUseId), nowMs);
         if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
         stalled.add(d.toolUseId);
         const result = computeSeverity({ exit: 'fatal', elapsedMs: nowMs - lastProgressMs, medianMsAtEval: deps.baseline.medianFor(d.subagentType) });
