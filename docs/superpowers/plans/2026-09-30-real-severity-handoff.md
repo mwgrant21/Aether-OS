@@ -8,7 +8,7 @@ Written 2026-09-30 on work-it, for picking the work up on the home machine.
 - **Plan:** `docs/superpowers/plans/2026-09-30-real-severity.md`.
 - **All 11 plan tasks are DONE.** Each passed its own independent review. The fix rounds are listed in the rulings appendix.
 - **The final whole-branch review returned FIX FIRST.** It found 2 must-fix items, both claims in docs or tests that were not true, plus 7 cheap fixes. The code itself was judged sound. Every item was fixed in `3240403`.
-- **The scoped re-review of `3240403` was STILL RUNNING when this file was written.** That makes it the first thing to check at home (see Next steps).
+- **UPDATE: the scoped re-review of `97e815a..3240403` came back READY TO MERGE** (every item addressed, no new breakage). Its one nit, the PROGRESS follow-up (4) heading, is fixed in the same commit as this update.
 - **Tests at `3240403`:**
   - root: 215 files passed + 1 skipped, 2435 tests passed + 19 skipped, 0 failed
   - collector: 422 passed + 5 skipped
@@ -51,7 +51,7 @@ Core and collector copy:
 
 ## Next steps (at home)
 1. `git fetch && git checkout docs/real-severity-design && git pull`, then `npm ci`. Watch out for other worktrees that borrow `node_modules` through a junction.
-2. Check the final re-review verdict.
+2. The final re-review verdict is in: READY TO MERGE. Skip the rerun described in the rest of this step.
    - If this file has no update below saying it came back READY, rerun the scoped re-review of `97e815a..3240403`. Use a fresh refuter. Its brief is `.superpowers/sdd/2026-09-30-real-severity/final-review.md` on work-it; the key points are repeated in Open risks below.
    - `.superpowers/` is gitignored and does not travel between machines. This file is the portable copy.
 3. Run the full suite once on the home machine. The load-sensitive tests are SDK stdio bridge and CodexAppServerAdapter deadline; rerun those alone if they fail.
