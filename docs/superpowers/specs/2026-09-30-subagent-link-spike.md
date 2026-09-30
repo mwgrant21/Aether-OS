@@ -42,12 +42,18 @@ The same 199 match on both checks. The 12 misses (5.7%) are unexplained by this 
 
 Task-notification `<status>` counts (all parent transcripts): completed 2102, failed 105, killed 22. The literal `<status>running</status>` occurs 6 times in 4 files, but in none of them inside a `<task-notification>` block (0 notification ids carry `running`), so there is no running-then-final sequence to reconcile. Follow-up result: 0 running notifications, 0 superseded.
 
-## Decision: NO-GO
+## Round 2: JSON-parse match
 
-Rule: withMeta/recent >= 95% (99.5%, pass) AND toolUseIdIsParentAgentCall/metaHasToolUseId >= 95% (94.3%, FAIL by 0.7 points) AND isErrorResults > 0 (191, pass).
+Script: node one-off, JSON.parse of every parent line, collect tool_use blocks named Agent or Task by id (any key order), match each recent meta toolUseId. Shapes and counts only.
 
-Strictly applied, the second threshold fails, so the rule gives NO-GO. Recommended: **NO-GO as written by the rule, with a cheap path to GO**: the 12 misses are probably a regex artifact (key order in the tool_use JSON), not a real link failure. The orchestrator should either (a) accept a parse-based match for Task 8 (JSON-parse parent lines, look for tool_use with name Agent and id == toolUseId) and re-run to confirm >= 95%, or (b) rule GO on the 94.3% figure. The link field for Task 8 is confirmed as meta.json `toolUseId` (string present in 211/211 metas).
+- Parse-based match against the parent transcript: 199 / 211 = 94.3%. Identical to the regex result, so the 12 misses were NOT a regex artifact.
+- Miss classes (12): 8 parent transcript missing (all spawnDepth 1; session jsonl rotated or deleted, subagents dir remains); 4 id absent from the parent transcript, all spawnDepth 2 (nested dispatch: the Agent tool_use lives in a sibling subagent jsonl of the same session, and the id was found there for 4 / 4, by substring match on the id key, name not parsed). No id-under-other-tool-name, no tool_result-only cases.
+- With nested dispatches resolved by also scanning sibling subagent files: 203 / 211 = 96.2%. Among sessions whose parent transcript exists: 203 / 203 = 100%.
+
+## Decision: GO
+
+Unchanged rule: withMeta/recent 99.5% (pass), link rate 96.2% with the nested-scan (pass, >= 95%), isErrorResults 191 (pass). Without the nested scan the rate is 94.3% and fails, so the GO depends on the nested scan. The link is still meta.json toolUseId == Agent tool_use.id. Task 8 delta: the tool_use lookup must cover the parent transcript AND the session sibling subagent jsonls (spawnDepth >= 2), and a dispatch whose parent transcript is missing (8 / 211 = 3.8%) stays unlinked and must degrade gracefully.
 
 ## Side finding
 
-The CLAUDE.md "0 isSidechain lines" gotcha is wrong: 26274 `"isSidechain":true` lines in recent subagent files. Task 11 corrects it.
+The CLAUDE.md "0 isSidechain lines" gotcha is wrong. Fact for Task 11: 26274 lines containing the string "isSidechain":true across the 212 subagent files modified in the last 30 days (work-it, 2026-09-30).
