@@ -47,12 +47,12 @@ Task-notification `<status>` counts (all parent transcripts): completed 2102, fa
 Script: node one-off, JSON.parse of every parent line, collect tool_use blocks named Agent or Task by id (any key order), match each recent meta toolUseId. Shapes and counts only.
 
 - Parse-based match against the parent transcript: 199 / 211 = 94.3%. Identical to the regex result, so the 12 misses were NOT a regex artifact.
-- Miss classes (12): 8 parent transcript missing (all spawnDepth 1; session jsonl rotated or deleted, subagents dir remains); 4 id absent from the parent transcript, all spawnDepth 2 (nested dispatch: the Agent tool_use lives in a sibling subagent jsonl of the same session, and the id was found there for 4 / 4, by substring match on the id key, name not parsed). No id-under-other-tool-name, no tool_result-only cases.
-- With nested dispatches resolved by also scanning sibling subagent files: 203 / 211 = 96.2%. Among sessions whose parent transcript exists: 203 / 203 = 100%.
+- Miss classes (12): 8 parent in another project dir (all spawnDepth 1; the <session>.jsonl is absent from the meta's own project dir but present under a different dir in ~/.claude/projects, with the Agent tool_use id in it); 4 id absent from the parent transcript, all spawnDepth 2 (nested dispatch: the Agent tool_use lives in a sibling subagent jsonl of the same session, and the id was found there for 4 / 4, by substring match on the id key, name not parsed). No id-under-other-tool-name, no tool_result-only cases.
+- Fix round 1 recount (resolve parent by session id across ALL project dirs, then sibling subagent jsonls; Agent or Task name parsed): 214 recent metas (more files landed since the first run, this session is live): 202 own-dir parent + 8 other-project-dir parent + 4 sibling subagent = 214 / 214 = 100%, 0 unresolved.
 
 ## Decision: GO
 
-Unchanged rule: withMeta/recent 99.5% (pass), link rate 96.2% with the nested-scan (pass, >= 95%), isErrorResults 191 (pass). Without the nested scan the rate is 94.3% and fails, so the GO depends on the nested scan. The link is still meta.json toolUseId == Agent tool_use.id. Task 8 delta: the tool_use lookup must cover the parent transcript AND the session sibling subagent jsonls (spawnDepth >= 2), and a dispatch whose parent transcript is missing (8 / 211 = 3.8%) stays unlinked and must degrade gracefully.
+Unchanged rule: withMeta/recent 99.5% (pass), link rate 214/214 = 100% with cross-project parent lookup plus nested scan (pass, >= 95%), isErrorResults 191 (pass). Own-dir parent lookup alone is 94.3% and fails, so the GO depends on both widened lookups. The link is still meta.json toolUseId == Agent tool_use.id. Task 8 delta: look up the parent transcript by session id across all project dirs, then the session sibling subagent jsonls (spawnDepth >= 2), then degrade gracefully if the tool_use is still absent (0 cases observed).
 
 ## Side finding
 
