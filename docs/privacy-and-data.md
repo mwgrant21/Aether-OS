@@ -202,9 +202,17 @@ designed as such:
 
 ## 7. At rest
 
-- `~/.aether-os/` (store, spool, statusline payload) is created with user-only permissions. On
-  Windows this means an explicit ACL rather than relying on inherited defaults — this project
-  already carries hard-won ACL knowledge from the AppContainer GPU issue; apply the same care here.
+- `~/.aether-os/` (store, spool, statusline payload, attachments, codex-home) is made user-only at
+  every app start (`electron/privateDir.ts`, issue #99). On Windows this is an explicit ACL rather
+  than the inherited profile default: the directory's ACL is protected (inheritance from the profile
+  disabled) and grants full control to the user and SYSTEM only, and everything under it inherits
+  that. It is written only when something is missing, since a rewrite re-propagates to every child.
+  An explicit grant some other tool added (seen in practice: the Codex sandbox group, which Codex
+  needs for `codex-home`) is **kept, not stripped**, and each one on the directory or a top-level
+  entry is recorded as a `[diag] private-dir extra` line in `diag.log` (entry name, account name,
+  allow/deny, rights). Stripping it silently could break that tool; tolerating it silently would
+  make the promise here unverifiable. On POSIX the directory is set to 0700 and its top-level
+  files and directories to 0600/0700 (symlinks are skipped). A failure is logged, not fatal.
 - The SQLite store is **not** encrypted, and the README should say so plainly rather than implying
   otherwise. Given §4, its contents are paths, names, timestamps and integers — the honest position
   is "here is exactly what is in it," not a security claim the implementation does not back.

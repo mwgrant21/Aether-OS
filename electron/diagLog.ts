@@ -50,9 +50,9 @@ export function createDiagLog(opts: DiagLogOptions): DiagLog {
 
   // docs/privacy-and-data.md §7: ~/.aether-os is user-only. The modes below
   // only apply when a file or dir is created, so a log an older build left
-  // 0644 is tightened once per run. POSIX only: Windows ignores these modes and
-  // relies on the profile's inherited ACL; the explicit-ACL promise for the
-  // whole directory is tracked as its own issue, not diag.log's job.
+  // 0644 is tightened once per run. POSIX only: Windows ignores these modes;
+  // there the directory's explicit ACL (privateDir.ts, issue #99) covers
+  // diag.log by inheritance.
   function repairPermsOnce(): void {
     if (permsRepaired) return;
     permsRepaired = true;
