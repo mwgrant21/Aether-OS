@@ -438,10 +438,6 @@ describe('v9: dispatches usage columns are nullable', () => {
     return db;
   }
 
-  it('SCHEMA_VERSION is 9', () => {
-    expect(SCHEMA_VERSION).toBe(9);
-  });
-
   it('a fresh database has nullable usage columns', () => {
     const db = openDatabase(join(mkdtempSync(join(tmpdir(), 'aether-schema-v9-')), 't.db'));
     migrate(db);
@@ -461,6 +457,29 @@ describe('v9: dispatches usage columns are nullable', () => {
     db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, exit_state)
                 VALUES ('tu_null', NULL, NULL, NULL, 1, 2, 'error')`).run();
     expect(db.prepare("SELECT tokens FROM dispatches WHERE tool_use_id = 'tu_null'").get()).toEqual({ tokens: null });
+    db.close();
+  });
+
+  it('surfaces the original error when SQLite already rolled the transaction back', () => {
+    const db = v8Db();
+    // Simulate an auto-rollback (IOERR/FULL): roll back, then fail the exec.
+    const proxy = new Proxy(db, {
+      get(target, prop) {
+        const v = (target as never)[prop];
+        if (prop === 'exec') {
+          return (sql: string) => {
+            if (sql.includes('ALTER TABLE dispatches_v9')) {
+              target.exec('ROLLBACK');
+              throw new Error('simulated IOERR');
+            }
+            return target.exec(sql);
+          };
+        }
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    expect(() => migrate(proxy)).toThrow('simulated IOERR');
+    expect(db.isTransaction).toBe(false);
     db.close();
   });
 

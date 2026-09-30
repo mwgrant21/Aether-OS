@@ -169,6 +169,9 @@ func usageNotNull(t *testing.T, db *sql.DB) map[string]int {
 		}
 		out[n] = nn
 	}
+	if len(out) != 3 {
+		t.Fatalf("pragma returned %d usage columns, want 3 (tokens, tool_uses, duration_ms): %v", len(out), out)
+	}
 	return out
 }
 

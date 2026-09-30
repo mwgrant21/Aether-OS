@@ -95,7 +95,7 @@ function rebuildDispatchesWithNullableUsage(db: DatabaseSync): void {
     `);
     db.exec('COMMIT');
   } catch (err) {
-    db.exec('ROLLBACK');
+    if (db.isTransaction) db.exec('ROLLBACK');
     throw err;
   }
 }

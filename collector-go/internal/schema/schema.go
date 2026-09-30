@@ -6,6 +6,7 @@
 package schema
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -83,13 +84,28 @@ func rebuildDispatchesWithNullableUsage(db *sql.DB) error {
 			return err
 		}
 	}
-	// Only the tx is used inside: the caller may set SetMaxOpenConns(1), and a
-	// db.Exec while this tx holds the one connection would deadlock.
-	tx, err := db.Begin()
+	// Take the write lock up front, like Node's BEGIN IMMEDIATE, so a
+	// concurrent writer cannot slip in between the copy and the drop. A
+	// deferred db.Begin() would lock lazily. A pinned Conn carries the
+	// explicit BEGIN IMMEDIATE; the modernc _txlock DSN option is not used
+	// because it would change every transaction on this handle. Only this
+	// conn is used inside: the caller may set SetMaxOpenConns(1), and a
+	// db.Exec while it is held would deadlock.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, `ROLLBACK`) // may already be rolled back; original error wins
+		}
+	}()
 	for _, stmt := range []string{
 		`DROP TABLE IF EXISTS dispatches_v9`,
 		`CREATE TABLE dispatches_v9 (
@@ -111,11 +127,15 @@ func rebuildDispatchesWithNullableUsage(db *sql.DB) error {
 		`DROP TABLE dispatches`,
 		`ALTER TABLE dispatches_v9 RENAME TO dispatches`,
 	} {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // OpenDatabase opens (creating if necessary) the SQLite database at dbPath,
