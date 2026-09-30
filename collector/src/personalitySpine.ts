@@ -1,5 +1,5 @@
 // Layer 0 data contract for the Agent Personality Layer, ported verbatim from
-// docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md §3 (types).
+// docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md section 3 (types).
 //
 // Stage 11 (this file's first consumer) only ever writes `severity` via
 // computeSeverity with `findingWeights` omitted (or empty) and

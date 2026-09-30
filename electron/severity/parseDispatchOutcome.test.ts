@@ -108,6 +108,13 @@ describe('parseDispatchOutcome', () => {
     expect(parseDispatchOutcome(text)).toEqual({ status: 'completed' });
   });
 
+  it('D2b: a truncated wrapped body quoting the closer and </result> yields no usage', () => {
+    const text =
+      '<task-notification><status>completed</status><summary>s</summary><result>see: </task-notification></result>' +
+      '<subagent_tokens>1</subagent_tokens><tool_uses>1</tool_uses><duration_ms>999999999</duration_ms> and more';
+    expect(parseDispatchOutcome(text)).toEqual({ status: 'completed' });
+  });
+
   it('a well-formed wrapped notification still yields full usage', () => {
     const text = note('completed', { tokens: 5, toolUses: 2, durationMs: 1234 });
     expect(parseDispatchOutcome(text)).toEqual({ status: 'completed', usage: { tokens: 5, toolUses: 2, durationMs: 1234 } });

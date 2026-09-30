@@ -49,9 +49,10 @@ function usagePart(text: string): string | null {
   );
   const tail = end < 0 ? text : text.slice(end);
   if (CONTENT_OPEN.test(tail)) return null;
-  // A wrapped notification is trusted only if it is closed: a cut-off body that
-  // quotes </result> must not lend its trailing text to the usage block.
-  if (text.includes('<task-notification>') && !text.includes('</task-notification>')) return null;
+  // A wrapped notification is trusted only if its closer comes AFTER the usage
+  // tail starts: a cut-off body that quotes </task-notification> or </result>
+  // must not lend its trailing text to the usage block.
+  if (text.includes('<task-notification>') && text.lastIndexOf('</task-notification>') < Math.max(end, 0)) return null;
   return tail;
 }
 

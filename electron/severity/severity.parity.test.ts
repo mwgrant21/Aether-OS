@@ -53,6 +53,22 @@ describe('severity core: generated collector copy', () => {
     expect(importSpecifiers(src)).toEqual(['./a', 'pkg', './side', './re', './dyn']);
   });
 
+  it('covers the backtick dynamic form and fails loudly on a computed specifier', () => {
+    const tick = 'const d = await import(`./dyn`);';
+    expect(importSpecifiers(tick)).toEqual(['./dyn']);
+    expect(renderCollectorCopy(tick, 'x.ts')).toContain('import(`./dyn.js`)');
+    const computed = 'const d = await import(`./x/${name}`);';
+    expect(() => importSpecifiers(computed)).toThrow(/cannot be checked/);
+    expect(() => renderCollectorCopy(computed, 'x.ts')).toThrow(/cannot be checked/);
+  });
+
+  it('a // inside a string (a URL) does not hide a later import on the same line', () => {
+    const src = "const u = 'http://x.test/'; const d = await import('./after');";
+    expect(importSpecifiers(src)).toEqual(['./after']);
+    expect(renderCollectorCopy(src, 'x.ts')).toContain("import('./after.js')");
+    expect(importSpecifiers("const d = 1; // then import('./c')")).toEqual([]);
+  });
+
   it('rewrites side-effect, re-export and dynamic imports, leaving comments and strings alone', () => {
     const src = [
       "import './side';",

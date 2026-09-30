@@ -19,18 +19,38 @@ export const CORE_FILES = ['parseDispatchOutcome.ts', 'computeSeverity.ts', 'isS
 // against comment prefixes and open string literals on its own line.
 const STATEMENT_FROM = /^([ \t]*(?:import|export)\b[^;'"`]*?\bfrom\s*['"])([^'"\n]+)(['"])/gm;
 const STATEMENT_SIDE = /^([ \t]*import\s*['"])([^'"\n]+)(['"])/gm;
-const DYNAMIC = /(\bimport\s*\(\s*['"])([^'"\n]+)(['"]\s*\))/g;
+const DYNAMIC = /(\bimport\s*\(\s*['"`])([^'"`\n]+)(['"`]\s*\))/g;
 
+// True when offset sits inside a comment or string literal, judged from the
+// start of its line. Scans left to right so a // inside a string (a URL) does
+// not count as a comment start.
 function inCommentOrString(source, offset) {
   const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
   const before = source.slice(lineStart, offset);
-  if (before.includes('//') || /^\s*(\/\*|\*)/.test(before)) return true;
-  return ["'", '"', '`'].some((q) => before.split(q).length % 2 === 0);
+  if (/^\s*\*/.test(before)) return true;
+  let quote = null;
+  for (let i = 0; i < before.length; i++) {
+    const c = before[i];
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+    } else if (c === '/' && (before[i + 1] === '/' || before[i + 1] === '*')) {
+      return true;
+    }
+  }
+  return quote !== null;
+}
+
+function assertCheckable(spec) {
+  if (spec.includes('$' + '{')) throw new Error('sync-severity-core: computed import specifier cannot be checked: ' + spec);
 }
 
 // Calls fn(spec) for every specifier; a string result replaces it.
 function mapSpecifiers(source, fn) {
   const swap = (match, head, spec, tail) => {
+    assertCheckable(spec);
     const next = fn(spec);
     return typeof next === 'string' ? head + next + tail : match;
   };
@@ -48,6 +68,7 @@ export function importSpecifiers(source) {
   for (const re of [STATEMENT_FROM, STATEMENT_SIDE, DYNAMIC]) {
     for (const m of source.matchAll(re)) {
       if (re === DYNAMIC && inCommentOrString(source, m.index)) continue;
+      assertCheckable(m[2]);
       hits.push({ at: m.index, spec: m[2] });
     }
   }
