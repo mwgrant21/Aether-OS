@@ -56,10 +56,14 @@ describe('ensurePrivateDir', () => {
 
     const report = await ensurePrivateDir(dir);
     expect(report.changed).toBe(true);
-    // One line per ACE: a grant can be stored as more than one ACE (the CI
-    // runner reports two for '.'), so assert which paths carry it, not a count.
-    expect([...new Set(report.extras.map((e) => e.path))].sort()).toEqual(['.', 'statusline.json']);
-    for (const e of report.extras) expect(e, JSON.stringify(report.extras)).toMatchObject({ who: expect.stringMatching(/Users$/), type: 'Allow' });
+    // Assert the Users grant specifically. On the elevated windows-latest
+    // runner the directory also carries an explicit BUILTIN\Administrators
+    // FullControl ACE after the icacls setup above (observed in CI, not on a
+    // non-elevated machine); reporting that too is correct, it is also a grant
+    // beyond the user and SYSTEM.
+    const users = report.extras.filter((e) => /\\Users$/.test(e.who));
+    expect(users.map((e) => e.path).sort(), JSON.stringify(report.extras)).toEqual(['.', 'statusline.json']);
+    expect(users.every((e) => e.type === 'Allow')).toBe(true);
     // Still granted afterwards.
     expect(ps(`icacls '${dir}'`)).toMatch(/Users:\(OI\)\(CI\)\(M\)/);
   }, 60_000);
