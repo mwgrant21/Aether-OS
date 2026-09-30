@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDiagLog } from './diagLog';
@@ -70,5 +70,35 @@ describe('createDiagLog', () => {
     expect(readFileSync(join(root, 'diag.log'), 'utf8')).toBe('first-line\nsecond-line\nthird-line\n');
     const failures = errSpy.mock.calls.filter((c) => String(c[0]).includes('diag.log write failed'));
     expect(failures).toHaveLength(1);
+  });
+
+  // Privacy doc §7: ~/.aether-os is user-only. POSIX modes only; Windows
+  // ignores them and relies on the profile ACL.
+  const posixOnly = it.skipIf(process.platform === 'win32');
+  const groupOrOther = (p: string) => statSync(p).mode & 0o077;
+
+  posixOnly('creates the dir and the log user-only', () => {
+    const dir = join(root, 'fresh');
+    createDiagLog({ dir }).write('a');
+    expect(groupOrOther(dir)).toBe(0);
+    expect(groupOrOther(join(dir, 'diag.log'))).toBe(0);
+  });
+
+  posixOnly('tightens a log and a rotated log an older build left world-readable', () => {
+    writeFileSync(join(root, 'diag.log'), 'old\n');
+    writeFileSync(join(root, 'diag.log.1'), 'older\n');
+    chmodSync(join(root, 'diag.log'), 0o644);
+    chmodSync(join(root, 'diag.log.1'), 0o644);
+    createDiagLog({ dir: root }).write('new');
+    expect(groupOrOther(join(root, 'diag.log'))).toBe(0);
+    expect(groupOrOther(join(root, 'diag.log.1'))).toBe(0);
+  });
+
+  posixOnly('a rotation keeps both files user-only', () => {
+    const log = createDiagLog({ dir: root, maxBytes: 5 });
+    log.write('first-line');
+    log.write('second');
+    expect(groupOrOther(join(root, 'diag.log'))).toBe(0);
+    expect(groupOrOther(join(root, 'diag.log.1'))).toBe(0);
   });
 });

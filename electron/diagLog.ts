@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface DiagLogOptions {
@@ -21,6 +21,7 @@ export function createDiagLog(opts: DiagLogOptions): DiagLog {
   const file = join(dir, fileName);
   const rotated = `${file}.1`;
   let failureReported = false;
+  let permsRepaired = false;
 
   function reportFailure(err: unknown): void {
     if (failureReported) return;
@@ -42,11 +43,28 @@ export function createDiagLog(opts: DiagLogOptions): DiagLog {
     if (size >= maxBytes) renameSync(file, rotated); // replaces an existing .1
   }
 
+  // docs/privacy-and-data.md §7: ~/.aether-os is user-only. The modes below
+  // only apply when a file or dir is created, so a log an older build left
+  // 0644 is tightened once per run. POSIX only: Windows ignores these modes and
+  // relies on the profile's inherited ACL; the explicit-ACL promise for the
+  // whole directory is tracked as its own issue, not diag.log's job.
+  function repairPermsOnce(): void {
+    if (permsRepaired) return;
+    permsRepaired = true;
+    if (process.platform === 'win32') return;
+    for (const f of [file, rotated]) if (existsSync(f)) chmodSync(f, 0o600);
+  }
+
   return {
     write(line: string): void {
       console.error(line);
       try {
-        mkdirSync(dir, { recursive: true });
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        try {
+          repairPermsOnce();
+        } catch (err) {
+          reportFailure(err);
+        }
         try {
           rotateIfFull();
         } catch (err) {
@@ -54,7 +72,7 @@ export function createDiagLog(opts: DiagLogOptions): DiagLog {
           // exceed the cap until the rename works.
           reportFailure(err);
         }
-        appendFileSync(file, line + '\n');
+        appendFileSync(file, line + '\n', { mode: 0o600 });
       } catch (err) {
         reportFailure(err);
       }
