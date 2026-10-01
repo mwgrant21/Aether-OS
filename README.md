@@ -232,7 +232,7 @@ npm run dev            # browser-only mode at http://localhost:5173 (no PTY / li
 ```
 
 Comms (formerly Chat) answers every message through a local, deterministic responder — no API key,
-no `.env`, no SDK or HTTP model call (the only Claude-CLI path is the opt-in, default-off collector
+no `.env`, no SDK or HTTP model call (the one background Claude-CLI path is the opt-in, default-off collector
 memory extraction, `docs/privacy-and-data.md` §14). See `docs/roadmap.md` §3.5 for the Stage 13.5
 teardown that removed the model call path.
 
