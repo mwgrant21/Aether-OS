@@ -273,6 +273,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('crossEngine:update', listener);
     },
   },
+  memoryExtraction: {
+    get: (): Promise<boolean> => ipcRenderer.invoke('memoryExtraction:get'),
+    set: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('memoryExtraction:set', enabled),
+  },
   retention: {
     status: (): Promise<RetentionStatus> => ipcRenderer.invoke('retention:status'),
     purge: (): Promise<PurgeResult> => ipcRenderer.invoke('retention:purge'),

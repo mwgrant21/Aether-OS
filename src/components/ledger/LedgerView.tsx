@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
@@ -33,7 +33,31 @@ import { usd, approxUsd, ESTIMATE_BASIS_TOOLTIP } from './format';
  */
 export function LedgerView() {
   const colors = useColors();
-  const { state } = useAetherStore();
+  const { state, dispatch } = useAetherStore();
+  // memoryExtractionEnabled is null (unknown) until something reads the file, so the
+  // Ledger hydrates it from the file-backed bridge itself and shows neutral copy until
+  // it is known. The readback is held locally (null = unknown) as well as dispatched,
+  // so the copy follows the file, not whatever the store happened to hold. With no
+  // bridge (browser mode) the store value is all there is, and null there means OFF.
+  const [memEnabled, setMemEnabled] = useState<boolean | null>(() =>
+    window.aetherElectron?.memoryExtraction ? null : state.memoryExtractionEnabled ?? false,
+  );
+  useEffect(() => {
+    const api = window.aetherElectron?.memoryExtraction;
+    if (!api) return;
+    let live = true;
+    api
+      .get()
+      .then((value) => {
+        if (!live) return;
+        dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: value === true });
+        setMemEnabled(value === true);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [dispatch]);
   const { ledger, showDispatchDetail } = resolveLedgerViewData(state);
 
   const rows = buildDispatchRows(state, {
@@ -138,10 +162,15 @@ export function LedgerView() {
               because "does this app cost me anything" is a question worth
               answering once and for good. */}
           <div style={aetherRowStyle(colors)}>
-            <span style={aetherLabelStyle(colors)}>Aether OS itself: {usd(0)}</span>
+            <span style={aetherLabelStyle(colors)}>
+              Aether OS itself:{memEnabled === false ? ` ${usd(0)}` : ''}
+            </span>
             <span style={aetherNoteStyle(colors)}>
-              no model call sites exist — guaranteed by src/shared/noApiCalls.test.ts, which fails the build if
-              one reappears
+              {memEnabled === null
+                ? 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); memory extraction status loading'
+                : memEnabled
+                  ? 'memory extraction is ON: it runs the Claude CLI and can bill depending on how Claude Code is configured (privacy section 14); its calls are saved as ordinary Claude Code sessions, so they count in the all-transcripts totals but are not broken out here'
+                  : 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); opt-in memory extraction is off'}
             </span>
           </div>
 

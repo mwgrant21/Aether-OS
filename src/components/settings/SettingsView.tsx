@@ -10,6 +10,7 @@ import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { CostGuardCard } from './CostGuardCard';
 import { RetentionCard } from './RetentionCard';
 import { CommunicationCard } from './CommunicationCard';
+import { MemoryExtractionCard } from './MemoryExtractionCard';
 
 export function SettingsView() {
   return (
@@ -23,6 +24,7 @@ export function SettingsView() {
         <PlanPriceCard />
         <CrossEngineVerificationCard />
         <CommunicationCard />
+        <MemoryExtractionCard />
         <CostGuardCard />
         <RetentionCard />
       </div>

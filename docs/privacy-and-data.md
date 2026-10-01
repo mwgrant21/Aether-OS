@@ -7,7 +7,7 @@ subordinate to this document.
 
 ## 1. The stance
 
-**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), and operator-driven terminals (§11).**
+**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14).**
 
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
@@ -19,12 +19,21 @@ only, reachable only from this machine, with no port exposed externally and no t
 surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
-**Aether does not call billed model APIs.** Stage 13.5 removed the Anthropic SDK,
+**Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
+path in §14 is a different thing: it can bill API usage, depending on how Claude Code is
+configured.) Stage 13.5 removed the Anthropic SDK,
 chat API proxy, and `.env` key loading. The legacy deterministic Comms responder stays local.
 Two independently default-off features can send content to OpenAI under the operator's Codex
 subscription: manual verification (§9) and Claude-requested consultations (§13). Neither toggle
 enables the other. The communication view displays real exchanges without asking another model
 to summarize them.
+
+**There is one background model call, and it is opt-in (§14).** The collector's memory
+extractor (`collector/src/memoryExtract.ts`) calls `claude -p --model haiku`. It shipped with
+Stage 13 and went unnoticed against the Stage 13.5 "no model call site" claim until issue #104;
+it is now off by default and gated behind a Settings toggle. It goes through the Claude CLI,
+not an SDK or HTTP call site, but it can still bill API usage depending on how Claude Code is
+configured; §14 states exactly what is sent and under which conditions.
 
 The embedded Claude terminal sends prompts to Anthropic under the user's Claude Code login.
 Aether strips API-key, auth-token and base-URL overrides from the launch environment; the
@@ -161,7 +170,7 @@ on the app's existing 900ms tick) — never a `state` push, and it is the one de
 the `useRealAgentsSync.ts` pattern that feeds every other real-data surface into the store.
 `src/state/noPayloadInStore.test.ts` is the mechanical enforcement: it asserts no
 transcript-message type is reachable from `AetherState`. The operator is the only reader of their
-own transcripts on their own machine, and nothing leaves it — the original rule was written to
+own transcripts on their own machine, and nothing leaves it (except what §14 sends, when enabled) — the original rule was written to
 prevent a *store* that could leak, not to prevent the operator from looking at their own session.
 
 ---
@@ -238,6 +247,11 @@ rest of the model call path they scoped context for — the surface they guarded
 since there is no longer any path by which chat context reaches a model at all. Recorded here as
 history, not as an active control: if a future stage reintroduces a model call, this boundary (or
 its equivalent) has to be rebuilt from scratch, not assumed to still be standing.
+
+**Update (issue #104):** a model call was in fact reintroduced as an opt-in, default-off
+background boundary: the collector's memory extraction via `claude -p` (§14). It does not
+reuse this retired scoped-context design; the boundary that governs it is §14, and the guard
+is `src/shared/noApiCalls.test.ts`'s claude-launch allow-list.
 
 ---
 
@@ -380,6 +394,8 @@ Added 2026-09-06 with the provider-neutral cross-engine adapter layer
 
 **Nothing about the shipped app's outbound behaviour changed.** `ClaudeHeadlessCliAdapter`
 can spawn `claude -p`, but no IPC handler, no store action, and no UI control constructs it.
+(It is not the only `claude -p` path in the repo: the collector's opt-in memory extractor, §14,
+launches it directly and independently of this adapter.)
 It is reachable only from tests, which drive an injected fake child process and never spawn a
 real CLI. This adapter remains unreachable from product controls. The separate Codex consultation
 path in §13 does not activate it.
@@ -563,3 +579,58 @@ optional context, review its instance/session label, then choose **Copy request*
 connected terminal**. Review the terminal before manually pasting/submitting. Submission can spend
 an existing consultation credit. Comms shows the real exchange and pages served; opening the answer
 does not retrieve pages for Claude. If retrieval stops early, any summary must identify it as partial.
+
+---
+
+## 14. Memory extraction via the Claude CLI — opt-in background boundary
+
+Added with issue #104 (2026-10-01). The collector (`collector/src/memoryExtract.ts`) turns
+completed subagent dispatches into private memory atoms by running `claude -p --model haiku`.
+That path shipped with Stage 13 and was missed by the Stage 13.5 teardown and its guard (the
+guard only matched a literal `spawn('claude'`, not the promisified `execFileAsync('claude'`
+the extractor uses). It is now an explicit boundary.
+
+**Default off, and enabling requires a confirmation.** The Settings card `MEMORY EXTRACTION`
+shows OFF until the operator clicks through a disclosure (`I UNDERSTAND, ENABLE`). The choice is
+written to `~/.aether-os/collector-settings.json` by Electron main; that file, not the UI, is the
+source of truth, because the collector is a separate process that runs without the app. The
+collector re-reads the file on every scan and every drain tick (about 15 s), so toggling needs no
+restart. With the setting off nothing is staged and nothing is sent: the transcript scan gets no
+extraction queue, and a drain tick also discards anything already queued rather than sending it.
+`CostGuardCard` lists the row as a network surface.
+
+**What is sent, and to whom.** To Anthropic, or whichever provider Claude Code is configured
+for (see below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification) plus up to 20
+memories previously extracted for that agent. Aether-initiated with no human typing the turn,
+which is what makes it a distinct boundary, like §12. It is usually sent within about 30 seconds
+of the dispatch completing.
+
+**What else `claude -p` brings along.** The call is a real Claude Code invocation: it also loads
+the user's CLAUDE.md and auto-memory context and runs the user's configured hooks on every call.
+None of that is controlled by Aether.
+
+**Which login, and can it bill.** Only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
+`ANTHROPIC_BASE_URL` are removed from the call's environment. Otherwise it uses whatever Claude
+Code is set up to use: the subscription login, an `apiKeyHelper`, an `env` key in Claude Code
+settings, or Bedrock/Vertex. So it CAN bill API usage; "your Claude account" is the common case,
+not a guarantee. Isolating the call from that ambient configuration is tracked in #111.
+
+**What is stored.** Model-written memory atoms in `~/.aether-os/memory.db`. They derive from
+transcript content, which strains the Stage 14 "never in `~/.aether-os/`" amendment in §4; this
+section names that tension and does not resolve it.
+
+**Backfill.** Scan offsets persist in `collector.db` (`transcript_files.last_offset`) and only
+advance when a scan runs. Dispatches the collector scans while the setting is off are not
+extracted later unless `collector.db` is deleted. Qualifying dispatches it has not yet scanned
+are sent the next time it scans with the setting ON. That covers dispatches that started and
+completed while the collector was not running, and every past dispatch when `collector.db` is fresh or deleted (the rescan starts at offset 0).
+
+**Deployment caveat.** The gate takes effect only once the collector `dist` is rebuilt or
+reinstalled. The installed collector runs from its built output, and a pre-#104 collector
+extracts unconditionally.
+
+**Guard.** `src/shared/noApiCalls.test.ts` fails on any literal `claude` process launch
+(`spawn`, `exec*`, `fork`, including promisified and aliased forms) outside an exact-path
+allow-list: the §12 adapter, `collector/src/fleetPoll.ts` (`claude agents --json` session
+listing; no prompt, no model; argv pinned), and `memoryExtract.ts`. A launch whose command is a
+variable is out of reach of a literal-string guard.

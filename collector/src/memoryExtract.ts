@@ -3,7 +3,9 @@
  *
  * Design: AETHER_MEMORY_LAYER_2.md §4.1 "Shape". Wires the three pieces
  * built in this plan (prompt builder, tolerant parser) to the already-shipped
- * `applyOps` (memoryStore.ts). This is the file that actually calls a model.
+ * `applyOps` (memoryStore.ts). This is the file that actually calls a model, so
+ * it is OPT-IN and default OFF (#104): index.ts gates both the enqueue and the
+ * drain on ~/.aether-os/collector-settings.json (privacy-and-data.md §14).
  *
  * SINGLE-WRITER ENFORCEMENT (§3.1's load-bearing property, exercised here):
  * `writer` is a parameter this module's CALLER supplies -- it is never read
@@ -27,15 +29,32 @@ import type { ApplyResult, MemoryStore, SourceKind } from './memoryStore.js';
 
 const execFileAsync = promisify(execFile);
 
+// The opt-in promises "your Claude account via the claude CLI". An API key
+// inherited from the collector's (scheduled-task) environment would silently turn
+// that into billed API usage, so these are stripped from the child. Duplicated
+// from electron/ptyManager.ts (the collector never imports from electron).
+const SCRUBBED_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+
+// Exported for the test. Matches case-insensitively: process.env is a plain object once
+// copied, but Windows resolves env names case-insensitively, so `Anthropic_Api_Key` would
+// still reach the child if only the exact-uppercase spelling were deleted.
+export function scrubbedEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...source };
+  for (const key of Object.keys(env)) {
+    if (SCRUBBED_ENV_KEYS.has(key.toUpperCase())) delete env[key];
+  }
+  return env;
+}
+
 export type ExtractExecFn = (prompt: string) => Promise<{ stdout: string }>;
 
 /** The real call: a cheap headless model invocation, no interactive session. */
 export async function defaultExtractExec(prompt: string): Promise<{ stdout: string }> {
-  const { stdout } = await execFileAsync('claude', [
-    '-p', prompt,
-    '--model', 'haiku',
-    '--output-format', 'text',
-  ]);
+  const { stdout } = await execFileAsync(
+    'claude',
+    ['-p', prompt, '--model', 'haiku', '--output-format', 'text'],
+    { env: scrubbedEnv(), windowsHide: true }
+  );
   return { stdout };
 }
 

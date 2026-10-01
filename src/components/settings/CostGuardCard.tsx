@@ -7,6 +7,9 @@ export function CostGuardCard() {
   const colors = useColors();
   const { state } = useAetherStore();
   const crossEngineOn = state.crossEngineCfg.enabled;
+  // null = not yet read back from collector-settings.json: never shown as OFF. With no
+  // bridge (browser mode) nothing can enable it, so that is a known OFF.
+  const memoryExtractionOn = state.memoryExtractionEnabled ?? (window.aetherElectron?.memoryExtraction ? null : false);
 
   return (
     <div style={cardStyle(colors)}>
@@ -18,7 +21,17 @@ export function CostGuardCard() {
       </div>
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>DIRECT ANTHROPIC CALLS</div>
-        <div style={valueStyle(colors)}>NONE · zero call sites</div>
+        <div style={valueStyle(colors)}>NONE · no SDK or HTTP call sites</div>
+      </div>
+      <div style={rowStyle(colors)}>
+        <div style={labelStyle(colors)}>MEMORY EXTRACTION</div>
+        <div style={valueStyle(colors)}>
+          {memoryExtractionOn === null
+            ? 'UNKNOWN · checking the collector setting'
+            : memoryExtractionOn
+              ? 'ON · dispatch result text and up to 20 prior memories sent via the claude CLI'
+              : 'OFF'}
+        </div>
       </div>
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>CROSS-ENGINE VERIFY</div>
@@ -32,10 +45,14 @@ export function CostGuardCard() {
       </div>
 
       <p style={hintStyle(colors)}>
-        The Anthropic SDK dependency was removed from this app and all model-calling code paths
-        deleted in Stage 13.5 — there is no key-reachable path left for Aether to call the
-        Anthropic API directly. Cross-engine verification and opted-in Claude–Codex consultations
-        use external clients and your subscriptions. Communication starts require an allowance;
+        The Anthropic SDK dependency was removed from this app in Stage 13.5 — there is no
+        key-reachable path left for Aether to call the Anthropic API directly. Opt-in
+        memory extraction is the one background, Aether-initiated Claude model call: when ON, the
+        collector sends dispatch result text to your Claude account through the claude CLI (only
+        ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its
+        environment; otherwise it uses Claude Code's own setup). Cross-engine
+        verification and opted-in Claude–Codex consultations use external clients and your
+        subscriptions. Communication starts require an allowance;
         enabling its preference alone does not make a consultation.
       </p>
     </div>

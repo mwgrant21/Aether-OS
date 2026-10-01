@@ -187,3 +187,60 @@ describe('LedgerView (rendered with a populated store)', () => {
     expect(screen.getByText(/not comparable/i)).toBeTruthy();
   });
 });
+
+// #104: the "Aether OS itself" note used to say no model call sites exist. The
+// collector's opt-in memory extraction is an allow-listed Claude CLI call site that
+// can bill, so the note follows the setting and never shows an unqualified $0.00
+// while it is ON.
+describe('LedgerView Aether-OS-itself note (#104)', () => {
+  afterEach(() => {
+    delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
+  });
+
+  it('OFF: scopes the claim to SDK/HTTP and says extraction is off', () => {
+    mountState({ memoryExtractionEnabled: false });
+    const { container } = render(<LedgerView />);
+    expect(screen.getByText(/Aether OS itself: \$0\.00/)).toBeTruthy();
+    expect(container.textContent).toContain('no SDK or HTTP model call sites');
+    expect(container.textContent).toContain('opt-in memory extraction is off');
+    expect(container.textContent).not.toContain('no model call sites exist');
+  });
+
+  it('ON: no unqualified $0.00; says it can bill and is counted in totals but not broken out', () => {
+    mountState({ memoryExtractionEnabled: true });
+    const { container } = render(<LedgerView />);
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
+    expect(container.textContent).toContain('memory extraction is ON');
+    expect(container.textContent).toContain('can bill');
+    expect(container.textContent).toContain('count in the all-transcripts totals but are not broken out here');
+  });
+
+  function bridge(get: () => Promise<boolean>): void {
+    (window as unknown as { aetherElectron?: unknown }).aetherElectron = {
+      memoryExtraction: { get, set: async (v: boolean) => v },
+    };
+  }
+
+  it('shows neutral copy until the bridge answers, then follows the file (true over a false store)', async () => {
+    let resolveGet: (v: boolean) => void = () => {};
+    bridge(() => new Promise<boolean>((r) => (resolveGet = r)));
+    mountState({ memoryExtractionEnabled: false });
+    const { container } = render(<LedgerView />);
+    expect(container.textContent).toContain('memory extraction status loading');
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
+    resolveGet(true);
+    expect(await screen.findByText(/memory extraction is ON/)).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
+  });
+
+  it('a rejecting get() keeps the neutral copy (never falls back to OFF/$0.00)', async () => {
+    const get = vi.fn(() => Promise.reject(new Error('ipc down')));
+    bridge(get);
+    mountState({ memoryExtractionEnabled: false });
+    const { container } = render(<LedgerView />);
+    await vi.waitFor(() => expect(get).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.textContent).toContain('memory extraction status loading');
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
+  });
+});

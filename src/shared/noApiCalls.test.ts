@@ -181,13 +181,113 @@ describe('cross-engine Codex boundary', () => {
   // The Claude headless adapter is the second module in this repo that can
   // spawn a model-running CLI. It is currently constructed by nothing outside
   // tests (docs/privacy-and-data.md §12); this guard makes a stray second
-  // spawn site fail loudly rather than quietly widening the boundary.
-  it('only the reviewed headless adapter spawns the claude binary', () => {
-    const hits = grepSourceFor(/spawn\(\s*['\"]claude['\"]/).filter((f) => {
-      const posix = f.replace(/\\/g, '/');
-      return !posix.includes('electron/crossEngine/providers/claudeHeadlessCli.ts') && !posix.includes('.test.ts');
-    });
+  // launch site fail loudly rather than quietly widening the boundary.
+  //
+  // Widened for #104: the original `spawn('claude'` regex could not see
+  // `execFileAsync('claude', ...)` (promisify alias), which is how the collector's
+  // memory extractor reached a model unnoticed. The matcher now resolves per-file
+  // aliases (`import { execFile as ef }`, `const run = promisify(execFile)`).
+  const LAUNCH_NAMES = ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];
+
+  function launchNamesFor(text: string): string[] {
+    const names = new Set(LAUNCH_NAMES);
+    for (const m of text.matchAll(/\b(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s+as\s+([A-Za-z_$][\w$]*)/g)) {
+      names.add(m[2]);
+    }
+    // Destructure-rename: const { execFile: ef } = require('child_process')
+    // Anchored to a `{ ... }` group so prose like "the exec: string" in a comment is ignored.
+    for (const g of text.matchAll(/\{([^{}]*)\}/g)) {
+      for (const m of g[1].matchAll(/\b(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+        names.add(m[2]);
+      }
+    }
+    // Fixpoint so a promisify of an alias (declared in any order) resolves.
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const m of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::(?:[^=]|=>)+?)?=\s*(?:[\w$]+\.)?promisify\(\s*(?:[\w$]+\.)?([A-Za-z_$][\w$]*)\s*\)/g)) {
+        if (names.has(m[2]) && !names.has(m[1])) {
+          names.add(m[1]);
+          grew = true;
+        }
+      }
+    }
+    return [...names];
+  }
+
+  function launchesClaude(text: string): boolean {
+    // Names are identifier-shaped today, so only `$` can occur, but escape every regex
+    // metacharacter (backslash included) so a future name source cannot break the pattern.
+    const alt = launchNamesFor(text).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const re = new RegExp(
+      '(?<![\\w$])(?:(?:' + alt + ')|(?:[\\w$]+\\.)?promisify\\(\\s*(?:[\\w$]+\\.)?(?:' + alt + ')\\s*\\))\\s*\\(\\s*[\'"\\x60]claude(?:\\.exe|\\.cmd)?(?:[\'"\\x60]|\\s)'
+    );
+    return re.test(text);
+  }
+
+  // Reviewed files that may launch the claude binary. Exact paths, never directories.
+  const CLAUDE_LAUNCH_ALLOWLIST: ReadonlyMap<string, string> = new Map([
+    ['electron/crossEngine/providers/claudeHeadlessCli.ts', 'test-only adapter, privacy §12'],
+    ['collector/src/fleetPoll.ts', '`claude agents --json` session listing, no prompt, no model; argv pinned'],
+    ['collector/src/memoryExtract.ts', 'opt-in memory extraction, default off, gated in collector/src/index.ts; privacy §14'],
+  ]);
+
+  function posixRel(file: string): string {
+    return path.relative('.', file).replace(/\\/g, '/');
+  }
+
+  it('the claude-launch matcher sees promisify/alias/shell-string forms and ignores lookalikes', () => {
+    const mustMatch = [
+      "spawn('claude', a)",
+      "const execFileAsync = promisify(execFile); execFileAsync('claude', ['-p'])",
+      "import { execFile as ef } from 'node:child_process'; ef(\"claude\", [])",
+      'execSync(`claude -p hi`)',
+      "const run = util.promisify(cp.execFile); run('claude', [])",
+      "cp.spawn('claude.exe')",
+      "await promisify(execFile)('claude', ['-p'])",
+      "const run: Fn = promisify(execFile); run('claude', [])",
+      "const run: (a: string) => Promise<X> = promisify(execFile); run('claude', [])",
+      "const { execFile: ef } = require('child_process'); ef('claude', [])",
+    ];
+    const mustNotMatch = [
+      "spawn('codex', [])",
+      'spawn(claudePath, [])',
+      "spawn('claudette')",
+      "notALaunch('claude')",
+      "const id = 'claude-x'",
+    ];
+    for (const s of mustMatch) expect(launchesClaude(s), 'should match: ' + s).toBe(true);
+    for (const s of mustNotMatch) expect(launchesClaude(s), 'should NOT match: ' + s).toBe(false);
+  });
+
+  it('fleetPoll.ts launches claude exactly once, with the pinned argv', () => {
+    const text = fs.readFileSync('collector/src/fleetPoll.ts', 'utf8');
+    const launches = [
+      ...text.matchAll(/(?<![\w$])execFileAsync\s*\(\s*['"`]claude['"`]\s*,\s*(\[[^\]]*\])/g),
+    ];
+    expect(launches).toHaveLength(1);
+    expect(launches[0][1].replace(/\s+/g, '')).toBe("['agents','--json']");
+    // No other claude launch form (any alias) may exist in the file.
+    const other = text.replace(/execFileAsync\s*\(\s*['"`]claude['"`]\s*,\s*\['agents',\s*'--json'\]/, '');
+    expect(launchesClaude(other)).toBe(false);
+  });
+
+  it('scan scope covers the sites this guard exists for (no vacuous pass from a wrong cwd)', () => {
+    const files = allSourceFiles().map(posixRel);
+    expect(files).toContain('collector/src/memoryExtract.ts');
+    expect(files).toContain('electron/crossEngine/providers/claudeHeadlessCli.ts');
+  });
+
+  it('only allow-listed files launch the claude binary, and no allow-list entry is stale', () => {
+    const hits = allSourceFiles()
+      .filter((f) => launchesClaude(fs.readFileSync(f, 'utf8')))
+      .map(posixRel)
+      .filter((f) => !CLAUDE_LAUNCH_ALLOWLIST.has(f));
     expect(hits).toEqual([]);
+    for (const allowed of CLAUDE_LAUNCH_ALLOWLIST.keys()) {
+      expect(fs.existsSync(allowed), 'allow-listed file missing: ' + allowed).toBe(true);
+      expect(launchesClaude(fs.readFileSync(allowed, 'utf8')), 'stale allow-list entry: ' + allowed).toBe(true);
+    }
   });
 
   // --restricted alone is NOT read-only: measured against Claude Code 2.1.263 it

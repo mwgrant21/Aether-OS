@@ -24,6 +24,13 @@ beforeEach(() => {
 });
 
 describe('persistence', () => {
+  it('never hydrates memoryExtractionEnabled, even from a hand-edited entry (the settings file is the truth)', () => {
+    localStorage.setItem('aetheros-v1', JSON.stringify({ activeTab: 'Grid', memoryExtractionEnabled: true }));
+    const loaded = loadPersisted();
+    expect(loaded?.activeTab).toBe('Grid');
+    expect(loaded).not.toHaveProperty('memoryExtractionEnabled');
+  });
+
   it('never writes sessionStartedAt', () => {
     savePersisted({ ...initialState, sessionStartedAt: '2026-09-30T14:30:00.000Z' });
     expect(localStorage.getItem('aetheros-v1')).not.toContain('sessionStartedAt');

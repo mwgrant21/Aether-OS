@@ -423,6 +423,13 @@ describe('reducer', () => {
     });
   });
 
+  it('SET_MEMORY_EXTRACTION_ENABLED sets the flag and defaults to null (unknown, not a confirmed OFF)', () => {
+    expect(initialState.memoryExtractionEnabled).toBeNull();
+    const on = reducer(initialState, { type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: true });
+    expect(on.memoryExtractionEnabled).toBe(true);
+    expect(reducer(on, { type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: false }).memoryExtractionEnabled).toBe(false);
+  });
+
   describe('SET_CROSS_ENGINE_CFG', () => {
     it('replaces crossEngineCfg wholesale', () => {
       const cfg = { enabled: true, provider: 'codex-chatgpt' as const };

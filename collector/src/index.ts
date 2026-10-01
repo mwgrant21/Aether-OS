@@ -9,7 +9,14 @@ import type { ToolCallHistory } from './toolCallHistory.js';
 import { pollFleet, upsertFleetSessions, type FleetExecFn } from './fleetPoll.js';
 import { readOwnSessionId } from './ownSessionFile.js';
 import { createMemoryStore } from './memoryStore.js';
-import { createMemoryExtractQueue, drainMemoryExtractQueue } from './memoryExtractQueue.js';
+import {
+  createMemoryExtractQueue,
+  drainMemoryExtractQueue,
+  type MemoryExtractQueue,
+} from './memoryExtractQueue.js';
+import type { ExtractExecFn } from './memoryExtract.js';
+import type { MemoryStore } from './memoryStore.js';
+import { COLLECTOR_SETTINGS_FILE, readMemoryExtractionEnabled } from './collectorSettings.js';
 
 // Exported (not just module-private) so tests can drive it directly with an
 // injected execFn, matching pollFleet's own injectable-exec-function
@@ -33,6 +40,28 @@ export async function pollAndUpsertFleet(
   }
 }
 
+// Memory extraction calls a model (claude -p), so it is opt-in, default OFF (#104).
+// The setting is re-read at every tick, and gated at BOTH ends: the scan only
+// stages work while it is on, and the drain re-checks it before EVERY item. The
+// queue is taken into a local batch and each item runs through its own one-item
+// queue, so an item staged while on and still waiting when the user turns it off
+// (including mid-batch, while an earlier item's `claude -p` is awaited) is dropped
+// without reaching the extractor: "off" means off at the moment of each exec.
+export async function memoryExtractionTick(
+  store: MemoryStore,
+  queue: MemoryExtractQueue,
+  settingsPath: string,
+  execFn?: ExtractExecFn
+): Promise<void> {
+  const batch = queue.drain();
+  for (const item of batch) {
+    if (!readMemoryExtractionEnabled(settingsPath)) return;
+    const single = createMemoryExtractQueue();
+    single.push(item);
+    await drainMemoryExtractQueue(store, single, execFn);
+  }
+}
+
 export function startCollector(options: {
   dbPath: string;
   spoolDir: string;
@@ -44,6 +73,7 @@ export function startCollector(options: {
   fleetPollIntervalMs: number;
   memoryDbPath: string;
   memoryExtractIntervalMs: number;
+  collectorSettingsPath: string;
 }): () => void {
   const db = openDatabase(options.dbPath);
   migrate(db);
@@ -54,9 +84,12 @@ export function startCollector(options: {
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
   const compactTimer = setInterval(() => compact(db, Date.now()), options.compactIntervalMs);
   const toolCallHistoryByFile = new Map<string, ToolCallHistory>();
-  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, extractQueue);
+  // Passing no queue skips enqueueing entirely, so dispatch result text is not even
+  // staged in memory while memory extraction is off.
+  const scanQueue = () => (readMemoryExtractionEnabled(options.collectorSettingsPath) ? extractQueue : undefined);
+  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, scanQueue());
   const transcriptScanTimer = setInterval(
-    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, extractQueue),
+    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, scanQueue()),
     options.transcriptScanIntervalMs
   );
 
@@ -69,11 +102,11 @@ export function startCollector(options: {
     );
   }, options.fleetPollIntervalMs);
 
-  drainMemoryExtractQueue(memoryStore, extractQueue).catch((err) =>
+  memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath).catch((err) =>
     console.error('[aether-collector] memory extraction failed:', err)
   );
   const memoryExtractTimer = setInterval(() => {
-    drainMemoryExtractQueue(memoryStore, extractQueue).catch((err) =>
+    memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath).catch((err) =>
       console.error('[aether-collector] memory extraction failed:', err)
     );
   }, options.memoryExtractIntervalMs);
@@ -106,6 +139,7 @@ if (isMainModule) {
     fleetPollIntervalMs: 15000,
     memoryDbPath: join(aetherDir, 'memory.db'),
     memoryExtractIntervalMs: 15000,
+    collectorSettingsPath: join(aetherDir, COLLECTOR_SETTINGS_FILE),
   });
 
   console.log('[aether-collector] running');
