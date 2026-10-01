@@ -1,15 +1,16 @@
 import { readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { parseTranscriptLine } from './transcriptParser.js';
+import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser.js';
 import { stampTranscriptScanHeartbeat } from './schema.js';
-import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
+import { ingestUsageEvent, ingestDispatchEvent, rescorePendingDispatches } from './usageIngest.js';
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
 import { extractDispatchResultText } from './dispatchResultText.js';
 import type { MemoryExtractQueue } from './memoryExtractQueue.js';
-import { createSubagentLinkIndex } from './severity/subagentLink.js';
+import { createSubagentLinkIndex, type SubagentFileProbe } from './severity/subagentLink.js';
+import { parseDispatchOutcome } from './severity/parseDispatchOutcome.js';
 
 function getLastOffset(db: DatabaseSync, filePath: string): number {
   const row = db.prepare('SELECT last_offset FROM transcript_files WHERE file_path = ?').get(filePath) as
@@ -59,6 +60,39 @@ function readNewLinesSync(filePath: string, offset: number): { lines: string[]; 
 // run for a while, same caveat as the Layer 2 spec's own Phase E.
 function clearsExtractionBar(durationMs: number, toolUses: number): boolean {
   return durationMs >= 60_000 || toolUses >= 5;
+}
+
+// Runs fn in one transaction, so a file's usage rows, tool calls, dispatch
+// rows and offset land together or not at all: a failure never leaves the
+// offset past rows that were not written, and a retry never double-counts
+// usage_events (no unique key). Kept per file, with the transcript read done
+// before it opens: collector.db has a second writable handle
+// (electron/retentionStore.ts) with a 5s busy_timeout, which a pass-wide
+// transaction over a cold scan would outlast.
+function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+// The subagent tool-error counts ingestDispatchEvent consults (completed runs
+// only), read before the file's transaction opens so it never waits on a
+// subagent transcript read.
+function resolveToolErrors(notifications: readonly TranscriptEvent[], probe: SubagentFileProbe): (id: string) => number | null {
+  const counts = new Map<string, number | null>();
+  for (const event of notifications) {
+    const text = event.humanText || '';
+    const id = text.match(/<tool-use-id>(.*?)<\/tool-use-id>/)?.[1];
+    if (id === undefined || counts.has(id) || parseDispatchOutcome(text).status !== 'completed') continue;
+    counts.set(id, probe.toolErrorsFor(id));
+  }
+  return (id) => counts.get(id) ?? null;
 }
 
 export function scanTranscriptsOnce(
@@ -125,31 +159,50 @@ export function scanTranscriptsOnce(
       const parsedEvents = lines
         .map((l) => parseTranscriptLine(l))
         .filter((e): e is NonNullable<typeof e> => e !== null);
-      for (const event of parsedEvents) {
-        if (ingestUsageEvent(db, event, relativePath)) eventsIngested += 1;
-      }
-
+      const notifications = parsedEvents.filter((e) => e.originKind === 'task-notification');
+      const toolErrorsFor = resolveToolErrors(notifications, subagentProbe);
       const priorHistory = historyByFile.get(relativePath) ?? createEmptyHistory();
-      const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
+
+      const { anomalyResult, usageCount } = inTransaction(db, () => {
+        let usage = 0;
+        for (const event of parsedEvents) {
+          if (ingestUsageEvent(db, event, relativePath)) usage += 1;
+        }
+        const result = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
+
+        // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
+        // own guards and no-ops unless the event is a genuine 'user'-kind
+        // 'task-notification' carrying a <tool-use-id> that matches a still-open
+        // 'Agent' tool call, so it is simply offered every task-notification --
+        // no loop over openByToolUseId, which is what previously fanned one
+        // completion out across every open dispatch.
+        // result.history (not priorHistory) is used so an Agent tool_use
+        // and its completion arriving in the same scan tick still correlate --
+        // updateHistory never closes an Agent entry via a normal tool_result, so
+        // the open entry survives into result.history either way.
+        for (const event of notifications) {
+          ingestDispatchEvent(db, result.history, event, { toolErrorsFor });
+        }
+
+        // Fatal-via-staleness sweep: run after the above ingest work so it sees
+        // this tick's freshest history. ingestDispatchEvent does not mutate
+        // history or remove entries from openByToolUseId, so an Agent entry
+        // that just completed via ingestDispatchEvent above still survives into
+        // result.history and is offered to the sweep below. It is only
+        // the existing-row guard inside sweepStaleDispatches (in
+        // staleDispatchSweep.ts) that prevents that already-completed dispatch
+        // from being re-flagged as fatal -- that guard is load-bearing, not
+        // redundant. Its progress probe only stats subagent files of
+        // dispatches that have no row yet.
+        sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
+        recordOffset(db, relativePath, newOffset, nowMs);
+        return { anomalyResult: result, usageCount: usage };
+      });
       historyByFile.set(relativePath, anomalyResult.history);
+      eventsIngested += usageCount;
       toolCallsIngested += anomalyResult.toolCallsIngested;
       anomaliesIngested += anomalyResult.anomaliesIngested;
-
-      // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
-      // own guards and no-ops unless the event is a genuine 'user'-kind
-      // 'task-notification' carrying a <tool-use-id> that matches a still-open
-      // 'Agent' tool call, so it is simply offered every parsed event -- no
-      // loop over openByToolUseId, which is what previously fanned one
-      // completion out across every open dispatch.
-      // anomalyResult.history (not priorHistory) is used so an Agent tool_use
-      // and its completion arriving in the same scan tick still correlate --
-      // updateHistory never closes an Agent entry via a normal tool_result, so
-      // the open entry survives into anomalyResult.history either way.
-      for (const event of parsedEvents) {
-        ingestDispatchEvent(db, anomalyResult.history, event, {
-          toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
-        });
-      }
+      filesScanned += 1;
 
       // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
       // SS2). extractQueue is optional so every existing caller (including this
@@ -190,20 +243,6 @@ export function scanTranscriptsOnce(
         }
       }
 
-      // Fatal-via-staleness sweep: run after the above ingest work so it sees
-      // this tick's freshest history. ingestDispatchEvent does not mutate
-      // history or remove entries from openByToolUseId, so an Agent entry
-      // that just completed via ingestDispatchEvent above still survives into
-      // anomalyResult.history and is offered to the sweep below. It is only
-      // the `exit_state !== 'fatal'` guard inside sweepStaleDispatches (in
-      // staleDispatchSweep.ts) that prevents that already-completed dispatch
-      // from being re-flagged as fatal -- that guard is load-bearing, not
-      // redundant.
-      sweepStaleDispatches(db, anomalyResult.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
-
-      filesScanned += 1;
-      recordOffset(db, relativePath, newOffset, nowMs);
-
       // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
       // dispatch's own tool calls live in a separate file this loop
       // otherwise never visits. See the reconciliation note §1.
@@ -236,30 +275,44 @@ export function scanTranscriptsOnce(
         // top-level loop above; ingestUsageEvent is idempotent per event, so a
         // re-scan of an already-recorded turn does not double count.
         // See issue #25.
-        for (const event of subParsedEvents) {
-          if (ingestUsageEvent(db, event, subRelativePath)) eventsIngested += 1;
-        }
-
+        const subNotifications = subParsedEvents.filter((e) => e.originKind === 'task-notification');
+        const subToolErrorsFor = resolveToolErrors(subNotifications, subagentProbe);
         const subPriorHistory = historyByFile.get(subRelativePath) ?? createEmptyHistory();
-        const subAnomalyResult = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
-        historyByFile.set(subRelativePath, subAnomalyResult.history);
-        toolCallsIngested += subAnomalyResult.toolCallsIngested;
-        anomaliesIngested += subAnomalyResult.anomaliesIngested;
 
-        // Nested (spawnDepth-2) dispatches: the Agent tool_use and its
-        // task-notification sit in a subagent transcript. Record their outcome
-        // here, but NEVER offer this history to sweepStaleDispatches: most
-        // nested Agent calls close by tool_result, not task-notification, so
-        // their entries stay open forever and a sweep would mark them all fatal.
-        for (const event of subParsedEvents) {
-          ingestDispatchEvent(db, subAnomalyResult.history, event, {
-            toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
-          });
-        }
-        recordOffset(db, subRelativePath, subNewOffset, nowMs);
+        const sub = inTransaction(db, () => {
+          let usage = 0;
+          for (const event of subParsedEvents) {
+            if (ingestUsageEvent(db, event, subRelativePath)) usage += 1;
+          }
+          const result = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
+
+          // Nested (spawnDepth-2) dispatches: the Agent tool_use and its
+          // task-notification sit in a subagent transcript. Record their outcome
+          // here, but NEVER offer this history to sweepStaleDispatches: most
+          // nested Agent calls close by tool_result, not task-notification, so
+          // their entries stay open forever and a sweep would mark them all fatal.
+          for (const event of subNotifications) {
+            ingestDispatchEvent(db, result.history, event, { toolErrorsFor: subToolErrorsFor });
+          }
+          recordOffset(db, subRelativePath, subNewOffset, nowMs);
+          return { anomalyResult: result, usageCount: usage };
+        });
+        historyByFile.set(subRelativePath, sub.anomalyResult.history);
+        eventsIngested += sub.usageCount;
+        toolCallsIngested += sub.anomalyResult.toolCallsIngested;
+        anomaliesIngested += sub.anomalyResult.anomaliesIngested;
       }
     }
   }
+
+  // Rescore (#106). Each completion was scored when its file was read, against
+  // whatever rows existed then; on a first scan files arrive in readdirSync
+  // order, not time order. Once the pass has stored them all, the durable
+  // watermark ingestDispatchEvent keeps says which rows to rescore from the
+  // database (see rescorePendingDispatches). Run every pass, not only when
+  // this pass ingested something, so a watermark left by a crash or a failed
+  // file is picked up on the next scan.
+  inTransaction(db, () => rescorePendingDispatches(db));
 
   return { filesScanned, eventsIngested, toolCallsIngested, anomaliesIngested };
 }

@@ -668,3 +668,91 @@ describe('scanTranscriptsOnce -- tool-error floor and subagent progress (spike G
     db.close();
   });
 });
+
+describe('scanTranscriptsOnce -- backfill severity is scan-order independent (#106)', () => {
+  const agentUse = (id: string, at: string) => JSON.stringify({
+    type: 'assistant', sessionId: 's1', timestamp: at,
+    message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: 'explorer' } }] },
+  });
+  const done = (id: string, at: string, durationMs: number) => JSON.stringify({
+    type: 'user', sessionId: 's1', timestamp: at, origin: { kind: 'task-notification' },
+    message: { content: [{ type: 'text', text:
+      `<tool-use-id>${id}</tool-use-id><status>completed</status>` +
+      `<subagent_tokens>100</subagent_tokens><tool_uses>2</tool_uses><duration_ms>${durationMs}</duration_ms>` }] },
+  });
+  // Five 10s baseline runs, then one 40s run an hour later (> 3x median).
+  const earlyLines = [1, 2, 3, 4, 5].flatMap((n) => [
+    agentUse(`tu_base_${n}`, `2026-07-08T09:0${n}:00Z`),
+    done(`tu_base_${n}`, `2026-07-08T09:0${n}:10Z`, 10_000),
+  ]);
+  const lateLines = [agentUse('tu_late', '2026-07-08T10:00:00Z'), done('tu_late', '2026-07-08T10:00:40Z', 40_000)];
+
+  // Same content under both file names, so one of the two runs always reads
+  // the late file before the baseline whatever order readdirSync returns.
+  for (const [lateName, earlyName] of [['a.jsonl', 'b.jsonl'], ['b.jsonl', 'a.jsonl']]) {
+    it(`scores the late run against its earlier baseline when it is in ${lateName}`, () => {
+      const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+      const projDir = join(projectsRoot, 'my-project');
+      mkdirSync(projDir);
+      writeFileSync(join(projDir, lateName), `${lateLines.join('\n')}\n`, 'utf8');
+      writeFileSync(join(projDir, earlyName), `${earlyLines.join('\n')}\n`, 'utf8');
+
+      const db = freshDb();
+      scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 10, 1, 0), new Map());
+
+      const late = db.prepare('SELECT severity, median_ms_at_eval, exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+      expect(late).toMatchObject({ severity: 2, median_ms_at_eval: 10_000, exit_state: 'ok' });
+      db.close();
+    });
+  }
+
+  it('rescores the late run from the database when its baseline arrives in a later scan', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'late.jsonl'), `${lateLines.join('\n')}\n`, 'utf8');
+
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 10, 1, 0), new Map());
+    const before = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(before).toMatchObject({ severity: 1, median_ms_at_eval: null });
+
+    // A fresh history map and no reread of late.jsonl: only stored rows can
+    // drive its rescore, the same position a crash before the rescore leaves
+    // the next scan in.
+    writeFileSync(join(projDir, 'early.jsonl'), `${earlyLines.join('\n')}\n`, 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 10, 2, 0), new Map());
+
+    const late = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(late).toMatchObject({ severity: 2, median_ms_at_eval: 10_000 });
+    expect(db.prepare("SELECT 1 FROM schema_meta WHERE key = 'dispatch_rescore_from_ms'").get()).toBeUndefined();
+    db.close();
+  });
+});
+
+describe('scanTranscriptsOnce -- a failed file checkpoints nothing', () => {
+  it("rolls back the file's usage rows and offset, and keeps its prior history, when its dispatch write throws", () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const completion = JSON.stringify({
+      type: 'user', sessionId: 's1', timestamp: '2026-07-08T09:00:12Z', origin: { kind: 'task-notification' },
+      message: { content: [{ type: 'text', text: '<tool-use-id>tu_x</tool-use-id><status>completed</status>' }] },
+    });
+    const agentUse = JSON.stringify({
+      type: 'assistant', sessionId: 's1', timestamp: '2026-07-08T09:00:00Z',
+      message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id: 'tu_x', name: 'Agent', input: {} }] },
+    });
+    writeFileSync(join(projDir, 'session.jsonl'), `${assistantLine(100)}\n${agentUse}\n${completion}\n`, 'utf8');
+
+    const db = freshDb();
+    db.exec('DROP TABLE dispatches'); // the file's dispatch INSERT now fails
+    const histories = new Map();
+    expect(() => scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 30), histories)).toThrow(/dispatches/);
+
+    expect((db.prepare('SELECT COUNT(*) AS n FROM usage_events').get() as any).n).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM transcript_files').get() as any).n).toBe(0);
+    expect(histories.size).toBe(0);
+    db.close();
+  });
+});
