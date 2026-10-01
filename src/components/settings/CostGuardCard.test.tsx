@@ -75,3 +75,15 @@ describe('CostGuardCard memory extraction row', () => {
     expect(screen.getByText(/dispatch result\s+text to your Claude account through the claude CLI/i)).toBeTruthy();
   });
 });
+
+describe('CostGuardCard hint wording', () => {
+  it('scopes the memory-extraction claim instead of calling it the only Claude-CLI path', () => {
+    render(
+      <AetherStoreProvider>
+        <CostGuardCard />
+      </AetherStoreProvider>,
+    );
+    expect(screen.getByText(/memory extraction is the one background, Aether-initiated Claude model call/i)).toBeTruthy();
+    expect(screen.queryByText(/the one Claude-CLI path/i)).toBeNull();
+  });
+});

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryExtractionCard } from './MemoryExtractionCard';
 import { CostGuardCard } from './CostGuardCard';
 import { AetherStoreProvider } from '../../state/store';
@@ -14,6 +14,12 @@ afterEach(() => {
   cleanup();
   delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
 });
+
+async function flush() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+}
 
 function renderBoth() {
   return render(
@@ -55,8 +61,17 @@ describe('MemoryExtractionCard', () => {
     fireEvent.click(within(cardHeader()).getByText('ENABLE'));
     expect(set).not.toHaveBeenCalled();
     expect(screen.getByText(/claude CLI \(claude -p --model haiku\)/)).toBeTruthy();
-    fireEvent.click(screen.getByText('CANCEL'));
+    expect(screen.getByText(/within about 30 seconds/)).toBeTruthy();
+    expect(screen.getByText(/up to 20 memories previously extracted for that agent/)).toBeTruthy();
+    await flush(); // a deferred (microtask/timer) set() must be caught too
     expect(set).not.toHaveBeenCalled();
+    expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy();
+    expect(within(costGuardRow()).getByText('OFF')).toBeTruthy();
+    fireEvent.click(screen.getByText('CANCEL'));
+    await flush();
+    expect(set).not.toHaveBeenCalled();
+    expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy();
+    expect(within(costGuardRow()).getByText('OFF')).toBeTruthy();
     fireEvent.click(within(cardHeader()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
     await waitFor(() => expect(set).toHaveBeenCalledWith(true));
@@ -71,6 +86,23 @@ describe('MemoryExtractionCard', () => {
     fireEvent.click(within(cardHeader()).getByText('DISABLE'));
     await waitFor(() => expect(set).toHaveBeenCalledWith(false));
     await waitFor(() => expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy());
+  });
+
+  it('scopes the OFF hint to the collector memory extraction', () => {
+    renderBoth();
+    expect(screen.getByText('OFF. The collector sends nothing for memory extraction while this is off.')).toBeTruthy();
+    expect(screen.queryByText(/nothing is sent to a model/i)).toBeNull();
+  });
+
+  it('when set() rejects, shows the on-disk value from get(), not a hard OFF', async () => {
+    const get = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(true);
+    installBridge({ get, set: vi.fn().mockRejectedValue(new Error('ipc')) });
+    renderBoth();
+    await waitFor(() => expect(within(cardHeader()).getByText('DISABLE')).toBeTruthy());
+    fireEvent.click(within(cardHeader()).getByText('DISABLE'));
+    await flush();
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(within(cardHeader()).getByText('DISABLE')).toBeTruthy();
   });
 
   it('displays the value set() returns even when it differs from the request', async () => {

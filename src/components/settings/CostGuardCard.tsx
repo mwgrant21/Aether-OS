@@ -40,9 +40,10 @@ export function CostGuardCard() {
 
       <p style={hintStyle(colors)}>
         The Anthropic SDK dependency was removed from this app in Stage 13.5 — there is no
-        key-reachable path left for Aether to call the Anthropic API directly. The one
-        Claude-CLI path is opt-in memory extraction: when ON, the collector sends dispatch result
-        text to your Claude account through the claude CLI (API keys stripped). Cross-engine
+        key-reachable path left for Aether to call the Anthropic API directly. Opt-in
+        memory extraction is the one background, Aether-initiated Claude model call: when ON, the
+        collector sends dispatch result text to your Claude account through the claude CLI (API
+        keys stripped). Cross-engine
         verification and opted-in Claude–Codex consultations use external clients and your
         subscriptions. Communication starts require an allowance;
         enabling its preference alone does not make a consultation.

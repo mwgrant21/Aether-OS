@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -63,5 +63,14 @@ describe('collectorSettings (electron writer)', () => {
     const blocker = join(dir, 'blocker');
     writeFileSync(blocker, 'not a directory');
     expect(writeMemoryExtractionEnabled(blocker, true, 1)).toBe(false);
+  });
+});
+
+describe('collectorSettings rename-stage failure', () => {
+  it('returns the readback and leaves no tmp file when the rename fails', () => {
+    // The target is a DIRECTORY, so tmp-then-rename throws after the tmp write succeeded.
+    mkdirSync(collectorSettingsPath(dir));
+    expect(writeMemoryExtractionEnabled(dir, true, 1)).toBe(false);
+    expect(readdirSync(dir)).toEqual([COLLECTOR_SETTINGS_FILE]);
   });
 });

@@ -64,7 +64,7 @@ export function loadPersisted(): Partial<AetherState> | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     // Only a literal boolean opts in. Never hydrate bridge runtime state, even
     // from an old or manually edited localStorage entry.
-    const { communicationSnapshot: _snapshot, communicationError: _error, selectedCommunicationExchangeId: _selection, viewedCommunicationAnswers: _viewed, ...persisted } = parsed;
+    const { communicationSnapshot: _snapshot, communicationError: _error, selectedCommunicationExchangeId: _selection, viewedCommunicationAnswers: _viewed, memoryExtractionEnabled: _memoryExtraction, ...persisted } = parsed;
     return { ...persisted, communicationCfg: { enabled: parsed.communicationCfg?.enabled === true } };
   } catch {
     return null;

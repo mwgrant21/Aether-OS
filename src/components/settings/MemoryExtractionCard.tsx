@@ -5,7 +5,7 @@ import { Button } from '../shared/Button';
 import { useAetherStore } from '../../state/store';
 
 export const MEMORY_EXTRACTION_DISCLOSURE =
-  'Sends the result text of each completed subagent dispatch that clears the extraction bar to your Claude account via the claude CLI (claude -p --model haiku), from the background collector, within about 15 seconds of the dispatch completing. Uses your Claude Code login; Anthropic API keys are stripped from the call. Extracted memories are stored locally in ~/.aether-os/memory.db. Applies only to dispatches that complete after you enable it. Requires the collector to be running. Off by default.';
+  'Sends the result text of each completed subagent dispatch that clears the extraction bar to your Claude account via the claude CLI (claude -p --model haiku), from the background collector, within about 30 seconds of the dispatch completing. Each call also sends up to 20 memories previously extracted for that agent. Uses your Claude Code login; Anthropic API keys are stripped from the call. Extracted memories are stored locally in ~/.aether-os/memory.db. Applies only to dispatches that complete after you enable it. Requires the collector to be running. Off by default.';
 
 export function MemoryExtractionCard() {
   const colors = useColors();
@@ -37,7 +37,14 @@ export function MemoryExtractionCard() {
       const readback = await api.set(requested);
       dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: readback === true });
     } catch {
-      dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: false });
+      // The write outcome is unknown: show what is on disk, falling back to OFF.
+      let onDisk = false;
+      try {
+        onDisk = (await api.get()) === true;
+      } catch {
+        onDisk = false;
+      }
+      dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: onDisk });
     }
   };
 
@@ -77,7 +84,7 @@ export function MemoryExtractionCard() {
         </div>
       )}
 
-      <p style={hintStyle(colors)}>{enabled ? MEMORY_EXTRACTION_DISCLOSURE : 'OFF. Nothing is sent to a model while this is off.'}</p>
+      <p style={hintStyle(colors)}>{enabled ? MEMORY_EXTRACTION_DISCLOSURE : 'OFF. The collector sends nothing for memory extraction while this is off.'}</p>
     </div>
   );
 }
