@@ -52,7 +52,11 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
   if (typeof json !== 'object' || json === null || Array.isArray(json)) return null;
 
   const sessionId = json.sessionId || json.session_id || null;
-  const timestamp = json.timestamp ? new Date(json.timestamp) : null;
+  // An unparseable timestamp becomes null, not an Invalid Date: its NaN would
+  // fail a NOT NULL column and, inside scanTranscriptsOnce's transaction, roll
+  // back every pass that reads the line.
+  const parsedTime = json.timestamp ? new Date(json.timestamp) : null;
+  const timestamp = parsedTime !== null && !Number.isNaN(parsedTime.getTime()) ? parsedTime : null;
   const cwd = json.cwd || null;
 
   if (json.type === 'assistant' && json.message) {

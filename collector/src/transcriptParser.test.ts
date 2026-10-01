@@ -105,6 +105,11 @@ describe('parseTranscriptLine', () => {
     expect(result?.timestamp).toBeNull();
   });
 
+  it('parses an unparseable timestamp as null, not an Invalid Date', () => {
+    const line = JSON.stringify({ type: 'assistant', timestamp: 'not-a-date', message: { content: [] } });
+    expect(parseTranscriptLine(line)?.timestamp).toBeNull();
+  });
+
   it('accepts session_id (snake_case) as a fallback for sessionId', () => {
     const line = JSON.stringify({ type: 'user', session_id: 's2', message: { content: '' } });
     const result = parseTranscriptLine(line);

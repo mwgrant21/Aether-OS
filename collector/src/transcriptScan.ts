@@ -95,148 +95,178 @@ export function scanTranscriptsOnce(
   const pendingDispatches: { history: ToolCallHistory; event: TranscriptEvent; toolErrorsFor: (id: string) => number | null }[] = [];
   const extractCandidates: TranscriptEvent[] = [];
   const pendingSweeps: { history: ToolCallHistory; lastProgressFor: (id: string) => number | null }[] = [];
+  // Offsets and in-memory histories advance only once the whole pass has
+  // committed. Dispatch scoring is deferred to the end of the pass (#106), so
+  // checkpointing a file earlier would skip its completions for good if the
+  // flush failed; usage_events has no unique key, so the rows written before
+  // the failure must roll back too or a retry double-counts them.
+  const pendingOffsets: [string, number][] = [];
+  const pendingHistories: [string, ToolCallHistory][] = [];
 
-  for (const dirName of projectDirs) {
-    const dirPath = join(projectsRoot, dirName);
-    let files: string[];
-    try {
-      files = readdirSync(dirPath).filter((f) => f.endsWith('.jsonl'));
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      // filePath is absolute and used for all actual filesystem operations
-      // (statSync/openSync/readSync below); relativePath is what's stored in
-      // (and looked up from) the transcript_files table, per
-      // docs/privacy-and-data.md SS5 -- that table must never persist a path
-      // containing the home directory/username.
-      const filePath = join(dirPath, file);
-      const relativePath = join(dirName, file);
-      const sessionBase = file.replace(/\.jsonl$/, '');
-      const subagentProbe = linkIndex.probeFor(sessionBase);
-      const offset = getLastOffset(db, relativePath);
-      let lines: string[];
-      let newOffset: number;
+  db.exec('BEGIN');
+  try {
+    for (const dirName of projectDirs) {
+      const dirPath = join(projectsRoot, dirName);
+      let files: string[];
       try {
-        const result = readNewLinesSync(filePath, offset);
-        lines = result.lines;
-        newOffset = result.newOffset;
+        files = readdirSync(dirPath).filter((f) => f.endsWith('.jsonl'));
       } catch {
         continue;
       }
 
-      const parsedEvents = lines
-        .map((l) => parseTranscriptLine(l))
-        .filter((e): e is NonNullable<typeof e> => e !== null);
-      for (const event of parsedEvents) {
-        if (ingestUsageEvent(db, event, relativePath)) eventsIngested += 1;
-      }
-
-      const priorHistory = historyByFile.get(relativePath) ?? createEmptyHistory();
-      const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
-      historyByFile.set(relativePath, anomalyResult.history);
-      toolCallsIngested += anomalyResult.toolCallsIngested;
-      anomaliesIngested += anomalyResult.anomaliesIngested;
-
-      // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
-      // own guards and no-ops unless the event is a genuine 'user'-kind
-      // 'task-notification' carrying a <tool-use-id> that matches a still-open
-      // 'Agent' tool call, so it is simply offered every parsed event -- no
-      // loop over openByToolUseId, which is what previously fanned one
-      // completion out across every open dispatch.
-      // anomalyResult.history (not priorHistory) is used so an Agent tool_use
-      // and its completion arriving in the same scan tick still correlate --
-      // updateHistory never closes an Agent entry via a normal tool_result, so
-      // the open entry survives into anomalyResult.history either way.
-      // Deferred to the end of the pass (see flush below) so completions are
-      // scored in time order, not directory order (#106).
-      for (const event of parsedEvents) {
-        pendingDispatches.push({ history: anomalyResult.history, event, toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id) });
-      }
-      if (extractQueue) {
-        for (const event of parsedEvents) {
-          if (event.originKind === 'task-notification') extractCandidates.push(event);
-        }
-      }
-      pendingSweeps.push({ history: anomalyResult.history, lastProgressFor: (id) => subagentProbe.lastWriteMsFor(id) });
-
-      filesScanned += 1;
-      recordOffset(db, relativePath, newOffset, nowMs);
-
-      // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
-      // dispatch's own tool calls live in a separate file this loop
-      // otherwise never visits. See the reconciliation note §1.
-      const subagentsDir = join(dirPath, sessionBase, 'subagents');
-      let subagentFiles: string[];
-      try {
-        subagentFiles = readdirSync(subagentsDir).filter((f) => f.endsWith('.jsonl'));
-      } catch {
-        subagentFiles = [];
-      }
-      for (const subFile of subagentFiles) {
-        const subFilePath = join(subagentsDir, subFile);
-        const subRelativePath = join(dirName, sessionBase, 'subagents', subFile);
-        const subOffset = getLastOffset(db, subRelativePath);
-        let subLines: string[];
-        let subNewOffset: number;
+      for (const file of files) {
+        // filePath is absolute and used for all actual filesystem operations
+        // (statSync/openSync/readSync below); relativePath is what's stored in
+        // (and looked up from) the transcript_files table, per
+        // docs/privacy-and-data.md SS5 -- that table must never persist a path
+        // containing the home directory/username.
+        const filePath = join(dirPath, file);
+        const relativePath = join(dirName, file);
+        const sessionBase = file.replace(/\.jsonl$/, '');
+        const subagentProbe = linkIndex.probeFor(sessionBase);
+        const offset = getLastOffset(db, relativePath);
+        let lines: string[];
+        let newOffset: number;
         try {
-          const subResult = readNewLinesSync(subFilePath, subOffset);
-          subLines = subResult.lines;
-          subNewOffset = subResult.newOffset;
+          const result = readNewLinesSync(filePath, offset);
+          lines = result.lines;
+          newOffset = result.newOffset;
         } catch {
           continue;
         }
-        const subParsedEvents = subLines.map((l) => parseTranscriptLine(l)).filter((e): e is NonNullable<typeof e> => e !== null);
 
-        // A dispatched subagent's assistant turns carry their own token usage,
-        // and this loop previously ingested only tool calls and anomalies from
-        // them -- so every dispatch's own spend was missing from usage_events,
-        // exactly the workload Cost Forensics exists to measure. Mirrors the
-        // top-level loop above; ingestUsageEvent is idempotent per event, so a
-        // re-scan of an already-recorded turn does not double count.
-        // See issue #25.
-        for (const event of subParsedEvents) {
-          if (ingestUsageEvent(db, event, subRelativePath)) eventsIngested += 1;
+        const parsedEvents = lines
+          .map((l) => parseTranscriptLine(l))
+          .filter((e): e is NonNullable<typeof e> => e !== null);
+        for (const event of parsedEvents) {
+          if (ingestUsageEvent(db, event, relativePath)) eventsIngested += 1;
         }
 
-        const subPriorHistory = historyByFile.get(subRelativePath) ?? createEmptyHistory();
-        const subAnomalyResult = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
-        historyByFile.set(subRelativePath, subAnomalyResult.history);
-        toolCallsIngested += subAnomalyResult.toolCallsIngested;
-        anomaliesIngested += subAnomalyResult.anomaliesIngested;
+        const priorHistory = historyByFile.get(relativePath) ?? createEmptyHistory();
+        const anomalyResult = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
+        pendingHistories.push([relativePath, anomalyResult.history]);
+        toolCallsIngested += anomalyResult.toolCallsIngested;
+        anomaliesIngested += anomalyResult.anomaliesIngested;
 
-        // Nested (spawnDepth-2) dispatches: the Agent tool_use and its
-        // task-notification sit in a subagent transcript. Record their outcome
-        // here, but NEVER offer this history to sweepStaleDispatches: most
-        // nested Agent calls close by tool_result, not task-notification, so
-        // their entries stay open forever and a sweep would mark them all fatal.
-        for (const event of subParsedEvents) {
-          pendingDispatches.push({ history: subAnomalyResult.history, event, toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id) });
+        // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
+        // own guards and no-ops unless the event is a genuine 'user'-kind
+        // 'task-notification' carrying a <tool-use-id> that matches a still-open
+        // 'Agent' tool call, so it is simply offered every task-notification -- no
+        // loop over openByToolUseId, which is what previously fanned one
+        // completion out across every open dispatch.
+        // anomalyResult.history (not priorHistory) is used so an Agent tool_use
+        // and its completion arriving in the same scan tick still correlate --
+        // updateHistory never closes an Agent entry via a normal tool_result, so
+        // the open entry survives into anomalyResult.history either way.
+        // Deferred to the end of the pass (see flush below) so completions are
+        // scored in time order, not directory order (#106). Only
+        // task-notifications are held: a cold scan would otherwise keep the
+        // whole transcript corpus in memory until the walk finished.
+        for (const event of parsedEvents) {
+          if (event.originKind !== 'task-notification') continue;
+          pendingDispatches.push({ history: anomalyResult.history, event, toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id) });
+          if (extractQueue) extractCandidates.push(event);
         }
-        recordOffset(db, subRelativePath, subNewOffset, nowMs);
+        pendingSweeps.push({ history: anomalyResult.history, lastProgressFor: (id) => subagentProbe.lastWriteMsFor(id) });
+
+        filesScanned += 1;
+        pendingOffsets.push([relativePath, newOffset]);
+
+        // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
+        // dispatch's own tool calls live in a separate file this loop
+        // otherwise never visits. See the reconciliation note §1.
+        const subagentsDir = join(dirPath, sessionBase, 'subagents');
+        let subagentFiles: string[];
+        try {
+          subagentFiles = readdirSync(subagentsDir).filter((f) => f.endsWith('.jsonl'));
+        } catch {
+          subagentFiles = [];
+        }
+        for (const subFile of subagentFiles) {
+          const subFilePath = join(subagentsDir, subFile);
+          const subRelativePath = join(dirName, sessionBase, 'subagents', subFile);
+          const subOffset = getLastOffset(db, subRelativePath);
+          let subLines: string[];
+          let subNewOffset: number;
+          try {
+            const subResult = readNewLinesSync(subFilePath, subOffset);
+            subLines = subResult.lines;
+            subNewOffset = subResult.newOffset;
+          } catch {
+            continue;
+          }
+          const subParsedEvents = subLines.map((l) => parseTranscriptLine(l)).filter((e): e is NonNullable<typeof e> => e !== null);
+
+          // A dispatched subagent's assistant turns carry their own token usage,
+          // and this loop previously ingested only tool calls and anomalies from
+          // them -- so every dispatch's own spend was missing from usage_events,
+          // exactly the workload Cost Forensics exists to measure. Mirrors the
+          // top-level loop above; ingestUsageEvent is idempotent per event, so a
+          // re-scan of an already-recorded turn does not double count.
+          // See issue #25.
+          for (const event of subParsedEvents) {
+            if (ingestUsageEvent(db, event, subRelativePath)) eventsIngested += 1;
+          }
+
+          const subPriorHistory = historyByFile.get(subRelativePath) ?? createEmptyHistory();
+          const subAnomalyResult = ingestToolCallsAndAnomalies(db, subPriorHistory, subParsedEvents, nowMs, subRelativePath);
+          pendingHistories.push([subRelativePath, subAnomalyResult.history]);
+          toolCallsIngested += subAnomalyResult.toolCallsIngested;
+          anomaliesIngested += subAnomalyResult.anomaliesIngested;
+
+          // Nested (spawnDepth-2) dispatches: the Agent tool_use and its
+          // task-notification sit in a subagent transcript. Record their outcome
+          // here, but NEVER offer this history to sweepStaleDispatches: most
+          // nested Agent calls close by tool_result, not task-notification, so
+          // their entries stay open forever and a sweep would mark them all fatal.
+          for (const event of subParsedEvents) {
+            if (event.originKind !== 'task-notification') continue;
+            pendingDispatches.push({ history: subAnomalyResult.history, event, toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id) });
+          }
+          pendingOffsets.push([subRelativePath, subNewOffset]);
+        }
       }
     }
-  }
 
-  // Dispatch completions, oldest first (#106). medianDurationMsFor only sees
-  // rows already inserted, so scoring in directory order let a run miss
-  // earlier baseline samples whose files were read later, and the stored
-  // severity then depended on readdirSync order. A first scan reads every
-  // file whole, so a backfill lands in this one pass. Array.prototype.sort is
-  // stable: events with equal (or null) timestamps keep their scan order, and
-  // ingestDispatchEvent rejects null timestamps anyway.
-  pendingDispatches.sort((a, b) => (a.event.timestamp?.getTime() ?? Infinity) - (b.event.timestamp?.getTime() ?? Infinity));
-  for (const p of pendingDispatches) {
-    ingestDispatchEvent(db, p.history, p.event, { toolErrorsFor: p.toolErrorsFor });
+    // Dispatch completions, oldest first (#106). medianDurationMsFor only sees
+    // rows already inserted, so scoring in directory order let a run miss
+    // earlier baseline samples whose files were read later, and the stored
+    // severity then depended on readdirSync order. A first scan reads every
+    // file whole, so a backfill lands in this one pass. Array.prototype.sort is
+    // stable: events with equal (or null) timestamps keep their scan order, and
+    // ingestDispatchEvent rejects null timestamps anyway.
+    pendingDispatches.sort((a, b) => (a.event.timestamp?.getTime() ?? Infinity) - (b.event.timestamp?.getTime() ?? Infinity));
+    for (const p of pendingDispatches) {
+      ingestDispatchEvent(db, p.history, p.event, { toolErrorsFor: p.toolErrorsFor });
+    }
+
+    // Fatal-via-staleness sweep: run after the flush so it sees this tick's
+    // completions. ingestDispatchEvent does not mutate history or remove
+    // entries from openByToolUseId, so an Agent entry that just completed
+    // above still survives into its file's history and is offered to the
+    // sweep. It is only the existing-row guard inside sweepStaleDispatches (in
+    // staleDispatchSweep.ts) that prevents that already-completed dispatch
+    // from being re-flagged as fatal -- that guard is load-bearing, not
+    // redundant. Subagent histories are never swept (see the nested-dispatch
+    // note above).
+    for (const s of pendingSweeps) {
+      sweepStaleDispatches(db, s.history, nowMs, s.lastProgressFor);
+    }
+
+    for (const [path, offset] of pendingOffsets) recordOffset(db, path, offset, nowMs);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
+  for (const [path, history] of pendingHistories) historyByFile.set(path, history);
 
   // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
   // SS2). extractQueue is optional so every existing caller (including this
   // file's own tests) is unaffected when omitted -- extraction is simply
   // skipped. Reads event.humanText (already parsed, already in memory for
   // this scan tick), never re-opens the file and never persists the text
-  // anywhere. Runs after the flush above, which writes the rows it reads.
+  // anywhere. Runs after the commit above, so it only queues committed rows.
   for (const event of extractCandidates) {
     const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
     if (!idMatch || !extractQueue) continue;
@@ -265,19 +295,6 @@ export function scanTranscriptsOnce(
       runSummary,
       queuedAtMs: nowMs,
     });
-  }
-
-  // Fatal-via-staleness sweep: run after the flush so it sees this tick's
-  // completions. ingestDispatchEvent does not mutate history or remove
-  // entries from openByToolUseId, so an Agent entry that just completed
-  // above still survives into its file's history and is offered to the
-  // sweep. It is only the existing-row guard inside sweepStaleDispatches (in
-  // staleDispatchSweep.ts) that prevents that already-completed dispatch
-  // from being re-flagged as fatal -- that guard is load-bearing, not
-  // redundant. Subagent histories are never swept (see the nested-dispatch
-  // note above).
-  for (const s of pendingSweeps) {
-    sweepStaleDispatches(db, s.history, nowMs, s.lastProgressFor);
   }
 
   return { filesScanned, eventsIngested, toolCallsIngested, anomaliesIngested };
