@@ -212,7 +212,7 @@ describe('LedgerView Aether-OS-itself note (#104)', () => {
     expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
     expect(container.textContent).toContain('memory extraction is ON');
     expect(container.textContent).toContain('can bill');
-    expect(container.textContent).toContain('count in the totals above but are not broken out here');
+    expect(container.textContent).toContain('count in the all-transcripts totals but are not broken out here');
   });
 
   function bridge(get: () => Promise<boolean>): void {

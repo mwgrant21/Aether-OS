@@ -169,7 +169,7 @@ export function LedgerView() {
               {memEnabled === null
                 ? 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); memory extraction status loading'
                 : memEnabled
-                  ? 'memory extraction is ON: it runs the Claude CLI and can bill depending on how Claude Code is configured (privacy section 14); its calls are saved as ordinary Claude Code sessions, so they count in the totals above but are not broken out here'
+                  ? 'memory extraction is ON: it runs the Claude CLI and can bill depending on how Claude Code is configured (privacy section 14); its calls are saved as ordinary Claude Code sessions, so they count in the all-transcripts totals but are not broken out here'
                   : 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); opt-in memory extraction is off'}
             </span>
           </div>
