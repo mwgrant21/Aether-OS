@@ -19,7 +19,9 @@ only, reachable only from this machine, with no port exposed externally and no t
 surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
-**Aether does not call billed model APIs.** Stage 13.5 removed the Anthropic SDK,
+**Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
+path in §14 is a different thing: it can bill API usage, depending on how Claude Code is
+configured.) Stage 13.5 removed the Anthropic SDK,
 chat API proxy, and `.env` key loading. The legacy deterministic Comms responder stays local.
 Two independently default-off features can send content to OpenAI under the operator's Codex
 subscription: manual verification (§9) and Claude-requested consultations (§13). Neither toggle
@@ -168,7 +170,7 @@ on the app's existing 900ms tick) — never a `state` push, and it is the one de
 the `useRealAgentsSync.ts` pattern that feeds every other real-data surface into the store.
 `src/state/noPayloadInStore.test.ts` is the mechanical enforcement: it asserts no
 transcript-message type is reachable from `AetherState`. The operator is the only reader of their
-own transcripts on their own machine, and nothing leaves it — the original rule was written to
+own transcripts on their own machine, and nothing leaves it (except dispatch result text under §14, when enabled) — the original rule was written to
 prevent a *store* that could leak, not to prevent the operator from looking at their own session.
 
 ---
@@ -597,8 +599,8 @@ restart. With the setting off nothing is staged and nothing is sent: the transcr
 extraction queue, and a drain tick also discards anything already queued rather than sending it.
 `CostGuardCard` lists the row as a network surface.
 
-**What is sent, and to whom.** To Anthropic, from the collector, per qualifying dispatch: the
-dispatch result text (`extractDispatchResultText` of the task-notification) plus up to 20
+**What is sent, and to whom.** To Anthropic, or whichever provider Claude Code is configured
+for (see below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification) plus up to 20
 memories previously extracted for that agent. Aether-initiated with no human typing the turn,
 which is what makes it a distinct boundary, like §12. It is usually sent within about 30 seconds
 of the dispatch completing.
@@ -617,10 +619,11 @@ not a guarantee. Isolating the call from that ambient configuration is tracked i
 transcript content, which strains the Stage 14 "never in `~/.aether-os/`" amendment in §4; this
 section names that tension and does not resolve it.
 
-**Backfill.** Scan offsets persist in `collector.db` (`transcript_files.last_offset`), so
-dispatches that complete while the setting is off are not extracted later. The exception is a
-fresh or deleted `collector.db`: with the setting ON, the collector rescans every transcript
-from offset 0, and every past dispatch that clears the extraction bar is sent.
+**Backfill.** Scan offsets persist in `collector.db` (`transcript_files.last_offset`) and only
+advance when a scan runs. Dispatches the collector scans while the setting is off are never
+extracted later. Dispatches it has not yet scanned are sent the next time it scans with the
+setting ON. That covers dispatches that completed while the collector was not running, and every
+past dispatch when `collector.db` is fresh or deleted (the rescan starts at offset 0).
 
 **Deployment caveat.** The gate takes effect only once the collector `dist` is rebuilt or
 reinstalled. The installed collector runs from its built output, and a pre-#104 collector

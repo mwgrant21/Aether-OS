@@ -164,7 +164,7 @@ docs/superpowers/
   binding: a cost bucket with no observed data is `null`, never `0` — see
   `RollupCard`, where "no data" and "$0.00" are deliberately different
   renderings, and `bucketByDay`, whose return type forces the distinction.
-- **Model calls**: billed API model calls remain prohibited. The reachable subscription
+- **Model calls**: billed API model calls remain prohibited (the opt-in §14 Claude CLI path can still bill, depending on Claude Code's own configuration; isolation is #111). The reachable subscription
   exceptions are manual Codex verification and separately opted-in Claude–Codex communication
   (`communicationBridge`, default off); see `docs/privacy-and-data.md` §9 and §13. The
   `ClaudeHeadlessCliAdapter` remains test-only (§12); do not activate it implicitly. The one

@@ -82,7 +82,7 @@ configuration (which can bill API usage if you set it up that way). The gate tak
 once the collector is rebuilt or reinstalled. See `docs/privacy-and-data.md` §14; any literal
 `claude` process launch outside a reviewed allow-list fails `src/shared/noApiCalls.test.ts`.
 
-**One named, default-off, opt-in exception, shipped 2026-08-07:** cross-engine Codex verification
+**Named, default-off, opt-in exception (Codex verification), shipped 2026-08-07:** cross-engine Codex verification
 lets the operator manually ask OpenAI's Codex (over the Agent Client Protocol) whether a specific
 Claude dispatch's claimed work is actually supported by its artifacts. It is off by default, requires
 clicking through an explicit disclosure to enable, sends only the selected dispatch's scoped
