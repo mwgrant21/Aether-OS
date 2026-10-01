@@ -227,10 +227,10 @@ describe('LedgerView Aether-OS-itself note (#104)', () => {
     mountState({ memoryExtractionEnabled: false });
     const { container } = render(<LedgerView />);
     expect(container.textContent).toContain('memory extraction status loading');
-    expect(container.textContent).not.toMatch(/Aether OS itself: $0.00/);
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
     resolveGet(true);
     expect(await screen.findByText(/memory extraction is ON/)).toBeTruthy();
-    expect(container.textContent).not.toMatch(/Aether OS itself: $0.00/);
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
   });
 
   it('a rejecting get() keeps the neutral copy (never falls back to OFF/$0.00)', async () => {
@@ -241,6 +241,6 @@ describe('LedgerView Aether-OS-itself note (#104)', () => {
     await vi.waitFor(() => expect(get).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 20));
     expect(container.textContent).toContain('memory extraction status loading');
-    expect(container.textContent).not.toMatch(/Aether OS itself: $0.00/);
+    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
   });
 });
