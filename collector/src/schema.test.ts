@@ -356,8 +356,8 @@ describe('schema', () => {
     expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
 
     const columns: any[] = db.prepare("PRAGMA table_info(dispatches)").all();
-    // Count should be exactly the original 6 + 7 new = 13 columns
-    expect(columns.length).toBe(13);
+    // Count should be exactly the original 6 + 7 new (v5) + dispatch_status (v9) = 14 columns
+    expect(columns.length).toBe(14);
 
     db.close();
   });
@@ -452,7 +452,8 @@ describe('v9: dispatches usage columns are nullable', () => {
     migrate(db);
     migrate(db);
     expect(usageNotNull(db)).toEqual({ tokens: 0, tool_uses: 0, duration_ms: 0 });
-    expect(db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all()).toEqual(before);
+    // Every old value is unchanged; the only addition is dispatch_status, NULL for history.
+    expect(db.prepare('SELECT * FROM dispatches ORDER BY tool_use_id').all()).toEqual(before.map((r) => ({ ...r, dispatch_status: null })));
     expect(getSchemaVersion(db)).toBe(9);
     db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, exit_state)
                 VALUES ('tu_null', NULL, NULL, NULL, 1, 2, 'error')`).run();
@@ -489,6 +490,17 @@ describe('v9: dispatches usage columns are nullable', () => {
     migrate(db);
     expect(usageNotNull(db)).toEqual({ tokens: 0, tool_uses: 0, duration_ms: 0 });
     expect((db.prepare('SELECT COUNT(*) AS n FROM dispatches').get() as { n: number }).n).toBe(2);
+    db.close();
+  });
+
+  it('adds a nullable dispatch_status column, even to a database already stamped 9 without it; existing rows stay NULL', () => {
+    const db = v8Db();
+    migrate(db);
+    db.exec('ALTER TABLE dispatches DROP COLUMN dispatch_status');
+    migrate(db);
+    const col = (db.prepare(`SELECT "notnull" AS nn FROM pragma_table_info('dispatches') WHERE name = 'dispatch_status'`).get() as { nn: number } | undefined);
+    expect(col).toEqual({ nn: 0 });
+    expect(db.prepare("SELECT dispatch_status FROM dispatches WHERE tool_use_id = 'tu_a'").get()).toEqual({ dispatch_status: null });
     db.close();
   });
 });

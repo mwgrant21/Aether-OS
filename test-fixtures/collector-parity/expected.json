@@ -16,6 +16,7 @@
   "columns": {
     "dispatches": [
       "agent_id",
+      "dispatch_status",
       "duration_ms",
       "ended_at_ms",
       "exit_state",

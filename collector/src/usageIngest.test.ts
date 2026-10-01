@@ -332,6 +332,25 @@ describe('ingestDispatchEvent -- real outcomes (spec 2026-09-30 sections 3, 6, 7
     db.close();
   });
 
+  it('stores the parsed status; unknown rows never enter the median, NULL-status history still does', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (status: string, d: number) => `<status>${status}</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    [0, 1, 2, 3, 4].forEach((i) => {
+      ingestDispatchEvent(db, openDispatch(`tu_u${i}`, 100 * i), notify(`tu_u${i}`, 100 * i + 50, usage('running', 9000)), opts);
+    });
+    ingestDispatchEvent(db, openDispatch('tu_c', 600), notify('tu_c', 650, usage('completed', 1000)), opts);
+    const status = (id: string) => (db.prepare('SELECT dispatch_status AS s FROM dispatches WHERE tool_use_id = ?').get(id) as { s: string | null }).s;
+    expect([status('tu_u0'), status('tu_c')]).toEqual(['unknown', 'completed']);
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBeNull();
+    // Rows written before this column existed (or by the Go collector) are NULL and still count.
+    const ins = db.prepare(`INSERT INTO dispatches (tool_use_id, duration_ms, started_at_ms, ended_at_ms, agent_id, exit_state)
+                            VALUES (?, 1000, 0, ?, 'general-purpose', 'ok')`);
+    for (let i = 0; i < 4; i++) ins.run(`legacy${i}`, 700 + i);
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBe(1000);
+    db.close();
+  });
+
   it('the median query ignores duration_ms = 0 and NULL rows and non-ok rows', () => {
     const db = freshDb();
     const ins = db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, exit_state)

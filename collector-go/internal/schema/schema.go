@@ -358,6 +358,11 @@ func Migrate(db *sql.DB) error {
 			return err
 		}
 	}
+	// Also v9, mirroring schema.ts: the parsed dispatch status. This collector
+	// does not parse <status>, so its rows leave it NULL (read as legacy).
+	if err := addColumnIfMissing(db, "dispatches", "dispatch_status", "dispatch_status TEXT"); err != nil {
+		return err
+	}
 
 	// NEVER lower the recorded version. This collector shares its database
 	// with collector/ (Node), which has been ahead before. Stamping

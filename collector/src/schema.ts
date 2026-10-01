@@ -252,6 +252,11 @@ export function migrate(db: DatabaseSync): void {
   // stamped 9 by one collector but created NOT NULL by another still heals.
   // Existing values are copied unchanged: no history rewrite.
   if (dispatchUsageIsNotNull(db)) rebuildDispatchesWithNullableUsage(db);
+  // Also v9: the parsed <status> (completed/failed/killed/unknown), so the
+  // median can admit completed runs only; unknown is stored as exit 'ok'.
+  // NULL = written before this column, or by the Go collector (no status
+  // parsing). Column-driven, like the rebuild, so a stamped-9 database heals.
+  addColumnIfMissing(db, 'dispatches', 'dispatch_status', 'dispatch_status TEXT');
 
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)

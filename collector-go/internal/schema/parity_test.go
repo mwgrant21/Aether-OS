@@ -338,3 +338,20 @@ func TestRebuildRollbackFailureReturnsOriginalErrorAndDiscardsConn(t *testing.T)
 		t.Errorf("driver Close calls = %d, want 1 (poisoned conn discarded, not pooled)", n)
 	}
 }
+
+func TestMigrateAddsNullableDispatchStatusToStamped9(t *testing.T) {
+	db := freshDB(t)
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE dispatches DROP COLUMN dispatch_status`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	var nn int
+	if err := db.QueryRow(`SELECT "notnull" FROM pragma_table_info('dispatches') WHERE name = 'dispatch_status'`).Scan(&nn); err != nil || nn != 0 {
+		t.Errorf("dispatch_status notnull = %d err=%v, want present and nullable", nn, err)
+	}
+}

@@ -53,18 +53,23 @@ export interface DispatchIngestOptions {
 const reportedStatusTagsForProcess = new Set<string>();
 
 // Spec section 6: median of this agent type's own successful history, the
-// same rules as the live baseline (ok rows, duration_ms > 0, last 20,
-// minimum 5). duration_ms > 0 also skips NULL and the historic failures that
-// were stored as ok with 0 ms. The row being ingested is excluded, so a
-// re-ingest never compares a run against itself. Only rows that ended before
-// beforeMs count, so a row is scored against its own past, never the future
-// (a backfill in directory order, or a re-ingest, gives the same answer).
+// same rules as the live baseline (completed rows, duration_ms > 0, last 20,
+// minimum 5). An unknown status is stored as exit 'ok' too, so dispatch_status
+// tells them apart; NULL status (history before the column, or Go-written
+// rows) is admitted as before. duration_ms > 0 also skips NULL and the
+// historic failures that were stored as ok with 0 ms. The row being ingested
+// is excluded, so a re-ingest never compares a run against itself. Only rows
+// that ended before beforeMs count, so a row is never scored against its own
+// future. That does NOT make a first backfill order-independent: a row only
+// sees earlier rows that were already ingested, and transcript files are
+// scanned in directory order, not by time.
 export function medianDurationMsFor(db: DatabaseSync, agentId: string | null, excludeToolUseId: string, beforeMs: number): number | null {
   if (agentId === null) return null;
   const rows = db
     .prepare(
       `SELECT duration_ms FROM dispatches
-        WHERE agent_id = ? AND exit_state = 'ok' AND duration_ms > 0 AND tool_use_id != ? AND ended_at_ms < ?
+        WHERE agent_id = ? AND exit_state = 'ok' AND (dispatch_status = 'completed' OR dispatch_status IS NULL)
+          AND duration_ms > 0 AND tool_use_id != ? AND ended_at_ms < ?
         ORDER BY ended_at_ms DESC LIMIT ?`,
     )
     .all(agentId, excludeToolUseId, beforeMs, BASELINE_WINDOW) as { duration_ms: number }[];
@@ -108,17 +113,18 @@ export function ingestDispatchEvent(
 
   db.prepare(
     `INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
-       agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval, dispatch_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tool_use_id) DO UPDATE SET tokens = excluded.tokens, tool_uses = excluded.tool_uses,
        duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms,
        agent_id = excluded.agent_id, task_kind = excluded.task_kind, session_id = excluded.session_id,
        retries = excluded.retries, exit_state = excluded.exit_state, severity = excluded.severity,
-       median_ms_at_eval = excluded.median_ms_at_eval`
+       median_ms_at_eval = excluded.median_ms_at_eval, dispatch_status = excluded.dispatch_status`
   ).run(
     dispatchToolUseId, outcome.usage?.tokens ?? null, outcome.usage?.toolUses ?? null, outcome.usage?.durationMs ?? null,
     open.startedAt, endedAtMs,
-    open.subagentType, open.subagentType, open.sessionId, 0, result.exitState, result.severity, result.medianMs
+    open.subagentType, open.subagentType, open.sessionId, 0, result.exitState, result.severity, result.medianMs,
+    outcome.status,
   );
   return true;
 }
