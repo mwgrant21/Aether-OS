@@ -49,8 +49,12 @@ import {
   createPeriodicContentCache,
   isNewPeriodicContent,
 } from './headlineGenerator';
-import { formatNarration } from './narrationGenerator';
-import { createDurationBaseline, getMedianMs, recordDuration } from './durationBaseline';
+import { narrationLine } from './narrationGenerator';
+import { loadDurationBaseline, DURATION_BASELINE_FILE } from './severity/durationBaseline';
+import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INTERVAL_MS } from './severity/liveSeverity';
+import { createTickCompletionHandler } from './liveTickCompletions';
+import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
+import { createFlushQuitGate } from './flushQuitGate';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { startStatuslineWatcher } from './statuslineWatcher';
@@ -123,7 +127,6 @@ let recapAcc: RecapAccumulator = createEmptyAccumulator();
 // the blocked-trigger headline, without calling tracker.tick() a second time.
 let lastTickResult: LiveAgentTick | null = null;
 const headlineThrottle = createHeadlineThrottle();
-const narrationDurationBaseline = createDurationBaseline();
 const periodicContentCache = createPeriodicContentCache();
 
 const DEFAULT_WIDTH = 1400;
@@ -451,7 +454,7 @@ const pendingPostToolFlagResolvers = new Map<string, (decision: PostToolFlagDeci
 // matching cleanup so a stale entry can't outlive the server-side timeout
 // that already made it moot. Its optional `onExpire` hook is currently unused:
 // it existed to force-close a user-wait interval for an abandoned prompt, and
-// that subtraction has been removed (see the comment at the narration loop).
+// that subtraction has been removed (see the WALL CLOCK comment in liveTickCompletions.ts).
 
 // startPermissionServer's own promise only ever resolves on the underlying
 // server's 'listening' event -- it does not reject on 'error' (e.g.
@@ -651,6 +654,32 @@ function optimizeProjectTargetPath(events: TranscriptEvent[]): string | null {
 }
 
 const liveAgentTracker = createLiveAgentTracker(os.homedir());
+// Real severity (docs/superpowers/specs/2026-09-30-real-severity-design.md).
+// Persisted per-agent baseline; corrupt/unreadable -> empty + one [diag].
+const narrationDurationBaseline = loadDurationBaseline({
+  filePath: join(aetherOsDir, DURATION_BASELINE_FILE),
+  diag: (line) => diagLog.write(line),
+});
+const liveSeverity = createLiveSeverityNarrator({ baseline: narrationDurationBaseline, narrate: narrationLine });
+// Shared by BOTH liveAgentTracker.tick() call sites (the agent tick and
+// onPostToolUse): each tick consumes the lines it reads, so either one may be
+// the only one to see a completion. See liveTickCompletions.ts.
+const liveSubagentProgress = createLiveSubagentProgress(join(os.homedir(), '.claude', 'projects'));
+const handleTickCompletions = createTickCompletionHandler({
+  narrator: liveSeverity,
+  reportUnseenStatus: createUnseenStatusReporter((line) => diagLog.write(line)),
+  sendNarration: (payload) => sendToWindow('agents:narration', payload),
+  sendCompleted: (done) => sendToWindow('agents:completed', done),
+  toolErrorsFor: (id) => {
+    const sid = liveAgentTracker.getPinnedSessionId();
+    return sid ? liveSubagentProgress.toolErrorsFor(sid, id) : null;
+  },
+});
+// First quit is held once (bounded to 500 ms) so a baseline write in flight lands.
+const baselineQuitGate = createFlushQuitGate(() => narrationDurationBaseline.flush(), () => app.quit(), 500);
+let lastStallCheckMs = 0;
+// "The owning session has ended" on the live path = the pinned pty exited.
+let pinnedPtyExited = false;
 const attachmentsStore = createAttachmentsStore(join(os.homedir(), '.aether-os', 'attachments'));
 let agentTickInFlight = false;
 let lastWrittenOwnSessionId: string | null | undefined = undefined;
@@ -706,7 +735,7 @@ async function tickAndPushAgents(): Promise<void> {
   agentTickInFlight = true;
   try {
     const result = await liveAgentTracker.tick();
-    const { open, completed, work, anomalies, cacheHitRatio } = result;
+    const { open, work, anomalies, cacheHitRatio } = result;
 
     if (!isWindowFocused) {
       recapAcc = accumulate(recapAcc, result, lastTickResult ?? result, Date.now());
@@ -737,31 +766,25 @@ async function tickAndPushAgents(): Promise<void> {
     }
 
     // Narration: for each dispatch that completed this tick, render a
-    // role-based voice line -- no model call (see narrationGenerator.ts).
+    // role-based voice line at the severity computed from the real outcome
+    // (electron/severity/liveSeverity.ts) -- no model call.
     // Unlike the headline loop above (which re-renders periodically for
     // still-open work), this fires once per completed dispatch, matching
     // FORGE's "speaks when finished or when stuck" register (spec §5.9).
-    for (const c of result.completed) {
-      // WALL CLOCK, deliberately. This used to subtract the time the app spent
-      // blocked on an approval prompt, on the theory that a dispatch which sat
-      // waiting for the operator should not read as "slower than usual".
-      //
-      // That subtraction was removed because it could not be made correct. Read
-      // docs/superpowers/specs/2026-09-16-user-wait-subtraction-removal.md
-      // BEFORE attempting to reintroduce it -- the short version is that a
-      // subagent's tool calls are not written to the transcript at all, so a
-      // prompt raised inside a dispatch can never be attributed back to it, and
-      // a prompt raised on the main thread does not block the dispatch it would
-      // have been subtracted from. Every correction it made was therefore taken
-      // from a dispatch that had not waited.
-      const measuredMs = c.durationMs;
-      // Snapshot the baseline BEFORE recording this run -- a run must never
-      // be compared against a baseline it has already contributed to.
-      const medianMsAtEval = getMedianMs(narrationDurationBaseline, c.subagentType);
-      const narrated = formatNarration({ subagentType: c.subagentType, durationMs: measuredMs }, medianMsAtEval);
-      recordDuration(narrationDurationBaseline, c.subagentType, measuredMs);
-      if (narrated) {
-        sendToWindow('agents:narration', { toolUseId: c.toolUseId, narration: narrated.narration, severity: narrated.severity });
+    // Durations are WALL CLOCK, deliberately: see the comment in
+    // liveTickCompletions.ts before changing that.
+    // Also sends agents:completed for this tick's completions.
+    handleTickCompletions(result);
+
+    // Stall check, ~every 30 s, AFTER completions (liveSeverity.ts contract).
+    const stallNowMs = Date.now();
+    if (stallNowMs - lastStallCheckMs >= STALL_CHECK_INTERVAL_MS) {
+      lastStallCheckMs = stallNowMs;
+      for (const payload of liveSeverity.checkStalls(result.open, stallNowMs, pinnedPtyExited, (id) => {
+        const sid = liveAgentTracker.getPinnedSessionId();
+        return sid ? liveSubagentProgress.lastWriteMsFor(sid, id) : null;
+      })) {
+        sendToWindow('agents:narration', payload);
       }
     }
 
@@ -772,7 +795,6 @@ async function tickAndPushAgents(): Promise<void> {
     }
 
     sendToWindow('agents:snapshot', open);
-    if (completed.length) sendToWindow('agents:completed', completed);
     sendToWindow('agents:activeWork', work);
     sendToWindow('agents:anomalies', anomalies);
     sendToWindow('agents:cacheHitRatio', cacheHitRatio);
@@ -912,6 +934,7 @@ app.whenReady().then(async () => {
       // for this specific tool_use_id -- everything else falls through to an
       // immediate, unblocked allow.
       const tick = await liveAgentTracker.tick();
+      handleTickCompletions(tick);
       const tripped = tick.anomalies.find((a) => a.toolUseId === req.toolUseId);
       if (!tripped) return { block: false };
       if (!mainWindow) return { block: false, reason: 'no window available to prompt for flag review' };
@@ -983,6 +1006,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
+  if (!baselineQuitGate(event)) return;
   isQuitting = true;
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();
@@ -1182,8 +1206,9 @@ const communicationSessions = new CommunicationSessionControl({
     connectedPromptObserver.start(launchId, dimensions, () => spawnPty(dimensions.cols, dimensions.rows, bundle), {
       onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
-      onExit: () => { onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
+      onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
     });
+    pinnedPtyExited = false;
     liveAgentTracker.notifyPtySpawned(Date.now());
   },
 });
@@ -1217,12 +1242,14 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
     // turns it on; pty:exit turns it back off.
     onAlive: () => sendToWindow('pty:alive', undefined),
     onExit: () => {
+      pinnedPtyExited = true;
       sendToWindow('pty:exit', undefined);
       planUsageScraper.reset(); // a new pty means a fresh /usage read next time
     },
   });
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
+  pinnedPtyExited = false;
   liveAgentTracker.notifyPtySpawned(Date.now());
 });
 

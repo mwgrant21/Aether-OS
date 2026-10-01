@@ -69,7 +69,7 @@ declare global {
         onCacheHitRatio: (callback: (ratio: number) => void) => () => void;
         onNotification: (callback: (payload: { reason: string }) => void) => () => void;
         onHeadline: (callback: (payload: { toolUseId: string; headline: string }) => void) => () => void;
-        onNarration: (callback: (payload: { toolUseId: string; narration: string; severity: number }) => void) => () => void;
+        onNarration: (callback: (payload: { toolUseId: string; narration: string; severity: number; subagentType: string; final: boolean }) => void) => () => void;
         setAutoHeadlines: (enabled: boolean) => void;
       };
       fleet: {

@@ -7,7 +7,7 @@
 // SET_ANOMALIES, SET_PENDING_PERMISSION_REQUEST, and SET_PENDING_POST_TOOL_FLAG
 // cases for where these events originate.
 //
-// Distinct from the model-written `dispatchNarrations` (electron/narrationGenerator.ts,
+// Distinct from the deterministic `dispatchNarrations` (electron/narrationGenerator.ts, no model call,
 // rendered on AgentRosterCard): that path always calls renderNarration(pack, severity, null)
 // -- eventKind is always null there, so the four frozen phrases are unreachable through it.
 // This feed is the actual consumer of Task 4's detectEventKind, passing the real eventKind
@@ -37,7 +37,7 @@ export interface DispatchCompletedEvent {
   // needs only role + severity, so it fires for real without these.
   toolUses?: Array<{ name: string }>;
   toolResults?: Array<{ resultLength: number }>;
-  exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | null;
+  exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | 'killed' | null;
 }
 
 export interface AnomalyDetectedEvent {

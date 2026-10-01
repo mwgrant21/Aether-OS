@@ -23,7 +23,7 @@ describe('communication Electron wiring', () => {
     expect(source.indexOf('new CommunicationBridgeIntegration')).toBeLessThan(source.indexOf('app.whenReady()'));
     expect(source).toContain('event.sender === mainWindow.webContents');
     expect(source).toContain('event.senderFrame === mainWindow.webContents.mainFrame');
-    expect(source).toMatch(/before-quit', event => \{\s*if \(!communicationQuitGate\(event\)\) return;\s*isQuitting = true/);
+    expect(source).toMatch(/before-quit', event => \{\s*if \(!communicationQuitGate\(event\)\) return;\s*if \(!baselineQuitGate\(event\)\) return;\s*isQuitting = true/);
     expect(source).toMatch(/win.on\('close', \(event\) => \{\s*if \(!isQuitting && process.platform !== 'darwin'\) \{\s*event.preventDefault\(\);\s*app.quit\(\)/);
   });
 });

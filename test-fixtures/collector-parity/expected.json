@@ -12,10 +12,11 @@
     "my-project/sess-1.jsonl",
     "my-project/sess-1/subagents/agent-x.jsonl"
   ],
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "columns": {
     "dispatches": [
       "agent_id",
+      "dispatch_status",
       "duration_ms",
       "ended_at_ms",
       "exit_state",

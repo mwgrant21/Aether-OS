@@ -4,11 +4,11 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
 
 // Acceptance gate for Tasks 1-5: proves the two real severity outcomes that
-// fall out of the actual pipeline (schema v5 columns -> personalitySpine's
-// computeSeverity -> toolCallHistory's dispatch-open capture -> usageIngest's
+// fall out of the actual pipeline (schema v5 columns ->
+// severity/computeSeverity -> toolCallHistory's dispatch-open capture -> usageIngest's
 // real-completion write / staleDispatchSweep's fatal-via-staleness write),
 // driven end to end through scanTranscriptsOnce -- the same orchestrator
 // harness pattern already used in transcriptScan.test.ts (mkdtemp projects
@@ -74,10 +74,9 @@ describe('narration spine end-to-end (Stage 11 acceptance gate)', () => {
     // it lands on the spec's documented "ok" outcome, sev=1.
     const expectedSeverity = computeSeverity({
       exit: 'ok',
-      retries: 0,
       elapsedMs: row.duration_ms,
       medianMsAtEval: null,
-    });
+    }).severity;
     expect(expectedSeverity).toBe(1);
     expect(row.severity).toBe(expectedSeverity);
 
@@ -121,10 +120,9 @@ describe('narration spine end-to-end (Stage 11 acceptance gate)', () => {
 
     const expectedSeverity = computeSeverity({
       exit: 'fatal',
-      retries: 0,
       elapsedMs: row.duration_ms,
       medianMsAtEval: null,
-    });
+    }).severity;
     expect(expectedSeverity).toBe(4);
     expect(row.severity).toBe(expectedSeverity);
 

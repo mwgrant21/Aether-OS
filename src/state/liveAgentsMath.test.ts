@@ -293,7 +293,9 @@ describe('applyLinesToOpenDispatches — completedOut parameter', () => {
     expect(completedOut[0]).toMatchObject({ toolUseId: 'tu_1', tokens: 500, toolUses: 2, durationMs: 1000 });
   });
 
-  it('defaults missing or malformed usage sub-fields to 0', () => {
+  // Spec section 2: a missing usage block is "usage: undefined, never zeros".
+  // This test used to pin 0/0/0 here.
+  it('leaves tokens/toolUses/durationMs absent when the usage block is missing, never zeros', () => {
     const malformedLine = parseLine(
       JSON.stringify({
         type: 'user',
@@ -307,7 +309,10 @@ describe('applyLinesToOpenDispatches — completedOut parameter', () => {
     const completedOut: CompletedDispatchUsage[] = [];
     applyLinesToOpenDispatches(openResult, [malformedLine], completedOut);
     expect(completedOut).toHaveLength(1);
-    expect(completedOut[0]).toMatchObject({ tokens: 0, toolUses: 0, durationMs: 0 });
+    expect(completedOut[0]).toEqual({ ...openResult[0] });
+    expect('tokens' in completedOut[0]).toBe(false);
+    expect('toolUses' in completedOut[0]).toBe(false);
+    expect('durationMs' in completedOut[0]).toBe(false);
   });
 
   it('does not push a completedOut entry for a completion event whose tool-use-id is not currently open', () => {
@@ -424,5 +429,15 @@ describe('applyLinesToOpenWork', () => {
   it('skips malformed JSON lines without throwing', () => {
     const events = ['not json', '', '   '].map(parseTranscriptLine).filter((e): e is TranscriptEvent => e !== null);
     expect(() => applyLinesToOpenWork([], events)).not.toThrow();
+  });
+});
+
+describe('applyLinesToOpenDispatches -- outcomesOut', () => {
+  it('records the parsed outcome per completed dispatch, with a diag tag only for unknown statuses', () => {
+    const open = applyLinesToOpenDispatches([], [dispatchLine('tu_1', 'general-purpose', 'd', '2026-07-20T10:00:00.000Z'), dispatchLine('tu_2', 'general-purpose', 'd', '2026-07-20T10:00:00.000Z')]);
+    const outcomes = new Map();
+    applyLinesToOpenDispatches(open, [completionLine('tu_1', 'failed'), completionLineWithUsage('tu_2', 5, 2, 900, 'running')], [], outcomes);
+    expect(outcomes.get('tu_1')).toEqual({ outcome: { status: 'failed' }, unknownStatusTag: null });
+    expect(outcomes.get('tu_2')).toEqual({ outcome: { status: 'unknown', usage: { tokens: 5, toolUses: 2, durationMs: 900 } }, unknownStatusTag: 'running' });
   });
 });

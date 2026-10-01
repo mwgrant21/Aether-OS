@@ -5,7 +5,8 @@ import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
+import { FUTURE_MTIME_TOLERANCE_MS } from './severity/isStalled.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-stale-sweep-'));
@@ -138,13 +139,104 @@ describe('sweepStaleDispatches', () => {
     sweepStaleDispatches(db, history, nowMs);
 
     const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu7');
-    const expectedSeverity = computeSeverity({ exit: 'fatal', retries: 0, elapsedMs: nowMs - startedAt, medianMsAtEval: null });
+    const expectedSeverity = computeSeverity({ exit: 'fatal', elapsedMs: nowMs - startedAt, medianMsAtEval: null }).severity;
     expect(expectedSeverity).toBe(4);
     expect(row.severity).toBe(4);
     expect(row.duration_ms).toBe(nowMs - startedAt);
     expect(row.ended_at_ms).toBe(nowMs);
-    expect(row.tokens).toBe(0);
-    expect(row.tool_uses).toBe(0);
+    expect(row.tokens).toBeNull();
+    expect(row.tool_uses).toBeNull();
+    db.close();
+  });
+
+  it('stall boundary: exactly STALL_MS of inactivity is not stalled, one ms more is', () => {
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES ('s1', NULL, 'proj', 'agent', 'running', 'agent', 0, ?)`
+    ).run(THIRTY_MIN);
+    expect(sweepStaleDispatches(db, historyWithOpen('tu_b', { startedAt: 0 }), THIRTY_MIN).staleFound).toBe(0);
+    db.prepare("UPDATE fleet_sessions SET last_seen_ms = ? WHERE session_id = 's1'").run(THIRTY_MIN + 1);
+    expect(sweepStaleDispatches(db, historyWithOpen('tu_b', { startedAt: 0 }), THIRTY_MIN + 1).staleFound).toBe(1);
+    db.close();
+  });
+});
+
+describe('sweepStaleDispatches -- subagent progress (F15)', () => {
+  function setup() {
+    const db = freshDb();
+    const nowMs = THIRTY_MIN * 2;
+    db.prepare(
+      `INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms)
+       VALUES ('s1', NULL, 'proj', 'agent', 'running', 'agent', 0, ?)`
+    ).run(nowMs - 1000);
+    return { db, nowMs };
+  }
+
+  it('recent subagent-file progress keeps a long dispatch from stalling', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_p', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - 60_000).staleFound).toBe(0);
+    expect(sweepStaleDispatches(db, h, nowMs).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('a probe with no data for the dispatch falls back to dispatch start', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_q', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => null).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('a far-future mtime (+5h, clock skew) is ignored and does not hold off a real stall', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_f', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + 5 * 60 * 60 * 1000).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('a live dispatch (40 min old) whose mtime is slightly ahead of nowMs is not stale', () => {
+    for (const ahead of [1, 1000, 4 * 60 * 1000]) {
+      const { db, nowMs } = setup();
+      const h = historyWithOpen('tu_live', { startedAt: nowMs - 40 * 60 * 1000 });
+      expect(sweepStaleDispatches(db, h, nowMs, () => nowMs + ahead).staleFound).toBe(0);
+      db.close();
+    }
+  });
+
+  it('future-mtime tolerance boundary: exactly +tolerance counts as progress, +1 ms is ignored', () => {
+    const at = setup();
+    const hAt = historyWithOpen('tu_edge_at', { startedAt: at.nowMs - 40 * 60 * 1000 });
+    expect(sweepStaleDispatches(at.db, hAt, at.nowMs, () => at.nowMs + FUTURE_MTIME_TOLERANCE_MS).staleFound).toBe(0);
+    at.db.close();
+    const over = setup();
+    const hOver = historyWithOpen('tu_edge_over', { startedAt: over.nowMs - 40 * 60 * 1000 });
+    expect(sweepStaleDispatches(over.db, hOver, over.nowMs, () => over.nowMs + FUTURE_MTIME_TOLERANCE_MS + 1).staleFound).toBe(1);
+    over.db.close();
+  });
+
+  it('an mtime 31 min in the past on a 40 min old dispatch stalls', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_idle', { startedAt: nowMs - 40 * 60 * 1000 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - 31 * 60 * 1000).staleFound).toBe(1);
+    db.close();
+  });
+
+  it('does not call lastProgressFor for an entry no older than STALL_MS; calls it once past it', () => {
+    const { db, nowMs } = setup();
+    const calls: string[] = [];
+    const spy = (id: string) => { calls.push(id); return null; };
+    sweepStaleDispatches(db, historyWithOpen('tu_young', { startedAt: nowMs - THIRTY_MIN }), nowMs, spy);
+    expect(calls).toEqual([]);
+    sweepStaleDispatches(db, historyWithOpen('tu_old', { startedAt: nowMs - THIRTY_MIN - 1 }), nowMs, spy);
+    expect(calls).toEqual(['tu_old']);
+    db.close();
+  });
+
+  it('old subagent progress (past the stall window) still stalls', () => {
+    const { db, nowMs } = setup();
+    const h = historyWithOpen('tu_r', { startedAt: 0 });
+    expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - THIRTY_MIN - 1).staleFound).toBe(1);
     db.close();
   });
 });

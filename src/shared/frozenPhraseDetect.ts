@@ -32,7 +32,7 @@ export interface FrozenPhraseInput {
     completed: boolean; // REQUIRED: empty_result/no_signal/critic_tell fire only on completed dispatches
     toolUses?: Array<{ name: string }>;
     toolResults?: Array<{ resultLength: number }>;
-    exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | null;
+    exitState?: 'ok' | 'partial' | 'error' | 'fatal' | 'timeout' | 'blocked' | 'killed' | null;
   };
 
   // For all_clear predicate (global state) — not affected by completion status
@@ -151,6 +151,7 @@ function detectNoSignal(
   toolUses?: Array<{ name: string }>
 ): boolean {
   if (role !== 'ASSAY') return false;
+  if (exitState === 'killed') return false; // deliberate stop, not "no signal"
 
   // Fatal exit state: no signal available
   if (exitState === 'fatal') return true;

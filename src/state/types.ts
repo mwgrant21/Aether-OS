@@ -49,7 +49,7 @@ import type { QuotaEfficiency } from '../shared/quotaEfficiency';
 
 // A single rendered voice-pack line appended to a Comms channel's feed
 // (Stage 14 Task 5, narrationFeed.ts). Distinct from `dispatchNarrations`
-// above: that's the model-written free-text line shown on the roster card;
+// above: that's the deterministic (electron/narrationGenerator.ts, no model call) free-text line shown on the roster card;
 // this is the deterministic, voice-pack-rendered line shown in Comms,
 // derived from real events (dispatch completion, anomalies, permission/flag
 // requests) via detectEventKind + renderNarration. Contains no transcript

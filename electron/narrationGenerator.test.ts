@@ -1,22 +1,24 @@
 // electron/narrationGenerator.test.ts
 import { describe, it, expect } from 'vitest';
-import { formatNarration } from './narrationGenerator';
+import { formatNarration, narrationLine } from './narrationGenerator';
 
-describe('formatNarration', () => {
-  it('resolves role from subagentType and renders that role’s sev-1 sample when nothing is anomalous', () => {
-    const result = formatNarration({ subagentType: 'code-reviewer', durationMs: 5000 }, null);
-    // code-reviewer -> CINDER; no medianMsAtEval and no retries -> sev 1
-    expect(result).toEqual({ narration: "It compiles. I'm thrilled.", severity: 1 });
+describe('formatNarration (render only; severity comes from electron/severity/computeSeverity)', () => {
+  it('renders the role sample for the given severity', () => {
+    expect(formatNarration({ subagentType: 'code-reviewer' }, 1)).toEqual({ narration: "It compiles. I'm thrilled.", severity: 1 });
+    expect(formatNarration({ subagentType: 'code-reviewer' }, 2)).toEqual({ narration: "There's a retry loop in here. I'll assume that was deliberate.", severity: 2 });
   });
-
-  it('returns null for FORGE at severity 1 (silent heartbeat, no chat line)', () => {
-    const result = formatNarration({ subagentType: 'general-purpose', durationMs: 5000 }, null);
-    expect(result).toBeNull();
+  it('returns null for FORGE at severity 1 (silent heartbeat)', () => {
+    expect(formatNarration({ subagentType: 'general-purpose' }, 1)).toBeNull();
   });
+  it('passes severity 4 through (the old local copy capped at 2)', () => {
+    expect(formatNarration({ subagentType: 'code-reviewer' }, 4)?.severity).toBe(4);
+  });
+});
 
-  it('escalates severity when duration exceeds 3x the median, same as computeSeverity', () => {
-    const result = formatNarration({ subagentType: 'code-reviewer', durationMs: 10_000 }, 1000);
-    // elapsedMs(10000) > 3 * medianMsAtEval(1000) -> sev 2
-    expect(result).toEqual({ narration: "There's a retry loop in here. I'll assume that was deliberate.", severity: 2 });
+describe('narrationLine (the narrate dep main.ts hands to the live severity narrator)', () => {
+  it('is the rendered text of formatNarration, or null when that is silent', () => {
+    expect(narrationLine('code-reviewer', 1)).toBe("It compiles. I'm thrilled.");
+    expect(narrationLine('code-reviewer', 4)).toBe(formatNarration({ subagentType: 'code-reviewer' }, 4)!.narration);
+    expect(narrationLine('general-purpose', 1)).toBeNull();
   });
 });

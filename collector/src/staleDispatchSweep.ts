@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ToolCallHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
+import { isStalled, STALL_MS, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
 
 // Grace period before a dispatch's session liveness is even checked: an entry
 // that opened moments ago may simply predate the first fleet poll ever seeing
@@ -11,10 +12,6 @@ const SESSION_CHECK_MIN_AGE_MS = 15000;
 // A session's fleet_sessions row is considered gone once its last_seen_ms is
 // this old -- matches fleetPoll.ts's own STALE_MS (twice the poll interval).
 const SESSION_STALE_MS = 30000;
-
-// Fixed timeout: an Agent dispatch open this long is fatal regardless of
-// whether its session is still reporting as alive.
-const FATAL_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * Detects 'Agent'-named open dispatches that never received a completion
@@ -30,8 +27,9 @@ const FATAL_TIMEOUT_MS = 30 * 60 * 1000;
  *   (a) the dispatch's session has no fleet_sessions row at all, OR that row's
  *       last_seen_ms is older than SESSION_STALE_MS -- but only checked once
  *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old.
- *   (b) the open entry has been open past FATAL_TIMEOUT_MS, regardless of
- *       session liveness.
+ *   (b) no progress for longer than STALL_MS (./severity/isStalled.js, 30 min),
+ *       measured from lastProgressFor (the dispatch's subagent file mtime),
+ *       falling back to the entry's start, regardless of session liveness.
  *
  * Only 'Agent'-named open entries are ever swept; any other tool call is left
  * untouched regardless of age.
@@ -39,7 +37,8 @@ const FATAL_TIMEOUT_MS = 30 * 60 * 1000;
 export function sweepStaleDispatches(
   db: DatabaseSync,
   history: ToolCallHistory,
-  nowMs: number
+  nowMs: number,
+  lastProgressFor?: (toolUseId: string) => number | null
 ): { staleFound: number } {
   const sessionLookup = db.prepare('SELECT last_seen_ms FROM fleet_sessions WHERE session_id = ?');
   // updateHistory only closes an open entry via a normal tool_result; an
@@ -74,26 +73,32 @@ export function sweepStaleDispatches(
     if (existing) continue;
 
     const ageMs = nowMs - open.startedAt;
-    const timedOut = ageMs >= FATAL_TIMEOUT_MS;
 
-    let sessionGone = false;
+    let sessionEnded = false;
     if (ageMs >= SESSION_CHECK_MIN_AGE_MS) {
       const row = sessionLookup.get(open.sessionId) as { last_seen_ms: number } | undefined;
-      sessionGone = !row || nowMs - row.last_seen_ms > SESSION_STALE_MS;
+      sessionEnded = !row || nowMs - row.last_seen_ms > SESSION_STALE_MS;
     }
 
-    if (!timedOut && !sessionGone) continue;
+    // Spec 5 measures inactivity from the last subagent progress: the mtime of
+    // the dispatch's own subagent transcript, via lastProgressFor. Until that
+    // exists (no link, no file, no probe), inactivity is measured from dispatch
+    // start.
+    // The future-mtime rule lives in ./severity/isStalled.js (shared with the live path).
+    // A dispatch younger than STALL_MS cannot be stalled on inactivity, so the
+    // probe (a stat) is skipped; only a session-ended entry can still be stale.
+    const lastProgressMs = ageMs <= STALL_MS ? open.startedAt : resolveLastProgressMs(open.startedAt, lastProgressFor?.(toolUseId), nowMs);
+    if (!isStalled({ lastProgressMs, sessionEnded }, nowMs)) continue;
 
     const durationMs = ageMs;
     const severity = computeSeverity({
       exit: 'fatal',
-      retries: 0,
       elapsedMs: durationMs,
       medianMsAtEval: null,
-    });
+    }).severity;
 
     upsert.run(
-      toolUseId, 0, 0, durationMs, open.startedAt, nowMs,
+      toolUseId, null, null, durationMs, open.startedAt, nowMs,
       open.subagentType, open.subagentType, open.sessionId, 0, 'fatal', severity, null
     );
     staleFound += 1;

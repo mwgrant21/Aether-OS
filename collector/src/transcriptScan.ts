@@ -9,6 +9,7 @@ import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
 import { extractDispatchResultText } from './dispatchResultText.js';
 import type { MemoryExtractQueue } from './memoryExtractQueue.js';
+import { createSubagentLinkIndex } from './severity/subagentLink.js';
 
 function getLastOffset(db: DatabaseSync, filePath: string): number {
   const row = db.prepare('SELECT last_offset FROM transcript_files WHERE file_path = ?').get(filePath) as
@@ -81,6 +82,11 @@ export function scanTranscriptsOnce(
     return { filesScanned: 0, eventsIngested: 0, toolCallsIngested: 0, anomaliesIngested: 0 };
   }
 
+  // One parent/subagent index per scan pass: a dispatch's subagent files can
+  // live under a different project dir than its parent transcript, and this
+  // keeps that lookup from rescanning every project dir per dispatch.
+  const linkIndex = createSubagentLinkIndex(projectsRoot);
+
   let filesScanned = 0;
   let eventsIngested = 0;
   let toolCallsIngested = 0;
@@ -103,6 +109,8 @@ export function scanTranscriptsOnce(
       // containing the home directory/username.
       const filePath = join(dirPath, file);
       const relativePath = join(dirName, file);
+      const sessionBase = file.replace(/\.jsonl$/, '');
+      const subagentProbe = linkIndex.probeFor(sessionBase);
       const offset = getLastOffset(db, relativePath);
       let lines: string[];
       let newOffset: number;
@@ -138,7 +146,9 @@ export function scanTranscriptsOnce(
       // updateHistory never closes an Agent entry via a normal tool_result, so
       // the open entry survives into anomalyResult.history either way.
       for (const event of parsedEvents) {
-        ingestDispatchEvent(db, anomalyResult.history, event);
+        ingestDispatchEvent(db, anomalyResult.history, event, {
+          toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
+        });
       }
 
       // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
@@ -159,10 +169,11 @@ export function scanTranscriptsOnce(
               'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
             )
             .get(toolUseId) as
-            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number; tool_uses: number; exit_state: string }
+            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number | null; tool_uses: number | null; exit_state: string }
             | undefined;
           if (!row || !row.agent_id) continue;
           if (row.exit_state !== 'ok') continue;
+          if (row.duration_ms === null || row.tool_uses === null) continue;
           if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
 
           const runSummary = extractDispatchResultText(event.humanText);
@@ -188,7 +199,7 @@ export function scanTranscriptsOnce(
       // staleDispatchSweep.ts) that prevents that already-completed dispatch
       // from being re-flagged as fatal -- that guard is load-bearing, not
       // redundant.
-      sweepStaleDispatches(db, anomalyResult.history, nowMs);
+      sweepStaleDispatches(db, anomalyResult.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
 
       filesScanned += 1;
       recordOffset(db, relativePath, newOffset, nowMs);
@@ -196,7 +207,6 @@ export function scanTranscriptsOnce(
       // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
       // dispatch's own tool calls live in a separate file this loop
       // otherwise never visits. See the reconciliation note §1.
-      const sessionBase = file.replace(/\.jsonl$/, '');
       const subagentsDir = join(dirPath, sessionBase, 'subagents');
       let subagentFiles: string[];
       try {
@@ -235,6 +245,17 @@ export function scanTranscriptsOnce(
         historyByFile.set(subRelativePath, subAnomalyResult.history);
         toolCallsIngested += subAnomalyResult.toolCallsIngested;
         anomaliesIngested += subAnomalyResult.anomaliesIngested;
+
+        // Nested (spawnDepth-2) dispatches: the Agent tool_use and its
+        // task-notification sit in a subagent transcript. Record their outcome
+        // here, but NEVER offer this history to sweepStaleDispatches: most
+        // nested Agent calls close by tool_result, not task-notification, so
+        // their entries stay open forever and a sweep would mark them all fatal.
+        for (const event of subParsedEvents) {
+          ingestDispatchEvent(db, subAnomalyResult.history, event, {
+            toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
+          });
+        }
         recordOffset(db, subRelativePath, subNewOffset, nowMs);
       }
     }

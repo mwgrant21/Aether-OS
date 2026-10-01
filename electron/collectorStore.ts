@@ -39,6 +39,10 @@ const MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE = 6;
 /**
  * A persisted dispatch as the viewer sees it.
  *
+ * tokens/toolUses/durationMs are null when the notification carried no usage
+ * block (schema v9: failed/killed/stalled dispatches); render null as a dash,
+ * never 0.
+ *
  * The six base fields have always been read. The telemetry fields below them
  * were added to SQLite by the Stage 11 schema-v5 migration and then never read
  * into the viewer -- the gap named in
@@ -48,8 +52,9 @@ const MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE = 6;
  * Ledger does: `exitState` and `retries` are what make the dispatch table a
  * cost-of-failure view rather than a cost-of-work one.
  *
- * Every telemetry field is nullable, and null means "not available" -- either
- * the database predates v5, or the column is genuinely null for this row.
+ * Every telemetry field, and the usage fields (tokens/toolUses/durationMs), is nullable, and
+ * null means "not available" -- either the database predates v5, or the
+ * column is genuinely null for this row.
  * Callers must not read null as a zero or an 'ok'.
  *
  * (That spec and the Stage 15 plan both enumerate six v5 columns and omit
@@ -57,9 +62,9 @@ const MIN_SCHEMA_VERSION_FOR_TOOL_CALL_SOURCE = 6;
  */
 export interface DispatchRow {
   toolUseId: string;
-  tokens: number;
-  toolUses: number;
-  durationMs: number;
+  tokens: number | null;
+  toolUses: number | null;
+  durationMs: number | null;
   startedAtMs: number;
   endedAtMs: number;
   agentId: string | null;
@@ -101,6 +106,7 @@ const EXIT_STATES: ReadonlySet<string> = new Set<ExitState>([
   'fatal',
   'timeout',
   'blocked',
+  'killed',
 ]);
 
 function asExitState(value: unknown): ExitState | null {
@@ -248,9 +254,9 @@ export function readDiagnostics(dbPath: string, sinceMs: number): DiagnosticsSna
       dispatches: dispatchRows.map(
         (r): DispatchRow => ({
           toolUseId: r.tool_use_id as string,
-          tokens: r.tokens as number,
-          toolUses: r.tool_uses as number,
-          durationMs: r.duration_ms as number,
+          tokens: asNullableNumber(r.tokens),
+          toolUses: asNullableNumber(r.tool_uses),
+          durationMs: asNullableNumber(r.duration_ms),
           startedAtMs: r.started_at_ms as number,
           endedAtMs: r.ended_at_ms as number,
           // On a pre-v5 database these keys are absent from the row object, so

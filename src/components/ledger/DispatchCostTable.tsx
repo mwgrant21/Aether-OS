@@ -28,9 +28,11 @@ export interface DispatchCostRow {
   endedAt: string;
   description: string;
   subagentType: string;
-  durationMs: number;
-  toolUses: number;
-  estimate: EstimatedCost;
+  /** null when the collector recorded no usage for this dispatch: render a dash, never 0. */
+  durationMs: number | null;
+  toolUses: number | null;
+  /** null under the same condition as durationMs; such rows sort last. */
+  estimate: EstimatedCost | null;
   /**
    * What this dispatch took out of the subscription quota, or `null` when the
    * dispatch's completion notification carried NO usage at all.
@@ -88,9 +90,13 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
   const colors = useColors();
   const [descending, setDescending] = useState(true);
 
-  const sorted = [...rows].sort((a, b) =>
-    descending ? b.estimate.usdApprox - a.estimate.usdApprox : a.estimate.usdApprox - b.estimate.usdApprox,
-  );
+  // Rows with no estimate (no usage reported) sort last in either direction.
+  const sorted = [...rows].sort((a, b) => {
+    if (a.estimate === null || b.estimate === null) {
+      return a.estimate === b.estimate ? 0 : a.estimate === null ? 1 : -1;
+    }
+    return descending ? b.estimate.usdApprox - a.estimate.usdApprox : a.estimate.usdApprox - b.estimate.usdApprox;
+  });
 
   if (rows.length === 0) {
     return (
@@ -132,24 +138,27 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
           // 'error' (recoverable), 'timeout' and 'blocked' -- a dispatch that
           // burned 80k tokens and exited 'error' is exactly the cost-of-failure
           // case this table exists to surface, and it was rendering clean.
-          const failed = row.exitState !== null && row.exitState !== 'ok' && row.exitState !== 'partial';
+          // 'killed' is informational (almost always a deliberate stop, spec
+          // 2026-09-30-real-severity-design.md section 3): labelled, never styled as trouble.
+          const killed = row.exitState === 'killed';
+          const failed = row.exitState !== null && row.exitState !== 'ok' && row.exitState !== 'partial' && !killed;
           const troubled = failed || (row.retries !== null && row.retries > 0);
           return (
             <div role="row" key={row.toolUseId} style={bodyRowStyle(colors, troubled)}>
               <span role="cell" style={{ ...colDesc, ...descCellStyle(colors) }} title={row.description}>
                 {row.description}
-                {troubled && (
-                  <span style={flagStyle(colors)}>
-                    {failed ? row.exitState : null}
-                    {failed && row.retries ? ' · ' : null}
+                {(troubled || killed) && (
+                  <span style={killed && !failed ? killedLabelStyle(colors) : flagStyle(colors)}>
+                    {failed || killed ? row.exitState : null}
+                    {(failed || killed) && row.retries ? ' \u00b7 ' : null}
                     {row.retries ? `${row.retries} ${row.retries === 1 ? 'retry' : 'retries'}` : null}
                   </span>
                 )}
               </span>
               <span role="cell" style={{ ...colType, ...cellStyle(colors) }}>{row.subagentType}</span>
-              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{fmtDuration(row.durationMs)}</span>
-              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.toolUses}</span>
-              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{fmtTokens(row.estimate.tokens)}</span>
+              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.durationMs === null ? '\u2014' : fmtDuration(row.durationMs)}</span>
+              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.toolUses ?? '\u2014'}</span>
+              <span role="cell" style={{ ...colNum, ...cellStyle(colors) }}>{row.estimate === null ? '\u2014' : fmtTokens(row.estimate.tokens)}</span>
               <span role="cell" style={{ ...colNum, ...cellStyle(colors) }} title={QUOTA_BASIS_TOOLTIP}>
                 {quotaCell(row.quota)}
               </span>
@@ -157,17 +166,19 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
                 role="cell"
                 style={{ ...colNum, ...estCellStyle(colors) }}
                 title={
-                  row.estimate.tierSource === 'defaulted'
+                  row.estimate === null
+                    ? ESTIMATE_BASIS_TOOLTIP
+                    : row.estimate.tierSource === 'defaulted'
                     ? `${ESTIMATE_BASIS_TOOLTIP}. This dispatch recorded no model, so the ${row.estimate.tier} rate was assumed — if it actually ran on a costlier tier this figure is low.`
                     : `${ESTIMATE_BASIS_TOOLTIP}. Priced at the ${row.estimate.tier} rate.`
                 }
               >
-                {approxUsd(row.estimate.usdApprox)}
+                {row.estimate === null ? '\u2014' : approxUsd(row.estimate.usdApprox)}
                 {/* The Agent tool's `model` is an optional override omitted on
                     most dispatches, so a defaulted tier is the common case, not
                     the edge one. Unmarked, it is a silent ~40% undercount on
                     any run that was really Opus. */}
-                {row.estimate.tierSource === 'defaulted' && <span style={assumedStyle(colors)}>?</span>}
+                {row.estimate !== null && row.estimate.tierSource === 'defaulted' && <span style={assumedStyle(colors)}>?</span>}
               </span>
               {row.exitState === 'ok' && (
                 <span role="cell" style={colVerify}>
@@ -279,6 +290,15 @@ const flagStyle = (c: ColorPalette): CSSProperties => ({
   font: `600 11px/1 ${fonts.ui}`,
   letterSpacing: '.06em',
   color: c.danger,
+  marginLeft: 8,
+});
+
+// Neutral label for a 'killed' exit: same type as flagStyle but the muted text
+// colour, because a kill is informational, not a failure (user decision F1).
+const killedLabelStyle = (c: ColorPalette): CSSProperties => ({
+  font: `600 11px/1 ${fonts.ui}`,
+  letterSpacing: '.06em',
+  color: c.textDim,
   marginLeft: 8,
 });
 

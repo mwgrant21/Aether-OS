@@ -212,6 +212,17 @@ nominal (§5.8); that must be distinguishable from a narration call that failed.
 
 ## 4. Severity model
 
+> **Revision 2026-09-30:** amended by `docs/superpowers/specs/2026-09-30-real-severity-design.md` section 3; the rules below are superseded where they differ. As shipped (`electron/severity/computeSeverity.ts`, `isStalled.ts`, `baselineMath.ts`; collector copy generated into `collector/src/severity/`):
+> - `failed` -> exit `error`, severity 4 (was 3).
+> - `killed` -> exit `killed`, severity exactly 2, never voiced, no failure styling. Applied last, so no other rule can lift it.
+> - Stall -> exit `fatal`, severity 4. Stalled = no progress for more than `STALL_MS` (30 min), or the owning session ended while the dispatch is open.
+> - Unknown/unparseable status -> `ok`, severity 1.
+> - Slowness (elapsed > `SLOW_FACTOR` 3 x median; a median needs `BASELINE_MIN_SAMPLES` 5 samples, taken from the last `BASELINE_WINDOW` 20) adds 1 but is capped at `SLOWNESS_CAP` 2.
+> - The `retries >= 2` rule is replaced by a tool-error floor: a `completed` run with `TOOL_ERROR_FLOOR` (3) or more tool errors in its own subagent transcript is at least 3.
+> - `partial` >= 2, `timeout` >= 3, `blocked` = 4 are unchanged, but nothing produces them yet.
+>
+> This section is not rewritten in place.
+
 One scale, shared across the entire fleet. **The number is universal; the
 rendering is local.**
 

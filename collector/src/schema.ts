@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export function openDatabase(dbPath: string): DatabaseSync {
   // Runtime-value require (not a static import) to avoid Vite transformation
@@ -49,6 +49,55 @@ function tableColumns(db: DatabaseSync, table: string): Set<string> {
 function addColumnIfMissing(db: DatabaseSync, table: string, column: string, ddl: string): void {
   if (tableColumns(db, table).has(column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+const DISPATCH_USAGE_COLUMNS = ['tokens', 'tool_uses', 'duration_ms'];
+const DISPATCH_COLUMNS_V9 =
+  'tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval';
+
+function dispatchUsageIsNotNull(db: DatabaseSync): boolean {
+  const rows = db.prepare(`SELECT name, "notnull" AS nn FROM pragma_table_info('dispatches')`).all() as { name: string; nn: number }[];
+  return rows.some((r) => DISPATCH_USAGE_COLUMNS.includes(r.name) && r.nn === 1);
+}
+
+function rebuildDispatchesWithNullableUsage(db: DatabaseSync): void {
+  // The copy below names all 13 columns, so make sure the v5 ones exist even
+  // on a database whose recorded version skipped the v5 block.
+  addColumnIfMissing(db, 'dispatches', 'agent_id', 'agent_id TEXT');
+  addColumnIfMissing(db, 'dispatches', 'task_kind', 'task_kind TEXT');
+  addColumnIfMissing(db, 'dispatches', 'session_id', 'session_id TEXT');
+  addColumnIfMissing(db, 'dispatches', 'retries', 'retries INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'dispatches', 'exit_state', "exit_state TEXT NOT NULL DEFAULT 'ok'");
+  addColumnIfMissing(db, 'dispatches', 'severity', 'severity INTEGER');
+  addColumnIfMissing(db, 'dispatches', 'median_ms_at_eval', 'median_ms_at_eval INTEGER');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      DROP TABLE IF EXISTS dispatches_v9;
+      CREATE TABLE dispatches_v9 (
+        tool_use_id TEXT PRIMARY KEY,
+        tokens INTEGER,
+        tool_uses INTEGER,
+        duration_ms INTEGER,
+        started_at_ms INTEGER NOT NULL,
+        ended_at_ms INTEGER NOT NULL,
+        agent_id TEXT,
+        task_kind TEXT,
+        session_id TEXT,
+        retries INTEGER NOT NULL DEFAULT 0,
+        exit_state TEXT NOT NULL DEFAULT 'ok',
+        severity INTEGER,
+        median_ms_at_eval INTEGER
+      );
+      INSERT INTO dispatches_v9 (${DISPATCH_COLUMNS_V9}) SELECT ${DISPATCH_COLUMNS_V9} FROM dispatches;
+      DROP TABLE dispatches;
+      ALTER TABLE dispatches_v9 RENAME TO dispatches;
+    `);
+    db.exec('COMMIT');
+  } catch (err) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 export function migrate(db: DatabaseSync): void {
@@ -114,9 +163,9 @@ export function migrate(db: DatabaseSync): void {
     );
     CREATE TABLE IF NOT EXISTS dispatches (
       tool_use_id TEXT PRIMARY KEY,
-      tokens INTEGER NOT NULL,
-      tool_uses INTEGER NOT NULL,
-      duration_ms INTEGER NOT NULL,
+      tokens INTEGER,
+      tool_uses INTEGER,
+      duration_ms INTEGER,
       started_at_ms INTEGER NOT NULL,
       ended_at_ms INTEGER NOT NULL
     );
@@ -193,6 +242,21 @@ export function migrate(db: DatabaseSync): void {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`
     ).run();
   }
+
+  // v9: dispatches.tokens / tool_uses / duration_ms become NULLABLE. A failed
+  // or killed dispatch's notification carries no usage block, and storing 0
+  // for "not reported" fed a 0 ms duration into the median baseline
+  // (docs/superpowers/specs/2026-09-30-real-severity-design.md sections 1, 7).
+  // SQLite cannot drop NOT NULL in place, so this is a table rebuild. It is
+  // column-driven (it reads pragma notnull), not version-gated, so a database
+  // stamped 9 by one collector but created NOT NULL by another still heals.
+  // Existing values are copied unchanged: no history rewrite.
+  if (dispatchUsageIsNotNull(db)) rebuildDispatchesWithNullableUsage(db);
+  // Also v9: the parsed <status> (completed/failed/killed/unknown), so the
+  // median can admit completed runs only; unknown is stored as exit 'ok'.
+  // NULL = written before this column, or by the Go collector (no status
+  // parsing). Column-driven, like the rebuild, so a stamped-9 database heals.
+  addColumnIfMissing(db, 'dispatches', 'dispatch_status', 'dispatch_status TEXT');
 
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)

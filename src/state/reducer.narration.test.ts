@@ -5,13 +5,13 @@ import type { AetherState } from './types';
 
 describe('SET_DISPATCH_NARRATION', () => {
   it('adds a narration and severity keyed by toolUseId', () => {
-    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'Done. Four files touched.', severity: 2 });
+    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'Done. Four files touched.', severity: 2, subagentType: 'code-reviewer', final: true });
     expect(state.dispatchNarrations['tu-1']).toEqual({ narration: 'Done. Four files touched.', severity: 2 });
   });
 
   it('overwrites an existing narration for the same toolUseId', () => {
-    let state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'first', severity: 1 });
-    state = reducer(state, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'second', severity: 4 });
+    let state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'first', severity: 1, subagentType: 'code-reviewer', final: true });
+    state = reducer(state, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'second', severity: 4, subagentType: 'code-reviewer', final: true });
     expect(state.dispatchNarrations['tu-1']).toEqual({ narration: 'second', severity: 4 });
   });
 });
@@ -21,27 +21,57 @@ describe('SET_DISPATCH_NARRATION', () => {
 // tests cover that wiring, not narrationFeed.ts's own mapping logic (see
 // narrationFeed.test.ts for that).
 describe('narrationMessages wiring', () => {
-  function withCompletedDispatch(toolUseId: string, subagentType: string): AetherState {
-    return {
-      ...initialState,
-      recentCompletedDispatches: [
-        { toolUseId, subagentType, description: 'x', startedAt: new Date().toISOString(), prompt: 'x', model: null },
-      ],
-    };
-  }
+  // The real IPC order on the periodic tick (electron/main.ts): the dispatch is
+  // open in realAgents, then agents:narration, then agents:snapshot without it.
+  // The onPostToolUse tick sends narration and no snapshot at all. So the Comms
+  // line must be resolvable from the narration action itself (subagentType),
+  // never from recentCompletedDispatches / dispatchChannels, which only fill
+  // AFTER the snapshot.
+  const openDispatch = { toolUseId: 'tu-1', subagentType: 'code-reviewer', description: 'x', startedAt: new Date().toISOString(), prompt: 'x', model: null };
+  const withOpen = (): AetherState => reducer(initialState, { type: 'SET_REAL_AGENTS', agents: [openDispatch] });
+  const narration = (narrationText: string, severity: number, final: boolean) =>
+    ({ type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: narrationText, severity, subagentType: 'code-reviewer', final }) as const;
 
-  it('SET_DISPATCH_NARRATION appends a narrationFeed line to the dispatch channel when the dispatch is known', () => {
-    const seeded = withCompletedDispatch('tu-1', 'code-reviewer');
-    const state = reducer(seeded, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-1', narration: 'irrelevant here', severity: 4 });
+  it('real order: open, narration (final), snapshot without it -> exactly one Comms line', () => {
+    let state = withOpen();
+    state = reducer(state, narration('irrelevant here', 4, true));
+    state = reducer(state, { type: 'SET_REAL_AGENTS', agents: [] });
     const messages = state.narrationMessages['dispatch:tu-1'];
-    expect(messages).toBeDefined();
+    expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe('CINDER');
     expect(messages[0].text.startsWith("Oh. That's actually interesting.")).toBe(true);
   });
 
-  it('SET_DISPATCH_NARRATION is a no-op for narrationMessages when the dispatch is unknown', () => {
-    const state = reducer(initialState, { type: 'SET_DISPATCH_NARRATION', toolUseId: 'tu-unknown', narration: 'x', severity: 4 });
-    expect(state.narrationMessages).toEqual({});
+  it('a stall line then a final empty narration clears the roster line and adds no Comms line', () => {
+    let state = reducer(withOpen(), narration('Stalled. Nothing for 31 minutes.', 4, false));
+    expect(state.dispatchNarrations['tu-1'].narration).not.toBe('');
+    state = reducer(state, narration('', 1, true));
+    expect(state.dispatchNarrations['tu-1'].narration).toBe('');
+    expect(state.narrationMessages['dispatch:tu-1']).toBeUndefined();
+  });
+
+  it('onPostToolUse order: open, narration (final), no snapshot -> exactly one Comms line', () => {
+    const state = reducer(withOpen(), narration('done', 1, true));
+    expect(state.narrationMessages['dispatch:tu-1']).toHaveLength(1);
+  });
+
+  // Orchestrator ruling (Task 7 fix round 1): a stall line is for the roster
+  // only; it must not show in Comms as a completion of work still running.
+  it('a stall (final: false) in the same order adds zero Comms lines but updates dispatchNarrations', () => {
+    const seeded = withOpen();
+    let state = reducer(seeded, narration('stalled line', 4, false));
+    expect(state.dispatchNarrations['tu-1']).toEqual({ narration: 'stalled line', severity: 4 });
+    state = reducer(state, { type: 'SET_REAL_AGENTS', agents: [openDispatch] });
+    expect(state.narrationMessages).toEqual(seeded.narrationMessages);
+    expect(state.narrationBudgets).toEqual(seeded.narrationBudgets);
+  });
+
+  it('a stall, then its recovery, then the snapshot -> exactly one Comms line', () => {
+    let state = reducer(withOpen(), narration('stalled line', 4, false));
+    state = reducer(state, narration('Recovered.', 1, true));
+    state = reducer(state, { type: 'SET_REAL_AGENTS', agents: [] });
+    expect(state.narrationMessages['dispatch:tu-1']).toHaveLength(1);
+    expect(state.dispatchNarrations['tu-1']).toEqual({ narration: 'Recovered.', severity: 1 });
   });
 
   it('SET_ANOMALIES appends a STEWARD line to AETHER for a newly detected anomaly', () => {

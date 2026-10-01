@@ -6,7 +6,9 @@
 package schema
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,7 +20,7 @@ import (
 // SchemaVersion mirrors schema.ts's SCHEMA_VERSION. Both collectors write
 // the SAME database, so these MUST move together -- see issue #31 and
 // internal/schema/parity_test.go.
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 // tableColumns returns the columns physically present on a table, regardless
 // of what schema_meta claims. Migrations are driven off THIS, not off the
@@ -58,6 +60,89 @@ func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
 	}
 	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + ddl)
 	return err
+}
+
+const dispatchColumnsV9 = "tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval"
+
+func dispatchUsageIsNotNull(db *sql.DB) (bool, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('dispatches')
+		WHERE name IN ('tokens','tool_uses','duration_ms') AND "notnull" = 1`).Scan(&n)
+	return n > 0, err
+}
+
+func rebuildDispatchesWithNullableUsage(db *sql.DB) error {
+	for _, c := range [][2]string{
+		{"agent_id", "agent_id TEXT"},
+		{"task_kind", "task_kind TEXT"},
+		{"session_id", "session_id TEXT"},
+		{"retries", "retries INTEGER NOT NULL DEFAULT 0"},
+		{"exit_state", "exit_state TEXT NOT NULL DEFAULT 'ok'"},
+		{"severity", "severity INTEGER"},
+		{"median_ms_at_eval", "median_ms_at_eval INTEGER"},
+	} {
+		if err := addColumnIfMissing(db, "dispatches", c[0], c[1]); err != nil {
+			return err
+		}
+	}
+	// Take the write lock up front, like Node's BEGIN IMMEDIATE, so a
+	// concurrent writer cannot slip in between the copy and the drop. A
+	// deferred db.Begin() would lock lazily. A pinned Conn carries the
+	// explicit BEGIN IMMEDIATE; the modernc _txlock DSN option is not used
+	// because it would change every transaction on this handle. Only this
+	// conn is used inside: the caller may set SetMaxOpenConns(1), and a
+	// db.Exec while it is held would deadlock.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			// ROLLBACK may fail because SQLite already rolled back (harmless).
+			// If it fails with the tx still open, do not return a poisoned
+			// connection to the pool: mark it bad so database/sql discards it.
+			// The original error is what the caller sees either way.
+			if _, rbErr := conn.ExecContext(ctx, `ROLLBACK`); rbErr != nil {
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			}
+		}
+	}()
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS dispatches_v9`,
+		`CREATE TABLE dispatches_v9 (
+			tool_use_id TEXT PRIMARY KEY,
+			tokens INTEGER,
+			tool_uses INTEGER,
+			duration_ms INTEGER,
+			started_at_ms INTEGER NOT NULL,
+			ended_at_ms INTEGER NOT NULL,
+			agent_id TEXT,
+			task_kind TEXT,
+			session_id TEXT,
+			retries INTEGER NOT NULL DEFAULT 0,
+			exit_state TEXT NOT NULL DEFAULT 'ok',
+			severity INTEGER,
+			median_ms_at_eval INTEGER
+		)`,
+		`INSERT INTO dispatches_v9 (` + dispatchColumnsV9 + `) SELECT ` + dispatchColumnsV9 + ` FROM dispatches`,
+		`DROP TABLE dispatches`,
+		`ALTER TABLE dispatches_v9 RENAME TO dispatches`,
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // OpenDatabase opens (creating if necessary) the SQLite database at dbPath,
@@ -157,9 +242,9 @@ func Migrate(db *sql.DB) error {
 	);
 	CREATE TABLE IF NOT EXISTS dispatches (
 		tool_use_id TEXT PRIMARY KEY,
-		tokens INTEGER NOT NULL,
-		tool_uses INTEGER NOT NULL,
-		duration_ms INTEGER NOT NULL,
+		tokens INTEGER,
+		tool_uses INTEGER,
+		duration_ms INTEGER,
 		started_at_ms INTEGER NOT NULL,
 		ended_at_ms INTEGER NOT NULL
 	);
@@ -259,6 +344,24 @@ func Migrate(db *sql.DB) error {
 		); err != nil {
 			return err
 		}
+	}
+
+	// v9: dispatches usage columns become NULLABLE, mirroring schema.ts's v9
+	// block. Column-driven (pragma notnull), not version-gated, so a database
+	// stamped 9 by the Node collector but created NOT NULL here still heals.
+	notNull, err := dispatchUsageIsNotNull(db)
+	if err != nil {
+		return err
+	}
+	if notNull {
+		if err := rebuildDispatchesWithNullableUsage(db); err != nil {
+			return err
+		}
+	}
+	// Also v9, mirroring schema.ts: the parsed dispatch status. This collector
+	// does not parse <status>, so its rows leave it NULL (read as legacy).
+	if err := addColumnIfMissing(db, "dispatches", "dispatch_status", "dispatch_status TEXT"); err != nil {
+		return err
 	}
 
 	// NEVER lower the recorded version. This collector shares its database

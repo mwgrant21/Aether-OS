@@ -74,4 +74,14 @@ describe('DispatchTimeline', () => {
     );
     expect(screen.getByText('foo.ts read 3 times')).toBeTruthy();
   });
+
+  it('renders an em dash placeholder, not a fabricated 0s, for a dispatch with no reported usage', () => {
+    const { container } = render(
+      <DispatchTimeline diagnostics={{ toolCalls: [], anomalies: [], dispatches: [dispatch({ toolUseId: 'tu_n', tokens: null, toolUses: null, durationMs: null, startedAtMs: 1, endedAtMs: 2 })] }} />,
+    );
+    expect(container.textContent).toContain('\u2014 tokens');
+    expect(container.textContent).toContain('\u2014 tool uses');
+    expect(container.textContent).not.toContain('0s');
+    expect(container.textContent).not.toMatch(/NaN/);
+  });
 });

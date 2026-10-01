@@ -3,7 +3,7 @@ import { createEmptyAccumulator, accumulate } from './recapAccumulator';
 import type { LiveAgentTick } from './liveAgentTracker';
 
 function tick(overrides: Partial<LiveAgentTick> = {}): LiveAgentTick {
-  return { open: [], completed: [], work: [], anomalies: [], cacheHitRatio: 1, ...overrides };
+  return { open: [], completed: [], outcomes: new Map(), work: [], anomalies: [], cacheHitRatio: 1, ...overrides };
 }
 
 describe('recapAccumulator.accumulate', () => {
@@ -21,6 +21,15 @@ describe('recapAccumulator.accumulate', () => {
     const acc = accumulate(createEmptyAccumulator(), nextTick, prevTick, Date.now());
     expect(acc.entries).toEqual([{ kind: 'dispatchCompleted', detail: 'general-purpose: do the thing', atMs: expect.any(Number) }]);
     expect(acc.tokensBurned).toBe(500);
+  });
+
+  it('a completion with no usage block adds nothing to tokensBurned (never NaN, never a fabricated 0)', () => {
+    const nextTick = tick({
+      completed: [{ toolUseId: 't2', subagentType: 'general-purpose', description: 'no usage', startedAt: '2026-01-01T00:00:00.000Z', prompt: 'x', model: null }],
+    });
+    const acc = accumulate({ entries: [], tokensBurned: 40 }, nextTick, tick(), Date.now());
+    expect(acc.tokensBurned).toBe(40);
+    expect(acc.entries).toEqual([{ kind: 'dispatchCompleted', detail: 'general-purpose: no usage', atMs: expect.any(Number) }]);
   });
 
   it('records an anomalyDetected entry for a newly-seen anomaly toolUseId', () => {

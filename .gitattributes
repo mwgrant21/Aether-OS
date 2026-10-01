@@ -3,3 +3,7 @@
 # Icon artifacts are binary -- never line-ending normalise them.
 build/icon.ico binary
 build/icon.png binary
+
+# Node scripts with a #! line must stay LF: vitest cannot load a module whose
+# shebang ends in CRLF ("Invalid or unexpected token"), which broke windows-build.
+scripts/*.mjs text eol=lf

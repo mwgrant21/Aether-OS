@@ -3,10 +3,10 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
-import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
+import { ingestUsageEvent, ingestDispatchEvent, medianDurationMsFor } from './usageIngest.js';
 import type { TranscriptEvent } from './transcriptParser.js';
 import { createEmptyHistory, updateHistory } from './toolCallHistory.js';
-import { computeSeverity } from './personalitySpine.js';
+import { computeSeverity } from './severity/computeSeverity.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-usageingest-'));
@@ -173,15 +173,15 @@ describe('ingestDispatchEvent', () => {
     db.close();
   });
 
-  it('defaults missing numeric tags to 0 rather than failing', () => {
+  it('stores NULL usage columns when the notification carries no usage tags', () => {
     const db = freshDb();
     const history = openDispatch('tu_1', 1000);
     const event = { ...completionEvent('tu_1', 13000), humanText: '<tool-use-id>tu_1</tool-use-id>' };
     expect(ingestDispatchEvent(db, history, event)).toBe(true);
     const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
-    expect(row.tokens).toBe(0);
-    expect(row.tool_uses).toBe(0);
-    expect(row.duration_ms).toBe(0);
+    expect(row.tokens).toBeNull();
+    expect(row.tool_uses).toBeNull();
+    expect(row.duration_ms).toBeNull();
     db.close();
   });
 
@@ -235,10 +235,9 @@ describe('ingestDispatchEvent', () => {
     expect(row.median_ms_at_eval).toBeNull();
     const expectedSeverity = computeSeverity({
       exit: 'ok',
-      retries: 0,
       elapsedMs: 4321,
       medianMsAtEval: null,
-    });
+    }).severity;
     expect(row.severity).toBe(expectedSeverity);
     expect(expectedSeverity).toBe(1);
     db.close();
@@ -266,6 +265,162 @@ describe('ingestDispatchEvent', () => {
     ingestDispatchEvent(db, history, event);
     const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_1');
     expect(JSON.stringify(row)).not.toContain('subagent_tokens');
+    db.close();
+  });
+});
+
+describe('ingestDispatchEvent -- real outcomes (spec 2026-09-30 sections 3, 6, 7)', () => {
+  function notify(toolUseId: string, endedAtMs: number, body: string) {
+    return { ...completionEvent(toolUseId, endedAtMs), humanText: `<tool-use-id>${toolUseId}</tool-use-id>${body}` };
+  }
+  const quiet = () => ({ diag: () => {}, reportedStatusTags: new Set<string>() });
+
+  it('failed -> exit_state error, severity 4, NULL usage columns', () => {
+    const db = freshDb();
+    expect(ingestDispatchEvent(db, openDispatch('tu_f', 1000), notify('tu_f', 9000, '<status>failed</status>'), quiet())).toBe(true);
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_f');
+    expect(row).toMatchObject({ exit_state: 'error', severity: 4, tokens: null, tool_uses: null, duration_ms: null });
+    db.close();
+  });
+
+  it('killed -> exit_state killed, severity 2, NULL usage columns', () => {
+    const db = freshDb();
+    ingestDispatchEvent(db, openDispatch('tu_k', 1000), notify('tu_k', 9000, '<status>killed</status>'), quiet());
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_k');
+    expect(row).toMatchObject({ exit_state: 'killed', severity: 2, tokens: null, tool_uses: null, duration_ms: null });
+    db.close();
+  });
+
+  it('unrecognised status -> ok/1 and exactly one diag line per unseen value', () => {
+    const db = freshDb();
+    const lines: string[] = [];
+    const opts = { diag: (l: string) => lines.push(l), reportedStatusTags: new Set<string>() };
+    ingestDispatchEvent(db, openDispatch('tu_r1', 1000), notify('tu_r1', 2000, '<status>running</status>'), opts);
+    ingestDispatchEvent(db, openDispatch('tu_r2', 1000), notify('tu_r2', 2000, '<status>running</status>'), opts);
+    const row: any = db.prepare('SELECT exit_state, severity FROM dispatches WHERE tool_use_id = ?').get('tu_r1');
+    expect(row).toEqual({ exit_state: 'ok', severity: 1 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('tag=running');
+    db.close();
+  });
+
+  it('uses the collector history median: slow completion after 5 prior successes -> 2, median recorded', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (d: number) => `<status>completed</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    [1000, 1000, 1000, 1000, 1000].forEach((d, i) => {
+      const id = `tu_p${i}`;
+      ingestDispatchEvent(db, openDispatch(id, 100 * i), notify(id, 100 * i + 50, usage(d)), opts);
+    });
+    ingestDispatchEvent(db, openDispatch('tu_slow', 9000), notify('tu_slow', 99999, usage(3001)), opts);
+    const row: any = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_slow');
+    expect(row).toEqual({ severity: 2, median_ms_at_eval: 1000 });
+    db.close();
+  });
+
+  it('an unrecognised status with a slow usage block stays ok/1: only completed runs get the slowness bump', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (status: string, d: number) => `<status>${status}</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    [0, 1, 2, 3, 4].forEach((i) => {
+      const id = `tu_p${i}`;
+      ingestDispatchEvent(db, openDispatch(id, 100 * i), notify(id, 100 * i + 50, usage('completed', 1000)), opts);
+    });
+    ingestDispatchEvent(db, openDispatch('tu_unk', 9000), notify('tu_unk', 99999, usage('running', 3001)), opts);
+    const row: any = db.prepare('SELECT exit_state, severity FROM dispatches WHERE tool_use_id = ?').get('tu_unk');
+    expect(row).toEqual({ exit_state: 'ok', severity: 1 });
+    db.close();
+  });
+
+  it('stores the parsed status; unknown rows never enter the median, NULL-status history still does', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (status: string, d: number) => `<status>${status}</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    [0, 1, 2, 3, 4].forEach((i) => {
+      ingestDispatchEvent(db, openDispatch(`tu_u${i}`, 100 * i), notify(`tu_u${i}`, 100 * i + 50, usage('running', 9000)), opts);
+    });
+    ingestDispatchEvent(db, openDispatch('tu_c', 600), notify('tu_c', 650, usage('completed', 1000)), opts);
+    const status = (id: string) => (db.prepare('SELECT dispatch_status AS s FROM dispatches WHERE tool_use_id = ?').get(id) as { s: string | null }).s;
+    expect([status('tu_u0'), status('tu_c')]).toEqual(['unknown', 'completed']);
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBeNull();
+    // Rows written before this column existed (or by the Go collector) are NULL and still count.
+    const ins = db.prepare(`INSERT INTO dispatches (tool_use_id, duration_ms, started_at_ms, ended_at_ms, agent_id, exit_state)
+                            VALUES (?, 1000, 0, ?, 'general-purpose', 'ok')`);
+    for (let i = 0; i < 4; i++) ins.run(`legacy${i}`, 700 + i);
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBe(1000);
+    db.close();
+  });
+
+  it('the median query ignores duration_ms = 0 and NULL rows and non-ok rows', () => {
+    const db = freshDb();
+    const ins = db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, exit_state)
+                            VALUES (?, 0, 0, ?, 0, ?, 'general-purpose', 'general-purpose', ?)`);
+    for (let i = 0; i < 10; i++) ins.run(`z${i}`, 0, i, 'ok');
+    for (let i = 0; i < 4; i++) ins.run(`g${i}`, 500, 100 + i, 'ok');
+    ins.run('e0', 99999, 200, 'error');
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBeNull();
+    ins.run('g4', 500, 300, 'ok');
+    expect(medianDurationMsFor(db, 'general-purpose', 'none', 1e9)).toBe(500);
+    expect(medianDurationMsFor(db, null, 'none', 1e9)).toBeNull();
+    db.close();
+  });
+
+  it('a late completion replaces a fatal (stalled) row', () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, exit_state, severity)
+                VALUES ('tu_late', NULL, NULL, 1800001, 1000, 1801001, 'fatal', 4)`).run();
+    ingestDispatchEvent(db, openDispatch('tu_late', 1000), notify('tu_late', 1900000, '<status>completed</status><subagent_tokens>5</subagent_tokens><tool_uses>2</tool_uses><duration_ms>1899000</duration_ms>'), quiet());
+    const row: any = db.prepare('SELECT exit_state, severity, duration_ms FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(row).toEqual({ exit_state: 'ok', severity: 1, duration_ms: 1899000 });
+    db.close();
+  });
+
+  it('the median only sees history that ended before the row; a re-ingest is stable', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (d: number) => `<status>completed</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    const seed = db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, exit_state)
+                            VALUES (?, 1, 1, ?, 0, ?, 'general-purpose', 'general-purpose', 'ok')`);
+    for (let k = 0; k < 5; k++) seed.run(`h${k}`, 1000, 100 + k);
+    const history = openDispatch('tu_new', 1000);
+    const ev = notify('tu_new', 5000, usage(3500));
+    ingestDispatchEvent(db, history, ev, opts);
+    const first: any = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_new');
+    expect(first).toEqual({ severity: 2, median_ms_at_eval: 1000 });
+    for (let k = 0; k < 6; k++) seed.run(`later${k}`, 9999999, 9000 + k);
+    expect(medianDurationMsFor(db, 'general-purpose', 'tu_new', 5000)).toBe(1000);
+    ingestDispatchEvent(db, history, ev, opts);
+    const again: any = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_new');
+    expect(again).toEqual(first);
+    db.close();
+  });
+});
+
+describe('ingestDispatchEvent -- tool-error floor (spike GO)', () => {
+  const quiet = () => ({ diag: () => {}, reportedStatusTags: new Set<string>() });
+  const notify = (id: string, endedAtMs: number, body: string) => ({
+    ...completionEvent(id, endedAtMs),
+    humanText: `<tool-use-id>${id}</tool-use-id>${body}`,
+  });
+
+  it('completed with 3 tool errors in its subagent file -> ok, severity 3', () => {
+    const db = freshDb();
+    ingestDispatchEvent(db, openDispatch('tu_t', 1000), notify('tu_t', 5000, '<status>completed</status>'), {
+      ...quiet(),
+      toolErrorsFor: (id) => (id === 'tu_t' ? 3 : null),
+    });
+    const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_t');
+    expect(row).toMatchObject({ exit_state: 'ok', severity: 3 });
+    db.close();
+  });
+
+  it('failed stays 4 and killed stays 2 whatever the tool-error count', () => {
+    const db = freshDb();
+    ingestDispatchEvent(db, openDispatch('tu_u', 1000), notify('tu_u', 5000, '<status>failed</status>'), { ...quiet(), toolErrorsFor: () => 9 });
+    ingestDispatchEvent(db, openDispatch('tu_v', 1000), notify('tu_v', 5000, '<status>killed</status>'), { ...quiet(), toolErrorsFor: () => 9 });
+    const u: any = db.prepare('SELECT severity FROM dispatches WHERE tool_use_id = ?').get('tu_u');
+    const v: any = db.prepare('SELECT severity FROM dispatches WHERE tool_use_id = ?').get('tu_v');
+    expect([u.severity, v.severity]).toEqual([4, 2]);
     db.close();
   });
 });

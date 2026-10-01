@@ -65,7 +65,7 @@ export type Action =
   | { type: 'RECAP_RECEIVED'; recap: RecapPayload }
   | { type: 'DISMISS_RECAP' }
   | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string }
-  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number }
+  | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number; subagentType: string; final: boolean }
   | { type: 'SET_CROSS_ENGINE_CFG'; cfg: { enabled: boolean; provider: 'codex-chatgpt' } }
   | { type: 'SET_CODEX_TERMINAL_CFG'; cfg: { enabled: boolean } };
 
@@ -402,18 +402,20 @@ export function reducer(state: AetherState, action: Action): AetherState {
         dispatchNarrations = Object.fromEntries(Object.entries(dispatchNarrations).filter(([k]) => !toEvict.has(k)));
       }
       // Give the completed dispatch a voice-pack line in its Comms channel too
-      // (distinct from `dispatchNarrations` above, the roster card's model-written
-      // line). subagentType isn't carried on this action, so resolve it from
-      // whichever record still has it -- recentCompletedDispatches (freshest) first,
-      // falling back to an already-created dispatch channel stub.
-      const dispatchInfo =
-        state.recentCompletedDispatches.find((d) => d.toolUseId === action.toolUseId) ??
-        state.dispatchChannels.find((d) => d.toolUseId === action.toolUseId);
+      // (distinct from `dispatchNarrations` above, the roster card's deterministic (electron/narrationGenerator.ts, no model call)
+      // line). subagentType comes on the action itself: main.ts sends the
+      // narration BEFORE the snapshot that moves the dispatch into
+      // recentCompletedDispatches / dispatchChannels, and its onPostToolUse tick
+      // sends no snapshot at all, so neither record exists yet here.
+      // Only for a dispatch that really ended (final): a stall line for a
+      // still-open dispatch updates the roster (dispatchNarrations) only, so it
+      // never shows in Comms as a completion of running work.
       let narrationMessages = state.narrationMessages;
       let narrationBudgets = state.narrationBudgets;
-      if (dispatchInfo) {
+      // An empty narration only clears a stall line: no Comms completion.
+      if (action.final && action.narration !== '') {
         const applied = applyNarrationEvent(
-          { kind: 'dispatchCompleted', toolUseId: action.toolUseId, subagentType: dispatchInfo.subagentType, severity: action.severity as 0 | 1 | 2 | 3 | 4 },
+          { kind: 'dispatchCompleted', toolUseId: action.toolUseId, subagentType: action.subagentType, severity: action.severity as 0 | 1 | 2 | 3 | 4 },
           state,
           narrationMessages,
           narrationBudgets
@@ -450,8 +452,13 @@ export function reducer(state: AetherState, action: Action): AetherState {
       let notifs = state.notifs;
       let unread = state.unread;
       for (const c of action.completed) {
-        dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
-        const summary = `${c.subagentType}: ${short(c.tokens)} tok · ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} · ${fmtElapsed(c.durationMs)}`;
+        // No usage block: no entry (Ledger/Roster render a dash), and the line
+        // says so rather than printing a fabricated "0 tok" / "0s".
+        let summary = `${c.subagentType}: finished, usage not reported`;
+        if (c.tokens !== undefined && c.toolUses !== undefined && c.durationMs !== undefined) {
+          dispatchUsage = { ...dispatchUsage, [c.toolUseId]: { tokens: c.tokens, toolUses: c.toolUses, durationMs: c.durationMs } };
+          summary = `${c.subagentType}: ${short(c.tokens)} tok \u00b7 ${c.toolUses} tool call${c.toolUses === 1 ? '' : 's'} \u00b7 ${fmtElapsed(c.durationMs)}`;
+        }
         logs = logs.concat({ t: nowLong(), m: summary, c: '#3be0a0' }).slice(-14);
         notifs = [{ t: nowShort(), m: summary, c: '#3be0a0' }, ...notifs].slice(0, 12);
         unread += 1;

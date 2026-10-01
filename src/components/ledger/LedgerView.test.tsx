@@ -138,18 +138,19 @@ describe('buildDispatchRows', () => {
     expect(r.subagentType).toBe('general-purpose');
     expect(r.toolUses).toBe(4);
     // opus blend: 0.8 * $25 + 0.2 * $5 = $21 per million
-    expect(r.estimate.usdApprox).toBeCloseTo(21, 6);
+    expect(r.estimate!.usdApprox).toBeCloseTo(21, 6);
     expect(r.exitState).toBe('fatal');
     expect(r.retries).toBe(2);
   });
 
   // A row that is missing usage still tells the operator the dispatch
   // happened; dropping it would hide work rather than report it as unpriced.
-  it('keeps a dispatch with no recorded usage, estimating it at zero', () => {
+  // Every usage-derived field is null (rendered as a dash): spec section 2,
+  // "usage: undefined, never zeros". This test used to pin a zero estimate.
+  it('keeps a dispatch with no recorded usage, with every usage-derived field null', () => {
     const [r] = buildDispatchRows({ ...base, dispatchUsage: {} }, { tokensPerPoint: null, planMonthlyUsd: null });
-    expect(r.estimate.usdApprox).toBe(0);
-    expect(r.estimate.tokens).toBe(0);
-    expect(r.toolUses).toBe(0);
+    expect(r).toMatchObject({ toolUseId: 'tu_1', durationMs: null, toolUses: null, estimate: null, quota: null, exitState: 'fatal', retries: 2 });
+    expect(r.endedAt).toBe(r.startedAt);
   });
 
   // Whole-branch review, FIX 2. The test above passes tokensPerPoint: null, so
@@ -164,6 +165,33 @@ describe('buildDispatchRows', () => {
       { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
     );
     expect(r.quota).toBeNull();
+  });
+
+  // Collector NULL tokens means the notification carried no usage block. A
+  // dispatchUsage entry recorded before the live parser stopped filling 0/0/0
+  // (persisted renderer state) still reads as zeros, so the collector row's NULL
+  // tokens is the truth, and it must win over those zeros.
+  it('nulls every usage-derived field when collector telemetry says tokens is NULL', () => {
+    const [r] = buildDispatchRows(
+      {
+        ...base,
+        dispatchUsage: { tu_1: { tokens: 0, toolUses: 0, durationMs: 0 } },
+        diagnostics: { dispatches: [{ toolUseId: 'tu_1', exitState: 'killed', retries: 0, tokens: null }] },
+      },
+      { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
+    );
+    expect(r).toMatchObject({ durationMs: null, toolUses: null, estimate: null, quota: null, exitState: 'killed' });
+  });
+
+  it('leaves a row with real usage and real telemetry tokens unchanged', () => {
+    const [r] = buildDispatchRows(
+      { ...base, diagnostics: { dispatches: [{ toolUseId: 'tu_1', exitState: 'ok', retries: 0, tokens: 1_000_000 }] } },
+      { tokensPerPoint: 200_000, planMonthlyUsd: 200 },
+    );
+    expect(r.durationMs).toBe(5000);
+    expect(r.toolUses).toBe(4);
+    expect(r.estimate!.usdApprox).toBeCloseTo(21, 6);
+    expect(r.quota).not.toBeNull();
   });
 
   // The other half of the same distinction: a dispatch that genuinely reported
@@ -184,7 +212,7 @@ describe('buildDispatchRows', () => {
     expect(r.exitState).toBeNull();
     expect(r.retries).toBeNull();
     // The cost estimate does not depend on telemetry, so it still lands.
-    expect(r.estimate.usdApprox).toBeCloseTo(21, 6);
+    expect(r.estimate!.usdApprox).toBeCloseTo(21, 6);
   });
 
   // Finding 3 (day-spanning dispatch misclassification): the exact "today"

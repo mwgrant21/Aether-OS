@@ -330,6 +330,18 @@ describe('readDiagnostics dispatch telemetry (schema v5)', () => {
     expect(row.medianMsAtEval).toBeNull();
   });
 
+  it('reads a killed exit and NULL usage columns (schema v9) as killed / null, never 0', () => {
+    const dbPath = tempDbForDiagnostics(5);
+    const db = new DatabaseSync(dbPath);
+    db.exec(`DROP TABLE dispatches;
+      CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER, tool_uses INTEGER, duration_ms INTEGER, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL, agent_id TEXT, task_kind TEXT, session_id TEXT, retries INTEGER NOT NULL DEFAULT 0, exit_state TEXT NOT NULL DEFAULT 'ok', severity INTEGER, median_ms_at_eval INTEGER);
+      INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, exit_state, severity)
+      VALUES ('tu_k', NULL, NULL, NULL, 1000, 61000, 'killed', 2);`);
+    db.close();
+    const row = readDiagnostics(dbPath, 0)!.dispatches[0];
+    expect(row).toMatchObject({ exitState: 'killed', severity: 2, tokens: null, toolUses: null, durationMs: null });
+  });
+
   // The cost-of-failure case the Ledger's dispatch table exists to surface:
   // tokens were spent, the work failed unrecoverably, and it was retried.
   it('reads a fatal exit with retries > 0', () => {

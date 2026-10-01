@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { TranscriptEvent } from '../../electron/transcriptParser';
-import type { CompletedDispatchUsage } from '../state/liveAgentsMath';
+import type { CompletedDispatchWithUsage } from '../state/liveAgentsMath';
 import {
   sessionLedger,
   tiersInSession,
@@ -46,7 +46,7 @@ function usage(input = 0, output = 0, cacheCreation = 0, cacheRead = 0) {
   };
 }
 
-function dispatch(over: Partial<CompletedDispatchUsage> = {}): CompletedDispatchUsage {
+function dispatch(over: Partial<CompletedDispatchWithUsage> = {}): CompletedDispatchWithUsage {
   return {
     toolUseId: 'tu_1',
     subagentType: 'general-purpose',

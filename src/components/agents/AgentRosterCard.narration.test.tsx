@@ -16,7 +16,7 @@ function Setter({ agents, narrations }: { agents: RealAgentDispatch[]; narration
   useEffect(() => {
     dispatch({ type: 'SET_REAL_AGENTS', agents });
     for (const [toolUseId, narration] of Object.entries(narrations)) {
-      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity: 1 });
+      dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity: 1, subagentType: 'code-reviewer', final: true });
     }
   }, [dispatch, agents, narrations]);
   return null;
@@ -68,7 +68,7 @@ function CompletionSetter({ toolUseId, narration }: { toolUseId: string; narrati
     // agents:narration emission timing.
     dispatch({ type: 'SET_REAL_AGENTS', agents: [dispatchInfo] });
     dispatch({ type: 'SET_REAL_AGENTS', agents: [] });
-    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity: 2 });
+    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity: 2, subagentType: 'code-reviewer', final: true });
   }, [dispatch, toolUseId, narration]);
   return null;
 }
@@ -94,7 +94,7 @@ function SilentDialSetter({ toolUseId, narration, severity }: { toolUseId: strin
       type: 'SET_REAL_AGENTS',
       agents: [{ toolUseId, subagentType: 'x', description: 'd', startedAt: new Date().toISOString(), prompt: '', model: null }],
     });
-    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity });
+    dispatch({ type: 'SET_DISPATCH_NARRATION', toolUseId, narration, severity, subagentType: 'code-reviewer', final: true });
   }, [dispatch, toolUseId, narration, severity]);
   return null;
 }
