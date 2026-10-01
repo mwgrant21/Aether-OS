@@ -170,7 +170,7 @@ on the app's existing 900ms tick) — never a `state` push, and it is the one de
 the `useRealAgentsSync.ts` pattern that feeds every other real-data surface into the store.
 `src/state/noPayloadInStore.test.ts` is the mechanical enforcement: it asserts no
 transcript-message type is reachable from `AetherState`. The operator is the only reader of their
-own transcripts on their own machine, and nothing leaves it (except dispatch result text under §14, when enabled) — the original rule was written to
+own transcripts on their own machine, and nothing leaves it (except what §14 sends, when enabled) — the original rule was written to
 prevent a *store* that could leak, not to prevent the operator from looking at their own session.
 
 ---
@@ -620,10 +620,10 @@ transcript content, which strains the Stage 14 "never in `~/.aether-os/`" amendm
 section names that tension and does not resolve it.
 
 **Backfill.** Scan offsets persist in `collector.db` (`transcript_files.last_offset`) and only
-advance when a scan runs. Dispatches the collector scans while the setting is off are never
-extracted later. Dispatches it has not yet scanned are sent the next time it scans with the
-setting ON. That covers dispatches that completed while the collector was not running, and every
-past dispatch when `collector.db` is fresh or deleted (the rescan starts at offset 0).
+advance when a scan runs. Dispatches the collector scans while the setting is off are not
+extracted later unless `collector.db` is deleted. Qualifying dispatches it has not yet scanned
+are sent the next time it scans with the setting ON. That covers dispatches that started and
+completed while the collector was not running, and every past dispatch when `collector.db` is fresh or deleted (the rescan starts at offset 0).
 
 **Deployment caveat.** The gate takes effect only once the collector `dist` is rebuilt or
 reinstalled. The installed collector runs from its built output, and a pre-#104 collector

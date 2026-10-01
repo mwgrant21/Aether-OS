@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { useAetherStore } from '../../state/store';
@@ -33,7 +33,27 @@ import { usd, approxUsd, ESTIMATE_BASIS_TOOLTIP } from './format';
  */
 export function LedgerView() {
   const colors = useColors();
-  const { state } = useAetherStore();
+  const { state, dispatch } = useAetherStore();
+  // memoryExtractionEnabled defaults to false until Settings mounts its card, so the
+  // Ledger hydrates it from the file-backed bridge itself and shows neutral copy until
+  // it is known (no bridge, i.e. browser mode, is known immediately: OFF).
+  const [memKnown, setMemKnown] = useState(() => !window.aetherElectron?.memoryExtraction);
+  useEffect(() => {
+    const api = window.aetherElectron?.memoryExtraction;
+    if (!api) return;
+    let live = true;
+    api
+      .get()
+      .then((value) => {
+        if (!live) return;
+        dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: value === true });
+        setMemKnown(true);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [dispatch]);
   const { ledger, showDispatchDetail } = resolveLedgerViewData(state);
 
   const rows = buildDispatchRows(state, {
@@ -138,10 +158,15 @@ export function LedgerView() {
               because "does this app cost me anything" is a question worth
               answering once and for good. */}
           <div style={aetherRowStyle(colors)}>
-            <span style={aetherLabelStyle(colors)}>Aether OS itself: {usd(0)}</span>
+            <span style={aetherLabelStyle(colors)}>
+              Aether OS itself:{memKnown && !state.memoryExtractionEnabled ? ` ${usd(0)}` : ''}
+            </span>
             <span style={aetherNoteStyle(colors)}>
-              no model call sites exist — guaranteed by src/shared/noApiCalls.test.ts, which fails the build if
-              one reappears
+              {!memKnown
+                ? 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); memory extraction status loading'
+                : state.memoryExtractionEnabled
+                  ? 'memory extraction is ON: it runs the Claude CLI and can bill depending on how Claude Code is configured (Settings, privacy section 14); its cost is not tracked here'
+                  : 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); opt-in memory extraction is off'}
             </span>
           </div>
 
