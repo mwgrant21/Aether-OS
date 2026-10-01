@@ -24,7 +24,7 @@ export function CostGuardCard() {
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>MEMORY EXTRACTION</div>
         <div style={valueStyle(colors)}>
-          {memoryExtractionOn ? 'ON · dispatch result text sent to your Claude account via the claude CLI' : 'OFF'}
+          {memoryExtractionOn ? 'ON · dispatch result text and up to 20 prior memories sent via the claude CLI' : 'OFF'}
         </div>
       </div>
       <div style={rowStyle(colors)}>

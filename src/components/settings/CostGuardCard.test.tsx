@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen, fireEvent, within } from '@testing-library/react';
 import { CostGuardCard } from './CostGuardCard';
+import { MemoryExtractionCard } from './MemoryExtractionCard';
 import { CrossEngineVerificationCard } from './CrossEngineVerificationCard';
 import { AetherStoreProvider } from '../../state/store';
 
@@ -73,6 +74,23 @@ describe('CostGuardCard memory extraction row', () => {
     expect(within(row).getByText('OFF')).toBeTruthy();
     // The always-visible hint names the path and what it sends.
     expect(screen.getByText(/dispatch result\s+text to your Claude account through the claude CLI/i)).toBeTruthy();
+  });
+});
+
+describe('CostGuardCard memory extraction ON row', () => {
+  it('states the ON copy: result text and up to 20 prior memories via the claude CLI', async () => {
+    (window as unknown as { aetherElectron?: unknown }).aetherElectron = {
+      memoryExtraction: { get: async () => true, set: async (v: boolean) => v },
+    };
+    render(
+      <AetherStoreProvider>
+        <MemoryExtractionCard />
+        <CostGuardCard />
+      </AetherStoreProvider>,
+    );
+    expect(
+      await screen.findByText('ON · dispatch result text and up to 20 prior memories sent via the claude CLI'),
+    ).toBeTruthy();
   });
 });
 

@@ -133,7 +133,7 @@ describe('MemoryExtractionCard disclosure wording', () => {
     renderBoth();
     fireEvent.click(within(cardHeader()).getByText('ENABLE'));
     expect(
-      screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses whatever Claude Code is set up to use \(your login, or an apiKeyHelper or settings key if you configured one\)/),
+      screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses whatever Claude Code is set up to use \(your login, or an apiKeyHelper, settings key or Bedrock\/Vertex if you configured one\)/),
     ).toBeTruthy();
     expect(screen.queryByText(/API keys are stripped/i)).toBeNull();
     expect(
