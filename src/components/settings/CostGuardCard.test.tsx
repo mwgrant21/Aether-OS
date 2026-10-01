@@ -87,3 +87,17 @@ describe('CostGuardCard hint wording', () => {
     expect(screen.queryByText(/the one Claude-CLI path/i)).toBeNull();
   });
 });
+
+describe('CostGuardCard env-scrub wording', () => {
+  it('names the three removed variables instead of claiming API keys are stripped', () => {
+    render(
+      <AetherStoreProvider>
+        <CostGuardCard />
+      </AetherStoreProvider>,
+    );
+    expect(
+      screen.getByText(/only ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses Claude Code's own setup/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/API keys stripped/i)).toBeNull();
+  });
+});

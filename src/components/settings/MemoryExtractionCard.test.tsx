@@ -11,11 +11,18 @@ function installBridge(bridge: Bridge) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
 });
 
+// Requires vi.useFakeTimers() to be active BEFORE the action under test, so a timer
+// of any length scheduled by a deferred-set mutant is run here.
 async function flush() {
+  await act(() => vi.runAllTimersAsync());
+}
+
+async function settle() {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 20));
   });
@@ -58,12 +65,14 @@ describe('MemoryExtractionCard', () => {
     const set = vi.fn().mockResolvedValue(true);
     installBridge({ get: vi.fn().mockResolvedValue(false), set });
     renderBoth();
+    await act(async () => {}); // let mount hydration settle on real timers
+    vi.useFakeTimers();
     fireEvent.click(within(cardHeader()).getByText('ENABLE'));
     expect(set).not.toHaveBeenCalled();
     expect(screen.getByText(/claude CLI \(claude -p --model haiku\)/)).toBeTruthy();
-    expect(screen.getByText(/within about 30 seconds/)).toBeTruthy();
+    expect(screen.getByText(/usually within about 30 seconds/)).toBeTruthy();
     expect(screen.getByText(/up to 20 memories previously extracted for that agent/)).toBeTruthy();
-    await flush(); // a deferred (microtask/timer) set() must be caught too
+    await flush(); // fake timers: a deferred set() of any delay must be caught
     expect(set).not.toHaveBeenCalled();
     expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy();
     expect(within(costGuardRow()).getByText('OFF')).toBeTruthy();
@@ -72,6 +81,7 @@ describe('MemoryExtractionCard', () => {
     expect(set).not.toHaveBeenCalled();
     expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy();
     expect(within(costGuardRow()).getByText('OFF')).toBeTruthy();
+    vi.useRealTimers();
     fireEvent.click(within(cardHeader()).getByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
     await waitFor(() => expect(set).toHaveBeenCalledWith(true));
@@ -100,7 +110,7 @@ describe('MemoryExtractionCard', () => {
     renderBoth();
     await waitFor(() => expect(within(cardHeader()).getByText('DISABLE')).toBeTruthy());
     fireEvent.click(within(cardHeader()).getByText('DISABLE'));
-    await flush();
+    await settle();
     expect(get).toHaveBeenCalledTimes(2);
     expect(within(cardHeader()).getByText('DISABLE')).toBeTruthy();
   });
@@ -114,5 +124,21 @@ describe('MemoryExtractionCard', () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith(true));
     expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy();
     expect(within(costGuardRow()).getByText('OFF')).toBeTruthy();
+  });
+});
+
+describe('MemoryExtractionCard disclosure wording', () => {
+  it('states exactly which env vars are removed and that Claude Code adds its own context and hooks', () => {
+    installBridge({ get: vi.fn().mockResolvedValue(false), set: vi.fn() });
+    renderBoth();
+    fireEvent.click(within(cardHeader()).getByText('ENABLE'));
+    expect(
+      screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses whatever Claude Code is set up to use \(your login, or an apiKeyHelper or settings key if you configured one\)/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/API keys are stripped/i)).toBeNull();
+    expect(
+      screen.getByText(/Claude Code also adds its own context to each call \(for example your CLAUDE\.md files\) and runs your configured hooks\./),
+    ).toBeTruthy();
+    expect(screen.getByText(/dispatches the collector picks up after you enable it/)).toBeTruthy();
   });
 });
