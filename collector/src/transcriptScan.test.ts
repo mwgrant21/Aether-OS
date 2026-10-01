@@ -707,8 +707,8 @@ describe('scanTranscriptsOnce -- backfill severity is scan-order independent (#1
   }
 });
 
-describe('scanTranscriptsOnce -- a failed pass checkpoints nothing', () => {
-  it('rolls back usage rows and offsets, and keeps prior histories, when the deferred dispatch flush throws', () => {
+describe('scanTranscriptsOnce -- a failed file checkpoints nothing', () => {
+  it("rolls back the file's usage rows and offset, and keeps its prior history, when its dispatch write throws", () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
     const projDir = join(projectsRoot, 'my-project');
     mkdirSync(projDir);
@@ -723,7 +723,7 @@ describe('scanTranscriptsOnce -- a failed pass checkpoints nothing', () => {
     writeFileSync(join(projDir, 'session.jsonl'), `${assistantLine(100)}\n${agentUse}\n${completion}\n`, 'utf8');
 
     const db = freshDb();
-    db.exec('DROP TABLE dispatches'); // the flush's INSERT now fails
+    db.exec('DROP TABLE dispatches'); // the file's dispatch INSERT now fails
     const histories = new Map();
     expect(() => scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 30), histories)).toThrow(/dispatches/);
 
