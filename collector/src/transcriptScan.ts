@@ -1,7 +1,7 @@
 import { readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { parseTranscriptLine } from './transcriptParser.js';
+import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser.js';
 import { stampTranscriptScanHeartbeat } from './schema.js';
 import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
@@ -92,6 +92,10 @@ export function scanTranscriptsOnce(
   let toolCallsIngested = 0;
   let anomaliesIngested = 0;
 
+  const pendingDispatches: { history: ToolCallHistory; event: TranscriptEvent; toolErrorsFor: (id: string) => number | null }[] = [];
+  const extractCandidates: TranscriptEvent[] = [];
+  const pendingSweeps: { history: ToolCallHistory; lastProgressFor: (id: string) => number | null }[] = [];
+
   for (const dirName of projectDirs) {
     const dirPath = join(projectsRoot, dirName);
     let files: string[];
@@ -145,61 +149,17 @@ export function scanTranscriptsOnce(
       // and its completion arriving in the same scan tick still correlate --
       // updateHistory never closes an Agent entry via a normal tool_result, so
       // the open entry survives into anomalyResult.history either way.
+      // Deferred to the end of the pass (see flush below) so completions are
+      // scored in time order, not directory order (#106).
       for (const event of parsedEvents) {
-        ingestDispatchEvent(db, anomalyResult.history, event, {
-          toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
-        });
+        pendingDispatches.push({ history: anomalyResult.history, event, toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id) });
       }
-
-      // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
-      // SS2). extractQueue is optional so every existing caller (including this
-      // file's own tests) is unaffected when omitted -- extraction is simply
-      // skipped. Reads event.humanText (already parsed, already in memory for
-      // this scan tick), never re-opens the file and never persists the text
-      // anywhere.
       if (extractQueue) {
         for (const event of parsedEvents) {
-          if (event.originKind !== 'task-notification') continue;
-          const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
-          if (!idMatch) continue;
-          const toolUseId = idMatch[1];
-
-          const row = db
-            .prepare(
-              'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
-            )
-            .get(toolUseId) as
-            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number | null; tool_uses: number | null; exit_state: string }
-            | undefined;
-          if (!row || !row.agent_id) continue;
-          if (row.exit_state !== 'ok') continue;
-          if (row.duration_ms === null || row.tool_uses === null) continue;
-          if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
-
-          const runSummary = extractDispatchResultText(event.humanText);
-          if (!runSummary) continue;
-
-          extractQueue.push({
-            agentId: row.agent_id,
-            taskKind: row.task_kind ?? row.agent_id,
-            sessionId: row.session_id,
-            toolUseId,
-            runSummary,
-            queuedAtMs: nowMs,
-          });
+          if (event.originKind === 'task-notification') extractCandidates.push(event);
         }
       }
-
-      // Fatal-via-staleness sweep: run after the above ingest work so it sees
-      // this tick's freshest history. ingestDispatchEvent does not mutate
-      // history or remove entries from openByToolUseId, so an Agent entry
-      // that just completed via ingestDispatchEvent above still survives into
-      // anomalyResult.history and is offered to the sweep below. It is only
-      // the `exit_state !== 'fatal'` guard inside sweepStaleDispatches (in
-      // staleDispatchSweep.ts) that prevents that already-completed dispatch
-      // from being re-flagged as fatal -- that guard is load-bearing, not
-      // redundant.
-      sweepStaleDispatches(db, anomalyResult.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
+      pendingSweeps.push({ history: anomalyResult.history, lastProgressFor: (id) => subagentProbe.lastWriteMsFor(id) });
 
       filesScanned += 1;
       recordOffset(db, relativePath, newOffset, nowMs);
@@ -252,13 +212,72 @@ export function scanTranscriptsOnce(
         // nested Agent calls close by tool_result, not task-notification, so
         // their entries stay open forever and a sweep would mark them all fatal.
         for (const event of subParsedEvents) {
-          ingestDispatchEvent(db, subAnomalyResult.history, event, {
-            toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id),
-          });
+          pendingDispatches.push({ history: subAnomalyResult.history, event, toolErrorsFor: (id) => subagentProbe.toolErrorsFor(id) });
         }
         recordOffset(db, subRelativePath, subNewOffset, nowMs);
       }
     }
+  }
+
+  // Dispatch completions, oldest first (#106). medianDurationMsFor only sees
+  // rows already inserted, so scoring in directory order let a run miss
+  // earlier baseline samples whose files were read later, and the stored
+  // severity then depended on readdirSync order. A first scan reads every
+  // file whole, so a backfill lands in this one pass. Array.prototype.sort is
+  // stable: events with equal (or null) timestamps keep their scan order, and
+  // ingestDispatchEvent rejects null timestamps anyway.
+  pendingDispatches.sort((a, b) => (a.event.timestamp?.getTime() ?? Infinity) - (b.event.timestamp?.getTime() ?? Infinity));
+  for (const p of pendingDispatches) {
+    ingestDispatchEvent(db, p.history, p.event, { toolErrorsFor: p.toolErrorsFor });
+  }
+
+  // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
+  // SS2). extractQueue is optional so every existing caller (including this
+  // file's own tests) is unaffected when omitted -- extraction is simply
+  // skipped. Reads event.humanText (already parsed, already in memory for
+  // this scan tick), never re-opens the file and never persists the text
+  // anywhere. Runs after the flush above, which writes the rows it reads.
+  for (const event of extractCandidates) {
+    const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
+    if (!idMatch || !extractQueue) continue;
+    const toolUseId = idMatch[1];
+
+    const row = db
+      .prepare(
+        'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
+      )
+      .get(toolUseId) as
+      | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number | null; tool_uses: number | null; exit_state: string }
+      | undefined;
+    if (!row || !row.agent_id) continue;
+    if (row.exit_state !== 'ok') continue;
+    if (row.duration_ms === null || row.tool_uses === null) continue;
+    if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
+
+    const runSummary = extractDispatchResultText(event.humanText);
+    if (!runSummary) continue;
+
+    extractQueue.push({
+      agentId: row.agent_id,
+      taskKind: row.task_kind ?? row.agent_id,
+      sessionId: row.session_id,
+      toolUseId,
+      runSummary,
+      queuedAtMs: nowMs,
+    });
+  }
+
+  // Fatal-via-staleness sweep: run after the flush so it sees this tick's
+  // completions. ingestDispatchEvent does not mutate history or remove
+  // entries from openByToolUseId, so an Agent entry that just completed
+  // above still survives into its file's history and is offered to the
+  // sweep. It is only the existing-row guard inside sweepStaleDispatches (in
+  // staleDispatchSweep.ts) that prevents that already-completed dispatch
+  // from being re-flagged as fatal -- that guard is load-bearing, not
+  // redundant. Subagent histories are never swept (see the nested-dispatch
+  // note above).
+  for (const s of pendingSweeps) {
+    sweepStaleDispatches(db, s.history, nowMs, s.lastProgressFor);
   }
 
   return { filesScanned, eventsIngested, toolCallsIngested, anomaliesIngested };

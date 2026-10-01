@@ -60,9 +60,9 @@ const reportedStatusTagsForProcess = new Set<string>();
 // historic failures that were stored as ok with 0 ms. The row being ingested
 // is excluded, so a re-ingest never compares a run against itself. Only rows
 // that ended before beforeMs count, so a row is never scored against its own
-// future. That does NOT make a first backfill order-independent: a row only
-// sees earlier rows that were already ingested, and transcript files are
-// scanned in directory order, not by time.
+// future. A row only sees earlier rows that were already ingested, so callers
+// must ingest completions in time order: scanTranscriptsOnce sorts each pass's
+// completions by timestamp before calling this (#106).
 export function medianDurationMsFor(db: DatabaseSync, agentId: string | null, excludeToolUseId: string, beforeMs: number): number | null {
   if (agentId === null) return null;
   const rows = db
