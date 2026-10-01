@@ -141,11 +141,56 @@ describe('memory extraction gate (#104)', () => {
     expect(claudePromptCalls()).toEqual([]);
   });
 
-  it('work scanned while off is never staged: enabling later does not send it', async () => {
-    const stop = start(); // initial scan runs with the setting off and consumes the transcript
-    await sleep(120);
+  // Start with an EMPTY projects dir so the initial scan/drain cannot mask anything:
+  // the transcript appears only after start, is scanned by the 50 ms scan timer while
+  // the setting is off, and the setting flips on before the 400 ms drain fires.
+  function startSlowDrain(): () => void {
+    return startCollector({
+      dbPath: join(dir, 'collector.db'),
+      spoolDir: join(dir, 'spool'),
+      tailIntervalMs: 1_000_000,
+      compactIntervalMs: 1_000_000,
+      projectsRoot: join(dir, 'projects'),
+      transcriptScanIntervalMs: 50,
+      ownSessionFilePath: join(dir, 'own-session.json'),
+      fleetPollIntervalMs: 1_000_000,
+      memoryDbPath: join(dir, 'memory.db'),
+      memoryExtractIntervalMs: 400,
+      collectorSettingsPath: settingsPath,
+    });
+  }
+
+  function writeFixture(): void {
+    const proj = join(dir, 'projects', 'my-project');
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(
+      join(proj, 'session.jsonl'),
+      [agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'), taskNotificationLine('tu_1', '2026-07-08T09:01:30Z')].join('\n') + '\n',
+      'utf8'
+    );
+  }
+
+  it('work scanned while off is never staged: enabling before the next drain does not send it', async () => {
+    rmSync(join(dir, 'projects'), { recursive: true, force: true });
+    mkdirSync(join(dir, 'projects'), { recursive: true });
+    const stop = startSlowDrain();
+    writeFixture();
+    await sleep(150); // scans run while off
     writeFileSync(settingsPath, '{"memoryExtractionEnabled":true}', 'utf8');
-    await sleep(300); // several drain ticks with the setting now on
+    await sleep(600); // past the 400 ms drain
+    stop();
+    expect(claudePromptCalls()).toEqual([]);
+  });
+
+  it('item staged while on but turned off before the drain is never sent', async () => {
+    rmSync(join(dir, 'projects'), { recursive: true, force: true });
+    mkdirSync(join(dir, 'projects'), { recursive: true });
+    writeFileSync(settingsPath, '{"memoryExtractionEnabled":true}', 'utf8');
+    const stop = startSlowDrain();
+    writeFixture();
+    await sleep(150); // staged while on
+    writeFileSync(settingsPath, '{"memoryExtractionEnabled":false}', 'utf8');
+    await sleep(600);
     stop();
     expect(claudePromptCalls()).toEqual([]);
   });
@@ -178,6 +223,29 @@ describe('memoryExtractionTick', () => {
     const execFn = vi.fn(async () => ({ stdout: '[]' }));
     await memoryExtractionTick(store, queue, join(dir, 'missing.json'), execFn);
     expect(execFn).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(0);
+    store.close();
+  });
+
+  it('turning the setting off mid-batch stops the remaining items', async () => {
+    const store = createMemoryStore(join(dir, 'memory.db'));
+    const settings = join(dir, 'collector-settings.json');
+    writeFileSync(settings, '{"memoryExtractionEnabled":true}', 'utf8');
+    const queue = queueWithOneItem();
+    queue.push({
+      agentId: 'CINDER',
+      taskKind: 'dispatch',
+      sessionId: 's1',
+      toolUseId: 'tu_2',
+      runSummary: 'Second item.',
+      queuedAtMs: 0,
+    });
+    const execFn = vi.fn(async () => {
+      writeFileSync(settings, '{"memoryExtractionEnabled":false}', 'utf8');
+      return { stdout: '[]' };
+    });
+    await memoryExtractionTick(store, queue, settings, execFn);
+    expect(execFn).toHaveBeenCalledTimes(1);
     expect(queue.size()).toBe(0);
     store.close();
   });

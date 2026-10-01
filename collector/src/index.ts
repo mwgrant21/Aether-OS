@@ -42,20 +42,24 @@ export async function pollAndUpsertFleet(
 
 // Memory extraction calls a model (claude -p), so it is opt-in, default OFF (#104).
 // The setting is re-read at every tick, and gated at BOTH ends: the scan only
-// stages work while it is on, and the drain only executes while it is on. An item
-// staged while on and still queued when the user turns it off is discarded here
-// without reaching the extractor, so "off" means off at the moment of exec.
+// stages work while it is on, and the drain re-checks it before EVERY item. The
+// queue is taken into a local batch and each item runs through its own one-item
+// queue, so an item staged while on and still waiting when the user turns it off
+// (including mid-batch, while an earlier item's `claude -p` is awaited) is dropped
+// without reaching the extractor: "off" means off at the moment of each exec.
 export async function memoryExtractionTick(
   store: MemoryStore,
   queue: MemoryExtractQueue,
   settingsPath: string,
   execFn?: ExtractExecFn
 ): Promise<void> {
-  if (!readMemoryExtractionEnabled(settingsPath)) {
-    queue.drain();
-    return;
+  const batch = queue.drain();
+  for (const item of batch) {
+    if (!readMemoryExtractionEnabled(settingsPath)) return;
+    const single = createMemoryExtractQueue();
+    single.push(item);
+    await drainMemoryExtractQueue(store, single, execFn);
   }
-  await drainMemoryExtractQueue(store, queue, execFn);
 }
 
 export function startCollector(options: {

@@ -194,11 +194,15 @@ describe('cross-engine Codex boundary', () => {
     for (const m of text.matchAll(/\b(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s+as\s+([A-Za-z_$][\w$]*)/g)) {
       names.add(m[2]);
     }
+    // Destructure-rename: const { execFile: ef } = require('child_process')
+    for (const m of text.matchAll(/\b(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+      names.add(m[2]);
+    }
     // Fixpoint so a promisify of an alias (declared in any order) resolves.
     let grew = true;
     while (grew) {
       grew = false;
-      for (const m of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$]+\.)?promisify\(\s*(?:[\w$]+\.)?([A-Za-z_$][\w$]*)\s*\)/g)) {
+      for (const m of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:[\w$]+\.)?promisify\(\s*(?:[\w$]+\.)?([A-Za-z_$][\w$]*)\s*\)/g)) {
         if (names.has(m[2]) && !names.has(m[1])) {
           names.add(m[1]);
           grew = true;
@@ -211,7 +215,7 @@ describe('cross-engine Codex boundary', () => {
   function launchesClaude(text: string): boolean {
     const alt = launchNamesFor(text).map((n) => n.replace(/\$/g, '\\$')).join('|');
     const re = new RegExp(
-      '(?<![\\w$])(?:' + alt + ')\\s*\\(\\s*[\'"\\x60]claude(?:\\.exe|\\.cmd)?(?:[\'"\\x60]|\\s)'
+      '(?<![\\w$])(?:(?:' + alt + ')|(?:[\\w$]+\\.)?promisify\\(\\s*(?:[\\w$]+\\.)?(?:' + alt + ')\\s*\\))\\s*\\(\\s*[\'"\\x60]claude(?:\\.exe|\\.cmd)?(?:[\'"\\x60]|\\s)'
     );
     return re.test(text);
   }
@@ -235,6 +239,9 @@ describe('cross-engine Codex boundary', () => {
       'execSync(`claude -p hi`)',
       "const run = util.promisify(cp.execFile); run('claude', [])",
       "cp.spawn('claude.exe')",
+      "await promisify(execFile)('claude', ['-p'])",
+      "const run: Fn = promisify(execFile); run('claude', [])",
+      "const { execFile: ef } = require('child_process'); ef('claude', [])",
     ];
     const mustNotMatch = [
       "spawn('codex', [])",
