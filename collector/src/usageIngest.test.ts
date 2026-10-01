@@ -318,6 +318,20 @@ describe('ingestDispatchEvent -- real outcomes (spec 2026-09-30 sections 3, 6, 7
     db.close();
   });
 
+  it('an unrecognised status with a slow usage block stays ok/1: only completed runs get the slowness bump', () => {
+    const db = freshDb();
+    const opts = quiet();
+    const usage = (status: string, d: number) => `<status>${status}</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>${d}</duration_ms>`;
+    [0, 1, 2, 3, 4].forEach((i) => {
+      const id = `tu_p${i}`;
+      ingestDispatchEvent(db, openDispatch(id, 100 * i), notify(id, 100 * i + 50, usage('completed', 1000)), opts);
+    });
+    ingestDispatchEvent(db, openDispatch('tu_unk', 9000), notify('tu_unk', 99999, usage('running', 3001)), opts);
+    const row: any = db.prepare('SELECT exit_state, severity FROM dispatches WHERE tool_use_id = ?').get('tu_unk');
+    expect(row).toEqual({ exit_state: 'ok', severity: 1 });
+    db.close();
+  });
+
   it('the median query ignores duration_ms = 0 and NULL rows and non-ok rows', () => {
     const db = freshDb();
     const ins = db.prepare(`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind, exit_state)

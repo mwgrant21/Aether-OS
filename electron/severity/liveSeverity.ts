@@ -53,7 +53,8 @@ export function createLiveSeverityNarrator(deps: LiveSeverityDeps): LiveSeverity
         exit: exitStateForStatus(outcome.status),
         // No usage block means no measured duration: NaN, which
         // computeSeverity's isFinite guard treats as "no slowness bump".
-        elapsedMs: outcome.usage ? outcome.usage.durationMs : Number.NaN,
+        // Only completed runs are scored for slowness: unknown stays at 1.
+        elapsedMs: outcome.status === 'completed' && outcome.usage ? outcome.usage.durationMs : Number.NaN,
         medianMsAtEval,
         toolErrors: outcome.status === 'completed' ? toolErrors : null,
       });

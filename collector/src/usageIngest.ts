@@ -100,7 +100,8 @@ export function ingestDispatchEvent(
   const endedAtMs = event.timestamp.getTime();
   const result = computeSeverity({
     exit: exitStateForStatus(outcome.status),
-    elapsedMs: outcome.usage?.durationMs ?? 0,
+    // Only completed runs are scored for slowness: unknown stays at 1.
+    elapsedMs: outcome.status === 'completed' ? (outcome.usage?.durationMs ?? 0) : 0,
     medianMsAtEval: medianDurationMsFor(db, open.subagentType, dispatchToolUseId, endedAtMs),
     toolErrors: outcome.status === 'completed' ? (options.toolErrorsFor?.(dispatchToolUseId) ?? null) : null,
   });

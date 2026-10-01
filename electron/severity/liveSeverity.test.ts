@@ -63,6 +63,11 @@ describe('createLiveSeverityNarrator', () => {
     expect(n.onCompleted(completed('m'), tracked('completed'))!.severity).toBe(1);
   });
 
+  it('an unknown status with a slow usage block stays at 1: only completed runs get the slowness bump', () => {
+    const n = createLiveSeverityNarrator({ baseline: fakeBaseline(1000), narrate });
+    expect(n.onCompleted(completed('s'), tracked('unknown', 3001))!.severity).toBe(1);
+  });
+
   it('a stall fires exactly once across ticks, as severity 4', () => {
     const n = createLiveSeverityNarrator({ baseline: fakeBaseline(), narrate });
     const d = [open('s')];
