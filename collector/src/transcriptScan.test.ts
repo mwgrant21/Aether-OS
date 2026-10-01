@@ -705,6 +705,29 @@ describe('scanTranscriptsOnce -- backfill severity is scan-order independent (#1
       db.close();
     });
   }
+
+  it('rescores the late run from the database when its baseline arrives in a later scan', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'late.jsonl'), `${lateLines.join('\n')}\n`, 'utf8');
+
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 10, 1, 0), new Map());
+    const before = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(before).toMatchObject({ severity: 1, median_ms_at_eval: null });
+
+    // A fresh history map and no reread of late.jsonl: only stored rows can
+    // drive its rescore, the same position a crash before the rescore leaves
+    // the next scan in.
+    writeFileSync(join(projDir, 'early.jsonl'), `${earlyLines.join('\n')}\n`, 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 10, 2, 0), new Map());
+
+    const late = db.prepare('SELECT severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(late).toMatchObject({ severity: 2, median_ms_at_eval: 10_000 });
+    expect(db.prepare("SELECT 1 FROM schema_meta WHERE key = 'dispatch_rescore_from_ms'").get()).toBeUndefined();
+    db.close();
+  });
 });
 
 describe('scanTranscriptsOnce -- a failed file checkpoints nothing', () => {

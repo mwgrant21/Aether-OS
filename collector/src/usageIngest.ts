@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { TranscriptEvent } from './transcriptParser.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { parseDispatchOutcome, unrecognisedStatusTag } from './severity/parseDispatchOutcome.js';
-import { computeSeverity, exitStateForStatus } from './severity/computeSeverity.js';
+import { computeSeverity, exitStateForStatus, TOOL_ERROR_FLOOR, type ExitState } from './severity/computeSeverity.js';
 import { medianOf, BASELINE_WINDOW } from './severity/baselineMath.js';
 
 /**
@@ -62,8 +62,8 @@ const reportedStatusTagsForProcess = new Set<string>();
 // that ended before beforeMs count, so a row is never scored against its own
 // future. A row only sees earlier rows that were already ingested, so a
 // completion scored before its predecessors are stored gets a partial
-// baseline: scanTranscriptsOnce rescores each pass's completions once all of
-// them are stored (#106).
+// baseline: rescorePendingDispatches corrects that from the database once the
+// scan pass has stored them all (#106).
 export function medianDurationMsFor(db: DatabaseSync, agentId: string | null, excludeToolUseId: string, beforeMs: number): number | null {
   if (agentId === null) return null;
   const rows = db
@@ -127,5 +127,57 @@ export function ingestDispatchEvent(
     open.subagentType, open.subagentType, open.sessionId, 0, result.exitState, result.severity, result.medianMs,
     outcome.status,
   );
+  noteDispatchRescore(db, endedAtMs);
   return true;
+}
+
+// #106: a dispatch is scored against the rows stored when it is ingested, so
+// one ingested before an earlier-ended run (a first scan reads files in
+// readdirSync order; old transcripts can also appear later) is scored on a
+// partial baseline. Every ingest lowers this durable watermark in the same
+// transaction as its row, and rescorePendingDispatches rescores every row
+// ended at or after it, then clears it. A crash before the rescore leaves the
+// watermark for the next scan, so the fix never depends on in-memory state.
+const RESCORE_KEY = 'dispatch_rescore_from_ms';
+
+function noteDispatchRescore(db: DatabaseSync, endedAtMs: number): void {
+  db.prepare(
+    `INSERT INTO schema_meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = CAST(MIN(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT)`,
+  ).run(RESCORE_KEY, String(endedAtMs));
+}
+
+// Rescores from stored columns only, so it needs no transcript or subagent
+// read. That is exact because the tool-error count is the one input not
+// stored, and it only matters as a floor of 3 on a completed run, which
+// slowness alone (capped at 2) can never reach: a stored completed severity
+// of 3 or more therefore means the floor applied. Rows with a NULL
+// dispatch_status (before the column, Go-written, or swept fatal) were not
+// scored by this path and are left alone. The median reads only
+// duration_ms and ended_at_ms, so the rescore order does not matter.
+export function rescorePendingDispatches(db: DatabaseSync): number {
+  const marker = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get(RESCORE_KEY) as { value: string } | undefined;
+  if (!marker) return 0;
+  const rows = db
+    .prepare(
+      `SELECT tool_use_id, agent_id, ended_at_ms, duration_ms, exit_state, severity, dispatch_status FROM dispatches
+        WHERE dispatch_status IS NOT NULL AND ended_at_ms >= ?`,
+    )
+    .all(Number(marker.value)) as {
+      tool_use_id: string; agent_id: string | null; ended_at_ms: number; duration_ms: number | null;
+      exit_state: ExitState; severity: number; dispatch_status: string;
+    }[];
+  const update = db.prepare('UPDATE dispatches SET severity = ?, median_ms_at_eval = ? WHERE tool_use_id = ?');
+  for (const row of rows) {
+    const completed = row.dispatch_status === 'completed';
+    const result = computeSeverity({
+      exit: row.exit_state,
+      elapsedMs: completed ? (row.duration_ms ?? 0) : 0,
+      medianMsAtEval: medianDurationMsFor(db, row.agent_id, row.tool_use_id, row.ended_at_ms),
+      toolErrors: completed && row.severity >= 3 ? TOOL_ERROR_FLOOR : null,
+    });
+    update.run(result.severity, result.medianMs, row.tool_use_id);
+  }
+  db.prepare('DELETE FROM schema_meta WHERE key = ?').run(RESCORE_KEY);
+  return rows.length;
 }

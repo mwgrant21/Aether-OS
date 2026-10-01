@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser.js';
 import { stampTranscriptScanHeartbeat } from './schema.js';
-import { ingestUsageEvent, ingestDispatchEvent } from './usageIngest.js';
+import { ingestUsageEvent, ingestDispatchEvent, rescorePendingDispatches } from './usageIngest.js';
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
@@ -125,7 +125,6 @@ export function scanTranscriptsOnce(
   let eventsIngested = 0;
   let toolCallsIngested = 0;
   let anomaliesIngested = 0;
-  const rescore: { history: ToolCallHistory; event: TranscriptEvent; toolErrorsFor: (id: string) => number | null }[] = [];
 
   for (const dirName of projectDirs) {
     const dirPath = join(projectsRoot, dirName);
@@ -204,7 +203,6 @@ export function scanTranscriptsOnce(
       toolCallsIngested += anomalyResult.toolCallsIngested;
       anomaliesIngested += anomalyResult.anomaliesIngested;
       filesScanned += 1;
-      for (const event of notifications) rescore.push({ history: anomalyResult.history, event, toolErrorsFor });
 
       // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
       // SS2). extractQueue is optional so every existing caller (including this
@@ -303,26 +301,18 @@ export function scanTranscriptsOnce(
         eventsIngested += sub.usageCount;
         toolCallsIngested += sub.anomalyResult.toolCallsIngested;
         anomaliesIngested += sub.anomalyResult.anomaliesIngested;
-        for (const event of subNotifications) rescore.push({ history: sub.anomalyResult.history, event, toolErrorsFor: subToolErrorsFor });
       }
     }
   }
 
-  // Rescore this pass's completions (#106). Each was scored when its file was
-  // read, against whatever rows existed then; on a first scan or after a
-  // purge, files arrive in readdirSync order, not time order, so a run could
-  // miss earlier baseline samples from a file read later. medianDurationMsFor
-  // filters on ended_at_ms, not insertion order, so once every completion of
-  // the pass is stored, rescoring in any order gives the order-independent
-  // result, and the upsert rewrites only severity-bearing fields with the same
-  // inputs. A crash before this point leaves the first-read scores, never
-  // lost rows. Only task-notifications are held, so memory stays bounded by
-  // the pass's dispatch count, not the transcript corpus.
-  if (rescore.length > 0) {
-    inTransaction(db, () => {
-      for (const r of rescore) ingestDispatchEvent(db, r.history, r.event, { toolErrorsFor: r.toolErrorsFor });
-    });
-  }
+  // Rescore (#106). Each completion was scored when its file was read, against
+  // whatever rows existed then; on a first scan files arrive in readdirSync
+  // order, not time order. Once the pass has stored them all, the durable
+  // watermark ingestDispatchEvent keeps says which rows to rescore from the
+  // database (see rescorePendingDispatches). Run every pass, not only when
+  // this pass ingested something, so a watermark left by a crash or a failed
+  // file is picked up on the next scan.
+  inTransaction(db, () => rescorePendingDispatches(db));
 
   return { filesScanned, eventsIngested, toolCallsIngested, anomaliesIngested };
 }
