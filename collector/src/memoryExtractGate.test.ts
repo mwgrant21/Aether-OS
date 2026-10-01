@@ -10,8 +10,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+import type { DatabaseSync } from 'node:sqlite';
 
+// Runtime require, not a static import: Vite strips the node: prefix off node:sqlite.
+const nodeRequire = createRequire(import.meta.url);
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -180,7 +183,7 @@ describe('memory extraction gate (#104)', () => {
       let scanned = false;
       let db: DatabaseSync | undefined;
       try {
-        db = new DatabaseSync(join(dir, 'collector.db'), { readOnly: true });
+        db = new (nodeRequire('node:sqlite').DatabaseSync)(join(dir, 'collector.db'), { readOnly: true }) as DatabaseSync;
         const row = db.prepare('SELECT COUNT(*) AS n FROM transcript_files WHERE last_offset > 0').get() as { n: number };
         scanned = row.n > 0;
       } catch {
