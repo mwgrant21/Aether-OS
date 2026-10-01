@@ -146,6 +146,10 @@ declare global {
         setEnabled: (enabled: boolean) => void;
         onUpdate: (callback: (event: VerificationEvent) => void) => () => void;
       };
+      memoryExtraction: {
+        get: () => Promise<boolean>;
+        set: (enabled: boolean) => Promise<boolean>;
+      };
       retention: {
         status: () => Promise<RetentionStatus>;
         purge: () => Promise<PurgeResult>;

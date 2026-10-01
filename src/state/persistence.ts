@@ -52,6 +52,7 @@ export const PERSISTENCE_EXCLUSIONS: Partial<Record<keyof AetherState, string>> 
   terminalOpenedAtMs: "stamped by this session's own pty:alive edge (SET_TERMINAL_ALIVE) and cleared on pty:exit; a persisted value would date a previous session's terminal as this one's, same reasoning as terminalAlive",
   codexTerminalAlive: "recomputed live -- starts false at every launch (no pty exists until the Codex view mounts) and is driven only by this session's own codexPty:alive/codexPty:exit events via useCodexTerminalAliveSync, same reasoning as terminalAlive",
   terminalIdle: "recomputed live -- derived from this session's own pty:data stream via useTerminalIdleSync (3s of silence = idle); a persisted value would show a stale idle/active state from a previous session with no pty behind it",
+  memoryExtractionEnabled: 'the source of truth is ~/.aether-os/collector-settings.json (owned by Electron main, read by the collector); hydrated over IPC on card mount, so a persisted copy could show a stale ON the collector is not obeying',
   codexTerminalIdle: "recomputed live -- derived from this session's own codexPty:data stream via useCodexTerminalIdleSync, same reasoning as terminalIdle",
 };
 

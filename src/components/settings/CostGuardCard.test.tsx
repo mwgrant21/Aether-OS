@@ -24,7 +24,7 @@ describe('CostGuardCard', () => {
       </AetherStoreProvider>,
     );
     expect(screen.getByText(/no sdk installed/i)).toBeTruthy();
-    expect(screen.getByText(/zero call sites/i)).toBeTruthy();
+    expect(screen.getByText(/no sdk or http call sites/i)).toBeTruthy();
   });
 
   it('shows cross-engine verification as OFF by default', () => {
@@ -59,5 +59,19 @@ describe('CostGuardCard', () => {
       </AetherStoreProvider>,
     );
     expect(screen.getByText(/computed locally, no api call/i)).toBeTruthy();
+  });
+});
+
+describe('CostGuardCard memory extraction row', () => {
+  it('is OFF by default and states what ON sends and where', () => {
+    render(
+      <AetherStoreProvider>
+        <CostGuardCard />
+      </AetherStoreProvider>,
+    );
+    const row = screen.getByText('MEMORY EXTRACTION').closest('div')!.parentElement!;
+    expect(within(row).getByText('OFF')).toBeTruthy();
+    // The always-visible hint names the path and what it sends.
+    expect(screen.getByText(/dispatch result\s+text to your Claude account through the claude CLI/i)).toBeTruthy();
   });
 });

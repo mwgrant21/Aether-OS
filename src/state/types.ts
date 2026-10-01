@@ -273,6 +273,8 @@ export interface AetherState {
   narrationMessages: Record<string, NarrationMessage[]>;
   narrationBudgets: Record<string, InterruptionBudgetState>;
   crossEngineCfg: { enabled: boolean; provider: 'codex-chatgpt' };
+  // Readback of ~/.aether-os/collector-settings.json via IPC; never persisted.
+  memoryExtractionEnabled: boolean;
   communicationCfg: { enabled: boolean };
   communicationSnapshot: CommunicationBridgeSnapshot | null;
   communicationError: string | null;

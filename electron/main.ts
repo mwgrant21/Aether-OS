@@ -22,6 +22,7 @@ import { listTranscriptSources, readTranscript, resolveSourcePath } from './tran
 import { cwdToProjectDirName } from '../src/state/projectDirName';
 import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
 import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';
+import { collectorSettingsPath, readMemoryExtractionEnabled, writeMemoryExtractionEnabled } from './collectorSettings';
 import { createAttachmentsStore } from './attachmentsStore';
 import { clampBoundsToDisplays, loadWindowBounds, saveWindowBounds, type Bounds } from './windowBounds';
 import { evaluateOptimizeRulesWithRecurrence } from '../src/shared/optimizeRules';
@@ -1033,6 +1034,15 @@ ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
 ipcMain.on('permission:setAutoAllow', (_event, level: PermissionAutoAllowLevel) => {
   permissionAutoAllowThreshold = level;
 });
+
+// Memory extraction (#104): the FILE is the source of truth, so both handlers
+// return what is on disk, never a cached or requested value.
+ipcMain.handle('memoryExtraction:get', () => readMemoryExtractionEnabled(collectorSettingsPath(aetherOsDir)));
+ipcMain.handle('memoryExtraction:set', (_event, enabled: unknown) =>
+  typeof enabled === 'boolean'
+    ? writeMemoryExtractionEnabled(aetherOsDir, enabled, Date.now())
+    : readMemoryExtractionEnabled(collectorSettingsPath(aetherOsDir)),
+);
 
 ipcMain.on('crossEngine:setEnabled', (_event, enabled: boolean) => {
   crossEngineFeatureEnabled = enabled;

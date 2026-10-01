@@ -99,6 +99,7 @@ export const initialState: AetherState = {
   narrationMessages: {},
   narrationBudgets: {},
   crossEngineCfg: { enabled: false, provider: 'codex-chatgpt' },
+  memoryExtractionEnabled: false,
   communicationCfg: { enabled: false },
   communicationSnapshot: null,
   communicationError: null,

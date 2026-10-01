@@ -7,6 +7,7 @@ export function CostGuardCard() {
   const colors = useColors();
   const { state } = useAetherStore();
   const crossEngineOn = state.crossEngineCfg.enabled;
+  const memoryExtractionOn = state.memoryExtractionEnabled;
 
   return (
     <div style={cardStyle(colors)}>
@@ -18,7 +19,13 @@ export function CostGuardCard() {
       </div>
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>DIRECT ANTHROPIC CALLS</div>
-        <div style={valueStyle(colors)}>NONE · zero call sites</div>
+        <div style={valueStyle(colors)}>NONE · no SDK or HTTP call sites</div>
+      </div>
+      <div style={rowStyle(colors)}>
+        <div style={labelStyle(colors)}>MEMORY EXTRACTION</div>
+        <div style={valueStyle(colors)}>
+          {memoryExtractionOn ? 'ON · dispatch result text sent to your Claude account via the claude CLI' : 'OFF'}
+        </div>
       </div>
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>CROSS-ENGINE VERIFY</div>
@@ -32,10 +39,12 @@ export function CostGuardCard() {
       </div>
 
       <p style={hintStyle(colors)}>
-        The Anthropic SDK dependency was removed from this app and all model-calling code paths
-        deleted in Stage 13.5 — there is no key-reachable path left for Aether to call the
-        Anthropic API directly. Cross-engine verification and opted-in Claude–Codex consultations
-        use external clients and your subscriptions. Communication starts require an allowance;
+        The Anthropic SDK dependency was removed from this app in Stage 13.5 — there is no
+        key-reachable path left for Aether to call the Anthropic API directly. The one
+        Claude-CLI path is opt-in memory extraction: when ON, the collector sends dispatch result
+        text to your Claude account through the claude CLI (API keys stripped). Cross-engine
+        verification and opted-in Claude–Codex consultations use external clients and your
+        subscriptions. Communication starts require an allowance;
         enabling its preference alone does not make a consultation.
       </p>
     </div>
