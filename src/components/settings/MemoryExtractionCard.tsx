@@ -10,7 +10,10 @@ export const MEMORY_EXTRACTION_DISCLOSURE =
 export function MemoryExtractionCard() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
-  const enabled = state.memoryExtractionEnabled;
+  // null = not yet read back from the settings file. With no bridge (browser mode) nothing
+  // can enable it, so that is a known OFF, matching the Ledger.
+  const enabled = state.memoryExtractionEnabled ?? (window.aetherElectron?.memoryExtraction ? null : false);
+  const unknown = enabled === null;
   const [confirming, setConfirming] = useState(false);
 
   // The file ~/.aether-os/collector-settings.json is the source of truth; show
@@ -37,18 +40,19 @@ export function MemoryExtractionCard() {
       const readback = await api.set(requested);
       dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: readback === true });
     } catch {
-      // The write outcome is unknown: show what is on disk, falling back to OFF.
-      let onDisk = false;
+      // The write outcome is unknown: show what is on disk, falling back to unknown (never OFF).
+      let onDisk: boolean | null = null;
       try {
         onDisk = (await api.get()) === true;
       } catch {
-        onDisk = false;
+        onDisk = null;
       }
       dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: onDisk });
     }
   };
 
   const toggle = () => {
+    if (unknown) return;
     if (!enabled) {
       setConfirming(true);
       return;
@@ -65,8 +69,8 @@ export function MemoryExtractionCard() {
     <div style={cardStyle(colors)}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ ...titleStyle(colors), margin: 0 }}>MEMORY EXTRACTION</h2>
-        <Button onClick={toggle} style={toggleStyle(colors, enabled)}>
-          {enabled ? 'DISABLE' : 'ENABLE'}
+        <Button onClick={toggle} disabled={unknown} style={toggleStyle(colors, enabled === true)}>
+          {unknown ? 'CHECKING...' : enabled ? 'DISABLE' : 'ENABLE'}
         </Button>
       </div>
 
@@ -84,7 +88,11 @@ export function MemoryExtractionCard() {
         </div>
       )}
 
-      <p style={hintStyle(colors)}>{enabled ? MEMORY_EXTRACTION_DISCLOSURE : 'OFF. The collector sends nothing for memory extraction while this is off.'}</p>
+      <p style={hintStyle(colors)}>{unknown
+          ? 'Checking the collector setting...'
+          : enabled
+            ? MEMORY_EXTRACTION_DISCLOSURE
+            : 'OFF. The collector sends nothing for memory extraction while this is off.'}</p>
     </div>
   );
 }

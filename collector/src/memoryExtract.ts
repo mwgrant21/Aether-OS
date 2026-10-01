@@ -33,11 +33,16 @@ const execFileAsync = promisify(execFile);
 // inherited from the collector's (scheduled-task) environment would silently turn
 // that into billed API usage, so these are stripped from the child. Duplicated
 // from electron/ptyManager.ts (the collector never imports from electron).
-const SCRUBBED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'];
+const SCRUBBED_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
 
-function scrubbedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of SCRUBBED_ENV_KEYS) delete env[key];
+// Exported for the test. Matches case-insensitively: process.env is a plain object once
+// copied, but Windows resolves env names case-insensitively, so `Anthropic_Api_Key` would
+// still reach the child if only the exact-uppercase spelling were deleted.
+export function scrubbedEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...source };
+  for (const key of Object.keys(env)) {
+    if (SCRUBBED_ENV_KEYS.has(key.toUpperCase())) delete env[key];
+  }
   return env;
 }
 

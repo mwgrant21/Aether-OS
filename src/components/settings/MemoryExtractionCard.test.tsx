@@ -119,7 +119,7 @@ describe('MemoryExtractionCard', () => {
     const set = vi.fn().mockResolvedValue(false); // write failed: readback is still OFF
     installBridge({ get: vi.fn().mockResolvedValue(false), set });
     renderBoth();
-    fireEvent.click(within(cardHeader()).getByText('ENABLE'));
+    fireEvent.click(await within(cardHeader()).findByText('ENABLE'));
     fireEvent.click(screen.getByText('I UNDERSTAND, ENABLE'));
     await waitFor(() => expect(set).toHaveBeenCalledWith(true));
     expect(within(cardHeader()).getByText('ENABLE')).toBeTruthy();
@@ -127,11 +127,55 @@ describe('MemoryExtractionCard', () => {
   });
 });
 
+describe('MemoryExtractionCard unknown state (#104 hydration)', () => {
+  function expectNeutral() {
+    expect(within(cardHeader()).queryByText('ENABLE')).toBeNull();
+    expect(within(cardHeader()).queryByText('DISABLE')).toBeNull();
+    expect(within(cardHeader()).getByText(/CHECKING/)).toBeTruthy();
+    expect(within(costGuardRow()).getByText(/UNKNOWN/)).toBeTruthy();
+    expect(within(costGuardRow()).queryByText('OFF')).toBeNull();
+  }
+
+  it('a get() that never resolves leaves both the card and the Cost Guard row neutral, with ENABLE not offered', async () => {
+    installBridge({ get: vi.fn(() => new Promise(() => {})), set: vi.fn() });
+    renderBoth();
+    await settle();
+    expectNeutral();
+    expect((within(cardHeader()).getByText(/CHECKING/).closest('button') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('get() resolving true shows ON in both', async () => {
+    installBridge({ get: vi.fn().mockResolvedValue(true), set: vi.fn() });
+    renderBoth();
+    await waitFor(() => expect(within(cardHeader()).getByText('DISABLE')).toBeTruthy());
+    expect(within(costGuardRow()).getByText(/^ON/)).toBeTruthy();
+  });
+
+  it('a rejecting get() stays neutral, never OFF', async () => {
+    const get = vi.fn().mockRejectedValue(new Error('ipc down'));
+    installBridge({ get, set: vi.fn() });
+    renderBoth();
+    await settle();
+    expect(get).toHaveBeenCalled();
+    expectNeutral();
+  });
+
+  it('when set() rejects and the re-read get() also rejects, returns to neutral rather than OFF', async () => {
+    const get = vi.fn().mockResolvedValueOnce(true).mockRejectedValue(new Error('ipc down'));
+    installBridge({ get, set: vi.fn().mockRejectedValue(new Error('ipc')) });
+    renderBoth();
+    fireEvent.click(await within(cardHeader()).findByText('DISABLE'));
+    await settle();
+    expect(get).toHaveBeenCalledTimes(2);
+    expectNeutral();
+  });
+});
+
 describe('MemoryExtractionCard disclosure wording', () => {
-  it('states exactly which env vars are removed and that Claude Code adds its own context and hooks', () => {
+  it('states exactly which env vars are removed and that Claude Code adds its own context and hooks', async () => {
     installBridge({ get: vi.fn().mockResolvedValue(false), set: vi.fn() });
     renderBoth();
-    fireEvent.click(within(cardHeader()).getByText('ENABLE'));
+    fireEvent.click(await within(cardHeader()).findByText('ENABLE'));
     expect(
       screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses whatever Claude Code is set up to use \(your login, or an apiKeyHelper, settings key or Bedrock\/Vertex if you configured one\)/),
     ).toBeTruthy();

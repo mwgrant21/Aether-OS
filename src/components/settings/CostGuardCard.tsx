@@ -7,7 +7,9 @@ export function CostGuardCard() {
   const colors = useColors();
   const { state } = useAetherStore();
   const crossEngineOn = state.crossEngineCfg.enabled;
-  const memoryExtractionOn = state.memoryExtractionEnabled;
+  // null = not yet read back from collector-settings.json: never shown as OFF. With no
+  // bridge (browser mode) nothing can enable it, so that is a known OFF.
+  const memoryExtractionOn = state.memoryExtractionEnabled ?? (window.aetherElectron?.memoryExtraction ? null : false);
 
   return (
     <div style={cardStyle(colors)}>
@@ -24,7 +26,11 @@ export function CostGuardCard() {
       <div style={rowStyle(colors)}>
         <div style={labelStyle(colors)}>MEMORY EXTRACTION</div>
         <div style={valueStyle(colors)}>
-          {memoryExtractionOn ? 'ON · dispatch result text and up to 20 prior memories sent via the claude CLI' : 'OFF'}
+          {memoryExtractionOn === null
+            ? 'UNKNOWN · checking the collector setting'
+            : memoryExtractionOn
+              ? 'ON · dispatch result text and up to 20 prior memories sent via the claude CLI'
+              : 'OFF'}
         </div>
       </div>
       <div style={rowStyle(colors)}>

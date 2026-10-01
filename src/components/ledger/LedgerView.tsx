@@ -34,13 +34,13 @@ import { usd, approxUsd, ESTIMATE_BASIS_TOOLTIP } from './format';
 export function LedgerView() {
   const colors = useColors();
   const { state, dispatch } = useAetherStore();
-  // memoryExtractionEnabled defaults to false until Settings mounts its card, so the
+  // memoryExtractionEnabled is null (unknown) until something reads the file, so the
   // Ledger hydrates it from the file-backed bridge itself and shows neutral copy until
   // it is known. The readback is held locally (null = unknown) as well as dispatched,
   // so the copy follows the file, not whatever the store happened to hold. With no
-  // bridge (browser mode) the store value is all there is.
+  // bridge (browser mode) the store value is all there is, and null there means OFF.
   const [memEnabled, setMemEnabled] = useState<boolean | null>(() =>
-    window.aetherElectron?.memoryExtraction ? null : state.memoryExtractionEnabled,
+    window.aetherElectron?.memoryExtraction ? null : state.memoryExtractionEnabled ?? false,
   );
   useEffect(() => {
     const api = window.aetherElectron?.memoryExtraction;

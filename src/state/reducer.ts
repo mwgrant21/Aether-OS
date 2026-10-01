@@ -67,7 +67,7 @@ export type Action =
   | { type: 'SET_DISPATCH_HEADLINE'; toolUseId: string; headline: string }
   | { type: 'SET_DISPATCH_NARRATION'; toolUseId: string; narration: string; severity: number; subagentType: string; final: boolean }
   | { type: 'SET_CROSS_ENGINE_CFG'; cfg: { enabled: boolean; provider: 'codex-chatgpt' } }
-  | { type: 'SET_MEMORY_EXTRACTION_ENABLED'; enabled: boolean }
+  | { type: 'SET_MEMORY_EXTRACTION_ENABLED'; enabled: boolean | null }
   | { type: 'SET_CODEX_TERMINAL_CFG'; cfg: { enabled: boolean } };
 
 // Shared by every reducer case that can produce a narration line (Stage 14
