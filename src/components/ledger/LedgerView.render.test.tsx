@@ -206,25 +206,41 @@ describe('LedgerView Aether-OS-itself note (#104)', () => {
     expect(container.textContent).not.toContain('no model call sites exist');
   });
 
-  it('ON: no unqualified $0.00; says it can bill and is not tracked here', () => {
+  it('ON: no unqualified $0.00; says it can bill and is counted in totals but not broken out', () => {
     mountState({ memoryExtractionEnabled: true });
     const { container } = render(<LedgerView />);
     expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
     expect(container.textContent).toContain('memory extraction is ON');
     expect(container.textContent).toContain('can bill');
-    expect(container.textContent).toContain('not tracked here');
+    expect(container.textContent).toContain('count in the totals above but are not broken out here');
   });
 
-  it('shows neutral copy until the bridge answers, then hydrates the setting', async () => {
-    let resolveGet: (v: boolean) => void = () => {};
+  function bridge(get: () => Promise<boolean>): void {
     (window as unknown as { aetherElectron?: unknown }).aetherElectron = {
-      memoryExtraction: { get: () => new Promise<boolean>((r) => (resolveGet = r)), set: async (v: boolean) => v },
+      memoryExtraction: { get, set: async (v: boolean) => v },
     };
+  }
+
+  it('shows neutral copy until the bridge answers, then follows the file (true over a false store)', async () => {
+    let resolveGet: (v: boolean) => void = () => {};
+    bridge(() => new Promise<boolean>((r) => (resolveGet = r)));
     mountState({ memoryExtractionEnabled: false });
     const { container } = render(<LedgerView />);
     expect(container.textContent).toContain('memory extraction status loading');
-    expect(container.textContent).not.toMatch(/Aether OS itself: \$0\.00/);
-    resolveGet(false);
-    expect(await screen.findByText(/opt-in memory extraction is off/)).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Aether OS itself: $0.00/);
+    resolveGet(true);
+    expect(await screen.findByText(/memory extraction is ON/)).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Aether OS itself: $0.00/);
+  });
+
+  it('a rejecting get() keeps the neutral copy (never falls back to OFF/$0.00)', async () => {
+    const get = vi.fn(() => Promise.reject(new Error('ipc down')));
+    bridge(get);
+    mountState({ memoryExtractionEnabled: false });
+    const { container } = render(<LedgerView />);
+    await vi.waitFor(() => expect(get).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.textContent).toContain('memory extraction status loading');
+    expect(container.textContent).not.toMatch(/Aether OS itself: $0.00/);
   });
 });

@@ -36,8 +36,12 @@ export function LedgerView() {
   const { state, dispatch } = useAetherStore();
   // memoryExtractionEnabled defaults to false until Settings mounts its card, so the
   // Ledger hydrates it from the file-backed bridge itself and shows neutral copy until
-  // it is known (no bridge, i.e. browser mode, is known immediately: OFF).
-  const [memKnown, setMemKnown] = useState(() => !window.aetherElectron?.memoryExtraction);
+  // it is known. The readback is held locally (null = unknown) as well as dispatched,
+  // so the copy follows the file, not whatever the store happened to hold. With no
+  // bridge (browser mode) the store value is all there is.
+  const [memEnabled, setMemEnabled] = useState<boolean | null>(() =>
+    window.aetherElectron?.memoryExtraction ? null : state.memoryExtractionEnabled,
+  );
   useEffect(() => {
     const api = window.aetherElectron?.memoryExtraction;
     if (!api) return;
@@ -47,7 +51,7 @@ export function LedgerView() {
       .then((value) => {
         if (!live) return;
         dispatch({ type: 'SET_MEMORY_EXTRACTION_ENABLED', enabled: value === true });
-        setMemKnown(true);
+        setMemEnabled(value === true);
       })
       .catch(() => {});
     return () => {
@@ -159,13 +163,13 @@ export function LedgerView() {
               answering once and for good. */}
           <div style={aetherRowStyle(colors)}>
             <span style={aetherLabelStyle(colors)}>
-              Aether OS itself:{memKnown && !state.memoryExtractionEnabled ? ` ${usd(0)}` : ''}
+              Aether OS itself:{memEnabled === false ? ` ${usd(0)}` : ''}
             </span>
             <span style={aetherNoteStyle(colors)}>
-              {!memKnown
+              {memEnabled === null
                 ? 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); memory extraction status loading'
-                : state.memoryExtractionEnabled
-                  ? 'memory extraction is ON: it runs the Claude CLI and can bill depending on how Claude Code is configured (Settings, privacy section 14); its cost is not tracked here'
+                : memEnabled
+                  ? 'memory extraction is ON: it runs the Claude CLI and can bill depending on how Claude Code is configured (privacy section 14); its calls are saved as ordinary Claude Code sessions, so they count in the totals above but are not broken out here'
                   : 'no SDK or HTTP model call sites (guarded by noApiCalls.test.ts); opt-in memory extraction is off'}
             </span>
           </div>
