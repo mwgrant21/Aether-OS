@@ -216,7 +216,9 @@ describe('cross-engine Codex boundary', () => {
   }
 
   function launchesClaude(text: string): boolean {
-    const alt = launchNamesFor(text).map((n) => n.replace(/\$/g, '\\$')).join('|');
+    // Names are identifier-shaped today, so only `$` can occur, but escape every regex
+    // metacharacter (backslash included) so a future name source cannot break the pattern.
+    const alt = launchNamesFor(text).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const re = new RegExp(
       '(?<![\\w$])(?:(?:' + alt + ')|(?:[\\w$]+\\.)?promisify\\(\\s*(?:[\\w$]+\\.)?(?:' + alt + ')\\s*\\))\\s*\\(\\s*[\'"\\x60]claude(?:\\.exe|\\.cmd)?(?:[\'"\\x60]|\\s)'
     );
