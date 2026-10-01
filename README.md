@@ -8,8 +8,9 @@ before you think to look.
 It runs as an Electron desktop app: a real `claude` CLI session, live tracking of your actual
 Claude Code usage and subagent dispatches, behavioral anomaly detection over that stream, and a
 Comms deck where the mission-control intelligence (AETHER) and every agent reply through a local,
-deterministic responder — no model call, no API key, no way for this app to place a paid API call
-at all (Stage 13.5; see `docs/roadmap.md` §3.5).
+deterministic responder — no SDK or HTTP model call, no API key, no direct paid API call path
+(Stage 13.5; see `docs/roadmap.md` §3.5). The one opt-in exception, collector memory extraction
+through the Claude CLI, is off by default; see `docs/privacy-and-data.md` §14.
 
 One honest line up front: **this started as a simulation and has been migrated to live data.**
 The original build ran on fictitious information by design — a deterministic tick fed synthetic
@@ -56,10 +57,11 @@ budget-driven alarm tiers.
 can false-positive on legitimately slow tools. The fix is planned — see
 `docs/diagnostic-thesis-plan.md`.
 
-### No model call site for Aether's own features, enforced by a test — with one named exception
+### No SDK or HTTP model call site, enforced by a test — with named, opt-in exceptions
 
-As of Stage 13.5 (2026-08-05), Aether OS contains no model call site of any kind for its own
-features: the `@anthropic-ai/sdk` dependency is gone from `package.json`, every chat-model call path
+As of Stage 13.5 (2026-08-05), Aether OS contains no SDK or HTTP model call site for its own
+features (the one Claude-CLI path, the opt-in collector memory extraction described below, was
+missed then and named in #104): the `@anthropic-ai/sdk` dependency is gone from `package.json`, every chat-model call path
 (`chatCore.ts`, `claudeClient.ts`, `systemPrompt.ts`, the Vite chat proxy) is deleted, and `.env`
 key loading is gone too. `src/shared/noApiCalls.test.ts` fails the build if the SDK reappears, if
 any source file references `api.anthropic.com`, or if a `messages.create(` call site reappears —
@@ -71,6 +73,14 @@ path where data used to leave the machine. That design and its tests are retired
 model call path they scoped — there's no longer a boundary to enforce because there's no longer a
 path across it. Comms (formerly Chat) now answers every message through `localResponder.ts`, a
 local, deterministic responder with no network request.
+
+**Opt-in background exception, named in #104 (2026-10-01):** the collector's memory extractor
+(`collector/src/memoryExtract.ts`) runs `claude -p --model haiku` over completed subagent
+dispatches. It is OFF by default, enabled only from Settings after a disclosure, and sends the
+dispatch result text plus up to 20 prior memories through the Claude CLI under your Claude Code
+configuration (which can bill API usage if you set it up that way). The gate takes effect only
+once the collector is rebuilt or reinstalled. See `docs/privacy-and-data.md` §14; any literal
+`claude` process launch outside a reviewed allow-list fails `src/shared/noApiCalls.test.ts`.
 
 **One named, default-off, opt-in exception, shipped 2026-08-07:** cross-engine Codex verification
 lets the operator manually ask OpenAI's Codex (over the Agent Client Protocol) whether a specific
@@ -149,7 +159,7 @@ other tool in this category has any sound design at all.
   a filter box (`transcriptFilter.ts`) and narrated through Stage 12's per-persona voice packs
   (`narrationFeed.ts`), which gives `interruptionBudget.ts` its first real consumer. Replies still come
   from `localResponder.ts`, a local, deterministic responder scoped to the AETHER channel — there is
-  no model call site anywhere in the app (Stage 13.5). Transcript content is read and rendered but
+  no SDK or HTTP model call site in the app (Stage 13.5; the opt-in collector memory extraction is privacy §14). Transcript content is read and rendered but
   never enters the store, persistence, or disk — see `docs/privacy-and-data.md`'s render-vs-store
   amendment, enforced by `noPayloadInStore.test.ts`.
 - **Ledger** — cost forensics for what this machine's Claude Code transcripts actually show: an
@@ -222,8 +232,9 @@ npm run dev            # browser-only mode at http://localhost:5173 (no PTY / li
 ```
 
 Comms (formerly Chat) answers every message through a local, deterministic responder — no API key,
-no `.env`, no model call of any kind. See `docs/roadmap.md` §3.5 for the Stage 13.5 teardown that
-removed the model call path.
+no `.env`, no SDK or HTTP model call (the only Claude-CLI path is the opt-in, default-off collector
+memory extraction, `docs/privacy-and-data.md` §14). See `docs/roadmap.md` §3.5 for the Stage 13.5
+teardown that removed the model call path.
 
 ```bash
 npm test               # vitest — reducer, tick, view math, anomaly detection,
