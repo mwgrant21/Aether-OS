@@ -30,6 +30,7 @@ describe('startCollector', () => {
       fleetPollIntervalMs: 100000,
       memoryDbPath: join(dir, 'memory.db'),
       memoryExtractIntervalMs: 100000,
+      collectorSettingsPath: join(dir, 'collector-settings.json'),
     });
     await new Promise((resolve) => setTimeout(resolve, 100)); // let the first tick fire
 
@@ -54,6 +55,7 @@ describe('startCollector', () => {
       fleetPollIntervalMs: 1_000_000,
       memoryDbPath: join(dir, 'memory.db'),
       memoryExtractIntervalMs: 1_000_000,
+      collectorSettingsPath: join(dir, 'collector-settings.json'),
     });
 
     expect(existsSync(join(dir, 'memory.db'))).toBe(true);
@@ -71,6 +73,7 @@ describe('startCollector', () => {
       fleetPollIntervalMs: 1_000_000,
       memoryDbPath: join(dir, 'memory.db'),
       memoryExtractIntervalMs: 1_000_000,
+      collectorSettingsPath: join(dir, 'collector-settings.json'),
     });
     expect(() => stop2()).not.toThrow();
   });
