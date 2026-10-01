@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', async (importOriginal) => {
@@ -170,12 +171,35 @@ describe('memory extraction gate (#104)', () => {
     );
   }
 
+  // Bounded wait until the scan timer has actually consumed the fixture
+  // (transcript_files.last_offset > 0). Without it, a flip after a fixed sleep can
+  // land before any scan and the "never sent" assertions pass vacuously.
+  async function waitUntilScanned(timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      let scanned = false;
+      let db: DatabaseSync | undefined;
+      try {
+        db = new DatabaseSync(join(dir, 'collector.db'), { readOnly: true });
+        const row = db.prepare('SELECT COUNT(*) AS n FROM transcript_files WHERE last_offset > 0').get() as { n: number };
+        scanned = row.n > 0;
+      } catch {
+        // db or table not there yet
+      } finally {
+        db?.close();
+      }
+      if (scanned) return;
+      await sleep(20);
+    }
+    throw new Error('fixture was never scanned within ' + timeoutMs + ' ms');
+  }
+
   it('work scanned while off is never staged: enabling before the next drain does not send it', async () => {
     rmSync(join(dir, 'projects'), { recursive: true, force: true });
     mkdirSync(join(dir, 'projects'), { recursive: true });
     const stop = startSlowDrain();
     writeFixture();
-    await sleep(150); // scans run while off
+    await waitUntilScanned(); // scans run while off
     writeFileSync(settingsPath, '{"memoryExtractionEnabled":true}', 'utf8');
     await sleep(600); // past the 400 ms drain
     stop();
@@ -188,7 +212,7 @@ describe('memory extraction gate (#104)', () => {
     writeFileSync(settingsPath, '{"memoryExtractionEnabled":true}', 'utf8');
     const stop = startSlowDrain();
     writeFixture();
-    await sleep(150); // staged while on
+    await waitUntilScanned(); // staged while on
     writeFileSync(settingsPath, '{"memoryExtractionEnabled":false}', 'utf8');
     await sleep(600);
     stop();

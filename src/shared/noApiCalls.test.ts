@@ -195,14 +195,17 @@ describe('cross-engine Codex boundary', () => {
       names.add(m[2]);
     }
     // Destructure-rename: const { execFile: ef } = require('child_process')
-    for (const m of text.matchAll(/\b(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*:\s*([A-Za-z_$][\w$]*)/g)) {
-      names.add(m[2]);
+    // Anchored to a `{ ... }` group so prose like "the exec: string" in a comment is ignored.
+    for (const g of text.matchAll(/\{([^{}]*)\}/g)) {
+      for (const m of g[1].matchAll(/\b(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+        names.add(m[2]);
+      }
     }
     // Fixpoint so a promisify of an alias (declared in any order) resolves.
     let grew = true;
     while (grew) {
       grew = false;
-      for (const m of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:[\w$]+\.)?promisify\(\s*(?:[\w$]+\.)?([A-Za-z_$][\w$]*)\s*\)/g)) {
+      for (const m of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::(?:[^=]|=>)+?)?=\s*(?:[\w$]+\.)?promisify\(\s*(?:[\w$]+\.)?([A-Za-z_$][\w$]*)\s*\)/g)) {
         if (names.has(m[2]) && !names.has(m[1])) {
           names.add(m[1]);
           grew = true;
@@ -241,6 +244,7 @@ describe('cross-engine Codex boundary', () => {
       "cp.spawn('claude.exe')",
       "await promisify(execFile)('claude', ['-p'])",
       "const run: Fn = promisify(execFile); run('claude', [])",
+      "const run: (a: string) => Promise<X> = promisify(execFile); run('claude', [])",
       "const { execFile: ef } = require('child_process'); ef('claude', [])",
     ];
     const mustNotMatch = [
