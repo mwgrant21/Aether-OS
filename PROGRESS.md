@@ -24,6 +24,12 @@ Billing credits are funded as of 2026-07-19, unblocking Chat Phase 2a's Task 7 a
 
 ## Shipped plans (newest first)
 
+- **[Backfill severity is scan-order independent (#106)](docs/superpowers/plans/2026-10-01-backfill-severity-handoff.md)**: 2026-10-01, PR #109, squash `1da9981`. Collector only; not in the installed v0.6.0.
+  - **Per-file transaction** in `scanTranscriptsOnce`: a file's usage rows, tool calls, dispatch rows, sweep and offset commit together, so a failure never strands an offset past unwritten rows and a retry never double-counts `usage_events`.
+  - **Durable rescore**: `ingestDispatchEvent` lowers `schema_meta.dispatch_rescore_from_ms`; `rescorePendingDispatches` rescores every non-NULL-status row ended at or after it, from stored columns, at the end of every scan, then clears it. It survives a crash, and covers old transcripts that arrive in a later scan. It treats a stored completed severity >= 3 as the tool-error floor, which is valid only while slowness stays capped at 2.
+  - **Parser**: an unparseable timestamp is `null`, not an Invalid Date.
+  - **Follow-up**: if #107 makes Go write `dispatch_status`, Go must also lower the watermark and share the severity rules.
+  - **Tests**: collector 433 passed + 2 skipped.
 - **[Real dispatch severity](docs/superpowers/specs/2026-09-30-real-severity-design.md)**: 2026-09-30, on branch `docs/real-severity-design` (11 tasks; spike: `docs/superpowers/specs/2026-09-30-subagent-link-spike.md`, GO). Narration severity is now derived from the dispatch's real outcome instead of a constant.
   - **Rules as shipped** (`electron/severity/computeSeverity.ts`): `failed` = error/4, `killed` = exactly 2 (a label, no failure styling, never voiced), a stall = fatal/4 emitted once per dispatch, unknown status = ok/1, slowness alone capped at 2 (`SLOW_FACTOR` 3, median from 5+ samples of the last 20), tool-error floor 3 for completed runs (spike GO). "Recovered." is prefixed only when a stalled dispatch then completes; a failed/killed/unknown outcome after a stall is narrated from its own outcome.
   - **Data:** usage on a dispatch with no usage block is NULL, not 0 (live parser, collector, Ledger renders an em dash); collector schema v9 (base was v8). The collector's median is time-bounded (rows ending before the row being scored); it includes nested-dispatch samples, while the live baseline sees only top-level ones; the live baseline persists to `duration-baseline.json`, tolerating a leading BOM.
