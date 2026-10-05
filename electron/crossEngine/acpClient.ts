@@ -127,7 +127,7 @@ export class AcpClient {
    *  supports is `session/request_permission`, which it always denies
    *  (`outcome: 'cancelled'`), so any escalation the agent asks for is
    *  refused rather than granted. This gates only what the adapter asks
-   *  about: the verifier pins codex-acp's 'read-only' mode so every
+   *  about: the verifier pins the ACP adapter's 'read-only' mode so every
    *  escalation is asked (acpProcess.ts buildAcpAdapterEnv), but that mode
    *  still permits in-sandbox writes to the snapshot dir and tmp. Any other incoming method gets a JSON-RPC "method not found"
    *  error so the agent's request always completes instead of hanging. */

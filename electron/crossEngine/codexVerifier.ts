@@ -109,7 +109,7 @@ export class CodexVerifier {
     // (session/new with mcpServers: []) and sends session/prompt. There is
     // no request-level "read-only / no MCP / no web search" flag in the real
     // ACP wire format (see acpClient.ts's prompt() doc comment) -- no MCP
-    // servers are ever connected. The adapter starts in codex-acp's
+    // servers are ever connected. The ACP adapter starts in its
     // 'read-only' mode (acpProcess.ts buildAcpAdapterEnv), so every
     // escalation reaches AcpClient, which denies it. That mode is still a
     // workspace-write sandbox over the disposable snapshot dir and tmp (no
