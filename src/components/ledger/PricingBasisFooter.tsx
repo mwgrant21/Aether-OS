@@ -5,6 +5,7 @@ import {
   PRICING_VERIFIED_AT,
   PRICING_PER_MILLION_TOKENS,
   CACHE_READ_DISCOUNT,
+  MODEL_RATE_OVERRIDES,
   CACHE_WRITE_MULTIPLIER,
 } from '../../shared/modelPricing';
 
@@ -37,6 +38,19 @@ export function PricingBasisFooter() {
       <span>
         {' '}
         · cache read {CACHE_READ_DISCOUNT * 100}% of input, cache write {CACHE_WRITE_MULTIPLIER}× input
+      </span>
+      <span>
+        {' '}
+        · per-model:{' '}
+        {Object.entries(MODEL_RATE_OVERRIDES)
+          .map(([key, o]) =>
+            [
+              key,
+              o.input !== undefined ? ` $${o.input}/$${o.output}` : '',
+              o.cacheRead !== undefined ? ` read $${o.cacheRead}` : '',
+            ].join(''),
+          )
+          .join(' · ')}
       </span>
     </div>
   );

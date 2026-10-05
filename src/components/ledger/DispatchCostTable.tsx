@@ -170,6 +170,8 @@ export function DispatchCostTable({ rows }: { rows: DispatchCostRow[] }) {
                     ? ESTIMATE_BASIS_TOOLTIP
                     : row.estimate.tierSource === 'defaulted'
                     ? `${ESTIMATE_BASIS_TOOLTIP}. This dispatch recorded no model, so the ${row.estimate.tier} rate was assumed — if it actually ran on a costlier tier this figure is low.`
+                    : row.estimate.basis === 'blended-model-rate'
+                    ? `${ESTIMATE_BASIS_TOOLTIP}. Priced at the ${row.estimate.modelKey} rate ($${row.estimate.rate.input}/$${row.estimate.rate.output} per Mtok), not the ${row.estimate.tier} tier rate.`
                     : `${ESTIMATE_BASIS_TOOLTIP}. Priced at the ${row.estimate.tier} rate.`
                 }
               >

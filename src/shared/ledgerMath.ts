@@ -6,6 +6,8 @@ import {
   costBreakdownForEvent,
   pricingTierForModel,
   PRICING_PER_MILLION_TOKENS,
+  rateForModel,
+  normalizeModelId,
   type PricingTier,
 } from './modelPricing';
 
@@ -36,10 +38,19 @@ export interface ExactCost {
  */
 export interface EstimatedCost {
   usdApprox: number;
-  basis: 'blended-tier-rate';
+  /**
+   * 'blended-model-rate' when a MODEL_RATE_OVERRIDES entry changed the input or
+   * output rate (e.g. Sonnet 5.5 at $2/$10), so a renderer never presents a
+   * per-model figure as the tier rate the pricing footer lists for that tier.
+   */
+  basis: 'blended-tier-rate' | 'blended-model-rate';
   tokens: number;
-  /** The tier the blend was taken from. */
+  /** The tier the model belongs to. */
   tier: PricingTier;
+  /** The $/M input and output rates the blend was actually taken from. */
+  rate: { input: number; output: number };
+  /** The override key ("sonnet-5-5") when basis is 'blended-model-rate', else null. */
+  modelKey: string | null;
   /**
    * Whether that tier came from a recorded model name or from the fallback.
    *
@@ -196,7 +207,15 @@ export const DISPATCH_OUTPUT_SHARE = 0.8;
 
 /** The blended per-million rate applied to a dispatch's scalar token count. */
 export function blendedRateForTier(tier: PricingTier): number {
-  const rates = PRICING_PER_MILLION_TOKENS[tier];
+  return blendedRate(PRICING_PER_MILLION_TOKENS[tier]);
+}
+
+/** Same blend at one model's own rate, so a per-model override (e.g. Sonnet 5.5) reaches dispatch estimates. */
+export function blendedRateForModel(model: string | null): number {
+  return blendedRate(rateForModel(model));
+}
+
+function blendedRate(rates: { input: number; output: number }): number {
   return DISPATCH_OUTPUT_SHARE * rates.output + (1 - DISPATCH_OUTPUT_SHARE) * rates.input;
 }
 
@@ -243,11 +262,16 @@ export function tiersInSession(events: TranscriptEvent[]): PricingTier[] {
 export function estimateDispatchCost(dispatch: CompletedDispatchWithUsage): EstimatedCost {
   const tokens = Number.isFinite(dispatch.tokens) && dispatch.tokens > 0 ? dispatch.tokens : 0;
   const tier = pricingTierForModel(dispatch.model);
+  const { input, output } = rateForModel(dispatch.model);
+  const tierRate = PRICING_PER_MILLION_TOKENS[tier];
+  const overridden = input !== tierRate.input || output !== tierRate.output;
   return {
-    usdApprox: (tokens / 1_000_000) * blendedRateForTier(tier),
-    basis: 'blended-tier-rate',
+    usdApprox: (tokens / 1_000_000) * blendedRateForModel(dispatch.model),
+    basis: overridden ? 'blended-model-rate' : 'blended-tier-rate',
     tokens,
     tier,
+    rate: { input, output },
+    modelKey: overridden ? normalizeModelId(dispatch.model) : null,
     tierSource: dispatch.model ? 'observed' : 'defaulted',
   };
 }
@@ -557,9 +581,8 @@ export function cacheImpact(events: TranscriptEvent[]): CacheImpact {
     if (e.kind !== 'assistant' || !e.usage) continue;
     const tokens = e.usage.cacheReadInputTokens;
     if (!tokens) continue;
-    const rates = PRICING_PER_MILLION_TOKENS[pricingTierForModel(e.model)];
     cacheReadTokens += tokens;
-    wouldHaveCostUsd += (tokens / 1_000_000) * rates.input;
+    wouldHaveCostUsd += (tokens / 1_000_000) * rateForModel(e.model).input;
     // Taken from the shared breakdown rather than re-applying the discount, so
     // this can never disagree with what the session card charges for cache.
     actuallyCostUsd += costBreakdownForEvent(e).cacheRead;
