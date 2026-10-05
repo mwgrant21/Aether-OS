@@ -35,7 +35,7 @@ function row(over: Partial<DispatchCostRow> & { usdApprox?: number } = {}): Disp
     subagentType: 'general-purpose',
     durationMs: 1000,
     toolUses: 2,
-    estimate: { usdApprox, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+    estimate: { usdApprox, basis: 'blended-tier-rate', rate: { input: 3, output: 15 }, modelKey: null, tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
     quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
     exitState: null,
     retries: null,
@@ -121,12 +121,25 @@ describe('DispatchCostTable', () => {
   it('marks an estimate whose tier was assumed, and explains it on hover', () => {
     render(
       <DispatchCostTable
-        rows={[row({ estimate: { usdApprox: 5, basis: 'blended-tier-rate', tokens: 10, tier: 'sonnet', tierSource: 'defaulted' } })]}
+        rows={[row({ estimate: { usdApprox: 5, basis: 'blended-tier-rate', rate: { input: 3, output: 15 }, modelKey: null, tokens: 10, tier: 'sonnet', tierSource: 'defaulted' } })]}
       />,
     );
     expect(screen.getByText('?')).toBeTruthy();
     const cell = screen.getByText('~$5.00').closest('[role="cell"]')!;
     expect(cell.getAttribute('title')).toContain('recorded no model');
+  });
+
+  // Codex review on #114: a per-model figure must not be presented as the tier rate
+  // the pricing footer lists for that tier ($3/$15 for sonnet).
+  it('names the per-model rate when an override priced the estimate', () => {
+    render(
+      <DispatchCostTable
+        rows={[row({ estimate: { usdApprox: 8.4, basis: 'blended-model-rate', rate: { input: 2, output: 10 }, modelKey: 'sonnet-5-5', tokens: 10, tier: 'sonnet', tierSource: 'observed' } })]}
+      />,
+    );
+    const title = screen.getByText('~$8.40').closest('[role="cell"]')!.getAttribute('title')!;
+    expect(title).toContain('sonnet-5-5 rate ($2/$10 per Mtok)');
+    expect(title).toContain('not the sonnet tier rate');
   });
 
   it('does not mark an estimate whose tier was observed', () => {
@@ -151,7 +164,7 @@ describe('DispatchCostTable', () => {
 
   it('shows a quota figure alongside the API estimate', () => {
     render(<DispatchCostTable rows={[row({
-      estimate: { usdApprox: 1.5, basis: 'blended-tier-rate', tokens: 300_000, tier: 'sonnet', tierSource: 'observed' },
+      estimate: { usdApprox: 1.5, basis: 'blended-tier-rate', rate: { input: 3, output: 15 }, modelKey: null, tokens: 300_000, tier: 'sonnet', tierSource: 'observed' },
       quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
     })]} />);
     expect(screen.getByText('$1.00')).toBeTruthy();   // quota, no tilde

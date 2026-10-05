@@ -268,7 +268,7 @@ describe('selectTodaysRows', () => {
       subagentType: 'general-purpose',
       durationMs: 300000,
       toolUses: 1,
-      estimate: { usdApprox: 1, basis: 'blended-tier-rate', tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
+      estimate: { usdApprox: 1, basis: 'blended-tier-rate', rate: { input: 3, output: 15 }, modelKey: null, tokens: 1000, tier: 'sonnet', tierSource: 'observed' },
       quota: { usdPlan: 1, points: 2, basis: 'seven_day', tokensPerPoint: 150_000 },
       exitState: null,
       retries: null,

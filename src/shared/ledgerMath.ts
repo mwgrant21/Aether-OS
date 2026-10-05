@@ -7,6 +7,7 @@ import {
   pricingTierForModel,
   PRICING_PER_MILLION_TOKENS,
   rateForModel,
+  normalizeModelId,
   type PricingTier,
 } from './modelPricing';
 
@@ -37,10 +38,19 @@ export interface ExactCost {
  */
 export interface EstimatedCost {
   usdApprox: number;
-  basis: 'blended-tier-rate';
+  /**
+   * 'blended-model-rate' when a MODEL_RATE_OVERRIDES entry changed the input or
+   * output rate (e.g. Sonnet 5.5 at $2/$10), so a renderer never presents a
+   * per-model figure as the tier rate the pricing footer lists for that tier.
+   */
+  basis: 'blended-tier-rate' | 'blended-model-rate';
   tokens: number;
-  /** The tier the blend was taken from. */
+  /** The tier the model belongs to. */
   tier: PricingTier;
+  /** The $/M input and output rates the blend was actually taken from. */
+  rate: { input: number; output: number };
+  /** The override key ("sonnet-5-5") when basis is 'blended-model-rate', else null. */
+  modelKey: string | null;
   /**
    * Whether that tier came from a recorded model name or from the fallback.
    *
@@ -252,11 +262,16 @@ export function tiersInSession(events: TranscriptEvent[]): PricingTier[] {
 export function estimateDispatchCost(dispatch: CompletedDispatchWithUsage): EstimatedCost {
   const tokens = Number.isFinite(dispatch.tokens) && dispatch.tokens > 0 ? dispatch.tokens : 0;
   const tier = pricingTierForModel(dispatch.model);
+  const { input, output } = rateForModel(dispatch.model);
+  const tierRate = PRICING_PER_MILLION_TOKENS[tier];
+  const overridden = input !== tierRate.input || output !== tierRate.output;
   return {
     usdApprox: (tokens / 1_000_000) * blendedRateForModel(dispatch.model),
-    basis: 'blended-tier-rate',
+    basis: overridden ? 'blended-model-rate' : 'blended-tier-rate',
     tokens,
     tier,
+    rate: { input, output },
+    modelKey: overridden ? normalizeModelId(dispatch.model) : null,
     tierSource: dispatch.model ? 'observed' : 'defaulted',
   };
 }
