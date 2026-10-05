@@ -45,6 +45,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import http from 'node:http';
 import process from 'node:process';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 // "is the app even reachable" -- fail fast. Matches the design spec's
 // explicit ~500ms target (docs/superpowers/specs/2026-07-28-closing-the-loop-design.md,
@@ -76,19 +77,47 @@ function readOwnSessionId(filePath) {
   }
 }
 
-function readPort(filePath) {
+// Reads { port, secret } from the user-only port file Aether writes on launch
+// and deletes on quit. A legacy bare port number carries no secret and is
+// treated as "app not reachable" -- falling through to Claude's own prompt
+// is always safe; trusting an unauthenticated listener is not.
+function readServerInfo(filePath) {
   try {
-    const raw = readFileSync(filePath, 'utf8').trim();
-    const port = Number.parseInt(raw, 10);
-    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    const { port, secret } = parsed;
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+    if (typeof secret !== 'string' || !/^[0-9a-f]{64}$/.test(secret)) return null;
+    return { port, secret };
   } catch {
     return null;
   }
 }
 
+// Mutual authentication with the decision server. Mirrors
+// electron/permissionServer.ts + electron/permissionAuth.ts#signPermission
+// (this script must stay import-free). Security audit 2026-10-04: without
+// this, any process that bound the stale port could answer PermissionRequest
+// with allow + a substituted updatedInput. The secret never crosses the socket.
+function sign(secret, role, nonce, path) {
+  return createHmac('sha256', secret).update(`${role}\n${nonce}\n${path}`).digest('hex');
+}
+
+function authHeaders(server, path) {
+  const nonce = randomBytes(16).toString('hex');
+  return { nonce, headers: { 'X-Aether-Nonce': nonce, 'X-Aether-Auth': sign(server.secret, 'client', nonce, path) } };
+}
+
+function serverProven(res, server, nonce, path) {
+  const given = res.headers['x-aether-proof'];
+  const expected = sign(server.secret, 'server', nonce, path);
+  if (typeof given !== 'string' || given.length !== expected.length || !/^[0-9a-f]+$/.test(given)) return false;
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(given, 'hex'));
+}
+
 // Resolves with the parsed decision, or null if the server was unreachable,
 // timed out, or returned something unusable. Never rejects.
-function postPermissionRequest(port, toolName, toolInput) {
+function postPermissionRequest(server, toolName, toolInput) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value) => {
@@ -98,18 +127,26 @@ function postPermissionRequest(port, toolName, toolInput) {
     };
 
     const body = JSON.stringify({ toolName, toolInput });
+    const path = '/permission-request';
+    const auth = authHeaders(server, path);
     const req = http.request(
       {
         host: '127.0.0.1',
-        port,
-        path: '/permission-request',
+        port: server.port,
+        path,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          ...auth.headers,
         },
       },
       (res) => {
+        if (!serverProven(res, server, auth.nonce, path)) {
+          res.resume();
+          done(null); // not Aether: never trust its decision
+          return;
+        }
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => {
@@ -171,7 +208,7 @@ function toHookOutput(decision) {
 // discipline but targets the separate /post-tool-flag-check route, which
 // speaks a different request/response shape (see
 // electron/permissionServer.ts's PostToolFlagDecision).
-function postToolFlagCheck(port, toolUseId, toolName, toolOutput) {
+function postToolFlagCheck(server, toolUseId, toolName, toolOutput) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value) => {
@@ -181,18 +218,26 @@ function postToolFlagCheck(port, toolUseId, toolName, toolOutput) {
     };
 
     const body = JSON.stringify({ toolUseId, toolName, toolOutput });
+    const path = '/post-tool-flag-check';
+    const auth = authHeaders(server, path);
     const req = http.request(
       {
         host: '127.0.0.1',
-        port,
-        path: '/post-tool-flag-check',
+        port: server.port,
+        path,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          ...auth.headers,
         },
       },
       (res) => {
+        if (!serverProven(res, server, auth.nonce, path)) {
+          res.resume();
+          done(null); // not Aether: never trust its block decision
+          return;
+        }
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => {
@@ -236,7 +281,7 @@ function postToolFlagCheck(port, toolUseId, toolName, toolOutput) {
 // Fire-and-forget: no decision to wait for, so this only needs the short
 // connect-timeout discipline (is the app even reachable), not the full
 // DECISION_TIMEOUT_MS wait the other two routes need.
-function postNotification(port, sessionId, notificationType) {
+function postNotification(server, sessionId, notificationType) {
   return new Promise((resolve) => {
     let settled = false;
     const done = () => {
@@ -245,13 +290,17 @@ function postNotification(port, sessionId, notificationType) {
       resolve();
     };
     const body = JSON.stringify({ sessionId, notificationType });
+    const path = '/notification';
+    // No decision comes back, so no proof check is needed; the client HMAC
+    // is still required by the server.
+    const auth = authHeaders(server, path);
     const req = http.request(
       {
         host: '127.0.0.1',
-        port,
-        path: '/notification',
+        port: server.port,
+        path,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...auth.headers },
       },
       (res) => {
         res.on('data', () => {});
@@ -303,13 +352,13 @@ async function main() {
   const ownSessionId = readOwnSessionId(join(aetherDir, 'own-session.json'));
   if (!ownSessionId || ownSessionId !== sessionId) return; // fall through: not our session
 
-  const port = readPort(join(aetherDir, 'permission-server-port'));
-  if (!port) return; // fall through: app not running / no port file
+  const server = readServerInfo(join(aetherDir, 'permission-server-port'));
+  if (!server) return; // fall through: app not running, no port file, or legacy file without a secret
 
   if (payload.hook_event_name === 'Notification') {
     const notificationType = typeof payload.notification_type === 'string' ? payload.notification_type : null;
     if (!notificationType) return; // fall through: unusable payload
-    await postNotification(port, sessionId, notificationType);
+    await postNotification(server, sessionId, notificationType);
     return; // no stdout: Notification has no decision contract to honor
   }
 
@@ -319,14 +368,14 @@ async function main() {
   if (payload.hook_event_name === 'PostToolUse') {
     const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
     if (!toolUseId) return; // fall through: unusable payload
-    const flagDecision = await postToolFlagCheck(port, toolUseId, toolName, payload.tool_output);
+    const flagDecision = await postToolFlagCheck(server, toolUseId, toolName, payload.tool_output);
     if (!flagDecision) return; // fall through: unreachable, timed out, or bad response
     const out = toPostToolUseOutput(flagDecision);
     if (out) process.stdout.write(JSON.stringify(out));
     return;
   }
 
-  const decision = await postPermissionRequest(port, toolName, payload.tool_input);
+  const decision = await postPermissionRequest(server, toolName, payload.tool_input);
   if (!decision) return; // fall through: unreachable, timed out, or bad response
 
   process.stdout.write(JSON.stringify(toHookOutput(decision)));

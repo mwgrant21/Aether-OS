@@ -15,8 +15,10 @@ by design, and its README carefully scopes what those reports may contain (usage
 never prompt content or code). Aether OS has no fleet, no sharing, no reporting, and no
 externally-reachable listener — `electron/permissionServer.ts` does run a local HTTP server for
 `PermissionRequest`/`PostToolUse`/`Notification` hook brokering, but it is bound to `127.0.0.1`
-only, reachable only from this machine, with no port exposed externally and no token or auth
-surface to leak (see §3). The single-user constraint is not a smaller version of TokenMonitor's
+only, reachable only from this machine, with no port exposed externally. Loopback is reachable by
+every local process and by browser pages, so since 2026-10-04 every request and response is
+mutually authenticated with a per-launch HMAC secret held only in the user-only port file, which
+is deleted on quit (`electron/permissionAuth.ts`; see §3). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
 **Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
@@ -64,8 +66,8 @@ Bank these as removed from scope, permanently:
 - No sharing links, no export-to-cloud, no sync
 - **No externally-reachable listener.** Collector ingest is a file spool, not a listener at all
   (§3); the one real local HTTP server in this app (`electron/permissionServer.ts`, for permission
-  and notification hook brokering) is bound to `127.0.0.1` only, with no port exposed externally
-  and no token or auth surface
+  and notification hook brokering) is bound to `127.0.0.1` only, with no port exposed externally,
+  and authenticates both directions with a per-launch HMAC secret that never crosses the socket
 
 Every one of those is an attack surface that now simply does not exist.
 

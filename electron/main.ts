@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor, dialog } from 'electron';
 import { join, dirname } from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { spawnPty } from './ptyManager';
@@ -72,6 +72,7 @@ import {
 } from './statuslineUninstallCli';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
+import { createPermissionSecret, writePortFile } from './permissionAuth';
 import { classifyPermissionRisk, shouldAutoAllow, type PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
 import { renderNotificationBadge } from './notificationBadge';
@@ -841,7 +842,9 @@ app.whenReady().then(async () => {
   // explicit ACL, not by the profile's inherited one. Fire-and-forget like the
   // migration above: a slow or failing PowerShell must not delay the window.
   // Grants someone else added are kept and logged, never stripped.
-  void ensurePrivateDir(aetherOsDir)
+  // Not awaited here; the permission-server port file (which holds a secret)
+  // awaits it below, after the window is up. The chain never rejects.
+  const privateDirReady = ensurePrivateDir(aetherOsDir)
     .then(({ changed, extras }) => {
       diagLog.write(`[diag] private-dir changed=${changed} extras=${extras.length} at=${new Date().toISOString()}`);
       for (const e of extras) {
@@ -906,6 +909,10 @@ app.whenReady().then(async () => {
   const desiredPort = 51823; // arbitrary fixed high port; bump-on-conflict handled below
   const portAvailable = await isPortAvailable(desiredPort);
   const permissionServerOptions = {
+    // Per-launch secret shared with the hook only through the user-only port
+    // file; every request and response is HMAC-authenticated with it
+    // (permissionAuth.ts, security audit 2026-10-04).
+    secret: createPermissionSecret(),
     port: portAvailable ? desiredPort : 0,
     timeoutMs: 120000,
     onPermissionRequest: async (req: { toolName: string; toolInput: unknown }): Promise<PermissionDecision> => {
@@ -998,7 +1005,10 @@ app.whenReady().then(async () => {
   }
   stopPermissionServer = permission.stop;
   await fsp.mkdir(dirname(permissionServerPortPath), { recursive: true });
-  await fsp.writeFile(permissionServerPortPath, String(permission.port), 'utf8');
+  // The Windows user-only ACL must be on ~/.aether-os before the secret lands
+  // there (PR #115 review); writePortFile handles the POSIX mode itself.
+  await privateDirReady;
+  await writePortFile(permissionServerPortPath, permission.port, permissionServerOptions.secret);
 });
 
 app.on('window-all-closed', () => {
@@ -1016,6 +1026,15 @@ app.on('before-quit', event => {
   if (stopPermissionServer) {
     stopPermissionServer();
     stopPermissionServer = null;
+    // Revoke discovery with the server: a port file left behind pointed the
+    // hook at whatever process next bound that port (security audit
+    // 2026-10-04). The HMAC proof already makes a squatter's answer
+    // worthless; removing the file also stops the hook from trying.
+    try {
+      rmSync(permissionServerPortPath, { force: true });
+    } catch {
+      // Best effort on quit; the hook rejects an unproven server regardless.
+    }
   }
   // If a cross-engine verification run is active, cancel it so its ACP
   // adapter process and snapshot temp directory are cleaned up via the

@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import http from 'node:http';
+import { createHmac } from 'node:crypto';
 
 const scriptPath = fileURLToPath(new URL('./aether-permission-hook.mjs', import.meta.url));
 
@@ -50,6 +51,34 @@ function runScriptAsync(stdin: string, homeDir: string): Promise<{ status: numbe
   });
 }
 
+// Security audit 2026-10-04: the hook must authenticate the server it talks
+// to. Computed here with node:crypto directly, independent of the hook's own
+// implementation, so a shared bug cannot make both sides agree.
+const SECRET = 'ab'.repeat(32);
+const sign = (secret: string, role: 'client' | 'server', nonce: string, path: string) =>
+  createHmac('sha256', secret).update(`${role}\n${nonce}\n${path}`).digest('hex');
+const portFile = (port: number, secret = SECRET) => JSON.stringify({ port, secret });
+
+type Proof = 'valid' | 'none' | 'wrong';
+// A fixture server answering `response`. 'valid' plays the real Aether server
+// (signs its proof with SECRET); 'none'/'wrong' play a port squatter.
+async function startFixture(response: unknown, proof: Proof, seen: { clientAuthOk?: boolean } = {}): Promise<number> {
+  const server = http.createServer((req, res) => {
+    const nonce = String(req.headers['x-aether-nonce'] ?? '');
+    seen.clientAuthOk = req.headers['x-aether-auth'] === sign(SECRET, 'client', nonce, req.url ?? '');
+    req.on('data', () => {});
+    req.on('end', () => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (proof === 'valid') headers['X-Aether-Proof'] = sign(SECRET, 'server', nonce, req.url ?? '');
+      if (proof === 'wrong') headers['X-Aether-Proof'] = sign('cd'.repeat(32), 'server', nonce, req.url ?? '');
+      res.writeHead(200, headers).end(JSON.stringify(response));
+    });
+  });
+  activeServers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return (server.address() as { port: number }).port;
+}
+
 let activeServers: http.Server[] = [];
 afterEach(() => {
   for (const server of activeServers) server.close();
@@ -87,20 +116,9 @@ describe('aether-permission-hook.mjs', () => {
   });
 
   it('round-trips a real decision from a fixture server into the exact hookSpecificOutput JSON shape', async () => {
-    const server = http.createServer((req, res) => {
-      let raw = '';
-      req.on('data', (chunk) => (raw += chunk));
-      req.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
-          JSON.stringify({ behavior: 'allow', updatedInput: { command: 'ls -la' } })
-        );
-      });
-    });
-    activeServers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as { port: number }).port;
+    const port = await startFixture({ behavior: 'allow', updatedInput: { command: 'ls -la' } }, 'valid');
 
-    const home = setupHome('sess-own', String(port));
+    const home = setupHome('sess-own', portFile(port));
     const payload = JSON.stringify({
       session_id: 'sess-own',
       tool_name: 'Bash',
@@ -139,6 +157,56 @@ describe('aether-permission-hook.mjs', () => {
   });
 });
 
+describe('aether-permission-hook.mjs -- server authentication', () => {
+  const permissionPayload = JSON.stringify({
+    session_id: 'sess-own',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+    tool_use_id: 'tu-1',
+  });
+  const allowWithSwap = { behavior: 'allow', updatedInput: { command: 'echo dummy' } };
+
+  it('falls through when a port squatter answers allow without a server proof', async () => {
+    const port = await startFixture(allowWithSwap, 'none');
+    const result = await runScriptAsync(permissionPayload, setupHome('sess-own', portFile(port)));
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('falls through when the server proof was signed with a different secret', async () => {
+    const port = await startFixture(allowWithSwap, 'wrong');
+    const result = await runScriptAsync(permissionPayload, setupHome('sess-own', portFile(port)));
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('falls through on a legacy bare-number port file, which carries no secret', async () => {
+    const port = await startFixture(allowWithSwap, 'valid');
+    const result = await runScriptAsync(permissionPayload, setupHome('sess-own', String(port)));
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('falls through on a PostToolUse block from an unproven server', async () => {
+    const port = await startFixture({ block: true, reason: 'squatter' }, 'none');
+    const payload = JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 'sess-own',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_output: { output: 'ok' },
+      tool_use_id: 'tu-1',
+    });
+    const result = await runScriptAsync(payload, setupHome('sess-own', portFile(port)));
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('signs its own request with the client HMAC for the route it calls', async () => {
+    const seen: { clientAuthOk?: boolean } = {};
+    const port = await startFixture({ behavior: 'deny' }, 'valid', seen);
+    await runScriptAsync(permissionPayload, setupHome('sess-own', portFile(port)));
+    expect(seen.clientAuthOk).toBe(true);
+  });
+});
+
 describe('aether-permission-hook.mjs -- PostToolUse branch', () => {
   it('falls through non-blocking when nothing is listening on the discovered port', () => {
     const home = setupHome('sess-own', '1'); // port 1 -- nothing listening
@@ -159,20 +227,9 @@ describe('aether-permission-hook.mjs -- PostToolUse branch', () => {
   });
 
   it('translates a block decision from a fixture server into the real PostToolUse stdout contract', async () => {
-    const server = http.createServer((req, res) => {
-      let raw = '';
-      req.on('data', (chunk) => (raw += chunk));
-      req.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
-          JSON.stringify({ block: true, reason: 'anomaly detected: unexpected file write' })
-        );
-      });
-    });
-    activeServers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as { port: number }).port;
+    const port = await startFixture({ block: true, reason: 'anomaly detected: unexpected file write' }, 'valid');
 
-    const home = setupHome('sess-own', String(port));
+    const home = setupHome('sess-own', portFile(port));
     const payload = JSON.stringify({
       hook_event_name: 'PostToolUse',
       session_id: 'sess-own',
@@ -193,18 +250,9 @@ describe('aether-permission-hook.mjs -- PostToolUse branch', () => {
   });
 
   it('produces no stdout when the flag-check decision is clean (block: false)', async () => {
-    const server = http.createServer((req, res) => {
-      let raw = '';
-      req.on('data', (chunk) => (raw += chunk));
-      req.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ block: false }));
-      });
-    });
-    activeServers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as { port: number }).port;
+    const port = await startFixture({ block: false }, 'valid');
 
-    const home = setupHome('sess-own', String(port));
+    const home = setupHome('sess-own', portFile(port));
     const payload = JSON.stringify({
       hook_event_name: 'PostToolUse',
       session_id: 'sess-own',

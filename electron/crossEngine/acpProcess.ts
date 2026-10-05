@@ -135,9 +135,25 @@ function resolveAdapterExecutable(): string {
   return adapterExecutablePath;
 }
 
+/** Env for the codex-acp verifier adapter: the shared allowlist plus a
+ *  pinned start mode. codex-acp defaults to 'agent', whose approvals
+ *  reviewer is auto_review: escalations are decided by Codex and never reach
+ *  AcpClient's deny-all session/request_permission handler. 'read-only'
+ *  (reviewer 'user') routes every escalation to that handler.
+ *  This is NOT a read-only sandbox: codex-acp 1.8.0 has no such preset, and
+ *  even 'read-only' is workspace-write (cwd = the disposable snapshot dir,
+ *  plus tmp; no network). Fully read-only verification would mean moving to
+ *  the app-server provider's READ_ONLY_THREAD/READ_ONLY_TURN pin.
+ *  (Security audit 2026-10-04, acp-verifier-default-agent-mode-not-read-only.) */
+export function buildAcpAdapterEnv(osEnv: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+  const child = buildCodexChildEnv(osEnv, codexHome);
+  child.INITIAL_AGENT_MODE = 'read-only';
+  return child;
+}
+
 export function spawnAcpProcess(): ChildProcessWithoutNullStreams {
   const codexHome = resolveCodexHome();
-  const env = buildCodexChildEnv(process.env, codexHome);
+  const env = buildAcpAdapterEnv(process.env, codexHome);
   const executable = resolveAdapterExecutable();
   const child = spawn(process.execPath, [executable], { shell: false, stdio: ['pipe', 'pipe', 'pipe'], env });
   attachStderrRingBuffer(child);

@@ -106,6 +106,73 @@ describe('buildVerificationSnapshot', () => {
     ).rejects.toThrow(/symlink/);
   });
 
+  // Security audit 2026-10-04 (snapshotBuilder-intermediate-symlink-escape):
+  // the guard above inspects only the final path component. A symlinked
+  // DIRECTORY anywhere in the path was followed on both sides.
+  // The packaged app resolves `tar` to Windows' System32 bsdtar, which
+  // extracts an archived symlink as a real symlink. A Git Bash shell puts MSYS
+  // tar first on PATH, and MSYS tar turns the link into a copy, hiding the
+  // escape. Pin the app's resolution for these cases; restored after each.
+  function useAppTar(): void {
+    if (process.platform !== 'win32') return;
+    const saved = process.env.PATH;
+    const sys32 = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+    process.env.PATH = `${sys32};${saved ?? ''}`;
+    cleanups.push(async () => { process.env.PATH = saved; });
+  }
+
+  async function commitSymlinkEntry(repoRoot: string, name: string, target: string): Promise<void> {
+    // Created through the index, not the filesystem, so the archive carries a
+    // real symlink entry regardless of core.symlinks or symlink privilege.
+    const hash = (await new Promise<string>((resolve, reject) => {
+      const child = execFile('git', ['hash-object', '-w', '--stdin'], { cwd: repoRoot }, (err, out) => (err ? reject(err) : resolve(out.trim())));
+      child.stdin!.end(target);
+    }));
+    await execFileAsync('git', ['update-index', '--add', '--cacheinfo', `120000,${hash},${name}`], { cwd: repoRoot });
+    await execFileAsync('git', ['commit', '-q', '-m', 'add link'], { cwd: repoRoot });
+  }
+
+  it('refuses to write through a symlinked directory that the baseline archive placed in the snapshot', async () => {
+    const repoRoot = await makeGitRepo();
+    const outsideDir = await mkdtemp(join(tmpdir(), 'aether-snapshot-outside-'));
+    cleanups.push(() => rm(outsideDir, { recursive: true, force: true }));
+    await writeFile(join(outsideDir, 'victim.txt'), 'orig\n', 'utf8');
+    useAppTar();
+    await commitSymlinkEntry(repoRoot, 'd', outsideDir);
+    // Working tree: a real directory d/ with dispatch-authored content.
+    await rm(join(repoRoot, 'd'), { recursive: true, force: true });
+    await mkdir(join(repoRoot, 'd'));
+    await writeFile(join(repoRoot, 'd', 'victim.txt'), 'new\n', 'utf8');
+
+    await expect(buildVerificationSnapshot(evidenceFor(repoRoot, ['d/victim.txt']))).rejects.toThrow();
+    expect(await readFile(join(outsideDir, 'victim.txt'), 'utf8')).toBe('orig\n');
+  });
+
+  it('refuses to delete through a symlinked directory that the baseline archive placed in the snapshot', async () => {
+    const repoRoot = await makeGitRepo();
+    const outsideDir = await mkdtemp(join(tmpdir(), 'aether-snapshot-outside-'));
+    cleanups.push(() => rm(outsideDir, { recursive: true, force: true }));
+    await writeFile(join(outsideDir, 'victim.txt'), 'orig\n', 'utf8');
+    useAppTar();
+    await commitSymlinkEntry(repoRoot, 'd', outsideDir);
+    // Working tree: d is absent, so the copy fails and the deletion path runs.
+    await rm(join(repoRoot, 'd'), { recursive: true, force: true });
+
+    await expect(buildVerificationSnapshot(evidenceFor(repoRoot, ['d/victim.txt']))).rejects.toThrow();
+    await expect(access(join(outsideDir, 'victim.txt'))).resolves.toBeUndefined();
+  });
+
+  it('refuses to read through a symlinked directory in the project working tree', async () => {
+    const repoRoot = await makeGitRepo();
+    const outsideDir = await mkdtemp(join(tmpdir(), 'aether-snapshot-outside-'));
+    cleanups.push(() => rm(outsideDir, { recursive: true, force: true }));
+    await writeFile(join(outsideDir, 'secret.txt'), 'do not leak\n', 'utf8');
+    // A junction needs no symlink privilege on Windows; it is a plain dir symlink elsewhere.
+    await symlink(outsideDir, join(repoRoot, 'e'), 'junction');
+
+    await expect(buildVerificationSnapshot(evidenceFor(repoRoot, ['e/secret.txt']))).rejects.toThrow(/symlink/);
+  });
+
   it('dispose removes the snapshot directory and is idempotent', async () => {
     const repoRoot = await makeGitRepo();
     const snapshot = await buildVerificationSnapshot(evidenceFor(repoRoot, ['committed.txt']));

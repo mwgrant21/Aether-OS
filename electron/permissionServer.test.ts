@@ -1,16 +1,31 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import http from 'node:http';
 import { startPermissionServer } from './permissionServer';
+import { randomBytes } from 'node:crypto';
+import { signPermission } from './permissionAuth';
 
-function postJson(port: number, path: string, body: unknown): Promise<{ status: number; body: any }> {
+const SECRET = 'ab'.repeat(32);
+
+// Signs with SECRET by default; pass { secret: null } for an unauthenticated
+// caller (another local process, or a browser page) or another secret.
+function postJson(
+  port: number,
+  path: string,
+  body: unknown,
+  auth: { secret?: string | null } = {},
+): Promise<{ status: number; body: any; proof?: string; nonce: string }> {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
+    const nonce = randomBytes(16).toString('hex');
+    const secret = auth.secret === undefined ? SECRET : auth.secret;
+    const authHeaders: Record<string, string> =
+      secret === null ? {} : { 'X-Aether-Nonce': nonce, 'X-Aether-Auth': signPermission(secret, 'client', nonce, path) };
     const req = http.request(
-      { hostname: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } },
+      { hostname: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), ...authHeaders } },
       (res) => {
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: raw ? JSON.parse(raw) : null }));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: raw ? JSON.parse(raw) : null, proof: res.headers['x-aether-proof'] as string | undefined, nonce }));
       }
     );
     req.on('error', reject);
@@ -27,7 +42,7 @@ describe('permissionServer', () => {
   });
 
   it('resolves POST /permission-request with the decision returned by onPermissionRequest', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
@@ -40,7 +55,7 @@ describe('permissionServer', () => {
   });
 
   it('propagates a deny decision with a reason', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'deny' as const, reason: 'nope' }),
@@ -51,7 +66,7 @@ describe('permissionServer', () => {
   });
 
   it('propagates updatedInput when the decision includes it', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const, updatedInput: { file_path: 'src/**' } }),
@@ -62,7 +77,7 @@ describe('permissionServer', () => {
   });
 
   it('auto-denies with a timeout reason when onPermissionRequest never resolves within timeoutMs', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 50,
       onPermissionRequest: () => new Promise(() => {}), // never resolves
@@ -74,7 +89,7 @@ describe('permissionServer', () => {
   });
 
   it('auto-denies (instead of hanging) when onPermissionRequest throws synchronously', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 50,
       onPermissionRequest: () => {
@@ -88,7 +103,7 @@ describe('permissionServer', () => {
   });
 
   it('auto-denies (instead of crashing the process) when onPermissionRequest returns a rejected promise', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 50,
       onPermissionRequest: async () => {
@@ -102,21 +117,21 @@ describe('permissionServer', () => {
   });
 
   it('returns 400 on malformed request body', async () => {
-    const started = await startPermissionServer({ port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
+    const started = await startPermissionServer({ secret: SECRET, port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
     stop = started.stop;
     const res = await postJson(started.port, '/permission-request', { notToolName: true });
     expect(res.status).toBe(400);
   });
 
   it('a request to an unknown path returns 404', async () => {
-    const started = await startPermissionServer({ port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
+    const started = await startPermissionServer({ secret: SECRET, port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) });
     stop = started.stop;
     const res = await postJson(started.port, '/nonexistent', {});
     expect(res.status).toBe(404);
   });
 
   it('POST /post-tool-flag-check calls onPostToolUse and returns its decision when a detector trips', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
@@ -129,7 +144,7 @@ describe('permissionServer', () => {
   });
 
   it('auto-allows (not deny) on /post-tool-flag-check timeout', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
@@ -144,7 +159,7 @@ describe('permissionServer', () => {
 
   it('calls onNotification and acks with 200 + empty body, fire-and-forget', async () => {
     const received: { sessionId: string; notificationType: string }[] = [];
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
@@ -159,7 +174,7 @@ describe('permissionServer', () => {
   });
 
   it('404s /notification when onNotification is not configured', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
@@ -170,7 +185,7 @@ describe('permissionServer', () => {
   });
 
   it('400s /notification with a malformed body', async () => {
-    const started = await startPermissionServer({
+    const started = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
@@ -181,15 +196,55 @@ describe('permissionServer', () => {
     expect(res.status).toBe(400);
   });
 
+  // Security audit 2026-10-04 (unauthenticated-loopback-permission-request-card-spoofing,
+  // stale-port-file-unauthenticated-decision-server): every route requires a
+  // per-launch HMAC from the caller and returns one to prove the server.
+  it.each(['/permission-request', '/post-tool-flag-check', '/notification'])(
+    'refuses %s with 403 and never calls the handler when the caller has no auth',
+    async (path) => {
+      let called = 0;
+      const started = await startPermissionServer({ secret: SECRET,
+        port: 0,
+        timeoutMs: 5000,
+        onPermissionRequest: async () => { called += 1; return { behavior: 'allow' as const }; },
+        onPostToolUse: async () => { called += 1; return { block: false }; },
+        onNotification: () => { called += 1; },
+      });
+      stop = started.stop;
+      const body = { toolName: 'Bash', toolInput: { command: 'echo dummy' }, toolUseId: 't', sessionId: 's', notificationType: 'n' };
+      expect((await postJson(started.port, path, body, { secret: null })).status).toBe(403);
+      expect((await postJson(started.port, path, body, { secret: 'cd'.repeat(32) })).status).toBe(403);
+      expect(called).toBe(0);
+    },
+  );
+
+  it('returns a server proof the client can verify, bound to the nonce and path', async () => {
+    const started = await startPermissionServer({ secret: SECRET,
+      port: 0,
+      timeoutMs: 5000,
+      onPermissionRequest: async () => ({ behavior: 'deny' as const }),
+    });
+    stop = started.stop;
+    const res = await postJson(started.port, '/permission-request', { toolName: 'Read', toolInput: {} });
+    expect(res.status).toBe(200);
+    expect(res.proof).toBe(signPermission(SECRET, 'server', res.nonce, '/permission-request'));
+  });
+
+  it('refuses to start without a 32-byte hex secret', async () => {
+    await expect(
+      startPermissionServer({ secret: '', port: 0, timeoutMs: 5000, onPermissionRequest: async () => ({ behavior: 'allow' as const }) }),
+    ).rejects.toThrow(/secret/);
+  });
+
   it('rejects (instead of crashing the process) when the port is already bound', async () => {
-    const holder = await startPermissionServer({
+    const holder = await startPermissionServer({ secret: SECRET,
       port: 0,
       timeoutMs: 5000,
       onPermissionRequest: async () => ({ behavior: 'allow' as const }),
     });
     stop = holder.stop;
     await expect(
-      startPermissionServer({
+      startPermissionServer({ secret: SECRET,
         port: holder.port,
         timeoutMs: 5000,
         onPermissionRequest: async () => ({ behavior: 'allow' as const }),
