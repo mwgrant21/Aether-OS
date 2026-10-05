@@ -5,6 +5,7 @@ import {
   costBreakdownForEvent,
   PRICING_VERIFIED_AT,
   PRICING_PER_MILLION_TOKENS,
+  rateForModel,
 } from './modelPricing';
 
 describe('modelPricing', () => {
@@ -184,5 +185,36 @@ describe('modelPricing', () => {
       // Total = $3.84
       expect(cost).toBeCloseTo(3.84, 5);
     });
+  });
+});
+
+// Re-verified 2026-10-04 against the official per-model pricing table.
+describe('per-model rate overrides', () => {
+  const read = (model: string) =>
+    costForEvent({ model, usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 1_000_000 } });
+  const io = (model: string) =>
+    costForEvent({ model, usage: { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 } });
+
+  it('bills Opus 5.5 at $4/$20 with cache reads at $0.20/M', () => {
+    expect(io('claude-opus-5-5')).toBeCloseTo(24, 6);
+    expect(read('claude-opus-5-5')).toBeCloseTo(0.2, 6);
+    expect(rateForModel('claude-opus-5-5[1m]').cacheWrite).toBeCloseTo(5, 6); // $4 * 1.25
+  });
+
+  it('bills Sonnet 5 and Sonnet 5.5 at $2/$10, not the sonnet tier default', () => {
+    expect(io('claude-sonnet-5')).toBeCloseTo(12, 6);
+    expect(io('claude-sonnet-5-5')).toBeCloseTo(12, 6);
+    expect(read('claude-sonnet-5-5')).toBeCloseTo(0.2, 6);
+  });
+
+  it('bills Fable 5.1 and Mythos 5.1 cache reads at $0.25/M', () => {
+    expect(read('claude-fable-5-1')).toBeCloseTo(0.25, 6);
+    expect(read('claude-mythos-5-1-20261001')).toBeCloseTo(0.25, 6);
+    expect(read('claude-fable-5')).toBeCloseTo(1, 6); // unchanged: 10% of $10
+  });
+
+  it('leaves models without an override on their tier rate', () => {
+    expect(io('claude-opus-4-8')).toBeCloseTo(30, 6);
+    expect(io('claude-sonnet-4-6')).toBeCloseTo(18, 6);
   });
 });

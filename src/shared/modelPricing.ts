@@ -10,10 +10,9 @@
 //                     pre-verification table carried $15 / $75 -- the retired
 //                     Opus 3 rate -- and overstated every Opus dollar figure
 //                     this app has ever rendered by 3x.
-//   sonnet $3 / $15   Unchanged. Caveat: Sonnet 5 carries an introductory
-//                     $2 / $10 rate through 2026-08-31. The standard rate is
-//                     stamped here deliberately, because it is the durable one;
-//                     until that date passes, Sonnet 5 figures read ~50% high.
+//   sonnet $3 / $15   The tier rate, still right for Sonnet 4.6. Sonnet 5 and
+//                     5.5 are $2 / $10 (not an introductory rate, as this
+//                     comment used to claim) -- see MODEL_RATE_OVERRIDES.
 //   haiku  $1 / $5    Was $0.80 / $4, understating Haiku by ~20%.
 //   fable  $10 / $50  New tier, covering the Fable and Mythos families. These
 //                     previously fell through to the sonnet default and billed a
@@ -22,7 +21,7 @@
 // Deliberately no full model-ID literals below: noApiCalls.test.ts guards on
 // /claude-[a-z]+-\d/, and naming tiers rather than IDs keeps this file out of
 // that test's LITERAL_EXCEPTIONS set.
-export const PRICING_VERIFIED_AT = '2026-08-07';
+export const PRICING_VERIFIED_AT = '2026-10-04';
 
 export const PRICING_PER_MILLION_TOKENS = {
   opus: { input: 5, output: 25 },
@@ -46,6 +45,54 @@ export const CACHE_READ_DISCOUNT = 0.1;
 export const CACHE_WRITE_MULTIPLIER = 1.25;
 
 export type PricingTier = keyof typeof PRICING_PER_MILLION_TOKENS;
+
+// Models whose published price diverges from their tier's rate above, keyed by
+// family-version with no "claude-" prefix (see the noApiCalls note at the top).
+// Re-verified 2026-10-04 against the official per-model table:
+//   sonnet-5, sonnet-5-5  $2 / $10 -- billed at the $3 / $15 sonnet tier before,
+//                         50% high. Sonnet 5's rate is not introductory.
+//   opus-5-5              $4 / $20, cache reads $0.20/M (0.05x input).
+//   fable-5-1, mythos-5-1 cache reads $0.25/M (0.025x input), not $1.00.
+// cacheRead is an absolute $/M, present only where it is not
+// input * CACHE_READ_DISCOUNT. At a ~0.98 cache-hit ratio cache reads are most
+// of a session's tokens, so those overrides carry the largest dollar correction.
+// Ported from TokenMonitorV2's KNOWN_VERSIONS (same date, same figures).
+export const MODEL_RATE_OVERRIDES: Record<string, { input?: number; output?: number; cacheRead?: number }> = {
+  'sonnet-5': { input: 2, output: 10 },
+  'sonnet-5-5': { input: 2, output: 10 },
+  'opus-5-5': { input: 4, output: 20, cacheRead: 0.2 },
+  'fable-5-1': { cacheRead: 0.25 },
+  'mythos-5-1': { cacheRead: 0.25 },
+};
+
+// Strips the leading "claude-" prefix, a trailing "[1m]" long-context marker and
+// a trailing "-YYYYMMDD" snapshot date, so a transcript's model name meets the
+// MODEL_RATE_OVERRIDES keys (e.g. an opus 5.5 [1m] name -> "opus-5-5").
+export function normalizeModelId(modelName: string | null): string {
+  let id = (modelName || '').toLowerCase().trim();
+  if (id.startsWith('claude-')) id = id.slice('claude-'.length);
+  return id.replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
+}
+
+export interface ModelRate {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** Every $/M rate for one model: its tier rate, with any per-model override applied. */
+export function rateForModel(modelName: string | null): ModelRate {
+  const tier = PRICING_PER_MILLION_TOKENS[pricingTierForModel(modelName)];
+  const o = MODEL_RATE_OVERRIDES[normalizeModelId(modelName)] ?? {};
+  const input = o.input ?? tier.input;
+  return {
+    input,
+    output: o.output ?? tier.output,
+    cacheRead: o.cacheRead ?? input * CACHE_READ_DISCOUNT,
+    cacheWrite: input * CACHE_WRITE_MULTIPLIER,
+  };
+}
 
 export function pricingTierForModel(modelName: string | null): PricingTier {
   const lower = (modelName || '').toLowerCase();
@@ -79,12 +126,12 @@ export interface PricedEvent {
  */
 export function costBreakdownForEvent(event: PricedEvent): CostBreakdown {
   if (!event || !event.usage) return { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
-  const rates = PRICING_PER_MILLION_TOKENS[pricingTierForModel(event.model)];
+  const rate = rateForModel(event.model);
   return {
-    input: (event.usage.inputTokens / 1_000_000) * rates.input,
-    output: (event.usage.outputTokens / 1_000_000) * rates.output,
-    cacheCreation: (event.usage.cacheCreationInputTokens / 1_000_000) * rates.input * CACHE_WRITE_MULTIPLIER,
-    cacheRead: (event.usage.cacheReadInputTokens / 1_000_000) * rates.input * CACHE_READ_DISCOUNT,
+    input: (event.usage.inputTokens / 1_000_000) * rate.input,
+    output: (event.usage.outputTokens / 1_000_000) * rate.output,
+    cacheCreation: (event.usage.cacheCreationInputTokens / 1_000_000) * rate.cacheWrite,
+    cacheRead: (event.usage.cacheReadInputTokens / 1_000_000) * rate.cacheRead,
   };
 }
 
