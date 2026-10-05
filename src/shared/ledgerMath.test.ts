@@ -492,3 +492,16 @@ describe('quotaCostForTokens', () => {
     expect(Object.keys(estimate)).not.toContain('usdPlan');
   });
 });
+
+describe('per-model rates reach the ledger', () => {
+  it('prices the cacheImpact counterfactual at the model input rate, not the tier rate', () => {
+    const result = cacheImpact([ev({ model: 'claude-opus-5-5', usage: usage(0, 0, 0, M) })]);
+    expect(result.wouldHaveCostUsd).toBeCloseTo(4, 6); // $4, not the opus tier's $5
+    expect(result.actuallyCostUsd).toBeCloseTo(0.2, 6);
+  });
+
+  it('estimates a dispatch at the model blended rate', () => {
+    const result = estimateDispatchCost(dispatch({ tokens: M, model: 'claude-sonnet-5-5' }));
+    expect(result.usdApprox).toBeCloseTo(0.8 * 10 + 0.2 * 2, 6);
+  });
+});

@@ -6,6 +6,7 @@ import {
   costBreakdownForEvent,
   pricingTierForModel,
   PRICING_PER_MILLION_TOKENS,
+  rateForModel,
   type PricingTier,
 } from './modelPricing';
 
@@ -196,7 +197,15 @@ export const DISPATCH_OUTPUT_SHARE = 0.8;
 
 /** The blended per-million rate applied to a dispatch's scalar token count. */
 export function blendedRateForTier(tier: PricingTier): number {
-  const rates = PRICING_PER_MILLION_TOKENS[tier];
+  return blendedRate(PRICING_PER_MILLION_TOKENS[tier]);
+}
+
+/** Same blend at one model's own rate, so a per-model override (e.g. Sonnet 5.5) reaches dispatch estimates. */
+export function blendedRateForModel(model: string | null): number {
+  return blendedRate(rateForModel(model));
+}
+
+function blendedRate(rates: { input: number; output: number }): number {
   return DISPATCH_OUTPUT_SHARE * rates.output + (1 - DISPATCH_OUTPUT_SHARE) * rates.input;
 }
 
@@ -244,7 +253,7 @@ export function estimateDispatchCost(dispatch: CompletedDispatchWithUsage): Esti
   const tokens = Number.isFinite(dispatch.tokens) && dispatch.tokens > 0 ? dispatch.tokens : 0;
   const tier = pricingTierForModel(dispatch.model);
   return {
-    usdApprox: (tokens / 1_000_000) * blendedRateForTier(tier),
+    usdApprox: (tokens / 1_000_000) * blendedRateForModel(dispatch.model),
     basis: 'blended-tier-rate',
     tokens,
     tier,
@@ -557,9 +566,8 @@ export function cacheImpact(events: TranscriptEvent[]): CacheImpact {
     if (e.kind !== 'assistant' || !e.usage) continue;
     const tokens = e.usage.cacheReadInputTokens;
     if (!tokens) continue;
-    const rates = PRICING_PER_MILLION_TOKENS[pricingTierForModel(e.model)];
     cacheReadTokens += tokens;
-    wouldHaveCostUsd += (tokens / 1_000_000) * rates.input;
+    wouldHaveCostUsd += (tokens / 1_000_000) * rateForModel(e.model).input;
     // Taken from the shared breakdown rather than re-applying the discount, so
     // this can never disagree with what the session card charges for cache.
     actuallyCostUsd += costBreakdownForEvent(e).cacheRead;
