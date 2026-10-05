@@ -72,7 +72,7 @@ import {
 } from './statuslineUninstallCli';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 import { startPermissionServer, type PermissionDecision, type PostToolFlagDecision } from './permissionServer';
-import { createPermissionSecret, encodePortFile } from './permissionAuth';
+import { createPermissionSecret, writePortFile } from './permissionAuth';
 import { classifyPermissionRisk, shouldAutoAllow, type PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import { derivePermissionEditableField } from '../src/shared/permissionEditableField';
 import { renderNotificationBadge } from './notificationBadge';
@@ -842,7 +842,9 @@ app.whenReady().then(async () => {
   // explicit ACL, not by the profile's inherited one. Fire-and-forget like the
   // migration above: a slow or failing PowerShell must not delay the window.
   // Grants someone else added are kept and logged, never stripped.
-  void ensurePrivateDir(aetherOsDir)
+  // Not awaited here; the permission-server port file (which holds a secret)
+  // awaits it below, after the window is up. The chain never rejects.
+  const privateDirReady = ensurePrivateDir(aetherOsDir)
     .then(({ changed, extras }) => {
       diagLog.write(`[diag] private-dir changed=${changed} extras=${extras.length} at=${new Date().toISOString()}`);
       for (const e of extras) {
@@ -1003,7 +1005,10 @@ app.whenReady().then(async () => {
   }
   stopPermissionServer = permission.stop;
   await fsp.mkdir(dirname(permissionServerPortPath), { recursive: true });
-  await fsp.writeFile(permissionServerPortPath, encodePortFile(permission.port, permissionServerOptions.secret), { encoding: 'utf8', mode: 0o600 });
+  // The Windows user-only ACL must be on ~/.aether-os before the secret lands
+  // there (PR #115 review); writePortFile handles the POSIX mode itself.
+  await privateDirReady;
+  await writePortFile(permissionServerPortPath, permission.port, permissionServerOptions.secret);
 });
 
 app.on('window-all-closed', () => {

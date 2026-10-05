@@ -12,6 +12,7 @@
 // the server answers with HMAC(secret, "server\n<nonce>\n<path>"). The secret
 // itself never crosses the socket, so a squatter learns nothing it can use.
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { rm, writeFile } from 'node:fs/promises';
 
 export const NONCE_HEADER = 'x-aether-nonce';
 export const AUTH_HEADER = 'x-aether-auth';
@@ -43,4 +44,14 @@ export function verifySignature(expectedHex: string, given: unknown): boolean {
  *  pre-2026-10-04 format) carries no secret, so the hook falls through. */
 export function encodePortFile(port: number, secret: string): string {
   return JSON.stringify({ port, secret });
+}
+
+/** Publishes the port file as a NEW user-only file. writeFile's `mode` only
+ *  applies on creation, so an existing (legacy, umask-moded) file is removed
+ *  first and the replacement created exclusively: 'wx' also refuses to follow
+ *  a link planted at the path. On Windows the mode is ignored; the user-only
+ *  ACL comes from ensurePrivateDir on ~/.aether-os, which main.ts awaits first. */
+export async function writePortFile(path: string, port: number, secret: string): Promise<void> {
+  await rm(path, { force: true });
+  await writeFile(path, encodePortFile(port, secret), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
 }
