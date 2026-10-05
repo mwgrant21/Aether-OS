@@ -1,5 +1,6 @@
 import http from 'node:http';
 import type { PermissionRisk } from '../src/shared/permissionRisk';
+import { AUTH_HEADER, NONCE_HEADER, PROOF_HEADER, isValidNonce, isValidSecret, signPermission, verifySignature } from './permissionAuth';
 
 export interface PermissionRequestPayload {
   requestId: string;
@@ -20,6 +21,9 @@ export interface PostToolFlagDecision {
 }
 
 export interface StartPermissionServerOptions {
+  /** Per-launch 32-byte hex secret shared with the hook through the user-only
+   *  port file. Required: every request must carry a valid client HMAC. */
+  secret: string;
   port: number;
   timeoutMs: number;
   onPermissionRequest: (req: { toolName: string; toolInput: unknown }) => Promise<PermissionDecision>;
@@ -109,7 +113,21 @@ function invokePostToolUseSafely(
 }
 
 export function startPermissionServer(options: StartPermissionServerOptions): Promise<{ server: http.Server; port: number; stop: () => void }> {
+  if (!isValidSecret(options.secret)) {
+    return Promise.reject(new Error('startPermissionServer requires a 32-byte hex secret'));
+  }
   const server = http.createServer(async (req, res) => {
+    // Authenticate before reading the body or touching any handler: 127.0.0.1
+    // is reachable by every local process and by browser pages, so
+    // reachability is not identity. See permissionAuth.ts.
+    const nonce = req.headers[NONCE_HEADER];
+    const path = req.url ?? '';
+    if (!isValidNonce(nonce) || !verifySignature(signPermission(options.secret, 'client', nonce, path), req.headers[AUTH_HEADER])) {
+      res.writeHead(403).end();
+      return;
+    }
+    res.setHeader(PROOF_HEADER, signPermission(options.secret, 'server', nonce, path));
+
     if (req.method === 'POST' && req.url === '/notification') {
       if (!options.onNotification) {
         res.writeHead(404).end();

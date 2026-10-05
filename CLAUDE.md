@@ -222,7 +222,11 @@ before designing anything that persists or transmits data. The short version:
   (`~/.aether-os/spool/`), not an HTTP server. Separately, `electron/permissionServer.ts` runs a
   local HTTP server bound to `127.0.0.1` (never `0.0.0.0`) for `PermissionRequest`/`PostToolUse`/
   `Notification` hook brokering — reachable only from this machine, with no port exposed
-  externally, no token, and nothing bound off-loopback.
+  externally and nothing bound off-loopback. Loopback is not identity (any local process or
+  browser page can reach it), so every request and response is mutually authenticated with a
+  per-launch HMAC secret kept only in the user-only `~/.aether-os/permission-server-port` file,
+  deleted on quit (`electron/permissionAuth.ts`, security audit 2026-10-04). Never drop the
+  check: the hook must also refuse an unproven server, or a port squatter can answer allow.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
   detector and optimize rule has been checked against this and none of them need content.
