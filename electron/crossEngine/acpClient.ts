@@ -125,9 +125,11 @@ export class AcpClient {
 
   /** Responds to requests the agent sends us. The only one this client
    *  supports is `session/request_permission`, which it always denies
-   *  (`outcome: 'cancelled'`) -- verification runs are read-only by policy,
-   *  so any write/exec permission the agent asks for is refused rather than
-   *  granted. Any other incoming method gets a JSON-RPC "method not found"
+   *  (`outcome: 'cancelled'`), so any escalation the agent asks for is
+   *  refused rather than granted. This gates only what the adapter asks
+   *  about: the verifier pins codex-acp's 'read-only' mode so every
+   *  escalation is asked (acpProcess.ts buildAcpAdapterEnv), but that mode
+   *  still permits in-sandbox writes to the snapshot dir and tmp. Any other incoming method gets a JSON-RPC "method not found"
    *  error so the agent's request always completes instead of hanging. */
   private handleIncomingRequest(id: number, method: string, params?: unknown): void {
     if (!this.child) return;
@@ -304,8 +306,10 @@ export class AcpClient {
    *  accumulated text isn't valid JSON, the raw string is returned instead
    *  of throwing; `parseVerificationResult` treats any non-object input as
    *  inconclusive rather than a parse error blowing up the run.
-   *  "Read-only" is enforced separately, by `handleIncomingRequest` denying
-   *  every `session/request_permission` the agent sends during the turn. */
+   *  Escalations are refused separately, by `handleIncomingRequest` denying
+   *  every `session/request_permission` the agent sends during the turn; the
+   *  adapter's 'read-only' start mode (acpProcess.ts) makes it ask. In-sandbox
+   *  writes to the snapshot dir and tmp are not gated -- see buildAcpAdapterEnv. */
   /** Prompts into an ALREADY-CREATED session and returns the raw accumulated
    *  text plus the turn's stop reason, without parsing. Extracted from
    *  prompt() so the provider-neutral adapter can own session lifetime
@@ -336,8 +340,10 @@ export class AcpClient {
    *  accumulated text isn't valid JSON, the raw string is returned instead
    *  of throwing; `parseVerificationResult` treats any non-object input as
    *  inconclusive rather than a parse error blowing up the run.
-   *  "Read-only" is enforced separately, by `handleIncomingRequest` denying
-   *  every `session/request_permission` the agent sends during the turn. */
+   *  Escalations are refused separately, by `handleIncomingRequest` denying
+   *  every `session/request_permission` the agent sends during the turn; the
+   *  adapter's 'read-only' start mode (acpProcess.ts) makes it ask. In-sandbox
+   *  writes to the snapshot dir and tmp are not gated -- see buildAcpAdapterEnv. */
   async prompt(params: { cwd: string; text: string }): Promise<unknown> {
     const sessionId = await this.newSession(params.cwd);
     const { text } = await this.promptSessionRaw(sessionId, params.text);

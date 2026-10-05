@@ -1,8 +1,9 @@
 // electron/crossEngine/acpProcess.test.ts
 import { buildAllowlistedChildEnv } from './acpProcess';
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync } from 'node:fs';
-import { buildCodexChildEnv, resolveCodexHome, spawnAcpProcess, toUnpackedPath } from './acpProcess';
+import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { buildAcpAdapterEnv, buildCodexChildEnv, resolveCodexHome, spawnAcpProcess, toUnpackedPath } from './acpProcess';
 
 const BLOCKED = [
   'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORG_ID',
@@ -81,6 +82,32 @@ describe('buildCodexChildEnv', () => {
   it('sets ELECTRON_RUN_AS_NODE so process.execPath runs the script as plain Node under Electron', () => {
     const child = buildCodexChildEnv({} as NodeJS.ProcessEnv, 'C:/fake/codex-home');
     expect(child.ELECTRON_RUN_AS_NODE).toBe('1');
+  });
+});
+
+// Security audit 2026-10-04 (acp-verifier-default-agent-mode-not-read-only):
+// codex-acp defaults to its 'agent' mode, whose approvals reviewer is
+// auto_review, so escalations were decided by Codex itself and never reached
+// AcpClient's deny-all request_permission handler. 'read-only' routes every
+// escalation to the client (reviewer 'user').
+describe('buildAcpAdapterEnv', () => {
+  it('starts the ACP adapter in read-only mode on top of the allowlisted env', () => {
+    const child = buildAcpAdapterEnv({ PATH: '/bin', OPENAI_API_KEY: 'x' } as NodeJS.ProcessEnv, 'C:/fake/codex-home');
+    expect(child.INITIAL_AGENT_MODE).toBe('read-only');
+    expect(child.CODEX_HOME).toBe('C:/fake/codex-home');
+    expect(child.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it('does not add the mode to the shared env used by the app-server provider', () => {
+    expect(buildCodexChildEnv({} as NodeJS.ProcessEnv, 'C:/fake/codex-home').INITIAL_AGENT_MODE).toBeUndefined();
+  });
+
+  it('names a mode the pinned codex-acp adapter actually defines and reads from INITIAL_AGENT_MODE', () => {
+    // An unknown id falls back to the default 'agent' mode silently, so pin
+    // the contract against the installed adapter source.
+    const dist = readFileSync(createRequire(import.meta.url).resolve('@agentclientprotocol/codex-acp/dist/index.js'), 'utf8');
+    expect(dist).toMatch(/new _AgentMode\(\s*"read-only"/);
+    expect(dist).toContain('process.env["INITIAL_AGENT_MODE"]');
   });
 });
 
