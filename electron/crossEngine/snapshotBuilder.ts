@@ -45,6 +45,29 @@ async function isSymlink(path: string): Promise<boolean> {
   }
 }
 
+/** Rejects a relative path whose existing parent directories under `root`
+ *  include a symlink or junction. isSymlink above inspects only the final
+ *  component, but copyFile/mkdir/rm follow a symlinked DIRECTORY anywhere in
+ *  the path -- and the baseline archive can carry one (a repo may commit
+ *  `d -> <anywhere>`), as can the working tree. Walks from the root down and
+ *  stops at the first missing component: whatever mkdir creates below that
+ *  point is a fresh real directory. (Security audit 2026-10-04,
+ *  snapshotBuilder-intermediate-symlink-escape.) */
+async function assertNoSymlinkedParents(root: string, relPath: string): Promise<void> {
+  const parts = relPath.split(/[\\/]+/).filter(Boolean).slice(0, -1);
+  let current = resolvePath(root);
+  for (const part of parts) {
+    current = join(current, part);
+    let isLink: boolean;
+    try {
+      isLink = (await lstat(current)).isSymbolicLink();
+    } catch {
+      return;
+    }
+    if (isLink) throw new Error(`touched path crosses a symlinked directory, refusing: ${relPath}`);
+  }
+}
+
 export async function buildVerificationSnapshot(evidence: DispatchEvidence): Promise<VerificationSnapshot> {
   const snapshotDir = await mkdtemp(join(tmpdir(), 'aether-codex-verify-'));
 
@@ -74,6 +97,8 @@ export async function buildVerificationSnapshot(evidence: DispatchEvidence): Pro
       if (await isSymlink(srcAbs)) {
         throw new Error(`touched path is a symlink, refusing to copy: ${relPath}`);
       }
+      await assertNoSymlinkedParents(evidence.projectRoot, relPath);
+      await assertNoSymlinkedParents(snapshotDir, relPath);
       await mkdir(dirname(destAbs), { recursive: true });
       try {
         await copyFile(srcAbs, destAbs);
