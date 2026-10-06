@@ -51,7 +51,11 @@ export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly stri
 
 export interface BridgePtyLaunch { scriptPath: string; env: NodeJS.ProcessEnv }
 
-export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string) {
+// Marks a terminal's claude as unmonitored for scripts/aether-statusline.mjs,
+// which then renders its line but never writes the shared statusline.json.
+export const UNMONITORED_TERMINAL_ENV: NodeJS.ProcessEnv = { AETHER_STATUSLINE_NO_PERSIST: '1' };
+
+export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv) {
   if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
   const ptyProcess = pty.spawn(shell, bridge ? ['-NoExit', '-File', bridge.scriptPath] : [], {
@@ -59,7 +63,7 @@ export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessio
     cols,
     rows,
     cwd: os.homedir(),
-    env: bridge ? bridge.env : buildPtyEnv(),
+    env: bridge ? bridge.env : { ...buildPtyEnv(), ...extraEnv },
   });
   if (!bridge) {
     ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));

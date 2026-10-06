@@ -3,7 +3,7 @@ import { join, dirname } from 'path';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { spawnPty } from './ptyManager';
+import { spawnPty, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
@@ -1346,7 +1346,7 @@ const terminal2PtyLifecycle = new PtyLifecycle();
 
 ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
-  terminal2PtyLifecycle.start(() => spawnPty(cols, rows), {
+  terminal2PtyLifecycle.start(() => spawnPty(cols, rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
     onData: (data) => {
       if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
     },

@@ -177,7 +177,10 @@ function main() {
     return;
   }
 
-  persistSnapshot(payload);
+  // Set only in Aether's own unmonitored terminals (Terminal 2): their payload
+  // would overwrite the pinned terminal's in the one shared file between the
+  // watcher's polls. The statusline line itself still renders.
+  if (process.env.AETHER_STATUSLINE_NO_PERSIST !== '1') persistSnapshot(payload);
 
   const chainCommand = parseChainArg(process.argv.slice(2));
   if (chainCommand) {

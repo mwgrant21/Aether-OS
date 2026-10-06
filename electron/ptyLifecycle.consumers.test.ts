@@ -39,7 +39,7 @@ function fakePty() {
   } satisfies PtyLike & { fireData(value: string): void; fireExit(): void };
 }
 function fixture() {
-  const ptyLifecycle = new PtyLifecycle(), codexPtyLifecycle = new PtyLifecycle();
+  const ptyLifecycle = new PtyLifecycle(), codexPtyLifecycle = new PtyLifecycle(), terminal2PtyLifecycle = new PtyLifecycle();
   const spawnPty = vi.fn(), spawnCodexPty = vi.fn(), send = vi.fn(), sendToWindow = vi.fn();
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
   let launchId: string | undefined = 'launch-1';
@@ -49,7 +49,8 @@ function fixture() {
     prompt = value; return true;
   }) };
   const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
-  const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
+  const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
+    UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
     planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() } };
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
@@ -57,7 +58,8 @@ function fixture() {
   }).outputText, context) as (...args: unknown[]) => void;
   return { ...context, prompt: () => prompt, launch: (id: string | undefined) => { launchId = id; prompt = 'unknown'; },
     resize: compile(callbackFor('pty:resize', 'on')), event: { sender: { isDestroyed: () => false, send } }, send,
-    ordinary: compile(callbackFor('pty:start')), connected: compile(connectedCallback()), codex: compile(callbackFor('codexPty:start')) };
+    ordinary: compile(callbackFor('pty:start')), connected: compile(connectedCallback()), codex: compile(callbackFor('codexPty:start')),
+    terminal2: compile(callbackFor('terminal2Pty:start')) };
 }
 
 describe('production terminal consumer ownership (deterministic callbacks)', () => {
@@ -109,6 +111,14 @@ describe('production pinned-session id wiring', () => {
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'pinned-id');
     f.connected({ sessionId: 'connected-id' }, vi.fn());
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'connected-id');
+  });
+
+  it('launches Terminal 2 tagged unmonitored, without a session id or touching the pinned tracker', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' });
+    expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
   });
 });
 
