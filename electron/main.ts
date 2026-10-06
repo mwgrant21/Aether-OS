@@ -1327,6 +1327,32 @@ ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: num
   codexPtyLifecycle.resize(cols, rows);
 });
 
+// A second, plain Claude session for the Terminal 2 tab. Same launch as the
+// pinned terminal (spawnPty, no bridge) but deliberately unmonitored: it never
+// feeds pinnedPtyExited, liveAgentTracker, planUsageScraper or the
+// communication bridge, which all stay bound to the pinned pty above.
+const terminal2PtyLifecycle = new PtyLifecycle();
+
+ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
+  const sender = event.sender;
+  terminal2PtyLifecycle.start(() => spawnPty(cols, rows), {
+    onData: (data) => {
+      if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
+    },
+    // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
+    onAlive: () => {},
+    onExit: () => {},
+  });
+});
+
+ipcMain.on('terminal2Pty:write', (_event, input: string) => {
+  terminal2PtyLifecycle.write(input);
+});
+
+ipcMain.on('terminal2Pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
+  terminal2PtyLifecycle.resize(cols, rows);
+});
+
 // Which `codex` the terminal will launch and its version, answered by a
 // profile-loaded shell running the terminal's own selection script on the
 // SAME env and cwd spawnCodexPty uses -- never Electron's raw process.env,

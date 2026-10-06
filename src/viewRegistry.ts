@@ -13,6 +13,7 @@ import { FilesView } from './components/files/FilesView';
 import { UplinksView } from './components/uplinks/UplinksView';
 import { OptimizeView } from './components/optimize/OptimizeView';
 import { CodexTerminalView } from './components/codexTerminal/CodexTerminalView';
+import { Terminal2View } from './components/terminal2/Terminal2View';
 
 export interface ViewDef {
   id: string;
@@ -23,6 +24,7 @@ export interface ViewDef {
 export const VIEWS: ViewDef[] = [
   { id: 'Dashboard', inSidebar: true, component: DashboardView },
   { id: 'Terminal', inSidebar: true, component: TerminalView },
+  { id: 'Terminal 2', inSidebar: true, component: Terminal2View },
   { id: 'Codex', inSidebar: true, component: CodexTerminalView },
   { id: 'Comms', inSidebar: true, component: CommsView },
   { id: 'Agents', inSidebar: true, component: AgentsView },
