@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { createLiveAgentTracker } from './liveAgentTracker';
@@ -177,5 +177,20 @@ describe('nested dispatches are not stalled on the live path', () => {
     const late = Date.parse('2026-09-30T10:31:00.000Z');
     const flagged = narrator.checkStalls(result.open, late, false, () => null).map((p) => p.toolUseId);
     expect(flagged).toEqual(['tu_top']);
+  });
+});
+
+describe('pinning by session id', () => {
+  it('pins the spawned session id even when another session in the same project dir wrote more recently', async () => {
+    const home = homeWithSession([]);
+    const sessionDir = path.join(home, '.claude', 'projects', cwdToProjectDirName(home));
+    writeFileSync(path.join(sessionDir, 'pinned-id.jsonl'), '', 'utf8');
+    utimesSync(path.join(sessionDir, 'pinned-id.jsonl'), new Date(5000), new Date(5000));
+    // Terminal 2's (or any other claude's) transcript, newer than the pinned one.
+    writeFileSync(path.join(sessionDir, 'terminal2.jsonl'), '', 'utf8');
+    const tracker = createLiveAgentTracker(home);
+    tracker.notifyPtySpawned(1000, 'pinned-id');
+    await tracker.tick();
+    expect(tracker.getPinnedSessionId()).toBe('pinned-id');
   });
 });

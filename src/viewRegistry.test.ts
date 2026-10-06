@@ -12,6 +12,7 @@ describe('viewRegistry', () => {
     expect(sidebarIds).toEqual([
       'Dashboard',
       'Terminal',
+      'Terminal 2',
       'Codex',
       'Comms',
       'Agents',
@@ -81,5 +82,9 @@ describe('viewRegistry', () => {
 
   it('getViewComponent resolves Codex now that it is built', () => {
     expect(getViewComponent('Codex')).not.toBeNull();
+  });
+
+  it('getViewComponent resolves Terminal 2 now that it is built', () => {
+    expect(getViewComponent('Terminal 2')).not.toBeNull();
   });
 });

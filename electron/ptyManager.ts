@@ -4,8 +4,12 @@ import os from 'node:os';
 // The terminal ALWAYS starts a fresh claude session -- never add
 // resume flags (--continue/--resume/-c/-r) here, matching this app's
 // own existing decision (and TokenMonitor's identical one) that the
-// terminal never opens on a stale session.
-const CLAUDE_LAUNCH_COMMAND = 'claude\r';
+// terminal never opens on a stale session. --session-id with a fresh uuid
+// still starts a new session; it only fixes the transcript's file name so the
+// pinned terminal's tracker can find it exactly (see liveAgentTracker.ts).
+export function buildClaudeLaunchCommand(sessionId?: string): string {
+  return sessionId ? `claude --session-id ${sessionId}\r` : 'claude\r';
+}
 
 // Env vars that, if inherited from the operator's shell, would let the
 // auto-launched `claude` session below bill against a paid API key without
@@ -34,7 +38,7 @@ export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Pro
 // Instead: let the profile run normally, then explicitly unset the blocked
 // vars in the live shell session immediately before the launch command --
 // this closes the re-export path without touching anything else the
-// profile sets up. Matches CLAUDE_LAUNCH_COMMAND's own trick of writing
+// profile sets up. Matches buildClaudeLaunchCommand's own trick of writing
 // input to the pty immediately after spawn: the shell reads its rc files
 // from disk, not from stdin, so queued writes are unaffected by profile
 // execution and simply wait until the shell is ready to read them.
@@ -47,7 +51,11 @@ export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly stri
 
 export interface BridgePtyLaunch { scriptPath: string; env: NodeJS.ProcessEnv }
 
-export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch) {
+// Marks a terminal's claude as unmonitored for scripts/aether-statusline.mjs,
+// which then renders its line but never writes the shared statusline.json.
+export const UNMONITORED_TERMINAL_ENV: NodeJS.ProcessEnv = { AETHER_STATUSLINE_NO_PERSIST: '1' };
+
+export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv) {
   if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
   const ptyProcess = pty.spawn(shell, bridge ? ['-NoExit', '-File', bridge.scriptPath] : [], {
@@ -55,11 +63,11 @@ export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch) {
     cols,
     rows,
     cwd: os.homedir(),
-    env: bridge ? bridge.env : buildPtyEnv(),
+    env: bridge ? bridge.env : { ...buildPtyEnv(), ...extraEnv },
   });
   if (!bridge) {
     ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));
-    ptyProcess.write(CLAUDE_LAUNCH_COMMAND);
+    ptyProcess.write(buildClaudeLaunchCommand(sessionId));
   }
   return ptyProcess;
 }

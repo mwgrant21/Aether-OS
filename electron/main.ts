@@ -3,7 +3,7 @@ import { join, dirname } from 'path';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { spawnPty } from './ptyManager';
+import { spawnPty, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
@@ -58,7 +58,7 @@ import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
 import { createFlushQuitGate } from './flushQuitGate';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
-import { startStatuslineWatcher } from './statuslineWatcher';
+import { isPinnedStatusline, startStatuslineWatcher } from './statuslineWatcher';
 import {
   readInstallState,
   installStatusline,
@@ -483,6 +483,9 @@ function isPortAvailable(port: number): Promise<boolean> {
 // has mounted, instead of waiting for the next on-disk change (which may never
 // come during the current session).
 let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
+// The --session-id the pinned Claude terminal was last launched with (ordinary
+// or connected). Filters the shared statusline file down to that terminal.
+let pinnedLaunchSessionId: string | null = null;
 
 // Same startup-race workaround as cachedStatuslineSnapshot above: the first
 // scan can finish before the renderer's useLedgerSync listener is registered,
@@ -886,7 +889,10 @@ app.whenReady().then(async () => {
   setInterval(scanAndPushMemory, MEMORY_SCAN_INTERVAL_MS);
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
-    cachedStatuslineSnapshot = snapshot;
+    // Quota is account-wide, so any session's seven-day reading is a valid
+    // sample (below); only the dashboard snapshot is limited to the pinned terminal.
+    const pinned = isPinnedStatusline(snapshot.sessionId, pinnedLaunchSessionId);
+    if (pinned) cachedStatuslineSnapshot = snapshot;
     // The seven-day window is the quota cost basis (the five-hour one stays a
     // live depletion gauge and is never fitted). A payload without it -- an
     // older Claude Code, or a session before the first rate-limit report --
@@ -903,7 +909,7 @@ app.whenReady().then(async () => {
         );
       }
     }
-    sendToWindow('statusline:snapshot', snapshot);
+    if (pinned) sendToWindow('statusline:snapshot', snapshot);
   });
 
   const desiredPort = 51823; // arbitrary fixed high port; bump-on-conflict handled below
@@ -1227,7 +1233,7 @@ const communicationSessions = new CommunicationSessionControl({
     if (!await launchMaintenance) throw new Error('STALE_LAUNCH_CLEANUP_FAILED');
     connectedExecutable = await preflightBridgeLaunch(launchRuntime);
   },
-  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable }),
+  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable, sessionId: crypto.randomUUID() }),
   spawn: (bundle, onExit) => {
     const launchId = communicationBridge.currentLaunchId();
     if (!launchId) throw new Error('REVOKED');
@@ -1238,7 +1244,8 @@ const communicationSessions = new CommunicationSessionControl({
       onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
     });
     pinnedPtyExited = false;
-    liveAgentTracker.notifyPtySpawned(Date.now());
+    pinnedLaunchSessionId = bundle.sessionId ?? null;
+    liveAgentTracker.notifyPtySpawned(Date.now(), pinnedLaunchSessionId);
   },
 });
 const communicationGrants = new CommunicationGrantControl(communicationBridge, async () => {
@@ -1259,7 +1266,10 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
     return;
   }
   const sender = event.sender;
-  ptyLifecycle.start(() => spawnPty(cols, rows), {
+  // Pinned by id, not by newest transcript: Terminal 2 (and any other claude
+  // started in ~) writes to the same project dir and could otherwise win.
+  const sessionId = crypto.randomUUID();
+  ptyLifecycle.start(() => spawnPty(cols, rows, undefined, sessionId), {
     onData: (data) => {
       if (!sender.isDestroyed()) sender.send('pty:data', data);
       planUsageScraper.ingest(data);
@@ -1279,7 +1289,8 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
   pinnedPtyExited = false;
-  liveAgentTracker.notifyPtySpawned(Date.now());
+  pinnedLaunchSessionId = sessionId;
+  liveAgentTracker.notifyPtySpawned(Date.now(), sessionId);
 });
 
 ipcMain.on('pty:write', (_event, input: string) => {
@@ -1325,6 +1336,32 @@ ipcMain.on('codexPty:write', (_event, input: string) => {
 
 ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   codexPtyLifecycle.resize(cols, rows);
+});
+
+// A second, plain Claude session for the Terminal 2 tab. Same launch as the
+// pinned terminal (spawnPty, no bridge) but deliberately unmonitored: it never
+// feeds pinnedPtyExited, liveAgentTracker, planUsageScraper or the
+// communication bridge, which all stay bound to the pinned pty above.
+const terminal2PtyLifecycle = new PtyLifecycle();
+
+ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
+  const sender = event.sender;
+  terminal2PtyLifecycle.start(() => spawnPty(cols, rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
+    onData: (data) => {
+      if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
+    },
+    // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
+    onAlive: () => {},
+    onExit: () => {},
+  });
+});
+
+ipcMain.on('terminal2Pty:write', (_event, input: string) => {
+  terminal2PtyLifecycle.write(input);
+});
+
+ipcMain.on('terminal2Pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
+  terminal2PtyLifecycle.resize(cols, rows);
 });
 
 // Which `codex` the terminal will launch and its version, answered by a

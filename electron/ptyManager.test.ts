@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPtyEnv, buildUnsetCommand } from './ptyManager';
+import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -42,5 +42,12 @@ describe('buildUnsetCommand', () => {
     expect(buildUnsetCommand('linux', ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'])).toBe(
       'unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL\r',
     );
+  });
+});
+
+describe('buildClaudeLaunchCommand', () => {
+  it('passes the pinned session id when given, and stays a bare fresh launch without one', () => {
+    expect(buildClaudeLaunchCommand('0b9a6f1e-1d2c-4e5f-8a7b-1c2d3e4f5a6b')).toBe('claude --session-id 0b9a6f1e-1d2c-4e5f-8a7b-1c2d3e4f5a6b\r');
+    expect(buildClaudeLaunchCommand()).toBe('claude\r');
   });
 });

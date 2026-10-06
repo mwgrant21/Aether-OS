@@ -132,3 +132,13 @@ export async function findSessionFileCreatedAfter(dirPath: string, sinceMs: numb
   if (candidate && candidate.mtimeMs >= sinceMs) return candidate.file;
   return null;
 }
+
+// The pinned terminal launches `claude --session-id <uuid>`, so its transcript
+// name is known up front. Unlike findSessionFileCreatedAfter, this cannot be
+// won by another session writing to the same project dir at spawn time
+// (Terminal 2, or any other claude started in ~). Null until claude creates
+// the file, which it does lazily on the first turn.
+export async function findSessionFileById(dirPath: string, sessionId: string): Promise<string | null> {
+  const file = path.join(dirPath, `${sessionId}.jsonl`);
+  return (await safeStatMtimeMs(file)) === null ? null : file;
+}

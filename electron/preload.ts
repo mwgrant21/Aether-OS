@@ -83,6 +83,16 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('codexPty:exit', listener);
     },
   },
+  terminal2Pty: {
+    start: (opts: { cols: number; rows: number }) => ipcRenderer.invoke('terminal2Pty:start', opts),
+    write: (input: string) => ipcRenderer.send('terminal2Pty:write', input),
+    resize: (cols: number, rows: number) => ipcRenderer.send('terminal2Pty:resize', { cols, rows }),
+    onData: (callback: (data: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
+      ipcRenderer.on('terminal2Pty:data', listener);
+      return () => ipcRenderer.removeListener('terminal2Pty:data', listener);
+    },
+  },
   usage: {
     onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, snapshot: RealUsageSnapshot) => callback(snapshot);
