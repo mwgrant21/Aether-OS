@@ -136,14 +136,15 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
       expect(await readdir(directory)).toEqual([]);
       await protectLaunchDirectory(directory);
     };
-    const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { PATH: process.env.PATH, ANTHROPIC_API_KEY: 'billing', CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '321' } }, dependencies);
+    const launch = await prepareBridgeLaunch({ ...options, sessionId: 'pinned-id', sourceEnv: { PATH: process.env.PATH, ANTHROPIC_API_KEY: 'billing', CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '321' } }, dependencies);
     const afterPrepare = Date.now();
     const config = JSON.parse(await readFile(join(launch.directory, 'mcp.json'), 'utf8'));
     const parameters = JSON.parse(await readFile(join(launch.directory, 'launch.json'), 'utf8'));
     expect(Object.keys(config.mcpServers)).toEqual(['aether-bridge']);
     expect(config.mcpServers['aether-bridge']).toMatchObject({ alwaysLoad: true, timeout: 90000,
       env: { AETHER_BRIDGE_CAPABILITY: options.manifest.capability } });
-    expect(parameters.arguments).toEqual(['--mcp-config', join(launch.directory, 'mcp.json'), '--allowedTools', ...BRIDGE_ALLOWED_TOOLS]);
+    expect(parameters.arguments).toEqual(['--mcp-config', join(launch.directory, 'mcp.json'), '--allowedTools', ...BRIDGE_ALLOWED_TOOLS, '--session-id', 'pinned-id']);
+    expect(launch.sessionId).toBe('pinned-id');
     expect(parameters).toMatchObject({ hadBackground: true, previousBackground: '321' });
     expect(launch.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(launch.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS).toBe('120000');

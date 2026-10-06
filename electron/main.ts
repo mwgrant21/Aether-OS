@@ -1227,7 +1227,7 @@ const communicationSessions = new CommunicationSessionControl({
     if (!await launchMaintenance) throw new Error('STALE_LAUNCH_CLEANUP_FAILED');
     connectedExecutable = await preflightBridgeLaunch(launchRuntime);
   },
-  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable }),
+  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable, sessionId: crypto.randomUUID() }),
   spawn: (bundle, onExit) => {
     const launchId = communicationBridge.currentLaunchId();
     if (!launchId) throw new Error('REVOKED');
@@ -1238,7 +1238,7 @@ const communicationSessions = new CommunicationSessionControl({
       onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
     });
     pinnedPtyExited = false;
-    liveAgentTracker.notifyPtySpawned(Date.now());
+    liveAgentTracker.notifyPtySpawned(Date.now(), bundle.sessionId ?? null);
   },
 });
 const communicationGrants = new CommunicationGrantControl(communicationBridge, async () => {
@@ -1259,7 +1259,10 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
     return;
   }
   const sender = event.sender;
-  ptyLifecycle.start(() => spawnPty(cols, rows), {
+  // Pinned by id, not by newest transcript: Terminal 2 (and any other claude
+  // started in ~) writes to the same project dir and could otherwise win.
+  const sessionId = crypto.randomUUID();
+  ptyLifecycle.start(() => spawnPty(cols, rows, undefined, sessionId), {
     onData: (data) => {
       if (!sender.isDestroyed()) sender.send('pty:data', data);
       planUsageScraper.ingest(data);
@@ -1279,7 +1282,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
   pinnedPtyExited = false;
-  liveAgentTracker.notifyPtySpawned(Date.now());
+  liveAgentTracker.notifyPtySpawned(Date.now(), sessionId);
 });
 
 ipcMain.on('pty:write', (_event, input: string) => {

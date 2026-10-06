@@ -1,5 +1,5 @@
 import path from 'path';
-import { findSessionFileCreatedAfter } from './activeSessionFinder';
+import { findSessionFileById, findSessionFileCreatedAfter } from './activeSessionFinder';
 import { readNewLines } from './transcriptTailer';
 import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser';
 import { createEmptyHistory, updateHistory, type ToolCallHistory } from './toolCallHistory';
@@ -30,20 +30,25 @@ export interface LiveAgentTick {
 // whichever file was touched most recently -- which any other concurrently
 // active Claude Code session (even an unrelated background one) can win --
 // this tracker is pinned to the specific file created by this app's own pty
-// spawn, and only that file is ever tailed until the pty respawns.
+// spawn, and only that file is ever tailed until the pty respawns. When the
+// spawn passed its own --session-id, the file is matched by that id exactly;
+// the newest-after-spawn mtime rule is only the fallback for a spawn without one.
 // Filesystem seams, injectable so tests can hold an await open and land a
 // respawn inside it deterministically. Production uses the real ones.
 export interface LiveAgentTrackerFs {
-  findSessionFile?: (dir: string, sinceMs: number) => Promise<string | null>;
+  findSessionFile?: (dir: string, sinceMs: number, sessionId: string | null) => Promise<string | null>;
   readLines?: (file: string, offset: number) => Promise<{ lines: string[]; newOffset: number }>;
 }
 
 export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs = {}) {
   const sessionDir = path.join(homeDir, '.claude', 'projects', cwdToProjectDirName(homeDir));
-  const findSessionFile = fs.findSessionFile ?? findSessionFileCreatedAfter;
+  const findSessionFile = fs.findSessionFile ??
+    ((dir: string, sinceMs: number, sessionId: string | null) =>
+      sessionId ? findSessionFileById(dir, sessionId) : findSessionFileCreatedAfter(dir, sinceMs));
   const readLines = fs.readLines ?? readNewLines;
 
   let spawnedAtMs: number | null = null;
+  let spawnedSessionId: string | null = null;
   let pinnedFile: string | null = null;
   let currentOffset = 0;
   let currentOpen: RealAgentDispatch[] = [];
@@ -83,7 +88,7 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
     const gen = generation;
     if (!pinnedFile) {
       if (spawnedAtMs === null) return emptyTick();
-      const found = await findSessionFile(sessionDir, spawnedAtMs);
+      const found = await findSessionFile(sessionDir, spawnedAtMs, spawnedSessionId);
       if (gen !== generation) return emptyTick();
       if (!found) return emptyTick();
       pinnedFile = found;
@@ -139,9 +144,10 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
       return pinnedFile ? path.basename(pinnedFile, '.jsonl') : null;
     },
 
-    notifyPtySpawned(atMs: number): void {
+    notifyPtySpawned(atMs: number, sessionId: string | null = null): void {
       generation += 1;
       spawnedAtMs = atMs;
+      spawnedSessionId = sessionId;
       pinnedFile = null;
       currentOffset = 0;
       currentOpen = [];

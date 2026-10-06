@@ -50,7 +50,7 @@ function fixture() {
   }) };
   const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
   const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
-    claudeTerminalDimensions: { cols: 100, rows: 30 },
+    claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
     planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() } };
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -97,6 +97,18 @@ describe('production terminal consumer ownership (deterministic callbacks)', () 
     expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:exit')).toHaveLength(1);
     expect(f.planUsageScraper.ingest).not.toHaveBeenCalled();
     expect(f.ptyLifecycle.current).toBeNull(); expect(f.codexPtyLifecycle.current).toBeNull();
+  });
+});
+
+describe('production pinned-session id wiring', () => {
+  it('launches the ordinary and connected Claude with the same session id the tracker is told to pin', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id');
+    expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'pinned-id');
+    f.connected({ sessionId: 'connected-id' }, vi.fn());
+    expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'connected-id');
   });
 });
 

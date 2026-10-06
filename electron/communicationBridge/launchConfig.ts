@@ -19,6 +19,8 @@ const psQuote = (value: string) => "'" + value.replace(/'/g, "''") + "'";
 
 export interface PreparedBridgeLaunch extends BridgePtyLaunch {
   directory: string;
+  /** The --session-id this launch passes to claude, so the tracker pins its transcript by name. */
+  sessionId?: string;
   completion(): Promise<'unknown' | 'starting' | 'running' | 'exited' | 'failed'>;
   cleanup(): Promise<void>;
 }
@@ -29,6 +31,7 @@ export interface LaunchConfigOptions {
   nodePath: string;
   sourceEnv?: NodeJS.ProcessEnv;
   executable?: string;
+  sessionId?: string;
 }
 interface LaunchDependencies {
   resolveClaude(): Promise<string>;
@@ -180,7 +183,8 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
       env: { ELECTRON_RUN_AS_NODE: '1', AETHER_BRIDGE_PIPE: options.manifest.endpoint, AETHER_BRIDGE_CAPABILITY: options.manifest.capability },
     } } }), { mode: 0o600, flag: 'wx' });
     await writeFile(join(directory, 'launch.json'), JSON.stringify({ executable, workingDirectory: homedir(),
-      arguments: ['--mcp-config', configPath, '--allowedTools', ...BRIDGE_ALLOWED_TOOLS],
+      arguments: ['--mcp-config', configPath, '--allowedTools', ...BRIDGE_ALLOWED_TOOLS,
+        ...(options.sessionId ? ['--session-id', options.sessionId] : [])],
       hadBackground: source[BACKGROUND] !== undefined, previousBackground: source[BACKGROUND] ?? '',
     }), { mode: 0o600, flag: 'wx' });
     const scriptPath = join(directory, 'launch.ps1');
@@ -189,7 +193,7 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
     const preparedAt = Date.now();
     let observedPid: number | undefined;
     let cleaned = false;
-    return { directory, scriptPath, env,
+    return { directory, scriptPath, env, sessionId: options.sessionId,
       completion: async () => {
         try {
           if (cleaned) throw Object.assign(new Error('removed'), { code: 'ENOENT' });
