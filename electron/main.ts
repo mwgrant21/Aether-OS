@@ -58,7 +58,7 @@ import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
 import { createFlushQuitGate } from './flushQuitGate';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
-import { startStatuslineWatcher } from './statuslineWatcher';
+import { isPinnedStatusline, startStatuslineWatcher } from './statuslineWatcher';
 import {
   readInstallState,
   installStatusline,
@@ -483,6 +483,9 @@ function isPortAvailable(port: number): Promise<boolean> {
 // has mounted, instead of waiting for the next on-disk change (which may never
 // come during the current session).
 let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
+// The --session-id the pinned Claude terminal was last launched with (ordinary
+// or connected). Filters the shared statusline file down to that terminal.
+let pinnedLaunchSessionId: string | null = null;
 
 // Same startup-race workaround as cachedStatuslineSnapshot above: the first
 // scan can finish before the renderer's useLedgerSync listener is registered,
@@ -886,7 +889,10 @@ app.whenReady().then(async () => {
   setInterval(scanAndPushMemory, MEMORY_SCAN_INTERVAL_MS);
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
-    cachedStatuslineSnapshot = snapshot;
+    // Quota is account-wide, so any session's seven-day reading is a valid
+    // sample (below); only the dashboard snapshot is limited to the pinned terminal.
+    const pinned = isPinnedStatusline(snapshot.sessionId, pinnedLaunchSessionId);
+    if (pinned) cachedStatuslineSnapshot = snapshot;
     // The seven-day window is the quota cost basis (the five-hour one stays a
     // live depletion gauge and is never fitted). A payload without it -- an
     // older Claude Code, or a session before the first rate-limit report --
@@ -903,7 +909,7 @@ app.whenReady().then(async () => {
         );
       }
     }
-    sendToWindow('statusline:snapshot', snapshot);
+    if (pinned) sendToWindow('statusline:snapshot', snapshot);
   });
 
   const desiredPort = 51823; // arbitrary fixed high port; bump-on-conflict handled below
@@ -1238,7 +1244,8 @@ const communicationSessions = new CommunicationSessionControl({
       onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
     });
     pinnedPtyExited = false;
-    liveAgentTracker.notifyPtySpawned(Date.now(), bundle.sessionId ?? null);
+    pinnedLaunchSessionId = bundle.sessionId ?? null;
+    liveAgentTracker.notifyPtySpawned(Date.now(), pinnedLaunchSessionId);
   },
 });
 const communicationGrants = new CommunicationGrantControl(communicationBridge, async () => {
@@ -1282,6 +1289,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
   pinnedPtyExited = false;
+  pinnedLaunchSessionId = sessionId;
   liveAgentTracker.notifyPtySpawned(Date.now(), sessionId);
 });
 

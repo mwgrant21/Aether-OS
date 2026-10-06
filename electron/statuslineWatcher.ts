@@ -46,6 +46,17 @@ function readSnapshot(payloadPath: string): StatuslineSnapshot | null {
 }
 
 /**
+ * Every claude session on the machine runs the same global statusline script
+ * and overwrites the one payload file -- Terminal 2, or any claude started in
+ * another window. A snapshot belongs on the dashboard only if it is the pinned
+ * terminal's. Unknown on either side (nothing pinned yet, or a payload with no
+ * session_id) keeps the pre-pinning behavior of accepting it.
+ */
+export function isPinnedStatusline(snapshotSessionId: string | null, pinnedSessionId: string | null): boolean {
+  return snapshotSessionId === null || pinnedSessionId === null || snapshotSessionId === pinnedSessionId;
+}
+
+/**
  * Starts watching `payloadPath` for the statusline script's snapshots.
  * Reads once immediately (so a payload written before the app launched is
  * picked up right away) and then polls via `fs.watchFile`. Returns an

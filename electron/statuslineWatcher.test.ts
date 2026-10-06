@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { startStatuslineWatcher } from './statuslineWatcher';
+import { isPinnedStatusline, startStatuslineWatcher } from './statuslineWatcher';
 import type { StatuslineSnapshot } from '../src/shared/statuslinePayload';
 
 /**
@@ -64,5 +64,14 @@ describe('statuslineWatcher capturedAtMs resolution', () => {
     expect(snapshot).not.toBeNull();
     const mtimeMs = statSync(file).mtimeMs;
     expect(snapshot!.capturedAtMs).toBe(mtimeMs);
+  });
+});
+
+describe('isPinnedStatusline', () => {
+  it('rejects another session\'s snapshot once a terminal is pinned, and accepts when either id is unknown', () => {
+    expect(isPinnedStatusline('terminal-2', 'pinned-id')).toBe(false);
+    expect(isPinnedStatusline('pinned-id', 'pinned-id')).toBe(true);
+    expect(isPinnedStatusline('terminal-2', null)).toBe(true);
+    expect(isPinnedStatusline(null, 'pinned-id')).toBe(true);
   });
 });
