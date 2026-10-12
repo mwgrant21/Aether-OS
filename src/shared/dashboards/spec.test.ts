@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sinceForRange, validateSpec } from './spec';
+import { isBoardId, sinceForRange, validateSpec } from './spec';
 
 const panel = (over: Record<string, unknown> = {}) => ({
   id: 'p1', title: 'Spend by day', type: 'line', sql: 'SELECT 1', x: 'day', y: ['usd'],
@@ -18,6 +18,9 @@ describe('validateSpec', () => {
     ['non-object', 'x', 'JSON object'],
     ['wrong version', board({ version: 2 }), 'version'],
     ['bad id', board({ id: 'Bad Id' }), 'id must match'],
+    ['reserved device id', board({ id: 'nul' }), 'device name'],
+    ['path traversal id', board({ id: '../x' }), 'id must match'],
+    ['65-char id', board({ id: 'a'.repeat(65) }), 'id must match'],
     ['empty title', board({ title: '' }), 'title'],
     ['no panels', board({ panels: [] }), 'panels'],
     ['13 panels', board({ panels: Array.from({ length: 13 }, (_, i) => panel({ id: `p${i}` })) }), 'panels'],
@@ -39,6 +42,17 @@ describe('validateSpec', () => {
 
   it('a table panel needs neither x nor y', () => {
     expect(validateSpec(board({ panels: [{ id: 't', title: 'T', type: 'table', sql: 'SELECT 1' }] })).ok).toBe(true);
+  });
+});
+
+describe('isBoardId', () => {
+  it('accepts ordinary ids and refuses device names, traversal, and non-strings', () => {
+    expect(isBoardId('spend-cache')).toBe(true);
+    expect(isBoardId('nul')).toBe(false);
+    expect(isBoardId('COM1'.toLowerCase())).toBe(false);
+    expect(isBoardId('../x')).toBe(false);
+    expect(isBoardId('a\n')).toBe(false);
+    expect(isBoardId(42)).toBe(false);
   });
 });
 

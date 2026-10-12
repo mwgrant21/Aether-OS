@@ -12,7 +12,13 @@ export interface PanelSpec {
 export interface DashboardSpec { version: 1; id: string; title: string; panels: PanelSpec[] }
 
 export const ID_PATTERN = /^[a-z0-9-]{1,64}$/;
+// Windows opens these names as devices, so "<id>.json" would never be a file.
+const RESERVED_IDS = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 export const MAX_PANELS = 12;
+
+export function isBoardId(id: unknown): id is string {
+  return typeof id === 'string' && ID_PATTERN.test(id) && !RESERVED_IDS.test(id);
+}
 
 const DAY_MS = 86_400_000;
 const RANGE_MS: Record<Exclude<Range, 'all'>, number> = { '24h': DAY_MS, '7d': 7 * DAY_MS, '30d': 30 * DAY_MS, '90d': 90 * DAY_MS };
@@ -29,7 +35,7 @@ export function validateSpec(input: unknown): { ok: true; spec: DashboardSpec } 
   if (!isObject(input)) return { ok: false, errors: ['Dashboard must be a JSON object.'] };
   const errors: string[] = [];
   if (input.version !== 1) errors.push('version must be 1.');
-  if (typeof input.id !== 'string' || !ID_PATTERN.test(input.id)) errors.push('id must match ^[a-z0-9-]{1,64}$.');
+  if (!isBoardId(input.id)) errors.push("id must match ^[a-z0-9-]{1,64}$ and not be a Windows device name (con, nul, …).");
   if (!isText(input.title, 120)) errors.push('title must be a non-empty string of at most 120 characters.');
   if (!Array.isArray(input.panels) || input.panels.length === 0 || input.panels.length > MAX_PANELS) {
     errors.push(`panels must be an array of 1 to ${MAX_PANELS} panels.`);
