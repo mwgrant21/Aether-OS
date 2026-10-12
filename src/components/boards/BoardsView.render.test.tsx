@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { BoardsView } from './BoardsView';
 import type { BoardsListing, RefreshResponse } from '../../shared/dashboards/types';
 
@@ -92,5 +92,27 @@ describe('BoardsView', () => {
     api.refresh.mockRejectedValue(new Error('ipc down'));
     render(<BoardsView />);
     expect(await screen.findByText('Refresh failed.')).toBeTruthy();
+  });
+
+  it('a late refresh for the previous board is discarded after switching boards', async () => {
+    const panel = { id: 'p', title: 'Shared', type: 'table' as const, range: '24h' as const, sql: 'SELECT 1', costBasis: null, x: null, y: [] };
+    const two: BoardsListing = { collectorAvailable: true, boards: [
+      { id: 'a', title: 'Board A', error: null, panels: [panel] },
+      { id: 'b', title: 'Board B', error: null, panels: [panel] },
+    ] };
+    const res = (v: string): RefreshResponse => ({ ok: true, panels: [
+      { panelId: 'p', columns: ['v'], rows: [{ v }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1 },
+    ] });
+    const api = mockApi(two);
+    let resolveA: (r: RefreshResponse) => void = () => {};
+    api.refresh.mockImplementation((id: string) => (id === 'a'
+      ? new Promise<RefreshResponse>((r) => { resolveA = r; })
+      : Promise.resolve(res('from-b'))));
+    render(<BoardsView />);
+    fireEvent.click(await screen.findByText('Board B'));
+    expect(await screen.findByText('from-b')).toBeTruthy();
+    await act(async () => { resolveA(res('from-a')); });
+    expect(screen.queryByText('from-a')).toBeNull();
+    expect(screen.getByText('from-b')).toBeTruthy();
   });
 });

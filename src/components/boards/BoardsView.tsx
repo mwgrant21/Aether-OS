@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../shared/Button';
 import { useColors } from '../shared/useColors';
 import { fonts } from '../../styles/tokens';
@@ -10,7 +10,7 @@ import { useBoards } from './useBoards';
 const PLUS = '+'; // never a board id: ids match ^[a-z0-9-]+$
 
 function readAuto(id: string): AutoRefresh {
-  try { const v = localStorage.getItem(`boards.autoRefresh.${id}`); return v && v in AUTO_REFRESH ? (v as AutoRefresh) : 'off'; } catch { return 'off'; }
+  try { const v = localStorage.getItem(`boards.autoRefresh.${id}`); return v && Object.hasOwn(AUTO_REFRESH, v) ? (v as AutoRefresh) : 'off'; } catch { return 'off'; }
 }
 function writeAuto(id: string, v: AutoRefresh) {
   try { localStorage.setItem(`boards.autoRefresh.${id}`, v); } catch { /* per-viewer convenience only */ }
@@ -29,7 +29,9 @@ export function BoardsView() {
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [auto, setAuto] = useState<AutoRefresh>('off');
 
-  const boards = listing?.boards ?? [];
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
+  const seq = useRef(0);
+  const boards = (listing?.boards ?? []).filter((b) => !deletedIds.includes(b.id));
   const current = picked !== null && (picked === PLUS || boards.some((b) => b.id === picked)) ? picked : boards[0]?.id ?? PLUS;
   const board = boards.find((b) => b.id === current) ?? null;
   const boardId = board && !board.error ? board.id : null;
@@ -37,21 +39,26 @@ export function BoardsView() {
 
   const refresh = useCallback(async () => {
     if (!api || !boardId) return;
+    const my = ++seq.current;
     setRefreshing(true);
     try {
       const r = await api.refresh(boardId, range ?? undefined);
+      if (my !== seq.current) return;
       if (!r.ok) { setBoardError(r.error); return; }
       setBoardError(null);
       setResults((prev) => mergeRefresh(prev, r.panels));
       setLastRefreshed(Date.now());
     } catch {
-      setBoardError('Refresh failed.');
+      if (my === seq.current) setBoardError('Refresh failed.');
     } finally {
-      setRefreshing(false);
+      if (my === seq.current) setRefreshing(false);
     }
   }, [api, boardId, range]);
 
-  useEffect(() => { setResults({}); setConfirmDelete(false); setBoardError(null); setAuto(readAuto(current)); }, [current]);
+  useEffect(() => {
+    seq.current += 1; // discard any in-flight refresh from the previous board
+    setResults({}); setRefreshing(false); setLastRefreshed(null); setConfirmDelete(false); setBoardError(null); setCopied('idle'); setAuto(readAuto(current));
+  }, [current]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (boardId && changed.ids.includes(boardId)) void refresh(); }, [changed.n]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -113,7 +120,7 @@ export function BoardsView() {
             {confirmDelete ? (
               <>
                 <span style={{ color: colors.warn, fontSize: 12 }}>Delete "{board.title}"? This removes its file.</span>
-                <Button onClick={() => { void api.remove(board.id).then((r) => { setConfirmDelete(false); if (!r.ok) setBoardError(r.error ?? 'Delete failed.'); else { setPicked(null); reload(); } }, () => { setConfirmDelete(false); setBoardError('Delete failed.'); }); }} style={{ ...chip(false), color: colors.danger }}>Confirm delete</Button>
+                <Button onClick={() => { void api.remove(board.id).then((r) => { setConfirmDelete(false); if (!r.ok) setBoardError(r.error ?? 'Delete failed.'); else { setDeletedIds((d) => [...d, board.id]); setPicked(null); reload(); } }, () => { setConfirmDelete(false); setBoardError('Delete failed.'); }); }} style={{ ...chip(false), color: colors.danger }}>Confirm delete</Button>
                 <Button onClick={() => setConfirmDelete(false)} style={chip(false)}>Cancel</Button>
               </>
             ) : (
