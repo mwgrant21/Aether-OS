@@ -11,6 +11,16 @@ describe('starter boards', () => {
     for (const b of STARTER_BOARDS) expect(validateSpec(b)).toEqual({ ok: true, spec: b });
   });
 
+  it('anomalies-by-kind counts retained rollups alongside live anomalies', async () => {
+    const now = Date.now();
+    const dbPath = createFixtureCollectorDb(now);
+    const panel = STARTER_BOARDS.flatMap((b) => b.panels).find((p) => p.id === 'anomalies-by-kind')!;
+    const r = await evaluatePanel(panel, { dbPath, nowMs: now, rowCap: 1000, rangeOverride: 'all' });
+    expect(r.error).toBeNull();
+    const byKind = Object.fromEntries(r.rows.map((row) => [row.kind, row.anomalies]));
+    expect(byKind).toMatchObject({ loop: 2, reReadLoop: 1, zeroEditBurn: 1 });
+  });
+
   it('every panel evaluates without error against a collector-shaped db', async () => {
     const now = Date.now();
     const dbPath = createFixtureCollectorDb(now);
