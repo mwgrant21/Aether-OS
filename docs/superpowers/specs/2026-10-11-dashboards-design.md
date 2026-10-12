@@ -35,10 +35,13 @@ Authoring is conversational only, plus two shipped starter boards
 - **Store the signal, not the payload** — the feature adds no new stored data
   beyond board definitions (SQL + layout).
 - **Path columns are blocked** (operator decision 2026-10-12). `queryGuard`
-  refuses any query naming `file_path_rel`, `project_rel_path` or `file_path`,
-  and refuses `*` (other than `COUNT(*)`) on `tool_calls`, `events` and
-  `transcript_files`. Query results reach the model conversation, and paths
-  are the store's remaining sensitive surface.
+  refuses any query naming `file_path_rel`, `project_rel_path`, `file_path`,
+  `source_file_rel` or `detail` (anomaly text names files), and refuses `*`
+  everywhere except `COUNT(*)`. Query results reach the model conversation,
+  and paths are the store's remaining sensitive surface.
+- Correction (2026-10-12): `dispatches.task_kind` is the subagent type, so
+  "which subagent" IS answerable; the Agent fleet board gains a "Dispatches by
+  agent type" panel. Gap 3 below is limited to "no model on dispatches".
 
 ## Naming
 

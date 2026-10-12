@@ -759,11 +759,13 @@ export function createFixtureCollectorDb(nowMs: number): string {
   db.exec(`
     CREATE TABLE usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at_ms INTEGER NOT NULL, model TEXT,
       input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
-      cache_creation_input_tokens INTEGER NOT NULL, cache_read_input_tokens INTEGER NOT NULL);
+      cache_creation_input_tokens INTEGER NOT NULL, cache_read_input_tokens INTEGER NOT NULL, source_file_rel TEXT);
     CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_use_id TEXT NOT NULL, tool_name TEXT NOT NULL,
-      file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL);
+      file_path_rel TEXT, started_at_ms INTEGER NOT NULL, closed_at_ms INTEGER NOT NULL, source_file_rel TEXT);
     CREATE TABLE dispatches (tool_use_id TEXT PRIMARY KEY, tokens INTEGER, tool_uses INTEGER, duration_ms INTEGER,
-      started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL);
+      started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL, agent_id TEXT, task_kind TEXT, session_id TEXT,
+      retries INTEGER NOT NULL DEFAULT 0, exit_state TEXT NOT NULL DEFAULT 'ok', severity INTEGER,
+      median_ms_at_eval INTEGER, dispatch_status TEXT);
     CREATE TABLE anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, tool_use_id TEXT NOT NULL,
       detail TEXT NOT NULL, detected_at_ms INTEGER NOT NULL);
     CREATE TABLE daily_anomaly_rollups (day TEXT NOT NULL, kind TEXT NOT NULL, anomaly_count INTEGER NOT NULL,
@@ -775,9 +777,9 @@ export function createFixtureCollectorDb(nowMs: number): string {
   usage.run(nowMs - 2 * DAY_MS, 'claude-sonnet-5-5', 2000, 100, 0, 1000);
   const tool = db.prepare('INSERT INTO tool_calls (tool_use_id, tool_name, started_at_ms, closed_at_ms) VALUES (?, ?, ?, ?)');
   ['Read', 'Read', 'Read', 'Bash'].forEach((name, i) => tool.run(`tu${i}`, name, nowMs - 3_600_000, nowMs - 3_590_000));
-  const dispatch = db.prepare('INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms) VALUES (?, ?, ?, ?, ?, ?)');
-  dispatch.run('d1', 50_000, 12, 90_000, nowMs - 7_200_000, nowMs - 7_110_000);
-  dispatch.run('d2', null, null, 30_000, nowMs - DAY_MS, nowMs - DAY_MS + 30_000);
+  const dispatch = db.prepare('INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  dispatch.run('d1', 50_000, 12, 90_000, nowMs - 7_200_000, nowMs - 7_110_000, 'Explore', 'Explore');
+  dispatch.run('d2', null, null, 30_000, nowMs - DAY_MS, nowMs - DAY_MS + 30_000, null, null);
   const d = new Date(nowMs);
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   db.prepare('INSERT INTO daily_anomaly_rollups (day, kind, anomaly_count) VALUES (?, ?, ?)').run(today, 'loop', 2);
@@ -1212,6 +1214,10 @@ export const STARTER_BOARDS: DashboardSpec[] = [
       { id: 'dispatch-spend', title: 'Dispatch spend by day (estimate)', type: 'line', range: '30d',
         sql: `SELECT ${DISPATCH_DAY} AS day, SUM(tokens) AS tokens FROM dispatches WHERE started_at_ms >= :since GROUP BY day`,
         cost: { basis: 'estimated', groupBy: 'day' }, x: 'day', y: ['usdApprox'] },
+      { id: 'dispatches-by-agent', title: 'Dispatches by agent type (top 15)', type: 'bar', range: '30d',
+        // dispatches.task_kind is the subagent type (collector/src/usageIngest.ts binds open.subagentType).
+        sql: "SELECT COALESCE(task_kind, '(unknown)') AS agent_type, COUNT(*) AS dispatches FROM dispatches WHERE started_at_ms >= :since GROUP BY agent_type ORDER BY dispatches DESC LIMIT 15",
+        x: 'agent_type', y: ['dispatches'] },
       { id: 'anomalies-by-kind', title: 'Anomalies by kind', type: 'bar', range: '30d',
         sql: "SELECT kind, SUM(anomaly_count) AS anomalies FROM daily_anomaly_rollups WHERE day >= date(:since / 1000, 'unixepoch', 'localtime') GROUP BY kind ORDER BY anomalies DESC",
         x: 'kind', y: ['anomalies'] },
@@ -1385,9 +1391,9 @@ export interface ToolReply { text: string; isError: boolean }
 export const KNOWN_GAPS = [
   'collector.db stores tokens, never dollars. Request dollars with a panel "cost" ({ basis: "exact", groupBy } on model + the four token columns -> usd; { basis: "estimated", groupBy } on a tokens column -> usdApprox). Never compute prices in SQL.',
   'usage_events has no project or session column: spend by project or session is not possible.',
-  'dispatches has no agent type or model: "which subagent" is not possible, and dispatch cost is always a blended-tier estimate.',
+  'dispatches.task_kind (and agent_id) is the subagent type, so "which subagent" works; dispatches has no model, so dispatch cost is always a blended-tier estimate.',
   'Cost panels need every row: aggregate in SQL (GROUP BY <groupBy>, model with SUM() of the token columns) so the result stays under 1000 rows.',
-  'Path columns (file_path_rel, project_rel_path, file_path) are blocked, and on tool_calls, events and transcript_files "*" is allowed only as COUNT(*). Name the columns you need.',
+  'Path and path-bearing columns (file_path_rel, project_rel_path, file_path, source_file_rel, detail) are blocked, and "*" is allowed only as COUNT(*): name the columns you need.',
 ];
 const NO_COLLECTOR = 'No collector data: ~/.aether-os/collector.db does not exist. The operator must start the collector (collector/README.md).';
 const NOTES = [
@@ -2761,9 +2767,10 @@ git add -- $P && git commit -m "feat(boards): Boards view, tabs, toolbar, panels
   operator pastes the command from the Boards "+" tab. Once registered, the Claude session it serves
   can read `collector.db` (read-only) and send query results to the model as part of that conversation.
 - **What is reachable:** `collector.db`'s signal columns: token counts, tool names, durations and anomaly
-  kinds. Its path columns (`tool_calls.file_path_rel`, `events.project_rel_path`,
-  `transcript_files.file_path`) are **blocked** by the query guard: they cannot be named, and `*` is
-  refused on their tables except as `COUNT(*)` (operator decision 2026-10-12). Even unblocked, these
+  kinds. Its path and path-bearing columns (`file_path_rel`, `project_rel_path`, `file_path`,
+  `source_file_rel`, and `anomalies.detail`, whose text names files) are **blocked** by the query
+  guard: they cannot be named, and `*` is refused everywhere except `COUNT(*)`, so a column the
+  collector adds later is never returned unnamed (operator decision 2026-10-12). Even unblocked, these
   paths came from Claude Code tool calls already sent in their original sessions; the block stops them
   being re-sent in bulk.
 - **What is stored:** board definitions (title, SQL, chart layout) in `~/.aether-os/dashboards/*.json`.
