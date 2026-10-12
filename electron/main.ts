@@ -1081,7 +1081,9 @@ function openCollectorDbReadOnly(): DatabaseSync | null {
   if (!existsSync(collectorDbPath)) return null;
   try {
     const sqlite = require('node:sqlite');
-    return new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
+    const db = new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
+    db.exec('PRAGMA busy_timeout = 5000'); // same reason as collectorStore.openReadOnly
+    return db;
   } catch {
     return null;
   }

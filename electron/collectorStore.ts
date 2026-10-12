@@ -136,11 +136,18 @@ const FLEET_HEARTBEAT_STALE_MS = 45000;
 // transcript-scan interval.
 const DIAGNOSTICS_HEARTBEAT_STALE_MS = 45000;
 
-function openReadOnly(dbPath: string): DatabaseSync | null {
+// The collector writes collector.db in journal_mode=delete; a reader without a
+// busy timeout fails immediately with "database is locked" during a large
+// write (seen during backfill, 2026-10-11).
+export const READ_BUSY_TIMEOUT_MS = 5000;
+
+export function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
     const sqlite = require('node:sqlite');
-    return new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`);
+    return db;
   } catch {
     return null;
   }
