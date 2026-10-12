@@ -30,9 +30,9 @@
 //   3. %USERPROFILE% is pointed at the fixture root. Node's os.homedir() and
 //      Go's os.UserHomeDir() both read it on Windows, so both binaries run
 //      their real, unmodified entrypoint path resolution -- no test-only flags.
-//   4. A stub `schtasks.exe` that only records its own argv is used for the
+//   4. A stub `reg.exe` that only records its own argv is used for the
 //      autostart comparison, on a PATH that contains NOTHING ELSE, so neither
-//      CLI can reach the real Windows Task Scheduler. See runAutostartParity.
+//      CLI can reach the real registry. See runAutostartParity.
 //
 // Multi-tick coverage
 // -------------------
@@ -74,7 +74,7 @@ import {
   FLEET_JSON,
   FLEET_JSON_LATER,
   STUB_CALL_COUNT_FILE,
-  STUB_SCHTASKS_LOG_FILE,
+  STUB_REG_LOG_FILE,
 } from './fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -206,10 +206,10 @@ func main() {
 }
 `;
 
-// schtasks.exe stub: records argv and does nothing else. Deliberately has no
+// reg.exe stub: records argv and does nothing else. Deliberately has no
 // side effect at all -- the point of the autostart comparison is WHAT each CLI
-// asks schtasks to do, and neither CLI may be allowed near the real scheduler.
-const STUB_SCHTASKS_SRC = `package main
+// asks reg to do, and neither CLI may be allowed near the real registry.
+const STUB_REG_SRC = `package main
 
 import (
 	"encoding/json"
@@ -222,7 +222,7 @@ func main() {
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
-	logPath := filepath.Join(home, ${JSON.stringify(STUB_SCHTASKS_LOG_FILE)})
+	logPath := filepath.Join(home, ${JSON.stringify(STUB_REG_LOG_FILE)})
 	b, err := json.Marshal(os.Args[1:])
 	if err != nil {
 		os.Exit(2)
@@ -586,15 +586,20 @@ function runHookInstallParity(sides) {
   return problems;
 }
 
-// The /TR value is the ONE disclosed, intentional divergence between the two
-// CLIs' schtasks argv: Node needs `"<node.exe>" "<index.js>"` because it needs
-// an interpreter, a self-contained Go binary passes `"<exe>"` alone (see
-// cmd/aether-collector-cli/main.go's doc comment). Every other flag, its
-// order, and the task name are compared verbatim.
-function normalizeSchtasksArgv(argv) {
+// The quoted path(s) after the `conhost.exe --headless ` launcher in the /d
+// value are the ONE disclosed, intentional divergence between the two CLIs'
+// reg argv: Node needs `"<node.exe>" "<index.js>"` because it needs an
+// interpreter, a self-contained Go binary passes `"<exe>"` alone (see
+// cmd/aether-collector-cli/main.go's doc comment). The launcher prefix itself,
+// every other flag, its order, the key and the value name are compared
+// verbatim -- a /d value missing the prefix is left raw so the mismatch shows.
+const HEADLESS_LAUNCHER = 'conhost.exe --headless ';
+function normalizeRegArgv(argv) {
   const out = [...argv];
-  const i = out.indexOf('/TR');
-  if (i !== -1 && i + 1 < out.length) out[i + 1] = '<TR: disclosed node-vs-go divergence>';
+  const i = out.indexOf('/d');
+  if (i !== -1 && i + 1 < out.length && out[i + 1].startsWith(HEADLESS_LAUNCHER)) {
+    out[i + 1] = `${HEADLESS_LAUNCHER}<paths: disclosed node-vs-go divergence>`;
+  }
   return out;
 }
 
@@ -626,13 +631,13 @@ function runAutostartParity(sides) {
     }
   }
 
-  const argvA = readArgvLog(sides[0].schtasksLogPath).map(normalizeSchtasksArgv);
-  const argvB = readArgvLog(sides[1].schtasksLogPath).map(normalizeSchtasksArgv);
-  if (argvA.length !== 2) push(`node CLI made ${argvA.length} schtasks call(s), expected 2 (install + uninstall)`);
-  if (argvB.length !== 2) push(`go CLI made ${argvB.length} schtasks call(s), expected 2 (install + uninstall)`);
+  const argvA = readArgvLog(sides[0].regLogPath).map(normalizeRegArgv);
+  const argvB = readArgvLog(sides[1].regLogPath).map(normalizeRegArgv);
+  if (argvA.length !== 2) push(`node CLI made ${argvA.length} reg call(s), expected 2 (install + uninstall)`);
+  if (argvB.length !== 2) push(`go CLI made ${argvB.length} reg call(s), expected 2 (install + uninstall)`);
   const sa = JSON.stringify(argvA, null, 2);
   const sb = JSON.stringify(argvB, null, 2);
-  if (sa !== sb) push(`schtasks argv mismatch\n  node: ${sa}\n  go:   ${sb}`);
+  if (sa !== sb) push(`reg argv mismatch\n  node: ${sa}\n  go:   ${sb}`);
 
   return problems;
 }
@@ -673,10 +678,10 @@ async function main() {
   log('building Go collector CLI...');
   execFileSync('go', ['build', '-o', goCliBin, './cmd/aether-collector-cli'], { cwd: collectorGoDir, stdio: 'inherit' });
 
-  log('building stub `claude` and `schtasks` binaries...');
+  log('building stub `claude` and `reg` binaries...');
   const stubBin = join(workRoot, 'stubbin');
   buildGoStub(stubBin, 'claude.exe', STUB_CLAUDE_SRC);
-  buildGoStub(stubBin, 'schtasks.exe', STUB_SCHTASKS_SRC);
+  buildGoStub(stubBin, 'reg.exe', STUB_REG_SRC);
 
   // ONE base timestamp, TWO identical fixture copies.
   const baseMs = Date.now();
@@ -703,8 +708,8 @@ async function main() {
     return env;
   };
   // For the autostart comparison PATH contains the stub directory and NOTHING
-  // else, so neither CLI can fall through to the real schtasks.exe in
-  // System32 and register (or delete) a scheduled task on the machine running
+  // else, so neither CLI can fall through to the real reg.exe in System32
+  // and add (or delete) a Run-key autostart value on the machine running
   // this harness. Verified below by an actual probe, not just by assumption.
   const autostartEnvFor = (root) => envFor(root, stubBin);
 
@@ -754,7 +759,7 @@ async function main() {
       root: rootA,
       claudeDir: fixA.claudeDir,
       settingsPath: fixA.settingsPath,
-      schtasksLogPath: fixA.stubSchtasksLogPath,
+      regLogPath: fixA.stubRegLogPath,
     },
     {
       label: 'go',
@@ -766,29 +771,29 @@ async function main() {
       root: rootB,
       claudeDir: fixB.claudeDir,
       settingsPath: fixB.settingsPath,
-      schtasksLogPath: fixB.stubSchtasksLogPath,
+      regLogPath: fixB.stubRegLogPath,
     },
   ];
 
   log('\nrunning hook install/uninstall CLI parity...');
   problems.push(...runHookInstallParity(sides));
 
-  // Safety gate: prove the stub schtasks.exe is what a child process actually
+  // Safety gate: prove the stub reg.exe is what a child process actually
   // resolves under this PATH before letting either CLI run an autostart
   // command. Node/libuv does its own PATH search rather than using
   // CreateProcess's System32-first order, and Go's exec.LookPath is PATH-only,
   // but "believed to be" is not good enough when the failure mode is silently
-  // creating or deleting a real AetherCollector scheduled task on a developer's
+  // writing or deleting a real AetherCollector Run-key value on a developer's
   // machine.
-  log('running autostart CLI parity (against a stub schtasks.exe)...');
+  log('running autostart CLI parity (against a stub reg.exe)...');
   const probeRoot = join(workRoot, 'probe-home');
   mkdirSync(probeRoot, { recursive: true });
-  spawnSync('schtasks.exe', ['--aether-stub-probe'], { env: envFor(probeRoot, stubBin), cwd: workRoot });
-  const probeLog = join(probeRoot, STUB_SCHTASKS_LOG_FILE);
+  spawnSync('reg.exe', ['--aether-stub-probe'], { env: envFor(probeRoot, stubBin), cwd: workRoot });
+  const probeLog = join(probeRoot, STUB_REG_LOG_FILE);
   if (!existsSync(probeLog) || !readFileSync(probeLog, 'utf8').includes('--aether-stub-probe')) {
     throw new Error(
-      'refusing to run the autostart parity step: spawning `schtasks.exe` under the stub-only PATH did not reach the stub, ' +
-        'so running it for real would touch the machine\'s actual Task Scheduler.'
+      'refusing to run the autostart parity step: spawning `reg.exe` under the stub-only PATH did not reach the stub, ' +
+        'so running it for real would touch the machine\'s actual registry.'
     );
   }
   problems.push(...runAutostartParity(sides));
@@ -809,7 +814,7 @@ async function main() {
 
   log('\nPARITY OK: every table row-for-row identical outside the documented exclusions,');
   log('multi-tick coverage assertions satisfied on both collectors, and both CLIs');
-  log('produced identical settings.json / schtasks argv outcomes.');
+  log('produced identical settings.json / reg argv outcomes.');
   if (!KEEP) rmSync(workRoot, { recursive: true, force: true });
   else log(`work dir kept: ${workRoot}`);
 }

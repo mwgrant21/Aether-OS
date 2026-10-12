@@ -1,6 +1,6 @@
 // Package autostart is the Go port of collector/src/autostart.ts:
-// registering (and unregistering) the collector as a Windows scheduled task
-// that runs on logon, at standard (non-admin) privilege. Windows-specific,
+// registering (and unregistering) the collector as a per-user Windows
+// Run-key value, so it starts at logon without elevation. Windows-specific,
 // matching this project's established platform scope from prior stages.
 package autostart
 
@@ -9,36 +9,38 @@ import (
 	"os/exec"
 )
 
-// taskName mirrors autostart.ts's TASK_NAME.
-const taskName = "AetherCollector"
+// valueName and runKey mirror autostart.ts's VALUE_NAME and RUN_KEY.
+const (
+	valueName = "AetherCollector"
+	runKey    = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+)
 
-// BuildScheduledTaskCommand is a pure argv builder for schtasks.exe -- kept
-// separate from the actual exec.Command call below so this logic is testable
-// without ever touching the real Windows Task Scheduler. /RL LIMITED
-// explicitly requests standard (non-admin) privilege. Mirrors autostart.ts's
-// buildScheduledTaskCommand exactly, including that action values other than
-// "delete" (i.e. "create") take the /Create branch.
+// BuildRunKeyCommand is a pure argv builder for reg.exe -- kept separate
+// from the actual exec.Command call below so this logic is testable without
+// ever touching the real registry. Mirrors autostart.ts's buildRunKeyCommand
+// exactly, including that action values other than "delete" (i.e. "create")
+// take the add branch; see that file for why this is a Run-key value behind
+// `conhost.exe --headless` rather than an ONLOGON scheduled task.
 //
 // entrypointPath == "" is a Go-specific accommodation with no TS equivalent:
 // TS always needs a `"<node.exe>" "<index.js>"` pair since Node requires a
 // separate interpreter, but a self-contained Go binary (nodePath) does not,
-// so an empty entrypointPath produces a single-path `/TR "<nodePath>"`
-// instead of a `/TR "<nodePath>" ""` with a stray trailing empty argument.
-func BuildScheduledTaskCommand(action string, nodePath string, entrypointPath string) []string {
+// so an empty entrypointPath produces a single-path command instead of one
+// with a stray trailing empty argument.
+func BuildRunKeyCommand(action string, nodePath string, entrypointPath string) []string {
 	if action == "delete" {
-		return []string{"/Delete", "/TN", taskName, "/F"}
+		return []string{"delete", runKey, "/v", valueName, "/f"}
 	}
-	tr := fmt.Sprintf(`"%s" "%s"`, nodePath, entrypointPath)
+	command := fmt.Sprintf(`conhost.exe --headless "%s" "%s"`, nodePath, entrypointPath)
 	if entrypointPath == "" {
-		tr = fmt.Sprintf(`"%s"`, nodePath)
+		command = fmt.Sprintf(`conhost.exe --headless "%s"`, nodePath)
 	}
 	return []string{
-		"/Create",
-		"/TN", taskName,
-		"/TR", tr,
-		"/SC", "ONLOGON",
-		"/RL", "LIMITED",
-		"/F",
+		"add", runKey,
+		"/v", valueName,
+		"/t", "REG_SZ",
+		"/d", command,
+		"/f",
 	}
 }
 
@@ -50,7 +52,7 @@ type Result struct {
 
 // InstallAutostart mirrors autostart.ts's installAutostart.
 func InstallAutostart(nodePath, entrypointPath string) Result {
-	cmd := exec.Command("schtasks.exe", BuildScheduledTaskCommand("create", nodePath, entrypointPath)...)
+	cmd := exec.Command("reg.exe", BuildRunKeyCommand("create", nodePath, entrypointPath)...)
 	if err := cmd.Run(); err != nil {
 		return Result{OK: false, Error: err.Error()}
 	}
@@ -59,7 +61,7 @@ func InstallAutostart(nodePath, entrypointPath string) Result {
 
 // UninstallAutostart mirrors autostart.ts's uninstallAutostart.
 func UninstallAutostart() Result {
-	cmd := exec.Command("schtasks.exe", BuildScheduledTaskCommand("delete", "unused", "unused")...)
+	cmd := exec.Command("reg.exe", BuildRunKeyCommand("delete", "unused", "unused")...)
 	if err := cmd.Run(); err != nil {
 		return Result{OK: false, Error: err.Error()}
 	}

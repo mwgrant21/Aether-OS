@@ -451,7 +451,9 @@ disk fails.
    so constraint #1 is satisfied structurally rather than by timeout code — and no events are lost
    while the collector is down. The rejected HTTP design would have put a secret in the hook command
    string inside `~/.claude/settings.json`, a file users routinely screenshot and share.
-8. **Lifecycle.** A Windows Scheduled Task at logon needs no service wrapper and no admin rights.
+8. **Lifecycle.** A per-user `HKCU\...\Run` value at logon needs no service wrapper and no admin
+   rights. (A Windows Scheduled Task was the original plan, but `schtasks /SC ONLOGON` needs an
+   elevated shell to create the task; corrected 2026-10-11.)
    Aether OS should also be able to start the collector on demand if it isn't running.
 
 ---

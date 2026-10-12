@@ -5,44 +5,44 @@ import (
 	"testing"
 )
 
-func TestBuildScheduledTaskCommand_Create_OnLogonNoElevationQuotedPaths(t *testing.T) {
-	argv := BuildScheduledTaskCommand("create", `C:\Program Files\nodejs\node.exe`, `C:\Users\test\aether-os\collector\dist\index.js`)
+const wantRunKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+
+func TestBuildRunKeyCommand_Create_HeadlessConhostQuotedPaths(t *testing.T) {
+	argv := BuildRunKeyCommand("create", `C:\Program Files\nodejs\node.exe`, `C:\Users\test\aether-os\collector\dist\index.js`)
 	want := []string{
-		"/Create",
-		"/TN", "AetherCollector",
-		"/TR", `"C:\Program Files\nodejs\node.exe" "C:\Users\test\aether-os\collector\dist\index.js"`,
-		"/SC", "ONLOGON",
-		"/RL", "LIMITED",
-		"/F",
+		"add", wantRunKey,
+		"/v", "AetherCollector",
+		"/t", "REG_SZ",
+		"/d", `conhost.exe --headless "C:\Program Files\nodejs\node.exe" "C:\Users\test\aether-os\collector\dist\index.js"`,
+		"/f",
 	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Errorf("argv = %#v, want %#v", argv, want)
 	}
 }
 
-func TestBuildScheduledTaskCommand_Create_SelfContainedBinary_NoTrailingEmptyArg(t *testing.T) {
+func TestBuildRunKeyCommand_Create_SelfContainedBinary_NoTrailingEmptyArg(t *testing.T) {
 	// A self-contained Go binary (e.g. aether-collector.exe) needs no
 	// separate interpreter argument, unlike Node's "<node.exe>" "<index.js>"
-	// pair -- entrypointPath == "" must produce a single-path /TR value, not
-	// a /TR with a stray trailing empty-string argument. This is what
+	// pair -- entrypointPath == "" must produce a single-path command, not
+	// one with a stray trailing empty-string argument. This is what
 	// cmd/aether-collector-cli's install-autostart handling relies on.
-	argv := BuildScheduledTaskCommand("create", `C:\Users\test\aether-os\collector-go\dist\aether-collector.exe`, "")
+	argv := BuildRunKeyCommand("create", `C:\Users\test\aether-os\collector-go\dist\aether-collector.exe`, "")
 	want := []string{
-		"/Create",
-		"/TN", "AetherCollector",
-		"/TR", `"C:\Users\test\aether-os\collector-go\dist\aether-collector.exe"`,
-		"/SC", "ONLOGON",
-		"/RL", "LIMITED",
-		"/F",
+		"add", wantRunKey,
+		"/v", "AetherCollector",
+		"/t", "REG_SZ",
+		"/d", `conhost.exe --headless "C:\Users\test\aether-os\collector-go\dist\aether-collector.exe"`,
+		"/f",
 	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Errorf("argv = %#v, want %#v", argv, want)
 	}
 }
 
-func TestBuildScheduledTaskCommand_Delete_ByTaskNameOnly(t *testing.T) {
-	argv := BuildScheduledTaskCommand("delete", "unused", "unused")
-	want := []string{"/Delete", "/TN", "AetherCollector", "/F"}
+func TestBuildRunKeyCommand_Delete_ByValueNameOnly(t *testing.T) {
+	argv := BuildRunKeyCommand("delete", "unused", "unused")
+	want := []string{"delete", wantRunKey, "/v", "AetherCollector", "/f"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Errorf("argv = %#v, want %#v", argv, want)
 	}
