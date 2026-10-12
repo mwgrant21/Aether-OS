@@ -28,18 +28,19 @@ const NOTES = [
   'Panel types: line, bar (x + one or more y), stat (exactly one y, no x), table (all columns). Ranges: 24h, 7d, 30d, 90d, all (default 30d).',
 ];
 
-const annotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+// save_dashboard and update_chart can replace an existing board file, so they are destructive.
+const annotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false };
 const costSchema = { type: 'object' as const, properties: { basis: { type: 'string' as const, enum: ['exact', 'estimated'] }, groupBy: { type: 'string' as const } }, required: ['basis', 'groupBy'], additionalProperties: false };
 
 export const DATA_TOOLS = [
   { name: 'describe_schema', description: 'Describe the Aether collector database: tables, columns, row counts, known gaps, and the board file format with an example. Call this first.',
-    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false }, annotations: { ...annotations, readOnlyHint: true } },
+    inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false }, annotations: { ...annotations, readOnlyHint: true, destructiveHint: false } },
   { name: 'run_query', description: 'Run one read-only SELECT/WITH query against collector.db and return up to 200 rows. Optional range binds :since; optional cost adds a usd or usdApprox column exactly as a panel would.',
     inputSchema: { type: 'object' as const, properties: { sql: { type: 'string' as const }, range: { type: 'string' as const, enum: [...RANGES] }, cost: costSchema }, required: ['sql'], additionalProperties: false },
-    annotations: { ...annotations, readOnlyHint: true } },
+    annotations: { ...annotations, readOnlyHint: true, destructiveHint: false } },
   { name: 'save_dashboard', description: 'Validate a whole board, dry-run every panel, and save it to the Boards tab (overwrites the same id). Writes nothing if any panel fails; returns per-panel errors to fix.',
     inputSchema: { type: 'object' as const, properties: { spec: { type: 'object' as const } }, required: ['spec'], additionalProperties: false }, annotations },
-  { name: 'update_chart', description: 'Change one panel of an existing board by merging patch into it (a new panelId appends a panel), then validate, dry-run and save like save_dashboard.',
+  { name: 'update_chart', description: 'Change one panel of an existing board by merging patch into it (a null value removes that field; a new panelId appends a panel), then validate, dry-run and save like save_dashboard.',
     inputSchema: { type: 'object' as const, properties: { dashboardId: { type: 'string' as const }, panelId: { type: 'string' as const }, patch: { type: 'object' as const } }, required: ['dashboardId', 'panelId', 'patch'], additionalProperties: false },
     annotations },
 ];
@@ -144,7 +145,12 @@ async function updateChartLocked(dashboardId: string, panelId: string, patch: Re
   if (!isObject(current) || !Array.isArray(current.panels)) return reply(`Board "${dashboardId}" has no panels array. Replace it with save_dashboard.`, true);
   const panels = current.panels as unknown[];
   const index = panels.findIndex((p) => isObject(p) && p.id === panelId);
-  const merged = index === -1 ? { ...patch, id: panelId } : { ...(panels[index] as object), ...patch, id: panelId };
+  const base: Record<string, unknown> = index === -1 ? {} : { ...(panels[index] as object) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete base[key];
+    else base[key] = value;
+  }
+  const merged = { ...base, id: panelId };
   const nextPanels = index === -1 ? [...panels, merged] : panels.map((p, i) => (i === index ? merged : p));
   return saveSpecUnlocked({ ...current, id: dashboardId, panels: nextPanels }, deps);
 }

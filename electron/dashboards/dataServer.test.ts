@@ -90,6 +90,21 @@ describe('aether-data tools', () => {
     expect(saved.panels.map((p: { id: string; title: string }) => [p.id, p.title])).toEqual([['calls', 'Renamed'], ['n', 'Count']]);
   });
 
+  it('update_chart removes a field patched to null, so a line panel can become a stat', async () => {
+    const d = deps();
+    const line = { id: 'calls', title: 'Calls', type: 'line', sql: "SELECT date(started_at_ms/1000,'unixepoch','localtime') AS day, COUNT(*) AS calls FROM tool_calls GROUP BY day", x: 'day', y: ['calls'] };
+    expect((await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [line] } }, d)).isError).toBe(false);
+    const r = await handleDataTool('update_chart', { dashboardId: 'mine', panelId: 'calls', patch: { type: 'stat', x: null, sql: 'SELECT COUNT(*) AS calls FROM tool_calls' } }, d);
+    expect(r.isError).toBe(false);
+    const saved = JSON.parse(readFileSync(join(d.dashboardsDir, 'mine.json'), 'utf8'));
+    expect(saved.panels[0]).toMatchObject({ type: 'stat', y: ['calls'] });
+    expect(saved.panels[0]).not.toHaveProperty('x');
+  });
+
+  it('marks only the board-writing tools destructive', () => {
+    expect(Object.fromEntries(DATA_TOOLS.map((t) => [t.name, t.annotations.destructiveHint]))).toEqual({ describe_schema: false, run_query: false, save_dashboard: true, update_chart: true });
+  });
+
   it('update_chart on a missing board points at save_dashboard', async () => {
     const r = await handleDataTool('update_chart', { dashboardId: 'nope', panelId: 'p', patch: {} }, deps());
     expect(r.isError).toBe(true);
