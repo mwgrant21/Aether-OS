@@ -61,6 +61,13 @@ export function BoardsView() {
     seq.current += 1; // discard any in-flight refresh from the previous board
     setResults({}); setRefreshing(false); setLastRefreshed(null); setConfirmDelete(false); setBoardError(null); setCopied('idle'); setAuto(readAuto(current));
   }, [current]);
+  // A range change drops the previous range's results so a busy refresh cannot show them as "last good data".
+  const rangeSeen = useRef(range);
+  useEffect(() => {
+    if (rangeSeen.current === range) return;
+    rangeSeen.current = range;
+    setResults({}); setLastRefreshed(null);
+  }, [range]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (boardId && changed.ids.includes(boardId)) void refresh(); }, [changed.n]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -110,7 +117,7 @@ export function BoardsView() {
         <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
           <p style={{ margin: 0 }}>Ask Claude in the Terminal tab, for example: "Make a board of my token spend by model per day this month."</p>
           <p style={{ margin: 0, color: colors.textSecondary }}>
-            Claude needs the aether-data tool server, registered once. Copy the command, paste it into the Terminal tab, then restart Claude there.
+            Claude needs the aether-data tool server, registered once. Copy the command, then in the Terminal tab paste it after a `!` (Claude runs it as a shell command), and restart Claude there.
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <Button onClick={() => { void api.copyRegisterCommand().then((r) => setCopied(r.ok ? 'copied' : 'failed'), () => setCopied('failed')); }} style={chip(false)}>Copy register command</Button>

@@ -47,7 +47,8 @@ process.stdin.on('end', () => {
       if (action === C.SQLITE_READ) {
         const table = String(a1 == null ? '' : a1).toLowerCase();
         const column = String(a2 == null ? '' : a2).toLowerCase();
-        if (blocked.has(column) || table === 'transcript_files') return C.SQLITE_DENY;
+        // Any column named like a path is denied too: a generated column over a blocked one bypasses the per-column check.
+        if (blocked.has(column) || column.includes('path') || table === 'transcript_files') return C.SQLITE_DENY;
         if (table.startsWith('sqlite_') && table !== 'sqlite_master') return C.SQLITE_DENY;
         if (table.startsWith('pragma_') && table !== 'pragma_table_info') return C.SQLITE_DENY;
         return C.SQLITE_OK;
@@ -133,7 +134,7 @@ function spawnOne(
     // budget; a shared deadline would report a held write lock as 'timeout', not 'busy'.
     timer = setTimeout(() => {
       proc.kill();
-      finish({ ok: false, kind: 'timeout', error: `Query ran longer than ${timeoutMs / 1000}s and was stopped.` });
+      finish({ ok: false, kind: 'timeout', error: `Query was stopped after ${(timeoutMs + busyTimeoutMs) / 1000}s (lock wait plus run time).` });
     }, timeoutMs + busyTimeoutMs);
     let stdout = '';
     let outBytes = 0;

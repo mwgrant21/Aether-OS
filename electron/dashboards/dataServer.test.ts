@@ -33,6 +33,12 @@ describe('aether-data tools', () => {
     expect(r.text).toContain('blocked');
   });
 
+  it('run_query refuses SQL that aliases a column usd', async () => {
+    const r = await handleDataTool('run_query', { sql: 'SELECT model, SUM(input_tokens) AS usd FROM usage_events GROUP BY model' }, deps());
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('usd and usdApprox');
+  });
+
   it('describe_schema without a collector db says so', async () => {
     const d = { ...deps(), dbPath: join(tmpdir(), 'missing-aether-collector.db') };
     const r = await handleDataTool('describe_schema', {}, d);

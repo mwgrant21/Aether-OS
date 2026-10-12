@@ -94,6 +94,9 @@ async function runQueryTool(args: Record<string, unknown>, deps: DataServerDeps)
   const range: Range = RANGES.includes(args.range as Range) ? (args.range as Range) : '30d';
   const q = await runQuery({ dbPath: deps.dbPath, sql: args.sql, since: sinceForRange(range, deps.now()), rowCap: TOOL_ROW_CAP });
   if (!q.ok) return reply(`${q.kind}: ${q.error}`, true);
+  if (q.columns.includes('usd') || q.columns.includes('usdApprox')) {
+    return reply('Columns usd and usdApprox are produced only by a panel "cost"; rename the SQL column.', true);
+  }
   if (args.cost === undefined) return reply({ columns: q.columns, rows: q.rows, truncated: q.truncated });
   const cost = args.cost as CostSpec;
   if (q.truncated) return reply(`Cost needs every row, but the query returned more than ${TOOL_ROW_CAP}. Aggregate in SQL (GROUP BY <groupBy>, model with SUM() of the token columns) so the result stays under ${TOOL_ROW_CAP} rows.`, true);

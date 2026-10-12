@@ -116,6 +116,23 @@ describe('BoardsView', () => {
     expect(screen.getByText('from-b')).toBeTruthy();
   });
 
+  it('changing the range drops the previous range data when the next refresh is busy', async () => {
+    const panel = { id: 'p', title: 'Shared', type: 'table' as const, range: '24h' as const, sql: 'SELECT 1', costBasis: null, x: null, y: [] };
+    const one: BoardsListing = { collectorAvailable: true, boards: [{ id: 'a', title: 'Board A', error: null, panels: [panel] }] };
+    const api = mockApi(one);
+    api.refresh.mockResolvedValueOnce({ ok: true, panels: [
+      { panelId: 'p', columns: ['v'], rows: [{ v: 'old-range' }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1 },
+    ] });
+    api.refresh.mockResolvedValue({ ok: true, panels: [
+      { panelId: 'p', columns: [], rows: [], truncated: false, unpricedRows: 0, error: 'locked', errorKind: 'busy', refreshedAt: 2 },
+    ] });
+    render(<BoardsView />);
+    expect(await screen.findByText('old-range')).toBeTruthy();
+    fireEvent.click(screen.getByText('7d'));
+    await waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('old-range')).toBeNull());
+  });
+
   it('delete hides the tab immediately', async () => {
     const api = mockApi();
     render(<BoardsView />);

@@ -29,6 +29,13 @@ describe('evaluatePanel', () => {
     expect(r.rows).toEqual([]);
   });
 
+  it('refuses SQL that aliases a column usd or usdApprox', async () => {
+    const sneaky: PanelSpec = { id: 's', title: 'S', type: 'table', sql: 'SELECT model, SUM(input_tokens) AS usd FROM usage_events GROUP BY model', range: '7d' };
+    const r = await evaluatePanel(sneaky, { dbPath: createFixtureCollectorDb(now), nowMs: now, rowCap: 1000 });
+    expect(r.errorKind).toBe('columns');
+    expect(r.error).toContain('usdApprox');
+  });
+
   it('names missing x/y columns', async () => {
     const bad: PanelSpec = { id: 'b', title: 'B', type: 'bar', sql: 'SELECT tool_name FROM tool_calls', range: '7d', x: 'tool_name', y: ['calls'] };
     const r = await evaluatePanel(bad, { dbPath: createFixtureCollectorDb(now), nowMs: now, rowCap: 1000 });

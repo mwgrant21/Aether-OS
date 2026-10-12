@@ -17,6 +17,9 @@ export async function evaluatePanel(panel: PanelSpec, ctx: EvalContext): Promise
   const q = await runQuery({ dbPath: ctx.dbPath, sql: panel.sql, since, rowCap: ctx.rowCap, timeoutMs: ctx.timeoutMs, busyTimeoutMs: ctx.busyTimeoutMs });
   if (!q.ok) return fail(q.kind, q.error);
 
+  if (q.columns.includes('usd') || q.columns.includes('usdApprox')) {
+    return fail('columns', 'Columns usd and usdApprox are produced only by a panel "cost"; rename the SQL column.');
+  }
   let { columns, rows } = q;
   let unpricedRows = 0;
   if (panel.cost) {

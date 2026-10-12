@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
+import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createFixtureCollectorDb } from './collectorDb.fixture';
@@ -84,6 +85,7 @@ describe('runQuery', () => {
     let pid = 0;
     const r = await runQuery({ dbPath, sql: slow, since: 0, rowCap: 10, timeoutMs: 300, busyTimeoutMs: 50, onSpawn: (p) => { pid = p; } });
     expect(r).toMatchObject({ ok: false, kind: 'timeout' });
+    expect(r.ok === false && r.error).toBe('Query was stopped after 0.35s (lock wait plus run time).');
     expect(pid).toBeGreaterThan(0);
     // The process must really be gone, not just abandoned.
     let alive = true;
@@ -155,6 +157,15 @@ describe('runQuery', () => {
     });
     it('denies source_file_rel', async () => {
       expect((await run('SELECT source_file_rel FROM usage_events')).ok).toBe(false);
+    });
+    it('denies any column whose name contains "path", allows others', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'aether-path-col-'));
+      const p = join(dir, 't.db');
+      const db = new DatabaseSync(p);
+      db.exec("CREATE TABLE t (a TEXT, some_path TEXT); INSERT INTO t VALUES ('x', 'y');");
+      db.close();
+      expect((await executeIsolated(p, 'SELECT some_path FROM t', null, 10, 5000, 5000)).ok).toBe(false);
+      expect((await executeIsolated(p, 'SELECT a FROM t', null, 10, 5000, 5000)).ok).toBe(true);
     });
     it('allows pragma_table_info', async () => {
       expect((await run("SELECT name FROM pragma_table_info('tool_calls')")).ok).toBe(true);
