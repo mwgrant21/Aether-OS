@@ -68,7 +68,11 @@
 - Test: `src/shared/dashboards/queryGuard.test.ts`
 
 **Interfaces:**
-- Produces: `RENDER_ROW_CAP = 1000`, `TOOL_ROW_CAP = 200`, `type GuardResult = { ok: true; sql: string; usesSince: boolean } | { ok: false; reason: string }`, `guardQuery(sql: string, rowCap: number): GuardResult`
+- Produces: `RENDER_ROW_CAP = 1000`, `TOOL_ROW_CAP = 200`, `BLOCKED_COLUMNS` (the path columns `file_path_rel`, `project_rel_path`, `file_path`), `type GuardResult = { ok: true; sql: string; usesSince: boolean } | { ok: false; reason: string }`, `guardQuery(sql: string, rowCap: number): GuardResult`
+
+Path columns are blocked (operator decision 2026-10-12): query results reach the model conversation, and the privacy doc calls paths "the remaining sensitive surface". Two rules enforce it:
+- A query may not name a blocked column anywhere, including inside quotes.
+- On the tables that hold one (`tool_calls`, `events`, `transcript_files`), `*` is allowed only as `COUNT(*)`, because `SELECT *` would return the path column without naming it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -109,6 +113,28 @@ describe('guardQuery', () => {
     const r = guardQuery(sql, 10);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason.toLowerCase()).toContain(reasonPart.toLowerCase());
+  });
+
+  it.each([
+    ['a path column by name', 'SELECT file_path_rel FROM tool_calls', 'file_path_rel'],
+    ['a quoted path column', 'SELECT "project_rel_path" FROM events', 'project_rel_path'],
+    ['the transcript path', 'SELECT file_path FROM transcript_files', 'file_path'],
+    ['star on a path table', 'SELECT * FROM tool_calls', 'name the columns'],
+    ['qualified star on a quoted path table', 'SELECT t.* FROM "tool_calls" t', 'name the columns'],
+    ['star hidden in a CTE', 'WITH t AS (SELECT * FROM tool_calls) SELECT tool_name FROM t', 'name the columns'],
+  ])('blocks %s', (_name, sql, reasonPart) => {
+    const r = guardQuery(sql, 10);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason.toLowerCase()).toContain(reasonPart.toLowerCase());
+  });
+
+  it.each([
+    ['COUNT(*) on a path table', 'SELECT COUNT(*) AS n FROM tool_calls'],
+    ['named non-path columns', 'SELECT tool_name, started_at_ms FROM tool_calls'],
+    ['star on a table with no path column', 'SELECT * FROM usage_events'],
+    ['multiplication on usage_events', 'SELECT SUM(cache_read_input_tokens) * 1.0 AS r FROM usage_events'],
+  ])('still accepts %s', (_name, sql) => {
+    expect(guardQuery(sql, 10).ok).toBe(true);
   });
 
   it('wraps with LIMIT rowCap+1 so truncation is detectable', () => {
@@ -152,6 +178,16 @@ export type GuardResult = { ok: true; sql: string; usesSince: boolean } | { ok: 
 
 const FORBIDDEN =
   /\b(ATTACH|DETACH|PRAGMA|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|VACUUM|REINDEX|SAVEPOINT|RELEASE|BEGIN|COMMIT|ROLLBACK|LOAD_EXTENSION)\b|\bREPLACE\s+INTO\b/i;
+
+/**
+ * Path columns never leave the app through Boards: query results reach the
+ * model conversation, and paths are the store's remaining sensitive surface
+ * (docs/privacy-and-data.md). Matched against `code` (quoted identifiers kept),
+ * so quoting a name does not get past it; a string literal containing one of
+ * these names is also refused, which is an acceptable false positive.
+ */
+export const BLOCKED_COLUMNS = ['file_path_rel', 'project_rel_path', 'file_path'] as const;
+const PATH_TABLES = /\b(tool_calls|events|transcript_files)\b/i;
 
 interface Scanned { code: string; skeleton: string; unterminated: boolean }
 
@@ -224,6 +260,12 @@ export function guardQuery(sql: string, rowCap: number): GuardResult {
   }
   const bad = FORBIDDEN.exec(skeleton);
   if (bad) return { ok: false, reason: `"${bad[0].toUpperCase()}" is not allowed in a Boards query.` };
+  const lowerCode = code.toLowerCase();
+  const blocked = BLOCKED_COLUMNS.find((c) => lowerCode.includes(c));
+  if (blocked) return { ok: false, reason: `Path column ${blocked} is blocked in Boards: paths stay out of model conversations.` };
+  if (PATH_TABLES.test(lowerCode) && skeleton.replace(/\bcount\s*\(\s*\*\s*\)/gi, '').includes('*')) {
+    return { ok: false, reason: 'On tool_calls, events and transcript_files, name the columns you need: "*" would include a blocked path column (only COUNT(*) is allowed there).' };
+  }
   return { ok: true, sql: `SELECT * FROM (${code}) LIMIT ${rowCap + 1}`, usesSince: /:since\b/.test(skeleton) };
 }
 ```
@@ -1240,6 +1282,14 @@ describe('aether-data tools', () => {
     expect(r.isError).toBe(false);
     expect(body.tables.find((t: { name: string }) => t.name === 'usage_events')).toMatchObject({ rows: 3 });
     expect(body.knownGaps.join(' ')).toContain('project');
+    const toolCalls = body.tables.find((t: { name: string }) => t.name === 'tool_calls');
+    expect(toolCalls.columns.find((c: { name: string }) => c.name === 'file_path_rel')).toMatchObject({ blocked: true });
+  });
+
+  it('run_query refuses path columns', async () => {
+    const r = await handleDataTool('run_query', { sql: 'SELECT file_path_rel FROM tool_calls' }, deps());
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('blocked');
   });
 
   it('describe_schema without a collector db says so', async () => {
@@ -1326,7 +1376,7 @@ import { runQuery } from './runQuery';
 import { evaluatePanel } from './evaluatePanel';
 import { applyCost } from '../../src/shared/dashboards/costing';
 import { ID_PATTERN, RANGES, sinceForRange, validateSpec, type CostSpec, type Range } from '../../src/shared/dashboards/spec';
-import { RENDER_ROW_CAP, TOOL_ROW_CAP } from '../../src/shared/dashboards/queryGuard';
+import { BLOCKED_COLUMNS, RENDER_ROW_CAP, TOOL_ROW_CAP } from '../../src/shared/dashboards/queryGuard';
 import { STARTER_BOARDS } from '../../src/shared/dashboards/starters';
 
 export interface DataServerDeps { dbPath: string; dashboardsDir: string; now: () => number }
@@ -1337,6 +1387,7 @@ export const KNOWN_GAPS = [
   'usage_events has no project or session column: spend by project or session is not possible.',
   'dispatches has no agent type or model: "which subagent" is not possible, and dispatch cost is always a blended-tier estimate.',
   'Cost panels need every row: aggregate in SQL (GROUP BY <groupBy>, model with SUM() of the token columns) so the result stays under 1000 rows.',
+  'Path columns (file_path_rel, project_rel_path, file_path) are blocked, and on tool_calls, events and transcript_files "*" is allowed only as COUNT(*). Name the columns you need.',
 ];
 const NO_COLLECTOR = 'No collector data: ~/.aether-os/collector.db does not exist. The operator must start the collector (collector/README.md).';
 const NOTES = [
@@ -1370,11 +1421,12 @@ async function describeSchema(deps: DataServerDeps): Promise<ToolReply> {
   const cols = await runQuery({ dbPath: deps.dbPath, since: 0, rowCap: RENDER_ROW_CAP,
     sql: "SELECT m.name AS tbl, p.name AS col, p.type AS type FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name, p.cid" });
   if (!cols.ok) return reply(cols.error, true);
-  const tables = new Map<string, { name: string; type: string }[]>();
+  const tables = new Map<string, { name: string; type: string; blocked?: true }[]>();
   for (const r of cols.rows) {
     const tbl = String(r.tbl);
     if (!/^[a-z_][a-z0-9_]*$/.test(tbl)) continue;
-    tables.set(tbl, [...(tables.get(tbl) ?? []), { name: String(r.col), type: String(r.type) }]);
+    const col = String(r.col);
+    tables.set(tbl, [...(tables.get(tbl) ?? []), { name: col, type: String(r.type), ...((BLOCKED_COLUMNS as readonly string[]).includes(col) ? { blocked: true } : {}) }]);
   }
   const names = [...tables.keys()];
   const counts = new Map<string, number>();
@@ -2708,9 +2760,12 @@ git add -- $P && git commit -m "feat(boards): Boards view, tabs, toolbar, panels
 - **Boundary:** an operator-driven terminal. The `aether-data` MCP server is registered only when the
   operator pastes the command from the Boards "+" tab. Once registered, the Claude session it serves
   can read `collector.db` (read-only) and send query results to the model as part of that conversation.
-- **What is reachable:** everything in `collector.db`, which by design holds signal, not payload: token
-  counts, tool names, durations and anomaly kinds. Its path columns (`tool_calls.file_path_rel`,
-  `events.project_rel_path`, `transcript_files.file_path`) are reachable too; queries are not filtered by column.
+- **What is reachable:** `collector.db`'s signal columns: token counts, tool names, durations and anomaly
+  kinds. Its path columns (`tool_calls.file_path_rel`, `events.project_rel_path`,
+  `transcript_files.file_path`) are **blocked** by the query guard: they cannot be named, and `*` is
+  refused on their tables except as `COUNT(*)` (operator decision 2026-10-12). Even unblocked, these
+  paths came from Claude Code tool calls already sent in their original sessions; the block stops them
+  being re-sent in bulk.
 - **What is stored:** board definitions (title, SQL, chart layout) in `~/.aether-os/dashboards/*.json`.
   No query results are persisted. Refresh runs locally and makes no model call.
 - **Writes:** none to `collector.db`. The connection is opened read-only and every query passes the guard

@@ -34,6 +34,11 @@ Authoring is conversational only, plus two shipped starter boards
 - **Opt-in.** Nothing is registered by default.
 - **Store the signal, not the payload** — the feature adds no new stored data
   beyond board definitions (SQL + layout).
+- **Path columns are blocked** (operator decision 2026-10-12). `queryGuard`
+  refuses any query naming `file_path_rel`, `project_rel_path` or `file_path`,
+  and refuses `*` (other than `COUNT(*)`) on `tool_calls`, `events` and
+  `transcript_files`. Query results reach the model conversation, and paths
+  are the store's remaining sensitive surface.
 
 ## Naming
 
