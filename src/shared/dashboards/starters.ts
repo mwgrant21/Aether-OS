@@ -48,8 +48,9 @@ export const STARTER_BOARDS: DashboardSpec[] = [
       { id: 'anomalies-by-kind', title: 'Anomalies by kind', type: 'bar', range: '30d',
         // Live anomalies plus daily_anomaly_rollups, which hold only anomalies already aged out of
         // `anomalies` past retention (collector/src/retention.ts), so nothing is counted twice.
-        // Rollup day keys are UTC, hence date(..., 'unixepoch').
-        sql: "SELECT kind, SUM(n) AS anomalies FROM (SELECT kind, COUNT(*) AS n FROM anomalies WHERE detected_at_ms >= :since GROUP BY kind UNION ALL SELECT kind, SUM(anomaly_count) AS n FROM daily_anomaly_rollups WHERE day >= date(:since / 1000, 'unixepoch') GROUP BY kind) GROUP BY kind ORDER BY anomalies DESC",
+        // Rollup day keys are UTC, hence date(..., 'unixepoch'). `day >` (strictly after the boundary
+        // day) never counts rollups from before :since; a range longer than retention undercounts at most one day.
+        sql: "SELECT kind, SUM(n) AS anomalies FROM (SELECT kind, COUNT(*) AS n FROM anomalies WHERE detected_at_ms >= :since GROUP BY kind UNION ALL SELECT kind, SUM(anomaly_count) AS n FROM daily_anomaly_rollups WHERE day > date(:since / 1000, 'unixepoch') GROUP BY kind) GROUP BY kind ORDER BY anomalies DESC",
         x: 'kind', y: ['anomalies'] },
       { id: 'slowest-dispatches', title: 'Slowest dispatches', type: 'table', range: '7d',
         sql: `SELECT ${DISPATCH_DAY} AS day, ROUND(duration_ms / 1000.0, 1) AS duration_s, tokens, tool_uses FROM dispatches WHERE started_at_ms >= :since ORDER BY duration_ms DESC LIMIT 20` },
