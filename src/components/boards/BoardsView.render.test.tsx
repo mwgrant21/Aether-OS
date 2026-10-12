@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BoardsView } from './BoardsView';
 import type { BoardsListing, RefreshResponse } from '../../shared/dashboards/types';
 
@@ -114,5 +114,29 @@ describe('BoardsView', () => {
     await act(async () => { resolveA(res('from-a')); });
     expect(screen.queryByText('from-a')).toBeNull();
     expect(screen.getByText('from-b')).toBeTruthy();
+  });
+
+  it('delete hides the tab immediately', async () => {
+    const api = mockApi();
+    render(<BoardsView />);
+    fireEvent.click(await screen.findByText('Delete board'));
+    fireEvent.click(screen.getByText('Confirm delete'));
+    await waitFor(() => expect(api.remove).toHaveBeenCalledWith('spend-cache'));
+    await waitFor(() => expect(screen.queryByText('Spend & cache')).toBeNull());
+  });
+
+  it('a board re-saved with a deleted id reappears', async () => {
+    const api = mockApi();
+    let changed: (ids: string[]) => void = () => {};
+    api.onChanged.mockImplementation((cb: (ids: string[]) => void) => { changed = cb; return () => {}; });
+    render(<BoardsView />);
+    fireEvent.click(await screen.findByText('Delete board'));
+    api.list.mockResolvedValue({ ...listing, boards: listing.boards.filter((b) => b.id !== 'spend-cache') });
+    fireEvent.click(screen.getByText('Confirm delete'));
+    await waitFor(() => expect(screen.queryByText('Spend & cache')).toBeNull());
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+    api.list.mockResolvedValue(listing);
+    await act(async () => { changed(['spend-cache']); });
+    expect(await screen.findByText('Spend & cache')).toBeTruthy();
   });
 });

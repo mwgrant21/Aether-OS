@@ -31,6 +31,8 @@ export function BoardsView() {
 
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const seq = useRef(0);
+  // Drop hidden ids once a listing no longer has them, so a re-saved board with the same id reappears.
+  useEffect(() => { if (listing) setDeletedIds((d) => (d.length ? d.filter((id) => listing.boards.some((b) => b.id === id)) : d)); }, [listing]);
   const boards = (listing?.boards ?? []).filter((b) => !deletedIds.includes(b.id));
   const current = picked !== null && (picked === PLUS || boards.some((b) => b.id === picked)) ? picked : boards[0]?.id ?? PLUS;
   const board = boards.find((b) => b.id === current) ?? null;
