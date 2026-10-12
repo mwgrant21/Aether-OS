@@ -28,6 +28,8 @@ describe('guardQuery', () => {
     ['with then delete', 'WITH t AS (SELECT 1) DELETE FROM usage_events', 'DELETE'],
     ['replace into', 'WITH t AS (SELECT 1) REPLACE INTO x SELECT * FROM t', 'REPLACE INTO'],
     ['load_extension', "SELECT load_extension('evil')", 'LOAD_EXTENSION'],
+    ['pragma_database_list', 'SELECT file FROM pragma_database_list', 'pragma_database_list'],
+    ['pragma_function_list', 'SELECT name FROM pragma_function_list', 'pragma_function_list'],
     ['unterminated string', "SELECT 'abc", 'unterminated'],
     ['unterminated block comment', 'SELECT 1 /* never closed', 'unterminated'],
   ])('rejects %s', (_name, sql, reasonPart) => {

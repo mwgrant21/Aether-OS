@@ -12,6 +12,8 @@ export type GuardResult = { ok: true; sql: string; usesSince: boolean } | { ok: 
 const FORBIDDEN =
   /\b(ATTACH|DETACH|PRAGMA|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|VACUUM|REINDEX|SAVEPOINT|RELEASE|BEGIN|COMMIT|ROLLBACK|LOAD_EXTENSION)\b|\bREPLACE\s+INTO\b/i;
 
+const PRAGMA_FN = /\bpragma_(?!table_info\b)\w+/i;
+
 /**
  * Path or path-bearing columns never leave the app through Boards: query results
  * reach the model conversation, and paths are the store's remaining sensitive
@@ -97,6 +99,12 @@ export function guardQuery(sql: string, rowCap: number): GuardResult {
   }
   const bad = FORBIDDEN.exec(skeleton);
   if (bad) return { ok: false, reason: `"${bad[0].toUpperCase()}" is not allowed in a Boards query.` };
+  // Table-valued pragmas such as pragma_database_list return the database's
+  // absolute path. pragma_table_info stays allowed for schema description.
+  const pragmaFn = PRAGMA_FN.exec(skeleton);
+  if (pragmaFn) {
+    return { ok: false, reason: `"${pragmaFn[0].toLowerCase()}" is not allowed in a Boards query: only pragma_table_info may be used.` };
+  }
   const lowerCode = code.toLowerCase();
   const blocked = BLOCKED_COLUMNS.find((c) => lowerCode.includes(c));
   if (blocked) return { ok: false, reason: `Path column ${blocked} is blocked in Boards: paths stay out of model conversations.` };
