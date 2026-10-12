@@ -29,9 +29,26 @@ export function buildRunKeyCommand(action: 'create' | 'delete', nodePath: string
   ];
 }
 
+// Windows ignores Run-key command lines over 260 characters, and reg.exe
+// stores them without complaint, so an over-long command would report a
+// successful install that never starts at logon.
+// https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys
+export const MAX_RUN_COMMAND_LENGTH = 260;
+
+/** Returns an error message when the argv's /d command is too long to run at logon, else null. */
+export function checkRunCommandLength(argv: string[]): string | null {
+  const command = argv[argv.indexOf('/d') + 1] ?? '';
+  return command.length > MAX_RUN_COMMAND_LENGTH
+    ? `Run-key command is ${command.length} characters; Windows ignores commands over ${MAX_RUN_COMMAND_LENGTH} at logon. Move the checkout to a shorter path.`
+    : null;
+}
+
 export function installAutostart(nodePath: string, entrypointPath: string): { ok: boolean; error?: string } {
+  const argv = buildRunKeyCommand('create', nodePath, entrypointPath);
+  const tooLong = checkRunCommandLength(argv);
+  if (tooLong) return { ok: false, error: tooLong };
   try {
-    execFileSync('reg.exe', buildRunKeyCommand('create', nodePath, entrypointPath));
+    execFileSync('reg.exe', argv);
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };

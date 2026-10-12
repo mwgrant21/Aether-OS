@@ -2,6 +2,7 @@ package autostart
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,17 @@ func TestBuildRunKeyCommand_Create_SelfContainedBinary_NoTrailingEmptyArg(t *tes
 	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Errorf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestCheckRunCommandLength_260Accepted_261Rejected(t *testing.T) {
+	// `conhost.exe --headless "` + node + `" "` + entry + `"` = 28 chars of framing.
+	entryFor := func(total int) string { return strings.Repeat("a", total-28-len("node.exe")) }
+	if msg := CheckRunCommandLength(BuildRunKeyCommand("create", "node.exe", entryFor(260))); msg != "" {
+		t.Errorf("260 chars rejected: %s", msg)
+	}
+	if msg := CheckRunCommandLength(BuildRunKeyCommand("create", "node.exe", entryFor(261))); !strings.Contains(msg, "261 characters") {
+		t.Errorf("261 chars not rejected, got %q", msg)
 	}
 }
 

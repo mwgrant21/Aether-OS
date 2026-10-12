@@ -50,9 +50,34 @@ type Result struct {
 	Error string
 }
 
+// MaxRunCommandLength mirrors autostart.ts's MAX_RUN_COMMAND_LENGTH: Windows
+// ignores Run-key command lines over 260 characters at logon, and reg.exe
+// stores them without complaint.
+const MaxRunCommandLength = 260
+
+// CheckRunCommandLength mirrors autostart.ts's checkRunCommandLength: it
+// returns an error message when argv's /d command is too long, else "".
+func CheckRunCommandLength(argv []string) string {
+	command := ""
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "/d" {
+			command = argv[i+1]
+			break
+		}
+	}
+	if len(command) > MaxRunCommandLength {
+		return fmt.Sprintf("Run-key command is %d characters; Windows ignores commands over %d at logon. Move the checkout to a shorter path.", len(command), MaxRunCommandLength)
+	}
+	return ""
+}
+
 // InstallAutostart mirrors autostart.ts's installAutostart.
 func InstallAutostart(nodePath, entrypointPath string) Result {
-	cmd := exec.Command("reg.exe", BuildRunKeyCommand("create", nodePath, entrypointPath)...)
+	argv := BuildRunKeyCommand("create", nodePath, entrypointPath)
+	if tooLong := CheckRunCommandLength(argv); tooLong != "" {
+		return Result{OK: false, Error: tooLong}
+	}
+	cmd := exec.Command("reg.exe", argv...)
 	if err := cmd.Run(); err != nil {
 		return Result{OK: false, Error: err.Error()}
 	}
