@@ -12,6 +12,7 @@ describe('guardQuery', () => {
     ['escaped quote in literal', "SELECT 'it''s' AS s"],
     ['replace() function', "SELECT replace(model, '-', ' ') AS m FROM usage_events"],
     ['pragma table-valued function', "SELECT name FROM pragma_table_info('usage_events')"],
+    ['ON join', 'SELECT a.tool_name FROM tool_calls a JOIN tool_calls b ON a.tool_use_id = b.tool_use_id'],
   ])('accepts %s', (_name, sql) => {
     expect(guardQuery(sql, 10).ok).toBe(true);
   });
@@ -55,6 +56,8 @@ describe('guardQuery', () => {
     ['distinct star', 'SELECT DISTINCT * FROM dispatches', 'name the columns'],
     ['comma star', 'SELECT tool_name, * FROM tool_calls', 'name the columns'],
     ['qualified star on a quoted path table', 'SELECT t.* FROM "tool_calls" t', 'name the columns'],
+    ['natural join', 'SELECT COUNT(*) AS n FROM tool_calls NATURAL JOIN usage_events', 'natural'],
+    ['using join', 'SELECT a.tool_name FROM tool_calls a JOIN tool_calls b USING (tool_use_id)', 'using'],
     ['star hidden in a CTE', 'WITH t AS (SELECT * FROM tool_calls) SELECT tool_name FROM t', 'name the columns'],
   ])('blocks %s', (_name, sql, reasonPart) => {
     const r = guardQuery(sql, 10);

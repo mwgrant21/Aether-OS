@@ -99,6 +99,11 @@ export function guardQuery(sql: string, rowCap: number): GuardResult {
   }
   const bad = FORBIDDEN.exec(skeleton);
   if (bad) return { ok: false, reason: `"${bad[0].toUpperCase()}" is not allowed in a Boards query.` };
+  // SQLite issues no column-read authorization for the merged column of a USING
+  // or NATURAL join, so the authorizer cannot see a blocked column through one.
+  if (/\b(NATURAL|USING)\b/i.test(skeleton)) {
+    return { ok: false, reason: 'NATURAL joins and USING (...) are not allowed in Boards queries; join with ON instead.' };
+  }
   // Table-valued pragmas such as pragma_database_list return the database's
   // absolute path. pragma_table_info stays allowed for schema description.
   // Matched on code (identifiers kept) so a quoted, bracketed or backticked

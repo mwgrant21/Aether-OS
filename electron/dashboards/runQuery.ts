@@ -33,10 +33,11 @@ process.stdin.on('end', () => {
     const job = JSON.parse(input);
     db = new DatabaseSync(job.dbPath, { readOnly: true });
     db.exec('PRAGMA busy_timeout = ' + Number(job.busyTimeoutMs));
-    // The authorizer is the PRIMARY read-only / blocked-column enforcement: SQLite
-    // itself resolves quoting, aliases, CTEs and SELECT *, so none of those can
-    // slip past it. queryGuard is the friendly-message layer in front. It must be
-    // set after the busy_timeout PRAGMA, because PRAGMA is denied once it is on.
+    // The authorizer and queryGuard enforce read-only / blocked columns TOGETHER.
+    // SQLite resolves quoting, aliases and CTEs itself, so the authorizer sees
+    // through them; it cannot see the merged column of a USING / NATURAL join, so
+    // the guard refuses those keywords and SELECT *. Set after the busy_timeout
+    // PRAGMA, because PRAGMA is denied once it is on.
     const blocked = new Set(job.blockedColumns);
     db.setAuthorizer((action, a1, a2) => {
       if (action === C.SQLITE_SELECT || action === C.SQLITE_RECURSIVE) return C.SQLITE_OK;
@@ -71,6 +72,12 @@ process.stdin.on('end', () => {
 type ChildReply = { ok: true; columns: string[]; rows: Record<string, unknown>[] } | { ok: false; error: string };
 
 export const MAX_CONCURRENT_QUERIES = 3;
+export const MAX_QUERY_OUTPUT_BYTES = 32 * 1024 * 1024;
+
+/** Error text crosses IPC and can reach a model conversation: never carry the db path. */
+export function scrubPath(message: string, dbPath: string): string {
+  return dbPath ? message.split(dbPath).join('collector.db') : message;
+}
 let running = 0;
 const waiting: Array<() => void> = [];
 function acquire(): Promise<void> {
@@ -98,8 +105,6 @@ function spawnOne(
   dbPath: string, wrappedSql: string, params: Record<string, number> | null,
   rowCap: number, timeoutMs: number, busyTimeoutMs: number, onSpawn?: (pid: number) => void,
 ): Promise<RunQueryResult> {
-  // Error text crosses IPC and can reach a model conversation: never carry the path.
-  const scrub = (t: string) => (dbPath ? t.split(dbPath).join('collector.db') : t);
   return new Promise((resolve) => {
     let settled = false;
     let child: ChildProcess | undefined;
@@ -108,7 +113,7 @@ function spawnOne(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (!r.ok) r = { ...r, error: scrub(r.error) };
+      if (!r.ok) r = { ...r, error: scrubPath(r.error, dbPath) };
       resolve(r);
     };
     try {
@@ -129,16 +134,20 @@ function spawnOne(
     }, timeoutMs);
     let stdout = '';
     proc.stdout!.setEncoding('utf8');
-    proc.stdout!.on('data', (c: string) => { stdout += c; });
-    let stderr = '';
-    proc.stderr!.setEncoding('utf8');
-    proc.stderr!.on('data', (c: string) => { stderr += c; });
+    proc.stdout!.on('data', (c: string) => {
+      stdout += c;
+      if (stdout.length > MAX_QUERY_OUTPUT_BYTES) {
+        proc.kill();
+        finish({ ok: false, kind: 'sql', error: 'Query result is too large.' });
+      }
+    });
+    proc.stderr!.resume();
     proc.stdin!.on('error', () => { /* child died early; 'close' reports it */ });
     proc.once('error', (e: Error) => finish({ ok: false, kind: 'sql', error: e.message }));
     proc.once('close', () => {
       let m: ChildReply | undefined;
       try { m = JSON.parse(stdout.trim()) as ChildReply; } catch { m = undefined; }
-      if (!m) { finish({ ok: false, kind: 'sql', error: 'Query process ended without a result.' + (stderr ? ' ' + stderr.slice(0, 300) : '') }); return; }
+      if (!m) { finish({ ok: false, kind: 'sql', error: 'Query process failed.' }); return; }
       if (!m.ok) {
         finish({ ok: false, kind: /database is locked|SQLITE_BUSY/i.test(m.error) ? 'busy' : 'sql', error: m.error });
         return;

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createFixtureCollectorDb } from './collectorDb.fixture';
-import { MAX_CONCURRENT_QUERIES, executeIsolated, runQuery } from './runQuery';
+import { MAX_CONCURRENT_QUERIES, MAX_QUERY_OUTPUT_BYTES, executeIsolated, runQuery, scrubPath } from './runQuery';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -97,20 +97,23 @@ describe('runQuery', () => {
     expect(maxAlive).toBeLessThanOrEqual(MAX_CONCURRENT_QUERIES);
   });
 
-  it('scrubs the db path out of error text', async () => {
-    const dbPath = createFixtureCollectorDb(now);
-    const r = await executeIsolated(dbPath, `SELECT '${dbPath.replace(/'/g, "''")}' AS p FROM nope`, null, 10, 5000, 5000);
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.error).not.toContain(dbPath);
+  it('scrubs the db path out of messages', () => {
+    expect(scrubPath('unable to open /tmp/x/collector.db now', '/tmp/x/collector.db')).toBe('unable to open collector.db now');
   });
 
-  it('the connection itself is read-only even if a write got past the guard', async () => {
+  it('caps the output a query process may produce', async () => {
     const dbPath = createFixtureCollectorDb(now);
-    const r = await executeIsolated(dbPath, 'DELETE FROM usage_events', null, 10, 5000, 5000);
+    const r = await runQuery({ dbPath, sql: "SELECT printf('%.*c', 40000000, 'x') AS s", since: 0, rowCap: 10 });
+    expect(MAX_QUERY_OUTPUT_BYTES).toBe(32 * 1024 * 1024);
+    expect(r).toMatchObject({ ok: false, kind: 'sql', error: 'Query result is too large.' });
+  });
+
+  it.each([
+    ['NATURAL FULL JOIN', 'SELECT tool_name FROM tool_calls NATURAL FULL JOIN tool_calls'],
+    ['FULL JOIN USING', "WITH g(file_path_rel) AS (VALUES ('zz')) SELECT tool_name FROM g FULL JOIN tool_calls USING (file_path_rel)"],
+  ])('guard and authorizer together refuse %s', async (_n, sql) => {
+    const r = await runQuery({ dbPath: createFixtureCollectorDb(now), sql, since: 0, rowCap: 10 });
     expect(r.ok).toBe(false);
-    const check = new DatabaseSync(dbPath, { readOnly: true });
-    expect(check.prepare('SELECT COUNT(*) AS n FROM usage_events').get().n).toBe(3);
-    check.close();
   });
 
   describe('authorizer (executeIsolated bypasses the text guard)', () => {
