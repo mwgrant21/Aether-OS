@@ -82,11 +82,16 @@ export function createDashboardsStore(opts: DashboardsStoreOptions): DashboardsS
       for (const s of opts.starters ?? []) {
         if (seeded.includes(s.id)) continue;
         // Seeded once: an edited starter is never overwritten and a deleted one never returns.
-        try { if (!existsSync(fileFor(s.id))) writeFileSync(fileFor(s.id), `${JSON.stringify(s, null, 2)}\n`, { flag: 'wx' }); } catch { /* raced a writer; keep theirs */ }
+        try {
+          if (!existsSync(fileFor(s.id))) writeFileSync(fileFor(s.id), `${JSON.stringify(s, null, 2)}\n`, { flag: 'wx' });
+        } catch (e) {
+          // EEXIST: raced a writer, keep theirs. Any other error: skip this run so it is retried, not marked seeded.
+          if (errCode(e) !== 'EEXIST') continue;
+        }
         seeded.push(s.id);
         changed = true;
       }
-      if (changed) writeFileSync(markerPath, JSON.stringify(seeded));
+      if (changed) { try { writeFileSync(markerPath, JSON.stringify(seeded)); } catch { /* marker failure must not throw; seeding retries next run */ } }
     },
 
     startWatching(onChange) {
@@ -102,6 +107,8 @@ export function createDashboardsStore(opts: DashboardsStoreOptions): DashboardsS
         clearTimeout(timer);
         timer = setTimeout(() => { const ids = [...pending]; pending.clear(); onChange(ids); }, opts.debounceMs ?? 250);
       });
+      // On Windows, deleting or renaming the watched dir emits 'error'; unhandled it crashes Electron main. Stop quietly.
+      watcher.on('error', () => { clearTimeout(timer); watcher.close(); });
       return () => { clearTimeout(timer); watcher.close(); };
     },
   };

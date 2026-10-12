@@ -81,6 +81,24 @@ describe('dashboardsStore', () => {
     expect(existsSync(join(dir, 'starter.json'))).toBe(false);
   });
 
+  it('remove of a missing board reports the errno code, not the path', () => {
+    const { dir, store } = setup();
+    store.seedStarters();
+    const r = store.remove('absent');
+    expect(r).toEqual({ ok: false, error: 'could not delete (ENOENT)' });
+    expect(JSON.stringify(r)).not.toContain(dir);
+  });
+
+  it('the watcher survives its folder being removed, and stop stays safe', async () => {
+    const { dir, store } = setup();
+    store.seedStarters();
+    const stop = store.startWatching(() => {});
+    rmSync(dir, { recursive: true, force: true });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(() => stop()).not.toThrow();
+    expect(() => stop()).not.toThrow();
+  });
+
   it('nothing it returns contains an absolute path', async () => {
     const { dir, store } = setup();
     store.seedStarters();
