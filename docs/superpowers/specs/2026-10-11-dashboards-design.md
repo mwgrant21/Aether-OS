@@ -1,6 +1,11 @@
 # Dashboards — design
 
-Status: approved in brainstorming 2026-10-11, pending written-spec review.
+Status: approved 2026-10-11. Amended 2026-10-12 (approved): the shared code
+and the MCP server move to the Electron side, following the `aether-bridge`
+precedent, because the repo never cross-imports runtime code between
+`collector/` and the app (`collector/src/collectorSettings.ts` is a deliberate
+duplicate of `electron/collectorSettings.ts`). The original text claimed that
+Electron already imports from `collector/src`, but those imports are type-only.
 Inspiration: Claude Dashboards (support.claude.com article 17454700) — ask in
 plain language, Claude builds a chart, edit by asking, refresh without asking.
 
@@ -54,8 +59,8 @@ From `collector/src/schema.ts`:
 Known gaps, surfaced by `describe_schema` and in this spec's out-of-scope list:
 
 1. **No stored dollar amounts.** Cost is computed by `src/shared/modelPricing.ts`
-   / `ledgerMath.ts`, which only Electron main can import. SQL cannot produce a
-   cost column — see "Cost post-processing".
+   / `ledgerMath.ts`. SQL cannot produce a cost column, so cost is added after
+   the query runs — see "Cost post-processing".
 2. **`usage_events` has no project or session column** — no spend-by-project.
 3. **`dispatches` has no agent type or model** — no "which subagent", and the
    dispatch estimate is always tier-defaulted.
@@ -65,7 +70,8 @@ Known gaps, surfaced by `describe_schema` and in this spec's out-of-scope list:
 ## Architecture
 
 ```
-Terminal: claude ──stdio──► aether-data MCP server (collector/src/dashboards/dataServer.ts)
+Terminal: claude ──stdio──► aether-data MCP server (out/main/aether-data-mcp.js,
+                              │  run as "Aether OS.exe" with ELECTRON_RUN_AS_NODE=1)
                               │ opens collector.db read-only, busy_timeout=5000
                               │ describe_schema · run_query · save_dashboard · update_chart
                               ▼
@@ -78,19 +84,22 @@ Electron main ── electron/dashboardsStore.ts: list · load · validate · re
 Renderer: src/components/boards/ ── LinePanel · BarPanel · StatPanel · TablePanel
 ```
 
-Shared code lives under `collector/src/dashboards/` and Electron imports it,
-matching the existing direction (`electron/collectorStore.ts` already imports
-from `collector/src/`; the collector never imports from `src/`).
+Pure shared code lives in `src/shared/dashboards/`, which Electron main, the
+MCP entry and the renderer can all import. The MCP server is a second
+electron-vite main entry, the same way `communication-mcp.js` is built for
+`aether-bridge`. Nothing in `collector/` changes.
 
 ### Units
 
 | Unit | Kind | Responsibility |
 |---|---|---|
-| `collector/src/dashboards/queryGuard.ts` | pure | Accept one `SELECT`/`WITH … SELECT` statement; reject `ATTACH`, `DETACH`, `PRAGMA`, `INSERT`/`UPDATE`/`DELETE`/`REPLACE`/`CREATE`/`DROP`/`ALTER`/`VACUUM`, multiple statements, and statements hidden after comments. Wraps the query as `SELECT * FROM (<sql>) LIMIT <cap+1>` so truncation is detectable. Defense in depth only — the read-only connection is the primary guard. |
-| `collector/src/dashboards/spec.ts` | pure | `DashboardSpec` type + `validateSpec(json) → {ok, spec} \| {ok:false, errors[]}`. |
-| `collector/src/dashboards/runQuery.ts` | I/O | Open `collector.db` with `readOnly: true`, set `busy_timeout=5000`, bind `:since`, run through `queryGuard` inside a `worker_threads` worker (`node:sqlite` is synchronous, so only terminating the worker can enforce the 5 s timeout), return `{columns, rows, truncated}`. Used by both the MCP server and Electron main. |
-| `collector/src/dashboards/dataServer.ts` | MCP stdio server | The four tools below. Plain Node 26, like the collector. |
-| `collector/src/dashboards/starters/*.json` | data | `spend-cache.json`, `agent-fleet.json`. |
+| `src/shared/dashboards/queryGuard.ts` | pure | Accept one `SELECT`/`WITH … SELECT` statement; reject `ATTACH`, `DETACH`, `PRAGMA`, `INSERT`/`UPDATE`/`DELETE`/`REPLACE`/`CREATE`/`DROP`/`ALTER`/`VACUUM`, multiple statements, and statements hidden after comments. Wraps the query as `SELECT * FROM (<sql>) LIMIT <cap+1>` so truncation is detectable. Defense in depth only — the read-only connection is the primary guard. |
+| `src/shared/dashboards/spec.ts` | pure | `DashboardSpec` type + `validateSpec(json) → {ok, spec} \| {ok:false, errors[]}`. |
+| `src/shared/dashboards/costing.ts` | pure | Cost post-processing (below). |
+| `electron/dashboards/runQuery.ts` | I/O | Open `collector.db` with `readOnly: true`, set `busy_timeout=5000`, bind `:since`, run through `queryGuard` inside a `worker_threads` worker (`node:sqlite` is synchronous, so only terminating the worker can enforce the 5 s timeout), return `{columns, rows, truncated}`. Used by both the MCP server and Electron main. |
+| `electron/dashboards/dataServer.ts` | MCP server factory | The four tools below; importable for tests. |
+| `electron/dashboards/dataServerEntry.ts` | executable entry | stdio transport only; built to `out/main/aether-data-mcp.js`. |
+| `src/shared/dashboards/starters.ts` | data | `spend-cache` and `agent-fleet` specs. |
 | `electron/dashboardsStore.ts` | main | Watch folder, validate, refresh (query in a worker thread), cost post-processing, seed starters, delete. |
 | `src/components/boards/` | renderer | View, tabs, panels. |
 
@@ -135,7 +144,7 @@ Rules enforced by `validateSpec`:
   checked at dry-run time, not in the pure validator, because only a real
   execution knows the column list.
 
-### Cost post-processing (Electron main only)
+### Cost post-processing (`src/shared/dashboards/costing.ts`; used by main and the MCP server)
 
 - **Exact:** for each row, `costForEvent({model, usage})` from
   `src/shared/modelPricing.ts`, summed per `groupBy`. Rows with `model IS NULL`
@@ -143,38 +152,42 @@ Rules enforced by `validateSpec`:
   not priced at a default rate, because a default-rate figure is not exact.
   Non-null but unknown model ids follow `rateForModel`'s existing fallback,
   matching the Ledger.
-- **Estimated:** `estimateDispatchCost` from `src/shared/ledgerMath.ts`,
-  summed per `groupBy`. `dispatches` has no model, so the basis is always the
-  defaulted tier. The panel renders `~$x.xx` with "est. (blended tier rate)".
+- **Estimated:** `tokens × blendedRateForModel(null) / 1e6` (the same rate
+  `estimateDispatchCost` in `src/shared/ledgerMath.ts` uses for a dispatch with
+  no model), summed per `groupBy`. `dispatches` has no model, so the basis is
+  always the defaulted tier. The panel renders `~$x.xx` with "est. (blended
+  tier rate)".
 - A `groupBy` value present in the time range but with zero rows renders `null`
   ("no data"), never `0`. For line and bar charts over days, the x-axis is
   filled to the full range so gaps are visible.
-- The MCP server cannot price (it cannot import `src/shared`). `run_query` and
-  the `save_dashboard` dry-run return the token rows and state that cost is
-  added at render time, so Claude knows the final column set.
+- The MCP server imports the same module, so the `save_dashboard` dry-run and
+  `run_query` (given an optional `cost`) return the same `usd`/`usdApprox`
+  columns the chart will show.
 
 ## MCP tools (`aether-data`)
 
 | Tool | Input | Behavior |
 |---|---|---|
 | `describe_schema` | — | Tables, columns, row counts, the known-gaps list, and the board file format with one example. |
-| `run_query` | `sql`, `range?` | Guard, run read-only, return ≤200 rows + `truncated`. For exploration. |
+| `run_query` | `sql`, `range?`, `cost?` | Guard, run read-only, apply cost if given, return ≤200 rows + `truncated`. For exploration. |
 | `save_dashboard` | full spec | Validate, dry-run every panel (column checks included), write atomically. All-or-nothing: on any error, return per-panel errors and write nothing. Overwrites an existing id. |
 | `update_chart` | `dashboardId`, `panelId`, partial panel | Read, merge, then the same path as `save_dashboard`. Adding a new panel id appends it. |
 
 There is no delete tool. Deletion is a UI action with a confirmation.
 
-**Registration / opt-in:** the collector CLI prints the exact command and does
-not run it:
+**Registration / opt-in:** the Boards "+" tab has a **Copy register command**
+button. Main builds the command from `process.execPath` and its own
+`__dirname`, and writes it to the clipboard itself, so the absolute paths never
+cross IPC:
 
 ```
-node collector/dist/cli.js print-data-server-command
-# -> claude mcp add --scope user aether-data -- "<node>" "<repo>/collector/dist/dashboards/dataServer.js"
+claude mcp add --scope user -e ELECTRON_RUN_AS_NODE=1 aether-data -- "<Aether OS.exe>" "<out/main>/aether-data-mcp.js"
 ```
 
-The operator runs it. Aether never edits `~/.claude.json`, and never launches
-`claude` for this, which keeps `noApiCalls.test.ts`'s launch allow-list
-unchanged. The Boards "+" tab shows the same instruction.
+The operator pastes and runs it. Aether never edits `~/.claude.json` and never
+launches `claude` for this, which keeps `noApiCalls.test.ts`'s launch
+allow-list unchanged. The server needs only an installed Aether, not a running
+window or the collector's build.
 
 ## Electron main (`electron/dashboardsStore.ts`)
 
@@ -223,10 +236,10 @@ unchanged. The Boards "+" tab shows the same instruction.
 **Spend & cache** (`spend-cache`):
 1. Spend by day (line, `usd`, 30d).
 2. Spend by model (bar, `usd`, 30d).
-3. Cache read share by day (line):
-   `SUM(cache_read_input_tokens) * 1.0 / NULLIF(SUM(input_tokens + cache_creation_input_tokens + cache_read_input_tokens), 0)`.
-   It uses the same definition as `src/shared/cacheHitRate.ts`; the plan must
-   confirm the formula matches.
+3. Cache hit rate by day (line):
+   `SUM(cache_read_input_tokens) * 1.0 / NULLIF(SUM(input_tokens + cache_read_input_tokens), 0)`.
+   This is the definition in `src/shared/cacheHitRate.ts` (cache creation is
+   excluded), so Boards and the Optimize panel agree.
 4. Spend today (stat, `usd`, 24h).
 
 **Agent fleet** (`agent-fleet`):
@@ -262,6 +275,9 @@ unchanged. The Boards "+" tab shows the same instruction.
   folder unchanged.
 - **`dashboardsStore`:** seed-once/never-overwrite, debounce, per-panel failure
   isolation, and an IPC payload scan asserting no absolute path.
+- **Build:** `electron.vite.config.ts` has the `aether-data-mcp` entry, and a
+  test asserts it is there, so the registered file cannot silently disappear
+  from a build.
 - **`noApiCalls.test.ts`:** stays green.
 - **Visual:** `electron-ui-verifier` screenshots both starters against real
   data. Charts are not unit-tested (repo convention).
