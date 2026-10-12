@@ -1251,7 +1251,7 @@ git add -- $P && git commit -m "feat(boards): Spend & cache and Agent fleet star
 - Test: `electron/dashboards/dataServer.test.ts`
 
 **Interfaces:**
-- Consumes: `runQuery` (Task 4), `evaluatePanel` (Task 5), `validateSpec`, `ID_PATTERN`, `RANGES`, `CostSpec` (Task 2), `applyCost` (Task 3), `STARTER_BOARDS` (Task 6), `TOOL_ROW_CAP`, `RENDER_ROW_CAP` (Task 1), `writeFileAtomically` from `electron/atomicWrite.ts`
+- Consumes: `runQuery` (Task 4), `evaluatePanel` (Task 5), `validateSpec`, `ID_PATTERN`, `isBoardId` (Task 3 ruling), `RANGES`, `CostSpec` (Task 2), `applyCost` (Task 3), `STARTER_BOARDS` (Task 6), `TOOL_ROW_CAP`, `RENDER_ROW_CAP` (Task 1), `writeFileAtomically` from `electron/atomicWrite.ts`
 - Produces:
   - `interface DataServerDeps { dbPath: string; dashboardsDir: string; now: () => number }`
   - `interface ToolReply { text: string; isError: boolean }`
@@ -1381,7 +1381,7 @@ import { writeFileAtomically } from '../atomicWrite';
 import { runQuery } from './runQuery';
 import { evaluatePanel } from './evaluatePanel';
 import { applyCost } from '../../src/shared/dashboards/costing';
-import { ID_PATTERN, RANGES, sinceForRange, validateSpec, type CostSpec, type Range } from '../../src/shared/dashboards/spec';
+import { ID_PATTERN, isBoardId, RANGES, sinceForRange, validateSpec, type CostSpec, type Range } from '../../src/shared/dashboards/spec';
 import { BLOCKED_COLUMNS, RENDER_ROW_CAP, TOOL_ROW_CAP } from '../../src/shared/dashboards/queryGuard';
 import { STARTER_BOARDS } from '../../src/shared/dashboards/starters';
 
@@ -1474,7 +1474,7 @@ async function saveSpec(input: unknown, deps: DataServerDeps): Promise<ToolReply
 
 async function updateChart(args: Record<string, unknown>, deps: DataServerDeps): Promise<ToolReply> {
   const { dashboardId, panelId, patch } = args;
-  if (typeof dashboardId !== 'string' || !ID_PATTERN.test(dashboardId)) return reply('dashboardId must match ^[a-z0-9-]{1,64}$.', true);
+  if (!isBoardId(dashboardId)) return reply('dashboardId must match ^[a-z0-9-]{1,64}$.', true);
   if (typeof panelId !== 'string' || !ID_PATTERN.test(panelId)) return reply('panelId must match ^[a-z0-9-]{1,64}$.', true);
   if (!isObject(patch)) return reply('patch must be an object.', true);
   const path = join(deps.dashboardsDir, `${dashboardId}.json`);
@@ -1669,7 +1669,7 @@ git add -- $P && git commit -m "feat(boards): aether-data stdio entry, build ent
 - Test: `electron/dashboards/dashboardsStore.test.ts`
 
 **Interfaces:**
-- Consumes: `validateSpec`, `ID_PATTERN`, `DashboardSpec`, `Range` (Task 2), `evaluatePanel` (Task 5), `RENDER_ROW_CAP` (Task 1), `BoardSummary`, `BoardsListing`, `RefreshResponse` (Task 4)
+- Consumes: `validateSpec`, `isBoardId` (Task 3 ruling), `DashboardSpec`, `Range` (Task 2), `evaluatePanel` (Task 5), `RENDER_ROW_CAP` (Task 1), `BoardSummary`, `BoardsListing`, `RefreshResponse` (Task 4)
 - Produces:
   - `interface DashboardsStoreOptions { dir: string; dbPath: string; starters?: DashboardSpec[]; now?: () => number; debounceMs?: number }`
   - `interface DashboardsStore { list(): BoardsListing; refresh(id: string, rangeOverride?: Range): Promise<RefreshResponse>; remove(id: string): { ok: boolean; error?: string }; seedStarters(): void; startWatching(onChange: (ids: string[]) => void): () => void }`
@@ -1775,7 +1775,7 @@ Expected: FAIL, cannot resolve `./dashboardsStore`.
 ```ts
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ID_PATTERN, validateSpec, type DashboardSpec, type Range } from '../../src/shared/dashboards/spec';
+import { isBoardId, validateSpec, type DashboardSpec, type Range } from '../../src/shared/dashboards/spec';
 import { RENDER_ROW_CAP } from '../../src/shared/dashboards/queryGuard';
 import type { BoardSummary, BoardsListing, RefreshResponse } from '../../src/shared/dashboards/types';
 import { evaluatePanel } from './evaluatePanel';
@@ -1818,12 +1818,12 @@ export function createDashboardsStore(opts: DashboardsStoreOptions): DashboardsS
   return {
     list() {
       ensureDir();
-      const ids = readdirSync(opts.dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).filter((id) => ID_PATTERN.test(id)).sort();
+      const ids = readdirSync(opts.dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).filter((id) => isBoardId(id)).sort();
       return { collectorAvailable: existsSync(opts.dbPath), boards: ids.map(summarize) };
     },
 
     async refresh(id, rangeOverride) {
-      if (!ID_PATTERN.test(id)) return { ok: false, error: 'Unknown board.' };
+      if (!isBoardId(id)) return { ok: false, error: 'Unknown board.' };
       const r = readBoard(id);
       if ('error' in r) return { ok: false, error: r.error };
       const nowMs = now();
@@ -1832,7 +1832,7 @@ export function createDashboardsStore(opts: DashboardsStoreOptions): DashboardsS
     },
 
     remove(id) {
-      if (!ID_PATTERN.test(id)) return { ok: false, error: 'Unknown board.' };
+      if (!isBoardId(id)) return { ok: false, error: 'Unknown board.' };
       try { unlinkSync(fileFor(id)); return { ok: true }; } catch (e) { return { ok: false, error: (e as Error).message }; }
     },
 
@@ -1863,7 +1863,7 @@ export function createDashboardsStore(opts: DashboardsStoreOptions): DashboardsS
         const name = filename ? String(filename) : '';
         if (!name.endsWith('.json')) return;
         const id = name.slice(0, -5);
-        if (!ID_PATTERN.test(id)) return;
+        if (!isBoardId(id)) return;
         pending.add(id);
         clearTimeout(timer);
         timer = setTimeout(() => { const ids = [...pending]; pending.clear(); onChange(ids); }, opts.debounceMs ?? 250);
