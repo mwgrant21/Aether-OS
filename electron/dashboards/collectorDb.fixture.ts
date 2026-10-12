@@ -27,6 +27,7 @@ export function createFixtureCollectorDb(nowMs: number): string {
       detail TEXT NOT NULL, detected_at_ms INTEGER NOT NULL);
     CREATE TABLE daily_anomaly_rollups (day TEXT NOT NULL, kind TEXT NOT NULL, anomaly_count INTEGER NOT NULL,
       PRIMARY KEY (day, kind));
+    CREATE TABLE transcript_files (file_path TEXT PRIMARY KEY, last_offset INTEGER NOT NULL, last_scanned_ms INTEGER NOT NULL);
   `);
   const usage = db.prepare('INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?)');
   usage.run(nowMs - 3_600_000, 'claude-opus-5-5', 1000, 500, 200, 3000);
