@@ -13,20 +13,19 @@ export const EXACT_COST_COLUMNS = ['model', 'input_tokens', 'output_tokens', 'ca
 
 export type CostOutcome = { ok: true; columns: string[]; rows: Row[]; unpricedRows: number } | { ok: false; error: string };
 
-const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 function exactRowCost(row: Row): number | null {
   // A row with no model is excluded, not priced at a default rate: a
   // default-rate figure is an estimate, and this column claims to be exact.
   if (typeof row.model !== 'string' || row.model === '') return null;
+  // An aggregate over no matching rows yields NULL token sums. A NULL must not
+  // read as zero tokens, so any missing token field leaves the row unpriced.
+  const { input_tokens: i, output_tokens: o, cache_creation_input_tokens: cw, cache_read_input_tokens: cr } = row;
+  if (!finite(i) || !finite(o) || !finite(cw) || !finite(cr)) return null;
   return costForEvent({
     model: row.model,
-    usage: {
-      inputTokens: num(row.input_tokens),
-      outputTokens: num(row.output_tokens),
-      cacheCreationInputTokens: num(row.cache_creation_input_tokens),
-      cacheReadInputTokens: num(row.cache_read_input_tokens),
-    },
+    usage: { inputTokens: i, outputTokens: o, cacheCreationInputTokens: cw, cacheReadInputTokens: cr },
   });
 }
 
@@ -80,6 +79,9 @@ function nextDay(day: string): string {
  * per day), are returned unchanged.
  */
 export function fillDailyGaps(x: string, yColumns: string[], rows: Row[], sinceMs: number, nowMs: number): Row[] {
+  // An empty result has no evidence of a day axis (every() is vacuously true),
+  // so it must not be filled into a run of null days.
+  if (rows.length === 0) return rows;
   if (!rows.every((r) => typeof r[x] === 'string' && DAY_RE.test(r[x] as string))) return rows;
   const byDay = new Map(rows.map((r) => [r[x] as string, r]));
   if (byDay.size !== rows.length) return rows;

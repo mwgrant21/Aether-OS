@@ -28,6 +28,13 @@ describe('applyCost exact', () => {
     expect(r.ok && r.rows[0].usd).toBeNull();
   });
 
+  it('a model row whose token sums are null is unpriced, not $0', () => {
+    const nullSums = { day: '2026-10-01', model: 'claude-opus-5-5', input_tokens: null, output_tokens: null, cache_creation_input_tokens: null, cache_read_input_tokens: null };
+    const r = applyCost(EXACT_COLS, [nullSums], { basis: 'exact', groupBy: 'day' });
+    expect(r.ok && r.rows[0].usd).toBeNull();
+    expect(r.ok && r.unpricedRows).toBe(1);
+  });
+
   it('names missing columns', () => {
     const r = applyCost(['day', 'model'], [], { basis: 'exact', groupBy: 'day' });
     expect(r.ok).toBe(false);
@@ -64,6 +71,10 @@ describe('fillDailyGaps', () => {
     expect(fillDailyGaps('day', ['usd'], cats, since, now)).toBe(cats);
     const dup = [{ day: '2026-10-04', usd: 1 }, { day: '2026-10-04', usd: 2 }];
     expect(fillDailyGaps('day', ['usd'], dup, since, now)).toBe(dup);
+  });
+
+  it('an empty result is not gap-filled', () => {
+    expect(fillDailyGaps('tool_name', ['calls'], [], since, now)).toEqual([]);
   });
 
   it('localDay formats local dates', () => {
