@@ -30,9 +30,9 @@ export function createFixtureCollectorDb(nowMs: number): string {
     CREATE TABLE transcript_files (file_path TEXT PRIMARY KEY, last_offset INTEGER NOT NULL, last_scanned_ms INTEGER NOT NULL);
   `);
   const usage = db.prepare('INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?)');
-  usage.run(nowMs - 3_600_000, 'claude-opus-5-5', 1000, 500, 200, 3000);
+  usage.run(nowMs - 3_600_000, 'test-opus', 1000, 500, 200, 3000);
   usage.run(nowMs - 3_600_000, null, 10, 10, 0, 0);
-  usage.run(nowMs - 2 * DAY_MS, 'claude-sonnet-5-5', 2000, 100, 0, 1000);
+  usage.run(nowMs - 2 * DAY_MS, 'test-sonnet', 2000, 100, 0, 1000);
   const tool = db.prepare('INSERT INTO tool_calls (tool_use_id, tool_name, started_at_ms, closed_at_ms) VALUES (?, ?, ?, ?)');
   ['Read', 'Read', 'Read', 'Bash'].forEach((name, i) => tool.run(`tu${i}`, name, nowMs - 3_600_000, nowMs - 3_590_000));
   const dispatch = db.prepare('INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, task_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');

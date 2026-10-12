@@ -11,6 +11,8 @@ const server = createDataMcpServer({
   now: () => Date.now(),
 });
 const close = () => { void server.close(); };
+// Mirrors communicationBridge/mcpEntry.ts. MCP clients keep stdin open for the
+// session; closing on 'end' can abort in-flight tool calls of a client that closes stdin early.
 process.stdin.once('end', close);
 process.once('SIGTERM', close);
 process.once('SIGINT', close);
