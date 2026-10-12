@@ -12,6 +12,8 @@ export interface PanelResult {
   error: string | null;
   errorKind: QueryErrorKind | 'columns' | 'cost' | null;
   refreshedAt: number;
+  /** The panel definition and effective range this result was computed from; a cached result is reusable only while it matches. */
+  definition: string;
 }
 
 export interface PanelSummary {

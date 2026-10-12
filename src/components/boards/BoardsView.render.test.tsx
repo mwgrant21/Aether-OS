@@ -14,8 +14,8 @@ const listing: BoardsListing = {
   ],
 };
 const refreshed: RefreshResponse = { ok: true, panels: [
-  { panelId: 'today', columns: ['period', 'usd'], rows: [{ period: 'last 24h', usd: null }], truncated: false, unpricedRows: 2, error: null, errorKind: null, refreshedAt: 1 },
-  { panelId: 'disp', columns: ['day', 'usdApprox'], rows: [{ day: '2026-10-11', usdApprox: 1.5 }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1 },
+  { panelId: 'today', columns: ['period', 'usd'], rows: [{ period: 'last 24h', usd: null }], truncated: false, unpricedRows: 2, error: null, errorKind: null, refreshedAt: 1, definition: 'd' },
+  { panelId: 'disp', columns: ['day', 'usdApprox'], rows: [{ day: '2026-10-11', usdApprox: 1.5 }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1, definition: 'd' },
 ] };
 
 function mockApi(overrides: Partial<BoardsListing> = {}) {
@@ -101,7 +101,7 @@ describe('BoardsView', () => {
       { id: 'b', title: 'Board B', error: null, panels: [panel] },
     ] };
     const res = (v: string): RefreshResponse => ({ ok: true, panels: [
-      { panelId: 'p', columns: ['v'], rows: [{ v }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1 },
+      { panelId: 'p', columns: ['v'], rows: [{ v }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1, definition: 'd' },
     ] });
     const api = mockApi(two);
     let resolveA: (r: RefreshResponse) => void = () => {};
@@ -121,10 +121,10 @@ describe('BoardsView', () => {
     const one: BoardsListing = { collectorAvailable: true, boards: [{ id: 'a', title: 'Board A', error: null, panels: [panel] }] };
     const api = mockApi(one);
     api.refresh.mockResolvedValueOnce({ ok: true, panels: [
-      { panelId: 'p', columns: ['v'], rows: [{ v: 'old-range' }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1 },
+      { panelId: 'p', columns: ['v'], rows: [{ v: 'old-range' }], truncated: false, unpricedRows: 0, error: null, errorKind: null, refreshedAt: 1, definition: 'd' },
     ] });
     api.refresh.mockResolvedValue({ ok: true, panels: [
-      { panelId: 'p', columns: [], rows: [], truncated: false, unpricedRows: 0, error: 'locked', errorKind: 'busy', refreshedAt: 2 },
+      { panelId: 'p', columns: [], rows: [], truncated: false, unpricedRows: 0, error: 'locked', errorKind: 'busy', refreshedAt: 2, definition: 'd' },
     ] });
     render(<BoardsView />);
     expect(await screen.findByText('old-range')).toBeTruthy();
