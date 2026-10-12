@@ -65,11 +65,24 @@ describe('runQuery', () => {
     }
   });
 
+  it('reports busy, not timeout, with the default timeouts while a write lock is held', async () => {
+    const dbPath = createFixtureCollectorDb(now);
+    const writer = new DatabaseSync(dbPath);
+    writer.exec('BEGIN EXCLUSIVE');
+    try {
+      const r = await runQuery({ dbPath, sql: 'SELECT COUNT(*) AS n FROM usage_events', since: 0, rowCap: 10 });
+      expect(r).toMatchObject({ ok: false, kind: 'busy' });
+    } finally {
+      writer.exec('ROLLBACK');
+      writer.close();
+    }
+  }, 15000);
+
   it('stops a runaway query at the timeout', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const slow = 'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c) SELECT MAX(i) AS m FROM c';
     let pid = 0;
-    const r = await runQuery({ dbPath, sql: slow, since: 0, rowCap: 10, timeoutMs: 300, onSpawn: (p) => { pid = p; } });
+    const r = await runQuery({ dbPath, sql: slow, since: 0, rowCap: 10, timeoutMs: 300, busyTimeoutMs: 50, onSpawn: (p) => { pid = p; } });
     expect(r).toMatchObject({ ok: false, kind: 'timeout' });
     expect(pid).toBeGreaterThan(0);
     // The process must really be gone, not just abandoned.

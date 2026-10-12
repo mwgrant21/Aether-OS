@@ -128,10 +128,12 @@ function spawnOne(
     }
     const proc = child;
     if (proc.pid !== undefined) onSpawn?.(proc.pid);
+    // Lock wait (busy_timeout, inside the child) and execution each get their own
+    // budget; a shared deadline would report a held write lock as 'timeout', not 'busy'.
     timer = setTimeout(() => {
       proc.kill();
       finish({ ok: false, kind: 'timeout', error: `Query ran longer than ${timeoutMs / 1000}s and was stopped.` });
-    }, timeoutMs);
+    }, timeoutMs + busyTimeoutMs);
     let stdout = '';
     let outBytes = 0;
     proc.stdout!.setEncoding('utf8');
