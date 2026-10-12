@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createFixtureCollectorDb } from './collectorDb.fixture';
-import { executeInWorker, runQuery } from './runQuery';
+import { MAX_CONCURRENT_QUERIES, executeIsolated, runQuery } from './runQuery';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -68,13 +68,45 @@ describe('runQuery', () => {
   it('stops a runaway query at the timeout', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const slow = 'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c) SELECT MAX(i) AS m FROM c';
-    const r = await runQuery({ dbPath, sql: slow, since: 0, rowCap: 10, timeoutMs: 300 });
+    let pid = 0;
+    const r = await runQuery({ dbPath, sql: slow, since: 0, rowCap: 10, timeoutMs: 300, onSpawn: (p) => { pid = p; } });
     expect(r).toMatchObject({ ok: false, kind: 'timeout' });
+    expect(pid).toBeGreaterThan(0);
+    // The process must really be gone, not just abandoned.
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try { process.kill(pid, 0); await new Promise((res) => setTimeout(res, 50)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+  });
+
+  it('never runs more than MAX_CONCURRENT_QUERIES query processes at once', async () => {
+    const dbPath = createFixtureCollectorDb(now);
+    const work = 'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 2000000) SELECT MAX(i) AS m FROM c';
+    const pids: number[] = [];
+    let maxAlive = 0;
+    const onSpawn = (pid: number) => {
+      pids.push(pid);
+      const alive = pids.filter((p) => { try { process.kill(p, 0); return true; } catch { return false; } }).length;
+      maxAlive = Math.max(maxAlive, alive);
+    };
+    const results = await Promise.all(Array.from({ length: 5 }, () =>
+      runQuery({ dbPath, sql: work, since: 0, rowCap: 10, timeoutMs: 20000, onSpawn })));
+    expect(results.every((r) => r.ok && r.rows[0].m === 2000000)).toBe(true);
+    expect(pids.length).toBe(5);
+    expect(maxAlive).toBeLessThanOrEqual(MAX_CONCURRENT_QUERIES);
+  });
+
+  it('scrubs the db path out of error text', async () => {
+    const dbPath = createFixtureCollectorDb(now);
+    const r = await executeIsolated(dbPath, `SELECT '${dbPath.replace(/'/g, "''")}' AS p FROM nope`, null, 10, 5000, 5000);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).not.toContain(dbPath);
   });
 
   it('the connection itself is read-only even if a write got past the guard', async () => {
     const dbPath = createFixtureCollectorDb(now);
-    const r = await executeInWorker(dbPath, 'DELETE FROM usage_events', null, 10, 5000, 5000);
+    const r = await executeIsolated(dbPath, 'DELETE FROM usage_events', null, 10, 5000, 5000);
     expect(r.ok).toBe(false);
     const check = new DatabaseSync(dbPath, { readOnly: true });
     expect(check.prepare('SELECT COUNT(*) AS n FROM usage_events').get().n).toBe(3);
