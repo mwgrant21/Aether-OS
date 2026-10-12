@@ -90,8 +90,8 @@ export const FLEET_JSON_LATER = JSON.stringify([
 // collector loop ever sees it.
 export const STUB_CALL_COUNT_FILE = 'stub-claude-calls.txt';
 
-// The schtasks.exe stub appends one JSON argv array per invocation here.
-export const STUB_SCHTASKS_LOG_FILE = 'stub-schtasks-calls.jsonl';
+// The reg.exe stub appends one JSON argv array per invocation here.
+export const STUB_REG_LOG_FILE = 'stub-reg-calls.jsonl';
 
 function jsonl(lines) {
   return lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n';
@@ -385,7 +385,7 @@ export function buildFixture(root, baseMs) {
     dbPath: join(aetherDir, 'collector.db'),
     settingsPath: join(claudeDir, 'settings.json'),
     stubCallCountPath: join(root, STUB_CALL_COUNT_FILE),
-    stubSchtasksLogPath: join(root, STUB_SCHTASKS_LOG_FILE),
+    stubRegLogPath: join(root, STUB_REG_LOG_FILE),
   };
 }
 

@@ -1,7 +1,8 @@
 // Command aether-collector-cli is the Go port of collector/src/cli.ts: the
 // install/uninstall/status CLI for wiring the collector's hooks into Claude
 // Code's settings.json (internal/hookinstall) and registering/unregistering
-// the collector as a Windows logon autostart task (internal/autostart).
+// the collector as a per-user Windows logon autostart (a Run-key value,
+// internal/autostart).
 //
 // Deliberate adaptation from the TS original (disclosed, not silent): cli.ts
 // resolves scriptPath relative to its own compiled file location under the
@@ -16,11 +17,11 @@
 // explicitly out of scope per the design spec's "Out of scope" section), so
 // -script-path is exposed as an explicit override for whatever the real
 // install location turns out to be. install-autostart similarly adapts: TS
-// registers "<node.exe>" "<index.js>" as the scheduled task's command since
+// registers "<node.exe>" "<index.js>" as the Run-key value's command since
 // Node needs an interpreter; a Go binary is self-contained, so this CLI
 // passes its sibling aether-collector executable's path as autostart's
 // nodePath argument with an empty entrypointPath (see main()'s
-// install-autostart case for the resulting /TR value).
+// install-autostart case for the resulting /d value).
 package main
 
 import (
@@ -114,11 +115,11 @@ func main() {
 
 	case "install-autostart":
 		collectorExePath := filepath.Join(filepath.Dir(exePath), "aether-collector.exe")
-		// autostart.BuildScheduledTaskCommand formats /TR as `"<nodePath>"
-		// "<entrypointPath>"` when entrypointPath is non-empty, but collapses
-		// to a single-path `"<nodePath>"` when it's ""; passing the
+		// autostart.BuildRunKeyCommand formats /d as `conhost.exe --headless
+		// "<nodePath>" "<entrypointPath>"` when entrypointPath is non-empty,
+		// but collapses to a single path when it's ""; passing the
 		// collector's own exe path as nodePath and "" as entrypointPath thus
-		// yields /TR `"<exe>"` with no trailing empty argument -- a
+		// yields `conhost.exe --headless "<exe>"` with no trailing empty argument -- a
 		// self-contained Go binary needs no separate interpreter argument,
 		// unlike TS's "<node.exe>" "<index.js>" pair. See this file's top
 		// doc comment.
