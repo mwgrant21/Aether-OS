@@ -97,6 +97,15 @@ describe('runQuery', () => {
     expect(maxAlive).toBeLessThanOrEqual(MAX_CONCURRENT_QUERIES);
   });
 
+  it('the connection itself is read-only even if a write got past the guard', async () => {
+    const dbPath = createFixtureCollectorDb(now);
+    const r = await executeIsolated(dbPath, 'DELETE FROM usage_events', null, 10, 5000, 5000);
+    expect(r.ok).toBe(false);
+    const check = new DatabaseSync(dbPath, { readOnly: true });
+    expect(check.prepare('SELECT COUNT(*) AS n FROM usage_events').get().n).toBe(3);
+    check.close();
+  });
+
   it('scrubs the db path out of messages', () => {
     expect(scrubPath('unable to open /tmp/x/collector.db now', '/tmp/x/collector.db')).toBe('unable to open collector.db now');
   });

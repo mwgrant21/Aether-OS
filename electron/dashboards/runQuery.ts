@@ -133,10 +133,12 @@ function spawnOne(
       finish({ ok: false, kind: 'timeout', error: `Query ran longer than ${timeoutMs / 1000}s and was stopped.` });
     }, timeoutMs);
     let stdout = '';
+    let outBytes = 0;
     proc.stdout!.setEncoding('utf8');
     proc.stdout!.on('data', (c: string) => {
       stdout += c;
-      if (stdout.length > MAX_QUERY_OUTPUT_BYTES) {
+      outBytes += Buffer.byteLength(c);
+      if (outBytes > MAX_QUERY_OUTPUT_BYTES) {
         proc.kill();
         finish({ ok: false, kind: 'sql', error: 'Query result is too large.' });
       }
