@@ -46,7 +46,8 @@ export const STARTER_BOARDS: DashboardSpec[] = [
         sql: "SELECT COALESCE(task_kind, '(unknown)') AS agent_type, COUNT(*) AS dispatches FROM dispatches WHERE started_at_ms >= :since GROUP BY agent_type ORDER BY dispatches DESC LIMIT 15",
         x: 'agent_type', y: ['dispatches'] },
       { id: 'anomalies-by-kind', title: 'Anomalies by kind', type: 'bar', range: '30d',
-        sql: "SELECT kind, SUM(anomaly_count) AS anomalies FROM daily_anomaly_rollups WHERE day >= date(:since / 1000, 'unixepoch', 'localtime') GROUP BY kind ORDER BY anomalies DESC",
+        // Reads live anomalies: daily_anomaly_rollups only holds rows aged out past retention (collector/src/retention.ts).
+        sql: 'SELECT kind, COUNT(*) AS anomalies FROM anomalies WHERE detected_at_ms >= :since GROUP BY kind ORDER BY anomalies DESC',
         x: 'kind', y: ['anomalies'] },
       { id: 'slowest-dispatches', title: 'Slowest dispatches', type: 'table', range: '7d',
         sql: `SELECT ${DISPATCH_DAY} AS day, ROUND(duration_ms / 1000.0, 1) AS duration_s, tokens, tool_uses FROM dispatches WHERE started_at_ms >= :since ORDER BY duration_ms DESC LIMIT 20` },

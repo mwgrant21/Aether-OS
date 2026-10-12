@@ -18,6 +18,7 @@ describe('starter boards', () => {
       for (const panel of board.panels) {
         const r = await evaluatePanel(panel, { dbPath, nowMs: now, rowCap: 1000 });
         expect({ board: board.id, panel: panel.id, error: r.error }).toEqual({ board: board.id, panel: panel.id, error: null });
+        expect(r.rows.length, `${board.id}/${panel.id} returned no rows`).toBeGreaterThan(0);
       }
     }
   });

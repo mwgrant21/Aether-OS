@@ -40,6 +40,9 @@ export function createFixtureCollectorDb(nowMs: number): string {
   const d = new Date(nowMs);
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   db.prepare('INSERT INTO daily_anomaly_rollups (day, kind, anomaly_count) VALUES (?, ?, ?)').run(today, 'loop', 2);
+  const anomaly = db.prepare('INSERT INTO anomalies (kind, tool_use_id, detail, detected_at_ms) VALUES (?, ?, ?, ?)');
+  anomaly.run('reReadLoop', 'tu0', 'x', nowMs - 3_600_000);
+  anomaly.run('zeroEditBurn', 'tu0', 'x', nowMs - 3_600_000);
   db.close();
   return path;
 }
