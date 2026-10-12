@@ -13,14 +13,18 @@ const FORBIDDEN =
   /\b(ATTACH|DETACH|PRAGMA|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|VACUUM|REINDEX|SAVEPOINT|RELEASE|BEGIN|COMMIT|ROLLBACK|LOAD_EXTENSION)\b|\bREPLACE\s+INTO\b/i;
 
 /**
- * Path columns never leave the app through Boards: query results reach the
- * model conversation, and paths are the store's remaining sensitive surface
- * (docs/privacy-and-data.md). Matched against `code` (quoted identifiers kept),
- * so quoting a name does not get past it; a string literal containing one of
- * these names is also refused, which is an acceptable false positive.
+ * Path or path-bearing columns never leave the app through Boards: query results
+ * reach the model conversation, and paths are the store's remaining sensitive
+ * surface (docs/privacy-and-data.md). `detail` carries file paths in anomaly
+ * text. Matched against `code` (quoted identifiers kept), so quoting a name does
+ * not get past it; a string literal containing one of these names is also
+ * refused, which is an acceptable false positive.
  */
-export const BLOCKED_COLUMNS = ['file_path_rel', 'project_rel_path', 'file_path'] as const;
-const PATH_TABLES = /\b(tool_calls|events|transcript_files)\b/i;
+export const BLOCKED_COLUMNS = ['file_path_rel', 'project_rel_path', 'file_path', 'source_file_rel', 'detail'] as const;
+
+// Select-star is banned in every table: a collector update can add a path
+// column anywhere, and a star would return it without the query naming it.
+const SELECT_STAR = /(\bSELECT|\bDISTINCT|\bALL|,|\.)\s*\*/i;
 
 interface Scanned { code: string; skeleton: string; unterminated: boolean }
 
@@ -96,8 +100,8 @@ export function guardQuery(sql: string, rowCap: number): GuardResult {
   const lowerCode = code.toLowerCase();
   const blocked = BLOCKED_COLUMNS.find((c) => lowerCode.includes(c));
   if (blocked) return { ok: false, reason: `Path column ${blocked} is blocked in Boards: paths stay out of model conversations.` };
-  if (PATH_TABLES.test(lowerCode) && skeleton.replace(/\bcount\s*\(\s*\*\s*\)/gi, '').includes('*')) {
-    return { ok: false, reason: 'On tool_calls, events and transcript_files, name the columns you need: "*" would include a blocked path column (only COUNT(*) is allowed there).' };
+  if (SELECT_STAR.test(skeleton)) {
+    return { ok: false, reason: 'Name the columns you need: "*" is not allowed in Boards queries (COUNT(*) is), because new columns, including path columns, can appear in any table.' };
   }
   return { ok: true, sql: `SELECT * FROM (${code}) LIMIT ${rowCap + 1}`, usesSince: /:since\b/.test(skeleton) };
 }

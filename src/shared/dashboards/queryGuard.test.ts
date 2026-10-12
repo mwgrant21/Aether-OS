@@ -40,7 +40,15 @@ describe('guardQuery', () => {
     ['a path column by name', 'SELECT file_path_rel FROM tool_calls', 'file_path_rel'],
     ['a quoted path column', 'SELECT "project_rel_path" FROM events', 'project_rel_path'],
     ['the transcript path', 'SELECT file_path FROM transcript_files', 'file_path'],
+    ['source_file_rel', 'SELECT source_file_rel FROM usage_events', 'source_file_rel'],
+    ['anomaly detail text', 'SELECT detail FROM anomalies', 'detail'],
+    ['bracketed blocked name', 'SELECT [file_path_rel] FROM tool_calls', 'file_path_rel'],
+    ['backtick blocked name', 'SELECT `project_rel_path` FROM events', 'project_rel_path'],
+    ['mixed-case blocked name', 'SELECT File_Path_Rel FROM tool_calls', 'file_path_rel'],
     ['star on a path table', 'SELECT * FROM tool_calls', 'name the columns'],
+    ['star on a table with no path column', 'SELECT * FROM usage_events', 'name the columns'],
+    ['distinct star', 'SELECT DISTINCT * FROM dispatches', 'name the columns'],
+    ['comma star', 'SELECT tool_name, * FROM tool_calls', 'name the columns'],
     ['qualified star on a quoted path table', 'SELECT t.* FROM "tool_calls" t', 'name the columns'],
     ['star hidden in a CTE', 'WITH t AS (SELECT * FROM tool_calls) SELECT tool_name FROM t', 'name the columns'],
   ])('blocks %s', (_name, sql, reasonPart) => {
@@ -52,8 +60,9 @@ describe('guardQuery', () => {
   it.each([
     ['COUNT(*) on a path table', 'SELECT COUNT(*) AS n FROM tool_calls'],
     ['named non-path columns', 'SELECT tool_name, started_at_ms FROM tool_calls'],
-    ['star on a table with no path column', 'SELECT * FROM usage_events'],
     ['multiplication on usage_events', 'SELECT SUM(cache_read_input_tokens) * 1.0 AS r FROM usage_events'],
+    ['COUNT(*) with multiplication', 'SELECT COUNT(*) AS n, SUM(tokens) * 2 AS t FROM dispatches'],
+    ['no-space multiplication', 'SELECT tokens*2 AS t FROM dispatches'],
   ])('still accepts %s', (_name, sql) => {
     expect(guardQuery(sql, 10).ok).toBe(true);
   });
