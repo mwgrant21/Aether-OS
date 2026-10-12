@@ -51,8 +51,13 @@ export function createDashboardsStore(opts: DashboardsStoreOptions): DashboardsS
 
   return {
     list() {
-      ensureDir();
-      const ids = readdirSync(opts.dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).filter((id) => isBoardId(id)).sort();
+      let ids: string[];
+      try {
+        ensureDir();
+        ids = readdirSync(opts.dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).filter((id) => isBoardId(id)).sort();
+      } catch (e) {
+        return { collectorAvailable: existsSync(opts.dbPath), boards: [], error: `Boards folder unavailable (${errCode(e)}).` };
+      }
       return { collectorAvailable: existsSync(opts.dbPath), boards: ids.map(summarize) };
     },
 

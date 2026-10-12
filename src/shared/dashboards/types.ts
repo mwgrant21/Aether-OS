@@ -19,5 +19,10 @@ export interface PanelSummary {
   costBasis: 'exact' | 'estimated' | null; x: string | null; y: string[];
 }
 export interface BoardSummary { id: string; title: string; error: string | null; panels: PanelSummary[] }
-export interface BoardsListing { collectorAvailable: boolean; boards: BoardSummary[] }
+export interface BoardsListing {
+  collectorAvailable: boolean;
+  boards: BoardSummary[];
+  /** Path-free; set when the boards folder itself cannot be used. */
+  error?: string;
+}
 export type RefreshResponse = { ok: true; panels: PanelResult[] } | { ok: false; error: string };

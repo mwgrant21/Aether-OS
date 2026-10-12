@@ -81,6 +81,18 @@ describe('dashboardsStore', () => {
     expect(existsSync(join(dir, 'starter.json'))).toBe(false);
   });
 
+  it('list reports a path-free error when the boards folder is a file', () => {
+    const { dir, store } = setup();
+    mkdirSync(join(dir, '..'), { recursive: true });
+    writeFileSync(dir, 'not a folder');
+    const result = store.list();
+    expect(result.boards).toEqual([]);
+    expect(result.error).toMatch(/Boards folder unavailable \(\w+\)/);
+    expect(JSON.stringify(result)).not.toContain(dir);
+    expect(JSON.stringify(result)).not.toContain(tmpdir());
+    expect(JSON.stringify(result)).not.toContain(tmpdir().replace(/\\/g, '\\\\')); // JSON-escaped form on Windows
+  });
+
   it('remove of a missing board reports the errno code, not the path', () => {
     const { dir, store } = setup();
     store.seedStarters();
