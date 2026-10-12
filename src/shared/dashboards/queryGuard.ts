@@ -101,7 +101,9 @@ export function guardQuery(sql: string, rowCap: number): GuardResult {
   if (bad) return { ok: false, reason: `"${bad[0].toUpperCase()}" is not allowed in a Boards query.` };
   // Table-valued pragmas such as pragma_database_list return the database's
   // absolute path. pragma_table_info stays allowed for schema description.
-  const pragmaFn = PRAGMA_FN.exec(skeleton);
+  // Matched on code (identifiers kept) so a quoted, bracketed or backticked
+  // name is seen too. A string literal containing the text is refused as well.
+  const pragmaFn = PRAGMA_FN.exec(code);
   if (pragmaFn) {
     return { ok: false, reason: `"${pragmaFn[0].toLowerCase()}" is not allowed in a Boards query: only pragma_table_info may be used.` };
   }

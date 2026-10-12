@@ -30,6 +30,9 @@ describe('guardQuery', () => {
     ['load_extension', "SELECT load_extension('evil')", 'LOAD_EXTENSION'],
     ['pragma_database_list', 'SELECT file FROM pragma_database_list', 'pragma_database_list'],
     ['pragma_function_list', 'SELECT name FROM pragma_function_list', 'pragma_function_list'],
+    ['quoted pragma_database_list', 'SELECT file FROM "pragma_database_list"', 'pragma_database_list'],
+    ['bracketed pragma_database_list', 'SELECT file FROM [pragma_database_list]', 'pragma_database_list'],
+    ['backtick pragma_database_list', 'SELECT file FROM `pragma_database_list`', 'pragma_database_list'],
     ['unterminated string', "SELECT 'abc", 'unterminated'],
     ['unterminated block comment', 'SELECT 1 /* never closed', 'unterminated'],
   ])('rejects %s', (_name, sql, reasonPart) => {
