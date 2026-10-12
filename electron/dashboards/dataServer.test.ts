@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createFixtureCollectorDb } from './collectorDb.fixture';
+import { createFixtureCollectorDb, itWithAuthorizer } from './collectorDb.fixture';
 import { DATA_TOOLS, handleDataTool, type DataServerDeps } from './dataServer';
 
 const now = Date.now();
@@ -17,7 +17,7 @@ describe('aether-data tools', () => {
     expect(DATA_TOOLS.map((t) => t.name)).toEqual(['describe_schema', 'run_query', 'save_dashboard', 'update_chart']);
   });
 
-  it('describe_schema lists tables, row counts and the known gaps', async () => {
+  itWithAuthorizer('describe_schema lists tables, row counts and the known gaps', async () => {
     const r = await handleDataTool('describe_schema', {}, deps());
     const body = JSON.parse(r.text);
     expect(r.isError).toBe(false);
@@ -33,7 +33,7 @@ describe('aether-data tools', () => {
     expect(r.text).toContain('blocked');
   });
 
-  it('run_query refuses SQL that aliases a column usd', async () => {
+  itWithAuthorizer('run_query refuses SQL that aliases a column usd', async () => {
     const r = await handleDataTool('run_query', { sql: 'SELECT model, SUM(input_tokens) AS usd FROM usage_events GROUP BY model' }, deps());
     expect(r.isError).toBe(true);
     expect(r.text).toContain('usd and usdApprox');
@@ -45,7 +45,7 @@ describe('aether-data tools', () => {
     expect(r.text).toContain('No collector data');
   });
 
-  it('run_query returns rows and applies cost when asked', async () => {
+  itWithAuthorizer('run_query returns rows and applies cost when asked', async () => {
     const d = deps();
     const plain = JSON.parse((await handleDataTool('run_query', { sql: 'SELECT COUNT(*) AS n FROM usage_events' }, d)).text);
     expect(plain.rows).toEqual([{ n: 3 }]);
@@ -62,7 +62,7 @@ describe('aether-data tools', () => {
     expect(r.isError).toBe(true);
   });
 
-  it('save_dashboard writes a valid board atomically', async () => {
+  itWithAuthorizer('save_dashboard writes a valid board atomically', async () => {
     const d = deps();
     const r = await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [tablePanel] } }, d);
     expect(r.isError).toBe(false);
@@ -79,7 +79,7 @@ describe('aether-data tools', () => {
     expect(files.filter((f) => f.endsWith('.json'))).toEqual([]);
   });
 
-  it('update_chart merges a patch into one panel, and appends an unknown panel id', async () => {
+  itWithAuthorizer('update_chart merges a patch into one panel, and appends an unknown panel id', async () => {
     const d = deps();
     await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [tablePanel] } }, d);
     const r1 = await handleDataTool('update_chart', { dashboardId: 'mine', panelId: 'calls', patch: { title: 'Renamed', id: 'ignored' } }, d);
@@ -90,7 +90,7 @@ describe('aether-data tools', () => {
     expect(saved.panels.map((p: { id: string; title: string }) => [p.id, p.title])).toEqual([['calls', 'Renamed'], ['n', 'Count']]);
   });
 
-  it('update_chart removes a field patched to null, so a line panel can become a stat', async () => {
+  itWithAuthorizer('update_chart removes a field patched to null, so a line panel can become a stat', async () => {
     const d = deps();
     const line = { id: 'calls', title: 'Calls', type: 'line', sql: "SELECT date(started_at_ms/1000,'unixepoch','localtime') AS day, COUNT(*) AS calls FROM tool_calls GROUP BY day", x: 'day', y: ['calls'] };
     expect((await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [line] } }, d)).isError).toBe(false);
@@ -111,7 +111,7 @@ describe('aether-data tools', () => {
     expect(r.text).toContain('save_dashboard');
   });
 
-  it('update_chart reports a corrupt board file instead of throwing', async () => {
+  itWithAuthorizer('update_chart reports a corrupt board file instead of throwing', async () => {
     const d = deps();
     await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [tablePanel] } }, d);
     writeFileSync(join(d.dashboardsDir, 'mine.json'), '{ not json');
@@ -119,7 +119,7 @@ describe('aether-data tools', () => {
     expect(r.isError).toBe(true);
   });
 
-  it('describe_schema omits transcript_files and still counts the other tables', async () => {
+  itWithAuthorizer('describe_schema omits transcript_files and still counts the other tables', async () => {
     const body = JSON.parse((await handleDataTool('describe_schema', {}, deps())).text);
     expect(body.tables.map((t: { name: string }) => t.name)).not.toContain('transcript_files');
     expect(body.tables.find((t: { name: string }) => t.name === 'usage_events')).toMatchObject({ rows: 3 });
@@ -144,7 +144,7 @@ describe('aether-data tools', () => {
     }
   });
 
-  it('concurrent update_chart calls on one board keep both edits', async () => {
+  itWithAuthorizer('concurrent update_chart calls on one board keep both edits', async () => {
     const d = deps();
     const second = { ...tablePanel, id: 'second', title: 'Second' };
     await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [tablePanel, second] } }, d);

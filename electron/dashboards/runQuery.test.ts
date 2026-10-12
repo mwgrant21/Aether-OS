@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createFixtureCollectorDb } from './collectorDb.fixture';
+import { createFixtureCollectorDb, itWithAuthorizer, AUTHORIZER_SUPPORTED } from './collectorDb.fixture';
 import { MAX_CONCURRENT_QUERIES, MAX_QUERY_OUTPUT_BYTES, executeIsolated, runQuery, scrubPath } from './runQuery';
 
 const require = createRequire(import.meta.url);
@@ -12,25 +12,25 @@ const { DatabaseSync } = require('node:sqlite');
 const now = Date.now();
 
 describe('runQuery', () => {
-  it('returns columns and rows', async () => {
+  itWithAuthorizer('returns columns and rows', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const r = await runQuery({ dbPath, sql: 'SELECT tool_name, COUNT(*) AS n FROM tool_calls GROUP BY tool_name ORDER BY n DESC', since: 0, rowCap: 10 });
     expect(r).toEqual({ ok: true, columns: ['tool_name', 'n'], rows: [{ tool_name: 'Read', n: 3 }, { tool_name: 'Bash', n: 1 }], truncated: false });
   });
 
-  it('binds :since when used', async () => {
+  itWithAuthorizer('binds :since when used', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const r = await runQuery({ dbPath, sql: 'SELECT COUNT(*) AS n FROM usage_events WHERE occurred_at_ms >= :since', since: now - 86_400_000, rowCap: 10 });
     expect(r.ok && r.rows[0].n).toBe(2);
   });
 
-  it('runs SQL that never references :since (Review Focus 4)', async () => {
+  itWithAuthorizer('runs SQL that never references :since (Review Focus 4)', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const r = await runQuery({ dbPath, sql: 'SELECT COUNT(*) AS n FROM usage_events', since: now, rowCap: 10 });
     expect(r.ok && r.rows[0].n).toBe(3);
   });
 
-  it('flags truncation at the row cap', async () => {
+  itWithAuthorizer('flags truncation at the row cap', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const r = await runQuery({ dbPath, sql: 'SELECT id FROM usage_events', since: 0, rowCap: 2 });
     expect(r.ok && r.rows.length).toBe(2);
@@ -47,13 +47,18 @@ describe('runQuery', () => {
     expect(r).toMatchObject({ ok: false, kind: 'missing-db' });
   });
 
+  it.runIf(!AUTHORIZER_SUPPORTED)('refuses every query on a Node without the SQLite authorizer', async () => {
+    const dbPath = createFixtureCollectorDb(now);
+    expect(await runQuery({ dbPath, sql: 'SELECT COUNT(*) AS n FROM usage_events', since: 0, rowCap: 10 })).toMatchObject({ ok: false });
+  });
+
   it('reports SQL errors', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const r = await runQuery({ dbPath, sql: 'SELECT nope FROM usage_events', since: 0, rowCap: 10 });
     expect(r).toMatchObject({ ok: false, kind: 'sql' });
   });
 
-  it('reports busy while another connection holds an exclusive lock (Review Focus 5)', async () => {
+  itWithAuthorizer('reports busy while another connection holds an exclusive lock (Review Focus 5)', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const writer = new DatabaseSync(dbPath);
     writer.exec('BEGIN EXCLUSIVE');
@@ -66,7 +71,7 @@ describe('runQuery', () => {
     }
   });
 
-  it('reports busy, not timeout, with the default timeouts while a write lock is held', async () => {
+  itWithAuthorizer('reports busy, not timeout, with the default timeouts while a write lock is held', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const writer = new DatabaseSync(dbPath);
     writer.exec('BEGIN EXCLUSIVE');
@@ -79,7 +84,7 @@ describe('runQuery', () => {
     }
   }, 15000);
 
-  it('stops a runaway query at the timeout', async () => {
+  itWithAuthorizer('stops a runaway query at the timeout', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const slow = 'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c) SELECT MAX(i) AS m FROM c';
     let pid = 0;
@@ -95,7 +100,7 @@ describe('runQuery', () => {
     expect(alive).toBe(false);
   });
 
-  it('never runs more than MAX_CONCURRENT_QUERIES query processes at once', async () => {
+  itWithAuthorizer('never runs more than MAX_CONCURRENT_QUERIES query processes at once', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const work = 'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 2000000) SELECT MAX(i) AS m FROM c';
     const pids: number[] = [];
@@ -125,7 +130,7 @@ describe('runQuery', () => {
     expect(scrubPath('unable to open /tmp/x/collector.db now', '/tmp/x/collector.db')).toBe('unable to open collector.db now');
   });
 
-  it('caps the output a query process may produce', async () => {
+  itWithAuthorizer('caps the output a query process may produce', async () => {
     const dbPath = createFixtureCollectorDb(now);
     const r = await runQuery({ dbPath, sql: "SELECT printf('%.*c', 40000000, 'x') AS s", since: 0, rowCap: 10 });
     expect(MAX_QUERY_OUTPUT_BYTES).toBe(32 * 1024 * 1024);
@@ -158,7 +163,7 @@ describe('runQuery', () => {
     it('denies source_file_rel', async () => {
       expect((await run('SELECT source_file_rel FROM usage_events')).ok).toBe(false);
     });
-    it('denies any column whose name contains "path", allows others', async () => {
+    itWithAuthorizer('denies any column whose name contains "path", allows others', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'aether-path-col-'));
       const p = join(dir, 't.db');
       const db = new DatabaseSync(p);
@@ -167,10 +172,10 @@ describe('runQuery', () => {
       expect((await executeIsolated(p, 'SELECT some_path FROM t', null, 10, 5000, 5000)).ok).toBe(false);
       expect((await executeIsolated(p, 'SELECT a FROM t', null, 10, 5000, 5000)).ok).toBe(true);
     });
-    it('allows pragma_table_info', async () => {
+    itWithAuthorizer('allows pragma_table_info', async () => {
       expect((await run("SELECT name FROM pragma_table_info('tool_calls')")).ok).toBe(true);
     });
-    it('allows recursive CTEs', async () => {
+    itWithAuthorizer('allows recursive CTEs', async () => {
       const r = await run('WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 3) SELECT i FROM c');
       expect(r.ok && r.rows.length).toBe(3);
     });

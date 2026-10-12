@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { STARTER_BOARDS } from '../../src/shared/dashboards/starters';
 import { validateSpec } from '../../src/shared/dashboards/spec';
 import { createRequire } from 'node:module';
-import { DAY_MS, createFixtureCollectorDb } from './collectorDb.fixture';
+import { DAY_MS, createFixtureCollectorDb, itWithAuthorizer } from './collectorDb.fixture';
 import { evaluatePanel } from './evaluatePanel';
 
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
@@ -14,7 +14,7 @@ describe('starter boards', () => {
     for (const b of STARTER_BOARDS) expect(validateSpec(b)).toEqual({ ok: true, spec: b });
   });
 
-  it('anomalies-by-kind counts retained rollups alongside live anomalies', async () => {
+  itWithAuthorizer('anomalies-by-kind counts retained rollups alongside live anomalies', async () => {
     const now = Date.now();
     const dbPath = createFixtureCollectorDb(now);
     const panel = STARTER_BOARDS.flatMap((b) => b.panels).find((p) => p.id === 'anomalies-by-kind')!;
@@ -24,7 +24,7 @@ describe('starter boards', () => {
     expect(byKind).toMatchObject({ loop: 2, reReadLoop: 1, zeroEditBurn: 1 });
   });
 
-  it('anomalies-by-kind excludes rollups on or before the range boundary day', async () => {
+  itWithAuthorizer('anomalies-by-kind excludes rollups on or before the range boundary day', async () => {
     const now = Date.now();
     const dbPath = createFixtureCollectorDb(now);
     const db = new DatabaseSync(dbPath);
@@ -37,7 +37,7 @@ describe('starter boards', () => {
     expect(r.rows.map((row) => row.kind)).not.toContain('expired');
   });
 
-  it('every panel evaluates without error against a collector-shaped db', async () => {
+  itWithAuthorizer('every panel evaluates without error against a collector-shaped db', async () => {
     const now = Date.now();
     const dbPath = createFixtureCollectorDb(now);
     for (const board of STARTER_BOARDS) {

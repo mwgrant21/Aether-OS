@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createFixtureCollectorDb } from './collectorDb.fixture';
+import { createFixtureCollectorDb, itWithAuthorizer } from './collectorDb.fixture';
 import { createDashboardsStore } from './dashboardsStore';
 import type { DashboardSpec } from '../../src/shared/dashboards/spec';
 
@@ -58,7 +58,7 @@ describe('dashboardsStore', () => {
     expect(payload).not.toContain(dir.replace(/\\/g, '\\\\'));
   });
 
-  it('refresh returns one result per panel, and one failing panel does not fail the rest', async () => {
+  itWithAuthorizer('refresh returns one result per panel, and one failing panel does not fail the rest', async () => {
     const { dir, store } = setup();
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'two.json'), JSON.stringify({ ...starter, id: 'two', panels: [starter.panels[0], { ...starter.panels[0], id: 'bad', sql: 'SELECT nope FROM usage_events' }] }));

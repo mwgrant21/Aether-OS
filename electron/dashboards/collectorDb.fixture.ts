@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { it } from 'vitest';
 
 // Test-only. Columns copied from collector/src/schema.ts (never imported:
 // the app and the collector do not share runtime code).
@@ -9,6 +10,14 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
 export const DAY_MS = 86_400_000;
+
+/**
+ * Query children run on process.execPath. The app's is Electron's Node, which has
+ * DatabaseSync#setAuthorizer; Node 22 does not, and there runQuery refuses every
+ * query instead of running it unguarded. Tests that need a query to succeed use this.
+ */
+export const AUTHORIZER_SUPPORTED = typeof DatabaseSync.prototype.setAuthorizer === 'function';
+export const itWithAuthorizer = it.skipIf(!AUTHORIZER_SUPPORTED);
 
 export function createFixtureCollectorDb(nowMs: number): string {
   const path = join(mkdtempSync(join(tmpdir(), 'aether-boards-')), 'collector.db');
