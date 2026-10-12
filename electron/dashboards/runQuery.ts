@@ -122,8 +122,9 @@ function spawnOne(
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       });
-    } catch (e) {
-      finish({ ok: false, kind: 'sql', error: String((e as Error).message ?? e) });
+    } catch {
+      // Fixed text: a spawn error message can carry process.execPath (an install path).
+      finish({ ok: false, kind: 'sql', error: 'Query process failed.' });
       return;
     }
     const proc = child;
@@ -147,7 +148,7 @@ function spawnOne(
     });
     proc.stderr!.resume();
     proc.stdin!.on('error', () => { /* child died early; 'close' reports it */ });
-    proc.once('error', (e: Error) => finish({ ok: false, kind: 'sql', error: e.message }));
+    proc.once('error', () => finish({ ok: false, kind: 'sql', error: 'Query process failed.' }));
     proc.once('close', () => {
       let m: ChildReply | undefined;
       try { m = JSON.parse(stdout.trim()) as ChildReply; } catch { m = undefined; }
