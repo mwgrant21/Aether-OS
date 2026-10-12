@@ -146,7 +146,12 @@ export function openReadOnly(dbPath: string): DatabaseSync | null {
   try {
     const sqlite = require('node:sqlite');
     const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
-    db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`);
+    try {
+      db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`);
+    } catch {
+      db.close();
+      return null;
+    }
     return db;
   } catch {
     return null;

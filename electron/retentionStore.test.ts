@@ -3,7 +3,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
-import { readRetentionStatus, purgeCollectedData } from './retentionStore.js';
+import { readRetentionStatus, purgeCollectedData, openReadOnly } from './retentionStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -354,5 +354,16 @@ describe('purgeCollectedData', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
     expect(result.error).toMatch(/file.*not.*database|corrupt|malformed/i);
+  });
+});
+
+describe('openReadOnly', () => {
+  it('sets a 5s busy timeout so reads wait out a collector write instead of failing', () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), 'aether-retention-open-')), 'test.db');
+    new DatabaseSync(dbPath).close();
+    const db = openReadOnly(dbPath);
+    expect(typeof db).not.toBe('string');
+    expect((db as InstanceType<typeof DatabaseSync>).prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+    (db as InstanceType<typeof DatabaseSync>).close();
   });
 });

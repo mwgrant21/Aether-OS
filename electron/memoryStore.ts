@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
+import { READ_BUSY_TIMEOUT_MS } from './collectorStore';
 
 const require = createRequire(import.meta.url);
 
@@ -32,11 +33,19 @@ export interface MemoryTombstoneUI {
   supersededBy: number | null;
 }
 
-function openReadOnly(dbPath: string): DatabaseSync | null {
+// memory.db is written by the collector too, so the same busy timeout applies.
+export function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
     const sqlite = require('node:sqlite');
-    return new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    try {
+      db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`);
+    } catch {
+      db.close();
+      return null;
+    }
+    return db;
   } catch {
     return null;
   }

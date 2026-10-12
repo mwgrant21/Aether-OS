@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { existsSync, statSync } from 'node:fs';
+import { READ_BUSY_TIMEOUT_MS } from './collectorStore';
 
 const require = createRequire(import.meta.url);
 
@@ -44,11 +45,18 @@ export interface PurgeResult {
 
 // Distinguishes "no file at this path" from "file is there but couldn't be
 // opened" -- the caller needs both, not just a collapsed null.
-function openReadOnly(dbPath: string): DatabaseSync | 'missing' | 'unreadable' {
+export function openReadOnly(dbPath: string): DatabaseSync | 'missing' | 'unreadable' {
   if (!existsSync(dbPath)) return 'missing';
   try {
     const sqlite = require('node:sqlite');
-    return new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    try {
+      db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`);
+    } catch {
+      db.close();
+      return 'unreadable';
+    }
+    return db;
   } catch {
     return 'unreadable';
   }
