@@ -636,3 +636,44 @@ extracts unconditionally.
 allow-list: the §12 adapter, `collector/src/fleetPoll.ts` (`claude agents --json` session
 listing; no prompt, no model; argv pinned), and `memoryExtract.ts`. A launch whose command is a
 variable is out of reach of a literal-string guard.
+
+## 15. Boards and the aether-data MCP server — operator-driven read boundary
+
+Added with the Boards feature (2026-10-12; spec `docs/superpowers/specs/2026-10-11-dashboards-design.md`).
+Boards are saved SQL queries over `collector.db` rendered as charts, plus a local MCP server
+(`aether-data`) that lets an operator-run Claude session read the same data and author boards.
+
+**Boundary: an operator-driven terminal.** The `aether-data` server is registered only when the
+operator runs the register command themselves. Aether copies the command to the clipboard from
+main (the paths never cross IPC); the operator pastes and runs it. Aether never launches `claude`.
+Once registered, the Claude session it serves can read `collector.db` and send query results to the
+model as part of that conversation. Opt out with `claude mcp remove aether-data --scope user`.
+
+**What is reachable.** The signal columns: token counts, tool names, durations, anomaly kinds.
+The path-bearing columns `file_path_rel`, `project_rel_path`, `file_path`, `source_file_rel` and
+`detail` (anomaly text names files) are blocked, along with the `transcript_files` table. Those
+paths came from tool calls already sent in their original sessions; the block stops them being
+re-sent in bulk.
+
+**Enforcement is two layers.**
+- A SQLite authorizer inside the query child process denies reads of the blocked columns,
+  `transcript_files`, `sqlite_*` other than `sqlite_master`, `pragma_*` other than
+  `pragma_table_info`, and every non-SELECT action.
+- The text query guard (`src/shared/dashboards/queryGuard.ts`) refuses `SELECT *` (except
+  `COUNT(*)`), NATURAL and USING joins, `pragma_*` other than `pragma_table_info`, the blocked
+  names, and writes, ATTACH and PRAGMA. Star is refused so a column a later collector migration
+  adds is never returned unnamed.
+
+Each query runs in a killable child process (Electron as Node), at most 3 at a time, with output
+capped at 32 MB. Errors that reach the model or the renderer are path-free.
+
+**Busy timeouts.** Boards query children wait up to 5 s for a lock. The main-thread read-only
+collector readers now use a 500 ms busy timeout (previously none); the retention purge keeps 5 s.
+
+**What is stored.** Board definitions (title, SQL, chart layout) in `~/.aether-os/dashboards/*.json`.
+No query results are persisted. Refresh runs locally and makes no model call.
+
+**Writes.** None to `collector.db`: the connection is read-only and every query passes both layers.
+
+**Not verified by unit tests.** Chart visuals, and the MCP server running inside a packaged
+`app.asar` (a dev-build smoke test via Electron-as-node passed).
