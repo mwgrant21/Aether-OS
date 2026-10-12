@@ -656,16 +656,21 @@ paths came from tool calls already sent in their original sessions; the block st
 re-sent in bulk.
 
 **Enforcement is two layers.**
-- A SQLite authorizer inside the query child process denies reads of the blocked columns,
-  `transcript_files`, `sqlite_*` other than `sqlite_master`, `pragma_*` other than
-  `pragma_table_info`, and every non-SELECT action.
+- A SQLite authorizer inside the query child process allows only SELECT, RECURSIVE, FUNCTION
+  (except `load_extension`), READ (except the blocked columns, any column whose name contains
+  "path", `transcript_files`, `sqlite_*` other than `sqlite_master`, and `pragma_*` other than
+  `pragma_table_info`) and PRAGMA only for `table_info`. Every other action is denied.
 - The text query guard (`src/shared/dashboards/queryGuard.ts`) refuses `SELECT *` (except
   `COUNT(*)`), NATURAL and USING joins, `pragma_*` other than `pragma_table_info`, the blocked
   names, and writes, ATTACH and PRAGMA. Star is refused so a column a later collector migration
   adds is never returned unnamed.
 
-Each query runs in a killable child process (Electron as Node), at most 3 at a time, with output
-capped at 32 MB. Errors that reach the model or the renderer are path-free.
+Each query runs in a killable child process (Electron as Node), at most 3 at a time (the cap is per
+process: the app and each MCP server count separately), with output capped at 32 MB. Errors that
+reach the model or the renderer are path-free.
+
+**Caveat.** A slow Boards query holds a read lock that can make a collector write wait or fail.
+The collector's spool ingest retries, so no data is lost.
 
 **Busy timeouts.** Boards query children wait up to 5 s for a lock. The main-thread read-only
 collector readers now use a 500 ms busy timeout (previously none); the retention purge keeps 5 s.

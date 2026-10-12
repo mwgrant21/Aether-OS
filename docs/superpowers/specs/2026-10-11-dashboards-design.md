@@ -299,3 +299,23 @@ window or the collector's build.
 - Switching `collector.db` to WAL.
 - Export, sharing, or multi-user anything (forbidden by the privacy stance anyway).
 - A delete tool on the MCP server.
+
+## Implementation notes (2026-10-12)
+
+Where the shipped code differs from the text above:
+
+- **Queries run in a killable child process, not a worker thread.** `node:sqlite` is
+  synchronous and `worker.terminate()` cannot interrupt a running statement, so only killing
+  a process stops a runaway query.
+- **Busy timeouts.** Main-thread collector readers use a 500 ms busy timeout; Boards query
+  children use 5 s (plus a 5 s run budget; the kill fires at the sum).
+- **Enforcement is a SQLite authorizer plus the text guard**, together. The authorizer sees
+  through quoting, aliases and CTEs; the guard covers what it cannot (SELECT *, USING and
+  NATURAL joins).
+- **Errors are path-free** on every surface that reaches the renderer or the model.
+- **The MCP server runs as Electron-as-node** (`ELECTRON_RUN_AS_NODE`), not a separate Node install.
+- **Starter deviations.** Dispatch duration is an average, not a median. Anomalies are totals
+  per kind, including retained rollups after the boundary day. An added "Dispatches by agent
+  type" panel (`dispatches.task_kind` is the subagent type).
+- **`usd` and `usdApprox` come only from a panel `cost`.** SQL that returns a column with
+  either name is rejected (errorKind `columns`), in panels and in `run_query`.
