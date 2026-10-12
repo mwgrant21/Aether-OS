@@ -75,10 +75,24 @@ export function BoardsView() {
     background: on ? colors.accentCyan : colors.panelInset, border: `1px solid ${on ? colors.activeBorder : colors.chipBorder}`,
   });
 
+  const deleteControls = board && api && (
+    <>
+      {confirmDelete ? (
+        <>
+          <span style={{ color: colors.warn, fontSize: 12 }}>Delete "{board.title}"? This removes its file.</span>
+          <Button onClick={() => { void api.remove(board.id).then((r) => { setConfirmDelete(false); if (!r.ok) setBoardError(r.error ?? 'Delete failed.'); else { setDeletedIds((d) => [...d, board.id]); setPicked(null); reload(); } }, () => { setConfirmDelete(false); setBoardError('Delete failed.'); }); }} style={{ ...chip(false), color: colors.danger }}>Confirm delete</Button>
+          <Button onClick={() => setConfirmDelete(false)} style={chip(false)}>Cancel</Button>
+        </>
+      ) : (
+        <Button onClick={() => setConfirmDelete(true)} style={chip(false)}>Delete board</Button>
+      )}
+    </>
+  );
+
   if (!api) return <div style={{ padding: 16, color: colors.textMuted }}>Boards needs the desktop app.</div>;
 
   return (
-    <div style={{ padding: 16, display: 'grid', gap: 12, fontFamily: fonts.ui, color: colors.textBody, alignContent: 'start' }}>
+    <div style={{ padding: 16, display: 'grid', gap: 12, fontFamily: fonts.ui, color: colors.textBody, alignContent: 'start', overflowY: 'auto', height: '100%', minHeight: 0, boxSizing: 'border-box' }}>
       {topError && <div role="alert" style={{ color: colors.danger }}>{topError}</div>}
       {listing && !listing.collectorAvailable && (
         <div role="status" style={{ border: `1px solid ${colors.warnDeep}`, color: colors.warn, padding: 8 }}>
@@ -106,7 +120,12 @@ export function BoardsView() {
         </div>
       )}
 
-      {board?.error && <div role="alert" style={{ color: colors.danger }}>invalid: {board.error}</div>}
+      {board?.error && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div role="alert" style={{ color: colors.danger }}>invalid: {board.error}</div>
+          {deleteControls}
+        </div>
+      )}
 
       {board && !board.error && (
         <>
@@ -119,15 +138,7 @@ export function BoardsView() {
             ))}
             {lastRefreshed !== null && <span style={{ color: colors.textMuted, fontSize: 12 }}>last refreshed {new Date(lastRefreshed).toLocaleTimeString()}</span>}
             <span style={{ flex: 1 }} />
-            {confirmDelete ? (
-              <>
-                <span style={{ color: colors.warn, fontSize: 12 }}>Delete "{board.title}"? This removes its file.</span>
-                <Button onClick={() => { void api.remove(board.id).then((r) => { setConfirmDelete(false); if (!r.ok) setBoardError(r.error ?? 'Delete failed.'); else { setDeletedIds((d) => [...d, board.id]); setPicked(null); reload(); } }, () => { setConfirmDelete(false); setBoardError('Delete failed.'); }); }} style={{ ...chip(false), color: colors.danger }}>Confirm delete</Button>
-                <Button onClick={() => setConfirmDelete(false)} style={chip(false)}>Cancel</Button>
-              </>
-            ) : (
-              <Button onClick={() => setConfirmDelete(true)} style={chip(false)}>Delete board</Button>
-            )}
+            {deleteControls}
           </div>
           {boardError && <div role="alert" style={{ color: colors.danger }}>{boardError}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>

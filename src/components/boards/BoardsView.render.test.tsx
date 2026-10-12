@@ -139,4 +139,15 @@ describe('BoardsView', () => {
     await act(async () => { changed(['spend-cache']); });
     expect(await screen.findByText('Spend & cache')).toBeTruthy();
   });
+
+  it('an invalid board can be deleted in-app', async () => {
+    const api = mockApi();
+    render(<BoardsView />);
+    fireEvent.click(await screen.findByText('broken'));
+    fireEvent.click(await screen.findByText('Delete board'));
+    expect(screen.queryByText('Refresh')).toBeNull();
+    expect(api.remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Confirm delete'));
+    await waitFor(() => expect(api.remove).toHaveBeenCalledWith('broken'));
+  });
 });
