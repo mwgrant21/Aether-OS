@@ -112,4 +112,31 @@ describe('runQuery', () => {
     expect(check.prepare('SELECT COUNT(*) AS n FROM usage_events').get().n).toBe(3);
     check.close();
   });
+
+  describe('authorizer (executeIsolated bypasses the text guard)', () => {
+    const run = (sql: string) => executeIsolated(createFixtureCollectorDb(now), sql, null, 10, 5000, 5000);
+
+    it('denies pragma table-valued functions other than pragma_table_info', async () => {
+      expect((await run('SELECT file FROM "pragma_database_list"')).ok).toBe(false);
+    });
+    it('denies blocked columns even when quoted', async () => {
+      expect((await run('SELECT file_path_rel FROM "tool_calls"')).ok).toBe(false);
+    });
+    it('denies blocked columns behind an alias', async () => {
+      expect((await run('SELECT tool_name, file_path_rel AS x FROM tool_calls')).ok).toBe(false);
+    });
+    it('denies SELECT * over a table with a blocked column', async () => {
+      expect((await run('SELECT * FROM tool_calls')).ok).toBe(false);
+    });
+    it('denies source_file_rel', async () => {
+      expect((await run('SELECT source_file_rel FROM usage_events')).ok).toBe(false);
+    });
+    it('allows pragma_table_info', async () => {
+      expect((await run("SELECT name FROM pragma_table_info('tool_calls')")).ok).toBe(true);
+    });
+    it('allows recursive CTEs', async () => {
+      const r = await run('WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 3) SELECT i FROM c');
+      expect(r.ok && r.rows.length).toBe(3);
+    });
+  });
 });

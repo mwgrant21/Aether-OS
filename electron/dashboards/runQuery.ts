@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { guardQuery } from '../../src/shared/dashboards/queryGuard';
+import { BLOCKED_COLUMNS, guardQuery } from '../../src/shared/dashboards/queryGuard';
 import type { QueryErrorKind } from '../../src/shared/dashboards/types';
 
 export const QUERY_TIMEOUT_MS = 5000;
@@ -22,7 +22,7 @@ export interface RunQueryOptions {
 // a process stops a runaway query. ELECTRON_RUN_AS_NODE makes the packaged
 // "Aether OS.exe" behave as plain Node, as the aether-bridge MCP helper does.
 const CHILD_SOURCE = `
-const { DatabaseSync } = require('node:sqlite');
+const { DatabaseSync, constants: C } = require('node:sqlite');
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => { input += c; });
@@ -33,6 +33,26 @@ process.stdin.on('end', () => {
     const job = JSON.parse(input);
     db = new DatabaseSync(job.dbPath, { readOnly: true });
     db.exec('PRAGMA busy_timeout = ' + Number(job.busyTimeoutMs));
+    // The authorizer is the PRIMARY read-only / blocked-column enforcement: SQLite
+    // itself resolves quoting, aliases, CTEs and SELECT *, so none of those can
+    // slip past it. queryGuard is the friendly-message layer in front. It must be
+    // set after the busy_timeout PRAGMA, because PRAGMA is denied once it is on.
+    const blocked = new Set(job.blockedColumns);
+    db.setAuthorizer((action, a1, a2) => {
+      if (action === C.SQLITE_SELECT || action === C.SQLITE_RECURSIVE) return C.SQLITE_OK;
+      if (action === C.SQLITE_FUNCTION) return String(a2).toLowerCase() === 'load_extension' ? C.SQLITE_DENY : C.SQLITE_OK;
+      // pragma_table_info() is a table-valued pragma and SQLite authorizes it as a PRAGMA too.
+      if (action === C.SQLITE_PRAGMA) return String(a1).toLowerCase() === 'table_info' ? C.SQLITE_OK : C.SQLITE_DENY;
+      if (action === C.SQLITE_READ) {
+        const table = String(a1 == null ? '' : a1).toLowerCase();
+        const column = String(a2 == null ? '' : a2).toLowerCase();
+        if (blocked.has(column) || table === 'transcript_files') return C.SQLITE_DENY;
+        if (table.startsWith('sqlite_') && table !== 'sqlite_master') return C.SQLITE_DENY;
+        if (table.startsWith('pragma_') && table !== 'pragma_table_info') return C.SQLITE_DENY;
+        return C.SQLITE_OK;
+      }
+      return C.SQLITE_DENY;
+    });
     const stmt = db.prepare(job.sql);
     const rows = job.params ? stmt.all(job.params) : stmt.all();
     const columns = typeof stmt.columns === 'function'
@@ -126,7 +146,7 @@ function spawnOne(
       const truncated = m.rows.length > rowCap;
       finish({ ok: true, columns: m.columns, rows: truncated ? m.rows.slice(0, rowCap) : m.rows, truncated });
     });
-    proc.stdin!.end(JSON.stringify({ dbPath, sql: wrappedSql, params, busyTimeoutMs }));
+    proc.stdin!.end(JSON.stringify({ dbPath, sql: wrappedSql, params, busyTimeoutMs, blockedColumns: BLOCKED_COLUMNS }));
   });
 }
 
