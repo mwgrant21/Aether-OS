@@ -138,8 +138,12 @@ const DIAGNOSTICS_HEARTBEAT_STALE_MS = 45000;
 
 // The collector writes collector.db in journal_mode=delete; a reader without a
 // busy timeout fails immediately with "database is locked" during a large
-// write (seen during backfill, 2026-10-11).
-export const READ_BUSY_TIMEOUT_MS = 5000;
+// write (seen during backfill, 2026-10-11). These readers run synchronously on
+// Electron's main thread, so this value is a trade-off: long enough to ride out
+// an ordinary collector commit, short enough not to freeze the window. Boards
+// queries run in child processes and keep their own 5000 ms timeout
+// (electron/dashboards/runQuery.ts).
+export const READ_BUSY_TIMEOUT_MS = 500;
 
 export function openReadOnly(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;

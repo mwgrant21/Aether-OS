@@ -3,7 +3,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
-import { readUsageEventsSince, readFleetSessions, readDiagnostics, openReadOnly } from './collectorStore.js';
+import { readUsageEventsSince, readFleetSessions, readDiagnostics, openReadOnly, READ_BUSY_TIMEOUT_MS } from './collectorStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -456,7 +456,7 @@ describe('openReadOnly', () => {
   it('sets a 5s busy timeout so reads wait out a collector write instead of failing', () => {
     const db = openReadOnly(tempDbWithUsageEvents([]));
     expect(db).not.toBeNull();
-    expect(db!.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+    expect(db!.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: READ_BUSY_TIMEOUT_MS });
     db!.close();
   });
 });

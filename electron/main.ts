@@ -11,7 +11,7 @@ import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
-import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
+import { readUsageEventsSince, readFleetSessions, readDiagnostics, READ_BUSY_TIMEOUT_MS, type CollectorUsageEvent } from './collectorStore';
 import { readRetentionStatus, purgeCollectedData, type PurgeResult } from './retentionStore';
 import { chooseUsageSource } from './collectorFreshness';
 import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
@@ -1083,7 +1083,7 @@ function openCollectorDbReadOnly(): DatabaseSync | null {
     const sqlite = require('node:sqlite');
     const db = new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
     try {
-      db.exec('PRAGMA busy_timeout = 5000'); // same reason as collectorStore.openReadOnly
+      db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`); // same reason as collectorStore.openReadOnly
     } catch {
       db.close();
       return null;

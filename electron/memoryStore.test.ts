@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
 import { readMemories, readMemoryTombstones, openReadOnly } from './memoryStore.js';
+import { READ_BUSY_TIMEOUT_MS } from './collectorStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -108,7 +109,7 @@ describe('openReadOnly', () => {
     new DatabaseSync(dbPath).close();
     const db = openReadOnly(dbPath);
     expect(db).not.toBeNull();
-    expect(db!.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+    expect(db!.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: READ_BUSY_TIMEOUT_MS });
     db!.close();
   });
 });
