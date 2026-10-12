@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFixtureCollectorDb } from './collectorDb.fixture';
@@ -102,5 +102,37 @@ describe('aether-data tools', () => {
     const body = JSON.parse((await handleDataTool('describe_schema', {}, deps())).text);
     expect(body.tables.map((t: { name: string }) => t.name)).not.toContain('transcript_files');
     expect(body.tables.find((t: { name: string }) => t.name === 'usage_events')).toMatchObject({ rows: 3 });
+  });
+
+  it('save_dashboard failures carry no absolute path', async () => {
+    const d = deps();
+    mkdirSync(join(d.dashboardsDir, '..'), { recursive: true });
+    writeFileSync(d.dashboardsDir, 'in the way');
+    const r = await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [tablePanel] } }, d);
+    expect(r.isError).toBe(true);
+    expect(r.text).not.toContain(tmpdir());
+    expect(r.text).not.toContain(d.dashboardsDir);
+  });
+
+  it('run_query rejects a malformed cost', async () => {
+    const d = deps();
+    for (const cost of [{ basis: 'bogus', groupBy: 'model' }, null]) {
+      const r = await handleDataTool('run_query', { sql: 'SELECT COUNT(*) AS n FROM usage_events', cost }, d);
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain('cost must be');
+    }
+  });
+
+  it('concurrent update_chart calls on one board keep both edits', async () => {
+    const d = deps();
+    const second = { ...tablePanel, id: 'second', title: 'Second' };
+    await handleDataTool('save_dashboard', { spec: { version: 1, id: 'mine', title: 'Mine', panels: [tablePanel, second] } }, d);
+    const [a, b] = await Promise.all([
+      handleDataTool('update_chart', { dashboardId: 'mine', panelId: 'calls', patch: { title: 'A' } }, d),
+      handleDataTool('update_chart', { dashboardId: 'mine', panelId: 'second', patch: { title: 'B' } }, d),
+    ]);
+    expect([a.isError, b.isError]).toEqual([false, false]);
+    const saved = JSON.parse(readFileSync(join(d.dashboardsDir, 'mine.json'), 'utf8'));
+    expect(saved.panels.map((p: { title: string }) => p.title)).toEqual(['A', 'B']);
   });
 });

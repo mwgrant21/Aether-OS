@@ -45,6 +45,17 @@ export const DATA_TOOLS = [
 ];
 
 const reply = (body: unknown, isError = false): ToolReply => ({ text: typeof body === 'string' ? body : JSON.stringify(body, null, 2), isError });
+const errCode = (e: unknown): string => { const c = (e as { code?: unknown } | null)?.code; return typeof c === 'string' ? c : 'unknown'; };
+// Serializes writes per board id within this server process (one Claude session).
+// Cross-process races remain; acceptable for a single-user tool.
+const boardLocks = new Map<string, Promise<unknown>>();
+function withBoardLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const run = (boardLocks.get(id) ?? Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => undefined);
+  boardLocks.set(id, tail);
+  void tail.then(() => { if (boardLocks.get(id) === tail) boardLocks.delete(id); });
+  return run;
+}
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 async function describeSchema(deps: DataServerDeps): Promise<ToolReply> {
@@ -74,26 +85,41 @@ async function describeSchema(deps: DataServerDeps): Promise<ToolReply> {
 
 async function runQueryTool(args: Record<string, unknown>, deps: DataServerDeps): Promise<ToolReply> {
   if (typeof args.sql !== 'string') return reply('sql must be a string.', true);
+  if (args.cost !== undefined) {
+    const c = args.cost;
+    if (!isObject(c) || (c.basis !== 'exact' && c.basis !== 'estimated') || typeof c.groupBy !== 'string' || c.groupBy.length === 0 || c.groupBy.length > 64) {
+      return reply('cost must be { basis: "exact" | "estimated", groupBy: <column> }.', true);
+    }
+  }
   const range: Range = RANGES.includes(args.range as Range) ? (args.range as Range) : '30d';
   const q = await runQuery({ dbPath: deps.dbPath, sql: args.sql, since: sinceForRange(range, deps.now()), rowCap: TOOL_ROW_CAP });
   if (!q.ok) return reply(`${q.kind}: ${q.error}`, true);
   if (args.cost === undefined) return reply({ columns: q.columns, rows: q.rows, truncated: q.truncated });
   const cost = args.cost as CostSpec;
-  if (q.truncated) return reply(`Cost needs every row, but the query returned more than ${TOOL_ROW_CAP}. ${KNOWN_GAPS[3]}`, true);
+  if (q.truncated) return reply(`Cost needs every row, but the query returned more than ${TOOL_ROW_CAP}. Aggregate in SQL (GROUP BY <groupBy>, model with SUM() of the token columns) so the result stays under ${TOOL_ROW_CAP} rows.`, true);
   const c = applyCost(q.columns, q.rows, cost);
   if (!c.ok) return reply(c.error, true);
   return reply({ columns: c.columns, rows: c.rows, unpricedRows: c.unpricedRows, truncated: false });
 }
 
-async function saveSpec(input: unknown, deps: DataServerDeps): Promise<ToolReply> {
+function saveSpec(input: unknown, deps: DataServerDeps): Promise<ToolReply> {
+  const id = isObject(input) && isBoardId(input.id) ? input.id : null;
+  return id === null ? saveSpecUnlocked(input, deps) : withBoardLock(id, () => saveSpecUnlocked(input, deps));
+}
+
+async function saveSpecUnlocked(input: unknown, deps: DataServerDeps): Promise<ToolReply> {
   const v = validateSpec(input);
   if (!v.ok) return reply({ saved: false, errors: v.errors }, true);
   const nowMs = deps.now();
   const results = await Promise.all(v.spec.panels.map((p) => evaluatePanel(p, { dbPath: deps.dbPath, nowMs, rowCap: RENDER_ROW_CAP })));
   const failures = results.filter((r) => r.error !== null).map((r) => ({ panel: r.panelId, kind: r.errorKind, error: r.error }));
   if (failures.length) return reply({ saved: false, panelErrors: failures }, true);
-  mkdirSync(deps.dashboardsDir, { recursive: true });
-  await writeFileAtomically(join(deps.dashboardsDir, `${v.spec.id}.json`), `${JSON.stringify(v.spec, null, 2)}\n`);
+  try {
+    mkdirSync(deps.dashboardsDir, { recursive: true });
+    await writeFileAtomically(join(deps.dashboardsDir, `${v.spec.id}.json`), `${JSON.stringify(v.spec, null, 2)}\n`);
+  } catch (e) {
+    return reply({ saved: false, error: `Could not write the board file (${errCode(e)}).` }, true);
+  }
   return reply({ saved: true, id: v.spec.id, panels: results.map((r) => ({ panel: r.panelId, rows: r.rows.length, columns: r.columns, unpricedRows: r.unpricedRows })) });
 }
 
@@ -102,16 +128,22 @@ async function updateChart(args: Record<string, unknown>, deps: DataServerDeps):
   if (!isBoardId(dashboardId)) return reply('dashboardId must match ^[a-z0-9-]{1,64}$.', true);
   if (typeof panelId !== 'string' || !ID_PATTERN.test(panelId)) return reply('panelId must match ^[a-z0-9-]{1,64}$.', true);
   if (!isObject(patch)) return reply('patch must be an object.', true);
+  return withBoardLock(dashboardId, () => updateChartLocked(dashboardId, panelId, patch, deps));
+}
+
+async function updateChartLocked(dashboardId: string, panelId: string, patch: Record<string, unknown>, deps: DataServerDeps): Promise<ToolReply> {
   const path = join(deps.dashboardsDir, `${dashboardId}.json`);
   if (!existsSync(path)) return reply(`No board "${dashboardId}". Create it with save_dashboard.`, true);
+  let raw: string;
+  try { raw = readFileSync(path, 'utf8'); } catch (e) { return reply(`Board "${dashboardId}" could not be read (${errCode(e)}).`, true); }
   let current: unknown;
-  try { current = JSON.parse(readFileSync(path, 'utf8')); } catch (e) { return reply(`Board "${dashboardId}" is not valid JSON (${(e as Error).message}). Replace it with save_dashboard.`, true); }
+  try { current = JSON.parse(raw); } catch { return reply(`Board "${dashboardId}" is not valid JSON. Replace it with save_dashboard.`, true); }
   if (!isObject(current) || !Array.isArray(current.panels)) return reply(`Board "${dashboardId}" has no panels array. Replace it with save_dashboard.`, true);
   const panels = current.panels as unknown[];
   const index = panels.findIndex((p) => isObject(p) && p.id === panelId);
   const merged = index === -1 ? { ...patch, id: panelId } : { ...(panels[index] as object), ...patch, id: panelId };
   const nextPanels = index === -1 ? [...panels, merged] : panels.map((p, i) => (i === index ? merged : p));
-  return saveSpec({ ...current, panels: nextPanels }, deps);
+  return saveSpecUnlocked({ ...current, id: dashboardId, panels: nextPanels }, deps);
 }
 
 export async function handleDataTool(name: string, args: unknown, deps: DataServerDeps): Promise<ToolReply> {
@@ -125,7 +157,7 @@ export async function handleDataTool(name: string, args: unknown, deps: DataServ
       default: return reply(`Unknown tool "${name}".`, true);
     }
   } catch (e) {
-    return reply(`Unexpected error: ${(e as Error).message}`, true);
+    return reply(`Unexpected error (${errCode(e)}).`, true);
   }
 }
 
