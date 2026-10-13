@@ -15,6 +15,8 @@ export const ID_PATTERN = /^[a-z0-9-]{1,64}$/;
 // Windows opens these names as devices, so "<id>.json" would never be a file.
 const RESERVED_IDS = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 export const MAX_PANELS = 12;
+/** Series per panel. Chart lines are keyed by column, and the value domain spreads every series. */
+export const MAX_SERIES = 8;
 
 export function isBoardId(id: unknown): id is string {
   return typeof id === 'string' && ID_PATTERN.test(id) && !RESERVED_IDS.test(id);
@@ -76,6 +78,8 @@ function validatePanel(raw: unknown, at: string, errors: string[]): PanelSpec | 
   if (x !== undefined && !isText(x, 64)) errors.push(`${at}.x must be a column name.`);
   if (y !== undefined && (!Array.isArray(y) || !y.every((v) => isText(v, 64)))) errors.push(`${at}.y must be an array of column names.`);
   const ys = Array.isArray(y) ? (y as string[]) : [];
+  if (ys.length > MAX_SERIES) errors.push(`${at}.y has at most ${MAX_SERIES} columns.`);
+  if (new Set(ys).size !== ys.length) errors.push(`${at}.y names a column more than once.`);
   if (type === 'line' || type === 'bar') {
     if (x === undefined) errors.push(`${at}: a ${type} panel needs x.`);
     if (ys.length === 0) errors.push(`${at}: a ${type} panel needs at least one y.`);

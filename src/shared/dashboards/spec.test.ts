@@ -33,7 +33,9 @@ describe('validateSpec', () => {
     ['usd and usdApprox together', board({ panels: [panel({ y: ['usd', 'usdApprox'] })] }), 'cannot share'],
     ['usd without exact cost', board({ panels: [panel({ cost: undefined })] }), 'needs cost.basis "exact"'],
     ['usdApprox with exact cost', board({ panels: [panel({ y: ['usdApprox'] })] }), 'needs cost.basis "estimated"'],
-    ['malformed cost', board({ panels: [panel({ cost: { basis: 'guess', groupBy: 'day' } })] }), 'cost must be'],
+    ['9 y columns', board({ panels: [panel({ cost: undefined, y: Array.from({ length: 9 }, (_, i) => `c${i}`) })] }), 'at most 8 columns'],
+    ['a duplicated y column', board({ panels: [panel({ cost: undefined, y: ['n', 'n'] })] }), 'more than once'],
+    ['malformed cost',board({ panels: [panel({ cost: { basis: 'guess', groupBy: 'day' } })] }), 'cost must be'],
   ])('rejects %s', (_n, input, part) => {
     const r = validateSpec(input);
     expect(r.ok).toBe(false);
