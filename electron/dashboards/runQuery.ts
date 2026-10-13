@@ -95,18 +95,20 @@ export async function executeIsolated(
   rowCap: number, timeoutMs: number, busyTimeoutMs: number, onSpawn?: (pid: number) => void,
 ): Promise<RunQueryResult> {
   await acquire();
-  try {
-    return await spawnOne(dbPath, wrappedSql, params, rowCap, timeoutMs, busyTimeoutMs, onSpawn);
-  } finally {
-    release();
-  }
+  const run = spawnOne(dbPath, wrappedSql, params, rowCap, timeoutMs, busyTimeoutMs, onSpawn);
+  // The caller gets a timeout or too-large result at once, but the slot stays
+  // taken until the killed process has really exited.
+  void run.exited.then(release);
+  return run.result;
 }
 
 function spawnOne(
   dbPath: string, wrappedSql: string, params: Record<string, number> | null,
   rowCap: number, timeoutMs: number, busyTimeoutMs: number, onSpawn?: (pid: number) => void,
-): Promise<RunQueryResult> {
-  return new Promise((resolve) => {
+): { result: Promise<RunQueryResult>; exited: Promise<void> } {
+  let markExited!: () => void;
+  const exited = new Promise<void>((r) => { markExited = r; });
+  const result = new Promise<RunQueryResult>((resolve) => {
     let settled = false;
     let child: ChildProcess | undefined;
     let timer: NodeJS.Timeout | undefined;
@@ -126,6 +128,7 @@ function spawnOne(
     } catch {
       // Fixed text: a spawn error message can carry process.execPath (an install path).
       finish({ ok: false, kind: 'sql', error: 'Query process failed.' });
+      markExited();
       return;
     }
     const proc = child;
@@ -149,8 +152,13 @@ function spawnOne(
     });
     proc.stderr!.resume();
     proc.stdin!.on('error', () => { /* child died early; 'close' reports it */ });
-    proc.once('error', () => finish({ ok: false, kind: 'sql', error: 'Query process failed.' }));
+    proc.once('error', () => {
+      finish({ ok: false, kind: 'sql', error: 'Query process failed.' });
+      // No pid means it never started, so no 'close' is coming.
+      if (proc.pid === undefined) markExited();
+    });
     proc.once('close', () => {
+      markExited();
       let m: ChildReply | undefined;
       try { m = JSON.parse(stdout.trim()) as ChildReply; } catch { m = undefined; }
       if (!m) { finish({ ok: false, kind: 'sql', error: 'Query process failed.' }); return; }
@@ -163,6 +171,7 @@ function spawnOne(
     });
     proc.stdin!.end(JSON.stringify({ dbPath, sql: wrappedSql, params, busyTimeoutMs, blockedColumns: BLOCKED_COLUMNS }));
   });
+  return { result, exited };
 }
 
 export function runQuery(opts: RunQueryOptions): Promise<RunQueryResult> {
