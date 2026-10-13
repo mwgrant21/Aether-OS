@@ -33,16 +33,25 @@ describe('executeIsolated child processes', () => {
     expect(await runs[MAX_CONCURRENT_QUERIES]).toMatchObject({ ok: false, kind: 'timeout' });
   });
 
-  it('stopAllQueries kills every running query process, and only those', async () => {
+  // Last in the file: stopAllQueries() is one-way for the module.
+  it('stopAllQueries kills running query processes and never spawns a queued or later one', async () => {
     const before = children.length;
-    const runs = [executeIsolated('db', 'SELECT 1', null, 10, 60_000, 0), executeIsolated('db', 'SELECT 1', null, 10, 60_000, 0)];
-    await vi.waitFor(() => expect(children.length).toBe(before + 2));
+    const runs = Array.from({ length: MAX_CONCURRENT_QUERIES + 2 }, () => executeIsolated('db', 'SELECT 1', null, 10, 60_000, 0));
+    await vi.waitFor(() => expect(children.length).toBe(before + MAX_CONCURRENT_QUERIES));
     const fresh = children.slice(before);
     expect(fresh.some((c) => c.killed)).toBe(false);
 
     stopAllQueries();
     expect(fresh.every((c) => c.killed)).toBe(true);
     for (const c of fresh) c.emit('close', null);
-    expect((await Promise.all(runs)).every((r) => !r.ok)).toBe(true);
+    const results = await Promise.all(runs);
+    expect(results.every((r) => !r.ok)).toBe(true);
+    expect(results.slice(MAX_CONCURRENT_QUERIES)).toEqual([
+      { ok: false, kind: 'sql', error: 'Query was cancelled: Aether is shutting down.' },
+      { ok: false, kind: 'sql', error: 'Query was cancelled: Aether is shutting down.' },
+    ]);
+    expect(await executeIsolated('db', 'SELECT 1', null, 10, 60_000, 0)).toMatchObject({ ok: false, error: 'Query was cancelled: Aether is shutting down.' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(children.length).toBe(before + MAX_CONCURRENT_QUERIES);
   });
 });

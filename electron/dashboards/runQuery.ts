@@ -80,31 +80,37 @@ export function scrubPath(message: string, dbPath: string): string {
   return dbPath ? message.split(dbPath).join('collector.db') : message;
 }
 let running = 0;
-const waiting: Array<() => void> = [];
+let stopping = false;
+const waiting: Array<(go: boolean) => void> = [];
 const liveChildren = new Set<ChildProcess>();
 
 /**
- * Kills every running query process. Hosts call it on shutdown (Electron
- * before-quit, the MCP server's close): the timeout lives in this process, so a
- * child left behind would run, and hold its read lock, with nothing to stop it.
+ * Shutdown, one way: kills every running query process and cancels queued and
+ * later queries. Hosts call it on shutdown (Electron before-quit, the MCP
+ * server's close): the timeout lives in this process, so a child left behind
+ * would run, and hold its read lock, with nothing to stop it.
  */
 export function stopAllQueries(): void {
+  stopping = true;
+  for (const next of waiting.splice(0)) next(false);
   for (const c of liveChildren) c.kill();
 }
-function acquire(): Promise<void> {
-  if (running < MAX_CONCURRENT_QUERIES) { running++; return Promise.resolve(); }
+/** Resolves false once shutdown has begun: the caller must not spawn. */
+function acquire(): Promise<boolean> {
+  if (stopping) return Promise.resolve(false);
+  if (running < MAX_CONCURRENT_QUERIES) { running++; return Promise.resolve(true); }
   return new Promise((r) => waiting.push(r));
 }
 function release(): void {
-  const next = waiting.shift();
-  if (next) next(); else running--;
+  const next = stopping ? undefined : waiting.shift();
+  if (next) next(true); else running--;
 }
 
 export async function executeIsolated(
   dbPath: string, wrappedSql: string, params: Record<string, number> | null,
   rowCap: number, timeoutMs: number, busyTimeoutMs: number, onSpawn?: (pid: number) => void,
 ): Promise<RunQueryResult> {
-  await acquire();
+  if (!(await acquire())) return { ok: false, kind: 'sql', error: 'Query was cancelled: Aether is shutting down.' };
   const run = spawnOne(dbPath, wrappedSql, params, rowCap, timeoutMs, busyTimeoutMs, onSpawn);
   // The caller gets a timeout or too-large result at once, but the slot stays
   // taken until the killed process has really exited.
