@@ -21,6 +21,7 @@ describe('viewRegistry', () => {
       'Memory',
       'Analytics',
       'Ledger',
+      'Boards',
       'Attachments',
       'Optimize',
       'Uplinks',

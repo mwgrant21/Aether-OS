@@ -1,4 +1,9 @@
-import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor, dialog, clipboard } from 'electron';
+import { createDashboardsStore } from './dashboards/dashboardsStore';
+import { buildRegisterCommand, DATA_SERVER_ENTRY_FILE } from './dashboards/registerCommand';
+import { stopAllQueries } from './dashboards/runQuery';
+import { STARTER_BOARDS } from '../src/shared/dashboards/starters';
+import { RANGES, type Range } from '../src/shared/dashboards/spec';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -11,7 +16,7 @@ import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { PtyLifecycle } from './ptyLifecycle';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
-import { readUsageEventsSince, readFleetSessions, readDiagnostics, type CollectorUsageEvent } from './collectorStore';
+import { readUsageEventsSince, readFleetSessions, readDiagnostics, READ_BUSY_TIMEOUT_MS, type CollectorUsageEvent } from './collectorStore';
 import { readRetentionStatus, purgeCollectedData, type PurgeResult } from './retentionStore';
 import { chooseUsageSource } from './collectorFreshness';
 import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
@@ -388,6 +393,8 @@ const memoryDbPath = join(os.homedir(), '.aether-os', 'memory.db');
 const statuslinePayloadPath = join(os.homedir(), '.aether-os', 'statusline.json');
 const permissionServerPortPath = join(os.homedir(), '.aether-os', 'permission-server-port');
 const aetherOsDir = join(os.homedir(), '.aether-os');
+const dashboardsStore = createDashboardsStore({ dir: join(aetherOsDir, 'dashboards'), dbPath: collectorDbPath, starters: STARTER_BOARDS });
+let stopDashboardsWatch: (() => void) | null = null;
 const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // The statusline script is spawned by Claude Code -- an EXTERNAL node process --
 // from a path written into ~/.claude/settings.json. It therefore has to live on
@@ -813,6 +820,12 @@ app.whenReady().then(async () => {
   // repaired. Returning here is what stops a window from flashing up (and the
   // whole app from booting) in the middle of a Windows uninstall.
   if (isStatuslineUninstallRun) return;
+  try {
+    dashboardsStore.seedStarters();
+    stopDashboardsWatch = dashboardsStore.startWatching((ids) => sendToWindow('dashboards:changed', ids));
+  } catch (e) {
+    diagLog.write(`[diag] boards init failed: ${(e as Error).message} at=${new Date().toISOString()}`);
+  }
   diagLog.write(
     `[diag] start version=${app.getVersion()} electron=${process.versions.electron} chrome=${process.versions.chrome} packaged=${app.isPackaged} at=${new Date().toISOString()}`
   );
@@ -1025,6 +1038,9 @@ app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
   if (!baselineQuitGate(event)) return;
   isQuitting = true;
+  stopDashboardsWatch?.();
+  stopDashboardsWatch = null;
+  stopAllQueries();
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();
     stopStatuslineWatcher = null;
@@ -1081,11 +1097,35 @@ function openCollectorDbReadOnly(): DatabaseSync | null {
   if (!existsSync(collectorDbPath)) return null;
   try {
     const sqlite = require('node:sqlite');
-    return new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
+    const db = new sqlite.DatabaseSync(collectorDbPath, { readOnly: true });
+    try {
+      db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`); // same reason as collectorStore.openReadOnly
+    } catch {
+      db.close();
+      return null;
+    }
+    return db;
   } catch {
     return null;
   }
 }
+
+// Boards. Ids only cross IPC; the register command is built and copied here so
+// its absolute paths never reach the renderer.
+const fromMainWindow = (event: Electron.IpcMainInvokeEvent) =>
+  !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+ipcMain.handle('dashboards:list', () => dashboardsStore.list());
+ipcMain.handle('dashboards:refresh', (_event, id: unknown, range: unknown) =>
+  typeof id === 'string'
+    ? dashboardsStore.refresh(id, RANGES.includes(range as Range) ? (range as Range) : undefined)
+    : { ok: false, error: 'Unknown board.' });
+ipcMain.handle('dashboards:delete', (event, id: unknown) =>
+  fromMainWindow(event) && typeof id === 'string' ? dashboardsStore.remove(id) : { ok: false, error: 'Refused.' });
+ipcMain.handle('dashboards:copyRegisterCommand', (event) => {
+  if (!fromMainWindow(event)) return { ok: false };
+  clipboard.writeText(buildRegisterCommand(process.execPath, join(__dirname, DATA_SERVER_ENTRY_FILE)));
+  return { ok: true };
+});
 
 ipcMain.handle('retention:status', () => ({
   ...readRetentionStatus(collectorDbPath),

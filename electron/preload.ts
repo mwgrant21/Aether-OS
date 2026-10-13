@@ -20,6 +20,8 @@ import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngin
 import type { CommunicationPayload } from '../src/shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './communicationBridge/mainIntegration';
 import type { QuotaEfficiency } from '../src/shared/quotaEfficiency';
+import type { BoardsListing, RefreshResponse } from '../src/shared/dashboards/types';
+import type { Range } from '../src/shared/dashboards/spec';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   communication: {
@@ -167,6 +169,17 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     // renderer's listener exists, and the interval is 60s -- same startup race
     // the statusline channel already solves this way.
     current: (): Promise<LedgerSnapshot | null> => ipcRenderer.invoke('ledger:snapshot:current'),
+  },
+  dashboards: {
+    list: (): Promise<BoardsListing> => ipcRenderer.invoke('dashboards:list'),
+    refresh: (id: string, range?: Range): Promise<RefreshResponse> => ipcRenderer.invoke('dashboards:refresh', id, range),
+    remove: (id: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('dashboards:delete', id),
+    copyRegisterCommand: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('dashboards:copyRegisterCommand'),
+    onChanged: (callback: (ids: string[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, ids: string[]) => callback(ids);
+      ipcRenderer.on('dashboards:changed', listener);
+      return () => ipcRenderer.removeListener('dashboards:changed', listener);
+    },
   },
   quota: {
     onEfficiency: (callback: (snapshot: QuotaEfficiency | null) => void) => {

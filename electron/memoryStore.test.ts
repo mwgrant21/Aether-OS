@@ -3,7 +3,8 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
-import { readMemories, readMemoryTombstones } from './memoryStore.js';
+import { readMemories, readMemoryTombstones, openReadOnly } from './memoryStore.js';
+import { READ_BUSY_TIMEOUT_MS } from './collectorStore.js';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -99,5 +100,16 @@ describe('readMemoryTombstones', () => {
   it('returns null when the database file does not exist', () => {
     const dbPath = tempMemoryDb({ withMemoriesTable: false });
     expect(readMemoryTombstones(dbPath)).toBeNull();
+  });
+});
+
+describe('openReadOnly', () => {
+  it('sets a 5s busy timeout so reads wait out a collector write instead of failing', () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), 'aether-memorystore-open-')), 'memory.db');
+    new DatabaseSync(dbPath).close();
+    const db = openReadOnly(dbPath);
+    expect(db).not.toBeNull();
+    expect(db!.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: READ_BUSY_TIMEOUT_MS });
+    db!.close();
   });
 });
