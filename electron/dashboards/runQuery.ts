@@ -81,6 +81,16 @@ export function scrubPath(message: string, dbPath: string): string {
 }
 let running = 0;
 const waiting: Array<() => void> = [];
+const liveChildren = new Set<ChildProcess>();
+
+/**
+ * Kills every running query process. Hosts call it on shutdown (Electron
+ * before-quit, the MCP server's close): the timeout lives in this process, so a
+ * child left behind would run, and hold its read lock, with nothing to stop it.
+ */
+export function stopAllQueries(): void {
+  for (const c of liveChildren) c.kill();
+}
 function acquire(): Promise<void> {
   if (running < MAX_CONCURRENT_QUERIES) { running++; return Promise.resolve(); }
   return new Promise((r) => waiting.push(r));
@@ -132,6 +142,7 @@ function spawnOne(
       return;
     }
     const proc = child;
+    liveChildren.add(proc);
     if (proc.pid !== undefined) onSpawn?.(proc.pid);
     // Lock wait (busy_timeout, inside the child) and execution each get their own
     // budget; a shared deadline would report a held write lock as 'timeout', not 'busy'.
@@ -155,9 +166,10 @@ function spawnOne(
     proc.once('error', () => {
       finish({ ok: false, kind: 'sql', error: 'Query process failed.' });
       // No pid means it never started, so no 'close' is coming.
-      if (proc.pid === undefined) markExited();
+      if (proc.pid === undefined) { liveChildren.delete(proc); markExited(); }
     });
     proc.once('close', () => {
+      liveChildren.delete(proc);
       markExited();
       let m: ChildReply | undefined;
       try { m = JSON.parse(stdout.trim()) as ChildReply; } catch { m = undefined; }

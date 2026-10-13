@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, nativeImage, powerMonitor, dialog, clipboard } from 'electron';
 import { createDashboardsStore } from './dashboards/dashboardsStore';
 import { buildRegisterCommand, DATA_SERVER_ENTRY_FILE } from './dashboards/registerCommand';
+import { stopAllQueries } from './dashboards/runQuery';
 import { STARTER_BOARDS } from '../src/shared/dashboards/starters';
 import { RANGES, type Range } from '../src/shared/dashboards/spec';
 import { join, dirname } from 'path';
@@ -1039,6 +1040,7 @@ app.on('before-quit', event => {
   isQuitting = true;
   stopDashboardsWatch?.();
   stopDashboardsWatch = null;
+  stopAllQueries();
   if (stopStatuslineWatcher) {
     stopStatuslineWatcher();
     stopStatuslineWatcher = null;
