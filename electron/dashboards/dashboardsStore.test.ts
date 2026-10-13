@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -109,6 +109,23 @@ describe('dashboardsStore', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(() => stop()).not.toThrow();
     expect(() => stop()).not.toThrow();
+  });
+
+  // Only Windows reports a removed watched folder as a watcher 'error'.
+  it.runIf(process.platform === 'win32')('after its folder is removed, the watcher recreates it and reports boards written later', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aether-boards-store-'));
+    dirs.push(root);
+    const dir = join(root, 'dashboards');
+    const store = createDashboardsStore({ dir, dbPath: createFixtureCollectorDb(now), starters: [starter], now: () => now, debounceMs: 20, restartMinMs: 50 });
+    store.seedStarters();
+    const seen: string[][] = [];
+    const stop = store.startWatching((ids) => seen.push(ids));
+    rmSync(dir, { recursive: true, force: true });
+    await vi.waitFor(() => expect(existsSync(dir)).toBe(true), { timeout: 3000 });
+    await new Promise((r) => setTimeout(r, 100));
+    writeFileSync(join(dir, 'later.json'), JSON.stringify({ ...starter, id: 'later' }));
+    await vi.waitFor(() => expect(seen.flat()).toContain('later'), { timeout: 3000 });
+    stop();
   });
 
   it('nothing it returns contains an absolute path', async () => {
