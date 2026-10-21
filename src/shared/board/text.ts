@@ -2,6 +2,9 @@
 // body cap. No node imports so this file can be bundled into the renderer.
 // Masking is pattern-based and conservative ("obvious secrets", not a DLP);
 // always mask BEFORE capping so a secret straddling the cap cannot leak half.
+// Known limits: doubly-stringified keys (\\\"password\\\") are not matched;
+// a quoted value spanning a real newline is masked on its first line only;
+// backtick-quoted values are masked to the first word only.
 
 const REDACTED = '[redacted]';
 
@@ -26,9 +29,11 @@ const RULES: Array<[RegExp, string]> = [
 // unquoted run. The key may be followed by an escaped quote (\"password\").
 // The quoted alternatives match any length; the 6-char threshold is applied in
 // maskSecrets to the whole RAW content (an escape pair counts as 2 chars).
-// Alternatives start on disjoint characters, so matching is linear.
+// Inside the escaped-quote body, \" ends the value only when its backslash is
+// not itself escaped. Every loop iteration consumes at least one character and
+// the alternatives start on disjoint characters, so matching is linear.
 const ASSIGN_RE =
-  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\\?["']?)(\s*[:=]\s*)(?:(?<qa>["'])(?<vqa>(?:\\.?|(?!\k<qa>)[^\\\r\n])*)(?<ca>\k<qa>)?|\\(?<qb>["'])(?<vqb>(?:(?!\\\k<qb>)(?:\\.?|[^\\\r\n]))*)(?<cb>\\\k<qb>)?|(?<qu>["']?)(?<vu>[^\s"',;[]{6,}))/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\\?["']?)(\s*[:=]\s*)(?:(?<qa>["'])(?<vqa>(?:\\.?|(?!\k<qa>)[^\\\r\n])*)(?<ca>\k<qa>)?|\\(?<qb>["'])(?<vqb>(?:(?!(?<!\\)\\\k<qb>)(?:\\.?|[^\\\r\n]))*)(?<cb>\\\k<qb>)?|(?<vu>[^\s"',;[]{6,}))/gi;
 const TYPE_WORDS = new Set([
   'string',
   'number',
@@ -65,7 +70,7 @@ export function maskSecrets(text: string): string {
         return `${k}${q1}${sep}\\${g.qb}${REDACTED}${g.cb ?? ''}`;
       }
       if (isCodeShape(g.vu ?? '')) return m;
-      return `${k}${q1}${sep}${g.qu}${REDACTED}`;
+      return `${k}${q1}${sep}${REDACTED}`;
     },
   );
 }

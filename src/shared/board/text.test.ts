@@ -189,6 +189,15 @@ describe('maskSecrets', () => {
     expect(maskSecrets(once)).toBe(once);
   });
 
+  it('keeps masking past an escaped backslash-quote inside stringified JSON', () => {
+    const want = String.raw`{\"password\":\"[redacted]\"}`;
+    expect(maskSecrets(String.raw`{\"password\":\"a\\\"b cd ef\"}`)).toBe(want);
+    expect(maskSecrets(String.raw`{\"password\":\"QXZ\\\"QXZ\"}`)).toBe(want);
+    const out = maskSecrets(String.raw`{\"password\":\"hunter22abc\\\"QXZQXZ\"}`);
+    expect(out).toBe(want);
+    expect(out).not.toContain('QXZQXZ');
+  });
+
   it('masks a huge quoted value with many escapes in linear time', () => {
     const big = 'password="' + 'a\\"b '.repeat(40000) + '"';
     const t0 = performance.now();
