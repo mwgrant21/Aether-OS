@@ -40,6 +40,7 @@ export interface BoardSessionRef {
 }
 export interface BoardSessionSummary extends BoardSessionRef {
   project: BoardProject | null;
+  title: string | null; // first human prompt, masked, <= 60 chars; render-only
   lastActiveMs: number;
   sizeBytes: number;
   subagentCount: number;

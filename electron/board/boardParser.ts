@@ -20,7 +20,7 @@ export type RawBoardEvent =
 
 const MARKERS = ['SendMessage', '"Agent"', '"Task"', 'agent-message', 'task-notification', '"peer"'];
 const AGENT_MSG_OPEN = /<agent-message\s+from="/;
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null);
 
 function tag(text: string, name: string): string | null {
   const m = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text);

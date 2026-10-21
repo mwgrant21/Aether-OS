@@ -101,4 +101,13 @@ describe('parseBoardLine', () => {
     expect(parseBoardLine(assistant(content, null), 0)[0].atMs).toBeNull();
     expect(parseBoardLine(assistant(content, 'not a date'), 0)[0].atMs).toBeNull();
   });
+
+  it('treats empty and whitespace-only names/ids as null', () => {
+    const l = assistant([{ type: 'tool_use', id: ' ', name: 'SendMessage', input: { to: '', recipient_kind: '  ', summary: '', message: 'm' } }]);
+    expect(parseBoardLine(l, 0)[0]).toMatchObject({ type: 'send', toolUseId: '', to: '', recipientKind: null, summary: null });
+    const d = assistant([{ type: 'tool_use', id: 'a', name: 'Agent', input: { subagent_type: '', description: ' ', prompt: 'p' } }]);
+    expect(parseBoardLine(d, 0)[0]).toMatchObject({ subagentType: null, description: null });
+    const p = user(frame('hi', 'aaa111'), { kind: 'peer', name: ' ', from: '' });
+    expect(parseBoardLine(p, 0)[0]).toMatchObject({ type: 'peer', fromName: null, fromAgentId: 'aaa111' });
+  });
 });

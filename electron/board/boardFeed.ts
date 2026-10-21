@@ -29,6 +29,10 @@ const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 const HEAD_BYTES = 64 * 1024;
 const SUBJECT_CAP = 200;
 const STUB_RE = /delivered to you as a message from/i;
+const TITLE_SCAN_BYTES = 256 * 1024;
+const TITLE_CAP = 60;
+// Wrapper lines the harness injects as user turns; none is something the human typed.
+const NON_PROMPT_RE = /^\s*(?:<command-|<local-command|<system-reminder|<task-notification|<agent-message|<user-prompt-submit-hook|Caveat:)/;
 const HEX_ID_RE = /^[0-9a-f]{12,}$/i;
 
 const MAIN: BoardParty = { kind: 'main', name: 'main', agentId: null };
@@ -56,6 +60,43 @@ async function projectFromHead(file: string, deps: BoardFeedDeps): Promise<Board
     return null;
   } finally {
     await fh?.close().catch(() => undefined);
+  }
+}
+
+/** First human-typed prompt in the head of a parent transcript, masked and shortened; null if none. */
+async function titleFromHead(file: string): Promise<string | null> {
+  const rl = readline.createInterface({
+    input: createReadStream(file, { encoding: 'utf8', start: 0, end: TITLE_SCAN_BYTES - 1 }),
+    crlfDelay: Infinity,
+  });
+  try {
+    for await (const line of rl) {
+      if (!line.includes('"user"')) continue;
+      let j: any;
+      try {
+        j = JSON.parse(line);
+      } catch {
+        continue; // includes a line cut off by the byte bound
+      }
+      if (!j || j.type !== 'user' || j.origin || j.isMeta || j.isSidechain) continue;
+      const c = j.message?.content;
+      let text: string | null = null;
+      if (typeof c === 'string') text = c;
+      else if (Array.isArray(c) && !c.some((i: any) => i?.type === 'tool_result')) {
+        const t = c.find((i: any) => i?.type === 'text' && typeof i.text === 'string');
+        text = t ? t.text : null;
+      }
+      if (text === null || NON_PROMPT_RE.test(text)) continue;
+      const clean = maskSecrets(text).replace(/\s+/g, ' ').trim();
+      if (!clean) continue;
+      if (clean.length <= TITLE_CAP) return clean;
+      return capBody(clean, TITLE_CAP - 1).body + '\u2026';
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    rl.close();
   }
 }
 
@@ -114,6 +155,7 @@ export async function listBoardSessions(
         projectDir: f.projectDir,
         sessionId: f.sessionId,
         project: await projectFromHead(f.file, deps),
+        title: await titleFromHead(f.file),
         lastActiveMs: f.mtimeMs,
         sizeBytes: f.size,
         subagentCount: await countSubagents(path.join(projectsRoot, f.projectDir, f.sessionId)),
@@ -196,7 +238,8 @@ export async function buildBoardFeed(
   try {
     const root = path.resolve(projectsRoot);
     const dir = path.resolve(root, ref.projectDir);
-    if (!dir.startsWith(root + path.sep)) return { ok: false, error: 'Invalid session.' };
+    const rel = path.relative(root, dir);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { ok: false, error: 'Invalid session.' };
     const mainFile = path.join(dir, `${ref.sessionId}.jsonl`);
     try {
       await fsp.stat(mainFile);
@@ -298,8 +341,8 @@ export async function buildBoardFeed(
       if (to === '*') return ALL;
       if (to === 'main' || kind === 'main') return MAIN;
       if (fileAgentIds.has(to) || toolUseIdByAgentId.has(to) || metaById.has(to)) return agentParty(to);
-      if (kind === 'agent' || HEX_ID_RE.test(to)) return UNKNOWN;
       if (to.startsWith('uds:')) return { kind: 'peer', name: 'peer session', agentId: null };
+      if (kind === 'agent' || HEX_ID_RE.test(to)) return UNKNOWN;
       return { kind: 'peer', name: to, agentId: null };
     };
 
@@ -345,6 +388,7 @@ export async function buildBoardFeed(
           if (STUB_RE.test(e.result)) continue;
           const id = knownAgent(e.taskId) ? e.taskId : agentIdByToolUseId.get(e.toolUseId ?? '') ?? null;
           const from = agentParty(id);
+          if (from.kind === 'unknown') continue; // matched only by tool-use-id, sender unresolvable
           x = {
             kind: 'handback', from, to: self, startedBy: startedByOf(from), subject: e.summary,
             raw: e.result || e.summary || '', status: e.status,
