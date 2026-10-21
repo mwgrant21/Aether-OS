@@ -109,4 +109,21 @@ describe('PostRow', () => {
     render(<PostRow post={mk()} />);
     expect(document.querySelector('[title="2026-10-20T12:00:00.000Z"]')).not.toBeNull();
   });
+
+  it('unknown sender shows the ? avatar and an empty name falls back to unknown', () => {
+    const unknown: BoardParty = { kind: 'unknown', name: 'unknown', agentId: null };
+    const { rerender } = render(<PostRow post={mk({ from: unknown })} />);
+    expect(screen.getByTestId('avatar').textContent).toBe('?');
+    expect(screen.getByTestId('sender').textContent).toBe('unknown');
+    rerender(<PostRow post={mk({ from: agent('  ', 'a9'), to: agent('', 'a8') })} />);
+    expect(screen.getByTestId('sender').textContent).toBe('unknown');
+    expect(screen.getByText('@unknown')).toBeTruthy();
+  });
+
+  it('peer sender and recipient render by name', () => {
+    const peer = (name: string): BoardParty => ({ kind: 'peer', name, agentId: null });
+    render(<PostRow post={mk({ from: peer('cross-peer'), to: peer('peer session') })} />);
+    expect(screen.getByTestId('sender').textContent).toBe('cross-peer');
+    expect(screen.getByText('@peer session')).toBeTruthy();
+  });
 });

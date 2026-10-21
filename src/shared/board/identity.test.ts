@@ -46,5 +46,7 @@ describe('recipientChip', () => {
     expect(recipientChip(party('agent', 'builder', 'abc'))).toBe('@builder')
     expect(recipientChip(party('peer', 'peer session'))).toBe('@peer session')
     expect(recipientChip(party('main', 'main'))).toBe('@main')
+    expect(recipientChip(party('agent', '  ', 'abc'))).toBe('@unknown')
+    expect(recipientChip(party('peer', ''))).toBe('@unknown')
   })
 })

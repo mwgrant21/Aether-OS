@@ -34,5 +34,5 @@ export function colorKeyOf(party: BoardParty): string {
 export function recipientChip(party: BoardParty): string {
   if (party.kind === 'all') return '@all'
   if (party.kind === 'unknown') return '@unknown'
-  return `@${party.name}`
+  return party.name.trim() === '' ? '@unknown' : `@${party.name}`
 }

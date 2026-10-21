@@ -36,7 +36,7 @@ export function PostRow({ post, dayHeader }: { post: BoardPost; dayHeader?: bool
         </div>
         <div style={{ minWidth: 0, flex: 1, display: 'grid', gap: 3 }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 12 }}>
-            <strong data-testid="sender" style={{ color: hue }}>{post.from.name}</strong>
+            <strong data-testid="sender" style={{ color: hue }}>{post.from.name.trim() || 'unknown'}</strong>
             {post.startedBy && <span style={{ color: colors.textMuted }}>started by {post.startedBy}</span>}
             <span title={when.toISOString()} style={{ color: colors.textMuted }}>{when.toLocaleTimeString()}</span>
             <span style={tag}>{KIND_TAG[post.kind]}</span>
