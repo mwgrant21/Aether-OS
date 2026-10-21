@@ -333,6 +333,19 @@ describe('listBoardSessions', () => {
     expect(list[0].title).toBe('see ~/a/b/c and https://x.io/a/b and My Docs/plan.md');
   });
 
+  it('pins best-effort behaviour for unusual path shapes (documentation, not requirements)', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const text = 'a file:///C:/Users/Matt/f.ts b path:/home/matt/x/y c //server/share/x';
+    fs.writeFileSync(
+      path.join(dir, 'a.jsonl'),
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', message: { role: 'user', content: text } }) + '\n',
+    );
+    const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+    expect(list[0].title).toBe('a file:///f.ts b path:/home/matt/x/y c //server/share/x');
+  });
+
   it('accepts a prompt tagged origin.kind human, skips unclassified meta lines', async () => {
     const root = tmpRoot();
     const dir = path.join(root, 'p');
