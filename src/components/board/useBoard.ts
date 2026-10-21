@@ -6,9 +6,7 @@ import type { BoardFeed, BoardSessionRef, BoardSessionSummary } from '../../shar
 function newestWithAgents(list: BoardSessionSummary[]): BoardSessionSummary | null {
   let best: BoardSessionSummary | null = null;
   for (const s of list) if (s.subagentCount > 0 && (!best || s.lastActiveMs > best.lastActiveMs)) best = s;
-  if (best) return best;
-  for (const s of list) if (!best || s.lastActiveMs > best.lastActiveMs) best = s;
-  return best;
+  return best; // none with agents: select nothing (agentless rows are hidden by default)
 }
 
 export function useBoard() {

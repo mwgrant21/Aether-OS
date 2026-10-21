@@ -141,6 +141,109 @@ describe('BoardView', () => {
     expect(await screen.findByText('No sessions found.')).toBeTruthy();
   });
 
+  it('zero sessions shows one empty state, not the select-a-session prompt too', async () => {
+    mockApi([]);
+    render(<BoardView />);
+    await screen.findByText('No sessions found.');
+    expect(screen.queryByText('Select a session to see its agent traffic.')).toBeNull();
+  });
+
+  it('selects nothing and fetches no feed when no session has agents', async () => {
+    const api = mockApi([session('a', { subagentCount: 0 }), session('b', { subagentCount: 0 })]);
+    render(<BoardView />);
+    await screen.findByText('Select a session to see its agent traffic.');
+    expect(api.feed).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('post')).toBeNull();
+  });
+
+  it('date header appears once for same-day posts and again across a local midnight', async () => {
+    const at = (p: BoardPost, ms: number): BoardPost => ({ ...p, atMs: ms });
+    const d1 = new Date(2026, 9, 20, 10, 0).getTime();
+    const d1b = new Date(2026, 9, 20, 23, 59).getTime();
+    const d2 = new Date(2026, 9, 21, 0, 1).getTime();
+    mockApi([session('s1')], (ref) => Promise.resolve(feedOf(ref.sessionId, [at(post('p1', 'a'), d1), at(post('p2', 'b'), d1b)])));
+    const { unmount } = render(<BoardView />);
+    await waitFor(() => expect(screen.getAllByTestId('post')).toHaveLength(2));
+    expect(screen.getAllByTestId('day-header')).toHaveLength(1);
+    unmount();
+    mockApi([session('s1')], (ref) => Promise.resolve(feedOf(ref.sessionId, [at(post('p1', 'a'), d1), at(post('p2', 'b'), d1b), at(post('p3', 'c'), d2)])));
+    render(<BoardView />);
+    await waitFor(() => expect(screen.getAllByTestId('post')).toHaveLength(3));
+    const heads = screen.getAllByTestId('day-header');
+    expect(heads).toHaveLength(2);
+    expect(heads[1].textContent).toBe(new Date(d2).toLocaleDateString());
+  });
+
+  describe('races', () => {
+    type Deferred = { p: Promise<BoardFeedResult>; res: (v: BoardFeedResult) => void };
+    const defer = (): Deferred => { let res!: (v: BoardFeedResult) => void; const p = new Promise<BoardFeedResult>((r) => { res = r; }); return { p, res }; };
+    const sessionRows = () => screen.getAllByRole('button').filter((b) => /agents?$/.test(b.textContent ?? '') && !/Show sessions/.test(b.textContent ?? ''));
+    const settle = () => new Promise((r) => setTimeout(r, 30));
+    function feedsByRef() {
+      const feeds: Record<string, Deferred[]> = { s1: [], s2: [] };
+      const feed = (ref: { sessionId: string }) => { const d = defer(); feeds[ref.sessionId].push(d); return d.p; };
+      return { feeds, feed };
+    }
+
+    it('Refresh then select: the older refresh resolving last is dropped', async () => {
+      const { feeds, feed } = feedsByRef();
+      const api = mockApi([session('s1', { lastActiveMs: NOW }), session('s2', { lastActiveMs: NOW - 5000 })], feed);
+      render(<BoardView />);
+      await waitFor(() => expect(api.feed).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(api.feed).toHaveBeenCalledTimes(2));
+      fireEvent.click(sessionRows()[1]);
+      await waitFor(() => expect(api.feed).toHaveBeenCalledTimes(3));
+      feeds.s2[0].res(feedOf('s2', [post('b', 'B-feed')]));
+      await screen.findByText('B-feed');
+      feeds.s1[1].res(feedOf('s1', [post('a', 'A-refresh')]));
+      feeds.s1[0].res(feedOf('s1', [post('a', 'A-first')]));
+      await settle();
+      expect(screen.queryByText('A-refresh')).toBeNull();
+      expect(screen.queryByText('A-first')).toBeNull();
+      expect(screen.getByText('B-feed')).toBeTruthy();
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+
+    it('select then Refresh: the older response for the same session is dropped', async () => {
+      const { feeds, feed } = feedsByRef();
+      const api = mockApi([session('s1', { lastActiveMs: NOW }), session('s2', { lastActiveMs: NOW - 5000 })], feed);
+      render(<BoardView />);
+      await waitFor(() => expect(api.feed).toHaveBeenCalledTimes(1));
+      fireEvent.click(sessionRows()[1]);
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(api.feed).toHaveBeenCalledTimes(3));
+      feeds.s2[1].res(feedOf('s2', [post('n', 'NEW')]));
+      await screen.findByText('NEW');
+      feeds.s2[0].res(feedOf('s2', [post('o', 'OLD')]));
+      feeds.s1[0].res(feedOf('s1', [post('a', 'A-stale')]));
+      await settle();
+      expect(screen.getByText('NEW')).toBeTruthy();
+      expect(screen.queryByText('OLD')).toBeNull();
+      expect(screen.queryByText('A-stale')).toBeNull();
+    });
+
+    it('sessions list: an older response resolving last is dropped and does not auto-select', async () => {
+      const lists: { res: (v: BoardSessionSummary[]) => void }[] = [];
+      const api = {
+        sessions: vi.fn(() => new Promise<BoardSessionSummary[]>((res) => { lists.push({ res }); })),
+        feed: vi.fn((ref: { sessionId: string }) => Promise.resolve(feedOf(ref.sessionId, []))),
+      };
+      (window as unknown as { aetherElectron: unknown }).aetherElectron = { board: api };
+      render(<BoardView />);
+      await waitFor(() => expect(api.sessions).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(api.sessions).toHaveBeenCalledTimes(2));
+      lists[1].res([session('new', { project: beta })]);
+      await screen.findByText(/^beta · feat-x ·/);
+      lists[0].res([session('old')]);
+      await settle();
+      expect(screen.queryByText(/^alpha ·/)).toBeNull();
+      expect(api.feed).toHaveBeenCalledTimes(1);
+      expect(api.feed).toHaveBeenCalledWith({ projectDir: 'dir-new', sessionId: 'new' });
+    });
+  });
+
   it('without window.aetherElectron renders the desktop-app message', () => {
     render(<BoardView />);
     expect(screen.getByText('Traffic needs the desktop app.')).toBeTruthy();

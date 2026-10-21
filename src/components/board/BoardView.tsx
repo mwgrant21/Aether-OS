@@ -4,6 +4,7 @@ import { EmptyState } from '../shared/EmptyState';
 import { useColors } from '../shared/useColors';
 import { fonts } from '../../styles/tokens';
 import type { BoardSessionSummary } from '../../shared/board/types';
+import { PostRow } from './PostRow';
 import { useBoard } from './useBoard';
 
 const ALL = '\u0000all';
@@ -15,6 +16,10 @@ function ago(ms: number, now: number): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+}
+
+function dayOf(ms: number): string {
+  return new Date(ms).toDateString(); // local calendar day
 }
 
 function sessionLabel(s: BoardSessionSummary, now: number): string {
@@ -85,18 +90,11 @@ export function BoardView() {
           {loading && <span role="status" style={{ color: colors.textMuted, fontSize: 12 }}>Loading...</span>}
         </div>
         {feedError && <div role="alert" style={{ color: colors.danger }}>{feedError}</div>}
-        {!selected && sessions !== null && !feedError && <EmptyState message="Select a session to see its agent traffic." />}
+        {!selected && sessions !== null && sessions.length > 0 && !feedError && <EmptyState message="Select a session to see its agent traffic." />}
         {feed && feed.posts.length === 0 && <EmptyState message="No agent traffic in this session." />}
         {feed && feed.capped && <div style={{ color: colors.textMuted, fontSize: 12 }}>Showing only the newest posts.</div>}
-        {feed?.posts.map((p) => (
-          <article key={p.id} data-testid="post" style={{ display: 'grid', gap: 2, padding: '6px 0', borderBottom: `1px solid ${colors.chipBorder}` }}>
-            <div style={{ fontSize: 12 }}>
-              <strong>{p.from.name}</strong>
-              <span style={{ color: colors.textMuted }}> {new Date(p.atMs).toLocaleTimeString()} to {p.to.name}</span>
-            </div>
-            {p.subject && <div>{p.subject}</div>}
-            <div style={{ whiteSpace: 'pre-wrap', color: colors.textSecondary }}>{p.body}</div>
-          </article>
+        {feed?.posts.map((p, i) => (
+          <PostRow key={p.id} post={p} dayHeader={i === 0 || dayOf(p.atMs) !== dayOf(feed.posts[i - 1].atMs)} />
         ))}
       </section>
     </div>
