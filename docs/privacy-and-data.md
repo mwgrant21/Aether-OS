@@ -185,13 +185,14 @@ enters the store, `persistence.ts`, `~/.aether-os/` or the collector, which the 
 Obvious secrets (key/token/password shapes) are masked at feed-build time in the main process, so the
 raw secret never crosses IPC, and bodies are capped at 8000 characters (the UI previews 280). Session titles
 (the row label in the session list) cross IPC as masked prompt text, like post bodies: the first human
-prompt of each session, masked and cut to 60 characters. Finding it reads only a bounded head of the
-session file (4 MB), and titles are computed per request, never stored. Project
+prompt of each session, masked and cut to 60
+characters. Finding it reads only a bounded head of the
+session file (4 MB), and titles are computed per request, never stored. Titles shorten common absolute paths (drive-letter, backslash UNC and multi-segment POSIX paths) to their last segment on a best-effort basis; some forms, such as paths containing spaces, `~/` paths and other unusual shapes, may be left partly or wholly as typed. This is cosmetic only: a title is the user's own prompt text, already masked for secrets. Project
 identity crosses IPC only as `{key,name,worktree}`, never an absolute path. Message bodies can still
 contain absolute paths, because they are dispatch prompts and are not altered. The guard is
 `src/state/noPayloadInStore.test.ts` (`BoardPost`/`BoardFeed` must not be referenced from the
 store, persistence or reducer). Masking is pattern-based and is not a DLP: a secret in an unusual shape
-is shown as-is, a PEM block given as a `key=value` value masks only its first token, dotted key names (`my.secret.key=...`) are not masked, and code-like
+is shown as-is, a non-private-key PEM block given as a `key=value` value masks only its first token, dotted key names (`my.secret.key=...`) are not masked, and code-like
 assignments may be masked (the only skipped value is an exact type keyword).
 
 ---

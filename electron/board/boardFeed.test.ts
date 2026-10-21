@@ -307,6 +307,45 @@ describe('listBoardSessions', () => {
     expect(list.find((x) => x.sessionId === 'b')?.title).toBeNull();
   });
 
+  it('shortens absolute paths in a title to their last segment', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const text = String.raw`read C:\Users\matt\docs\plan.md and \\srv\share\x\y.txt then /home/x/notes and/or a/b, also /home/x/y.`;
+    fs.writeFileSync(
+      path.join(dir, 'a.jsonl'),
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', message: { role: 'user', content: text } }) + '\n',
+    );
+    const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+    expect(list[0].title).toBe('read plan.md and y.txt then notes and/or a/b, also y.');
+  });
+
+  it('leaves ~ paths and URLs alone, and cuts a path with spaces at the first space', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const text = 'see ~/a/b/c and https://x.io/a/b and C:/u/My Docs/plan.md';
+    fs.writeFileSync(
+      path.join(dir, 'a.jsonl'),
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', message: { role: 'user', content: text } }) + '\n',
+    );
+    const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+    expect(list[0].title).toBe('see ~/a/b/c and https://x.io/a/b and My Docs/plan.md');
+  });
+
+  it('pins best-effort behaviour for unusual path shapes (documentation, not requirements)', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const text = 'a file:///C:/Users/Matt/f.ts b path:/home/matt/x/y c //server/share/x';
+    fs.writeFileSync(
+      path.join(dir, 'a.jsonl'),
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', message: { role: 'user', content: text } }) + '\n',
+    );
+    const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+    expect(list[0].title).toBe('a file:///f.ts b path:/home/matt/x/y c //server/share/x');
+  });
+
   it('accepts a prompt tagged origin.kind human, skips unclassified meta lines', async () => {
     const root = tmpRoot();
     const dir = path.join(root, 'p');

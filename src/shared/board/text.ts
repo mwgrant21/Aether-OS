@@ -29,11 +29,14 @@ const RULES: Array<[RegExp, string]> = [
 // unquoted run. The key may be followed by an escaped quote (\"password\").
 // The quoted alternatives match any length; the 6-char threshold is applied in
 // maskSecrets to the whole RAW content (an escape pair counts as 2 chars).
-// Inside the escaped-quote body, \" ends the value only when its backslash is
-// not itself escaped. Every loop iteration consumes at least one character and
-// the alternatives start on disjoint characters, so matching is linear.
+// Inside the escaped-quote body, a backslash run before a quote is read by
+// parity: four backslashes are an escaped backslash, three plus a quote are an
+// inner quote, and a \" whose backslash is unescaped ends the value,
+// so a value ending in an escaped backslash stops at its real closing quote.
+// Every loop iteration consumes at least one character and nothing can fail
+// after the body, so matching is linear.
 const ASSIGN_RE =
-  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\\?["']?)(\s*[:=]\s*)(?:(?<qa>["'])(?<vqa>(?:\\.?|(?!\k<qa>)[^\\\r\n])*)(?<ca>\k<qa>)?|\\(?<qb>["'])(?<vqb>(?:(?!(?<!\\)\\\k<qb>)(?:\\.?|[^\\\r\n]))*)(?<cb>\\\k<qb>)?|(?<vu>[^\s"',;[]{6,}))/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\\?["']?)(\s*[:=]\s*)(?:(?<qa>["'])(?<vqa>(?:\\.?|(?!\k<qa>)[^\\\r\n])*)(?<ca>\k<qa>)?|\\(?<qb>["'])(?<vqb>(?:(?!\\\k<qb>)(?:\\{4}|\\{3}\k<qb>|\\.?|[^\\\r\n]))*)(?<cb>\\\k<qb>)?|(?<vu>[^\s"',;[]{6,}))/gi;
 const TYPE_WORDS = new Set([
   'string',
   'number',

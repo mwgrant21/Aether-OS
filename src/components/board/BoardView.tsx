@@ -66,7 +66,7 @@ export function BoardView() {
 
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 0, fontFamily: fonts.ui, color: colors.textBody }}>
-      <aside aria-label="Sessions" style={{ width: 300, flexShrink: 0, padding: 12, display: 'grid', gap: 10, alignContent: 'start', overflowY: 'auto', borderRight: `1px solid ${colors.chipBorder}`, boxSizing: 'border-box' }}>
+      <aside aria-label="Sessions" style={{ width: 300, flexShrink: 0, padding: 12, display: 'grid', gap: 10, alignContent: 'start', gridTemplateColumns: 'minmax(0, 1fr)', overflowY: 'auto', overflowX: 'hidden', borderRight: `1px solid ${colors.chipBorder}`, boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {filterChip(ALL, 'All projects')}
           {[...projects].map(([key, name]) => filterChip(key, name))}
@@ -77,14 +77,14 @@ export function BoardView() {
         {sessions !== null && visible.length === 0 && (
           <EmptyState message={all.length === 0 ? 'No sessions found.' : 'No sessions match this filter.'} />
         )}
-        <div style={{ display: 'grid', gap: 4 }}>
+        <div style={{ display: 'grid', gap: 4, gridTemplateColumns: 'minmax(0, 1fr)' }}>
           {visible.map((s) => {
             const on = selected?.projectDir === s.projectDir && selected.sessionId === s.sessionId;
             return (
-              <Button key={`${s.projectDir}/${s.sessionId}`} aria-current={on ? 'true' : undefined} onClick={() => select({ projectDir: s.projectDir, sessionId: s.sessionId })} style={chip(on)}>
+              <Button key={`${s.projectDir}/${s.sessionId}`} aria-current={on ? 'true' : undefined} onClick={() => select({ projectDir: s.projectDir, sessionId: s.sessionId })} style={{ ...chip(on), minWidth: 0, overflow: 'hidden' }}>
                 {s.title ? (
                   <>
-                    <span title={s.title} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</span>
+                    <span title={s.title} style={{ display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</span>
                     <span style={{ display: 'block', fontSize: 11, opacity: 0.8 }}>{sessionLabel(s, now)}</span>
                   </>
                 ) : sessionLabel(s, now)}
