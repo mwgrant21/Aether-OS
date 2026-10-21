@@ -62,6 +62,12 @@ describe('maskSecrets', () => {
     expect(maskSecrets(`a\n${pgpBegin}\nVersion: x\n\nlQOYBF9abcd\nmore`)).toBe('a\n[redacted]');
   });
 
+  it('does not let an END line of the other kind close an open private key block', () => {
+    const pemBegin = '-----BEGIN RSA PRIVATE ' + 'KEY-----';
+    expect(maskSecrets(`${pemBegin}\nk1\n${pgpEnd}\ntail1`)).toBe('[redacted]');
+    expect(maskSecrets(`${pgpBegin}\nk1\n-----END RSA PRIVATE ` + `KEY-----\ntail1`)).toBe('[redacted]');
+  });
+
   it('masks private key blocks in linear time, terminated or not', () => {
     const body = 'A'.repeat(200000);
     const cases = [
