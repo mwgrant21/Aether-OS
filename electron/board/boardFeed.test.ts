@@ -330,7 +330,7 @@ describe('listBoardSessions', () => {
       JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', message: { role: 'user', content: text } }) + '\n',
     );
     const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
-    expect(list[0].title).toBe('see ~/a/b/c and https://x.io/a/b and Docs/plan.md');
+    expect(list[0].title).toBe('see ~/a/b/c and https://x.io/a/b and My Docs/plan.md');
   });
 
   it('accepts a prompt tagged origin.kind human, skips unclassified meta lines', async () => {
