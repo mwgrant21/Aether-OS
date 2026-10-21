@@ -36,7 +36,7 @@ const NON_PROMPT_RE = /^\s*(?:<command-|<local-command|<system-reminder|<task-no
 const HEX_ID_RE = /^[0-9a-f]{12,}$/i;
 // Absolute paths in a title: drive-letter (C:\a\b, C:/a/b), UNC (\\host\share\x) and
 // POSIX with at least two segments (/home/x/y). Each is shortened to its last segment.
-const ABS_PATH_RE = /(?:\b[A-Za-z]:[\\/]|\\\\[^\s\\/]|(?<![\w.:/\\])\/[^\s/\\]+\/)[^\s"'<>|*?]*/g;
+const ABS_PATH_RE = /(?:\b[A-Za-z]:[\\/]|\\\\[^\s\\/]|(?<![\w.:/\\~])\/[^\s/\\]+\/)[^\s"'<>|*?]*/g;
 
 function shortenPaths(text: string): string {
   return text.replace(ABS_PATH_RE, (m) => {

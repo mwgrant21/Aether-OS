@@ -320,6 +320,19 @@ describe('listBoardSessions', () => {
     expect(list[0].title).toBe('read plan.md and y.txt then notes and/or a/b, also y.');
   });
 
+  it('leaves ~ paths and URLs alone, and cuts a path with spaces at the first space', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const text = 'see ~/a/b/c and https://x.io/a/b and C:/u/My Docs/plan.md';
+    fs.writeFileSync(
+      path.join(dir, 'a.jsonl'),
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', message: { role: 'user', content: text } }) + '\n',
+    );
+    const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+    expect(list[0].title).toBe('see ~/a/b/c and https://x.io/a/b and Docs/plan.md');
+  });
+
   it('accepts a prompt tagged origin.kind human, skips unclassified meta lines', async () => {
     const root = tmpRoot();
     const dir = path.join(root, 'p');

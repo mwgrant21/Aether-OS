@@ -185,7 +185,8 @@ enters the store, `persistence.ts`, `~/.aether-os/` or the collector, which the 
 Obvious secrets (key/token/password shapes) are masked at feed-build time in the main process, so the
 raw secret never crosses IPC, and bodies are capped at 8000 characters (the UI previews 280). Session titles
 (the row label in the session list) cross IPC as masked prompt text, like post bodies: the first human
-prompt of each session, masked, with any absolute path shortened to its last segment, and cut to 60
+prompt of each session, masked, with absolute paths shortened to their last segment (a path containing spaces is only
+shortened up to the first space; `~/` paths and URLs are left as typed), and cut to 60
 characters. Finding it reads only a bounded head of the
 session file (4 MB), and titles are computed per request, never stored. Project
 identity crosses IPC only as `{key,name,worktree}`, never an absolute path. Message bodies can still
