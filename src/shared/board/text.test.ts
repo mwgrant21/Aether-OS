@@ -198,6 +198,21 @@ describe('maskSecrets', () => {
     expect(out).not.toContain('QXZQXZ');
   });
 
+  it('ends a stringified value at its real closing quote after an escaped backslash', () => {
+    // even run of value backslashes (4 raw + the closing \"): value ends there
+    expect(maskSecrets(String.raw`{\"password\":\"hunter22\\\\\",\"user\":\"bob\"}`)).toBe(
+      String.raw`{\"password\":\"[redacted]\",\"user\":\"bob\"}`,
+    );
+    // odd run (3 raw + quote) is an inner quote: masking continues to the real end
+    const out = maskSecrets(String.raw`{\"password\":\"hunter22\\\"QXZQXZ\",\"user\":\"bob\"}`);
+    expect(out).toBe(String.raw`{\"password\":\"[redacted]\",\"user\":\"bob\"}`);
+    expect(out).not.toContain('QXZQXZ');
+    // 7 raw backslashes + quote: escaped backslash then inner quote
+    expect(maskSecrets(String.raw`{\"password\":\"hunter22\\\\\\\"QXZQXZ\",\"u\":1}`)).toBe(
+      String.raw`{\"password\":\"[redacted]\",\"u\":1}`,
+    );
+  });
+
   it('masks a huge quoted value with many escapes in linear time', () => {
     const big = 'password="' + 'a\\"b '.repeat(40000) + '"';
     const t0 = performance.now();
