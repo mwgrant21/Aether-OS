@@ -10,6 +10,7 @@ import type { RetentionStatus, PurgeResult } from '../electron/retentionStore';
 import type { LedgerSnapshot } from './shared/ledgerMath';
 import type { BoardsListing, RefreshResponse } from './shared/dashboards/types';
 import type { Range as BoardRange } from './shared/dashboards/spec';
+import type { BoardFeedResult, BoardSessionRef, BoardSessionSummary } from './shared/board/types';
 import type { ProjectsSnapshot } from './shared/projectsSnapshot';
 import type { MemoryRowUI, MemoryTombstoneUI } from '../electron/memoryStore';
 import type { CodexLaunchInfo } from '../electron/codexLaunchInfo';
@@ -96,6 +97,10 @@ declare global {
         remove: (id: string) => Promise<{ ok: boolean; error?: string }>;
         copyRegisterCommand: () => Promise<{ ok: boolean }>;
         onChanged: (callback: (ids: string[]) => void) => () => void;
+      };
+      board: {
+        sessions: () => Promise<BoardSessionSummary[]>;
+        feed: (ref: BoardSessionRef) => Promise<BoardFeedResult>;
       };
       quota: {
         onEfficiency: (callback: (snapshot: QuotaEfficiency | null) => void) => () => void;
