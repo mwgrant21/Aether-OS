@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import * as fs from 'fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildBoardFeed, listBoardSessions, type BoardFeedDeps } from './boardFeed';
@@ -319,6 +319,40 @@ describe('listBoardSessions', () => {
     );
     const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
     expect(list[0].title).toBe('typed by a person');
+  });
+
+  it('closes the title stream on an early return and skips compaction summaries', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const m = (content: string, extra: Record<string, unknown> = {}): string =>
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', ...extra, message: { role: 'user', content } });
+    fs.writeFileSync(
+      path.join(dir, 'c.jsonl'),
+      [m('This session is being continued from a previous conversation', { isCompactSummary: true }), m('shown only in transcript', { isVisibleInTranscriptOnly: true }), m('the real prompt')].join('\n') + '\n',
+    );
+    const opened: number[] = [];
+    const closed: number[] = [];
+    const realOpen = fs.open;
+    const realClose = fs.close;
+    const openSpy = vi.spyOn(fs, 'open').mockImplementation(((...a: unknown[]) => {
+      const cb = a[a.length - 1] as (e: unknown, fd: number) => void;
+      (realOpen as (...x: unknown[]) => void)(...a.slice(0, -1), (e: unknown, fd: number) => { if (!e) opened.push(fd); cb(e, fd); });
+    }) as never);
+    const closeSpy = vi.spyOn(fs, 'close').mockImplementation(((fd: number, cb: (e: unknown) => void) => {
+      closed.push(fd);
+      (realClose as (...x: unknown[]) => void)(fd, cb);
+    }) as never);
+    try {
+      const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+      expect(list[0].title).toBe('the real prompt');
+      await new Promise((res) => setTimeout(res, 100));
+    } finally {
+      openSpy.mockRestore();
+      closeSpy.mockRestore();
+    }
+    expect(opened.length).toBeGreaterThan(0);
+    expect(closed.slice().sort()).toEqual(opened.slice().sort());
   });
 
   it('honours limit, maxAgeMs and skips empty files', async () => {

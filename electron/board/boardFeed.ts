@@ -29,7 +29,7 @@ const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 const HEAD_BYTES = 64 * 1024;
 const SUBJECT_CAP = 200;
 const STUB_RE = /delivered to you as a message from/i;
-const TITLE_SCAN_BYTES = 256 * 1024;
+const TITLE_SCAN_BYTES = 4 * 1024 * 1024; // real first prompts sit behind ~130 KB request-blob lines
 const TITLE_CAP = 60;
 // Wrapper lines the harness injects as user turns; none is something the human typed.
 const NON_PROMPT_RE = /^\s*(?:<command-|<local-command|<system-reminder|<task-notification|<agent-message|<user-prompt-submit-hook|Caveat:)/;
@@ -65,10 +65,8 @@ async function projectFromHead(file: string, deps: BoardFeedDeps): Promise<Board
 
 /** First human-typed prompt in the head of a parent transcript, masked and shortened; null if none. */
 async function titleFromHead(file: string): Promise<string | null> {
-  const rl = readline.createInterface({
-    input: createReadStream(file, { encoding: 'utf8', start: 0, end: TITLE_SCAN_BYTES - 1 }),
-    crlfDelay: Infinity,
-  });
+  const input = createReadStream(file, { encoding: 'utf8', start: 0, end: TITLE_SCAN_BYTES - 1 });
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
   try {
     for await (const line of rl) {
       if (!line.includes('"user"')) continue;
@@ -78,7 +76,7 @@ async function titleFromHead(file: string): Promise<string | null> {
       } catch {
         continue; // includes a line cut off by the byte bound
       }
-      if (!j || j.type !== 'user' || (j.origin && j.origin.kind !== 'human') || j.isMeta || j.isSidechain) continue;
+      if (!j || j.type !== 'user' || (j.origin && j.origin.kind !== 'human') || j.isMeta || j.isSidechain || j.isCompactSummary || j.isVisibleInTranscriptOnly) continue;
       const c = j.message?.content;
       let text: string | null = null;
       if (typeof c === 'string') text = c;
@@ -97,6 +95,7 @@ async function titleFromHead(file: string): Promise<string | null> {
     return null;
   } finally {
     rl.close();
+    input.destroy(); // rl.close() does not release the fd on an early return
   }
 }
 
@@ -239,7 +238,7 @@ export async function buildBoardFeed(
     const root = path.resolve(projectsRoot);
     const dir = path.resolve(root, ref.projectDir);
     const rel = path.relative(root, dir);
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { ok: false, error: 'Invalid session.' };
+    if (!rel || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return { ok: false, error: 'Invalid session.' };
     const mainFile = path.join(dir, `${ref.sessionId}.jsonl`);
     try {
       await fsp.stat(mainFile);
