@@ -323,4 +323,26 @@ describe('BoardView', () => {
     expect(api.feed.mock.calls.length).toBe(calls);
     expect(screen.getByText('Select a session to see its agent traffic.')).toBeTruthy();
   });
+
+  it('unmounting and mounting again auto-selects once more', async () => {
+    const api = mockApi([session('s1')], (ref) => Promise.resolve(feedOf(ref.sessionId, [post('p1', 'again body')])));
+    const first = render(<BoardView />);
+    await screen.findByText('again body');
+    first.unmount();
+    render(<BoardView />);
+    await screen.findByText('again body');
+    expect(api.sessions).toHaveBeenCalledTimes(2);
+    expect(api.feed).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed first sessions load followed by a successful Refresh still auto-selects', async () => {
+    const api = mockApi([session('s1')], (ref) => Promise.resolve(feedOf(ref.sessionId, [post('p1', 'recovered body')])));
+    api.sessions.mockRejectedValueOnce(new Error('boom'));
+    render(<BoardView />);
+    await screen.findByText('Could not list sessions.');
+    expect(api.feed).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText('recovered body');
+    expect(api.feed).toHaveBeenCalledWith({ projectDir: 'dir-s1', sessionId: 's1' });
+  });
 });
