@@ -188,6 +188,7 @@ describe('buildBoardFeed', () => {
         assistant(1, 'toolu_E', 'SendMessage', { message: 'nobody' }),
         assistant(2, '', 'Agent', { description: 'No id', prompt: 'p' }),
         user(3, notification('aaa111', '', 'completed', 'Agent finished', 'done'), { kind: 'task-notification' }),
+        user(4, notification('ghost1', '', 'completed', 'Other task', 'ignored'), { kind: 'task-notification' }),
       ],
       { aaa111: { lines: [assistant(0, 'toolu_Q', 'SendMessage', { to: 'main', message: 'x' })], meta: JSON.stringify({ agentType: 'builder' }) } },
     );
@@ -200,6 +201,8 @@ describe('buildBoardFeed', () => {
     const hb = feed.posts.find((p) => p.kind === 'handback') as BoardPost;
     expect(hb).toMatchObject({ startedBy: null });
     expect(hb.from.agentId).toBe('aaa111');
+    // an empty tool-use-id must not match the empty-id dispatch: the ghost notification is dropped
+    expect(feed.posts.filter((p) => p.kind === 'handback')).toHaveLength(1);
   });
 
   it('links an unmetadata agent through meta added to a copy (nested startedBy)', async () => {
