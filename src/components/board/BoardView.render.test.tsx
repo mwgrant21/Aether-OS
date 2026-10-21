@@ -294,4 +294,18 @@ describe('BoardView', () => {
     await waitFor(() => expect(screen.queryByText('body of idle')).toBeNull());
     expect(screen.getByText('Select a session to see its agent traffic.')).toBeTruthy();
   });
+
+  it('Refresh does not re-pick a session the project filter hides', async () => {
+    const api = mockApi([session('a1', { lastActiveMs: NOW }), session('b1', { project: beta, lastActiveMs: NOW - 5000 })], (ref) => Promise.resolve(feedOf(ref.sessionId, [post('p1', 'visible body')])));
+    render(<BoardView />);
+    await screen.findByText('visible body');
+    fireEvent.click(screen.getByRole('button', { name: 'beta' }));
+    await waitFor(() => expect(screen.queryByText('visible body')).toBeNull());
+    const calls = api.feed.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(api.sessions).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.feed.mock.calls.length).toBe(calls);
+    expect(screen.getByText('Select a session to see its agent traffic.')).toBeTruthy();
+  });
 });

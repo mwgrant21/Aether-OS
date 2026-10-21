@@ -20,6 +20,7 @@ export function useBoard() {
   const feedSeq = useRef(0);
   const sessionsSeq = useRef(0);
   const selectedRef = useRef<BoardSessionRef | null>(null);
+  const didAutoSelect = useRef(false); // auto-pick only on the first successful list, never on Refresh or after a clear
 
   const loadFeed = useCallback(async (ref: BoardSessionRef) => {
     if (!api) return;
@@ -52,8 +53,9 @@ export function useBoard() {
       if (my !== sessionsSeq.current) return;
       setSessions(list);
       setSessionsError(null);
-      if (!selectedRef.current) {
-        const pick = newestWithAgents(list);
+      if (!didAutoSelect.current) {
+        didAutoSelect.current = true;
+        const pick = selectedRef.current ? null : newestWithAgents(list);
         if (pick) select({ projectDir: pick.projectDir, sessionId: pick.sessionId });
       }
     } catch {
