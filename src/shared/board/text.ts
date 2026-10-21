@@ -23,18 +23,22 @@ const RULES: Array<[RegExp, string]> = [
 const ASSIGN_RE =
   /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi;
 const TYPE_WORDS = new Set([
-  'string', 'number', 'boolean', 'null', 'undefined', 'true', 'false', 'required', 'optional',
+  'string',
+  'number',
+  'boolean',
+  'null',
+  'undefined',
+  'true',
+  'false',
+  'required',
+  'optional',
 ]);
 
-// A value is a code shape (not a secret) when it is a call or member access
-// written in code style (lowercase-initial identifier, letters/_/$ only, no
-// digits), or a type/keyword token (optionally a | union). Mixed-case or
-// digit-bearing values like My.Pass2024 stay masked (fail-closed). Residual:
-// all-lowercase, digit-free dotted values (e.g. secret=abc.def) are treated as
-// code and not masked.
+// The only skip is an exact type/keyword value (or a | union of only those
+// words), e.g. "secret: string;". Everything else in a key=value secret
+// position is masked, so code assignments like "const secret = getSecret();"
+// may be over-masked by design (fail-closed).
 function isCodeShape(v: string): boolean {
-  if (/^[a-z_$][A-Za-z_$]*\([^0-9]*$/.test(v)) return true;
-  if (/^[a-z_$][A-Za-z_$]*(?:\.[A-Za-z_$]+)+$/.test(v)) return true;
   return v.split('|').every((p) => TYPE_WORDS.has(p.toLowerCase()));
 }
 
