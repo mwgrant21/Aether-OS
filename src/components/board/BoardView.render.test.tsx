@@ -151,7 +151,7 @@ describe('BoardView', () => {
   it('selects nothing and fetches no feed when no session has agents', async () => {
     const api = mockApi([session('a', { subagentCount: 0 }), session('b', { subagentCount: 0 })]);
     render(<BoardView />);
-    await screen.findByText('Select a session to see its agent traffic.');
+    await screen.findByText('No sessions match this filter.');
     expect(api.feed).not.toHaveBeenCalled();
     expect(screen.queryByTestId('post')).toBeNull();
   });
