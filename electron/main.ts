@@ -43,7 +43,8 @@ import {
 } from '../src/shared/quotaEfficiency';
 import { createQuotaSampleBuffer, recordQuotaSample } from './quotaSampleBuffer';
 import { buildProjectsSnapshot, type ProjectsSnapshot } from '../src/shared/projectsSnapshot';
-import { normalizePath } from '../src/shared/projectIdentity';
+import { normalizePath, resolveProject } from '../src/shared/projectIdentity';
+import { createBoardHandlers } from './board/boardHandlers';
 import { createScopedGitProbe } from './gitProbeCache';
 import { createHash } from 'node:crypto';
 import { loadOptimizeState, recordAppliedAt } from './optimizeState';
@@ -1444,6 +1445,22 @@ ipcMain.handle(
     return readTranscript(filePath, { limit, before });
   }
 );
+
+// Traffic board (pull-only). Same rule as the Comms transcript channels above: these
+// are request/response, NEVER pushed on the tick and NEVER cached in main between
+// calls (docs/privacy-and-data.md "Rendering is not storing"). Only {key,name,worktree}
+// project identity crosses IPC, never an absolute path; the ref is validated in
+// boardHandlers before any fs access.
+const boardHandlers = createBoardHandlers({
+  projectsRoot: join(os.homedir(), '.claude', 'projects'),
+  projectOf: (cwd) => {
+    const r = resolveProject(cwd, gitProbe);
+    return r ? { key: projectKey(r.repoPath), name: r.repoName, worktree: r.worktree } : null;
+  },
+  beforeList: resetGitProbeCache,
+});
+ipcMain.handle('board:sessions', () => boardHandlers.sessions());
+ipcMain.handle('board:feed', (_event, ref: unknown) => boardHandlers.feed(ref));
 
 ipcMain.handle('optimize:targets', async () => {
   const globalPath = optimizeGlobalTargetPath();

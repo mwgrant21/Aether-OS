@@ -175,6 +175,25 @@ transcript-message type is reachable from `AetherState`. The operator is the onl
 own transcripts on their own machine, and nothing leaves it (except what §14 sends, when enabled) — the original rule was written to
 prevent a *store* that could leak, not to prevent the operator from looking at their own session.
 
+**Traffic tab amendment (Message Board v1).** The Traffic tab (`electron/board/*`,
+`src/shared/board/*`, `src/components/board/*`) is a second pull-based transcript reader under the
+same rule. It is Claude-only and read-only, and it spans every session under `~/.claude/projects`
+rather than the one pinned session. The main process rebuilds the feed on each request (tab open,
+session select, or the Refresh button; there is no timer and no dependence on the 900ms tick) and keeps
+nothing between calls. The feed text lives only in `useBoard.ts`/`BoardView.tsx` React state: it never
+enters the store, `persistence.ts`, `~/.aether-os/` or the collector, which the tab does not touch.
+Obvious secrets (key/token/password shapes) are masked at feed-build time in the main process, so the
+raw secret never crosses IPC, and bodies are capped at 8000 characters (the UI previews 280). Session titles
+(the row label in the session list) cross IPC as masked prompt text, like post bodies: the first human
+prompt of each session, masked and cut to 60 characters. Finding it reads only a bounded head of the
+session file (4 MB), and titles are computed per request, never stored. Project
+identity crosses IPC only as `{key,name,worktree}`, never an absolute path. Message bodies can still
+contain absolute paths, because they are dispatch prompts and are not altered. The guard is
+`src/state/noPayloadInStore.test.ts` (`BoardPost`/`BoardFeed` must not be referenced from the
+store, persistence or reducer). Masking is pattern-based and is not a DLP: a secret in an unusual shape
+is shown as-is, a PEM block given as a `key=value` value masks only its first token, dotted key names (`my.secret.key=...`) are not masked, and code-like
+assignments may be masked (the only skipped value is an exact type keyword).
+
 ---
 
 ## 5. File paths are the remaining sensitive surface

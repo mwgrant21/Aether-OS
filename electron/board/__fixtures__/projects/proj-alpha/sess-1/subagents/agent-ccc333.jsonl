@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-10-20T10:00:22.000Z","sessionId":"sess-1","cwd":"/work/alpha","uuid":"u-22-cnoeuu","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_S6","name":"SendMessage","input":{"to":"main","recipient_kind":"main","message":"Found 3 usages"}}]}}

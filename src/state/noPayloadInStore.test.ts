@@ -40,6 +40,13 @@ describe('no transcript payload in the store', () => {
     }
   });
 
+  it('BoardPost and BoardFeed are never referenced by the AetherState/persistence/reducer surface', () => {
+    for (const file of STATE_SURFACE_FILES) {
+      const src = readSource(file);
+      expect(src, `${file} must not reference BoardPost/BoardFeed`).not.toMatch(/BoardPost|BoardFeed/);
+    }
+  });
+
   it('AetherState has no key that plausibly holds transcript message content', () => {
     const suspicious = /transcript|displaymessage|chatlog/i;
     const keys = Object.keys(initialState) as (keyof AetherState)[];

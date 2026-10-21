@@ -22,6 +22,7 @@ import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './commun
 import type { QuotaEfficiency } from '../src/shared/quotaEfficiency';
 import type { BoardsListing, RefreshResponse } from '../src/shared/dashboards/types';
 import type { Range } from '../src/shared/dashboards/spec';
+import type { BoardFeedResult, BoardSessionRef, BoardSessionSummary } from '../src/shared/board/types';
 
 contextBridge.exposeInMainWorld('aetherElectron', {
   communication: {
@@ -180,6 +181,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('dashboards:changed', listener);
       return () => ipcRenderer.removeListener('dashboards:changed', listener);
     },
+  },
+  board: {
+    sessions: (): Promise<BoardSessionSummary[]> => ipcRenderer.invoke('board:sessions'),
+    feed: (ref: BoardSessionRef): Promise<BoardFeedResult> => ipcRenderer.invoke('board:feed', ref),
   },
   quota: {
     onEfficiency: (callback: (snapshot: QuotaEfficiency | null) => void) => {
