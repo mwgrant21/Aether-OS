@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-10-20T10:00:03.000Z","sessionId":"sess-2","cwd":"/work/beta","uuid":"b1","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_B1","name":"Agent","input":{"subagent_type":"builder","description":"Beta job","prompt":"Do beta"}}]}}

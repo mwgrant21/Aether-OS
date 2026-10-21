@@ -271,7 +271,7 @@ async function isLive(filePath: string): Promise<boolean> {
 // traversal tricks, nothing that could escape the directory they're joined into.
 const SAFE_SEGMENT = /^[^\\/]+$/;
 
-function isSafeSegment(segment: string): boolean {
+export function isSafeSegment(segment: string): boolean {
   return SAFE_SEGMENT.test(segment) && segment !== '.' && segment !== '..';
 }
 
