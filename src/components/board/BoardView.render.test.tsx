@@ -274,6 +274,21 @@ describe('BoardView', () => {
     expect(plain.getAttribute('title')).toBeNull();
   });
 
+  it('lets a long title shrink in the rail: min-width 0 and ellipsis on the row, its text and the grids', async () => {
+    mockApi([session('t1', { title: 'x'.repeat(300) })]);
+    const { container } = render(<BoardView />);
+    const title = await screen.findByText('x'.repeat(300));
+    expect(title.style.minWidth).toBe('0');
+    expect(title.style.overflow).toBe('hidden');
+    expect(title.style.textOverflow).toBe('ellipsis');
+    expect(title.style.whiteSpace).toBe('nowrap');
+    const row = title.closest('button') as HTMLElement;
+    expect(row.style.minWidth).toBe('0');
+    expect(row.style.overflow).toBe('hidden');
+    expect((row.parentElement as HTMLElement).style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect((container.querySelector('aside') as HTMLElement).style.overflowX).toBe('hidden');
+  });
+
   it('clears the selection and the feed when the filter hides the selected session', async () => {
     mockApi([session('a1', { lastActiveMs: NOW }), session('b1', { project: beta })], (ref) => Promise.resolve(feedOf(ref.sessionId, [post('p1', 'visible body')])));
     render(<BoardView />);
