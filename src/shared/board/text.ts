@@ -12,8 +12,13 @@ const REDACTED = '[redacted]';
 // case the replacement keeps the label (Bearer, key name) and masks the value.
 // Unquoted values exclude '[' so a masked value is not re-matched; a masked
 // quoted value may re-match but yields identical output (idempotent).
+// The first rule masks PEM and PGP-armored private keys whole (the armor type
+// ends in "PRIVATE KEY" or "PRIVATE KEY BLOCK"), headers and checksum included.
 const RULES: Array<[RegExp, string]> = [
-  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED],
+  [
+    /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)/g,
+    REDACTED,
+  ],
   [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/g, REDACTED],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/g, REDACTED],
   [/\bgithub_pat_[A-Za-z0-9_]{40,}/g, REDACTED],
