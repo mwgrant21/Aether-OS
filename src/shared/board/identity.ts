@@ -2,19 +2,15 @@
 // recipient chip text. Pure. Agent colours are signal, not theme, so this file
 // deliberately imports neither React nor tokens.ts (same carve-out as the reactor).
 
-// Local structural type until T1's BoardParty is merged; T7 switches to the import.
-interface PartyLike {
-  kind: string
-  name: string
-  agentId: string | null
-}
+import type { BoardParty } from './types'
 
 export function initialsOf(name: string): string {
   const trimmed = name.trim()
   if (trimmed === '' || trimmed.toLowerCase() === 'unknown') return '?'
-  const words = trimmed.split(/[^A-Za-z0-9]+/).filter((w) => w !== '')
+  const words = trimmed.split(/[^\p{L}\p{N}]+/u).filter((w) => w !== '')
   if (words.length === 0) return '?'
-  const out = words.length >= 2 ? words[0][0] + words[1][0] : words[0].slice(0, 2)
+  const chars = (w: string) => Array.from(w) // code points, so an astral letter is not split
+  const out = words.length >= 2 ? chars(words[0])[0] + chars(words[1])[0] : chars(words[0]).slice(0, 2).join('')
   return out.toUpperCase()
 }
 
@@ -31,11 +27,11 @@ export function colorOf(key: string): string {
   return `hsl(${fnv1a32(key) % 360} 55% 58%)`
 }
 
-export function colorKeyOf(party: PartyLike): string {
+export function colorKeyOf(party: BoardParty): string {
   return party.agentId ?? party.name
 }
 
-export function recipientChip(party: PartyLike): string {
+export function recipientChip(party: BoardParty): string {
   if (party.kind === 'all') return '@all'
   if (party.kind === 'unknown') return '@unknown'
   return `@${party.name}`

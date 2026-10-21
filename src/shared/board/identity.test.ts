@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { initialsOf, colorOf, colorKeyOf, recipientChip } from './identity'
+import type { PartyKind } from './types'
 
-const party = (kind: string, name: string, agentId: string | null = null) => ({ kind, name, agentId })
+const party = (kind: PartyKind, name: string, agentId: string | null = null) => ({ kind, name, agentId })
 
 describe('initialsOf', () => {
   it.each([
@@ -12,6 +13,9 @@ describe('initialsOf', () => {
     ['matt-51 [e2f673]', 'M5'],
     ['', '?'],
     ['unknown', '?'],
+    ['éclair-agent', 'ÉA'],
+    ['研究エージェント', '研究'],
+    ['über', 'ÜB'],
   ])('%j -> %j', (input, expected) => {
     expect(initialsOf(input)).toBe(expected)
   })
