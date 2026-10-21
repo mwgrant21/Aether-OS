@@ -57,7 +57,7 @@ describe('maskSecrets', () => {
       'lifetime is a separate concern. '.repeat(20);
     expect(maskSecrets(long)).toBe(long);
     const path = 'C:\\Users\\Matt\\projects\\aether-os';
-    expect(path).toContain('C:\Users');
+    expect(path).toContain('C:\\Users');
     expect(maskSecrets(path)).toBe(path);
     const sha = 'c4344ae792e3e5fdde924f09270d6aebac29561a';
     expect(maskSecrets(sha)).toBe(sha);
