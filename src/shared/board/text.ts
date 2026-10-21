@@ -16,6 +16,8 @@ const REDACTED = '[redacted]';
 // second masks PGP-armored private keys ("PRIVATE KEY BLOCK") whole, headers and checksum
 // included. Running PEM first keeps its masking identical, so a PGP block that encloses
 // a PEM BEGIN line never makes the text after its END visible that PEM masking hid.
+// PEM runs first, so a PGP BEGIN inside an open PEM block is hidden by the PEM mask and the
+// PGP body after the PEM END can stay visible.
 const RULES: Array<[RegExp, string]> = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED],
   [/-----BEGIN [A-Z ]*PRIVATE KEY BLOCK-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY BLOCK-----|$)/g, REDACTED],
