@@ -142,6 +142,43 @@ describe('maskSecrets', () => {
     expect(maskSecrets('BEARER ' + 'x'.repeat(30))).toBe('BEARER [redacted]');
   });
 
+  it('masks a whole quoted value through its closing quote', () => {
+    for (const [inp, out] of [
+      ['password="correct horse battery staple"', 'password="[redacted]"'],
+      ['{"password":"ab cd ef gh ij kl"}', '{"password":"[redacted]"}'],
+      ["password='a b c d e f g'", "password='[redacted]'"],
+      ['"api_key": "sk 12 34 56"', '"api_key": "[redacted]"'],
+      ['password="ab\\"cd ef gh" tail', 'password="[redacted]" tail'],
+      ["password='it\\'s a b c' tail", "password='[redacted]' tail"],
+    ]) {
+      expect(maskSecrets(inp)).toBe(out);
+    }
+  });
+
+  it('applies the 6-char threshold to the whole quoted value', () => {
+    expect(maskSecrets('password="ab cd e"')).toBe('password="[redacted]"');
+    expect(maskSecrets('password="abcde"')).toBe('password="abcde"');
+    expect(maskSecrets('password="ab c"')).toBe('password="ab c"');
+  });
+
+  it('masks an unterminated quote to end of line only', () => {
+    expect(maskSecrets('password="abc def ghi\nnext line')).toBe('password="[redacted]\nnext line');
+  });
+
+  it('skips exact type keywords inside quotes too', () => {
+    expect(maskSecrets('"secret": "string"')).toBe('"secret": "string"');
+    expect(maskSecrets("password: 'required'")).toBe("password: 'required'");
+  });
+
+  it('masks a huge quoted value with many escapes in linear time', () => {
+    const big = 'password="' + 'a\\"b '.repeat(40000) + '"';
+    const t0 = performance.now();
+    const out = maskSecrets(big);
+    const ms = performance.now() - t0;
+    expect(out).toBe('password="[redacted]"');
+    expect(ms).toBeLessThan(50);
+  });
+
   it('is idempotent', () => {
     const x = [
       'sk-ant-' + 'a'.repeat(30),
