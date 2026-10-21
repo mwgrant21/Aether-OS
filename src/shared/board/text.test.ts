@@ -62,6 +62,19 @@ describe('maskSecrets', () => {
     expect(maskSecrets(sha)).toBe(sha);
   });
 
+  it('masks env-var and quoted-JSON assignment shapes', () => {
+    expect(maskSecrets('ANTHROPIC_API_KEY=abcdefghijk')).toBe('ANTHROPIC_API_KEY=[redacted]');
+    expect(maskSecrets('{"password": "hunter2hunter2"}')).toBe('{"password": "[redacted]"}');
+    const once = maskSecrets('MY_CLIENT_SECRET: abcdefghijk "api_key":"abcdef123456"');
+    expect(once).toBe('MY_CLIENT_SECRET: [redacted] "api_key":"[redacted]"');
+    expect(maskSecrets(once)).toBe(once);
+  });
+
+  it('masks Bearer in any case', () => {
+    expect(maskSecrets('bearer ' + 'x'.repeat(30))).toBe('bearer [redacted]');
+    expect(maskSecrets('BEARER ' + 'x'.repeat(30))).toBe('BEARER [redacted]');
+  });
+
   it('is idempotent', () => {
     const x = [
       'sk-ant-' + 'a'.repeat(30),

@@ -16,10 +16,10 @@ const RULES: Array<[RegExp, string]> = [
   [/\bAKIA[0-9A-Z]{16}\b/g, REDACTED],
   [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, REDACTED],
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, REDACTED],
-  [/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{20,}/g, `$1$2${REDACTED}`],
+  [/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{20,}/gi, `$1$2${REDACTED}`],
   [
-    /\b(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi,
-    `$1$2$3${REDACTED}`,
+    /(?<![A-Za-z0-9])(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi,
+    `$1$2$3$4${REDACTED}`,
   ],
 ];
 
