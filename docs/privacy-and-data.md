@@ -183,12 +183,16 @@ session select, or the Refresh button; there is no timer and no dependence on th
 nothing between calls. The feed text lives only in `useBoard.ts`/`BoardView.tsx` React state: it never
 enters the store, `persistence.ts`, `~/.aether-os/` or the collector, which the tab does not touch.
 Obvious secrets (key/token/password shapes) are masked at feed-build time in the main process, so the
-raw secret never crosses IPC, and bodies are capped at 8000 characters (the UI previews 280). Project
+raw secret never crosses IPC, and bodies are capped at 8000 characters (the UI previews 280). Session titles
+(the row label in the session list) cross IPC as masked prompt text, like post bodies: the first human
+prompt of each session, masked and cut to 60 characters. Finding it reads only a bounded head of the
+session file (4 MB), and titles are computed per request, never stored. Project
 identity crosses IPC only as `{key,name,worktree}`, never an absolute path. Message bodies can still
 contain absolute paths, because they are dispatch prompts and are not altered. The guard is
 `src/state/noPayloadInStore.test.ts` (`BoardPost`/`BoardFeed` must not be referenced from the
 store, persistence or reducer). Masking is pattern-based and is not a DLP: a secret in an unusual shape
-is shown as-is, and `AWS_SECRET_ACCESS_KEY=` / `secret_key=` assignments are known not to be masked.
+is shown as-is, a PEM block given as a `key=value` value masks only its first token, and code-like
+assignments may be masked (the only skipped value is an exact type keyword).
 
 ---
 

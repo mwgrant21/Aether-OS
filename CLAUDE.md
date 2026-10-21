@@ -138,8 +138,7 @@ docs/superpowers/
   new IPC-reactive features should mirror it, not invent a new subscription style.
   **Two deliberate exceptions**: `src/components/comms/useTranscriptSource.ts`
   and `src/components/board/useBoard.ts` (the Traffic tab; fetches on open, select and
-  Refresh only, no timer). `useTranscriptSource.ts`
-  (Stage 14) reads real transcript content over a pull-based, request/response
+  Refresh only, no timer). `useTranscriptSource.ts` (Stage 14) reads real transcript content over a pull-based, request/response
   IPC channel — on mount, on explicit refresh, and, for a live source, re-fetched
   on the existing 1s tick — and holds it only in the view's own React state. It
   never dispatches into the store, because transcript *content* is exactly the
