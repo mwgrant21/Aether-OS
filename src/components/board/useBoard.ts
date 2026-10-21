@@ -61,6 +61,15 @@ export function useBoard() {
     }
   }, [api, select]);
 
+  const clearSelection = useCallback(() => {
+    selectedRef.current = null;
+    feedSeq.current++; // drop any in-flight feed for the session being cleared
+    setSelected(null);
+    setFeed(null);
+    setFeedError(null);
+    setLoading(false);
+  }, []);
+
   const refresh = useCallback(() => {
     void loadSessions();
     if (selectedRef.current) void loadFeed(selectedRef.current);
@@ -68,5 +77,5 @@ export function useBoard() {
 
   useEffect(() => { void loadSessions(); }, [loadSessions]);
 
-  return { api, sessions, sessionsError, selected, select, feed, feedError, loading, refresh };
+  return { api, sessions, sessionsError, selected, select, clearSelection, feed, feedError, loading, refresh };
 }

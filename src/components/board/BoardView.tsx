@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../shared/Button';
 import { EmptyState } from '../shared/EmptyState';
 import { useColors } from '../shared/useColors';
@@ -31,26 +31,30 @@ function sessionLabel(s: BoardSessionSummary, now: number): string {
 
 export function BoardView() {
   const colors = useColors();
-  const { api, sessions, sessionsError, selected, select, feed, feedError, loading, refresh } = useBoard();
+  const { api, sessions, sessionsError, selected, select, clearSelection, feed, feedError, loading, refresh } = useBoard();
   const [filter, setFilter] = useState<string>(ALL);
   const [showEmpty, setShowEmpty] = useState(false);
 
-  if (!api) return <div style={{ padding: 16, color: colors.textMuted }}>Traffic needs the desktop app.</div>;
-
   const now = Date.now();
   const all = sessions ?? [];
-  const projects = new Map<string, string>();
-  let hasNone = false;
-  for (const s of all) {
-    if (s.project) projects.set(s.project.key, s.project.name);
-    else hasNone = true;
-  }
   const visible = all.filter((s) => {
     if (!showEmpty && s.subagentCount === 0) return false;
     if (filter === ALL) return true;
     return filter === NONE ? s.project === null : s.project?.key === filter;
   });
 
+  // A selection whose row is hidden by the toggle or the project filter must not leave its feed on screen.
+  const selectedHidden = !!selected && sessions !== null && !visible.some((s) => s.projectDir === selected.projectDir && s.sessionId === selected.sessionId);
+  useEffect(() => { if (selectedHidden) clearSelection(); }, [selectedHidden, clearSelection]);
+
+  if (!api) return <div style={{ padding: 16, color: colors.textMuted }}>Traffic needs the desktop app.</div>;
+
+  const projects = new Map<string, string>();
+  let hasNone = false;
+  for (const s of all) {
+    if (s.project) projects.set(s.project.key, s.project.name);
+    else hasNone = true;
+  }
   const chip = (on: boolean) => ({
     fontSize: 12, padding: '3px 10px', color: on ? colors.inkOnCyan : colors.textSecondary,
     background: on ? colors.accentCyan : colors.panelInset, border: `1px solid ${on ? colors.activeBorder : colors.chipBorder}`,
@@ -78,7 +82,12 @@ export function BoardView() {
             const on = selected?.projectDir === s.projectDir && selected.sessionId === s.sessionId;
             return (
               <Button key={`${s.projectDir}/${s.sessionId}`} aria-current={on ? 'true' : undefined} onClick={() => select({ projectDir: s.projectDir, sessionId: s.sessionId })} style={chip(on)}>
-                {sessionLabel(s, now)}
+                {s.title ? (
+                  <>
+                    <span title={s.title} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</span>
+                    <span style={{ display: 'block', fontSize: 11, opacity: 0.8 }}>{sessionLabel(s, now)}</span>
+                  </>
+                ) : sessionLabel(s, now)}
               </Button>
             );
           })}

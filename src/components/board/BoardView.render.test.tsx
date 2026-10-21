@@ -262,4 +262,36 @@ describe('BoardView', () => {
       expect(src).not.toMatch(/useAetherStore|persistence|localStorage|setInterval/);
     }
   });
+
+  it('shows the title with the full text in its title attribute and the label as a secondary line; null title keeps the label', async () => {
+    mockApi([session('t1', { title: 'Fix the login redirect loop' }), session('t2', { title: null, project: beta })]);
+    render(<BoardView />);
+    const title = await screen.findByText('Fix the login redirect loop');
+    expect(title.getAttribute('title')).toBe('Fix the login redirect loop');
+    expect(title.style.textOverflow).toBe('ellipsis');
+    expect(screen.getByText(/^alpha · .* · 2 agents/)).toBeTruthy();
+    const plain = screen.getByText(/^beta · feat-x · /);
+    expect(plain.getAttribute('title')).toBeNull();
+  });
+
+  it('clears the selection and the feed when the filter hides the selected session', async () => {
+    mockApi([session('a1', { lastActiveMs: NOW }), session('b1', { project: beta })], (ref) => Promise.resolve(feedOf(ref.sessionId, [post('p1', 'visible body')])));
+    render(<BoardView />);
+    await screen.findByText('visible body');
+    fireEvent.click(screen.getByRole('button', { name: 'beta' }));
+    await waitFor(() => expect(screen.queryByText('visible body')).toBeNull());
+  });
+
+  it('clears the selection and the feed when the agentless toggle hides the selected session', async () => {
+    mockApi([session('idle', { subagentCount: 0, lastActiveMs: NOW }), session('busy')], (ref) => Promise.resolve(feedOf(ref.sessionId, [post(`p-${ref.sessionId}`, `body of ${ref.sessionId}`)])));
+    render(<BoardView />);
+    const toggle = screen.getByRole('button', { name: 'Show sessions without agents' });
+    await screen.findByText('body of busy');
+    fireEvent.click(toggle);
+    fireEvent.click(await screen.findByText(/· 0 agents/));
+    await screen.findByText('body of idle');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByText('body of idle')).toBeNull());
+    expect(screen.getByText('Select a session to see its agent traffic.')).toBeTruthy();
+  });
 });
