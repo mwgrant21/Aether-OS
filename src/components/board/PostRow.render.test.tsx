@@ -70,6 +70,14 @@ describe('PostRow', () => {
     expect(screen.getByTestId('body').textContent).toBe('x'.repeat(280) + '…');
   });
 
+  it('the preview never splits a surrogate pair at the 280 boundary', () => {
+    const body = 'x'.repeat(279) + '\u{1F600}' + 'y'.repeat(50);
+    render(<PostRow post={mk({ body })} />);
+    expect(screen.getByTestId('body').textContent).toBe('x'.repeat(279) + '…');
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByTestId('body').textContent).toBe(body);
+  });
+
   it('a short body has no toggle', () => {
     render(<PostRow post={mk({ body: 'x'.repeat(280) })} />);
     expect(screen.queryByRole('button')).toBeNull();

@@ -90,7 +90,7 @@ export function BoardView() {
           {loading && <span role="status" style={{ color: colors.textMuted, fontSize: 12 }}>Loading...</span>}
         </div>
         {feedError && <div role="alert" style={{ color: colors.danger }}>{feedError}</div>}
-        {!selected && sessions !== null && sessions.length > 0 && !feedError && <EmptyState message="Select a session to see its agent traffic." />}
+        {!selected && sessions !== null && visible.length > 0 && !feedError && <EmptyState message="Select a session to see its agent traffic." />}
         {feed && feed.posts.length === 0 && <EmptyState message="No agent traffic in this session." />}
         {feed && feed.capped && <div style={{ color: colors.textMuted, fontSize: 12 }}>Showing only the newest posts.</div>}
         {feed?.posts.map((p, i) => (

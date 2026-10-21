@@ -156,6 +156,13 @@ describe('BoardView', () => {
     expect(screen.queryByTestId('post')).toBeNull();
   });
 
+  it('with the toggle off and no visible session, only the filter empty state shows', async () => {
+    mockApi([session('a', { subagentCount: 0 })]);
+    render(<BoardView />);
+    await screen.findByText('No sessions match this filter.');
+    expect(screen.queryByText('Select a session to see its agent traffic.')).toBeNull();
+  });
+
   it('date header appears once for same-day posts and again across a local midnight', async () => {
     const at = (p: BoardPost, ms: number): BoardPost => ({ ...p, atMs: ms });
     const d1 = new Date(2026, 9, 20, 10, 0).getTime();

@@ -3,6 +3,7 @@ import { Button } from '../shared/Button';
 import { useColors } from '../shared/useColors';
 import { fonts } from '../../styles/tokens';
 import { colorKeyOf, colorOf, initialsOf, recipientChip } from '../../shared/board/identity';
+import { capBody } from '../../shared/board/text';
 import type { BoardPost } from '../../shared/board/types';
 
 const PREVIEW_CHARS = 280;
@@ -13,7 +14,7 @@ export function PostRow({ post, dayHeader }: { post: BoardPost; dayHeader?: bool
   const [open, setOpen] = useState(false);
   const hue = colorOf(colorKeyOf(post.from));
   const cut = post.body.length > PREVIEW_CHARS;
-  const shown = cut && !open ? `${post.body.slice(0, PREVIEW_CHARS)}…` : post.body;
+  const shown = cut && !open ? `${capBody(post.body, PREVIEW_CHARS).body}…` : post.body;
   const when = new Date(post.atMs);
   const tag = { fontSize: 11, padding: '1px 6px', border: `1px solid ${colors.chipBorder}`, background: colors.panelInset, color: colors.textMuted };
   const bad = post.status === 'failed' || post.status === 'killed';
