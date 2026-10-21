@@ -170,6 +170,25 @@ describe('maskSecrets', () => {
     expect(maskSecrets("password: 'required'")).toBe("password: 'required'");
   });
 
+  it('counts the threshold in raw chars, so escape pairs cannot hide a value', () => {
+    expect(maskSecrets(String.raw`password="a\"b\"c"`)).toBe('password="[redacted]"');
+    expect(maskSecrets(String.raw`password="\"\"\"x"`)).toBe('password="[redacted]"');
+    expect(maskSecrets(String.raw`password="a\"bc"`)).toBe(String.raw`password="a\"bc"`);
+  });
+
+  it('masks stringified JSON with escaped quotes', () => {
+    expect(maskSecrets(String.raw`{\"password\":\"hunter22 abc\"}`)).toBe(
+      String.raw`{\"password\":\"[redacted]\"}`,
+    );
+    expect(maskSecrets(String.raw`{\"api_key\":\"sk 12 34 56\"}`)).toBe(
+      String.raw`{\"api_key\":\"[redacted]\"}`,
+    );
+    const keep = String.raw`{\"secret\":\"string\"}`;
+    expect(maskSecrets(keep)).toBe(keep);
+    const once = maskSecrets(String.raw`{\"password\":\"hunter22 abc\"}`);
+    expect(maskSecrets(once)).toBe(once);
+  });
+
   it('masks a huge quoted value with many escapes in linear time', () => {
     const big = 'password="' + 'a\\"b '.repeat(40000) + '"';
     const t0 = performance.now();

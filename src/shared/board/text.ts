@@ -7,7 +7,8 @@ const REDACTED = '[redacted]';
 
 // Each rule is replaced wholesale unless it carries capture groups, in which
 // case the replacement keeps the label (Bearer, key name) and masks the value.
-// Values exclude '[' so an already-masked value never re-matches (idempotent).
+// Unquoted values exclude '[' so a masked value is not re-matched; a masked
+// quoted value may re-match but yields identical output (idempotent).
 const RULES: Array<[RegExp, string]> = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED],
   [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/g, REDACTED],
@@ -19,12 +20,15 @@ const RULES: Array<[RegExp, string]> = [
   [/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{20,}/gi, `$1$2${REDACTED}`],
 ];
 
-// Value is either a quoted string (masked whole, through its closing quote,
-// honouring backslash escapes; an unterminated quote runs to end of line, never
-// across lines) or an unquoted run. The 6-char threshold applies to the whole
-// value. Alternatives start on disjoint characters, so matching is linear.
+// Value is a quoted string (masked whole, through its closing quote, honouring
+// backslash escapes; an unterminated quote runs to end of line, never across
+// lines), an escaped-quoted string as in stringified JSON (\"...\"), or an
+// unquoted run. The key may be followed by an escaped quote (\"password\").
+// The quoted alternatives match any length; the 6-char threshold is applied in
+// maskSecrets to the whole RAW content (an escape pair counts as 2 chars).
+// Alternatives start on disjoint characters, so matching is linear.
 const ASSIGN_RE =
-  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(?:(["'])((?:\\.?|(?!\4)[^\\\r\n]){6,})(\4)?|(["']?)([^\s"',;[]{6,}))/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\\?["']?)(\s*[:=]\s*)(?:(?<qa>["'])(?<vqa>(?:\\.?|(?!\k<qa>)[^\\\r\n])*)(?<ca>\k<qa>)?|\\(?<qb>["'])(?<vqb>(?:(?!\\\k<qb>)(?:\\.?|[^\\\r\n]))*)(?<cb>\\\k<qb>)?|(?<qu>["']?)(?<vu>[^\s"',;[]{6,}))/gi;
 const TYPE_WORDS = new Set([
   'string',
   'number',
@@ -50,11 +54,18 @@ export function maskSecrets(text: string): string {
   for (const [re, rep] of RULES) out = out.replace(re, rep);
   return out.replace(
     ASSIGN_RE,
-    (m, k, q1, sep, qa: string | undefined, vq: string | undefined, qc: string | undefined, qb: string, vu: string | undefined) => {
-      if (isCodeShape(vq ?? vu ?? '')) return m;
-      return qa !== undefined
-        ? `${k}${q1}${sep}${qa}${REDACTED}${qc ?? ''}`
-        : `${k}${q1}${sep}${qb}${REDACTED}`;
+    (m, k, q1, sep, ...rest) => {
+      const g = rest[rest.length - 1] as Record<string, string | undefined>;
+      if (g.vqa !== undefined) {
+        if (g.vqa.length < 6 || isCodeShape(g.vqa)) return m;
+        return `${k}${q1}${sep}${g.qa}${REDACTED}${g.ca ?? ''}`;
+      }
+      if (g.vqb !== undefined) {
+        if (g.vqb.length < 6 || isCodeShape(g.vqb)) return m;
+        return `${k}${q1}${sep}\\${g.qb}${REDACTED}${g.cb ?? ''}`;
+      }
+      if (isCodeShape(g.vu ?? '')) return m;
+      return `${k}${q1}${sep}${g.qu}${REDACTED}`;
     },
   );
 }
