@@ -137,13 +137,14 @@ docs/superpowers/
   dispatch actions on IPC events — see `useRealAgentsSync.ts` for the pattern;
   new IPC-reactive features should mirror it, not invent a new subscription style.
   **Two deliberate exceptions**: `src/components/comms/useTranscriptSource.ts`
-  and `src/components/board/useBoard.ts` (the Traffic tab; fetches on open, select and
-  Refresh only, no timer). `useTranscriptSource.ts` (Stage 14) reads real transcript content over a pull-based, request/response
+  (Stage 14) reads real transcript content over a pull-based, request/response
   IPC channel — on mount, on explicit refresh, and, for a live source, re-fetched
   on the existing 1s tick — and holds it only in the view's own React state. It
   never dispatches into the store, because transcript *content* is exactly the
   payload `docs/privacy-and-data.md`'s "store the signal, not the payload" rule
   exists to keep out; see that doc's Stage 14 amendment for the full reasoning.
+  The second is `src/components/board/useBoard.ts` (the Traffic tab), which fetches on open,
+  select and Refresh only, with no timer.
 - **Project identity (Stage 16, binding)**: `src/shared/projectIdentity.ts`
   resolves project identity from the path string **before any filesystem probe**.
   Rule 1 (worktree-by-path-shape, pure string work) must precede Rule 2
