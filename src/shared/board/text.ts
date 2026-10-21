@@ -17,16 +17,30 @@ const RULES: Array<[RegExp, string]> = [
   [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, REDACTED],
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, REDACTED],
   [/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{20,}/gi, `$1$2${REDACTED}`],
-  [
-    /(?<![A-Za-z0-9])(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi,
-    `$1$2$3$4${REDACTED}`,
-  ],
 ];
+
+// Assignment rule, applied with a function so obvious code shapes are kept.
+const ASSIGN_RE =
+  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi;
+const TYPE_WORDS = new Set([
+  'string', 'number', 'boolean', 'null', 'undefined', 'true', 'false', 'required', 'optional',
+]);
+
+// A value is a code shape (not a secret) when it is a call (ident followed by
+// "("), a member access (a.b), or a type/keyword token (optionally a | union).
+// Plain secret-looking words stay masked (fail-closed).
+function isCodeShape(v: string): boolean {
+  if (/^[A-Za-z_$][\w$]*\(/.test(v)) return true;
+  if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(v)) return true;
+  return v.split('|').every((p) => TYPE_WORDS.has(p.toLowerCase()));
+}
 
 export function maskSecrets(text: string): string {
   let out = text;
   for (const [re, rep] of RULES) out = out.replace(re, rep);
-  return out;
+  return out.replace(ASSIGN_RE, (m, k, q1, sep, q2, v: string) =>
+    isCodeShape(v) ? m : `${k}${q1}${sep}${q2}${REDACTED}`,
+  );
 }
 
 // Default mirrors BODY_CAP in ./types; T3 passes BODY_CAP explicitly.

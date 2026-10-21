@@ -71,6 +71,36 @@ describe('maskSecrets', () => {
     expect(maskSecrets(once)).toBe(once);
   });
 
+  it('masks secret_key, AWS_SECRET_ACCESS_KEY, private_key and export shapes', () => {
+    expect(maskSecrets('secret_key=abcdefgh')).toBe('secret_key=[redacted]');
+    expect(maskSecrets('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCY')).toBe(
+      'AWS_SECRET_ACCESS_KEY=[redacted]',
+    );
+    expect(maskSecrets('"private_key": "abcd1234efgh"')).toBe('"private_key": "[redacted]"');
+    expect(maskSecrets('export SECRET_ACCESS_KEY=abcdefghijk')).toBe(
+      'export SECRET_ACCESS_KEY=[redacted]',
+    );
+  });
+
+  it('leaves obvious code shapes alone', () => {
+    for (const c of [
+      'secret: string;',
+      'const secret = getSecret();',
+      'password = req.body.password;',
+      'password: required',
+      'token: number',
+      'apiKey: string | null',
+    ]) {
+      expect(maskSecrets(c)).toBe(c);
+    }
+  });
+
+  it('still masks plain secret-looking values (fail-closed)', () => {
+    expect(maskSecrets('password=correcthorsebattery')).toBe('password=[redacted]');
+    expect(maskSecrets('password: hunter2hunter2')).toBe('password: [redacted]');
+    expect(maskSecrets('api_key=abcdefghijk')).toBe('api_key=[redacted]');
+  });
+
   it('masks Bearer in any case', () => {
     expect(maskSecrets('bearer ' + 'x'.repeat(30))).toBe('bearer [redacted]');
     expect(maskSecrets('BEARER ' + 'x'.repeat(30))).toBe('BEARER [redacted]');
