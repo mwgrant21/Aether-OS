@@ -4,6 +4,7 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { AgentsView } from './components/agents/AgentsView';
 import { GridView } from './components/grid/GridView';
 import { CommsView } from './components/comms/CommsView';
+import { BoardView } from './components/board/BoardView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { MemoryView } from './components/memory/MemoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
@@ -28,6 +29,7 @@ export const VIEWS: ViewDef[] = [
   { id: 'Terminal 2', inSidebar: true, component: Terminal2View },
   { id: 'Codex', inSidebar: true, component: CodexTerminalView },
   { id: 'Comms', inSidebar: true, component: CommsView },
+  { id: 'Traffic', inSidebar: true, component: BoardView },
   { id: 'Agents', inSidebar: true, component: AgentsView },
   { id: 'Grid', inSidebar: true, component: GridView },
   { id: 'Projects', inSidebar: true, component: ProjectsView },

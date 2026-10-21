@@ -15,6 +15,7 @@ describe('viewRegistry', () => {
       'Terminal 2',
       'Codex',
       'Comms',
+      'Traffic',
       'Agents',
       'Grid',
       'Projects',
@@ -35,6 +36,10 @@ describe('viewRegistry', () => {
 
   it('getViewComponent resolves Comms now that it is built', () => {
     expect(getViewComponent('Comms')).not.toBeNull();
+  });
+
+  it('getViewComponent resolves Traffic', () => {
+    expect(getViewComponent('Traffic')).not.toBeNull();
   });
 
   it('getViewComponent resolves Dashboard now that it is built', () => {
