@@ -168,15 +168,25 @@ describe('buildBoardFeed', () => {
     ]);
   });
 
-  it('skips a peer message whose fromAgentId is unknown to this session (MUST-HANDLE 2)', async () => {
+  it("skips an unknown-sender peer line from a non-peer origin, keeps real cross-session messages (MUST-HANDLE 2)", async () => {
     const root = tmpRoot();
-    const peer = (s: number, from: string): string =>
-      user(s, `<agent-message from="${from}">quoted</agent-message>`, { kind: 'peer', from, name: 'someone' });
-    writeSession(root, [peer(1, 'zzz999'), peer(2, 'aaa111')], { aaa111: { lines: [assistant(0, 'toolu_Q', 'SendMessage', { to: 'main', message: 'x' })] } });
+    const peer = (s: number, from: string, origin: Record<string, unknown>): string =>
+      user(s, `<agent-message from="${from}">quoted ${s}</agent-message>`, { from, name: 'matt-51', ...origin });
+    writeSession(
+      root,
+      [
+        peer(1, 'zzz999', { kind: 'unclassified' }), // memory-observer wrapper: skipped
+        peer(2, 'sess9', { kind: 'peer' }), // real cross-session message: kept
+        peer(3, 'zzz998', { kind: 'peer', handback: true }), // hand-back from an unknown agent: skipped
+        peer(4, 'aaa111', { kind: 'peer', handback: true }), // known agent: kept
+      ],
+      { aaa111: { lines: [assistant(0, 'toolu_Q', 'SendMessage', { to: 'main', message: 'x' })] } },
+    );
     const feed = await feedOf(root);
-    expect(feed.posts.map((p) => [p.from.agentId, p.body])).toEqual([
-      ['aaa111', 'x'],
-      ['aaa111', 'quoted'],
+    expect(feed.posts.map((p) => [p.kind, p.from.kind, p.from.name, p.body])).toEqual([
+      ['message', 'agent', 'matt-51', 'x'], // named from the peer line's origin.name (rule c)
+      ['message', 'peer', 'matt-51', 'quoted 2'],
+      ['handback', 'agent', 'matt-51', 'quoted 4'],
     ]);
   });
 

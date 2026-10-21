@@ -244,9 +244,9 @@ export async function buildBoardFeed(
     const peerNames = new Map<string, string>();
     const agentIdByToolUseId = new Map<string, string>();
     const toolUseIdByAgentId = new Map<string, string>();
-    // '' is "absent" from the parser and is never a usable id.
+    // The parser emits '' for an absent id. '' is never stored in dispatchById, so no notification can link it.
     const link = (agentId: string | null, toolUseId: string | null): void => {
-      if (!agentId || !toolUseId) return;
+      if (!agentId || toolUseId === null) return;
       if (!agentIdByToolUseId.has(toolUseId)) agentIdByToolUseId.set(toolUseId, agentId);
       if (!toolUseIdByAgentId.has(agentId)) toolUseIdByAgentId.set(agentId, toolUseId);
     };
@@ -263,7 +263,7 @@ export async function buildBoardFeed(
     for (const [id, m] of metaById) link(id, m.toolUseId);
     for (const d of data) {
       for (const e of d.events) {
-        if (e.type === 'notification' && e.toolUseId && dispatchById.has(e.toolUseId)) link(e.taskId, e.toolUseId);
+        if (e.type === 'notification' && dispatchById.has(e.toolUseId ?? '')) link(e.taskId, e.toolUseId);
       }
     }
     const knownAgent = (id: string | null): id is string =>
@@ -319,7 +319,7 @@ export async function buildBoardFeed(
         }
         let x: Draft;
         if (e.type === 'dispatch') {
-          const linked = e.toolUseId ? agentIdByToolUseId.get(e.toolUseId) ?? null : null;
+          const linked = agentIdByToolUseId.get(e.toolUseId) ?? null;
           const to: BoardParty = linked
             ? agentParty(linked)
             : { kind: 'agent', name: e.subagentType ?? 'agent', agentId: null };
@@ -330,16 +330,17 @@ export async function buildBoardFeed(
             subject: e.summary, raw: e.message, status: null,
           };
         } else if (e.type === 'peer') {
-          // Unknown sender: a quoted wrapper (memory observer) or a foreign session; not agent traffic of this session.
-          if (!knownAgent(e.fromAgentId)) continue;
-          const from = agentParty(e.fromAgentId, e.fromName);
+          let from: BoardParty;
+          if (knownAgent(e.fromAgentId)) from = agentParty(e.fromAgentId, e.fromName);
+          else if (e.originKind === 'peer' && !e.isHandback) from = { kind: 'peer', name: e.fromName ?? 'peer session', agentId: null }; // real cross-session message
+          else continue; // unknown hand-back, or a memory-observer wrapper quoting an agent-message
           x = {
             kind: e.isHandback ? 'handback' : 'message', from, to: self, startedBy: startedByOf(from),
             subject: e.isHandback ? descriptionOf(e.fromAgentId) : null, raw: e.text, status: null,
           };
         } else {
           // Task notifications also report shell commands, workflows and monitors: keep only this session's agents.
-          const viaDispatch = !!e.toolUseId && dispatchById.has(e.toolUseId);
+          const viaDispatch = dispatchById.has(e.toolUseId ?? '');
           if (!viaDispatch && !knownAgent(e.taskId)) continue;
           if (STUB_RE.test(e.result)) continue;
           const id = knownAgent(e.taskId) ? e.taskId : agentIdByToolUseId.get(e.toolUseId ?? '') ?? null;

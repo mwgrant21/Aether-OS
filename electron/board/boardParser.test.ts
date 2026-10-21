@@ -53,7 +53,7 @@ describe('parseBoardLine', () => {
       kind: 'peer', from: 'aaa111', name: 'builder', handback: true, handbackReportText: 'Parser done',
     });
     expect(parseBoardLine(l, 0)).toEqual([
-      { type: 'peer', lineIndex: 0, atMs: Date.parse(TS), fromAgentId: 'aaa111', fromName: 'builder', isHandback: true, text: 'Parser done' },
+      { type: 'peer', lineIndex: 0, atMs: Date.parse(TS), fromAgentId: 'aaa111', fromName: 'builder', isHandback: true, originKind: 'peer', text: 'Parser done' },
     ]);
   });
 
@@ -73,6 +73,12 @@ describe('parseBoardLine', () => {
     expect(parseBoardLine(user(frame('hi', 'zzz9')), 0)[0]).toMatchObject({
       type: 'peer', fromAgentId: 'zzz9', fromName: null, isHandback: false, text: 'hi',
     });
+  });
+
+  it("peer from an 'unclassified' wrapper quoting an agent-message gets originKind 'other'", () => {
+    const l = user(frame('quoted', 'zzz9'), { kind: 'unclassified' });
+    expect(parseBoardLine(l, 0)[0]).toMatchObject({ type: 'peer', fromAgentId: 'zzz9', originKind: 'other' });
+    expect(parseBoardLine(user(frame('hi', 'sess9'), { kind: 'peer', from: 'sess9' }), 0)[0]).toMatchObject({ originKind: 'peer' });
   });
 
   it('task-notification', () => {

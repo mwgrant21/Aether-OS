@@ -15,7 +15,7 @@ interface Base {
 export type RawBoardEvent =
   | (Base & { type: 'dispatch'; toolUseId: string; subagentType: string | null; description: string | null; prompt: string })
   | (Base & { type: 'send'; toolUseId: string; to: string; recipientKind: string | null; summary: string | null; message: string })
-  | (Base & { type: 'peer'; fromAgentId: string | null; fromName: string | null; isHandback: boolean; text: string })
+  | (Base & { type: 'peer'; fromAgentId: string | null; fromName: string | null; isHandback: boolean; originKind: 'peer' | 'other'; text: string })
   | (Base & { type: 'notification'; taskId: string | null; toolUseId: string | null; status: HandbackStatus; summary: string | null; result: string });
 
 const MARKERS = ['SendMessage', '"Agent"', '"Task"', 'agent-message', 'task-notification', '"peer"'];
@@ -102,7 +102,7 @@ export function parseBoardLine(line: string, lineIndex: number): RawBoardEvent[]
     }
     out.push({
       type: 'peer', lineIndex, atMs, fromAgentId: str(origin.from) ?? (attr ? attr[1] : null),
-      fromName: str(origin.name), isHandback, text: body,
+      fromName: str(origin.name), isHandback, originKind: ev.originKind === 'peer' ? 'peer' : 'other', text: body,
     });
   }
   return out;
