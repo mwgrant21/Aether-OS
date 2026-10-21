@@ -48,8 +48,8 @@ npm run icon            # regenerate build/icon.png + build/icon.ico (only when 
 
 ```
 src/
-  components/    React views, one directory per nav tab (agents/, analytics/, comms/,
-                 dashboard/, files/, grid/, layout/, ledger/, memory/, projects/,
+  components/    React views, one directory per nav tab (agents/, analytics/, board/ (the
+                 Traffic tab), comms/, dashboard/, files/, grid/, layout/, ledger/, memory/, projects/,
                  reactor/, settings/, terminal/, uplinks/) plus components/shared/ for the
                  cross-cutting primitives (Button, useColors, useHoverStyle). comms/
                  (renamed from chat/, Stage 13.5) holds the Comms deck: real
@@ -94,6 +94,10 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
   toolCallHistory.ts    ring buffer of closed tool calls, feeds anomaly detection.
   historyScanner.ts / activeSessionFinder.ts   discover/rescan session files.
   attachmentsStore.ts   the local file-attachment library backing Files/Attachments.
+  board/boardParser.ts  per-line parser for the Traffic tab (dispatch, SendMessage,
+                        background hand-back, cross-session peer message). No electron import.
+  board/boardFeed.ts    lists sessions and assembles the ordered, secret-masked feed
+                        from a session's transcript plus its subagent files. No electron import.
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
 docs/superpowers/
@@ -132,7 +136,9 @@ docs/superpowers/
   IPC-driven state (live agents, anomalies, usage) flows in via hooks that
   dispatch actions on IPC events — see `useRealAgentsSync.ts` for the pattern;
   new IPC-reactive features should mirror it, not invent a new subscription style.
-  **One deliberate exception**: `src/components/comms/useTranscriptSource.ts`
+  **Two deliberate exceptions**: `src/components/comms/useTranscriptSource.ts`
+  and `src/components/board/useBoard.ts` (the Traffic tab; fetches on open, select and
+  Refresh only, no timer). `useTranscriptSource.ts`
   (Stage 14) reads real transcript content over a pull-based, request/response
   IPC channel — on mount, on explicit refresh, and, for a live source, re-fetched
   on the existing 1s tick — and holds it only in the view's own React state. It
