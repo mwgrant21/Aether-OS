@@ -192,7 +192,7 @@ identity crosses IPC only as `{key,name,worktree}`, never an absolute path. Mess
 contain absolute paths, because they are dispatch prompts and are not altered. The guard is
 `src/state/noPayloadInStore.test.ts` (`BoardPost`/`BoardFeed` must not be referenced from the
 store, persistence or reducer). Masking is pattern-based and is not a DLP: a secret in an unusual shape
-is shown as-is, a non-private-key PEM block given as a `key=value` value masks only its first token, dotted key names (`my.secret.key=...`) are not masked, and code-like
+is shown as-is, PEM and PGP private-key blocks are masked whole (including as a `key=value` value), but any other armored or PEM block given as a `key=value` value masks only its first token, dotted key names (`my.secret.key=...`) are not masked, and code-like
 assignments may be masked (the only skipped value is an exact type keyword).
 
 ---
