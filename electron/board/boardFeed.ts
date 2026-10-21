@@ -78,7 +78,7 @@ async function titleFromHead(file: string): Promise<string | null> {
       } catch {
         continue; // includes a line cut off by the byte bound
       }
-      if (!j || j.type !== 'user' || j.origin || j.isMeta || j.isSidechain) continue;
+      if (!j || j.type !== 'user' || (j.origin && j.origin.kind !== 'human') || j.isMeta || j.isSidechain) continue;
       const c = j.message?.content;
       let text: string | null = null;
       if (typeof c === 'string') text = c;

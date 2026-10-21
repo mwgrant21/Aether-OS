@@ -307,6 +307,20 @@ describe('listBoardSessions', () => {
     expect(list.find((x) => x.sessionId === 'b')?.title).toBeNull();
   });
 
+  it('accepts a prompt tagged origin.kind human, skips unclassified meta lines', async () => {
+    const root = tmpRoot();
+    const dir = path.join(root, 'p');
+    fs.mkdirSync(dir, { recursive: true });
+    const m = (content: string, extra: Record<string, unknown>): string =>
+      JSON.stringify({ type: 'user', timestamp: ts(1), sessionId: 's', ...extra, message: { role: 'user', content } });
+    fs.writeFileSync(
+      path.join(dir, 'h.jsonl'),
+      [m('[observer note]', { origin: { kind: 'unclassified' }, isMeta: true }), m('typed by a person', { origin: { kind: 'human' } })].join('\n') + '\n',
+    );
+    const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
+    expect(list[0].title).toBe('typed by a person');
+  });
+
   it('honours limit, maxAgeMs and skips empty files', async () => {
     expect(await listBoardSessions(ROOT, deps, { maxAgeMs: Infinity, limit: 1 })).toHaveLength(1);
     expect(await listBoardSessions(ROOT, { ...deps, now: () => Date.now() + 10 * 24 * 3600 * 1000 }, { maxAgeMs: 0 })).toEqual([]);

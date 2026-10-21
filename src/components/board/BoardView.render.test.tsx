@@ -10,7 +10,7 @@ const alpha = { key: 'alpha', name: 'alpha', worktree: null };
 const beta = { key: 'beta', name: 'beta', worktree: 'feat-x' };
 
 function session(id: string, over: Partial<BoardSessionSummary> = {}): BoardSessionSummary {
-  return { projectDir: `dir-${id}`, sessionId: id, project: alpha, lastActiveMs: NOW - 60_000, sizeBytes: 10, subagentCount: 2, ...over };
+  return { projectDir: `dir-${id}`, sessionId: id, project: alpha, title: null, lastActiveMs: NOW - 60_000, sizeBytes: 10, subagentCount: 2, ...over };
 }
 function post(id: string, body: string): BoardPost {
   const party = { kind: 'main' as const, name: 'main', agentId: null };
