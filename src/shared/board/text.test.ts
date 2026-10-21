@@ -53,7 +53,7 @@ describe('maskSecrets', () => {
     const prose = 'token budget: 5000 tokens, secret sauce, password reset flow, my sk-8 plan';
     expect(maskSecrets(prose)).toBe(prose);
     const long =
-      'The token refresh logic should store the token in memory only, and the token ' +
+      'The token: refresh-handling logic should store the token in memory only, and the token ' +
       'lifetime is a separate concern. '.repeat(20);
     expect(maskSecrets(long)).toBe(long);
     const path = 'C:\Users\Matt\projects\aether-os';
