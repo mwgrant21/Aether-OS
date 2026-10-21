@@ -19,9 +19,8 @@ const RULES: Array<[RegExp, string]> = [
   [/\b(Bearer)(\s+)[A-Za-z0-9._~+/=-]{20,}/gi, `$1$2${REDACTED}`],
 ];
 
-// Assignment rule, applied with a function so obvious code shapes are kept.
 const ASSIGN_RE =
-  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi;
+  /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(["']?)(\s*[:=]\s*)(["']?)([^\s"',;[]{6,})/gi;
 const TYPE_WORDS = new Set([
   'string',
   'number',

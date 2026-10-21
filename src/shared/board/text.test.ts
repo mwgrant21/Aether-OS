@@ -86,7 +86,7 @@ describe('maskSecrets', () => {
     for (const c of [
       'secret: string;',
       'password: required',
-      'token: number',
+      'secret: number',
       'apiKey: string | null',
     ]) {
       expect(maskSecrets(c)).toBe(c);
@@ -131,6 +131,12 @@ describe('maskSecrets', () => {
     }
   });
 
+  it('masks secret_key variants with _BASE / _ID suffixes', () => {
+    expect(maskSecrets('SECRET_KEY_BASE=abcdefghijk')).toBe('SECRET_KEY_BASE=[redacted]');
+    expect(maskSecrets('secret_key_id=abcdefghijk')).toBe('secret_key_id=[redacted]');
+    expect(maskSecrets('SECRET_ACCESS_KEY_ID=abcdefghijk')).toBe('SECRET_ACCESS_KEY_ID=[redacted]');
+  });
+
   it('masks Bearer in any case', () => {
     expect(maskSecrets('bearer ' + 'x'.repeat(30))).toBe('bearer [redacted]');
     expect(maskSecrets('BEARER ' + 'x'.repeat(30))).toBe('BEARER [redacted]');
@@ -151,19 +157,11 @@ describe('maskSecrets', () => {
 
 describe('capBody', () => {
   it('returns text unchanged under the cap', () => {
-    expect(capBody('hello', 10)).toEqual({
-      body: 'hello',
-      bodyLength: 5,
-      truncated: false,
-    });
+    expect(capBody('hello', 10)).toEqual({ body: 'hello', bodyLength: 5, truncated: false });
   });
 
   it('slices at the cap and reports the full length', () => {
-    expect(capBody('abcdefghij', 4)).toEqual({
-      body: 'abcd',
-      bodyLength: 10,
-      truncated: true,
-    });
+    expect(capBody('abcdefghij', 4)).toEqual({ body: 'abcd', bodyLength: 10, truncated: true });
   });
 
   it('defaults the cap to 8000', () => {
