@@ -34,6 +34,18 @@ const TITLE_CAP = 60;
 // Wrapper lines the harness injects as user turns; none is something the human typed.
 const NON_PROMPT_RE = /^\s*(?:<command-|<local-command|<system-reminder|<task-notification|<agent-message|<user-prompt-submit-hook|Caveat:)/;
 const HEX_ID_RE = /^[0-9a-f]{12,}$/i;
+// Absolute paths in a title: drive-letter (C:\a\b, C:/a/b), UNC (\\host\share\x) and
+// POSIX with at least two segments (/home/x/y). Each is shortened to its last segment.
+const ABS_PATH_RE = /(?:\b[A-Za-z]:[\\/]|\\\\[^\s\\/]|(?<![\w.:/\\])\/[^\s/\\]+\/)[^\s"'<>|*?]*/g;
+
+function shortenPaths(text: string): string {
+  return text.replace(ABS_PATH_RE, (m) => {
+    const tail = /[.,;:!)\]}]+$/.exec(m)?.[0] ?? '';
+    const body = tail ? m.slice(0, -tail.length) : m;
+    const last = body.split(/[\\/]/).filter(Boolean).pop();
+    return (last ?? body) + tail;
+  });
+}
 
 const MAIN: BoardParty = { kind: 'main', name: 'main', agentId: null };
 const ALL: BoardParty = { kind: 'all', name: 'all', agentId: null };
@@ -85,7 +97,7 @@ async function titleFromHead(file: string): Promise<string | null> {
         text = t ? t.text : null;
       }
       if (text === null || NON_PROMPT_RE.test(text)) continue;
-      const clean = maskSecrets(text).replace(/\s+/g, ' ').trim();
+      const clean = shortenPaths(maskSecrets(text)).replace(/\s+/g, ' ').trim();
       if (!clean) continue;
       if (clean.length <= TITLE_CAP) return clean;
       return capBody(clean, TITLE_CAP - 1).body + '\u2026';
