@@ -8,8 +8,9 @@ export function useRemoteStatus(): RemoteStatus | null {
     const remote = window.aetherElectron?.remote;
     if (!remote) return;
     let live = true;
-    void remote.status().then(s => { if (live) setStatus(s); }).catch(() => {});
-    const unsubscribe = remote.onStatus(s => { if (live) setStatus(s); });
+    let pushed = false;
+    void remote.status().then(s => { if (live && !pushed) setStatus(s); }).catch(() => {});
+    const unsubscribe = remote.onStatus(s => { pushed = true; if (live) setStatus(s); });
     return () => { live = false; unsubscribe(); };
   }, []);
   return status;

@@ -37,4 +37,29 @@ describe('useRemoteStatus', () => {
     expect(get).not.toHaveBeenCalled();
     expect(set).not.toHaveBeenCalled();
   });
+  it('a push that lands before status() resolves is not overwritten by the stale read', async () => {
+    let resolve: (s: RemoteStatus) => void = () => {};
+    let push: (s: RemoteStatus) => void = () => {};
+    const status = vi.fn(() => new Promise<RemoteStatus>(r => { resolve = r; }));
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = { remote: { status, onStatus: (cb: (s: RemoteStatus) => void) => { push = cb; return vi.fn(); } } };
+    const out = { v: null as RemoteStatus | null };
+    render(<Probe out={out} />);
+    act(() => push(mkStatus({ clients: 1 })));
+    await act(async () => { resolve(mkStatus({ clients: 0 })); });
+    expect(out.v?.clients).toBe(1);
+  });
+  it('unmount before status() resolves unsubscribes once and ignores the late result', async () => {
+    let resolve: (s: RemoteStatus) => void = () => {};
+    const unsub = vi.fn();
+    const status = vi.fn(() => new Promise<RemoteStatus>(r => { resolve = r; }));
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = { remote: { status, onStatus: () => unsub } };
+    const err = vi.spyOn(console, 'error');
+    const out = { v: null as RemoteStatus | null };
+    const view = render(<Probe out={out} />);
+    view.unmount();
+    await act(async () => { resolve(mkStatus({ clients: 2 })); });
+    expect(unsub).toHaveBeenCalledTimes(1);
+    expect(out.v).toBeNull();
+    expect(err).not.toHaveBeenCalled();
+  });
 });

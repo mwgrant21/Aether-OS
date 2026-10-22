@@ -22,8 +22,7 @@ export function RemoteChip() {
       setAnnounce(connected ? 'Phone connected' : 'Phone disconnected');
     }
   }, [connected]);
-  const live = <span aria-live="polite" role="status" style={hidden}>{announce}</span>;
-  if (!connected) return live;
+  const live = <span aria-live="polite" style={hidden}>{announce}</span>;
   const label = clients === 1 ? 'PHONE CONNECTED' : `PHONE - ${clients} connected`;
   const description = `Phone connected, read-only chat view (${clients} connected). Open remote access settings.`;
   const style: CSSProperties & { WebkitAppRegion: 'no-drag' } = {
@@ -32,11 +31,11 @@ export function RemoteChip() {
     color: colors.warn, font: `600 11px/1.25 ${fonts.ui}`, letterSpacing: 0.3, cursor: 'pointer', position: 'relative',
   };
   return <>
-    <button type="button" style={style} aria-label={description} title={`${description} Click to open Settings`}
+    {connected && <button type="button" style={style} aria-label={description} title={`${description} Click to open Settings`}
       onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Settings' })}>
       <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: colors.warn }} />
       {label}
-    </button>
+    </button>}
     {live}
   </>;
 }

@@ -80,4 +80,27 @@ describe('RemoteChip', () => {
     expect(get).not.toHaveBeenCalled();
     expect(set).not.toHaveBeenCalled();
   });
+  it('keeps the same live-region element across 0 -> 1 -> 0', async () => {
+    const h = install(mkStatus());
+    render(<RemoteChip />);
+    await act(async () => {});
+    const region = document.querySelector('[aria-live="polite"]');
+    expect(region).not.toBeNull();
+    expect(region!.getAttribute('role')).toBeNull();
+    h.push(mkStatus({ clients: 1 }));
+    expect(document.querySelector('[aria-live="polite"]')).toBe(region);
+    h.push(mkStatus({ clients: 0 }));
+    expect(document.querySelector('[aria-live="polite"]')).toBe(region);
+  });
+  it('still shows the chip on a push after a rejected status()', async () => {
+    let push: (s: RemoteStatus) => void = () => {};
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      remote: { status: vi.fn().mockRejectedValue(new Error('x')), onStatus: (cb: (s: RemoteStatus) => void) => { push = cb; return vi.fn(); } },
+    };
+    render(<RemoteChip />);
+    await act(async () => {});
+    expect(screen.queryByRole('button')).toBeNull();
+    act(() => push(mkStatus({ clients: 1 })));
+    expect(screen.getByRole('button')).toBeTruthy();
+  });
 });
