@@ -36,7 +36,10 @@ class FakeSocket {
 }
 
 function bodyOf(html: string): string {
-  return /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1].replace(/<script[^>]*><\/script>/g, '');
+  // Parse, then drop script elements from the tree: no regex tag filtering to get wrong.
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script').forEach((el) => el.remove());
+  return doc.body.innerHTML;
 }
 function msg(id: string, text: string, extra: Record<string, unknown> = {}) {
   return { k: 'msg', id, atMs: 1_700_000_000_000, role: 'claude', text, truncated: false, tools: [], ...extra };
