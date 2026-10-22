@@ -7,7 +7,7 @@ subordinate to this document.
 
 ## 1. The stance
 
-**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14).**
+**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14). The one deliberate inbound exception is the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16).**
 
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
@@ -18,7 +18,9 @@ externally-reachable listener — `electron/permissionServer.ts` does run a loca
 only, reachable only from this machine, with no port exposed externally. Loopback is reachable by
 every local process and by browser pages, so since 2026-10-04 every request and response is
 mutually authenticated with a per-launch HMAC secret held only in the user-only port file, which
-is deleted on quit (`electron/permissionAuth.ts`; see §3). The single-user constraint is not a smaller version of TokenMonitor's
+is deleted on quit (`electron/permissionAuth.ts`; see §3). The single exception is the opt-in remote chat view (§16): a read-only listener bound to the
+Tailscale interface address only, off at every launch, enabled through a native confirmation, and gated by a pairing code and a
+session cookie; it never binds a wildcard or LAN address. The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
 **Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
@@ -67,7 +69,11 @@ Bank these as removed from scope, permanently:
 - **No externally-reachable listener.** Collector ingest is a file spool, not a listener at all
   (§3); the one real local HTTP server in this app (`electron/permissionServer.ts`, for permission
   and notification hook brokering) is bound to `127.0.0.1` only, with no port exposed externally,
-  and authenticates both directions with a per-launch HMAC secret that never crosses the socket
+  and authenticates both directions with a per-launch HMAC secret that never crosses the socket.
+  **One deliberate, opt-in exception:** the read-only phone chat view (`electron/remote/`) listens on
+  the Tailscale interface address only (never `0.0.0.0`, `::` or a LAN address), is off at every
+  launch, needs a native confirmation to enable, and requires a pairing code and session cookie;
+  see §16
 
 Every one of those is an attack surface that now simply does not exist.
 
@@ -246,6 +252,7 @@ designed as such:
   files and directories to 0600/0700 (symlinked entries are skipped). If `~/.aether-os` itself is a
   symlink (or a junction on Windows), its real target is what gets secured. A failure is logged,
   not fatal.
+- `~/.aether-os/remote-sessions.json` holds the paired phones for the remote chat view: a SHA-256 hash and three timestamps per phone, nothing else (§16). It is auth configuration, so Settings → Purge leaves it; REVOKE ALL PHONES empties it.
 - The SQLite store is **not** encrypted, and the README should say so plainly rather than implying
   otherwise. Given §4, its contents are paths, names, timestamps and integers — the honest position
   is "here is exactly what is in it," not a security claim the implementation does not back.
@@ -702,3 +709,46 @@ No query results are persisted. Refresh runs locally and makes no model call.
 
 **Not verified by unit tests.** Chart visuals, and the MCP server running inside a packaged
 `app.asar` (a dev-build smoke test via Electron-as-node passed).
+
+---
+
+## 16. Remote read-only chat view over Tailscale — the one opt-in listener
+
+Added with the mobile remote-access feature (2026-10-21; plan `~/.claude/handoffs/aether-os/2026-10-21-mobile-remote-access-plan.md`, outside the repo). It lets a paired phone on the owner's own tailnet read the chat of the pinned Claude session. It is the single deliberate exception to "no externally-reachable listener" (§1, §2). Code: `electron/remote/`.
+
+**What is exposed.** Human prompts, Claude replies, agent-to-agent messages (dispatches, SendMessage posts, hand-backs, shown as traffic cards) and the **names** of the tools Claude called, for the one pinned Claude session. Never tool inputs, tool results, thinking blocks or file contents. No Codex session, no Terminal 2, no session picker and no subagent transcripts in v1.
+
+**Masking.** Every message body goes through `maskSecrets` and then the 4000-character cap, in `chatParser.ts`, before it is buffered and before it reaches the wire; no code path holds an unmasked copy. The masker is pattern-based and conservative ("obvious secrets", not a DLP), with the known limits listed at the top of `src/shared/board/text.ts` (doubly-stringified keys, a quoted value spanning a real newline, backtick-quoted values masked to the first word, secrets in shapes it has no rule for). Labels and titles (session title, traffic `from`/`to`/`subject`) are also path-shortened and capped at 60 characters. **Message bodies are masked and capped but not path-shortened**, so a path the agent wrote in a reply is visible to the phone.
+
+**Boundary.**
+- Tailnet only. The server binds to the Tailscale interface's IPv4 address (`100.64.0.0/10`, found by interface name containing "tailscale"), port 47821, via `findTailnetAddress()`; no host is configurable. `assertBindableHost` refuses anything else (it also accepts 127.0.0.0/8, for tests). If no tailnet address exists, enabling reports "unavailable" and nothing listens. It never falls back to `0.0.0.0`, `::` or a LAN address. The address is chosen at enable time and is not re-bound if it changes; toggle off and on.
+- **Off at every launch.** Whether it is enabled is never persisted. Enabling needs a native confirm dialog in the main process and a request from the trusted app window.
+- HTTP, not TLS, inside the WireGuard-encrypted tailnet. The session cookie is therefore not `Secure`; it is `HttpOnly; SameSite=Strict; Path=/` with a 30-day `Max-Age`.
+- Every request (404s and the WebSocket upgrade included) is checked against the bound address as `Host`; the pairing POST and the upgrade also require a matching `Origin`. Only `GET /pair`, `GET /assets/pair.js`, `GET /assets/app.css` and `POST /api/pair` are public; the chat page, `viewer.js` and `/ws` need a valid cookie. At most 3 live connections, a 1 KiB pairing body, 10 s request and header timeouts. Responses are `no-store` with a restrictive CSP.
+- The `ws` server is `noServer: true` and the protocol has no phone-to-server message: any inbound frame (1 KiB max) closes the socket. A client is also dropped for pinging faster than 20 per second (queued auto-pongs cannot grow server memory) and when its unsent backlog passes 1 MiB (slow-consumer close).
+
+**Auth model.**
+- A pairing code is 8 characters shown as `XXXX-XXXX`, held in memory only. It lives 60 minutes, works once, and is burned after 5 wrong attempts. It travels in the QR/URL fragment (`#c=`), which the browser does not send to the server, and is posted in a request body. A new code replaces the old one, and disabling clears it.
+- Redeeming issues a random 32-byte session token as a cookie; the server keeps only its SHA-256 hash. A session lasts 30 days absolute from pairing (not sliding), and at most 5 phones are kept: pairing a sixth drops the oldest. Revocation is re-checked on every open socket, so a revoked phone is disconnected right away on a desktop revoke.
+- Disabling the listener does **not** revoke paired phones; they work again after the next enable without re-pairing. Settings → Purge does **not** delete the sessions file (it is auth configuration, not collected data); REVOKE ALL PHONES is the control.
+
+**Exactly what is stored on disk.** One file, `~/.aether-os/remote-sessions.json`, shaped `{"v":1,"sessions":[{"hash","createdAtMs","expiresAtMs","lastSeenMs"}]}` and nothing else: `hash` is the SHA-256 of the cookie token. No token, no pairing code, no message text, no replay content, no user-agent, no IP address. Every read and write passes each entry through a field-by-field validator (64-hex hash, integer stamps) and caps the list at 20 entries, and a read ignores a file over 64 KB, so extra properties cannot reach disk. `lastSeenMs` is written at most every 5 minutes. The file lives in the user-only `~/.aether-os/` (§7) and is written atomically. A revoke or expiry removes that entry; REVOKE ALL PHONES keeps the file with an empty list.
+
+If a revoke cannot be saved, it still takes effect in memory at once, the status carries the fixed notice "Revoke not saved to disk yet", and the save is retried (up to 3 times, 5 s apart, and again before the next enable). At quit the app holds the quit open while the listener stops and the store flushes; if that times out, or a revoke is still unsaved, it writes a fixed `[diag]` line to `diag.log` (no content). A failed save is logged with a fixed string and never breaks authentication.
+
+**What is held only in memory.** A replay buffer of at most 64 KB (UTF-8 bytes of the JSON form) of already-masked chat events, so a phone that joins mid-session sees recent history. When access is enabled it is seeded from the last 512 KB of the pinned transcript (a file Claude Code wrote, not Aether) and then follows new lines. It is cleared on disable, quit, session switch and transcript truncation, and is never written anywhere. Pairing codes and the live client list are memory-only too.
+
+**Render, not store, on the phone.** The page builds its DOM with `textContent` only, keeps at most 200 bubbles, uses no storage APIs and no service worker, and is served `no-store`. It has no input element, so nothing is typed, resized or sent to the terminal.
+
+**Read-only, no model calls.** `electron/remote/` imports no pty code, never calls `kill` or writes to a pty, and its only disk write is the sessions file. It makes no model or API call. `electron/remote/noWildcardListener.test.ts` guards this mechanically: no wildcard bind literal in `electron/` or `scripts/`, the one `listen(` call with an explicit host after `assertBindableHost`, no pty or value `electron` imports, `fs` confined to the transcript reader and the sessions store, and chat events built only in `chatParser.ts`.
+
+**Visibility.** A top-bar chip shows while at least one phone is connected, and the Settings → REMOTE ACCESS card lists the paired phones (short reference and three timestamps only) with per-phone REVOKE and REVOKE ALL PHONES.
+
+**Limits, stated plainly.**
+- It works only while the machine is awake with Aether open; closing the main window quits the app and ends the phone view.
+- Any tailnet device that the tailnet ACLs let reach this machine's port 47821 can reach the pairing page; the pairing code or a paired cookie is what stops it. Anyone holding a valid code or cookie can read the chat. The ACLs belong to the owner.
+- A lost or stolen paired phone keeps read access until its 30-day expiry or a revoke from the desktop; there is no remote kill switch.
+- Masking is best effort (above). A secret in an unknown shape, or a path the agent wrote in a body, crosses the wire.
+- Treat it as R3-class: the chat can contain anything said in the session.
+
+**Not verified by unit tests.** Phone layout and legibility, the top-bar chip at narrow widths, Windows Firewall behaviour on first enable, how Chrome and Samsung Internet treat an `http://100.x` address, and a packaged-build run.
