@@ -93,6 +93,46 @@ describe('sessionStore', () => {
     await expect(s.save(null as never)).rejects.toThrow();
   });
 
+  it('save snapshots each field once: stateful getters and Proxies cannot leak', async () => {
+    const s = createSessionStore(file);
+    let h = 0;
+    let c = 0;
+    const getterHash = { ...mk('a'), get hash() { return ++h <= 2 ? H('a') : 'SECRET'; } };
+    const getterStamp = { ...mk('c'), get createdAtMs() { return ++c <= 2 ? 1000 : { toJSON: () => 'LEAK' }; } };
+    let reads = 0;
+    const proxy = new Proxy(mk('d'), {
+      get(t2, k) {
+        if (k === 'hash') return ++reads <= 2 ? H('d') : 'SECRET';
+        return (t2 as Record<string | symbol, unknown>)[k];
+      },
+    });
+    await s.save([getterHash, getterStamp, proxy, mk('b')] as never);
+    const raw = readFileSync(file, 'utf8');
+    expect(raw).not.toMatch(/SECRET|LEAK/);
+    for (const e of JSON.parse(raw).sessions) {
+      expect(e.hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(Object.keys(e).sort()).toEqual(['createdAtMs', 'expiresAtMs', 'hash', 'lastSeenMs']);
+    }
+  });
+
+  it('save rejects a non-array without touching list.map or the disk', async () => {
+    const s = createSessionStore(file);
+    const fake = { length: 1, 0: mk('a'), map: () => [{ evil: 1 }] };
+    await expect(s.save(fake as never)).rejects.toThrow(TypeError);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('save writes a snapshot: later mutation of the caller array is ignored', async () => {
+    const s = createSessionStore(file);
+    const list = [mk('a')];
+    const p = s.save(list);
+    list[0].hash = 'SECRET';
+    list.push(mk('b'));
+    await p;
+    expect(s.load()).toEqual([mk('a')]);
+    expect(readFileSync(file, 'utf8')).not.toContain('SECRET');
+  });
+
   it('save caps at 20 entries', async () => {
     const s = createSessionStore(file);
     await s.save(Array.from({ length: 25 }, (_, i) => ({ ...mk('a'), hash: String(i).padStart(64, '0') })));

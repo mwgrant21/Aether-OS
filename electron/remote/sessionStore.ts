@@ -14,21 +14,23 @@ const MAX_ENTRIES = 20;
 const HASH_RE = /^[0-9a-f]{64}$/;
 
 function isStamp(n: unknown): n is number {
-  return typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 }
 
+// Each field is read exactly once into a local and only the locals are
+// validated and returned, so a getter or Proxy that answers differently on a
+// later read cannot slip a value past the check.
 function pick(raw: unknown): StoredSession | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  if (typeof r.hash !== 'string' || !HASH_RE.test(r.hash)) return null;
-  if (!isStamp(r.createdAtMs) || !isStamp(r.expiresAtMs) || !isStamp(r.lastSeenMs)) return null;
-  if (r.expiresAtMs <= r.createdAtMs) return null;
-  return {
-    hash: r.hash,
-    createdAtMs: r.createdAtMs,
-    expiresAtMs: r.expiresAtMs,
-    lastSeenMs: r.lastSeenMs,
-  };
+  const hash = r.hash;
+  const created = r.createdAtMs;
+  const expires = r.expiresAtMs;
+  const lastSeen = r.lastSeenMs;
+  if (typeof hash !== 'string' || !HASH_RE.test(hash)) return null;
+  if (!isStamp(created) || !isStamp(expires) || !isStamp(lastSeen)) return null;
+  if (expires <= created) return null;
+  return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen };
 }
 
 export function createSessionStore(filePath: string): SessionStorePort {
@@ -55,13 +57,17 @@ export function createSessionStore(filePath: string): SessionStorePort {
     },
 
     save(list: StoredSession[]): Promise<void> {
-      const run = chain.then(() => {
-        const sessions = list
-          .map(pick)
-          .filter((x): x is StoredSession => x !== null)
-          .slice(0, MAX_ENTRIES);
-        return writeFileAtomically(filePath, JSON.stringify({ v: 1, sessions }));
-      });
+      if (!Array.isArray(list)) return Promise.reject(new TypeError('sessions must be an array'));
+      // Snapshot now: nothing the caller does to `list` after this call, and
+      // no getter it carries, can change what is written.
+      const sessions: StoredSession[] = [];
+      for (const item of list) {
+        const s = pick(item);
+        if (s) sessions.push(s);
+        if (sessions.length >= MAX_ENTRIES) break;
+      }
+      const body = JSON.stringify({ v: 1, sessions });
+      const run = chain.then(() => writeFileAtomically(filePath, body));
       chain = run.catch(() => undefined);
       return run;
     },
