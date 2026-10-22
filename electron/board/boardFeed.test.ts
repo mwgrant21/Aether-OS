@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { buildBoardFeed, listBoardSessions, type BoardFeedDeps } from './boardFeed';
+import { buildBoardFeed, listBoardSessions, shortenPaths, type BoardFeedDeps } from './boardFeed';
 import type { BoardFeed, BoardPost } from '../../src/shared/board/types';
 
 const ROOT = path.join(__dirname, '__fixtures__', 'projects');
@@ -401,5 +401,13 @@ describe('listBoardSessions', () => {
     fs.writeFileSync(path.join(root, 'proj-beta', 'empty.jsonl'), '');
     const list = await listBoardSessions(root, deps, { maxAgeMs: Infinity });
     expect(list.map((s) => s.sessionId).sort()).toEqual(['sess-1', 'sess-2']);
+  });
+});
+
+describe('shortenPaths (exported for the remote chat parser)', () => {
+  it('shortens an absolute path to its last segment', () => {
+    const out = shortenPaths('see C:\\Users\\Matt\\proj\\a.ts, ok');
+    expect(out).toBe('see a.ts, ok');
+    expect(out).not.toMatch(/[A-Za-z]:[\\/]/);
   });
 });

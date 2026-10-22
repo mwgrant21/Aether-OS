@@ -23,7 +23,7 @@ import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
 import { readMemories, readMemoryTombstones } from './memoryStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
 import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
-import { listTranscriptSources, readTranscript, resolveSourcePath } from './transcriptReader';
+import { isSafeSegment, listTranscriptSources, readTranscript, resolveSourcePath } from './transcriptReader';
 import { cwdToProjectDirName } from '../src/state/projectDirName';
 import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
 import { writeOwnSessionFile, readOwnSessionId, ownSessionFilePath } from './ownSessionFile';
@@ -95,6 +95,10 @@ import { assertCrossEngineFeatureEnabled, assertNoActiveVerificationRun } from '
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
 import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegration';
 import { registerCommunicationIpc } from './communicationBridge/ipc';
+import { createRemoteHub } from './remote/remoteHub';
+import { createSessionStore } from './remote/sessionStore';
+import { registerRemoteIpc } from './remote/remoteIpc';
+import type { PairingResult, RemoteStatus } from '../src/shared/remote/types';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -689,7 +693,27 @@ const handleTickCompletions = createTickCompletionHandler({
   },
 });
 // First quit is held once (bounded to 500 ms) so a baseline write in flight lands.
-const baselineQuitGate = createFlushQuitGate(() => narrationDurationBaseline.flush(), () => app.quit(), 500);
+// The remote hub (declared further down) stops inside the same held quit: listener closed, replay
+// buffer cleared and the paired-session store flushed before exit. A failed flush leaves the hub's
+// notice set, which is logged below as a fixed string. Bounded like the baseline write: if the stop has
+// not finished when the bound elapses the quit proceeds and the timeout is logged instead.
+// remoteQuitting turns the hub's mutators into no-ops once the stop has begun (a stopped hub is single-use).
+let remoteQuitting = false;
+let remoteStopped = false;
+const baselineQuitGate = createFlushQuitGate(async () => {
+  remoteQuitting = true;
+  await Promise.allSettled([
+    narrationDurationBaseline.flush(),
+    // A failed ACL setup means the hub never loaded the store; do not let stop() read it at quit either.
+    (remoteDirFailed ? Promise.resolve() : remoteHub.stop()).then(() => {
+      remoteStopped = true;
+      if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
+    }),
+  ]);
+}, () => {
+  if (remoteQuitting && !remoteStopped) diagLog.write(`[diag] remote session store flush timed out at quit at=${new Date().toISOString()}`);
+  app.quit();
+}, 1500);
 let lastStallCheckMs = 0;
 // "The owning session has ended" on the live path = the pinned pty exited.
 let pinnedPtyExited = false;
@@ -861,8 +885,10 @@ app.whenReady().then(async () => {
   // Grants someone else added are kept and logged, never stripped.
   // Not awaited here; the permission-server port file (which holds a secret)
   // awaits it below, after the window is up. The chain never rejects.
+  let privateDirOk = false; // remote access gate: stays false if the ACL could not be applied
   const privateDirReady = ensurePrivateDir(aetherOsDir)
     .then(({ changed, extras }) => {
+      privateDirOk = true;
       diagLog.write(`[diag] private-dir changed=${changed} extras=${extras.length} at=${new Date().toISOString()}`);
       for (const e of extras) {
         diagLog.write(
@@ -875,6 +901,20 @@ app.whenReady().then(async () => {
         `[diag] private-dir failed: ${err instanceof Error ? err.message : String(err)} at=${new Date().toISOString()}`
       );
     });
+  // The paired-session store lives in this directory: load it, and let the renderer's
+  // mutating remote commands run, only once the user-only ACL has been applied.
+  // If the ACL failed, remote stays unavailable for this run: the store is never loaded and the
+  // renderer's remote commands report unavailable (a local user could otherwise plant a session hash).
+  void privateDirReady.then(() => {
+    remoteDirReady = privateDirOk;
+    remoteDirFailed = !privateDirOk;
+    if (privateDirOk) {
+      remoteHub.init();
+      // A Settings card mounted before this point holds the pre-init status; give it the real one.
+      sendToWindow('remote:statusChanged', remoteHub.status());
+    }
+    resolveRemotePrivateDir();
+  });
 
   Menu.setApplicationMenu(null);
   createWindow();
@@ -1433,6 +1473,52 @@ ipcMain.handle('attachments:open', (_event, name: string) => attachmentsStore.op
 // tempted to add a `transcript:snapshot` push channel or a `useTranscriptSync` hook,
 // don't -- read that section first.
 const transcriptSessionDir = join(os.homedir(), '.claude', 'projects', cwdToProjectDirName(os.homedir()));
+
+// Mobile remote access (read-only chat view over Tailscale). Created once at app start and
+// stopped only at quit: a stopped hub never restarts. Off at every launch; enabling needs the
+// native dialog below. Nothing here touches a pty.
+let resolveRemotePrivateDir: () => void = () => {};
+const remotePrivateDir = new Promise<void>(resolve => { resolveRemotePrivateDir = resolve; });
+let remoteDirReady = false;
+let remoteDirFailed = false; // true only after the ACL setup actually failed (not while it is pending)
+const remoteHub = createRemoteHub({
+  resolveSession: () => {
+    const id = liveAgentTracker.getPinnedSessionId();
+    return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
+  },
+  store: createSessionStore(join(aetherOsDir, 'remote-sessions.json')),
+  onStatus: s => sendToWindow('remote:statusChanged', s),
+  log: l => diagLog.write(l),
+});
+// Commands that can write the session store wait for the private-dir ACL first, and init (which loads
+// the store) does nothing until it is applied. Once the quit gate has begun stopping the hub every
+// mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
+// Commands await the gate, so after it they see ready or failed. Status reports unavailable only once the
+// ACL setup has actually failed; while it is pending it is the hub's own (off) status.
+const remoteStatusOrUnavailable = (): RemoteStatus => !remoteDirFailed
+  ? remoteHub.status()
+  : { ...remoteHub.status(), state: 'unavailable', reason: 'error', address: null, clients: 0 };
+const remoteHubForIpc = {
+  init: () => { if (remoteDirReady) remoteHub.init(); },
+  status: () => remoteStatusOrUnavailable(),
+  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.setEnabled(on); },
+  createPairing: async (): Promise<PairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : remoteHub.createPairing(); },
+  revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeAll(); },
+  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeOne(ref); },
+};
+registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
+  && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+  && event.senderFrame === mainWindow.webContents.mainFrame,
+  async () => (await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Allow phone access?',
+    message: 'Let your phone read your Claude chat over Tailscale?',
+    detail: "Read-only. A paired phone sees your prompts, Claude's replies, agent messages and tool names from the pinned Claude session, with obvious secrets masked (masking is pattern-based and not perfect).\n\n"
+      + 'It is reachable by any device on your tailnet that holds a pairing code or an already-paired phone. Paired phones stay paired across restarts until they expire or you revoke them. Access itself turns off when Aether restarts.',
+    buttons: ['Cancel', 'Allow read-only access'],
+    defaultId: 0,
+    cancelId: 0,
+  })).response === 1);
 
 ipcMain.handle('transcript:sources', () =>
   listTranscriptSources(transcriptSessionDir, liveAgentTracker.getPinnedSessionId())
