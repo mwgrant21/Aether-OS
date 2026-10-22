@@ -30,7 +30,8 @@ export interface RemoteAuth extends RemoteAuthGate {
   revokeAll(): void;
   revokeOne(ref: string): boolean;
   counts(): { sessions: number; pairingActive: boolean };
-  flush(): Promise<void>;
+  /** Resolves true when everything is on disk, false when a save failed. Never rejects. */
+  flush(): Promise<boolean>;
 }
 
 function sha256Hex(s: string): string {
@@ -103,14 +104,23 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     const snapshot = sessions.map(s => ({
       hash: s.hash, createdAtMs: s.createdAtMs, expiresAtMs: s.expiresAtMs, lastSeenMs: s.lastSeenMs,
     }));
-    for (const s of snapshot) persistedLastSeen.set(s.hash, s.lastSeenMs);
     let p: Promise<void>;
     try {
       p = Promise.resolve(store!.save(snapshot));
     } catch (e) {
       p = Promise.reject(e);
     }
-    const tracked: Promise<void> = p.catch(() => { /* swallowed: auth keeps working */ }).then(() => {
+    let ok = true;
+    const tracked: Promise<void> = p.then(
+      () => { for (const s of snapshot) persistedLastSeen.set(s.hash, s.lastSeenMs); },
+      () => { ok = false; /* swallowed: auth keeps working */ },
+    ).then(() => {
+      if (!ok) {
+        // Stay dirty so the next persist() or flush() retries; no retry loop here.
+        dirty = true;
+        inFlight = null;
+        return undefined;
+      }
       if (dirty) return runSave();
       inFlight = null;
       return undefined;
@@ -136,7 +146,9 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     const t = now();
     sessions = loaded
       .filter(isValidStored)
-      .filter(s => s.expiresAtMs > t)
+      .filter(s => s.expiresAtMs > t && s.expiresAtMs > s.createdAtMs)
+      .sort((a, b) => b.createdAtMs - a.createdAtMs)
+      .slice(0, maxSessions)
       .map(s => ({ hash: s.hash, createdAtMs: s.createdAtMs, expiresAtMs: s.expiresAtMs, lastSeenMs: s.lastSeenMs }));
     for (const s of sessions) persistedLastSeen.set(s.hash, s.lastSeenMs);
   }
@@ -195,7 +207,8 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       sessions.push({ hash: sha256Hex(token), createdAtMs: t, expiresAtMs: t + ttlMs, lastSeenMs: t });
       while (sessions.length > maxSessions) {
         let oldest = 0;
-        for (let i = 1; i < sessions.length; i++) {
+        // The entry just issued is last and is never the eviction candidate.
+        for (let i = 1; i < sessions.length - 1; i++) {
           if (sessions[i].createdAtMs < sessions[oldest].createdAtMs) oldest = i;
         }
         removeSession(sessions[oldest].hash);
@@ -265,9 +278,10 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     },
 
     async flush() {
-      if (!store) return;
+      if (!store) return true;
       if (!inFlight && dirty) void runSave();
       while (inFlight) await inFlight;
+      return !dirty;
     },
   };
 }

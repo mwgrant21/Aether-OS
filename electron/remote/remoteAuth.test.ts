@@ -292,6 +292,32 @@ describe('sessions and cookie', () => {
     expect(auth.counts().sessions).toBe(1);
   });
 
+  it('load applies maxSessions: 20 valid entries load as the newest 5', () => {
+    const t = 1_000_000;
+    const list = Array.from({ length: 20 }, (_, i) => ({
+      hash: i.toString(16).padStart(64, '0'), createdAtMs: t - 1000 + i, expiresAtMs: t + 1000, lastSeenMs: t - 1000 + i,
+    }));
+    const { auth } = setup({ store: fakeStore(list) });
+    const got = auth.list();
+    expect(got).toHaveLength(5);
+    expect(got.map(g => g.createdAtMs)).toEqual([19, 18, 17, 16, 15].map(i => t - 1000 + i));
+  });
+
+  it('load drops entries whose expiresAtMs <= createdAtMs', () => {
+    const t = 1_000_000;
+    const store = fakeStore([{ hash: 'a'.repeat(64), createdAtMs: t + 500, expiresAtMs: t + 100, lastSeenMs: t }]);
+    expect(setup({ store }).auth.list()).toEqual([]);
+  });
+
+  it('eviction never removes the session just issued when the clock steps back', () => {
+    const { auth, clock } = setup();
+    for (let i = 0; i < 5; i++) { pairOne(auth); clock.advance(1000); }
+    clock.advance(-100_000);
+    const cookie = pairOne(auth);
+    expect(auth.counts().sessions).toBe(5);
+    expect(auth.isAuthenticated(cookie)).toBe(true);
+  });
+
   it('a throwing load yields an empty auth', () => {
     const store = fakeStore();
     store.load = () => { throw new Error('boom'); };
@@ -311,7 +337,7 @@ describe('persistence discipline', () => {
     const r = auth.redeem(code);
     expect(r.ok).toBe(true);
     expect(onChange).toHaveBeenCalled();
-    await expect(auth.flush()).resolves.toBeUndefined();
+    await expect(auth.flush()).resolves.toBe(false);
     expect(auth.isAuthenticated(r.ok ? r.cookie.split(';')[0] : '')).toBe(true);
   });
 
@@ -320,7 +346,44 @@ describe('persistence discipline', () => {
     store.save = () => { throw new Error('sync boom'); };
     const { auth } = setup({ store });
     expect(() => pairOne(auth)).not.toThrow();
-    await expect(auth.flush()).resolves.toBeUndefined();
+    await expect(auth.flush()).resolves.toBe(false);
+  });
+
+  it('retries a failed revoke save on the next persist so the disk never keeps the revoked hash', async () => {
+    const store = fakeStore();
+    const { auth, clock } = setup({ store });
+    const c1 = pairOne(auth);
+    clock.advance(1000);
+    pairOne(auth);
+    expect(await auth.flush()).toBe(true);
+    const revoked = auth.list()[1];
+    const realSave = store.save;
+    store.save = async () => { throw new Error('disk full'); };
+    expect(auth.revokeOne(revoked.ref)).toBe(true);
+    expect(await auth.flush()).toBe(false);
+    expect(store.current.some(x => x.hash.startsWith(revoked.ref))).toBe(true);
+    store.save = realSave;
+    expect(await auth.flush()).toBe(true);
+    expect(store.current.some(x => x.hash.startsWith(revoked.ref))).toBe(false);
+    expect(auth.isAuthenticated(c1)).toBe(false);
+    const b = createRemoteAuth({ now: clock.now, store });
+    expect(b.isAuthenticated(c1)).toBe(false);
+  });
+
+  it('retries on the next change even without flush', async () => {
+    const store = fakeStore();
+    const { auth, clock } = setup({ store });
+    pairOne(auth);
+    await auth.flush();
+    const realSave = store.save;
+    store.save = async () => { throw new Error('x'); };
+    auth.revokeAll();
+    await auth.flush();
+    store.save = realSave;
+    clock.advance(1000);
+    pairOne(auth);
+    await auth.flush();
+    expect(store.current).toHaveLength(1);
   });
 
   it('throttles lastSeen persistence to 5 minute steps', async () => {
