@@ -32,12 +32,16 @@ const PING_MS = 25_000
 const PONG_TIMEOUT_MS = 60_000
 const RECHECK_MS = 30_000
 const SLOW_CONSUMER_BYTES = 1024 * 1024
+const PING_WINDOW_MS = 1000
+const MAX_PINGS_PER_WINDOW = 20
 const ADDRESS_RE = /^[0-9A-Za-z.:[\]-]+$/
 
 interface Client {
   ws: WebSocket
   cookie: string | undefined
   lastPong: number
+  pingWindowStart: number
+  pingCount: number
   leave: () => void
   closed: boolean
 }
@@ -189,10 +193,28 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
   }
 
   function attach(ws: WebSocket, cookie: string | undefined): void {
-    const c: Client = { ws, cookie, lastPong: Date.now(), leave: () => {}, closed: false }
+    const c: Client = { ws, cookie, lastPong: Date.now(), pingWindowStart: 0, pingCount: 0, leave: () => {}, closed: false }
     clients.add(c)
     ws.on('pong', () => {
       c.lastPong = Date.now()
+    })
+    // ws auto-pongs every ping into its send queue; a client that floods pings without reading
+    // would grow server memory, so cap the rate and the queued bytes here.
+    ws.on('ping', () => {
+      if (c.closed || ws.readyState !== 1) return
+      const now = Date.now()
+      if (now - c.pingWindowStart >= PING_WINDOW_MS) {
+        c.pingWindowStart = now
+        c.pingCount = 0
+      }
+      if (++c.pingCount > MAX_PINGS_PER_WINDOW) {
+        ws.close(1008)
+        const t = setTimeout(() => ws.terminate(), 1000)
+        t.unref()
+        ws.once('close', () => clearTimeout(t))
+        return
+      }
+      if (ws.bufferedAmount > SLOW_CONSUMER_BYTES) bye(c, 'slow-consumer')
     })
     // The protocol has no client-to-server message: any frame closes the socket.
     ws.on('message', () => {
@@ -224,6 +246,7 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
     const now = Date.now()
     for (const c of [...clients]) {
       if (now - c.lastPong > PONG_TIMEOUT_MS) c.ws.terminate()
+      else if (c.ws.bufferedAmount > SLOW_CONSUMER_BYTES) bye(c, 'slow-consumer')
       else if (c.ws.readyState === 1) c.ws.ping()
     }
   }, PING_MS)

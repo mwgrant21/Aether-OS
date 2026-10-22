@@ -415,6 +415,34 @@ describe('websocket', () => {
     await until(() => h.clients() === 0)
   })
 
+  it('closes 1008 promptly on a ping flood from a client that never reads', async () => {
+    const { h } = await boot()
+    const c = wsOpen(h, goodHeaders(h))
+    await c.opened
+    ;(c.ws as unknown as { _socket: net.Socket })._socket.pause()
+    const rss0 = process.memoryUsage().rss
+    const t0 = Date.now()
+    for (let i = 0; i < 200 && h.clients() > 0; i++) {
+      for (let j = 0; j < 500; j++) c.ws.ping()
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    await until(() => h.clients() === 0)
+    const ms = Date.now() - t0
+    const rssMb = Math.round((process.memoryUsage().rss - rss0) / 1048576)
+    console.info(`ping flood closed in ${ms} ms, rss delta ${rssMb} MB (client and server share this process)`)
+    expect(ms).toBeLessThan(2000)
+  })
+
+  it('allows a normal ping rate', async () => {
+    const { h } = await boot()
+    const c = wsOpen(h, goodHeaders(h))
+    await c.opened
+    for (let i = 0; i < 15; i++) c.ws.ping()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(h.clients()).toBe(1)
+    c.ws.close()
+  })
+
   it('logs fixed strings only', async () => {
     const lines: string[] = []
     const { h } = await boot({ log: (l) => lines.push(l) })
