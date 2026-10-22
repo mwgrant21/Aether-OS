@@ -351,7 +351,7 @@ describe('websocket', () => {
     h.recheckAuth()
     await c.closed
     expect(c.msgs.at(-1)).toEqual({ t: 'bye', reason: 'revoked' })
-    expect(h.clients()).toBe(0)
+    await until(() => h.clients() === 0) // the server drops the client in its own close handler, which can run after the client's
   })
 
   it('re-validates every 30 s so a mid-connection expiry closes the socket', async () => {
