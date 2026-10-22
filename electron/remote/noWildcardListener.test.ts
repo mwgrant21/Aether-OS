@@ -1,10 +1,22 @@
 // @vitest-environment node
 // electron/remote/noWildcardListener.test.ts
 //
-// Source-scan guard for the remote read-only chat view (docs/privacy-and-data.md §16).
+// AST guard for the remote read-only chat view (docs/privacy-and-data.md §16).
 // It fails if the tree gains a wildcard bind, a second listener in electron/remote, a pty
 // or electron value import there, a file write outside the session store, or a chat event
 // built anywhere but chatParser.ts (the only place that masks before constructing).
+//
+// The files are parsed with the TypeScript compiler API (syntax only, no Program or TypeChecker),
+// so comments and string contents are never read as code, which is what defeated two regex
+// versions of this guard. Tracking is name-based and scope-insensitive: it can over-count a
+// shadowing local (a false reject) but every escape of a tracked name is itself a violation.
+// It is a guard against drift and mistakes, not a sandbox: transitive imports, dynamic-key
+// calls (x[k]()) and listen() reached through a computed key are out of reach.
+//
+// Equivalence with the regex guard it replaces (be0b260) is a corpus claim, not a proof over all
+// inputs: replayed over noWildcardListener.corpus.json, every row be0b260 rejected is still
+// rejected except 19 rows tagged `relaxation`, each an intended loosening and nothing else
+// (comment 5, string 1, syntax 2, tolerance 11); 68 further rows record holes the regexes missed.
 //
 // Scaffolding (ROOTS / SKIP_DIR_NAMES / walk) is modelled on src/shared/noApiCalls.test.ts.
 // Paths resolve from this file, not the cwd, so a wrong cwd cannot make the scan vacuous.
@@ -51,31 +63,58 @@ const remoteSet = new Set(remoteFiles);
 const nameOf = (f: string): string => posixRel(f).slice('electron/remote/'.length);
 const remoteByName = new Map(remoteFiles.map((f) => [nameOf(f), f]));
 
-/** Module specifiers of import/export-from/require/dynamic import, with a type-only flag. */
-function importsOf(text: string): { spec: string; typeOnly: boolean }[] {
-  const out: { spec: string; typeOnly: boolean }[] = [];
-  for (const m of text.matchAll(/^\s*(?:import|export)\s+(type\s+)?[^;]*?from\s+['"]([^'"]+)['"]/gm)) {
-    out.push({ spec: m[2], typeOnly: !!m[1] });
-  }
-  for (const m of text.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gm)) out.push({ spec: m[1], typeOnly: false });
-  for (const m of text.matchAll(/\b(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) {
-    out.push({ spec: m[1], typeOnly: false });
-  }
-  return out;
-}
-
-const FS_SPEC = /^(?:node:)?fs(?:\/promises)?$/;
-
-// The only .listen( calls that exist outside electron/remote. Matched by exact call-site text.
-// Keyed by file; the value is the call text after the receiver (a chained or newline-split receiver cannot dodge it).
-const LISTEN_ALLOWLIST: ReadonlyMap<string, string> = new Map([
-  ['electron/permissionServer.ts', "listen(options.port, '127.0.0.1')"],
-  ['electron/communicationBridge/pipeServer.ts', 'listen(endpoint,'],
+// The only .listen( calls that exist outside electron/remote, matched on the whitespace-normalised
+// argument texts of the AST call (a chained or newline-split receiver cannot dodge it).
+const LISTEN_ALLOWLIST: ReadonlyMap<string, (args: readonly string[]) => boolean> = new Map([
+  ['electron/permissionServer.ts', (a: readonly string[]) => a.length === 2 && a[0] === 'options.port' && a[1] === "'127.0.0.1'"],
+  ['electron/communicationBridge/pipeServer.ts', (a: readonly string[]) => a.length >= 2 && a[0] === 'endpoint'],
   // RISKS in the mobile remote-access plan: isPortAvailable() binds all interfaces for an instant
   // (permission-server port probe). Pre-existing; the one-line fix (probe.listen(port, '127.0.0.1'))
   // is its own ticket, so main.ts is allow-listed here rather than changed.
-  ['electron/main.ts', 'listen(port)'],
+  ['electron/main.ts', (a: readonly string[]) => a.length === 1 && a[0] === 'port'],
 ]);
+
+// Which engine rules each test below reports. The last test checks the union is every Rule, so no
+// violation can be produced that no test surfaces.
+const RULES_SCOPE: readonly Rule[] = ['syntax'];
+const RULES_WILDCARD: readonly Rule[] = ['wildcard'];
+const RULES_LISTEN: readonly Rule[] = ['listen'];
+const RULES_WS: readonly Rule[] = ['ws'];
+const RULES_PTY: readonly Rule[] = ['pty', 'module'];
+const RULES_WRITE: readonly Rule[] = ['write', 'escape'];
+const RULES_FS: readonly Rule[] = ['fs'];
+const RULES_PERSIST: readonly Rule[] = ['persist'];
+const RULES_CHAT: readonly Rule[] = ['chat-event'];
+const ALL_RULES: Readonly<Record<Rule, true>> = {
+  syntax: true, module: true, fs: true, ws: true, listen: true, wildcard: true, pty: true, write: true, persist: true, 'chat-event': true, escape: true,
+};
+
+let analysisCache: Map<string, RemoteAnalysis> | null = null;
+/** Engine result for every electron/remote file (parsed once, on first use). */
+function remoteAnalyses(): Map<string, RemoteAnalysis> {
+  if (!analysisCache) analysisCache = new Map(remoteFiles.map((f) => [nameOf(f), analyzeRemote(nameOf(f), read(f))]));
+  return analysisCache;
+}
+/** `file: [rule] message` for every violation of the given rules, across all remote files. */
+function remoteViolations(rules: readonly Rule[], only?: string): string[] {
+  const out: string[] = [];
+  for (const [name, a] of remoteAnalyses()) {
+    if (only !== undefined && name !== only) continue;
+    for (const x of a.violations) if (rules.includes(x.rule)) out.push(`${name}: [${x.rule}] ${x.msg}`);
+  }
+  return out;
+}
+const filesWhere = (pred: (a: RemoteAnalysis) => boolean): string[] => [...remoteAnalyses()].filter(([, a]) => pred(a)).map(([n]) => n).sort();
+
+/** Every file under electron/remote (any extension), so an extension the scan does not parse cannot hide code. */
+function listRemote(dir: string, out: string[]): void {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIR_NAMES.has(entry.name)) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) listRemote(full, out);
+    else if (entry.isFile()) out.push(posixRel(full).slice('electron/remote/'.length));
+  }
+}
 
 describe('remote access: no wildcard listener', () => {
   it('scan scope is real (no vacuous pass from a wrong cwd)', () => {
@@ -84,69 +123,51 @@ describe('remote access: no wildcard listener', () => {
     for (const name of ['remoteServer.ts', 'chatFeed.ts', 'sessionStore.ts']) {
       expect(remoteByName.has(name), 'missing from scan: ' + name).toBe(true);
     }
+    // A file the scan does not parse cannot be proven safe: .cjs/.mts/.cts/.tsx/.jsx are failures, .json/.md are not code.
+    const all: string[] = [];
+    listRemote(path.join(REPO, 'electron/remote'), all);
+    expect(all.filter((n) => /\.(?:cjs|mts|cts|tsx|jsx)$/.test(n))).toEqual([]);
+    expect(remoteViolations(RULES_SCOPE)).toEqual([]);
   });
 
   it('no non-test source under electron/ or scripts/ contains a wildcard bind literal', () => {
     const offenders = allFiles
-      .filter((f) => /(['"`])(?:0\.0\.0\.0|::)\1/.test(read(f)))
+      .filter((f) => !remoteSet.has(f) && analyzeOutside(posixRel(f), read(f)).wildcard.length > 0)
       .map(posixRel);
     expect(offenders).toEqual([]);
+    expect(remoteViolations(RULES_WILDCARD)).toEqual([]);
   });
 
   it('electron/remote has exactly one listen(), in remoteServer.ts, with an explicit host, after assertBindableHost', () => {
-    const calls: { file: string; text: string; at: number }[] = [];
-    for (const f of remoteFiles) {
-      const text = read(f);
-      for (const m of text.matchAll(/\.listen\s*\(/g)) {
-        calls.push({ file: nameOf(f), text: text.slice(m.index!), at: m.index! });
-      }
-    }
-    expect(calls.map((c) => c.file)).toEqual(['remoteServer.ts']);
-    const call = calls[0];
-    // listen(port, host, ...): at least two arguments before any closing paren.
-    expect(call.text, 'listen() must pass an explicit host').toMatch(/^\.listen\s*\(\s*[^,()]+,\s*[^,()\s][^,()]*[,)]/);
-    // ...and that host is the one assertBindableHost checked.
-    expect(call.text, 'listen() must bind opts.host').toMatch(/^\.listen\s*\(\s*opts\.port\s*,\s*opts\.host\b/);
-    const src = read(remoteByName.get('remoteServer.ts')!);
-    const guardAt = src.search(/\bassertBindableHost\s*\(/);
-    expect(guardAt, 'assertBindableHost is not called').toBeGreaterThanOrEqual(0);
-    expect(guardAt).toBeLessThan(call.at);
+    // The per-file rule enforces `listen(opts.port, opts.host, ...)` and the assertBindableHost() call order.
+    expect(remoteViolations(RULES_LISTEN)).toEqual([]);
+    expect(filesWhere((x) => x.facts.listenCount > 0)).toEqual(['remoteServer.ts']);
+    expect(remoteAnalyses().get('remoteServer.ts')?.facts.listenCount).toBe(1);
   });
 
   it("only remoteServer.ts imports 'ws' under electron/remote", () => {
-    const importers = remoteFiles
-      .filter((f) => importsOf(read(f)).some((i) => i.spec === 'ws'))
-      .map(nameOf);
-    expect(importers).toEqual(['remoteServer.ts']);
-    // No renamed import: an alias (import { WebSocketServer as WSS }) would dodge the ...Server( matcher below.
-    const clause = read(remoteByName.get('remoteServer.ts')!).match(/import\s+[^;]*?from\s+['"]ws['"]/);
-    expect(clause, "remoteServer.ts must import 'ws'").not.toBeNull();
-    expect(clause![0], "no aliased import from 'ws'").not.toMatch(/\bas\b/);
+    expect(filesWhere((a) => a.facts.wsRef)).toEqual(['remoteServer.ts']);
+    // No renamed import (import { WebSocketServer as WSS }) and no other shape: the ws rule rejects them.
+    expect(remoteViolations(RULES_WS)).toEqual([]);
   });
 
-  // Matches new WebSocketServer(, new WS.Server(, new WS.WebSocketServer(, new Server(, and any alias
-  // ending in Server, so the legacy and aliased constructors cannot dodge the noServer rule.
+  // The ws rule also rejects any other `new ...Server(` (new WS.Server, new http.Server), a second
+  // construction, and any alias or indirect use of the WebSocketServer binding.
   it('every ...Server( construction in remoteServer.ts is noServer: true', () => {
-    const text = read(remoteByName.get('remoteServer.ts')!);
-    let seen = 0;
-    for (const m of text.matchAll(/\bnew\s+[\w$.]*Server\s*\(([\s\S]*?)\)/g)) {
-      seen++;
-      expect(m[1], 'a ws server must be noServer: ' + m[0].slice(0, 40)).toMatch(/noServer\s*:\s*true/);
-    }
-    expect(seen).toBeGreaterThan(0);
+    expect(remoteAnalyses().get('remoteServer.ts')?.facts.wsConstructions).toBe(1);
+    expect(remoteViolations(RULES_WS, 'remoteServer.ts')).toEqual([]);
   });
 
   it('every listen() elsewhere under electron/ and scripts/ is on the reviewed allow-list, and no entry is stale', () => {
     const offenders: string[] = [];
     const used = new Set<string>();
     for (const f of allFiles) {
-      const rel = posixRel(f);
       if (remoteSet.has(f)) continue;
-      const text = read(f);
-      for (const m of text.matchAll(/\.listen\s*\(/g)) {
-        const allowed = LISTEN_ALLOWLIST.get(rel);
-        if (allowed && text.slice(m.index! + 1).startsWith(allowed)) used.add(rel);
-        else offenders.push(rel + ': ' + text.slice(m.index!, m.index! + 60).split('\n')[0]);
+      const rel = posixRel(f);
+      const allowed = LISTEN_ALLOWLIST.get(rel);
+      for (const args of analyzeOutside(rel, read(f)).listens) {
+        if (allowed?.(args)) used.add(rel);
+        else offenders.push(`${rel}: listen(${args.join(', ')})`);
       }
     }
     expect(offenders).toEqual([]);
@@ -156,78 +177,45 @@ describe('remote access: no wildcard listener', () => {
 
 describe('remote access: read-only, no pty', () => {
   it('electron/remote sources import no pty module and no electron value', () => {
-    const offenders: string[] = [];
-    for (const f of remoteFiles) {
-      for (const i of importsOf(read(f))) {
-        if (/ptyLifecycle|ptyManager|codexPtyManager|node-pty/.test(i.spec)) offenders.push(`${nameOf(f)}: ${i.spec}`);
-        // A type-only import is erased at build time; remoteIpc.ts imports IpcMain types this way.
-        if (i.spec === 'electron' && !i.typeOnly) offenders.push(`${nameOf(f)}: value import of electron`);
-      }
-    }
-    expect(offenders).toEqual([]);
+    // Also rejects child_process in any form. A type-only `import type { ... } from 'electron'` is erased and allowed.
+    expect(remoteViolations(RULES_PTY)).toEqual([]);
   });
 
   it('electron/remote never writes to a pty, kills a process, or .write()s anything but a response/socket', () => {
-    const offenders: string[] = [];
-    const ALLOWED_RECEIVER = /^(?:res|socket|ws|client)$/;
-    for (const f of remoteFiles) {
-      const text = read(f);
-      const name = nameOf(f);
-      if (/pty:write/.test(text)) offenders.push(name + ': pty:write');
-      if (/\.kill\s*\(/.test(text)) offenders.push(name + ': .kill(');
-      for (const m of text.matchAll(/([\w$]+)\s*\.write\s*\(/g)) {
-        if (!ALLOWED_RECEIVER.test(m[1])) offenders.push(`${name}: ${m[0]}`);
-      }
-    }
-    expect(offenders).toEqual([]);
+    expect(remoteViolations(RULES_WRITE)).toEqual([]);
   });
 });
 
 describe('remote access: nothing persisted but the session store', () => {
   it('node:fs is imported only by chatFeed.ts and sessionStore.ts', () => {
-    const importers = remoteFiles
-      .filter((f) => importsOf(read(f)).some((i) => FS_SPEC.test(i.spec)))
-      .map((f) => nameOf(f))
-      .sort();
-    expect(importers).toEqual(['chatFeed.ts', 'sessionStore.ts']);
+    expect(filesWhere((a) => a.facts.fsRef)).toEqual(['chatFeed.ts', 'sessionStore.ts']);
   });
 
   // Allow-list, not deny-list: copyFile, truncate, any write*Sync and every fs name not listed fails.
   it('chatFeed.ts uses only read-only fs names (promises.open and promises.stat)', () => {
-    const text = read(remoteByName.get('chatFeed.ts')!);
-    const imported = [...text.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"](?:node:)?fs(?:\/promises)?['"]/g)]
-      .flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean));
-    expect(imported).toEqual(['promises']);
-    expect(text, 'default/namespace fs import').not.toMatch(/import\s+(?:\*\s+as\s+\w+|\w+)\s*(?:,\s*\{[^}]*\})?\s*from\s*['"](?:node:)?fs/);
-    const used = new Set([...text.matchAll(/\bfsp\.(\w+)/g)].map((m) => m[1]));
-    expect([...used].sort()).toEqual(['open', 'stat']);
-    expect(text).not.toMatch(/writeFile|appendFile|createWriteStream|rename|unlink|mkdir|\.rm\s*\(|\.truncate\s*\(|copyFile/);
+    expect(remoteViolations(RULES_FS)).toEqual([]);
+    // Non-vacuity: chatFeed.ts makes at least one fs call through a tracked binding.
+    expect(remoteAnalyses().get('chatFeed.ts')?.facts.fsCalls).toBeGreaterThan(0);
   });
 
   it('sessionStore.ts writes only through writeFileAtomically', () => {
-    const text = read(remoteByName.get('sessionStore.ts')!);
-    expect(importsOf(text).some((i) => /atomicWrite/.test(i.spec)) && /\bwriteFileAtomically\b/.test(text)).toBe(true);
-    expect(text).not.toMatch(/writeFileSync|appendFile|createWriteStream|\bwriteFile\b/);
+    expect(remoteAnalyses().get('sessionStore.ts')?.facts.atomicCalls).toBeGreaterThan(0);
+    expect(remoteViolations(RULES_PERSIST, 'sessionStore.ts')).toEqual([]);
   });
 
   it('no other electron/remote source imports atomicWrite or the collector/retention/memory/persistence stores', () => {
-    const offenders: string[] = [];
-    for (const f of remoteFiles) {
-      const name = nameOf(f);
-      for (const i of importsOf(read(f))) {
-        if (/collectorStore|retentionStore|memoryStore|persistence/.test(i.spec)) offenders.push(`${name}: ${i.spec}`);
-        if (/atomicWrite/.test(i.spec) && name !== 'sessionStore.ts') offenders.push(`${name}: ${i.spec}`);
-      }
-    }
-    expect(offenders).toEqual([]);
+    expect(remoteViolations(RULES_PERSIST)).toEqual([]);
   });
 
   it("chat events (k: 'msg' / k: 'traffic') are constructed only in chatParser.ts (types.ts declares them)", () => {
-    const offenders = remoteFiles
-      .filter((f) => !['chatParser.ts', 'types.ts'].includes(nameOf(f)))
-      .filter((f) => /\bk\s*:\s*['"](?:msg|traffic)['"]/.test(read(f)))
-      .map((f) => nameOf(f));
-    expect(offenders).toEqual([]);
+    expect(remoteViolations(RULES_CHAT)).toEqual([]);
+  });
+
+  it('every engine rule is reported by some test above', () => {
+    const covered = new Set<Rule>([
+      ...RULES_SCOPE, ...RULES_WILDCARD, ...RULES_LISTEN, ...RULES_WS, ...RULES_PTY, ...RULES_WRITE, ...RULES_FS, ...RULES_PERSIST, ...RULES_CHAT,
+    ]);
+    expect((Object.keys(ALL_RULES) as Rule[]).filter((r) => !covered.has(r))).toEqual([]);
   });
 });
 
@@ -239,7 +227,7 @@ describe('remote access: nothing persisted but the session store', () => {
 // ---------------------------------------------------------------------------------------------
 type Rule = 'syntax' | 'module' | 'fs' | 'ws' | 'listen' | 'wildcard' | 'pty' | 'write' | 'persist' | 'chat-event' | 'escape';
 interface Violation { rule: Rule; msg: string }
-interface RemoteFacts { fsRef: boolean; wsRef: boolean; listenCount: number; wsConstructions: number; atomicCalls: number }
+interface RemoteFacts { fsRef: boolean; fsCalls: number; wsRef: boolean; listenCount: number; wsConstructions: number; atomicCalls: number }
 interface RemoteAnalysis { violations: Violation[]; facts: RemoteFacts }
 interface OutsideAnalysis { wildcard: string[]; listens: string[][] }
 
@@ -383,6 +371,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
   for (const s of syntax) v('syntax', 'syntax error (cannot prove the file safe): ' + s);
   const refs = moduleRefs(sf);
   let fsRef = false;
+  let fsCalls = 0;
   let wsRef = false;
   let wsConstructions = 0;
   let atomicCalls = 0;
@@ -465,12 +454,14 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
       if (ref && !declSite && binding) {
         if (binding.kind === 'member') {
           if (ts.isCallExpression(p) && p.expression === n && !p.questionDotToken) {
+            fsCalls++;
             const m = fsCallProblem(binding.member, p);
             if (m) v('fs', `${t}(): ${m}`);
           } else v('fs', `fs binding ${t} used other than as a direct call`);
         } else {
           const g = p.parent;
           if (ts.isPropertyAccessExpression(p) && p.expression === n && !p.questionDotToken && ts.isCallExpression(g) && g.expression === p && !g.questionDotToken && FSP_READ.has(p.name.text)) {
+            fsCalls++;
             const m = fsCallProblem(p.name.text, g);
             if (m) v('fs', `${t}.${p.name.text}(): ${m}`);
           } else v('fs', `fs binding ${t} used other than as a direct read-only call`);
@@ -542,7 +533,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
     }
     if (wsConstructions !== 1) v('ws', `expected exactly one WebSocketServer construction, found ${wsConstructions}`);
   }
-  return { violations: [...found.values()], facts: { fsRef, wsRef, listenCount: listens.length, wsConstructions, atomicCalls } };
+  return { violations: [...found.values()], facts: { fsRef, fsCalls, wsRef, listenCount: listens.length, wsConstructions, atomicCalls } };
 }
 
 /** For a file under electron/ or scripts/ that is NOT in electron/remote: wildcard literals plus each listen() call's argument texts. */
