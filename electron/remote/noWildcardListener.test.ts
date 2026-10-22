@@ -43,8 +43,11 @@ for (const r of ROOTS) {
 }
 const read = (f: string): string => fs.readFileSync(f, 'utf8');
 
-const remoteFiles = allFiles.filter((f) => /^electron\/remote\/[^/]+\.ts$/.test(posixRel(f)));
-const remoteByName = new Map(remoteFiles.map((f) => [path.basename(f), f]));
+// Every non-test .ts/.mjs/.js at any depth under electron/remote, so a subdirectory cannot hide a rule break.
+const remoteFiles = allFiles.filter((f) => /^electron\/remote\/.+\.(?:ts|mjs|js)$/.test(posixRel(f)));
+const remoteSet = new Set(remoteFiles);
+const nameOf = (f: string): string => posixRel(f).slice('electron/remote/'.length);
+const remoteByName = new Map(remoteFiles.map((f) => [nameOf(f), f]));
 
 /** Module specifiers of import/export-from/require/dynamic import, with a type-only flag. */
 function importsOf(text: string): { spec: string; typeOnly: boolean }[] {
@@ -62,13 +65,14 @@ function importsOf(text: string): { spec: string; typeOnly: boolean }[] {
 const FS_SPEC = /^(?:node:)?fs(?:\/promises)?$/;
 
 // The only .listen( calls that exist outside electron/remote. Matched by exact call-site text.
+// Keyed by file; the value is the call text after the receiver (a chained or newline-split receiver cannot dodge it).
 const LISTEN_ALLOWLIST: ReadonlyMap<string, string> = new Map([
-  ['electron/permissionServer.ts', "server.listen(options.port, '127.0.0.1')"],
-  ['electron/communicationBridge/pipeServer.ts', 'server.listen(endpoint,'],
+  ['electron/permissionServer.ts', "listen(options.port, '127.0.0.1')"],
+  ['electron/communicationBridge/pipeServer.ts', 'listen(endpoint,'],
   // RISKS in the mobile remote-access plan: isPortAvailable() binds all interfaces for an instant
   // (permission-server port probe). Pre-existing; the one-line fix (probe.listen(port, '127.0.0.1'))
   // is its own ticket, so main.ts is allow-listed here rather than changed.
-  ['electron/main.ts', 'probe.listen(port)'],
+  ['electron/main.ts', 'listen(port)'],
 ]);
 
 describe('remote access: no wildcard listener', () => {
@@ -82,7 +86,7 @@ describe('remote access: no wildcard listener', () => {
 
   it('no non-test source under electron/ or scripts/ contains a wildcard bind literal', () => {
     const offenders = allFiles
-      .filter((f) => /(['"])(?:0\.0\.0\.0|::)\1/.test(read(f)))
+      .filter((f) => /(['"`])(?:0\.0\.0\.0|::)\1/.test(read(f)))
       .map(posixRel);
     expect(offenders).toEqual([]);
   });
@@ -92,13 +96,15 @@ describe('remote access: no wildcard listener', () => {
     for (const f of remoteFiles) {
       const text = read(f);
       for (const m of text.matchAll(/\.listen\s*\(/g)) {
-        calls.push({ file: path.basename(f), text: text.slice(m.index!), at: m.index! });
+        calls.push({ file: nameOf(f), text: text.slice(m.index!), at: m.index! });
       }
     }
     expect(calls.map((c) => c.file)).toEqual(['remoteServer.ts']);
     const call = calls[0];
     // listen(port, host, ...): at least two arguments before any closing paren.
     expect(call.text, 'listen() must pass an explicit host').toMatch(/^\.listen\s*\(\s*[^,()]+,\s*[^,()\s][^,()]*[,)]/);
+    // ...and that host is the one assertBindableHost checked.
+    expect(call.text, 'listen() must bind opts.host').toMatch(/^\.listen\s*\(\s*opts\.port\s*,\s*opts\.host\b/);
     const src = read(remoteByName.get('remoteServer.ts')!);
     const guardAt = src.search(/\bassertBindableHost\s*\(/);
     expect(guardAt, 'assertBindableHost is not called').toBeGreaterThanOrEqual(0);
@@ -110,7 +116,7 @@ describe('remote access: no wildcard listener', () => {
     for (const f of remoteFiles) {
       for (const m of read(f).matchAll(/new\s+WebSocketServer\s*\(([\s\S]*?)\)/g)) {
         seen++;
-        expect(m[1], path.basename(f) + ': WebSocketServer must be noServer').toMatch(/noServer\s*:\s*true/);
+        expect(m[1], nameOf(f) + ': WebSocketServer must be noServer').toMatch(/noServer\s*:\s*true/);
       }
     }
     expect(seen).toBeGreaterThan(0);
@@ -121,11 +127,11 @@ describe('remote access: no wildcard listener', () => {
     const used = new Set<string>();
     for (const f of allFiles) {
       const rel = posixRel(f);
-      if (rel.startsWith('electron/remote/')) continue;
+      if (remoteSet.has(f)) continue;
       const text = read(f);
-      for (const m of text.matchAll(/\b[\w$]+\.listen\s*\(/g)) {
+      for (const m of text.matchAll(/\.listen\s*\(/g)) {
         const allowed = LISTEN_ALLOWLIST.get(rel);
-        if (allowed && text.slice(m.index!).startsWith(allowed)) used.add(rel);
+        if (allowed && text.slice(m.index! + 1).startsWith(allowed)) used.add(rel);
         else offenders.push(rel + ': ' + text.slice(m.index!, m.index! + 60).split('\n')[0]);
       }
     }
@@ -139,9 +145,9 @@ describe('remote access: read-only, no pty', () => {
     const offenders: string[] = [];
     for (const f of remoteFiles) {
       for (const i of importsOf(read(f))) {
-        if (/ptyLifecycle|ptyManager|codexPtyManager|node-pty/.test(i.spec)) offenders.push(`${path.basename(f)}: ${i.spec}`);
+        if (/ptyLifecycle|ptyManager|codexPtyManager|node-pty/.test(i.spec)) offenders.push(`${nameOf(f)}: ${i.spec}`);
         // A type-only import is erased at build time; remoteIpc.ts imports IpcMain types this way.
-        if (i.spec === 'electron' && !i.typeOnly) offenders.push(`${path.basename(f)}: value import of electron`);
+        if (i.spec === 'electron' && !i.typeOnly) offenders.push(`${nameOf(f)}: value import of electron`);
       }
     }
     expect(offenders).toEqual([]);
@@ -152,7 +158,7 @@ describe('remote access: read-only, no pty', () => {
     const ALLOWED_RECEIVER = /^(?:res|socket|ws|client)$/;
     for (const f of remoteFiles) {
       const text = read(f);
-      const name = path.basename(f);
+      const name = nameOf(f);
       if (/pty:write/.test(text)) offenders.push(name + ': pty:write');
       if (/\.kill\s*\(/.test(text)) offenders.push(name + ': .kill(');
       for (const m of text.matchAll(/([\w$]+)\s*\.write\s*\(/g)) {
@@ -167,7 +173,7 @@ describe('remote access: nothing persisted but the session store', () => {
   it('node:fs is imported only by chatFeed.ts and sessionStore.ts', () => {
     const importers = remoteFiles
       .filter((f) => importsOf(read(f)).some((i) => FS_SPEC.test(i.spec)))
-      .map((f) => path.basename(f))
+      .map((f) => nameOf(f))
       .sort();
     expect(importers).toEqual(['chatFeed.ts', 'sessionStore.ts']);
   });
@@ -185,7 +191,7 @@ describe('remote access: nothing persisted but the session store', () => {
   it('no other electron/remote source imports atomicWrite or the collector/retention/memory/persistence stores', () => {
     const offenders: string[] = [];
     for (const f of remoteFiles) {
-      const name = path.basename(f);
+      const name = nameOf(f);
       for (const i of importsOf(read(f))) {
         if (/collectorStore|retentionStore|memoryStore|persistence/.test(i.spec)) offenders.push(`${name}: ${i.spec}`);
         if (/atomicWrite/.test(i.spec) && name !== 'sessionStore.ts') offenders.push(`${name}: ${i.spec}`);
@@ -196,9 +202,9 @@ describe('remote access: nothing persisted but the session store', () => {
 
   it("chat events (k: 'msg' / k: 'traffic') are constructed only in chatParser.ts (types.ts declares them)", () => {
     const offenders = remoteFiles
-      .filter((f) => !['chatParser.ts', 'types.ts'].includes(path.basename(f)))
+      .filter((f) => !['chatParser.ts', 'types.ts'].includes(nameOf(f)))
       .filter((f) => /\bk\s*:\s*['"](?:msg|traffic)['"]/.test(read(f)))
-      .map((f) => path.basename(f));
+      .map((f) => nameOf(f));
     expect(offenders).toEqual([]);
   });
 });
