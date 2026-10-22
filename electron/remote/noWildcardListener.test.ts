@@ -10,13 +10,18 @@
 // so comments and string contents are never read as code, which is what defeated two regex
 // versions of this guard. Tracking is name-based and scope-insensitive: it can over-count a
 // shadowing local (a false reject) but every escape of a tracked name is itself a violation.
-// It is a guard against drift and mistakes, not a sandbox: transitive imports, dynamic-key
-// calls (x[k]()) and listen() reached through a computed key are out of reach.
+// It is a guard against drift and mistakes, not a sandbox. Out of reach: transitive imports, calls through
+// dynamic keys on objects outside electron/remote, and Node corners no rule names. Inside electron/remote it
+// denies by name (eval, Function, Reflect, .constructor, prototype access, Object.assign/create/defineProperty,
+// process.report, data:/file: specifiers, builtins off the import allow-list) and rejects every element access
+// whose key is not a literal, except the three reviewed array indexings in DYNAMIC_ELEMENT_ALLOWED.
+// writeFileAtomically's first argument is checked by name (filePath, declared once as a parameter, never
+// reassigned in sessionStore.ts): defence in depth, not a data-flow proof.
 //
 // Equivalence with the regex guard it replaces (be0b260) is a corpus claim, not a proof over all
 // inputs: replayed over noWildcardListener.corpus.json, every row be0b260 rejected is still
-// rejected except 22 rows tagged `relaxation`, each an intended loosening and nothing else
-// (comment 5, string 1, syntax 2, tolerance 14); 77 further rows record holes the regexes missed.
+// rejected except 20 rows tagged `relaxation`, each an intended loosening and nothing else
+// (comment 5, string 1, syntax 2, tolerance 12); 95 further rows record holes the regexes missed.
 //
 // Scaffolding (ROOTS / SKIP_DIR_NAMES / walk) is modelled on src/shared/noApiCalls.test.ts.
 // Paths resolve from this file, not the cwd, so a wrong cwd cannot make the scan vacuous.
@@ -114,9 +119,10 @@ const filesWhere = (pred: (a: RemoteAnalysis) => boolean): string[] => [...remot
 /** Every file under electron/remote (any extension), so an extension the scan does not parse cannot hide code. */
 function listRemote(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (SKIP_DIR_NAMES.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isSymbolicLink()) out.push(posixRel(full).slice('electron/remote/'.length) + ' [symlink]');
+    // Unlike the tree walk, nothing is skipped here: a dist/release/node_modules directory under electron/remote is a failure.
+    if (SKIP_DIR_NAMES.has(entry.name)) out.push(posixRel(full).slice('electron/remote/'.length) + ' [reserved directory name]');
+    else if (entry.isSymbolicLink()) out.push(posixRel(full).slice('electron/remote/'.length) + ' [symlink]');
     else if (entry.isDirectory()) listRemote(full, out);
     else if (entry.isFile()) out.push(posixRel(full).slice('electron/remote/'.length));
   }
@@ -251,8 +257,8 @@ const WRITE_NAMES: ReadonlySet<string> = new Set([
   'truncate', 'truncateSync', 'ftruncate', 'ftruncateSync', 'symlink', 'symlinkSync', 'link', 'linkSync', 'chmod', 'chmodSync',
   'chown', 'chownSync', 'utimes', 'utimesSync', 'lutimes', 'writeSync', 'writev', 'writevSync',
 ]);
-const DENY_IDENT: ReadonlySet<string> = new Set(['createRequire', 'eval', 'Function', 'globalThis', 'global', 'module']);
-const DENY_PROP: ReadonlySet<string> = new Set(['createRequire', 'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'mainModule', 'require', 'kill', '__proto__', 'prototype', 'getPrototypeOf', 'setPrototypeOf', '__defineGetter__', '__defineSetter__']);
+const DENY_IDENT: ReadonlySet<string> = new Set(['createRequire', 'eval', 'Function', 'globalThis', 'global', 'module', 'Reflect']);
+const DENY_PROP: ReadonlySet<string> = new Set(['createRequire', 'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'mainModule', 'require', 'kill', '__proto__', 'prototype', 'getPrototypeOf', 'setPrototypeOf', '__defineGetter__', '__defineSetter__', 'constructor', 'report']);
 const ELEMENT_ACCESS_BLOCKED_ON: ReadonlySet<string> = new Set(['process', 'globalThis', 'global', 'module', 'require']);
 const WRITE_RECEIVERS: ReadonlySet<string> = new Set(['res', 'socket', 'ws', 'client']);
 const FS_MODULE = /^(?:node:)?fs(?:\/promises)?$/;
@@ -261,7 +267,12 @@ const STORE_MODULE = /collectorStore|retentionStore|memoryStore|persistence/;
 // Builtins electron/remote may import (what the real tree uses); every other builtin, node: or bare, is a violation.
 const ALLOWED_BUILTINS: ReadonlySet<string> = new Set(['crypto', 'fs', 'fs/promises', 'http', 'os', 'stream']);
 const PROTO_NAMES: ReadonlySet<string> = new Set(['__proto__', 'prototype', 'getPrototypeOf', 'setPrototypeOf', '__defineGetter__', '__defineSetter__']);
-const READ_OPTION_KEYS: ReadonlySet<string> = new Set(['encoding', 'signal']);
+// The only non-literal element accesses the real tree uses (array indexing in remoteAuth.ts), matched on exact
+// whitespace-normalised text. A new one anywhere else is a violation; adding an entry is a reviewed change to this file.
+const DYNAMIC_ELEMENT_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['remoteAuth.ts', new Set(['CODE_ALPHABET[randInt(CODE_ALPHABET.length)]', 'sessions[i]', 'sessions[oldest]'])],
+]);
+const OBJECT_ESCAPES: ReadonlySet<string> = new Set(['defineProperty', 'defineProperties', 'assign', 'create']);
 const WILDCARDS: ReadonlySet<string> = new Set(['0.0.0.0', '::']);
 
 type StrLit = ts.StringLiteral | ts.NoSubstitutionTemplateLiteral;
@@ -272,6 +283,19 @@ function isStrLit(n: ts.Node | undefined): n is StrLit {
 /** Text of an identifier or string-literal property key; null for anything else (computed, numeric, private). */
 function keyText(name: ts.Node | undefined): string | null {
   return name && (ts.isIdentifier(name) || isStrLit(name)) ? name.text : null;
+}
+
+/** Like keyText, but also sees through a computed key holding a plain string literal: { ['listen']: x }. */
+function keyName(name: ts.Node | undefined): string | null {
+  if (name && ts.isComputedPropertyName(name) && isStrLit(name.expression)) return name.expression.text;
+  return keyText(name);
+}
+
+/** An object-pattern or object-literal key position that names `listen` (declaration or assignment destructuring, literal key). */
+function isListenKey(n: ts.Node): boolean {
+  if (ts.isBindingElement(n)) return keyName(n.propertyName) === 'listen' || keyName(n.name) === 'listen';
+  if (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) return keyName(n.name) === 'listen';
+  return false;
 }
 
 /** Name of a member access: `.x`, or `['x']` with a literal; null for a dynamic key. */
@@ -362,11 +386,9 @@ function fsCallProblem(member: string, call: ts.CallExpression): string | null {
   if (member === 'readFile' || member === 'readFileSync') {
     if (args.length < 1 || args.length > 2) return 'readFile takes 1-2 args';
     const o = args[1];
-    if (o && !isStrLit(o)) {
-      if (!ts.isObjectLiteralExpression(o)) return 'readFile options must be a literal';
-      // Allow-list, not a deny on `flag`: an inherited flag (__proto__ key, Object.prototype) would reopen the file for writing.
-      if (!o.properties.every((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && READ_OPTION_KEYS.has(keyText(p.name) ?? ''))) return 'readFile options: only encoding/signal keys';
-    }
+    // A string literal (an encoding) only. Any options object can carry an inherited `flag` (Object.prototype pollution,
+    // a __proto__ key reached through a computed name) that reopens the file for writing, and no name list can close that.
+    if (o && !isStrLit(o)) return 'readFile options must be a string literal or absent';
   }
   return null;
 }
@@ -391,6 +413,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
   let atomicCalls = 0;
   let assertPos: number | null = null;
   const listens: ts.CallExpression[] = [];
+  const filePathDecls: ts.Node[] = [];
 
   // ---- module references ----
   const fsBindings = new Map<string, FsBinding>();
@@ -399,6 +422,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
   for (const r of refs) {
     if (r.spec === null) { v('module', `dynamic module specifier (${r.form})`); continue; }
     const norm = r.spec.replace(/^node:/, '');
+    if (/^(?:data|file|https?):/.test(r.spec)) v('module', `data:/file:/http(s): module specifier: ${r.spec}`);
     if ((r.spec.startsWith('node:') || builtinModules.includes(norm.split('/')[0])) && !ALLOWED_BUILTINS.has(norm)) v('module', `node builtin not on the electron/remote allow-list: ${r.spec}`);
     if (FS_MODULE.test(r.spec)) {
       fsRef = true;
@@ -459,8 +483,14 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
       const t = n.text;
       const p = n.parent;
       if (WRITE_NAMES.has(t)) v('fs', `write-capable name: ${t}`);
+      if (t === 'filePath' && name === 'sessionStore.ts') {
+        // Defence in depth for the writeFileAtomically(filePath, ...) check below: one declaration (the parameter), never reassigned.
+        if ((ts.isParameter(p) || ts.isVariableDeclaration(p) || ts.isBindingElement(p) || ts.isFunctionDeclaration(p)) && p.name === n) filePathDecls.push(p);
+        const assigned = (ts.isBinaryExpression(p) && p.left === n && p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && p.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+          ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken));
+        if (assigned) v('persist', 'filePath reassigned in sessionStore.ts');
+      }
       if (PROTO_NAMES.has(t)) v('escape', `prototype access: ${t}`);
-      if (t === 'listen' && ts.isBindingElement(p)) v('listen', 'listen destructured out of its receiver');
       const ref = isReference(n);
       const declSite = ts.isImportSpecifier(p);
       if (ref && DENY_IDENT.has(t) && !declSite) v('escape', `escape-hatch identifier: ${t}`);
@@ -496,8 +526,12 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
         } else v('persist', 'writeFileAtomically used other than as a direct call');
       }
     }
+    if (isListenKey(n)) v('listen', 'listen named as a destructuring or object key (not a direct call)');
     if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) {
       if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && ELEMENT_ACCESS_BLOCKED_ON.has(n.expression.text)) v('escape', `element access on ${n.expression.text}`);
+      // A computed key can name anything at run time (srv['lis'+'ten'], x['__pro'+'to__']): only a plain literal is provable.
+      if (ts.isElementAccessExpression(n) && !(isStrLit(n.argumentExpression) || ts.isNumericLiteral(n.argumentExpression)) && !DYNAMIC_ELEMENT_ALLOWED.get(name)?.has(n.getText(sf).replace(/\s+/g, ' '))) v('escape', 'element access with a non-literal key');
+      if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'Object' && OBJECT_ESCAPES.has(n.name.text)) v('escape', `Object.${n.name.text}`);
       const m = memberName(n);
       if (m !== null) {
         if (DENY_PROP.has(m)) v('escape', `denied member: .${m}`);
@@ -534,7 +568,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
         } else v('ws', `server construction other than the ws noServer one: new ${cname}`);
       }
     }
-    if ((ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && PROTO_NAMES.has(keyText(n.name) ?? '')) v('escape', 'prototype key in an object literal');
+    if ((ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && (PROTO_NAMES.has(keyText(n.name) ?? '') || keyText(n.name) === 'constructor')) v('escape', 'prototype or constructor key in an object literal');
     // chat events
     if (name !== 'chatParser.ts' && name !== 'types.ts') {
       if (ts.isPropertyAssignment(n) && keyText(n.name) === 'k' && isStrLit(n.initializer) && /^(?:msg|traffic)$/.test(n.initializer.text)) v('chat-event', 'chat event constructed outside chatParser.ts');
@@ -543,6 +577,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
     if (isStrLit(n) && WILDCARDS.has(n.text)) v('wildcard', `wildcard bind literal: ${n.text}`);
   });
 
+  if (name === 'sessionStore.ts' && (filePathDecls.length !== 1 || !ts.isParameter(filePathDecls[0]))) v('persist', 'sessionStore.ts must declare filePath exactly once, as a parameter');
   if (name === 'sessionStore.ts' && (atomicLocal === null || atomicCalls === 0)) v('persist', 'sessionStore.ts must write through a direct writeFileAtomically() call');
   if (listens.length && name !== 'remoteServer.ts') v('listen', 'listen() in electron/remote outside remoteServer.ts');
   if (name === 'remoteServer.ts') {
@@ -567,7 +602,7 @@ function analyzeOutside(relPath: string, text: string): OutsideAnalysis {
   visit(sf, (n) => {
     if (isStrLit(n) && WILDCARDS.has(n.text)) wildcard.push(n.text);
     if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && memberName(n) === 'listen' && !(ts.isCallExpression(n.parent) && n.parent.expression === n)) listenEscapes.push(n.getText(sf));
-    if (ts.isIdentifier(n) && n.text === 'listen' && ts.isBindingElement(n.parent)) listenEscapes.push(n.parent.getText(sf));
+    if (isListenKey(n)) listenEscapes.push(n.getText(sf));
     if (ts.isCallExpression(n) && (ts.isPropertyAccessExpression(n.expression) || ts.isElementAccessExpression(n.expression)) && memberName(n.expression) === 'listen') {
       listens.push(n.arguments.map((a) => a.getText(sf).replace(/\s+/g, ' ')));
     }

@@ -988,11 +988,10 @@
   "id": "X045",
   "src": "T3 spec: tolerant read-only set",
   "file": "chatFeed.ts",
-  "label": "fsp.readFile(a, { encoding: 'utf8' }) is allowed",
+  "label": "fsp.readFile(a, { encoding: 'utf8' }) is allowed (REJ since round 3: readFile options are a string literal only)",
   "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(a, { encoding: 'utf8' });",
-  "want": "PASS",
-  "old": "REJ",
-  "relaxation": "tolerance"
+  "want": "REJ",
+  "old": "REJ"
  },
  {
   "id": "X046",
@@ -2198,10 +2197,253 @@
   "id": "R2-tol-3",
   "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
   "file": "chatFeed.ts",
-  "label": "readFile(a, { signal })",
+  "label": "readFile(a, { signal }) (REJ since round 3: readFile options are a string literal only)",
   "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { signal });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "({})['__pro'+'to__'].flag = w (computed concat key) + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\n({})['__pro' + 'to__'].flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "Reflect.get({}, '__proto__').flag = w + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nReflect.get({}, '__proto__').flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "const k = '__proto__'; ({})[k].flag = w + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nconst k = '__proto__'; ({})[k].flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "const {'__proto__': p} = {}; p.flag = w + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nconst { '__proto__': p } = {}; p.flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "Object[`get${...}Of`]({}).flag = w + readFile (template-computed key)",
+  "text": "import { promises as fsp } from 'node:fs';\nObject[`get${'Prototype'}Of`]({}).flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-listen-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "assignment-pattern shorthand ({listen} = s)",
+  "text": "let s: any; ({ listen } = s);\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "assignment-pattern renamed ({listen: l} = s); l.call(s, 9)",
+  "text": "let s: any; let l: any; ({ listen: l } = s); l.call(s, 9);\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "declaration with quoted key const {'listen': l} = s",
+  "text": "declare const s: any; const { 'listen': l } = s;\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "declaration with computed-literal key const {['listen']: l} = s",
+  "text": "declare const s: any; const { ['listen']: l } = s;\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "object literal key { listen: fn }",
+  "text": "export const o = { listen: () => 1 };\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-6",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: srv['lis'+'ten'](9) (computed concat key)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nsrv['lis' + 'ten'](9);\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-7",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "Reflect.get(s, 'lis'+'ten')",
+  "text": "declare const s: any; Reflect.get(s, 'lis' + 'ten');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "(() => {}).constructor('code')() (Function constructor)",
+  "text": "(() => {}).constructor('return 1')();\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "process.report.writeReport('x')",
+  "text": "process.report.writeReport('x');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "import('data:text/javascript,...')",
+  "text": "import('data:text/javascript,export default 1');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "Object.assign(a, b)",
+  "text": "declare const a: any; Object.assign(a, { x: 1 });\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "Object.defineProperty(a, 'x', {})",
+  "text": "declare const a: any; Object.defineProperty(a, 'x', {});\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-6",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "object literal constructor key",
+  "text": "export const o = { constructor: 1 };\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-7",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "identifier-keyed element access x[i + 1]",
+  "text": "declare const x: number[]; declare const i: number; export const y = x[i + 1];\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-8",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "import('file:///x.js')",
+  "text": "import('file:///x.js');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-fp-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: filePath reassigned",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nfilePath = '/etc/x';\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-fp-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: second function declaring a filePath parameter",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nexport function f(filePath: string): string { return filePath; }\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-fp-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: top-level let filePath = '/etc/x'",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nexport let filePath = '/etc/x';\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-ok-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "literal element access and a plain array index stay allowed",
+  "text": "export const a = [1, 2][0];\nexport const b = ({ k: 1 } as Record<string, number>)['k'];\n",
   "want": "PASS",
-  "old": "REJ",
-  "relaxation": "tolerance"
+  "old": "PASS"
  }
 ]
