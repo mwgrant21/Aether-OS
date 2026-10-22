@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync, mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -183,7 +183,40 @@ describe('chatFeed', () => {
     feed.stop();
   });
 
-  it('a transcript that does not exist yet attaches empty, logs once, and picks the file up when it appears', async () => {
+  // Replaces the file at the same path with a new inode (write elsewhere, rename over), as an editor or a
+  // session restore would. Writing in place would keep the inode and is not a replacement.
+  const replaceFile = (content: string): void => {
+    const tmp = join(dir, 'replacement.tmp');
+    writeFileSync(tmp, content);
+    renameSync(tmp, file);
+  };
+
+  it('resets to the new content when the transcript is replaced by an equal-sized file', async () => {
+    writeFileSync(file, u('old'));
+    const { feed } = make();
+    feed.start();
+    await ready(feed);
+    const c = collect(feed);
+    expect(texts(c.history()!.events)).toEqual(['old']);
+    replaceFile(u('new'));
+    await tick(() => texts(c.history()!.events).join() === 'new');
+    expect(texts(c.history()!.events)).toEqual(['new']);
+    feed.stop();
+  });
+
+  it('reads a larger replacement from byte 0 instead of the old offset', async () => {
+    writeFileSync(file, u('old'));
+    const { feed } = make();
+    feed.start();
+    await ready(feed);
+    const c = collect(feed);
+    replaceFile(u('first') + u('second') + u('third'));
+    await tick(() => texts(c.history()!.events).join() === 'first,second,third');
+    expect(texts(c.history()!.events)).toEqual(['first', 'second', 'third']);
+    feed.stop();
+  });
+
+  it('a transcript that does not exist yet attaches empty,logs once, and picks the file up when it appears', async () => {
     const stat = vi.spyOn(fsp, 'stat');
     const { feed, logs } = make();
     feed.start();

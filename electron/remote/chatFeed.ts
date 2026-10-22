@@ -26,6 +26,12 @@ export interface ChatFeedDeps {
   log?: (line: string) => void;
 }
 
+// A replaced file (same path, new inode) must not be followed from the old offset. dev+ino identify it;
+// birthtime covers filesystems that report ino 0. Node on Windows returns a real NTFS file id.
+function fileIdentity(st: { dev: number; ino: number; birthtimeMs: number }): string {
+  return `${st.dev}:${st.ino}:${st.birthtimeMs}`;
+}
+
 function freezeEvent(e: ChatEvent): ChatEvent {
   if (e.k === 'msg') Object.freeze(e.tools);
   return Object.freeze(e);
@@ -71,6 +77,7 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
   let pending: Buffer = Buffer.alloc(0); // unterminated tail, contiguous before `offset`
   let discarding = false; // drop bytes up to the next newline (we are mid-line)
   let unreadable = false;
+  let identity: string | null = null; // which file the offset belongs to (see fileIdentity)
 
   function broadcast(m: ServerMessage): void {
     for (const l of [...listeners]) {
@@ -129,9 +136,12 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
     let seed: Buffer = Buffer.alloc(0);
     let seedStart = 0;
     let newTitle: string | null = null;
+    let newIdentity: string | null = null;
     if (s) {
       try {
-        const size = (await fsp.stat(s.file)).size;
+        const st = await fsp.stat(s.file);
+        newIdentity = fileIdentity(st);
+        const size = st.size;
         seedStart = Math.max(0, size - seedBytes);
         seed = await readRange(s.file, seedStart, size - seedStart);
         unreadable = false;
@@ -150,6 +160,7 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
     // Synchronous commit: reset, seed, publish. A join cannot interleave.
     resetState();
     currentId = s?.sessionId ?? null;
+    identity = newIdentity;
     attached = s !== null;
     title = newTitle;
     titleTries = 0;
@@ -161,14 +172,19 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
 
   async function follow(s: { sessionId: string; file: string }, myEpoch: number): Promise<void> {
     let size: number;
+    let ident: string;
     try {
-      size = (await fsp.stat(s.file)).size;
+      const st = await fsp.stat(s.file);
+      size = st.size;
+      ident = fileIdentity(st);
     } catch {
       noteUnreadable();
       return;
     }
     if (myEpoch !== epoch) return;
-    if (size < offset) return attach(s, myEpoch); // truncated or replaced
+    if (identity !== null && ident !== identity) return attach(s, myEpoch); // replaced at the same path
+    identity = ident; // adopts the identity of a file that appeared after an unreadable attach
+    if (size < offset) return attach(s, myEpoch); // truncated
     if (size === offset) {
       unreadable = false;
       return;
