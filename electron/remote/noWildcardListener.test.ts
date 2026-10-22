@@ -111,13 +111,25 @@ describe('remote access: no wildcard listener', () => {
     expect(guardAt).toBeLessThan(call.at);
   });
 
-  it('every new WebSocketServer( in electron/remote is noServer: true', () => {
+  it("only remoteServer.ts imports 'ws' under electron/remote", () => {
+    const importers = remoteFiles
+      .filter((f) => importsOf(read(f)).some((i) => i.spec === 'ws'))
+      .map(nameOf);
+    expect(importers).toEqual(['remoteServer.ts']);
+    // No renamed import: an alias (import { WebSocketServer as WSS }) would dodge the ...Server( matcher below.
+    const clause = read(remoteByName.get('remoteServer.ts')!).match(/import\s+[^;]*?from\s+['"]ws['"]/);
+    expect(clause, "remoteServer.ts must import 'ws'").not.toBeNull();
+    expect(clause![0], "no aliased import from 'ws'").not.toMatch(/\bas\b/);
+  });
+
+  // Matches new WebSocketServer(, new WS.Server(, new WS.WebSocketServer(, new Server(, and any alias
+  // ending in Server, so the legacy and aliased constructors cannot dodge the noServer rule.
+  it('every ...Server( construction in remoteServer.ts is noServer: true', () => {
+    const text = read(remoteByName.get('remoteServer.ts')!);
     let seen = 0;
-    for (const f of remoteFiles) {
-      for (const m of read(f).matchAll(/new\s+WebSocketServer\s*\(([\s\S]*?)\)/g)) {
-        seen++;
-        expect(m[1], nameOf(f) + ': WebSocketServer must be noServer').toMatch(/noServer\s*:\s*true/);
-      }
+    for (const m of text.matchAll(/\bnew\s+[\w$.]*Server\s*\(([\s\S]*?)\)/g)) {
+      seen++;
+      expect(m[1], 'a ws server must be noServer: ' + m[0].slice(0, 40)).toMatch(/noServer\s*:\s*true/);
     }
     expect(seen).toBeGreaterThan(0);
   });
@@ -178,14 +190,22 @@ describe('remote access: nothing persisted but the session store', () => {
     expect(importers).toEqual(['chatFeed.ts', 'sessionStore.ts']);
   });
 
-  it('chatFeed.ts only reads', () => {
-    expect(read(remoteByName.get('chatFeed.ts')!)).not.toMatch(/writeFile|appendFile|createWriteStream|rename|unlink|mkdir|\.rm\s*\(/);
+  // Allow-list, not deny-list: copyFile, truncate, any write*Sync and every fs name not listed fails.
+  it('chatFeed.ts uses only read-only fs names (promises.open and promises.stat)', () => {
+    const text = read(remoteByName.get('chatFeed.ts')!);
+    const imported = [...text.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"](?:node:)?fs(?:\/promises)?['"]/g)]
+      .flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean));
+    expect(imported).toEqual(['promises']);
+    expect(text, 'default/namespace fs import').not.toMatch(/import\s+(?:\*\s+as\s+\w+|\w+)\s*(?:,\s*\{[^}]*\})?\s*from\s*['"](?:node:)?fs/);
+    const used = new Set([...text.matchAll(/\bfsp\.(\w+)/g)].map((m) => m[1]));
+    expect([...used].sort()).toEqual(['open', 'stat']);
+    expect(text).not.toMatch(/writeFile|appendFile|createWriteStream|rename|unlink|mkdir|\.rm\s*\(|\.truncate\s*\(|copyFile/);
   });
 
   it('sessionStore.ts writes only through writeFileAtomically', () => {
     const text = read(remoteByName.get('sessionStore.ts')!);
     expect(importsOf(text).some((i) => /atomicWrite/.test(i.spec)) && /\bwriteFileAtomically\b/.test(text)).toBe(true);
-    expect(text).not.toMatch(/writeFileSync|appendFile/);
+    expect(text).not.toMatch(/writeFileSync|appendFile|createWriteStream|\bwriteFile\b/);
   });
 
   it('no other electron/remote source imports atomicWrite or the collector/retention/memory/persistence stores', () => {

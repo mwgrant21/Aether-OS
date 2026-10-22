@@ -742,7 +742,7 @@ If a revoke cannot be saved, it still takes effect in memory at once, the status
 
 **Read-only, no model calls.** `electron/remote/` imports no pty code, never calls `kill` or writes to a pty, and its only disk write is the sessions file. It makes no model or API call. `electron/remote/noWildcardListener.test.ts` guards this mechanically: no wildcard bind literal in `electron/` or `scripts/`, the one `listen(` call with an explicit host after `assertBindableHost`, no pty or value `electron` imports, `fs` confined to the transcript reader and the sessions store, and chat events built only in `chatParser.ts`.
 
-**Visibility.** A top-bar chip shows while at least one phone is connected, and the Settings → REMOTE ACCESS card lists the paired phones (short reference and three timestamps only) with per-phone REVOKE and REVOKE ALL PHONES.
+**Visibility.** A top-bar chip reads `PHONE CONNECTED` (or `PHONE - N connected`) while at least one phone is connected and opens Settings. The Settings card `REMOTE ACCESS (READ-ONLY)` has the ENABLE/DISABLE button, PAIR A PHONE (QR, code and a countdown, cleared on Done or expiry), and a PAIRED PHONES list (short reference and three timestamps only) with per-phone REVOKE and REVOKE ALL PHONES. A "Revoke not saved to disk yet" warning shows there when a revoke could not be saved. Outside the desktop app (no bridge) the card says "Available in the desktop app".
 
 **Limits, stated plainly.**
 - It works only while the machine is awake with Aether open; closing the main window quits the app and ends the phone view.

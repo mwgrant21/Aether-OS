@@ -246,7 +246,7 @@ before designing anything that persists or transmits data. The short version:
   check: the hook must also refuse an unproven server, or a port squatter can answer allow.
   **One deliberate, opt-in exception:** the read-only phone chat view (`electron/remote/`, privacy §16)
   listens on the Tailscale interface IPv4 address only (never `0.0.0.0`, `::` or a LAN address; the
-  only `listen(` is in `remoteServer.ts`, after `assertBindableHost`), is off at every launch, needs a
+  only `listen(` under `electron/remote` is in `remoteServer.ts`, after `assertBindableHost`), is off at every launch, needs a
   native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
   `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind or a pty/write path there.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
