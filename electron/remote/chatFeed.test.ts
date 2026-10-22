@@ -216,7 +216,7 @@ describe('chatFeed', () => {
     feed.stop();
   });
 
-  it('a transcript that does not exist yet attaches empty,logs once, and picks the file up when it appears', async () => {
+  it('a transcript that does not exist yet attaches empty, logs once, and picks the file up when it appears', async () => {
     const stat = vi.spyOn(fsp, 'stat');
     const { feed, logs } = make();
     feed.start();

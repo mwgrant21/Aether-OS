@@ -704,7 +704,8 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   remoteQuitting = true;
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
-    remoteHub.stop().then(() => {
+    // A failed ACL setup means the hub never loaded the store; do not let stop() read it at quit either.
+    (remoteDirFailed ? Promise.resolve() : remoteHub.stop()).then(() => {
       remoteStopped = true;
       if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
     }),
@@ -905,8 +906,13 @@ app.whenReady().then(async () => {
   // If the ACL failed, remote stays unavailable for this run: the store is never loaded and the
   // renderer's remote commands report unavailable (a local user could otherwise plant a session hash).
   void privateDirReady.then(() => {
-    if (privateDirOk) remoteHub.init();
     remoteDirReady = privateDirOk;
+    remoteDirFailed = !privateDirOk;
+    if (privateDirOk) {
+      remoteHub.init();
+      // A Settings card mounted before this point holds the pre-init status; give it the real one.
+      sendToWindow('remote:statusChanged', remoteHub.status());
+    }
     resolveRemotePrivateDir();
   });
 
@@ -1474,6 +1480,7 @@ const transcriptSessionDir = join(os.homedir(), '.claude', 'projects', cwdToProj
 let resolveRemotePrivateDir: () => void = () => {};
 const remotePrivateDir = new Promise<void>(resolve => { resolveRemotePrivateDir = resolve; });
 let remoteDirReady = false;
+let remoteDirFailed = false; // true only after the ACL setup actually failed (not while it is pending)
 const remoteHub = createRemoteHub({
   resolveSession: () => {
     const id = liveAgentTracker.getPinnedSessionId();
@@ -1486,8 +1493,9 @@ const remoteHub = createRemoteHub({
 // Commands that can write the session store wait for the private-dir ACL first, and init (which loads
 // the store) does nothing until it is applied. Once the quit gate has begun stopping the hub every
 // mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
-// A failed ACL setup (remoteDirReady stays false) makes every command refuse and status report unavailable.
-const remoteStatusOrUnavailable = (): RemoteStatus => remoteDirReady
+// Commands await the gate, so after it they see ready or failed. Status reports unavailable only once the
+// ACL setup has actually failed; while it is pending it is the hub's own (off) status.
+const remoteStatusOrUnavailable = (): RemoteStatus => !remoteDirFailed
   ? remoteHub.status()
   : { ...remoteHub.status(), state: 'unavailable', reason: 'error', address: null, clients: 0 };
 const remoteHubForIpc = {

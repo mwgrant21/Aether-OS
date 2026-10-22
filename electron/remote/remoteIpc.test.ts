@@ -104,18 +104,26 @@ describe('remote preload and main wiring', () => {
   });
 
   it('main keeps remote unavailable when the private dir ACL failed: no init, refusing commands, unavailable status', () => {
-    const catchBlock = main.slice(main.indexOf('private-dir failed:') - 200, main.indexOf('private-dir failed:'));
+    const catchStart = main.indexOf('.catch((err) => {', main.indexOf('ensurePrivateDir(aetherOsDir)'));
+    const catchBlock = main.slice(catchStart, main.indexOf('});', catchStart));
+    expect(catchBlock).toContain('private-dir failed:');
     expect(catchBlock).not.toContain('privateDirOk = true');
     expect(main).toContain('remoteDirReady = privateDirOk;');
     expect(main).not.toMatch(/privateDirReady[.]then[(][(][)] => remoteHub[.]init/);
     const ipc = main.slice(main.indexOf('const remoteStatusOrUnavailable'), main.indexOf('registerRemoteIpc('));
     expect(ipc).toContain("state: 'unavailable'");
+    // Unavailable only after an actual failure: while the ACL setup is pending the hub's own status is returned.
+    expect(main).toContain('remoteDirFailed = !privateDirOk;');
+    expect(ipc).toContain('!remoteDirFailed');
+    expect(main).toMatch(/remoteHub[.]init[(][)];.{0,200}sendToWindow[(]'remote:statusChanged', remoteHub[.]status[(][)][)]/s);
+    // A failed setup never reads the store, not even through stop() at quit.
+    expect(main).toContain('(remoteDirFailed ? Promise.resolve() : remoteHub.stop())');
     expect(ipc).toMatch(/status: [(][)] => remoteStatusOrUnavailable[(][)]/);
   });
 
   it('main inits the hub only after the private dir, from one hub created at start', () => {
-    expect(main).toContain('if (privateDirOk) remoteHub.init();');
-    expect(main.indexOf('ensurePrivateDir(aetherOsDir)')).toBeLessThan(main.indexOf('if (privateDirOk) remoteHub.init();'));
+    expect(main).toContain('if (privateDirOk) {');
+    expect(main.indexOf('ensurePrivateDir(aetherOsDir)')).toBeLessThan(main.indexOf('if (privateDirOk) {'));
     expect(main.match(/createRemoteHub\(/g)).toHaveLength(1);
   });
 
