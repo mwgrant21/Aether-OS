@@ -3,9 +3,11 @@ import { writeFileAtomically } from '../atomicWrite';
 import type { SessionStorePort, StoredSession } from './types';
 
 // On-disk home of the paired phone sessions. The file holds a digest and three
-// timestamps per session and nothing else: every read and every write picks
-// those four fields by name, so a caller that passes extra properties cannot
-// get them onto disk. The caller owns the (private) directory.
+// timestamps per session and nothing else: every read and every write runs each
+// entry through pick(), which selects those four fields by name AND validates
+// their values (hash shape, integer stamps), and both directions cap the list
+// at MAX_ENTRIES. Extra properties or odd values from a caller cannot reach
+// disk. The caller owns the (private) directory.
 
 const MAX_BYTES = 64 * 1024;
 const MAX_ENTRIES = 20;
@@ -53,14 +55,13 @@ export function createSessionStore(filePath: string): SessionStorePort {
     },
 
     save(list: StoredSession[]): Promise<void> {
-      const sessions = list.map((s) => ({
-        hash: s.hash,
-        createdAtMs: s.createdAtMs,
-        expiresAtMs: s.expiresAtMs,
-        lastSeenMs: s.lastSeenMs,
-      }));
-      const body = JSON.stringify({ v: 1, sessions });
-      const run = chain.then(() => writeFileAtomically(filePath, body));
+      const run = chain.then(() => {
+        const sessions = list
+          .map(pick)
+          .filter((x): x is StoredSession => x !== null)
+          .slice(0, MAX_ENTRIES);
+        return writeFileAtomically(filePath, JSON.stringify({ v: 1, sessions }));
+      });
       chain = run.catch(() => undefined);
       return run;
     },

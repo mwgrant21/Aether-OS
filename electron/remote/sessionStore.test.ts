@@ -77,6 +77,28 @@ describe('sessionStore', () => {
     }
   });
 
+  it('save validates values: bad entries are dropped and nothing leaks', async () => {
+    const s = createSessionStore(file);
+    const evil = [
+      { ...mk('a'), hash: 'SECRET token text here', createdAtMs: { token: 'LEAK' } },
+      { ...mk('c'), lastSeenMs: { toJSON: () => 'LEAKED' } },
+      { ...mk('d'), createdAtMs: NaN },
+      { ...mk('e'), expiresAtMs: Infinity },
+      mk('b'),
+    ];
+    await s.save(evil as never);
+    const raw = readFileSync(file, 'utf8');
+    expect(JSON.parse(raw).sessions).toEqual([mk('b')]);
+    expect(raw).not.toMatch(/LEAK|SECRET/);
+    await expect(s.save(null as never)).rejects.toThrow();
+  });
+
+  it('save caps at 20 entries', async () => {
+    const s = createSessionStore(file);
+    await s.save(Array.from({ length: 25 }, (_, i) => ({ ...mk('a'), hash: String(i).padStart(64, '0') })));
+    expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toHaveLength(20);
+  });
+
   it('keeps at most 20 entries', () => {
     const list = Array.from({ length: 25 }, (_, i) => ({ ...mk('a'), hash: String(i).padStart(64, '0') }));
     writeFileSync(file, JSON.stringify({ v: 1, sessions: list }));
