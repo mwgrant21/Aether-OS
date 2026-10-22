@@ -17,6 +17,7 @@ import type { PermissionDecision, PostToolFlagDecision } from './permissionServe
 import type { PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
+import type { PairingResult, RemoteStatus } from '../src/shared/remote/types';
 import type { CommunicationPayload } from '../src/shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './communicationBridge/mainIntegration';
 import type { QuotaEfficiency } from '../src/shared/quotaEfficiency';
@@ -37,6 +38,18 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, snapshot: CommunicationBridgeSnapshot) => callback(snapshot);
       ipcRenderer.on('communication:snapshot', listener);
       return () => ipcRenderer.removeListener('communication:snapshot', listener);
+    },
+  },
+  remote: {
+    status: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:status'),
+    setEnabled: (enabled: boolean): Promise<RemoteStatus> => ipcRenderer.invoke('remote:setEnabled', enabled),
+    createPairing: (): Promise<PairingResult> => ipcRenderer.invoke('remote:createPairing'),
+    revokeAll: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:revokeAll'),
+    revokeOne: (ref: string): Promise<RemoteStatus> => ipcRenderer.invoke('remote:revokeOne', ref),
+    onStatus: (callback: (status: RemoteStatus) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: RemoteStatus) => callback(status);
+      ipcRenderer.on('remote:statusChanged', listener);
+      return () => ipcRenderer.removeListener('remote:statusChanged', listener);
     },
   },
   app: {
