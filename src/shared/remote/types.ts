@@ -22,6 +22,7 @@ export interface RemoteStatus {
   sessions: RemoteSessionInfo[]; // paired, unexpired; present even when state is 'off'
   pairingActive: boolean; // an unexpired unused code exists (the code is NOT here)
   following: boolean; // a pinned Claude session transcript is being followed
+  notice: string | null; // fixed text, e.g. "Revoke not saved to disk yet"; null when nothing to report
 }
 export type PairingResult =
   | { ok: true; url: string; code: string; qrSvg: string; expiresAtMs: number }

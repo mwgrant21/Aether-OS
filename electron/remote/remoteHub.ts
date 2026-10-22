@@ -12,9 +12,6 @@ import { startRemoteServer, type RemoteServerHandle } from './remoteServer';
 import { findTailnetAddress } from './tailnet';
 import type { SessionStorePort } from './types';
 
-/** RemoteStatus plus a fixed notice string while a revoke is not yet durable on disk. */
-export type RemoteHubStatus = RemoteStatus & { notice: string | null };
-
 export const REVOKE_UNSAVED_NOTICE = 'Revoke not saved to disk yet';
 
 export interface RemoteHubDeps {
@@ -26,7 +23,7 @@ export interface RemoteHubDeps {
   createFeed?: typeof createChatFeed;
   now?: () => number;
   log?: (line: string) => void;
-  onStatus?: (s: RemoteHubStatus) => void;
+  onStatus?: (s: RemoteStatus) => void;
   /** Delay between durability retries after a failed revoke save. */
   retryMs?: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
@@ -35,11 +32,13 @@ export interface RemoteHubDeps {
 
 export interface RemoteHub {
   init(): void;
-  status(): RemoteHubStatus;
-  setEnabled(on: boolean): Promise<RemoteHubStatus>;
+  status(): RemoteStatus;
+  setEnabled(on: boolean): Promise<RemoteStatus>;
   createPairing(): Promise<PairingResult>;
-  revokeAll(): Promise<RemoteHubStatus>;
-  revokeOne(ref: string): Promise<RemoteHubStatus>;
+  revokeAll(): Promise<RemoteStatus>;
+  revokeOne(ref: string): Promise<RemoteStatus>;
+  /** Retries a pending unsaved revoke so the notice can clear without another revoke. */
+  retrySave(): Promise<RemoteStatus>;
   stop(): Promise<void>;
 }
 
@@ -63,10 +62,11 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
   let unsaved = false;
   let retryTimer: unknown = null;
   let retries = 0;
+  let stopped = false; // set by stop() (quit path): no retry timer may be scheduled afterwards
   // Serialises enable/disable so two quick toggles cannot interleave.
   let chain: Promise<unknown> = Promise.resolve();
 
-  function status(): RemoteHubStatus {
+  function status(): RemoteStatus {
     const counts = auth?.counts() ?? { sessions: 0, pairingActive: false };
     return {
       state,
@@ -106,7 +106,7 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     }
     if (!unsaved) log('remote: session store save failed');
     unsaved = true;
-    if (allowRetry && retryTimer === null && retries < MAX_RETRIES) {
+    if (allowRetry && !stopped && retryTimer === null && retries < MAX_RETRIES) {
       retries++;
       retryTimer = setT(() => {
         retryTimer = null;
@@ -117,6 +117,7 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
 
   async function teardown(): Promise<void> {
     clearRetry();
+    auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
     const s = server;
     const f = feed;
     server = null;
@@ -132,16 +133,18 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
   async function enable(): Promise<void> {
     init();
     if (state === 'on') return;
-    const address = findTailnetAddress(ifaces() as any);
-    if (!address) {
-      state = 'unavailable';
-      reason = 'no-tailnet-address';
-      log('remote: no tailnet address');
-      return;
-    }
-    const f = makeFeed({ resolveSession: deps.resolveSession, log });
-    f.start();
+    if (unsaved) await settle(true); // retry a pending revoke save before opening the listener
+    let f: ReturnType<typeof createChatFeed> | null = null;
     try {
+      const address = findTailnetAddress(ifaces() as any);
+      if (!address) {
+        state = 'unavailable';
+        reason = 'no-tailnet-address';
+        log('remote: no tailnet address');
+        return;
+      }
+      f = makeFeed({ resolveSession: deps.resolveSession, log });
+      f.start();
       const s = await startServer({
         host: address,
         port,
@@ -157,7 +160,7 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
       reason = null;
       log(`remote: enabled address=${s.address}`);
     } catch (e) {
-      f.stop();
+      if (f) f.stop();
       state = 'unavailable';
       reason = (e as NodeJS.ErrnoException)?.code === 'EADDRINUSE' ? 'port-in-use' : 'error';
       log(reason === 'port-in-use' ? 'remote: port in use' : 'remote: start failed');
@@ -180,7 +183,7 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     return p;
   }
 
-  async function revoke(fn: () => void): Promise<RemoteHubStatus> {
+  async function revoke(fn: () => void): Promise<RemoteStatus> {
     init();
     fn();
     server?.recheckAuth();
@@ -206,7 +209,14 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     },
     revokeAll: () => revoke(() => auth!.revokeAll()),
     revokeOne: (ref) => revoke(() => { auth!.revokeOne(ref); }),
+    async retrySave() {
+      init();
+      await settle(true);
+      emit();
+      return status();
+    },
     async stop() {
+      stopped = true;
       await queue(disable);
     },
   };

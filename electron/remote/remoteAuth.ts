@@ -27,6 +27,8 @@ export interface RemoteAuthOptions {
 export interface RemoteAuth extends RemoteAuthGate {
   createPairing(): { code: string; expiresAtMs: number };
   list(): RemoteSessionInfo[];
+  /** Drops the active pairing code and resets attempt/burned state. */
+  clearPairing(): void;
   revokeAll(): void;
   revokeOne(ref: string): boolean;
   counts(): { sessions: number; pairingActive: boolean };
@@ -182,6 +184,13 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       burned = false;
       changed();
       return { code: `${out.slice(0, 4)}-${out.slice(4)}`, expiresAtMs };
+    },
+
+    clearPairing() {
+      code = null;
+      failures = 0;
+      burned = false;
+      changed();
     },
 
     redeem(input: unknown) {

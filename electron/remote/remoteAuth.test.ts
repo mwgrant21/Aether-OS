@@ -66,6 +66,18 @@ describe('pairing code', () => {
     expect(auth.redeem(code)).toEqual({ ok: false, status: 401 });
   });
 
+  it('clearPairing drops the code and resets the burned state', () => {
+    const { auth } = setup();
+    const { code } = auth.createPairing();
+    auth.clearPairing();
+    expect(auth.counts().pairingActive).toBe(false);
+    expect(auth.redeem(code)).toEqual({ ok: false, status: 401 });
+    for (let i = 0; i < 5; i++) auth.redeem('AAAA-AAAA');
+    auth.clearPairing();
+    const next = auth.createPairing();
+    expect(auth.redeem(next.code).ok).toBe(true);
+  });
+
   it('is replaced by a new createPairing', () => {
     const { auth } = setup();
     let i = 0;

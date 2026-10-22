@@ -7,9 +7,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { createChatFeed } from './chatFeed';
-import { createRemoteHub, REVOKE_UNSAVED_NOTICE, type RemoteHub, type RemoteHubStatus } from './remoteHub';
+import { createRemoteHub, REVOKE_UNSAVED_NOTICE, type RemoteHub } from './remoteHub';
 import { createReplayBuffer, type ReplayBuffer } from './replayBuffer';
 import { startRemoteServer } from './remoteServer';
+import type { RemoteStatus } from '../../src/shared/remote/types';
 import type { ServerMessage, SessionStorePort, StoredSession } from './types';
 
 const TS = '2026-10-21T10:00:00.000Z';
@@ -57,7 +58,7 @@ function fakeStore(initial: StoredSession[] = []) {
 interface Rig {
   hub: RemoteHub;
   logs: string[];
-  statuses: RemoteHubStatus[];
+  statuses: RemoteStatus[];
   hosts: string[];
   feeds: { buffer: ReplayBuffer; stopped: number; running: number }[];
   startServer: ReturnType<typeof vi.fn>;
@@ -67,7 +68,7 @@ interface Rig {
 // still picks the (fake) tailnet address and the wrapper records it, then rebinds for the test.
 function rig(store: SessionStorePort, over: Partial<Parameters<typeof createRemoteHub>[0]> = {}): Rig {
   const logs: string[] = [];
-  const statuses: RemoteHubStatus[] = [];
+  const statuses: RemoteStatus[] = [];
   const hosts: string[] = [];
   const feeds: Rig['feeds'] = [];
   const startServer = vi.fn((o: Parameters<typeof startRemoteServer>[0]) => {
@@ -317,5 +318,61 @@ describe('remoteHub', () => {
     expect(p.qrSvg.startsWith('<svg')).toBe(true);
     expect(JSON.stringify(r.hub.status())).not.toContain(p.code);
     expect(r.hub.status().pairingActive).toBe(true);
+  });
+
+  it('an unused pairing code dies on disable: not redeemable after re-enable, not active while off', async () => {
+    const r = rig(fakeStore());
+    await r.hub.setEnabled(true);
+    const p = await r.hub.createPairing();
+    if (!p.ok) throw new Error('not enabled');
+    expect(r.hub.status().pairingActive).toBe(true);
+    await r.hub.setEnabled(false);
+    expect(r.hub.status().pairingActive).toBe(false);
+    await r.hub.setEnabled(true);
+    expect(r.hub.status().pairingActive).toBe(false);
+    await expect(redeem(r.hub.status().address!, p.code)).rejects.toThrow('pair status 401');
+  });
+
+  it('stop() during a slow failing save leaves no retry timer', async () => {
+    const store = fakeStore();
+    const timers: (() => void)[] = [];
+    const r = rig(store, { setTimeoutFn: (fn) => { timers.push(fn); return timers.length; }, clearTimeoutFn: () => {} });
+    await r.hub.setEnabled(true);
+    await pairPhone(r.hub);
+    await waitFor(() => store.data.length === 1);
+    store.save = async () => { await new Promise((res) => setTimeout(res, 60)); throw new Error('disk full'); };
+    const pending = r.hub.revokeAll();
+    await r.hub.stop();
+    await pending;
+    expect(timers).toHaveLength(0);
+  });
+
+  it('retrySave and the next enable retry a pending unsaved revoke', async () => {
+    const store = fakeStore();
+    const r = rig(store, { setTimeoutFn: () => 1, clearTimeoutFn: () => {} });
+    await r.hub.setEnabled(true);
+    await pairPhone(r.hub);
+    await waitFor(() => store.data.length === 1);
+    store.failSaves = true;
+    expect((await r.hub.revokeAll()).notice).toBe(REVOKE_UNSAVED_NOTICE);
+    store.failSaves = false;
+    expect((await r.hub.retrySave()).notice).toBeNull();
+    expect(store.data).toHaveLength(0);
+
+    await pairPhone(r.hub);
+    await waitFor(() => store.data.length === 1);
+    store.failSaves = true;
+    await r.hub.revokeAll();
+    await r.hub.setEnabled(false);
+    expect(r.hub.status().notice).toBe(REVOKE_UNSAVED_NOTICE);
+    store.failSaves = false;
+    expect((await r.hub.setEnabled(true)).notice).toBeNull();
+  });
+
+  it('a throwing networkInterfaces becomes an error state, not a rejection', async () => {
+    const r = rig(fakeStore(), { networkInterfaces: () => { throw new Error('boom'); } });
+    const s = await r.hub.setEnabled(true);
+    expect(s).toMatchObject({ state: 'unavailable', reason: 'error' });
+    expect(r.startServer).not.toHaveBeenCalled();
   });
 });
