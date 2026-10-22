@@ -2003,5 +2003,205 @@
    ]
   },
   "old": "PASS"
+ },
+ {
+  "id": "R2-proto-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile options {__proto__:{flag:\"w\"}} (inherited flag truncates)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { __proto__: { flag: 'w' } });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile options {'__proto__':{flag:'w'}} quoted key",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { '__proto__': { flag: 'w' } });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "Object.prototype.flag = w then readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nObject.prototype.flag = 'w'; await fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "({}).__proto__.flag = w then readFile",
+  "text": "import { promises as fsp } from 'node:fs';\n({}).__proto__.flag = 'w'; await fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile options with a non-allow-listed key (mode)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { mode: 1 });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-listen-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: const l = srv.listen (not a direct call)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nconst l = srv.listen;\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-listen-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: Reflect.apply(srv.listen, ...)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nReflect.apply(srv.listen, srv, [9]);\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-listen-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: const { listen } = srv",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nconst { listen } = srv;\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-listen-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: srv.listen.call(srv, 9)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nsrv.listen.call(srv, 9);\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import v8 from 'node:v8'",
+  "text": "import { writeHeapSnapshot } from 'node:v8';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import worker_threads",
+  "text": "import { Worker } from 'worker_threads';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import node:sqlite",
+  "text": "import { DatabaseSync } from 'node:sqlite';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import node:path (allowed list is only what the real tree uses)",
+  "text": "import { join } from 'node:path';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import node:os is still fine",
+  "text": "import { hostname } from 'node:os';\nexport const h = hostname();\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-atomic-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: writeFileAtomically(\"/etc/x\", b)",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nwriteFileAtomically('/etc/x', 'b');\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-tol-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "open(f, `r`) template literal flag",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, `r`);\n",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "R2-tol-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile(a, 'w') (string options = encoding, EINVAL, no open)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, 'w');\n",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "R2-tol-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile(a, { signal })",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { signal });\n",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
  }
 ]

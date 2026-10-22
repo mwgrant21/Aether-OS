@@ -108,7 +108,7 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
                           place events are built is chatParser; 64 KB in-memory replay only.
     remotePages.ts / pairingQr.ts   phone HTML/JS/CSS (textContent only) and the pairing QR.
     remoteIpc.ts / types.ts   trusted IPC for Settings; shared wire types.
-    noWildcardListener.test.ts   source-scan guard (no wildcard bind, no pty, no stray fs write).
+    noWildcardListener.test.ts   AST guard, parses with the TypeScript compiler API (no wildcard bind, no pty, no stray fs write).
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
 docs/superpowers/

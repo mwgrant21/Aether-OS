@@ -15,13 +15,14 @@
 //
 // Equivalence with the regex guard it replaces (be0b260) is a corpus claim, not a proof over all
 // inputs: replayed over noWildcardListener.corpus.json, every row be0b260 rejected is still
-// rejected except 19 rows tagged `relaxation`, each an intended loosening and nothing else
-// (comment 5, string 1, syntax 2, tolerance 11); 68 further rows record holes the regexes missed.
+// rejected except 22 rows tagged `relaxation`, each an intended loosening and nothing else
+// (comment 5, string 1, syntax 2, tolerance 14); 77 further rows record holes the regexes missed.
 //
 // Scaffolding (ROOTS / SKIP_DIR_NAMES / walk) is modelled on src/shared/noApiCalls.test.ts.
 // Paths resolve from this file, not the cwd, so a wrong cwd cannot make the scan vacuous.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import { builtinModules } from 'node:module';
 import path from 'node:path';
 import ts from 'typescript';
 import corpus from './noWildcardListener.corpus.json';
@@ -35,11 +36,15 @@ function isTestOrDecl(name: string): boolean {
   return /\.(test|spec)\.(ts|tsx|js|mjs)$/.test(name) || name.endsWith('.d.ts') || name.endsWith('.d.mts');
 }
 
+// A symlink is never followed, so whatever it points at would go unscanned: any one is a failure (asserted below).
+const symlinks: string[] = [];
+
 function walk(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (SKIP_DIR_NAMES.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, out);
+    if (entry.isSymbolicLink()) symlinks.push(full);
+    else if (entry.isDirectory()) walk(full, out);
     else if (entry.isFile() && SOURCE_EXTENSIONS.some((e) => entry.name.endsWith(e)) && !isTestOrDecl(entry.name)) {
       out.push(full);
     }
@@ -111,7 +116,8 @@ function listRemote(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (SKIP_DIR_NAMES.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) listRemote(full, out);
+    if (entry.isSymbolicLink()) out.push(posixRel(full).slice('electron/remote/'.length) + ' [symlink]');
+    else if (entry.isDirectory()) listRemote(full, out);
     else if (entry.isFile()) out.push(posixRel(full).slice('electron/remote/'.length));
   }
 }
@@ -123,10 +129,12 @@ describe('remote access: no wildcard listener', () => {
     for (const name of ['remoteServer.ts', 'chatFeed.ts', 'sessionStore.ts']) {
       expect(remoteByName.has(name), 'missing from scan: ' + name).toBe(true);
     }
-    // A file the scan does not parse cannot be proven safe: .cjs/.mts/.cts/.tsx/.jsx are failures, .json/.md are not code.
+    // A file the scan does not parse cannot be proven safe: only .ts/.mjs/.js (scanned) and .json/.md (not code) may exist
+    // under electron/remote, matched case-sensitively so evil.TS fails too, and a symlink is a failure.
     const all: string[] = [];
     listRemote(path.join(REPO, 'electron/remote'), all);
-    expect(all.filter((n) => /\.(?:cjs|mts|cts|tsx|jsx)$/.test(n))).toEqual([]);
+    expect(all.filter((n) => !/\.(?:ts|mjs|js|json|md)$/.test(n))).toEqual([]);
+    expect(symlinks.map(posixRel)).toEqual([]);
     expect(remoteViolations(RULES_SCOPE)).toEqual([]);
   });
 
@@ -165,7 +173,9 @@ describe('remote access: no wildcard listener', () => {
       if (remoteSet.has(f)) continue;
       const rel = posixRel(f);
       const allowed = LISTEN_ALLOWLIST.get(rel);
-      for (const args of analyzeOutside(rel, read(f)).listens) {
+      const outside = analyzeOutside(rel, read(f));
+      for (const esc of outside.listenEscapes) offenders.push(`${rel}: listen not called directly: ${esc}`);
+      for (const args of outside.listens) {
         if (allowed?.(args)) used.add(rel);
         else offenders.push(`${rel}: listen(${args.join(', ')})`);
       }
@@ -192,7 +202,7 @@ describe('remote access: nothing persisted but the session store', () => {
   });
 
   // Allow-list, not deny-list: copyFile, truncate, any write*Sync and every fs name not listed fails.
-  it('chatFeed.ts uses only read-only fs names (promises.open and promises.stat)', () => {
+  it('chatFeed.ts uses only read-only fs names (the engine allow-list, no write path)', () => {
     expect(remoteViolations(RULES_FS)).toEqual([]);
     // Non-vacuity: chatFeed.ts makes at least one fs call through a tracked binding.
     expect(remoteAnalyses().get('chatFeed.ts')?.facts.fsCalls).toBeGreaterThan(0);
@@ -229,7 +239,7 @@ type Rule = 'syntax' | 'module' | 'fs' | 'ws' | 'listen' | 'wildcard' | 'pty' | 
 interface Violation { rule: Rule; msg: string }
 interface RemoteFacts { fsRef: boolean; fsCalls: number; wsRef: boolean; listenCount: number; wsConstructions: number; atomicCalls: number }
 interface RemoteAnalysis { violations: Violation[]; facts: RemoteFacts }
-interface OutsideAnalysis { wildcard: string[]; listens: string[][] }
+interface OutsideAnalysis { wildcard: string[]; listens: string[][]; listenEscapes: string[] }
 
 const FSP_READ: ReadonlySet<string> = new Set(['open', 'stat', 'lstat', 'readFile', 'readdir', 'readlink', 'realpath', 'access']);
 const FS_SYNC_READ: ReadonlySet<string> = new Set(['readFileSync', 'statSync', 'lstatSync', 'readdirSync', 'readlinkSync', 'realpathSync', 'accessSync', 'existsSync']);
@@ -242,12 +252,16 @@ const WRITE_NAMES: ReadonlySet<string> = new Set([
   'chown', 'chownSync', 'utimes', 'utimesSync', 'lutimes', 'writeSync', 'writev', 'writevSync',
 ]);
 const DENY_IDENT: ReadonlySet<string> = new Set(['createRequire', 'eval', 'Function', 'globalThis', 'global', 'module']);
-const DENY_PROP: ReadonlySet<string> = new Set(['createRequire', 'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'mainModule', 'require', 'kill']);
+const DENY_PROP: ReadonlySet<string> = new Set(['createRequire', 'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'mainModule', 'require', 'kill', '__proto__', 'prototype', 'getPrototypeOf', 'setPrototypeOf', '__defineGetter__', '__defineSetter__']);
 const ELEMENT_ACCESS_BLOCKED_ON: ReadonlySet<string> = new Set(['process', 'globalThis', 'global', 'module', 'require']);
 const WRITE_RECEIVERS: ReadonlySet<string> = new Set(['res', 'socket', 'ws', 'client']);
 const FS_MODULE = /^(?:node:)?fs(?:\/promises)?$/;
 const PTY_MODULE = /ptyLifecycle|ptyManager|codexPtyManager|node-pty/;
 const STORE_MODULE = /collectorStore|retentionStore|memoryStore|persistence/;
+// Builtins electron/remote may import (what the real tree uses); every other builtin, node: or bare, is a violation.
+const ALLOWED_BUILTINS: ReadonlySet<string> = new Set(['crypto', 'fs', 'fs/promises', 'http', 'os', 'stream']);
+const PROTO_NAMES: ReadonlySet<string> = new Set(['__proto__', 'prototype', 'getPrototypeOf', 'setPrototypeOf', '__defineGetter__', '__defineSetter__']);
+const READ_OPTION_KEYS: ReadonlySet<string> = new Set(['encoding', 'signal']);
 const WILDCARDS: ReadonlySet<string> = new Set(['0.0.0.0', '::']);
 
 type StrLit = ts.StringLiteral | ts.NoSubstitutionTemplateLiteral;
@@ -350,8 +364,8 @@ function fsCallProblem(member: string, call: ts.CallExpression): string | null {
     const o = args[1];
     if (o && !isStrLit(o)) {
       if (!ts.isObjectLiteralExpression(o)) return 'readFile options must be a literal';
-      if (badObjectKey(o)) return 'readFile options: spread/computed key';
-      if (objectHasKey(o, 'flag')) return 'readFile options: flag property';
+      // Allow-list, not a deny on `flag`: an inherited flag (__proto__ key, Object.prototype) would reopen the file for writing.
+      if (!o.properties.every((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && READ_OPTION_KEYS.has(keyText(p.name) ?? ''))) return 'readFile options: only encoding/signal keys';
     }
   }
   return null;
@@ -385,6 +399,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
   for (const r of refs) {
     if (r.spec === null) { v('module', `dynamic module specifier (${r.form})`); continue; }
     const norm = r.spec.replace(/^node:/, '');
+    if ((r.spec.startsWith('node:') || builtinModules.includes(norm.split('/')[0])) && !ALLOWED_BUILTINS.has(norm)) v('module', `node builtin not on the electron/remote allow-list: ${r.spec}`);
     if (FS_MODULE.test(r.spec)) {
       fsRef = true;
       const clause = r.decl?.importClause;
@@ -444,6 +459,8 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
       const t = n.text;
       const p = n.parent;
       if (WRITE_NAMES.has(t)) v('fs', `write-capable name: ${t}`);
+      if (PROTO_NAMES.has(t)) v('escape', `prototype access: ${t}`);
+      if (t === 'listen' && ts.isBindingElement(p)) v('listen', 'listen destructured out of its receiver');
       const ref = isReference(n);
       const declSite = ts.isImportSpecifier(p);
       if (ref && DENY_IDENT.has(t) && !declSite) v('escape', `escape-hatch identifier: ${t}`);
@@ -472,8 +489,11 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
         if (!ok) v('ws', 'WebSocketServer used other than as new WebSocketServer(...)');
       }
       if (atomicLocal !== null && t === atomicLocal && ref && !declSite) {
-        if (ts.isCallExpression(p) && p.expression === n) atomicCalls++;
-        else v('persist', 'writeFileAtomically used other than as a direct call');
+        if (ts.isCallExpression(p) && p.expression === n) {
+          const first = p.arguments[0];
+          if (first && ts.isIdentifier(first) && first.text === 'filePath') atomicCalls++;
+          else v('persist', 'writeFileAtomically first argument must be the identifier filePath');
+        } else v('persist', 'writeFileAtomically used other than as a direct call');
       }
     }
     if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) {
@@ -481,6 +501,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
       const m = memberName(n);
       if (m !== null) {
         if (DENY_PROP.has(m)) v('escape', `denied member: .${m}`);
+        if (m === 'listen' && !(ts.isCallExpression(n.parent) && n.parent.expression === n)) v('listen', 'listen reached other than as a direct call');
         if (WRITE_NAMES.has(m) && ts.isElementAccessExpression(n)) v('fs', `write-capable name (element access): ${m}`);
         if (m === 'write') {
           const r = n.expression;
@@ -513,6 +534,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
         } else v('ws', `server construction other than the ws noServer one: new ${cname}`);
       }
     }
+    if ((ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && PROTO_NAMES.has(keyText(n.name) ?? '')) v('escape', 'prototype key in an object literal');
     // chat events
     if (name !== 'chatParser.ts' && name !== 'types.ts') {
       if (ts.isPropertyAssignment(n) && keyText(n.name) === 'k' && isStrLit(n.initializer) && /^(?:msg|traffic)$/.test(n.initializer.text)) v('chat-event', 'chat event constructed outside chatParser.ts');
@@ -541,13 +563,16 @@ function analyzeOutside(relPath: string, text: string): OutsideAnalysis {
   const { sf } = parseSource(relPath, text);
   const wildcard: string[] = [];
   const listens: string[][] = [];
+  const listenEscapes: string[] = [];
   visit(sf, (n) => {
     if (isStrLit(n) && WILDCARDS.has(n.text)) wildcard.push(n.text);
+    if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && memberName(n) === 'listen' && !(ts.isCallExpression(n.parent) && n.parent.expression === n)) listenEscapes.push(n.getText(sf));
+    if (ts.isIdentifier(n) && n.text === 'listen' && ts.isBindingElement(n.parent)) listenEscapes.push(n.parent.getText(sf));
     if (ts.isCallExpression(n) && (ts.isPropertyAccessExpression(n.expression) || ts.isElementAccessExpression(n.expression)) && memberName(n.expression) === 'listen') {
       listens.push(n.arguments.map((a) => a.getText(sf).replace(/\s+/g, ' ')));
     }
   });
-  return { wildcard, listens };
+  return { wildcard, listens, listenEscapes };
 }
 
 // ---------------------------------------------------------------------------------------------
