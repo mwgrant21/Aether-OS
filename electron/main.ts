@@ -98,6 +98,7 @@ import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createRemoteHub } from './remote/remoteHub';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
+import type { PairingResult } from '../src/shared/remote/types';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -694,15 +695,24 @@ const handleTickCompletions = createTickCompletionHandler({
 // First quit is held once (bounded to 500 ms) so a baseline write in flight lands.
 // The remote hub (declared further down) stops inside the same held quit: listener closed, replay
 // buffer cleared and the paired-session store flushed before exit. A failed flush leaves the hub's
-// notice set, which is logged below as a fixed string. Bounded like the baseline write.
+// notice set, which is logged below as a fixed string. Bounded like the baseline write: if the stop has
+// not finished when the bound elapses the quit proceeds and the timeout is logged instead.
+// remoteQuitting turns the hub's mutators into no-ops once the stop has begun (a stopped hub is single-use).
+let remoteQuitting = false;
+let remoteStopped = false;
 const baselineQuitGate = createFlushQuitGate(async () => {
+  remoteQuitting = true;
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
     remoteHub.stop().then(() => {
+      remoteStopped = true;
       if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
     }),
   ]);
-}, () => app.quit(), 1500);
+}, () => {
+  if (remoteQuitting && !remoteStopped) diagLog.write(`[diag] remote session store flush timed out at quit at=${new Date().toISOString()}`);
+  app.quit();
+}, 1500);
 let lastStallCheckMs = 0;
 // "The owning session has ended" on the live path = the pinned pty exited.
 let pinnedPtyExited = false;
@@ -891,7 +901,7 @@ app.whenReady().then(async () => {
   // The paired-session store lives in this directory: load it, and let the renderer's
   // mutating remote commands run, only once the user-only ACL has been applied.
   void privateDirReady.then(() => remoteHub.init());
-  void privateDirReady.then(() => resolveRemotePrivateDir());
+  void privateDirReady.then(() => { remoteDirReady = true; resolveRemotePrivateDir(); });
 
   Menu.setApplicationMenu(null);
   createWindow();
@@ -1456,6 +1466,7 @@ const transcriptSessionDir = join(os.homedir(), '.claude', 'projects', cwdToProj
 // native dialog below. Nothing here touches a pty.
 let resolveRemotePrivateDir: () => void = () => {};
 const remotePrivateDir = new Promise<void>(resolve => { resolveRemotePrivateDir = resolve; });
+let remoteDirReady = false;
 const remoteHub = createRemoteHub({
   resolveSession: () => {
     const id = liveAgentTracker.getPinnedSessionId();
@@ -1465,14 +1476,16 @@ const remoteHub = createRemoteHub({
   onStatus: s => sendToWindow('remote:statusChanged', s),
   log: l => diagLog.write(l),
 });
-// Commands that can write the session store wait for the private-dir ACL first.
+// Commands that can write the session store wait for the private-dir ACL first, and init (which loads
+// the store) does nothing until it is applied. Once the quit gate has begun stopping the hub every
+// mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
 const remoteHubForIpc = {
-  init: () => remoteHub.init(),
+  init: () => { if (remoteDirReady) remoteHub.init(); },
   status: () => remoteHub.status(),
-  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteHub.setEnabled(on); },
-  createPairing: async () => { await remotePrivateDir; return remoteHub.createPairing(); },
-  revokeAll: async () => { await remotePrivateDir; return remoteHub.revokeAll(); },
-  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteHub.revokeOne(ref); },
+  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting ? remoteHub.status() : remoteHub.setEnabled(on); },
+  createPairing: async (): Promise<PairingResult> => { await remotePrivateDir; return remoteQuitting ? { ok: false, reason: 'not-enabled' } : remoteHub.createPairing(); },
+  revokeAll: async () => { await remotePrivateDir; return remoteQuitting ? remoteHub.status() : remoteHub.revokeAll(); },
+  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting ? remoteHub.status() : remoteHub.revokeOne(ref); },
 };
 registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents

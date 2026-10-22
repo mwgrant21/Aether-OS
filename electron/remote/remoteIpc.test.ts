@@ -94,6 +94,15 @@ describe('remote preload and main wiring', () => {
   });
 
   const main = readFileSync('electron/main.ts', 'utf8');
+  it('main gates the ipc init on the private dir and refuses mutators once the quit gate has stopped the hub', () => {
+    const ipc = main.slice(main.indexOf('const remoteHubForIpc'), main.indexOf('registerRemoteIpc('));
+    expect(ipc).toContain('init: () => { if (remoteDirReady) remoteHub.init(); }');
+    expect(main).toContain('remoteDirReady = true; resolveRemotePrivateDir();');
+    for (const m of ['setEnabled', 'createPairing', 'revokeAll', 'revokeOne']) {
+      expect(ipc).toMatch(new RegExp(m + ':[^\n]*remoteQuitting [?]'));
+    }
+  });
+
   it('main inits the hub only after the private dir, from one hub created at start', () => {
     expect(main).toContain('void privateDirReady.then(() => remoteHub.init());');
     expect(main.indexOf('ensurePrivateDir(aetherOsDir)')).toBeLessThan(main.indexOf('void privateDirReady.then(() => remoteHub.init());'));
@@ -105,6 +114,13 @@ describe('remote preload and main wiring', () => {
     expect(gate).toContain('remoteHub.stop()');
     expect(gate).toContain('remoteHub.status().notice');
     expect(gate).toContain('remote session store not saved at quit');
+    expect(gate).toContain('remoteStopped = true');
+  });
+
+  it('main logs a fixed line when the quit gate times out before the hub has stopped', () => {
+    const gate = main.slice(main.indexOf('const baselineQuitGate'), main.indexOf('let lastStallCheckMs'));
+    expect(gate).toContain('if (remoteQuitting && !remoteStopped) diagLog.write(`[diag] remote session store flush timed out at quit at=');
+    expect(gate.indexOf('flush timed out at quit')).toBeLessThan(gate.indexOf('app.quit()'));
     expect(main.indexOf('const baselineQuitGate')).toBeLessThan(main.indexOf("app.on('before-quit'"));
   });
 
