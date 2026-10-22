@@ -3,6 +3,7 @@ import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { REMOTE_MAX_CLIENTS } from '../../src/shared/remote/types'
 import type { ChatFeed, RemoteAssets, RemoteAuthGate, ServerMessage } from './types'
+import { isAllowedHost, isAllowedOrigin } from './remoteAuth'
 import { contentSecurityPolicy } from './remotePages'
 import { assertBindableHost } from './tailnet'
 
@@ -32,15 +33,6 @@ const PONG_TIMEOUT_MS = 60_000
 const RECHECK_MS = 30_000
 const SLOW_CONSUMER_BYTES = 1024 * 1024
 const ADDRESS_RE = /^[0-9A-Za-z.:[\]-]+$/
-
-// Local copies of the T4 predicates (remoteAuth is not on this branch): exact
-// match against the bound address, never anything derived from the request.
-function hostAllowed(hostHeader: string | undefined, address: string): boolean {
-  return typeof hostHeader === 'string' && hostHeader.toLowerCase() === address.toLowerCase()
-}
-function originAllowed(origin: string | undefined, address: string): boolean {
-  return typeof origin === 'string' && origin.toLowerCase() === `http://${address}`.toLowerCase()
-}
 
 interface Client {
   ws: WebSocket
@@ -78,7 +70,7 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
 
   const server = http.createServer((req, res) => {
     securityHeaders(res)
-    if (!hostAllowed(req.headers.host, address)) return bare(res, 403)
+    if (!isAllowedHost(req.headers.host, address)) return bare(res, 403)
     const method = req.method
     if (method !== 'GET' && method !== 'POST') return bare(res, 405)
     const path = (req.url ?? '').split('?')[0]
@@ -108,7 +100,7 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
   server.headersTimeout = 10_000
 
   function handlePair(req: http.IncomingMessage, res: http.ServerResponse): void {
-    if (!originAllowed(req.headers.origin, address)) return bare(res, 403)
+    if (!isAllowedOrigin(req.headers.origin, address)) return bare(res, 403)
     const ctype = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
     if (ctype !== 'application/json') return bare(res, 415)
     const declared = Number(req.headers['content-length'])
@@ -162,10 +154,10 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
 
   server.on('upgrade', (req, socket, head) => {
     socket.on('error', () => {})
-    if (!hostAllowed(req.headers.host, address)) return reject(socket, 403, 'Forbidden')
+    if (!isAllowedHost(req.headers.host, address)) return reject(socket, 403, 'Forbidden')
     const path = (req.url ?? '').split('?')[0]
     if (path !== '/ws') return reject(socket, 404, 'Not Found')
-    if (!originAllowed(req.headers.origin, address)) return reject(socket, 403, 'Forbidden')
+    if (!isAllowedOrigin(req.headers.origin, address)) return reject(socket, 403, 'Forbidden')
     const cookie = req.headers.cookie
     if (!opts.auth.isAuthenticated(cookie, { touch: true })) return reject(socket, 401, 'Unauthorized')
     if (clients.size >= maxClients) return reject(socket, 503, 'Service Unavailable')
