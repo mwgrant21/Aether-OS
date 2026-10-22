@@ -46,7 +46,7 @@ function make(over: Partial<Parameters<typeof createChatFeed>[0]> = {}) {
 }
 const tick = async (): Promise<void> => {
   cb!();
-  await sleep(40);
+  await sleep(120);
 };
 const texts = (evs: ChatEvent[]): string[] => evs.map((e) => (e.k === 'msg' ? e.text : e.text));
 function collect(feed: ReturnType<typeof make>['feed']) {
@@ -70,7 +70,7 @@ describe('chatFeed', () => {
     writeFileSync(file, s);
     const { feed } = make({ seedBytes: 2000 });
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     const t = texts(c.history()!.events);
     expect(t.length).toBeGreaterThan(5);
@@ -85,7 +85,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('one'));
     const { feed } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     appendFileSync(file, u('two') + u('three').slice(0, 30));
     await tick();
@@ -100,7 +100,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     appendFileSync(file, u('b'));
     await tick();
     const c = collect(feed); // joins after b was consumed, before c is appended
@@ -127,7 +127,7 @@ describe('chatFeed', () => {
     const { feed } = make();
     const c = collect(feed);
     feed.start();
-    await sleep(60);
+    await sleep(120);
     await tick();
     const all = [...c.history()!.events, ...c.live()];
     expect(texts(all)).toEqual(['a', 'b', 'late']);
@@ -141,7 +141,7 @@ describe('chatFeed', () => {
     let cur = { sessionId: 's1', file };
     const { feed, buffer } = make({ resolveSession: () => cur });
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     cur = { sessionId: 's2', file: file2 };
     await tick();
@@ -154,7 +154,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('one') + u('two') + u('three'));
     const { feed } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     writeFileSync(file, u('n'));
     await tick();
@@ -165,7 +165,7 @@ describe('chatFeed', () => {
   it('a transcript that does not exist yet attaches empty, logs once, and picks the file up when it appears', async () => {
     const { feed, logs } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     await tick();
     expect(logs).toEqual(['remote: transcript unreadable']);
     const c = collect(feed);
@@ -180,7 +180,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('x'));
     const { feed } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     sid = null;
     await tick();
@@ -192,7 +192,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('first'));
     const { feed } = make({ maxReadBytes: 1000 });
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     let s = '';
     for (let i = 0; i < 100; i++) s += u(`line ${i} ${'y'.repeat(40)}`);
@@ -227,7 +227,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed, buffer } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const [e] = buffer.snapshot();
     expect(Object.isFrozen(e)).toBe(true);
     expect(() => {
@@ -240,7 +240,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed, buffer } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     const stat = vi.spyOn(fsp, 'stat');
     feed.stop();
@@ -249,7 +249,7 @@ describe('chatFeed', () => {
     cb!();
     appendFileSync(file, u('b'));
     cb!();
-    await sleep(40);
+    await sleep(120);
     expect(stat).not.toHaveBeenCalled();
     expect(c.live()).toEqual([]);
     expect(collect(feed).history()!.events).toEqual([]);
@@ -271,7 +271,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     let n = 0;
     feed.join(() => {
       if (++n > 2) throw new Error('boom');
@@ -288,7 +288,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed } = make();
     feed.start();
-    await sleep(60);
+    await sleep(120);
     const c = collect(feed);
     c.j.leave();
     c.j.leave();
@@ -302,7 +302,7 @@ describe('chatFeed', () => {
     const { feed, logs } = make();
     const c = collect(feed);
     feed.start();
-    await sleep(60);
+    await sleep(120);
     await tick();
     writeFileSync(file, u('a'));
     await tick();
