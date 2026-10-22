@@ -11,6 +11,7 @@ import type { ChatEvent, ChatFeed, ServerMessage } from './types';
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_PENDING_BYTES = 4 * 1024 * 1024;
+const MAX_TITLE_TRIES = 5;
 const NL = 0x0a;
 
 export interface ChatFeedDeps {
@@ -64,6 +65,7 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
   let currentId: string | null = null;
   let attached = false;
   let title: string | null = null;
+  let titleTries = 0; // follow-time title reads for this session
   let ctx: ChatParseContext = { dispatchIds: new Set() };
   let offset = 0; // absolute byte position of the next unread byte
   let pending: Buffer = Buffer.alloc(0); // unterminated tail, contiguous before `offset`
@@ -138,7 +140,11 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
         seed = Buffer.alloc(0);
         seedStart = 0;
       }
-      newTitle = await Promise.resolve(readTitle(s.file)).catch(() => null);
+      try {
+        newTitle = await readTitle(s.file);
+      } catch {
+        newTitle = null;
+      }
     }
     if (myEpoch !== epoch) return;
     // Synchronous commit: reset, seed, publish. A join cannot interleave.
@@ -146,6 +152,7 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
     currentId = s?.sessionId ?? null;
     attached = s !== null;
     title = newTitle;
+    titleTries = 0;
     discarding = seedStart > 0;
     consume(seed, seedStart, (e) => buffer.push(e));
     broadcast({ t: 'session', attached, title });
@@ -177,7 +184,14 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
       return;
     }
     let newTitle: string | null = null;
-    if (title === null && chunk.length > 0) newTitle = await Promise.resolve(readTitle(s.file)).catch(() => null);
+    if (title === null && chunk.length > 0 && titleTries < MAX_TITLE_TRIES) {
+      titleTries++;
+      try {
+        newTitle = await readTitle(s.file);
+      } catch {
+        newTitle = null;
+      }
+    }
     if (myEpoch !== epoch) return;
     unreadable = false;
     if (jump) {
@@ -228,6 +242,7 @@ export function createChatFeed(deps: ChatFeedDeps): ChatFeed & { start(): void; 
       currentId = null;
       attached = false;
       title = null;
+      titleTries = 0;
       unreadable = false;
     },
     join(listener) {
