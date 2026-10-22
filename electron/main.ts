@@ -98,7 +98,7 @@ import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createRemoteHub } from './remote/remoteHub';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
-import type { PairingResult } from '../src/shared/remote/types';
+import type { PairingResult, RemoteStatus } from '../src/shared/remote/types';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -884,8 +884,10 @@ app.whenReady().then(async () => {
   // Grants someone else added are kept and logged, never stripped.
   // Not awaited here; the permission-server port file (which holds a secret)
   // awaits it below, after the window is up. The chain never rejects.
+  let privateDirOk = false; // remote access gate: stays false if the ACL could not be applied
   const privateDirReady = ensurePrivateDir(aetherOsDir)
     .then(({ changed, extras }) => {
+      privateDirOk = true;
       diagLog.write(`[diag] private-dir changed=${changed} extras=${extras.length} at=${new Date().toISOString()}`);
       for (const e of extras) {
         diagLog.write(
@@ -900,8 +902,13 @@ app.whenReady().then(async () => {
     });
   // The paired-session store lives in this directory: load it, and let the renderer's
   // mutating remote commands run, only once the user-only ACL has been applied.
-  void privateDirReady.then(() => remoteHub.init());
-  void privateDirReady.then(() => { remoteDirReady = true; resolveRemotePrivateDir(); });
+  // If the ACL failed, remote stays unavailable for this run: the store is never loaded and the
+  // renderer's remote commands report unavailable (a local user could otherwise plant a session hash).
+  void privateDirReady.then(() => {
+    if (privateDirOk) remoteHub.init();
+    remoteDirReady = privateDirOk;
+    resolveRemotePrivateDir();
+  });
 
   Menu.setApplicationMenu(null);
   createWindow();
@@ -1479,13 +1486,17 @@ const remoteHub = createRemoteHub({
 // Commands that can write the session store wait for the private-dir ACL first, and init (which loads
 // the store) does nothing until it is applied. Once the quit gate has begun stopping the hub every
 // mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
+// A failed ACL setup (remoteDirReady stays false) makes every command refuse and status report unavailable.
+const remoteStatusOrUnavailable = (): RemoteStatus => remoteDirReady
+  ? remoteHub.status()
+  : { ...remoteHub.status(), state: 'unavailable', reason: 'error', address: null, clients: 0 };
 const remoteHubForIpc = {
   init: () => { if (remoteDirReady) remoteHub.init(); },
-  status: () => remoteHub.status(),
-  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting ? remoteHub.status() : remoteHub.setEnabled(on); },
-  createPairing: async (): Promise<PairingResult> => { await remotePrivateDir; return remoteQuitting ? { ok: false, reason: 'not-enabled' } : remoteHub.createPairing(); },
-  revokeAll: async () => { await remotePrivateDir; return remoteQuitting ? remoteHub.status() : remoteHub.revokeAll(); },
-  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting ? remoteHub.status() : remoteHub.revokeOne(ref); },
+  status: () => remoteStatusOrUnavailable(),
+  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.setEnabled(on); },
+  createPairing: async (): Promise<PairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : remoteHub.createPairing(); },
+  revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeAll(); },
+  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeOne(ref); },
 };
 registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents

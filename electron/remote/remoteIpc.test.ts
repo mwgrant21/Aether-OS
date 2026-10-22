@@ -97,15 +97,25 @@ describe('remote preload and main wiring', () => {
   it('main gates the ipc init on the private dir and refuses mutators once the quit gate has stopped the hub', () => {
     const ipc = main.slice(main.indexOf('const remoteHubForIpc'), main.indexOf('registerRemoteIpc('));
     expect(ipc).toContain('init: () => { if (remoteDirReady) remoteHub.init(); }');
-    expect(main).toContain('remoteDirReady = true; resolveRemotePrivateDir();');
+    expect(main).toContain('resolveRemotePrivateDir();');
     for (const m of ['setEnabled', 'createPairing', 'revokeAll', 'revokeOne']) {
-      expect(ipc).toMatch(new RegExp(m + ':[^\n]*remoteQuitting [?]'));
+      expect(ipc).toMatch(new RegExp(m + ':[^\n]*remoteQuitting [|][|] !remoteDirReady [?]'));
     }
   });
 
+  it('main keeps remote unavailable when the private dir ACL failed: no init, refusing commands, unavailable status', () => {
+    const catchBlock = main.slice(main.indexOf('private-dir failed:') - 200, main.indexOf('private-dir failed:'));
+    expect(catchBlock).not.toContain('privateDirOk = true');
+    expect(main).toContain('remoteDirReady = privateDirOk;');
+    expect(main).not.toMatch(/privateDirReady[.]then[(][(][)] => remoteHub[.]init/);
+    const ipc = main.slice(main.indexOf('const remoteStatusOrUnavailable'), main.indexOf('registerRemoteIpc('));
+    expect(ipc).toContain("state: 'unavailable'");
+    expect(ipc).toMatch(/status: [(][)] => remoteStatusOrUnavailable[(][)]/);
+  });
+
   it('main inits the hub only after the private dir, from one hub created at start', () => {
-    expect(main).toContain('void privateDirReady.then(() => remoteHub.init());');
-    expect(main.indexOf('ensurePrivateDir(aetherOsDir)')).toBeLessThan(main.indexOf('void privateDirReady.then(() => remoteHub.init());'));
+    expect(main).toContain('if (privateDirOk) remoteHub.init();');
+    expect(main.indexOf('ensurePrivateDir(aetherOsDir)')).toBeLessThan(main.indexOf('if (privateDirOk) remoteHub.init();'));
     expect(main.match(/createRemoteHub\(/g)).toHaveLength(1);
   });
 
