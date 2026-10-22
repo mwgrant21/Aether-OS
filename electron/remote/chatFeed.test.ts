@@ -12,6 +12,16 @@ const TS = '2026-10-21T10:00:00.000Z';
 const KEY = 'sk-ant-api03-' + 'A1b2C3d4'.repeat(5);
 const u = (text: string): string => JSON.stringify({ type: 'user', timestamp: TS, message: { role: 'user', content: text } }) + '\n';
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// Polls until cond() holds, so tests scale with machine load instead of guessing a settle window.
+async function waitFor(cond: () => boolean, opts: { timeout?: number; interval?: number } = {}): Promise<void> {
+  const { timeout = 2000, interval = 10 } = opts;
+  const end = Date.now() + timeout;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error('waitFor timed out');
+    await sleep(interval);
+  }
+}
+const flush = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 let dir: string;
 let file: string;
@@ -44,10 +54,21 @@ function make(over: Partial<Parameters<typeof createChatFeed>[0]> = {}) {
   });
   return { feed, buffer, logs };
 }
-const tick = async (): Promise<void> => {
-  cb!();
-  await sleep(120);
-};
+// Fires the poll callback until cond() holds (an overlapping fire is a no-op while one is in flight).
+const tick = (cond: () => boolean): Promise<void> =>
+  waitFor(() => {
+    cb!();
+    return cond();
+  });
+// Resolves once the feed has committed its first attach (session announced, seed buffered).
+const ready = (feed: ReturnType<typeof make>['feed']): Promise<void> =>
+  waitFor(() => {
+    let attached = false;
+    feed.join((m) => {
+      if (m.t === 'session') attached = m.attached;
+    }).leave();
+    return attached;
+  });
 const texts = (evs: ChatEvent[]): string[] => evs.map((e) => (e.k === 'msg' ? e.text : e.text));
 function collect(feed: ReturnType<typeof make>['feed']) {
   const msgs: ServerMessage[] = [];
@@ -70,7 +91,7 @@ describe('chatFeed', () => {
     writeFileSync(file, s);
     const { feed } = make({ seedBytes: 2000 });
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     const t = texts(c.history()!.events);
     expect(t.length).toBeGreaterThan(5);
@@ -85,27 +106,27 @@ describe('chatFeed', () => {
     writeFileSync(file, u('one'));
     const { feed } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     appendFileSync(file, u('two') + u('three').slice(0, 30));
-    await tick();
+    await tick(() => c.live().length >= 1);
     expect(texts(c.live())).toEqual(['two']);
     appendFileSync(file, u('three').slice(30) + u('four'));
-    await tick();
+    await tick(() => c.live().length >= 3);
     expect(texts(c.live())).toEqual(['two', 'three', 'four']);
     feed.stop();
   });
 
   it('a join between two appends gets each event exactly once across history and live', async () => {
     writeFileSync(file, u('a'));
-    const { feed } = make();
+    const { feed, buffer } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     appendFileSync(file, u('b'));
-    await tick();
+    await tick(() => buffer.snapshot().length === 2);
     const c = collect(feed); // joins after b was consumed, before c is appended
     appendFileSync(file, u('c'));
-    await tick();
+    await tick(() => c.live().length === 1);
     const all = [...c.history()!.events, ...c.live()];
     expect(texts(all)).toEqual(['a', 'b', 'c']);
     expect(new Set(all.map((e) => e.id)).size).toBe(3);
@@ -127,8 +148,8 @@ describe('chatFeed', () => {
     const { feed } = make();
     const c = collect(feed);
     feed.start();
-    await sleep(120);
-    await tick();
+    await ready(feed);
+    await tick(() => c.history()!.events.length + c.live().length >= 3);
     const all = [...c.history()!.events, ...c.live()];
     expect(texts(all)).toEqual(['a', 'b', 'late']);
     feed.stop();
@@ -141,10 +162,10 @@ describe('chatFeed', () => {
     let cur = { sessionId: 's1', file };
     const { feed, buffer } = make({ resolveSession: () => cur });
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     cur = { sessionId: 's2', file: file2 };
-    await tick();
+    await tick(() => texts(c.history()!.events).join() === 'fresh');
     expect(texts(c.history()!.events)).toEqual(['fresh']);
     expect(texts(buffer.snapshot())).toEqual(['fresh']);
     feed.stop();
@@ -154,24 +175,27 @@ describe('chatFeed', () => {
     writeFileSync(file, u('one') + u('two') + u('three'));
     const { feed } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     writeFileSync(file, u('n'));
-    await tick();
+    await tick(() => texts(c.history()!.events).join() === 'n');
     expect(texts(c.history()!.events)).toEqual(['n']);
     feed.stop();
   });
 
   it('a transcript that does not exist yet attaches empty, logs once, and picks the file up when it appears', async () => {
+    const stat = vi.spyOn(fsp, 'stat');
     const { feed, logs } = make();
     feed.start();
-    await sleep(120);
-    await tick();
+    await ready(feed);
+    const before = stat.mock.calls.length;
+    await tick(() => stat.mock.calls.length > before); // a second failed read
+    await flush();
     expect(logs).toEqual(['remote: transcript unreadable']);
     const c = collect(feed);
     expect(c.msgs[0]).toMatchObject({ t: 'session', attached: true });
     writeFileSync(file, u('hello'));
-    await tick();
+    await tick(() => c.live().length >= 1);
     expect(texts(c.live())).toEqual(['hello']);
     feed.stop();
   });
@@ -180,10 +204,10 @@ describe('chatFeed', () => {
     writeFileSync(file, u('x'));
     const { feed } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     sid = null;
-    await tick();
+    await tick(() => c.msgs.some((m) => m.t === 'session' && !m.attached));
     expect(c.msgs.slice(-2)).toEqual([{ t: 'session', attached: false, title: null }, { t: 'history', events: [] }]);
     feed.stop();
   });
@@ -192,12 +216,12 @@ describe('chatFeed', () => {
     writeFileSync(file, u('first'));
     const { feed } = make({ maxReadBytes: 1000 });
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     let s = '';
     for (let i = 0; i < 100; i++) s += u(`line ${i} ${'y'.repeat(40)}`);
     appendFileSync(file, s);
-    await tick();
+    await tick(() => (texts(c.live()).at(-1) ?? '').startsWith('line 99 '));
     const t = texts(c.live());
     expect(t.length).toBeGreaterThan(3);
     expect(t[t.length - 1]).toMatch(/^line 99 /);
@@ -212,10 +236,10 @@ describe('chatFeed', () => {
     expect(s.length).toBeGreaterThan(300 * 1024);
     const { feed, buffer } = make();
     feed.start();
-    await sleep(100);
+    await ready(feed);
     const c = collect(feed);
     appendFileSync(file, u(`live ${KEY} password=hunter2hunter2`));
-    await tick();
+    await tick(() => c.live().length >= 1);
     expect(buffer.bytes).toBeLessThanOrEqual(65536);
     const dump = JSON.stringify([buffer.snapshot(), c.msgs]);
     expect(dump).toContain('[redacted]');
@@ -227,7 +251,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed, buffer } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const [e] = buffer.snapshot();
     expect(Object.isFrozen(e)).toBe(true);
     expect(() => {
@@ -240,7 +264,7 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed, buffer } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
     const stat = vi.spyOn(fsp, 'stat');
     feed.stop();
@@ -249,7 +273,7 @@ describe('chatFeed', () => {
     cb!();
     appendFileSync(file, u('b'));
     cb!();
-    await sleep(120);
+    await flush();
     expect(stat).not.toHaveBeenCalled();
     expect(c.live()).toEqual([]);
     expect(collect(feed).history()!.events).toEqual([]);
@@ -257,12 +281,21 @@ describe('chatFeed', () => {
 
   it('stop() during an in-flight read publishes nothing', async () => {
     writeFileSync(file, u('a'));
-    const { feed, buffer } = make({ readTitle: () => sleep(50).then(() => 'T') });
+    let release: (t: string) => void = () => {};
+    let asked = false;
+    const { feed, buffer } = make({
+      readTitle: () => {
+        asked = true;
+        return new Promise<string>((r) => (release = r));
+      },
+    });
     const c = collect(feed);
     feed.start();
-    await sleep(10);
+    await waitFor(() => asked);
     feed.stop();
-    await sleep(100);
+    release('T');
+    await flush();
+    await flush();
     expect(buffer.snapshot()).toEqual([]);
     expect(c.msgs).toEqual([{ t: 'session', attached: false, title: null }, { t: 'history', events: [] }]);
   });
@@ -271,14 +304,14 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     let n = 0;
     feed.join(() => {
       if (++n > 2) throw new Error('boom');
     });
     const c = collect(feed);
     appendFileSync(file, u('b') + u('c'));
-    await tick();
+    await tick(() => c.live().length >= 2);
     expect(n).toBe(3);
     expect(texts(c.live())).toEqual(['b', 'c']);
     feed.stop();
@@ -288,12 +321,13 @@ describe('chatFeed', () => {
     writeFileSync(file, u('a'));
     const { feed } = make();
     feed.start();
-    await sleep(120);
+    await ready(feed);
     const c = collect(feed);
+    const d = collect(feed); // stays joined: its delivery marks the poll as finished
     c.j.leave();
     c.j.leave();
     appendFileSync(file, u('b'));
-    await tick();
+    await tick(() => d.live().length === 1);
     expect(c.live()).toEqual([]);
     feed.stop();
   });
@@ -302,11 +336,48 @@ describe('chatFeed', () => {
     const { feed, logs } = make();
     const c = collect(feed);
     feed.start();
-    await sleep(120);
-    await tick();
+    await ready(feed);
     writeFileSync(file, u('a'));
-    await tick();
+    await tick(() => c.live().length >= 1);
     expect(JSON.stringify([c.msgs, logs])).not.toContain(dir);
+    feed.stop();
+  });
+
+  it('a readTitle that throws synchronously leaves the title null and the feed running', async () => {
+    writeFileSync(file, u('a'));
+    const { feed } = make({
+      readTitle: () => {
+        throw new Error('sync boom');
+      },
+    });
+    feed.start();
+    await ready(feed);
+    const c = collect(feed);
+    expect(c.msgs[0]).toEqual({ t: 'session', attached: true, title: null });
+    appendFileSync(file, u('b'));
+    await tick(() => c.live().length >= 1);
+    expect(texts(c.live())).toEqual(['b']);
+    feed.stop();
+  });
+
+  it('stops asking for a title after a few failed follow-time retries', async () => {
+    writeFileSync(file, u('a'));
+    let calls = 0;
+    const { feed } = make({
+      readTitle: async () => {
+        calls++;
+        return null;
+      },
+    });
+    feed.start();
+    await ready(feed);
+    const c = collect(feed);
+    for (let i = 0; i < 12; i++) {
+      appendFileSync(file, u(`m${i}`));
+      await tick(() => c.live().length >= i + 1);
+    }
+    expect(calls).toBeGreaterThan(1);
+    expect(calls).toBeLessThanOrEqual(6); // one at attach, at most five retries
     feed.stop();
   });
 
