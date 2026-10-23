@@ -10,7 +10,7 @@ function mkStatus(patch: Partial<ControlStatus> = {}): ControlStatus {
 function mkDevice(ref: string, patch: Partial<RemoteSessionInfo> = {}): RemoteSessionInfo {
   return { ref, createdAtMs: Date.now() - 3600_000, expiresAtMs: Date.now() + 86400_000 * 20, lastSeenMs: Date.now() - 120_000, peer: '100.94.15.125', ...patch };
 }
-const okPairing = (): ControlPairingResult => ({ ok: true, uri: 'aethermobile://pair?host=100.1.2.3&port=47821&code=ABCD-1234', code: 'ABCD-1234', qrSvg: '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', expiresAtMs: Date.now() + 90_000 });
+const okPairing = (ttlMs = 90_000): ControlPairingResult => ({ ok: true, uri: 'aethermobile://pair?host=100.1.2.3&port=47821&code=ABCD-1234', code: 'ABCD-1234', qrSvg: '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', expiresAtMs: Date.now() + ttlMs });
 
 interface Opts {
   status?: ControlStatus;
@@ -133,7 +133,7 @@ describe('ControlAccessCard', () => {
 
   it('the code and QR clear at expiry', async () => {
     vi.useFakeTimers();
-    await pairFlow({ pairing: { ...okPairing(), expiresAtMs: Date.now() + 3_000 } });
+    await pairFlow({ pairing: okPairing(3_000) });
     expect(screen.getByAltText('Pairing QR code')).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(4_000); });
     expect(screen.queryByAltText('Pairing QR code')).toBeNull();
