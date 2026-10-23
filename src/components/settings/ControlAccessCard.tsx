@@ -102,7 +102,7 @@ export function ControlAccessCard() {
       const r = await control.createPairing();
       if (g !== gen.current || stateRef.current !== 'on') return;
       if (r.ok) setPairing(r);
-      else setMessage('Couldn't create a pairing code.');
+      else setMessage("Couldn't create a pairing code.");
     } catch {
       setMessage('Could not create a pairing code.');
     }
