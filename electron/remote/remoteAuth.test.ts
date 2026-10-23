@@ -469,3 +469,257 @@ describe('host and origin predicates', () => {
     }
   });
 });
+
+// ---- device (bearer) scope ----
+import { readFileSync as readFileSyncDev } from 'node:fs';
+import { createDeviceAuth, serverProof } from './remoteAuth';
+import { CONTROL_MAX_DEVICES } from '../../src/shared/remote/types';
+
+describe('device auth scope', () => {
+  const PEER = '100.94.15.125';
+  function dev(over: Parameters<typeof createDeviceAuth>[0] = {}) {
+    let t = 1_000_000;
+    let n = 0;
+    const clock = { now: () => t, advance: (ms: number) => { t += ms; } };
+    const store = fakeStore();
+    const auth = createDeviceAuth({ now: clock.now, randomBytes: (len) => Buffer.alloc(len, ++n), store, ...over });
+    return { auth, clock, store };
+  }
+  async function pairDev(auth: ReturnType<typeof createDeviceAuth>, peer: string | undefined = PEER) {
+    const { code } = auth.createPairing();
+    const r = await auth.redeemDevice(code, peer, async () => true);
+    if (!r.ok) throw new Error('pair failed');
+    return r;
+  }
+  const bearer = (t: string) => `Bearer ${t}`;
+
+  it('cap is one device and a second redeem evicts the first', async () => {
+    expect(CONTROL_MAX_DEVICES).toBe(1);
+    const { auth } = dev();
+    const a = await pairDev(auth);
+    const b = await pairDev(auth);
+    expect(auth.list()).toHaveLength(1);
+    expect(auth.authenticate(bearer(a.token), PEER)).toBeNull();
+    expect(auth.authenticate(bearer(b.token), PEER)).not.toBeNull();
+  });
+
+  it('scopes never accept each other\'s credentials', async () => {
+    const { auth } = dev();
+    const viewer = createRemoteAuth({ randomBytes: (len) => Buffer.alloc(len, 9) });
+    const { code } = viewer.createPairing();
+    const v = viewer.redeem(code);
+    if (!v.ok) throw new Error('viewer pair failed');
+    const cookieToken = v.cookie.split(';')[0].split('=')[1];
+    expect(auth.authenticate(bearer(cookieToken), PEER)).toBeNull();
+    const d = await pairDev(auth);
+    expect(viewer.isAuthenticated(`aether_remote=${d.token}`)).toBe(false);
+    expect(auth.isAuthenticated(`aether_remote=${d.token}`)).toBe(false);
+    expect(auth.redeem('AAAA-AAAA')).toEqual({ ok: false, status: 401 });
+    const redeemed = await (viewer as unknown as import('./remoteAuth').DeviceAuth).redeemDevice('x', PEER, async () => true);
+    expect(redeemed).toEqual({ ok: false, status: 401 });
+    expect((viewer as unknown as import('./remoteAuth').DeviceAuth).authenticate(bearer(d.token), PEER)).toBeNull();
+    expect(viewer.list()).toHaveLength(1);
+    expect(auth.list()).toHaveLength(1);
+  });
+
+  it('parses the bearer header strictly', async () => {
+    const { auth } = dev();
+    const { token } = await pairDev(auth);
+    expect(auth.authenticate(undefined, PEER)).toBeNull();
+    expect(auth.authenticate(`Basic ${token}`, PEER)).toBeNull();
+    expect(auth.authenticate(`Bearer ${token} ${token}`, PEER)).toBeNull();
+    expect(auth.authenticate(`Bearer ${token.slice(1)}`, PEER)).toBeNull();
+    expect(auth.authenticate(`Bearer ${token}A`, PEER)).toBeNull();
+    expect(auth.authenticate(`bearer ${token}`, PEER)).not.toBeNull();
+    const id = auth.authenticate(bearer(token), PEER);
+    expect(id?.ref).toHaveLength(12);
+  });
+
+  it('slides on touch, expires 30 days after the last touch, and caps at 180 days', async () => {
+    const { auth, clock } = dev();
+    const { token } = await pairDev(auth);
+    clock.advance(20 * DAY);
+    expect(auth.authenticate(bearer(token), PEER)).not.toBeNull(); // no touch: no extension
+    clock.advance(11 * DAY);
+    expect(auth.authenticate(bearer(token), PEER)).toBeNull(); // 31 d after pairing, never touched
+
+    const b = dev();
+    const t2 = (await pairDev(b.auth)).token;
+    b.clock.advance(20 * DAY);
+    expect(b.auth.authenticate(bearer(t2), PEER, { touch: true })).not.toBeNull();
+    b.clock.advance(29 * DAY);
+    expect(b.auth.authenticate(bearer(t2), PEER)).not.toBeNull();
+    b.clock.advance(2 * DAY);
+    expect(b.auth.authenticate(bearer(t2), PEER)).toBeNull(); // 31 d after the last touch
+
+    const c = dev();
+    const t3 = (await pairDev(c.auth)).token;
+    for (let i = 0; i < 17; i++) {
+      c.clock.advance(10 * DAY);
+      expect(c.auth.authenticate(bearer(t3), PEER, { touch: true })).not.toBeNull();
+    }
+    expect(c.auth.list()[0].expiresAtMs).toBe(1_000_000 + 170 * DAY + 10 * DAY);
+    c.clock.advance(10 * DAY); // day 180: the absolute cap
+    expect(c.auth.authenticate(bearer(t3), PEER, { touch: true })).toBeNull();
+  });
+
+  it('binds the token to its peer', async () => {
+    const { auth } = dev();
+    const { token } = await pairDev(auth);
+    expect(auth.authenticate(bearer(token), '100.94.15.126')).toBeNull();
+    expect(auth.authenticate(bearer(token), undefined)).toBeNull();
+    expect(auth.authenticate(bearer(token), `::ffff:${PEER}`)).not.toBeNull();
+    expect(auth.list()[0].peer).toBe(PEER);
+
+    const off = dev({ peerBinding: false });
+    const t2 = (await pairDev(off.auth)).token;
+    expect(off.auth.authenticate(bearer(t2), '10.0.0.9')).not.toBeNull();
+  });
+
+  it('redeemDevice honours approve true, false, throw, wrong code and burn', async () => {
+    const { auth, store } = dev();
+    const { code } = auth.createPairing();
+    expect(await auth.redeemDevice(code, PEER, async () => false)).toEqual({ ok: false, status: 403 });
+    expect(auth.list()).toHaveLength(0);
+    expect(auth.counts().pairingActive).toBe(false); // consumed even when declined
+
+    const second = auth.createPairing();
+    expect(await auth.redeemDevice(second.code, PEER, async () => { throw new Error('boom'); })).toEqual({ ok: false, status: 403 });
+    expect(auth.list()).toHaveLength(0);
+
+    const third = auth.createPairing();
+    expect(await auth.redeemDevice('ZZZZ-ZZZZ', PEER, async () => true)).toEqual({ ok: false, status: 401 });
+    const ok = await auth.redeemDevice(third.code, PEER, async () => true);
+    expect(ok.ok).toBe(true);
+    await auth.flush();
+    expect(store.current).toHaveLength(1);
+    expect(store.current[0].peer).toBe(PEER);
+
+    auth.createPairing();
+    for (let i = 0; i < 5; i++) await auth.redeemDevice('ZZZZ-ZZZZ', PEER, async () => true);
+    expect(await auth.redeemDevice('ZZZZ-ZZZZ', PEER, async () => true)).toEqual({ ok: false, status: 429 });
+  });
+
+  it('a pending approval cannot be raced with the same code', async () => {
+    const { auth } = dev();
+    const { code } = auth.createPairing();
+    let release!: (v: boolean) => void;
+    const first = auth.redeemDevice(code, PEER, () => new Promise<boolean>((r) => { release = r; }));
+    expect(await auth.redeemDevice(code, PEER, async () => true)).toEqual({ ok: false, status: 401 });
+    release(true);
+    expect((await first).ok).toBe(true);
+  });
+
+  it('code lives 5 minutes', async () => {
+    const { auth, clock } = dev();
+    const { code } = auth.createPairing();
+    clock.advance(5 * MIN);
+    expect(await auth.redeemDevice(code, PEER, async () => true)).toEqual({ ok: false, status: 401 });
+    const b = dev();
+    const fresh = b.auth.createPairing();
+    b.clock.advance(5 * MIN - 1);
+    expect((await b.auth.redeemDevice(fresh.code, PEER, async () => true)).ok).toBe(true);
+  });
+
+  it('serverProof reproduces the shared vector and identity.proofFor uses the stored hash', async () => {
+    const proto = JSON.parse(readFileSyncDev('protocol/mobile-protocol.json', 'utf8'));
+    const v = proto.proof.vectors;
+    expect(serverProof(v.tokenSha256Hex, v.nonce)).toBe(v.proof);
+    const { auth } = dev();
+    const { token } = await pairDev(auth);
+    const id = auth.authenticate(bearer(token), PEER)!;
+    expect(id.proofFor(v.nonce)).toBe(serverProof(createHash('sha256').update(token).digest('hex'), v.nonce));
+  });
+
+  it('revoke and revokeAll still work', async () => {
+    const { auth } = dev();
+    const { token } = await pairDev(auth);
+    const ref = auth.list()[0].ref;
+    expect(auth.revokeOne(ref)).toBe(true);
+    expect(auth.authenticate(bearer(token), PEER)).toBeNull();
+    const t2 = (await pairDev(auth)).token;
+    auth.revokeAll();
+    expect(auth.authenticate(bearer(t2), PEER)).toBeNull();
+    expect(auth.list()).toHaveLength(0);
+  });
+
+  it('reloads peer from the store and drops it for the viewer profile', async () => {
+    const { auth, store } = dev();
+    const { token } = await pairDev(auth);
+    await auth.flush();
+    const again = createDeviceAuth({ store, now: () => 1_000_000 + MIN });
+    expect(again.authenticate(bearer(token), PEER)).not.toBeNull();
+    expect(again.authenticate(bearer(token), '1.2.3.4')).toBeNull();
+    const asViewer = createRemoteAuth({ store, now: () => 1_000_000 + MIN });
+    expect(asViewer.list().every((s) => s.peer === undefined)).toBe(true);
+  });
+});
+
+describe('device and viewer scopes over one store', () => {
+  const PEER = '100.94.15.125';
+  const bearer = (t: string) => `Bearer ${t}`;
+  async function mintBoth(storeFor: (kind: 'viewer' | 'device') => SessionStorePort) {
+    const viewer = createRemoteAuth({ store: storeFor('viewer'), randomBytes: (n) => Buffer.alloc(n, 1) });
+    const vr = viewer.redeem(viewer.createPairing().code);
+    if (!vr.ok) throw new Error('viewer pair failed');
+    const vToken = vr.cookie.split(';')[0].split('=')[1];
+    await viewer.flush();
+    const device = createDeviceAuth({ store: storeFor('device'), peerBinding: false, randomBytes: (n) => Buffer.alloc(n, 2) });
+    const dr = await device.redeemDevice(device.createPairing().code, PEER, async () => true);
+    if (!dr.ok) throw new Error('device pair failed');
+    await device.flush();
+    return { vToken, dToken: dr.token };
+  }
+
+  it('never see each other\'s sessions over one fake store port', async () => {
+    // One shared port, written by both sides in turn (as two files would not be, but as a mixed list would).
+    const shared = fakeStore();
+    const { vToken, dToken } = await mintBoth(() => shared);
+    shared.current = [
+      { hash: createHash('sha256').update(vToken).digest('hex'), createdAtMs: 1, expiresAtMs: 9e12, lastSeenMs: 1 },
+      { hash: createHash('sha256').update(dToken).digest('hex'), createdAtMs: 2, expiresAtMs: 9e12, lastSeenMs: 2, peer: PEER },
+    ];
+    const v = createRemoteAuth({ store: shared, now: () => 1000 });
+    const d = createDeviceAuth({ store: shared, now: () => 1000, peerBinding: false });
+    expect(v.list().map((s) => s.peer)).toEqual([undefined]);
+    expect(d.list().map((s) => s.peer)).toEqual([PEER]);
+    expect(v.isAuthenticated(`aether_remote=${dToken}`)).toBe(false);
+    expect(d.authenticate(bearer(vToken), PEER)).toBeNull();
+    expect(v.isAuthenticated(`aether_remote=${vToken}`)).toBe(true);
+    expect(d.authenticate(bearer(dToken), PEER)).not.toBeNull();
+  });
+
+  it('never see each other\'s sessions over one real file, in both directions', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createSessionStore } = await import('./sessionStore');
+    const dir = mkdtempSync(join(tmpdir(), 'aether-scope-'));
+    try {
+      const file = join(dir, 'shared.json');
+      // device writes, viewer reads
+      const { dToken } = await mintBoth((k) => (k === 'device' ? createSessionStore(file, { peer: true }) : fakeStore()));
+      const v1 = createRemoteAuth({ store: createSessionStore(file), now: () => 1_000_000 });
+      expect(v1.list()).toHaveLength(0);
+      expect(v1.isAuthenticated(`aether_remote=${dToken}`)).toBe(false);
+      // viewer writes, device reads
+      const { vToken } = await mintBoth((k) => (k === 'viewer' ? createSessionStore(file) : fakeStore()));
+      const d1 = createDeviceAuth({ store: createSessionStore(file, { peer: true }), now: () => 1_000_000, peerBinding: false });
+      expect(d1.list()).toHaveLength(0);
+      expect(d1.authenticate(bearer(vToken), PEER)).toBeNull();
+      expect(d1.authenticate(bearer(vToken), undefined)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a viewer profile never authenticates a bearer, even with peerBinding off', () => {
+    const viewer = createRemoteAuth({ peerBinding: false, randomBytes: (n) => Buffer.alloc(n, 3) });
+    const r = viewer.redeem(viewer.createPairing().code);
+    if (!r.ok) throw new Error('pair failed');
+    const token = r.cookie.split(';')[0].split('=')[1];
+    const asDevice = viewer as unknown as import('./remoteAuth').DeviceAuth;
+    expect(asDevice.authenticate(bearer(token), '1.2.3.4')).toBeNull();
+    expect(asDevice.authenticate(bearer(token), undefined, { touch: true })).toBeNull();
+  });
+});
