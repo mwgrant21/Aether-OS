@@ -269,19 +269,38 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     const opened = generation;
     const approve = (): Promise<boolean> => new Promise<boolean>(resolve => {
       confirmPending = true;
+      let settled = false; // per dialog: a late answer from a timed-out dialog must not clear a newer dialog's flag
       const done = (ok: boolean): void => {
+        if (settled) return;
+        settled = true;
         confirmPending = false;
         // a disable or quit while the dialog was open voids the answer
         resolve(ok && opened === generation && state === 'on' && !stopped);
       };
       const timer = setT(() => done(false), CONTROL_PAIR_CONFIRM_TIMEOUT_MS);
-      deps.confirmPair(peer ?? null, replaces).then(
+      let asked: Promise<boolean>;
+      try {
+        asked = deps.confirmPair(peer ?? null, replaces);
+      } catch {
+        clearT(timer);
+        done(false);
+        return;
+      }
+      asked.then(
         ok => { clearT(timer); done(ok === true); },
         () => { clearT(timer); done(false); },
       );
     });
     const r = await auth!.redeemDevice(code, peer, approve);
     if (!r.ok) return { status: r.status };
+    if (opened !== generation || state !== 'on' || stopped) {
+      // a disable or quit landed between the approval and the mint: nothing may stay paired (cap 1, so this is the one device)
+      auth!.revokeAll();
+      deps.listener.recheckControl();
+      await settle(false);
+      emit();
+      return { status: 403 };
+    }
     log('control: paired');
     deps.listener.recheckControl(); // a superseded device's live sockets stop authenticating
     await settle(true);

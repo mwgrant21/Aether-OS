@@ -17,7 +17,7 @@ import type { PermissionDecision, PostToolFlagDecision } from './permissionServe
 import type { PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
-import type { PairingResult, RemoteStatus } from '../src/shared/remote/types';
+import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
 import type { CommunicationPayload } from '../src/shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './communicationBridge/mainIntegration';
 import type { QuotaEfficiency } from '../src/shared/quotaEfficiency';
@@ -50,6 +50,19 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, status: RemoteStatus) => callback(status);
       ipcRenderer.on('remote:statusChanged', listener);
       return () => ipcRenderer.removeListener('remote:statusChanged', listener);
+    },
+  },
+  control: {
+    status: (): Promise<ControlStatus> => ipcRenderer.invoke('control:status'),
+    setEnabled: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setEnabled', on),
+    setReenableAtLaunch: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setReenableAtLaunch', on),
+    createPairing: (): Promise<ControlPairingResult> => ipcRenderer.invoke('control:createPairing'),
+    revokeAll: (): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeAll'),
+    revokeOne: (ref: string): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeOne', ref),
+    onStatus: (cb: (s: ControlStatus) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, s: ControlStatus) => cb(s);
+      ipcRenderer.on('control:statusChanged', listener);
+      return () => ipcRenderer.removeListener('control:statusChanged', listener);
     },
   },
   app: {

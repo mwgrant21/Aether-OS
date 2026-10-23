@@ -330,6 +330,82 @@ describe('control hub pairing', () => {
     expect(hub.status().devices).toHaveLength(0);
   });
 
+  it('a confirm answered after a disable AND re-enable is still 403 (the dialog belongs to the old generation)', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub, store } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = hub.port.pair(made.code, PEER);
+    await tick();
+    await hub.setEnabled(false);
+    await hub.setEnabled(true);
+    expect(hub.status().state).toBe('on');
+    answer(true);
+    expect(await pending).toEqual({ status: 403 });
+    expect(hub.status().devices).toHaveLength(0);
+    expect(store.saved.flat()).toHaveLength(0);
+  });
+
+  it('a disable that lands between the approval and the mint revokes the new device and answers 403', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub, listener } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = hub.port.pair(made.code, PEER);
+    await tick();
+    answer(true);
+    // same tick: the approval is resolved but redeemDevice has not minted yet
+    const disabling = hub.setEnabled(false);
+    expect(await pending).toEqual({ status: 403 });
+    await disabling;
+    expect(hub.status().devices).toHaveLength(0);
+    expect(listener.recheckControl).toHaveBeenCalled();
+  });
+
+  it('a late answer from a timed-out dialog cannot clear confirmPending for a newer dialog', async () => {
+    const answers: Array<(ok: boolean) => void> = [];
+    const { hub, timers, confirmPair } = setup({ confirm: () => new Promise<boolean>(r => { answers.push(r); }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const first = hub.port.pair(made.code, PEER);
+    await tick();
+    const t = timers.find(x => x.ms === 60000)!;
+    timers.splice(timers.indexOf(t), 1);
+    t.fn();
+    expect(await first).toEqual({ status: 403 });
+    const made2 = await hub.createPairing();
+    if (!made2.ok) throw new Error('no pairing');
+    const second = hub.port.pair(made2.code, PEER);
+    await tick();
+    expect(confirmPair).toHaveBeenCalledTimes(2);
+    answers[0](true); // the first, timed-out dialog is answered late
+    await tick();
+    const made3 = await hub.createPairing();
+    if (!made3.ok) throw new Error('no pairing');
+    const third = hub.port.pair(made3.code, PEER); // the second dialog is still open, so this must not open a third
+    await tick();
+    expect(confirmPair).toHaveBeenCalledTimes(2);
+    expect(await third).toEqual({ status: 429 });
+    answers[1](true);
+    expect((await second).status).toBe(200);
+  });
+
+  it('a confirm that throws synchronously is a decline', async () => {
+    const { hub } = setup({ confirm: () => { throw new Error('dialog'); } });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 403 });
+    const again = await hub.createPairing();
+    if (!again.ok) throw new Error('no pairing');
+    expect(await hub.port.pair(again.code, PEER)).toEqual({ status: 403 }); // not stuck behind a pending dialog (429)
+    expect(hub.status().devices).toHaveLength(0);
+    expect(hub.status().state).toBe('on');
+  });
+
   it('a second pair while a confirm is open is 429 and does not open another dialog', async () => {
     let answer: (ok: boolean) => void = () => {};
     const { hub, confirmPair } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
