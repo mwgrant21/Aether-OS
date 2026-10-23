@@ -98,6 +98,17 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
                         background hand-back, cross-session peer message). No electron import.
   board/boardFeed.ts    lists sessions and assembles the ordered, secret-masked feed
                         from a session's transcript plus its subagent files. No electron import.
+  remote/               opt-in read-only phone chat view over Tailscale (privacy §16). No pty code.
+    remoteHub.ts          enable/disable, pairing, revoke, status; composes the rest.
+    remoteServer.ts       the ONE listener: tailnet IPv4 only, ws noServer, host/origin checks.
+    remoteAuth.ts / sessionStore.ts   pairing code + cookie sessions; the only disk write
+                          (~/.aether-os/remote-sessions.json: hash + 3 timestamps).
+    tailnet.ts            findTailnetAddress / assertBindableHost (bind-host guard).
+    chatFeed.ts / chatParser.ts / replayBuffer.ts   transcript -> masked ChatEvents; the only
+                          place events are built is chatParser; 64 KB in-memory replay only.
+    remotePages.ts / pairingQr.ts   phone HTML/JS/CSS (textContent only) and the pairing QR.
+    remoteIpc.ts / types.ts   trusted IPC for Settings; shared wire types.
+    noWildcardListener.test.ts   source-scan guard (no wildcard bind, no pty, no stray fs write).
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
 docs/superpowers/
@@ -233,6 +244,11 @@ before designing anything that persists or transmits data. The short version:
   per-launch HMAC secret kept only in the user-only `~/.aether-os/permission-server-port` file,
   deleted on quit (`electron/permissionAuth.ts`, security audit 2026-10-04). Never drop the
   check: the hook must also refuse an unproven server, or a port squatter can answer allow.
+  **One deliberate, opt-in exception:** the read-only phone chat view (`electron/remote/`, privacy §16)
+  listens on the Tailscale interface IPv4 address only (never `0.0.0.0`, `::` or a LAN address; the
+  only `listen(` under `electron/remote` is in `remoteServer.ts`, after `assertBindableHost`), is off at every launch, needs a
+  native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
+  `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind or a pty/write path there.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
   detector and optimize rule has been checked against this and none of them need content.
@@ -242,7 +258,8 @@ before designing anything that persists or transmits data. The short version:
 - `systemPrompt.ts` and its scoped-snapshot leak tests were retired in Stage 13.5 along with the
   rest of the chat model call path — the surface they guarded no longer exists.
 
-Single-user also **deletes** a lot of scope permanently: no auth model, no multi-tenant schema, no
+Single-user also **deletes** a lot of scope permanently: no account or multi-user auth model (the only
+auth is the phone-pairing gate of the opt-in remote view, privacy §16), no multi-tenant schema, no
 shared folder or report writing, no roll-up, no sharing links, no cloud sync. TokenMonitor is the
 fleet product and writes per-seat reports to a shared folder by design; Aether OS has no equivalent
 and should never grow one.

@@ -28,17 +28,17 @@ export interface BoardFeedDeps {
 const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 const HEAD_BYTES = 64 * 1024;
 const SUBJECT_CAP = 200;
-const STUB_RE = /delivered to you as a message from/i;
+export const STUB_RE = /delivered to you as a message from/i;
 const TITLE_SCAN_BYTES = 4 * 1024 * 1024; // real first prompts sit behind ~130 KB request-blob lines
 const TITLE_CAP = 60;
 // Wrapper lines the harness injects as user turns; none is something the human typed.
-const NON_PROMPT_RE = /^\s*(?:<command-|<local-command|<system-reminder|<task-notification|<agent-message|<user-prompt-submit-hook|Caveat:)/;
-const HEX_ID_RE = /^[0-9a-f]{12,}$/i;
+export const NON_PROMPT_RE = /^\s*(?:<command-|<local-command|<system-reminder|<task-notification|<agent-message|<user-prompt-submit-hook|Caveat:)/;
+export const HEX_ID_RE = /^[0-9a-f]{12,}$/i;
 // Absolute paths in a title: drive-letter (C:\a\b, C:/a/b), UNC (\\host\share\x) and
 // POSIX with at least two segments (/home/x/y). Each is shortened to its last segment.
 const ABS_PATH_RE = /(?:\b[A-Za-z]:[\\/]|\\\\[^\s\\/]|(?<![\w.:/\\~])\/[^\s/\\]+\/)[^\s"'<>|*?]*/g;
 
-function shortenPaths(text: string): string {
+export function shortenPaths(text: string): string {
   return text.replace(ABS_PATH_RE, (m) => {
     const tail = /[.,;:!)\]}]+$/.exec(m)?.[0] ?? '';
     const body = tail ? m.slice(0, -tail.length) : m;
@@ -76,7 +76,7 @@ async function projectFromHead(file: string, deps: BoardFeedDeps): Promise<Board
 }
 
 /** First human-typed prompt in the head of a parent transcript, masked and shortened; null if none. */
-async function titleFromHead(file: string): Promise<string | null> {
+export async function titleFromHead(file: string): Promise<string | null> {
   const input = createReadStream(file, { encoding: 'utf8', start: 0, end: TITLE_SCAN_BYTES - 1 });
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
   try {

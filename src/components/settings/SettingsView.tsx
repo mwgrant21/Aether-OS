@@ -11,6 +11,7 @@ import { CostGuardCard } from './CostGuardCard';
 import { RetentionCard } from './RetentionCard';
 import { CommunicationCard } from './CommunicationCard';
 import { MemoryExtractionCard } from './MemoryExtractionCard';
+import { RemoteAccessCard } from './RemoteAccessCard';
 
 export function SettingsView() {
   return (
@@ -25,6 +26,7 @@ export function SettingsView() {
         <CrossEngineVerificationCard />
         <CommunicationCard />
         <MemoryExtractionCard />
+        <RemoteAccessCard />
         <CostGuardCard />
         <RetentionCard />
       </div>
