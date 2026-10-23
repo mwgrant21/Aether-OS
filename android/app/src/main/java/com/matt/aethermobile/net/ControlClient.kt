@@ -5,6 +5,9 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.net.ConnectException
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 /** Byte-level seam under [ControlClient] so the handshake is JVM-testable. */
 interface Transport {
@@ -75,6 +78,8 @@ class ControlClient(
     private val onState: (ControlState) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
+    /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
+    private val scheduler: (delayMs: Long, task: () -> Unit) -> (() -> Unit) = ::scheduleOnTimer,
 ) {
     @Volatile
     var state: ControlState = ControlState.Idle
@@ -94,8 +99,13 @@ class ControlClient(
             publish(ControlState.Connecting)
             val url = "ws://$host:${ControlProtocol.PORT}${ControlProtocol.PATH_CTL}"
             val headers = mapOf("Authorization" to "${ControlProtocol.AUTH_SCHEME} $token")
-            s.transportOpened = true
-            transport.open(url, headers, s)
+            try {
+                transport.open(url, headers, s)
+            } catch (e: Throwable) {
+                if (e is VirtualMachineError) throw e
+                // Never carries the exception text: it could echo the URL or headers.
+                s.finish(ControlState.Failed(Failure.Unreachable))
+            }
         }
     }
 
@@ -115,15 +125,18 @@ class ControlClient(
         private val nonce: String,
         private val epoch: String,
     ) : Transport.Listener {
-        var transportOpened = false
+        private var cancelWatchdog: (() -> Unit)? = null
         private var helloSent = false
         private var done = false
+        private var welcomed = false
 
         /** Ends the connection once; returns false if it had already ended. */
         fun finish(next: ControlState, closeCode: Int? = null): Boolean {
             synchronized(this@ControlClient) {
                 if (done) return false
                 done = true
+                cancelWatchdog?.invoke()
+                cancelWatchdog = null
                 if (session === this) session = null
                 if (closeCode != null) transport.close(closeCode, "")
                 publish(next)
@@ -137,6 +150,13 @@ class ControlClient(
                 helloSent = true
                 if (!transport.send(ControlProtocol.buildHello(appVersion, epoch, nonce))) {
                     finish(ControlState.Failed(Failure.Unreachable), closeCode = 1001)
+                    return
+                }
+                cancelWatchdog = scheduler(WELCOME_TIMEOUT_MS) {
+                    // cancel() cannot stop a task already blocked on this monitor, so re-check here.
+                    synchronized(this@ControlClient) {
+                        if (!done && !welcomed) finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                    }
                 }
             }
         }
@@ -183,6 +203,9 @@ class ControlClient(
                 finish(ControlState.Failed(Failure.ProofMismatch), closeCode = 1008)
                 return
             }
+            welcomed = true
+            cancelWatchdog?.invoke()
+            cancelWatchdog = null
             publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs))
         }
 
@@ -210,4 +233,16 @@ class ControlClient(
 
     private fun frameType(text: String): String? =
         try { JSONObject(text).optString("t").ifEmpty { null } } catch (_: JSONException) { null }
+}
+
+/** Client-side bound on the wait for `welcome` after the socket opens. */
+private const val WELCOME_TIMEOUT_MS = 8_000L
+
+private val timer: ScheduledExecutorService by lazy {
+    Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "aether-ctl-watchdog").apply { isDaemon = true } }
+}
+
+private fun scheduleOnTimer(delayMs: Long, task: () -> Unit): () -> Unit {
+    val f = timer.schedule(task, delayMs, TimeUnit.MILLISECONDS)
+    return { f.cancel(false) }
 }
