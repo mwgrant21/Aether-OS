@@ -704,11 +704,17 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   remoteQuitting = true;
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
-    // A failed ACL setup means the hub never loaded the store; do not let stop() read it at quit either.
-    (remoteDirFailed ? Promise.resolve() : remoteHub.stop()).then(() => {
-      remoteStopped = true;
-      if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
-    }),
+    // ACL pending or failed: the store was never loaded; do not let stop() read it at quit either.
+    (remoteDirReady ? remoteHub.stop() : Promise.resolve()).then(
+      () => {
+        remoteStopped = true;
+        if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
+      },
+      () => {
+        remoteStopped = true;
+        diagLog.write(`[diag] remote stop failed at quit at=${new Date().toISOString()}`);
+      },
+    ),
   ]);
 }, () => {
   if (remoteQuitting && !remoteStopped) diagLog.write(`[diag] remote session store flush timed out at quit at=${new Date().toISOString()}`);
@@ -912,6 +918,8 @@ app.whenReady().then(async () => {
       remoteHub.init();
       // A Settings card mounted before this point holds the pre-init status; give it the real one.
       sendToWindow('remote:statusChanged', remoteHub.status());
+    } else {
+      sendToWindow('remote:statusChanged', remoteStatusOrUnavailable());
     }
     resolveRemotePrivateDir();
   });

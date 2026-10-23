@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
@@ -58,9 +58,20 @@ export function RemoteAccessCard() {
 
   // Turning access off (or it becoming unavailable) invalidates any displayed code.
   const stateNow = status?.state;
+  const onRef = useRef(false);
   useEffect(() => {
+    onRef.current = stateNow === 'on';
     if (stateNow && stateNow !== 'on') setPairing(null);
   }, [stateNow]);
+
+  // Keep "last seen" current while phones are listed; the interval only runs while sessions exist.
+  const hasSessions = (status?.sessions.length ?? 0) > 0;
+  useEffect(() => {
+    if (!hasSessions) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [hasSessions]);
 
   if (!remote || !status) {
     return (
@@ -83,8 +94,10 @@ export function RemoteAccessCard() {
     setMessage(null);
     try {
       const r = await remote.createPairing();
-      if (r.ok) setPairing(r);
-      else setMessage('Turn remote access on first.');
+      // A code that resolves after access left 'on' is dropped, not shown.
+      if (r.ok) {
+        if (onRef.current) setPairing(r);
+      } else setMessage('Turn remote access on first.');
     } catch {
       setMessage('Could not create a pairing code.');
     }
