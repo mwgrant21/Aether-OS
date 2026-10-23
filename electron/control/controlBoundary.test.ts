@@ -2,8 +2,8 @@
 // electron/control/controlBoundary.test.ts
 //
 // AST guard for phone CONTROL (docs/privacy-and-data.md section 17), the opt-in input path that sits
-// beside the read-only viewer. electron/control/ does not exist yet (slice V-1 is docs and guards), so
-// this file has two halves that must both stay true:
+// beside the read-only viewer. electron/control/ now holds protocol.ts and controlGateway.ts (the rest
+// arrives with later slices), so this file has two halves that must both stay true:
 //   1. the REAL TREE test scans electron/control/ and passes when the directory is missing or empty;
 //   2. the ENGINE tests run the very same analyzer over in-memory fixtures and a scratch directory, so
 //      the rules are proven live today and an empty tree cannot make them pass vacuously. Every Rule
@@ -71,6 +71,8 @@ const FORBIDDEN_MODULE = /^(?:node:)?(?:child_process|http|https|net|ws|fs|fs\/p
 const DENY_IDENT: ReadonlySet<string> = new Set(['createRequire', 'eval', 'Function', 'globalThis', 'global', 'module', 'Reflect', 'require', 'process',
   // network and thread egress that needs no import (rule 1 forbids http/https/net/ws; these are the global-scope routes to the same thing)
   'fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource', 'Worker', 'SharedWorker', 'navigator',
+  // renderer-global aliases of globalThis: no legitimate use in the main process, and a name-based guard cannot tell them apart
+  'window', 'self',
 ]);
 const DENY_PROP: ReadonlySet<string> = new Set([
   'createRequire', 'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'mainModule', 'require', 'kill', 'constructor', 'report',
@@ -191,6 +193,10 @@ function analyzeControl(name: string, text: string): Analysis {
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && (ts.getCombinedNodeFlags(n) & ts.NodeFlags.Const) !== 0) {
       const init = unwrap(n.initializer);
       if (ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === INPUT_VALIDATOR) validated.add(n.name.text);
+    }
+    // a parameter, variable or binding named like the validator would shadow the import and satisfy the sink rule with a caller-supplied function
+    if (name === 'inputRouter.ts' && (ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) && ts.isIdentifier(n.name) && n.name.text === INPUT_VALIDATOR) {
+      v('input', `${INPUT_VALIDATOR} declared as a parameter, variable or binding (shadows the imported validator)`);
     }
     if (ts.isIdentifier(n)) {
       const t = n.text;
@@ -391,6 +397,11 @@ const BAD: Bad[] = [
   { id: 'validator-local', file: 'inputRouter.ts', src: "const validateInput = (x: unknown): string => String(x);\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'import from ./protocol' },
   { id: 'validator-aliased', file: 'inputRouter.ts', src: "import { validateInput as validateInputX } from './protocol';\nconst validateInput = validateInputX;\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'import from ./protocol' },
   { id: 'validator-type-only', file: 'inputRouter.ts', src: "import type { validateInput } from './protocol';\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'import from ./protocol' },
+  { id: 'validator-param-shadow', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport function route(terminals: { write(s: number, d: string): void }, raw: unknown, validateInput: (x: unknown) => string): void { terminals.write(0, validateInput(raw)); }", rule: 'input', has: 'shadows the imported validator' },
+  { id: 'validator-binding-shadow', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport const r = (terminals: { write(s: number, d: string): void }, o: { validateInput: (x: unknown) => string }, raw: unknown): void => { const { validateInput } = o; terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'shadows the imported validator' },
+  { id: 'validator-var-shadow', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { { const validateInput = (x: unknown): string => String(x); terminals.write(0, validateInput(raw)); } };", rule: 'input', has: 'shadows the imported validator' },
+  { id: 'global-window', file: 'controlHub.ts', src: "export const e = () => window.location;", rule: 'escape', has: 'window' },
+  { id: 'global-self', file: 'controlHub.ts', src: "export const e = () => self.postMessage('x');", rule: 'escape', has: 'self' },
   { id: 'kill', file: 'controlGateway.ts', src: "export const k = (h: { kill(): void }) => { h.kill(); };", rule: 'escape', has: '.kill' },
   { id: 'fs-write-name', file: 'controlHub.ts', src: "export const w = (s: { writeFileSync: () => void }) => { s.writeFileSync(); };", rule: 'write', has: 'writeFileSync' },
   // rule 3: closed message set (single-file shapes; set equality is in CROSS below)
