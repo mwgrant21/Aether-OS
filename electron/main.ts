@@ -929,7 +929,7 @@ app.whenReady().then(async () => {
     }
     resolveRemotePrivateDir();
     // Opt-in launch re-enable: acquires only when the persisted flag is true (no confirm, no flag write).
-    if (privateDirOk && !remoteQuitting) void controlHub.autoEnable();
+    if (privateDirOk && !remoteQuitting) controlHub.autoEnable().catch(() => { console.error('[control] launch re-enable failed'); });
   });
 
   Menu.setApplicationMenu(null);
@@ -1590,7 +1590,7 @@ async function confirmControlPair(peer: string | null, replacesExisting: boolean
 registerControlIpc(ipcMain, controlHubForIpc, event => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
   && event.senderFrame === mainWindow.webContents.mainFrame,
-  async () => (await dialog.showMessageBox({
+  async () => (await remotePrivateDir, await dialog.showMessageBox({
     type: 'warning',
     title: 'Allow phone control?',
     message: 'Let a paired Android app type into your terminals and approve permission prompts?',
