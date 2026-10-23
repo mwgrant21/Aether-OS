@@ -165,7 +165,7 @@ describe('remote access: no wildcard listener', () => {
     expect(remoteViolations(RULES_WS)).toEqual([]);
   });
 
-  // The ws rule also rejects any other `new ...Server(` (new WS.Server, new http.Server), a second
+  // The ws rule also rejects any other `new ...Server(` (new WS.Server, new http.Server), a third
   // construction, and any alias or indirect use of the WebSocketServer binding.
   it('every ...Server( construction in remoteServer.ts is noServer: true', () => {
     // Viewer (1 KiB frames) and control (/ctl, 64 KiB frames): exactly these two, both noServer. The engine itself
