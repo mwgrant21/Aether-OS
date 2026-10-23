@@ -39,6 +39,8 @@ export function ControlAccessCard() {
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  // True while a createPairing call is in flight: a second call could resolve first and leave the older code showing.
+  const [pairingBusy, setPairingBusy] = useState(false);
 
   const control = window.aetherElectron?.control;
   const adopt = (s: ControlStatus) => setLocal({ base: hookStatus, status: s });
@@ -97,6 +99,7 @@ export function ControlAccessCard() {
   };
   const pair = async () => {
     setMessage(null);
+    setPairingBusy(true);
     try {
       const g = gen.current;
       const r = await control.createPairing();
@@ -105,6 +108,8 @@ export function ControlAccessCard() {
       else setMessage("Couldn't create a pairing code.");
     } catch {
       setMessage('Could not create a pairing code.');
+    } finally {
+      setPairingBusy(false);
     }
   };
   const revoke = async (act: () => Promise<ControlStatus>) => {
@@ -149,7 +154,7 @@ export function ControlAccessCard() {
 
       {on && (
         <div style={{ marginTop: 10 }}>
-          <Button onClick={() => void pair()} style={buttonStyle(colors, false)}>PAIR AN APP</Button>
+          <Button onClick={() => void pair()} disabled={pairingBusy} style={buttonStyle(colors, false)}>PAIR AN APP</Button>
           {replaces && (
             <p style={hintStyle(colors)}>Pairing a new phone REPLACES the currently paired one.</p>
           )}
