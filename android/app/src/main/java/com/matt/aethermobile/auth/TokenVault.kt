@@ -6,14 +6,22 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.GeneralSecurityException
+import java.security.InvalidAlgorithmParameterException
+import java.security.InvalidKeyException
 import java.security.KeyStore
+import java.security.KeyStoreException
+import java.security.NoSuchAlgorithmException
 import java.security.ProviderException
 import java.security.UnrecoverableKeyException
+import javax.crypto.AEADBadTagException
+import javax.crypto.BadPaddingException
 import javax.crypto.Cipher
+import javax.crypto.IllegalBlockSizeException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -25,11 +33,11 @@ import javax.crypto.spec.GCMParameterSpec
  */
 object VaultFormat {
     const val VERSION: Int = 1
-    const val MAX_IV_LEN: Int = 32
+    const val IV_LEN: Int = 12
     const val MAX_TOTAL_BYTES: Int = 4096
 
     fun encode(iv: ByteArray, ct: ByteArray): ByteArray {
-        require(iv.isNotEmpty() && iv.size <= MAX_IV_LEN) { "bad iv length" }
+        require(iv.size == IV_LEN) { "bad iv length" }
         require(2 + iv.size + ct.size <= MAX_TOTAL_BYTES) { "vault too large" }
         val out = ByteArray(2 + iv.size + ct.size)
         out[0] = VERSION.toByte()
@@ -44,7 +52,7 @@ object VaultFormat {
         if (bytes.size < 2 || bytes.size > MAX_TOTAL_BYTES) return null
         if (bytes[0].toInt() != VERSION) return null
         val ivLen = bytes[1].toInt() and 0xFF
-        if (ivLen == 0 || ivLen > MAX_IV_LEN) return null
+        if (ivLen != IV_LEN) return null
         if (2 + ivLen > bytes.size) return null
         val iv = bytes.copyOfRange(2, 2 + ivLen)
         val ct = bytes.copyOfRange(2 + ivLen, bytes.size)
@@ -147,6 +155,18 @@ class TokenVault(context: Context) {
         } catch (_: UnrecoverableKeyException) {
             clear()
             UnlockStart.Invalidated
+        } catch (_: InvalidAlgorithmParameterException) {
+            clear()
+            UnlockStart.Invalidated
+        } catch (_: InvalidKeyException) {
+            clear()
+            UnlockStart.Invalidated
+        } catch (_: KeyStoreException) {
+            clear()
+            UnlockStart.Invalidated
+        } catch (_: NoSuchAlgorithmException) {
+            clear()
+            UnlockStart.Invalidated
         }
     }
 
@@ -168,8 +188,17 @@ class TokenVault(context: Context) {
             } finally {
                 plain.fill(0)
             }
-        } catch (_: GeneralSecurityException) {
+        } catch (_: AEADBadTagException) {
             clear()
+            null
+        } catch (_: BadPaddingException) {
+            clear()
+            null
+        } catch (_: IllegalBlockSizeException) {
+            clear()
+            null
+        } catch (_: GeneralSecurityException) {
+            // Auth not satisfied (e.g. UserNotAuthenticatedException): keep the vault, caller re-prompts.
             null
         }
     }
@@ -205,6 +234,7 @@ class TokenVault(context: Context) {
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
+            .setRandomizedEncryptionRequired(true)
             .setUserAuthenticationRequired(true)
             // Timeout 0 = authentication is required for every single cryptographic use.
             .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
@@ -218,7 +248,10 @@ class TokenVault(context: Context) {
 
     private fun writeAtomically(bytes: ByteArray) {
         val tmp = File(file.parentFile, "$FILE_NAME.tmp")
-        tmp.writeBytes(bytes)
+        FileOutputStream(tmp).use { out ->
+            out.write(bytes)
+            out.fd.sync()
+        }
         Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 

@@ -73,6 +73,16 @@ class VaultFormatTest {
     }
 
     @Test
+    fun nonTwelveByteIvIsNull() {
+        for (n in intArrayOf(1, 5, 13, 32)) {
+            val b = ByteArray(2 + n + 20)
+            b[0] = 1
+            b[1] = n.toByte()
+            assertNull("ivLen $n", VaultFormat.decode(b))
+        }
+    }
+
+    @Test
     fun sizeCapEnforcedOnBothSides() {
         val atCap = ByteArray(VaultFormat.MAX_TOTAL_BYTES - 2 - iv.size)
         assertNotNull(VaultFormat.decode(VaultFormat.encode(iv, atCap)))
