@@ -380,7 +380,7 @@ describe('remoteHub', () => {
 describe('remoteHub shared listener (viewer + control holders)', () => {
   const fakeControl = { maxSockets: 2, authenticate: () => null, pair: async () => ({ status: 401 as const }), open: () => {} };
 
-  function shared(over: Partial<Parameters<typeof createRemoteHub>[0]> = {}) {
+  function shared(over: Partial<Parameters<typeof createRemoteHub>[0]> = {}, store = fakeStore()) {
     const calls = { stop: 0, closeClients: [] as string[], closeControl: [] as string[], recheckControl: 0 };
     const opts: Parameters<typeof startRemoteServer>[0][] = [];
     const startServer = vi.fn(async (o: Parameters<typeof startRemoteServer>[0]) => {
@@ -393,7 +393,7 @@ describe('remoteHub shared listener (viewer + control holders)', () => {
         stop: async () => { calls.stop++; },
       } as any;
     });
-    const r = rig(fakeStore(), { startServer: startServer as any, ...over });
+    const r = rig(store, { startServer: startServer as any, ...over });
     r.hub.attachControl(fakeControl);
     return { ...r, startServer, calls, opts };
   }
@@ -497,5 +497,31 @@ describe('remoteHub shared listener (viewer + control holders)', () => {
     expect(counts).toEqual([2]);
     expect(r.calls.closeControl).toEqual(['revoked']);
     expect(r.calls.recheckControl).toBe(1);
+  });
+
+  it('acquire after stop() fails closed and starts nothing', async () => {
+    const r = shared();
+    await r.hub.stop();
+    expect(await r.hub.listenerPort().acquire()).toEqual({ ok: false, reason: 'error' });
+    expect(r.startServer).not.toHaveBeenCalled();
+  });
+
+  it('a viewer disable while control holds the listener clears a pending save retry', async () => {
+    const now = Date.now();
+    const store = fakeStore([{ hash: 'a'.repeat(64), createdAtMs: now, expiresAtMs: now + 1e9, lastSeenMs: now }]);
+    const timers = new Map<number, () => void>();
+    let next = 1;
+    const r = shared({
+      setTimeoutFn: (fn) => { timers.set(next, fn); return next++; },
+      clearTimeoutFn: (h) => { timers.delete(h); },
+    }, store);
+    await r.hub.listenerPort().acquire();
+    await r.hub.setEnabled(true);
+    store.failSaves = true;
+    await r.hub.revokeAll();
+    expect(timers.size).toBe(1); // the bounded durability retry is pending
+    await r.hub.setEnabled(false);
+    expect(r.calls.stop).toBe(0); // control still holds the listener
+    expect(timers.size).toBe(0);
   });
 });

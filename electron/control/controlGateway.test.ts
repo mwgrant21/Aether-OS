@@ -154,6 +154,32 @@ describe('control gateway (hello only)', () => {
     expect(clear).toHaveBeenCalledWith(123);
   });
 
+  it('a deadline callback that fires after hello or close does nothing', () => {
+    const fns: Array<() => void> = [];
+    const mk = () => createControlGateway({ now: () => 0, setTimeoutFn: (fn) => { fns.push(fn); return fns.length; }, clearTimeoutFn: () => {} });
+    const a = fakeSocket();
+    mk().attach(a, identity);
+    a.feed(helloFrame);
+    fns[0]();
+    expect(a.sent).toHaveLength(1); // only the welcome
+    expect(a.closes).toEqual([]);
+    const b = fakeSocket();
+    const sb = mk().attach(b, identity);
+    sb.close('disabled');
+    fns[1]();
+    expect(b.sent.map((x) => JSON.parse(x))).toEqual([{ t: 'bye', reason: 'disabled' }]);
+    expect(b.closes).toEqual([1000]);
+  });
+
+  it('close() still closes the socket when sending the bye throws', () => {
+    const s = fakeSocket();
+    s.send = () => { throw new Error('socket gone'); };
+    const session = make().attach(s, identity);
+    expect(() => session.close('revoked')).toThrow('socket gone');
+    expect(s.closes).toEqual([1000]);
+    expect(() => session.close('revoked')).not.toThrow(); // idempotent afterwards
+  });
+
   it('logs fixed strings with the ref only, never the nonce, proof or token', () => {
     const logs: string[] = [];
     const s = fakeSocket();

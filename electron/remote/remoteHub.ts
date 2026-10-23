@@ -188,7 +188,6 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     if (state === 'on') return;
     if (unsaved) await settle(true); // retry a pending revoke save before opening the listener
     let f: ReturnType<typeof createChatFeed> | null = null;
-    const started = server === null;
     try {
       const address = server ? '' : tailnetAddress(); // before the feed exists: no tailnet leaves nothing to stop
       f = makeFeed({ resolveSession: deps.resolveSession, log });
@@ -201,7 +200,6 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     } catch (e) {
       if (f) f.stop();
       feed = null;
-      if (started && server) { try { await server.stop(); } catch { /* already down */ } server = null; }
       state = 'unavailable';
       reason = mapReason(e);
       if (reason === 'no-tailnet-address') log('remote: no tailnet address');
@@ -220,6 +218,7 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     const was = state;
     if (controlOn && server) {
       // Control still holds the listener: drop only the viewer side.
+      clearRetry();
       auth?.clearPairing();
       clientCount = 0;
       try { server.closeClients('disabled'); } catch { /* closing is best effort */ }
@@ -238,7 +237,7 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
 
   async function acquireControl(): Promise<{ ok: true; address: string } | { ok: false; reason: RemoteUnavailableReason }> {
     init();
-    if (!controlPort) return { ok: false, reason: 'error' };
+    if (stopped || !controlPort) return { ok: false, reason: 'error' };
     if (server && !serverHasControl) return { ok: false, reason: 'error' };
     try {
       const s = server ?? (await startShared(tailnetAddress()));

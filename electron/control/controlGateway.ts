@@ -50,8 +50,11 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       if (closed) return;
       closed = true;
       cancelDeadline();
-      socket.send(encodeBye(reason));
-      socket.close(reason === 'policy' ? CLOSE_POLICY : CLOSE_NORMAL);
+      try {
+        socket.send(encodeBye(reason));
+      } finally {
+        socket.close(reason === 'policy' ? CLOSE_POLICY : CLOSE_NORMAL);
+      }
     };
 
     const violation = (why: string): void => {
@@ -61,6 +64,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
 
     deadline = setTimer(() => {
       deadline = null;
+      if (closed || helloSeen) return;
       violation('control: hello deadline expired');
     }, helloTimeoutMs);
 
