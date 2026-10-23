@@ -708,19 +708,24 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   remoteQuitting = true;
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
-    // A failed ACL setup means the hub never loaded the store; do not let stop() read it at quit either.
     // Phone control stops first (its sockets and listener hold), then the remote hub; control's stop() leaves the
-    // persisted re-enable flag alone. It is skipped unless the private dir is ready, so a pending or failed ACL
-    // never lets it read the device store or the flag.
+    // persisted re-enable flag alone. Both are skipped unless the private dir is ready: ACL pending or failed means
+    // the stores were never loaded, so stop() must not read them at quit either.
     (async () => {
       try {
         if (remoteDirReady) await controlHub.stop();
       } catch { /* a failed control stop must not skip the remote hub's stop */ }
-    })().then(() => (remoteDirFailed ? Promise.resolve() : remoteHub.stop())).then(() => {
-      remoteStopped = true;
-      if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
-      if (controlHub.status().notice) diagLog.write(`[diag] control device store not saved at quit at=${new Date().toISOString()}`);
-    }),
+    })().then(() => (remoteDirReady ? remoteHub.stop() : Promise.resolve())).then(
+      () => {
+        remoteStopped = true;
+        if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
+        if (controlHub.status().notice) diagLog.write(`[diag] control device store not saved at quit at=${new Date().toISOString()}`);
+      },
+      () => {
+        remoteStopped = true;
+        diagLog.write(`[diag] remote stop failed at quit at=${new Date().toISOString()}`);
+      },
+    ),
   ]);
 }, () => {
   if (remoteQuitting && !remoteStopped) diagLog.write(`[diag] remote session store flush timed out at quit at=${new Date().toISOString()}`);
@@ -926,6 +931,9 @@ app.whenReady().then(async () => {
       sendToWindow('remote:statusChanged', remoteHub.status());
       controlHub.init(); // reads remote-devices.json and control-settings.json: only after the ACL
       sendToWindow('control:statusChanged', controlHub.status());
+    } else {
+      sendToWindow('remote:statusChanged', remoteStatusOrUnavailable());
+      sendToWindow('control:statusChanged', controlStatusOrUnavailable());
     }
     resolveRemotePrivateDir();
     // Opt-in launch re-enable: acquires only when the persisted flag is true (no confirm, no flag write).
