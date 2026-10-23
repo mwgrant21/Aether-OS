@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type { ChatFeed, RemoteAssets, RemoteAuthGate, ServerMessage } from './types'
 import { startRemoteServer, type RemoteServerHandle } from './remoteServer'
+import type { ControlIdentity, ControlPairResult, ControlPort, ControlSocket } from '../../src/shared/remote/types'
 
 const ASSETS: RemoteAssets = {
   pairHtml: '<p>PAIR_HTML</p>',
@@ -451,5 +452,342 @@ describe('websocket', () => {
     c.ws.close()
     await until(() => lines.length >= 2)
     expect(lines).toEqual(['remote: client connected n=1', 'remote: client disconnected n=0'])
+  })
+})
+
+
+// ---------------------------------------------------------------------------------------------
+// Phone control: /ctl, POST /api/device/pair, viewer gating. The ControlPort is a fake; the server
+// only transports and gates, so these tests pin the gate order and the wire behaviour.
+// ---------------------------------------------------------------------------------------------
+const BEARER = 'Bearer good'
+
+interface FakeControl extends ControlPort {
+  valid: boolean
+  pairResult: ControlPairResult
+  auths: Array<{ authorization: string | undefined; peer: string | undefined; touch: boolean | undefined }>
+  pairs: Array<{ code: unknown; peer: string | undefined }>
+  opened: Array<{ socket: ControlSocket; identity: ControlIdentity }>
+  texts: string[]
+  closes: number
+}
+
+function fakeControl(maxSockets = 2): FakeControl {
+  const identity: ControlIdentity = { ref: 'abcdef012345', expiresAtMs: 1, proofFor: () => 'proof' }
+  const c: FakeControl = {
+    maxSockets,
+    valid: true,
+    pairResult: { status: 200, token: 'T'.repeat(43), expiresAtMs: 123 },
+    auths: [],
+    pairs: [],
+    opened: [],
+    texts: [],
+    closes: 0,
+    authenticate(authorization, peer, o) {
+      c.auths.push({ authorization, peer, touch: o?.touch })
+      return c.valid && authorization === BEARER ? identity : null
+    },
+    async pair(code, peer) {
+      c.pairs.push({ code, peer })
+      return c.pairResult
+    },
+    open(socket, id) {
+      c.opened.push({ socket, identity: id })
+      socket.onMessage((t) => c.texts.push(t))
+      socket.onClose(() => c.closes++)
+    },
+  }
+  return c
+}
+
+async function bootCtl(over: Partial<Parameters<typeof startRemoteServer>[0]> = {}, ctl = fakeControl()) {
+  const r = await boot({ control: ctl, ...over })
+  return { ...r, ctl }
+}
+
+function ctlOpen(h: RemoteServerHandle, headers: Record<string, string> = { Authorization: BEARER }) {
+  const ws = new WebSocket(`ws://127.0.0.1:${h.port}/ctl`, { headers })
+  const msgs: unknown[] = []
+  ws.on('message', (d) => msgs.push(JSON.parse(String(d))))
+  const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+  const opened = new Promise<void>((res, rej) => {
+    ws.on('open', () => res())
+    ws.on('error', rej)
+  })
+  return { ws, msgs, closed, opened }
+}
+
+function upgradeStatus(h: RemoteServerHandle, path: string, headers: Record<string, string>): Promise<number> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${h.port}${path}`, { headers })
+    ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0))
+    ws.on('open', () => {
+      resolve(101)
+      ws.close()
+    })
+    ws.on('error', () => {})
+  })
+}
+
+const postPair = (h: RemoteServerHandle, o: { headers?: Record<string, string>; body?: string } = {}) =>
+  request(h.port, {
+    method: 'POST',
+    path: '/api/device/pair',
+    headers: { 'Content-Type': 'application/json', ...o.headers },
+    body: o.body ?? JSON.stringify({ code: 'ABCD2345' }),
+  })
+
+describe('POST /api/device/pair', () => {
+  it('rejects any Origin header with 403 before the control port is asked', async () => {
+    const { h, ctl } = await bootCtl()
+    const r = await postPair(h, { headers: { Origin: 'http://evil.example' } })
+    expect(r.status).toBe(403)
+    expect(ctl.pairs).toEqual([])
+  })
+
+  it('returns the token as JSON and passes the code and the peer address through', async () => {
+    const { h, ctl } = await bootCtl()
+    const r = await postPair(h)
+    expect(r.status).toBe(200)
+    expect(r.headers['content-type']).toBe('application/json')
+    expect(JSON.parse(r.body)).toEqual({ token: 'T'.repeat(43), expiresAtMs: 123 })
+    expect(ctl.pairs).toEqual([{ code: 'ABCD2345', peer: '127.0.0.1' }])
+  })
+
+  it('maps a refusal to a bare status and never echoes a token', async () => {
+    const { h, ctl } = await bootCtl()
+    for (const status of [401, 403, 429] as const) {
+      ctl.pairResult = { status }
+      const r = await postPair(h)
+      expect(r.status).toBe(status)
+      expect(r.body).toBe('')
+    }
+  })
+
+  it('answers 415 for a non-JSON body, 400 for a missing or non-string code, 413 past 1 KiB', async () => {
+    const { h, ctl } = await bootCtl()
+    expect((await postPair(h, { headers: { 'Content-Type': 'text/plain' } })).status).toBe(415)
+    expect((await postPair(h, { body: '{"code":5}' })).status).toBe(400)
+    expect((await postPair(h, { body: 'nope' })).status).toBe(400)
+    expect((await postPair(h, { body: JSON.stringify({ code: 'x'.repeat(2000) }) })).status).toBe(413)
+    expect(ctl.pairs).toEqual([])
+  })
+
+  it('is 404 when control is closed, when no control port exists, and for GET', async () => {
+    const closed = await bootCtl({ controlOpen: () => false })
+    expect((await postPair(closed.h)).status).toBe(404)
+    const none = await boot()
+    expect((await postPair(none.h)).status).toBe(404)
+    const open = await bootCtl()
+    expect((await request(open.h.port, { path: '/api/device/pair' })).status).toBe(404)
+  })
+
+  it('still checks the Host header first', async () => {
+    const { h } = await bootCtl()
+    expect((await request(h.port, { method: 'POST', path: '/api/device/pair', host: 'evil.example', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(403)
+  })
+})
+
+describe('/ctl upgrade', () => {
+  it('rejects an Origin header with 403 even with a valid bearer', async () => {
+    const { h, ctl } = await bootCtl()
+    expect(await upgradeStatus(h, '/ctl', { Authorization: BEARER, Origin: `http://${h.address}` })).toBe(403)
+    expect(ctl.auths).toEqual([])
+  })
+
+  it('answers 401 for a missing or invalid bearer and for a viewer cookie', async () => {
+    const { h, ctl } = await bootCtl()
+    expect(await upgradeStatus(h, '/ctl', {})).toBe(401)
+    expect(await upgradeStatus(h, '/ctl', { Authorization: 'Bearer nope' })).toBe(401)
+    expect(await upgradeStatus(h, '/ctl', { Cookie: GOOD })).toBe(401)
+    expect(ctl.opened).toEqual([])
+  })
+
+  it('treats two Authorization headers as no credential', async () => {
+    const { h, ctl } = await bootCtl()
+    const status = await new Promise<string>((resolve) => {
+      const s = net.connect(h.port, '127.0.0.1', () => {
+        s.write(
+          `GET /ctl HTTP/1.1\r\nHost: ${h.address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nAuthorization: ${BEARER}\r\nAuthorization: ${BEARER}\r\n\r\n`,
+        )
+      })
+      s.once('data', (d) => {
+        resolve(String(d).split('\r\n')[0])
+        s.destroy()
+      })
+    })
+    expect(status).toContain('401')
+    expect(ctl.auths[0]?.authorization).toBeUndefined()
+  })
+
+  it('opens with a valid bearer, touches, and hands the socket, identity and peer to control.open once', async () => {
+    const { h, ctl } = await bootCtl()
+    const c = ctlOpen(h)
+    await c.opened
+    await until(() => ctl.opened.length === 1)
+    expect(ctl.auths).toEqual([{ authorization: BEARER, peer: '127.0.0.1', touch: true }])
+    expect(ctl.opened[0].identity.ref).toBe('abcdef012345')
+    expect(h.controlClients()).toBe(1)
+    c.ws.send('hello')
+    await until(() => ctl.texts.length === 1)
+    expect(ctl.texts).toEqual(['hello'])
+    ctl.opened[0].socket.send('{"t":"welcome"}')
+    await until(() => c.msgs.length === 1)
+    expect(c.msgs).toEqual([{ t: 'welcome' }])
+    expect(ctl.opened[0].socket.bufferedBytes()).toBeGreaterThanOrEqual(0)
+    c.ws.close()
+    await c.closed
+    await until(() => ctl.closes === 1)
+    expect(h.controlClients()).toBe(0)
+    ctl.opened[0].socket.send('late') // no-op after close
+  })
+
+  it('answers 503 for a socket past control.maxSockets and keeps the first two', async () => {
+    const { h } = await bootCtl({}, fakeControl(2))
+    const a = ctlOpen(h)
+    const b = ctlOpen(h)
+    await Promise.all([a.opened, b.opened])
+    expect(await upgradeStatus(h, '/ctl', { Authorization: BEARER })).toBe(503)
+    expect(h.controlClients()).toBe(2)
+  })
+
+  it('does not count control sockets against the viewer cap, nor viewers against the control cap', async () => {
+    const { h } = await bootCtl({ maxClients: 1 }, fakeControl(1))
+    const a = ctlOpen(h)
+    await a.opened
+    const v = wsOpen(h, goodHeaders(h))
+    await v.opened
+    expect(h.clients()).toBe(1)
+    expect(h.controlClients()).toBe(1)
+  })
+
+  it('is 404 when control is closed or absent', async () => {
+    const closed = await bootCtl({ controlOpen: () => false })
+    expect(await upgradeStatus(closed.h, '/ctl', { Authorization: BEARER })).toBe(404)
+    const none = await boot()
+    expect(await upgradeStatus(none.h, '/ctl', { Authorization: BEARER })).toBe(404)
+  })
+
+  it('refuses a bearer on /ws: the viewer gate only knows its cookie', async () => {
+    const { h } = await bootCtl()
+    expect(await upgradeStatus(h, '/ws', { Authorization: BEARER, Origin: `http://${h.address}` })).toBe(401)
+  })
+
+  it('closes 1003 on a binary frame', async () => {
+    const { h } = await bootCtl()
+    const c = ctlOpen(h)
+    await c.opened
+    c.ws.send(Buffer.from([1, 2, 3]))
+    expect(await c.closed).toBe(1003)
+  })
+
+  it('allows a text frame between 1 KiB and 64 KiB and closes 1009 past 64 KiB', async () => {
+    const { h, ctl } = await bootCtl()
+    const a = ctlOpen(h)
+    await a.opened
+    a.ws.send('x'.repeat(5000))
+    await until(() => ctl.texts.length === 1)
+    expect(ctl.texts[0]).toHaveLength(5000)
+    a.ws.close()
+    await a.closed
+    const b = ctlOpen(h)
+    await b.opened
+    b.ws.send('x'.repeat(65537))
+    expect(await b.closed).toBe(1009)
+  })
+
+  it('sends bye revoked and closes 1000 within one recheckControl() once authenticate returns null', async () => {
+    const { h, ctl } = await bootCtl()
+    const c = ctlOpen(h)
+    await c.opened
+    ctl.auths.length = 0
+    h.recheckControl()
+    expect(ctl.auths).toEqual([{ authorization: BEARER, peer: '127.0.0.1', touch: true }])
+    await new Promise((r) => setTimeout(r, 30))
+    expect(c.msgs).toEqual([])
+    ctl.valid = false
+    h.recheckControl()
+    expect(await c.closed).toBe(1000)
+    expect(c.msgs).toEqual([{ t: 'bye', reason: 'revoked' }])
+  })
+
+  it('closeControlClients sends the given reason and leaves viewer sockets alone', async () => {
+    const { h } = await bootCtl()
+    const c = ctlOpen(h)
+    const v = wsOpen(h, goodHeaders(h))
+    await Promise.all([c.opened, v.opened])
+    h.closeControlClients('disabled')
+    expect(await c.closed).toBe(1000)
+    expect(c.msgs).toEqual([{ t: 'bye', reason: 'disabled' }])
+    expect(v.ws.readyState).toBe(1)
+  })
+
+  it('reports the control client count through onControlClients and logs fixed strings only', async () => {
+    const counts: number[] = []
+    const lines: string[] = []
+    const { h } = await bootCtl({ onControlClients: (n) => counts.push(n), log: (l) => lines.push(l) })
+    const c = ctlOpen(h)
+    await c.opened
+    c.ws.close()
+    await c.closed
+    await until(() => counts.length >= 2)
+    expect(counts).toEqual([1, 0])
+    expect(lines).toEqual(['remote: control client connected n=1', 'remote: control client disconnected n=0'])
+    expect(lines.join(' ')).not.toContain('good')
+  })
+
+  it('stop() sends bye disabled to control clients', async () => {
+    const { h } = await bootCtl()
+    const c = ctlOpen(h)
+    await c.opened
+    handles = handles.filter((x) => x !== h)
+    await h.stop()
+    expect(await c.closed).toBe(1000)
+    expect(c.msgs).toEqual([{ t: 'bye', reason: 'disabled' }])
+  })
+
+  it('uses a 64 KiB frame cap for control and keeps the viewer at 1 KiB', async () => {
+    const { h } = await bootCtl()
+    const v = wsOpen(h, goodHeaders(h))
+    await v.opened
+    v.ws.send('x'.repeat(1025))
+    expect(await v.closed).toBe(1009)
+  })
+})
+
+describe('viewer gating', () => {
+  it('answers 404 on every viewer route while viewerOpen() is false, and keeps the control routes up', async () => {
+    const { h, ctl } = await bootCtl({ viewerOpen: () => false })
+    for (const path of ['/pair', '/assets/pair.js', '/assets/app.css', '/', '/assets/viewer.js']) {
+      expect((await request(h.port, { path, headers: { Cookie: GOOD } })).status).toBe(404)
+    }
+    const pair = await request(h.port, { method: 'POST', path: '/api/pair', headers: { 'Content-Type': 'application/json', Origin: `http://${h.address}` }, body: '{"code":"X"}' })
+    expect(pair.status).toBe(404)
+    expect(await upgradeStatus(h, '/ws', { Origin: `http://${h.address}`, Cookie: GOOD })).toBe(404)
+    expect((await postPair(h)).status).toBe(200)
+    const c = ctlOpen(h)
+    await c.opened
+    expect(ctl.opened).toHaveLength(1)
+  })
+
+  it('still checks the Host header before the 404', async () => {
+    const { h } = await bootCtl({ viewerOpen: () => false })
+    expect((await request(h.port, { path: '/pair', host: 'evil.example' })).status).toBe(403)
+  })
+
+  it('reads viewerOpen() on every request, so the viewer opens and closes without a restart', async () => {
+    let open = false
+    const { h } = await bootCtl({ viewerOpen: () => open })
+    expect((await request(h.port, { path: '/pair' })).status).toBe(404)
+    open = true
+    expect((await request(h.port, { path: '/pair' })).status).toBe(200)
+    open = false
+    expect((await request(h.port, { path: '/pair' })).status).toBe(404)
+  })
+
+  it('serves the viewer exactly as before when control is absent', async () => {
+    const { h } = await boot()
+    expect((await request(h.port, { path: '/pair' })).status).toBe(200)
+    expect(h.controlClients()).toBe(0)
   })
 })
