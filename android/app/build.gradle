@@ -1,0 +1,98 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// Signing: ONE dedicated key for debug AND release (design spec 4.7), so an
+// upgrade never needs an uninstall. The key lives outside the repo; its path
+// and passwords come from android/local.properties (gitignored) or the
+// environment. If any value is missing the package tasks FAIL: AGP would
+// otherwise silently fall back to the shared default debug key.
+def localProps = new Properties()
+rootProject.file('local.properties').with { if (it.exists()) it.withInputStream { s -> localProps.load(s) } }
+def signingValue = { String name -> localProps.getProperty(name) ?: System.getenv(name) }
+def ksPath = signingValue('AETHER_KEYSTORE_PATH')
+def ksPassword = signingValue('AETHER_KEYSTORE_PASSWORD')
+def ksAlias = signingValue('AETHER_KEY_ALIAS')
+def ksKeyPassword = signingValue('AETHER_KEY_PASSWORD')
+def hasAetherSigning = ksPath && ksPassword && ksAlias && ksKeyPassword && new File(ksPath).exists()
+
+android {
+    namespace 'com.matt.aethermobile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.matt.aethermobile"
+        minSdk 31
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0-v0"
+    }
+
+    signingConfigs {
+        if (hasAetherSigning) {
+            aether {
+                storeFile new File(ksPath)
+                storePassword ksPassword
+                keyAlias ksAlias
+                keyPassword ksKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (hasAetherSigning) signingConfig signingConfigs.aether
+        }
+        release {
+            if (hasAetherSigning) signingConfig signingConfigs.aether
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    // Terminal assets are served as-is by WebViewAssetLoader.
+    androidResources {
+        noCompress 'js', 'css', 'html'
+    }
+}
+
+tasks.register('verifyAetherSigning') {
+    doFirst {
+        if (!hasAetherSigning) {
+            throw new GradleException(
+                "Aether Mobile signing is not configured. Set AETHER_KEYSTORE_PATH, AETHER_KEYSTORE_PASSWORD, " +
+                "AETHER_KEY_ALIAS and AETHER_KEY_PASSWORD in android/local.properties (gitignored) or the " +
+                "environment, pointing at the dedicated keystore outside the repo. Refusing to fall back to " +
+                "the default debug key.")
+        }
+    }
+}
+// Generic rule: every package*, sign* and bundle<Variant> task (APK or AAB, any variant)
+// needs the guard, so no packaging path can sign with the default debug key.
+tasks.configureEach { t ->
+    def n = t.name
+    def intermediate = n ==~ /.*(Classes|Resources|Aar|Jar|Metadata|Libs|Mapping).*/ // compile/test plumbing, not signing
+    if (n != 'verifyAetherSigning' && !intermediate && n ==~ /^(package|sign|bundle)[A-Z]\w*/) {
+        t.dependsOn 'verifyAetherSigning'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    // WebViewAssetLoader + addWebMessageListener
+    implementation 'androidx.webkit:webkit:1.12.1'
+
+    testImplementation 'junit:junit:4.13.2'
+    // Real org.json for JVM unit tests (Android's jar is stubs that throw)
+    testImplementation 'org.json:json:20231013'
+}
