@@ -4,6 +4,11 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketAddress
+import javax.net.SocketFactory
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -83,10 +88,35 @@ class PairingTest {
         try { server.shutdown() } catch (_: Exception) {}
     }
 
-    // MockWebServer listens on loopback, which the production guard refuses; the
-    // internal constructor lets tests bypass only that guard.
-    private fun client(timeoutMs: Long = 5_000L) =
-        PairingClient(OkHttpClient(), server.hostName, server.port, { true }, timeoutMs)
+    // OkHttp never consults Dns for an IP literal, so the fake tailnet address is
+    // routed to the loopback mock at the socket layer; the production tailnet guard
+    // stays in force.
+    private val fakeTailnetHost = "100.64.1.2"
+
+    private val loopbackSockets = object : SocketFactory() {
+        private val real = getDefault()
+        private fun redirecting() = object : Socket() {
+            override fun connect(endpoint: SocketAddress, timeout: Int) {
+                val a = endpoint as InetSocketAddress
+                super.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), a.port), timeout)
+            }
+        }
+        override fun createSocket(): Socket = redirecting()
+        override fun createSocket(h: String, p: Int): Socket = real.createSocket(h, p)
+        override fun createSocket(h: String, p: Int, la: InetAddress, lp: Int): Socket = real.createSocket(h, p, la, lp)
+        override fun createSocket(a: InetAddress, p: Int): Socket = real.createSocket(a, p)
+        override fun createSocket(a: InetAddress, p: Int, la: InetAddress, lp: Int): Socket = real.createSocket(a, p, la, lp)
+    }
+
+    private fun client(readTimeoutMs: Long = 5_000L) =
+        PairingClient(
+            OkHttpClient.Builder()
+                .socketFactory(loopbackSockets)
+                .readTimeout(readTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .build(),
+            fakeTailnetHost,
+            server.port,
+        )
 
     @Test fun requestShapeAndPairedMapping() {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"token":"$token","expiresAtMs":1234567}"""))
@@ -153,11 +183,18 @@ class PairingTest {
 
     @Test fun nonTailnetHostIsRefusedWithoutAnyRequest() {
         // Production constructor: the real isTailnetHost guard applies to the loopback mock.
-        val c = PairingClient(OkHttpClient(), server.hostName, server.port)
+        val c = PairingClient(OkHttpClient.Builder().socketFactory(loopbackSockets).build(), server.hostName, server.port)
         assertEquals(PairResult.Unreachable, c.pair("ABCD2345"))
         assertEquals(0, server.requestCount)
         val tooHigh = PairingClient(OkHttpClient(), "100.128.0.0", 47821)
         assertTrue(tooHigh.pair("ABCD2345") == PairResult.Unreachable)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun resultsRedactSecretsInToString() {
+        val paired = PairResult.Paired(token, 99L).toString()
+        assertTrue(paired, !paired.contains(token))
+        val ok = QrResult.Ok(host, 47821, "ABCD2345").toString()
+        assertTrue(ok, !ok.contains("ABCD2345"))
     }
 }
