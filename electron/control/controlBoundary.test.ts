@@ -68,7 +68,10 @@ function allowedImports(file: string): Map<string, { typeOnly: boolean }> {
 
 // Specific rule-1 categories, reported in addition to the allow-list so a failure names the real problem.
 const FORBIDDEN_MODULE = /^(?:node:)?(?:child_process|http|https|net|ws|fs|fs\/promises|worker_threads|vm|dgram|tls|http2|cluster)$|node-pty|ptyManager|codexPtyManager|ptyLifecycle|permissionServer|communicationBridge/;
-const DENY_IDENT: ReadonlySet<string> = new Set(['createRequire', 'eval', 'Function', 'globalThis', 'global', 'module', 'Reflect', 'require', 'process']);
+const DENY_IDENT: ReadonlySet<string> = new Set(['createRequire', 'eval', 'Function', 'globalThis', 'global', 'module', 'Reflect', 'require', 'process',
+  // network and thread egress that needs no import (rule 1 forbids http/https/net/ws; these are the global-scope routes to the same thing)
+  'fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource', 'Worker', 'SharedWorker', 'navigator',
+]);
 const DENY_PROP: ReadonlySet<string> = new Set([
   'createRequire', 'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'mainModule', 'require', 'kill', 'constructor', 'report',
   '__proto__', 'prototype', 'getPrototypeOf', 'setPrototypeOf', '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
@@ -159,6 +162,13 @@ function analyzeControl(name: string, text: string): Analysis {
 
   // ---- rules 1 and 4: imports ----
   const allowed = allowedImports(name);
+  for (const imp of sf.statements) {
+    // the validator must come from ./protocol itself: a local `const validateInput = ...` must not satisfy rule 2
+    if (ts.isImportDeclaration(imp) && isStrLit(imp.moduleSpecifier) && imp.moduleSpecifier.text === './protocol' && !imp.importClause?.isTypeOnly) {
+      const nb = imp.importClause?.namedBindings;
+      if (nb && ts.isNamedImports(nb) && nb.elements.some((e) => !e.isTypeOnly && !e.propertyName && e.name.text === INPUT_VALIDATOR)) validatorImported = true;
+    }
+  }
   for (const r of moduleRefs(sf)) {
     if (r.spec === null) { v('module', `dynamic module specifier (${r.form})`); continue; }
     const bare = r.spec.replace(/^node:/, '');
@@ -173,6 +183,7 @@ function analyzeControl(name: string, text: string): Analysis {
   const sinks: ts.CallExpression[] = [];
   const declCount = new Map<string, number>();
   const validated = new Set<string>();
+  let validatorImported = false;
   const handled = new Set<string>();
   visit(sf, (n) => {
     // names declared (for shadowing detection of the validated binding)
@@ -250,6 +261,7 @@ function analyzeControl(name: string, text: string): Analysis {
 
   // rule 2, continued: what the sink writes
   if (name === 'inputRouter.ts') {
+    if (sinks.length > 0 && !validatorImported) v('input', `${INPUT_VALIDATOR} must be a named (non-aliased) value import from ./protocol`);
     for (const call of sinks) {
       const last = call.arguments[call.arguments.length - 1];
       const arg = last ? unwrap(last) : undefined;
@@ -376,6 +388,9 @@ const BAD: Bad[] = [
   { id: 'write-optional-chain', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport const r = (terminals: { write?: (a: number, b: string) => void }, raw: string): void => { terminals.write?.(0, validateInput(raw)); };", rule: 'write', has: 'direct terminals.write' },
   { id: 'write-shadowed-binding', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport const r = (terminals: { write(s: number, d: string): void }, raw: string): void => { const d = validateInput(raw); { const d = raw; terminals.write(0, d); } void d; };", rule: 'input', has: 'validateInput' },
   { id: 'write-let-binding', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport const r = (terminals: { write(s: number, d: string): void }, raw: string): void => { let d = validateInput(raw); d = raw; terminals.write(0, d); };", rule: 'input', has: 'validateInput' },
+  { id: 'validator-local', file: 'inputRouter.ts', src: "const validateInput = (x: unknown): string => String(x);\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'import from ./protocol' },
+  { id: 'validator-aliased', file: 'inputRouter.ts', src: "import { validateInput as validateInputX } from './protocol';\nconst validateInput = validateInputX;\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'import from ./protocol' },
+  { id: 'validator-type-only', file: 'inputRouter.ts', src: "import type { validateInput } from './protocol';\nexport const r = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(0, validateInput(raw)); };", rule: 'input', has: 'import from ./protocol' },
   { id: 'kill', file: 'controlGateway.ts', src: "export const k = (h: { kill(): void }) => { h.kill(); };", rule: 'escape', has: '.kill' },
   { id: 'fs-write-name', file: 'controlHub.ts', src: "export const w = (s: { writeFileSync: () => void }) => { s.writeFileSync(); };", rule: 'write', has: 'writeFileSync' },
   // rule 3: closed message set (single-file shapes; set equality is in CROSS below)
@@ -407,6 +422,14 @@ const BAD: Bad[] = [
   { id: 'lookup-getter', file: 'controlHub.ts', src: "export const e = (o: { __lookupGetter__(s: string): void }) => o.__lookupGetter__('x');", rule: 'escape', has: '__lookupGetter__' },
   { id: 'object-define', file: 'controlHub.ts', src: "export const e = (o: object) => Object.defineProperty(o, 'x', {});", rule: 'escape', has: 'defineProperty' },
   { id: 'with-statement', file: 'controlHub.ts', src: "export function e(o: object) { with (o) { return 1; } }", rule: 'escape', has: 'with statement' },
+  // global egress with no import
+  { id: 'global-fetch', file: 'controlHub.ts', src: "export const e = () => fetch('http://x');", rule: 'escape', has: 'fetch' },
+  { id: 'global-websocket', file: 'controlHub.ts', src: "export const e = () => new WebSocket('ws://x');", rule: 'escape', has: 'WebSocket' },
+  { id: 'global-xhr', file: 'controlHub.ts', src: "export const e = () => new XMLHttpRequest();", rule: 'escape', has: 'XMLHttpRequest' },
+  { id: 'global-eventsource', file: 'controlHub.ts', src: "export const e = () => new EventSource('http://x');", rule: 'escape', has: 'EventSource' },
+  { id: 'global-worker', file: 'controlHub.ts', src: "export const e = () => new Worker('w.js');", rule: 'escape', has: 'Worker' },
+  { id: 'global-sharedworker', file: 'controlHub.ts', src: "export const e = () => new SharedWorker('w.js');", rule: 'escape', has: 'SharedWorker' },
+  { id: 'global-navigator', file: 'controlHub.ts', src: "export const e = () => navigator.sendBeacon('http://x', 'y');", rule: 'escape', has: 'navigator' },
   // listeners
   { id: 'listen-call', file: 'controlHub.ts', src: "export const l = (s: { listen(p: number): void }) => { s.listen(1); };", rule: 'listen', has: 'listen' },
   { id: 'listen-destructure', file: 'controlHub.ts', src: "export const l = (s: { listen: () => void }) => { const { listen } = s; listen(); };", rule: 'listen', has: 'listen' },
