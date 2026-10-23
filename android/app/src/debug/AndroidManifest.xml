@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug builds only: V0's fake terminal, kept for the navigation-block test
+         (adb shell am start with the page extra navtest.html).
+         This file is not part of the release variant. -->
+    <application>
+        <activity
+            android:name=".DemoTerminalActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+    </application>
+
+</manifest>

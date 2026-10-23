@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="aether_warn">#F6AD55</color>
+
     <style name="Theme.AetherMobile" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/aether_bg</item>
         <item name="android:statusBarColor">@color/aether_bg</item>

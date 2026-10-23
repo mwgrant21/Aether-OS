@@ -1,4 +1,60 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Aether</string>
+
+    <string name="title_pair">Pair with titan</string>
+    <string name="title_pairing">Confirm on titan...</string>
+    <string name="title_save">Saving the pairing</string>
+    <string name="title_locked">Locked</string>
+    <string name="title_connecting">Connecting to titan...</string>
+    <string name="title_connected">Connected to titan</string>
+    <string name="title_error">Not connected</string>
+    <string name="title_not_configured">Titan address not configured in this build</string>
+
+    <string name="hint_code">Pairing code</string>
+    <string name="action_scan">Scan QR</string>
+    <string name="action_pair">Pair</string>
+    <string name="action_unlock">Unlock</string>
+    <string name="action_lock_now">Lock now</string>
+    <string name="action_retry">Retry</string>
+
+    <string name="body_save">Touch the fingerprint sensor to save the pairing on this phone.</string>
+    <string name="body_locked">Use your fingerprint to unlock.</string>
+    <plurals name="days_left">
+        <item quantity="one">%d day left</item>
+        <item quantity="other">%d days left</item>
+    </plurals>
+    <string name="days_left_warn">Expires soon: %s</string>
+
+    <string name="prompt_save_title">Save the pairing</string>
+    <string name="prompt_save_subtitle">Fingerprint required</string>
+    <string name="prompt_unlock_title">Unlock Aether</string>
+    <string name="prompt_unlock_subtitle">Fingerprint required</string>
+    <string name="prompt_cancel">Cancel</string>
+
+    <string name="notice_bad_code">That code was not accepted. Check it and try again.</string>
+    <string name="notice_declined">The pairing was declined on titan.</string>
+    <string name="notice_burned">That code has expired or was used. Create a new one on titan.</string>
+    <string name="notice_unreachable">Could not reach titan. Check the tailnet and try again.</string>
+    <string name="notice_server_error">Titan sent an unexpected answer. Try again.</string>
+    <string name="notice_scan_failed">The scanner is unavailable. Type the code instead.</string>
+    <string name="notice_wrong_qr">That QR code is not for this phone and titan. Type the code instead.</string>
+    <string name="notice_save_cancelled">Pairing not saved. Revoke this phone\'s pairing on the PC, then pair again.</string>
+    <string name="notice_save_failed">Could not save the pairing. Revoke this phone\'s pairing on the PC, then pair again.</string>
+    <string name="notice_revoked">This phone was unpaired. Pair again to continue.</string>
+    <string name="notice_key_invalidated">The saved pairing is no longer valid (fingerprints changed). Pair again.</string>
+    <string name="notice_try_again">Couldn\'t unlock, try again.</string>
+    <string name="notice_cancelled">Unlock cancelled.</string>
+    <string name="notice_lockout">Too many attempts. Wait a moment and try again.</string>
+    <string name="notice_biometric_unavailable">Fingerprint unlock is not available on this phone right now.</string>
+
+    <string name="error_unreachable">Could not reach titan.</string>
+    <string name="error_refused">Titan refused the connection.</string>
+    <string name="error_not_listening">Phone control is not enabled on titan.</string>
+    <string name="error_busy">Titan has no free connection. Try again shortly.</string>
+    <string name="error_proof">Titan could not prove it knows this pairing. Not connected.</string>
+    <string name="error_protocol">Unexpected answer from titan.</string>
+    <string name="error_superseded">Another connection replaced this one.</string>
+    <string name="error_disabled">Phone control was turned off on titan.</string>
+    <string name="error_closed">The connection closed.</string>
 </resources>
