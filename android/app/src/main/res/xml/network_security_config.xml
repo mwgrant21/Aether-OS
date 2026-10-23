@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is forbidden everywhere. V1 adds one domain-config permitting
+     cleartext to titan's tailnet IP only (design spec 4.5, generated at build
+     time from AETHER_TITAN_TAILNET_IP). V0 has no network use. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,10 @@
+{
+  "name": "aether-mobile-web",
+  "private": true,
+  "type": "module",
+  "description": "Builds the bundled xterm page for the Android app. Dependencies resolve from the aether-os root node_modules; do not npm install here.",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:verify": "node build.mjs --verify"
+  }
+}

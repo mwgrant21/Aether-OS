@@ -1,0 +1,12 @@
+# Android build outputs and per-machine config. Never commit signing material.
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12

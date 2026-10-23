@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Aether navtest</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body style="color:#D5DEE8;font:16px sans-serif;position:static;padding:16px">
+<h3>Debug-only navigation-block test</h3>
+<p>Each attempt must fail. Results are logged to logcat (tag AetherWV) and shown below.</p>
+<p><a id="link" href="https://example.com/">Tap: link to https://example.com</a></p>
+<p><button id="open">window.open</button> <button id="assign">location.assign</button>
+<button id="fetch">fetch</button> <button id="alert">alert</button></p>
+<pre id="log"></pre>
+<script src="navtest.js"></script>
+</body>
+</html>
