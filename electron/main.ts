@@ -715,10 +715,8 @@ const baselineQuitGate = createFlushQuitGate(async () => {
     (async () => {
       try {
         if (remoteDirReady) await controlHub.stop();
-      } finally {
-        if (!remoteDirFailed) await remoteHub.stop();
-      }
-    })().then(() => {
+      } catch { /* a failed control stop must not skip the remote hub's stop */ }
+    })().then(() => (remoteDirFailed ? Promise.resolve() : remoteHub.stop())).then(() => {
       remoteStopped = true;
       if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
       if (controlHub.status().notice) diagLog.write(`[diag] control device store not saved at quit at=${new Date().toISOString()}`);
@@ -924,9 +922,9 @@ app.whenReady().then(async () => {
     remoteDirFailed = !privateDirOk;
     if (privateDirOk) {
       remoteHub.init();
-      controlHub.init(); // reads remote-devices.json and control-settings.json: only after the ACL
       // A Settings card mounted before this point holds the pre-init status; give it the real one.
       sendToWindow('remote:statusChanged', remoteHub.status());
+      controlHub.init(); // reads remote-devices.json and control-settings.json: only after the ACL
       sendToWindow('control:statusChanged', controlHub.status());
     }
     resolveRemotePrivateDir();
@@ -1508,12 +1506,7 @@ const remoteHub = createRemoteHub({
   onStatus: s => sendToWindow('remote:statusChanged', s),
   log: l => diagLog.write(l),
 });
-// Commands that can write the session store wait for the private-dir ACL first, and init (which loads
-// the store) does nothing until it is applied. Once the quit gate has begun stopping the hub every
-// mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
-// Commands await the gate, so after it they see ready or failed. Status reports unavailable only once the
-// ACL setup has actually failed; while it is pending it is the hub's own (off) status.
-// Phone control (privacy section 17). Same lifecycle as the remote hub: created once, stopped only at quit, and
+// Phone control (privacy section 17). Created once at start like the remote hub, stopped only at quit, and
 // every store or flag access waits for the private-dir ACL. It shares the remote hub's listener through
 // listenerPort(); the port is attached synchronously, before registerRemoteIpc and before any await, because an
 // attach after a viewer-only start fails closed by design.
@@ -1530,6 +1523,11 @@ const controlHub = createControlHub({
   onStatus: s => sendToWindow('control:statusChanged', s),
 });
 remoteHub.attachControl(controlHub.port);
+// Commands that can write the session store wait for the private-dir ACL first, and init (which loads
+// the store) does nothing until it is applied. Once the quit gate has begun stopping the hub every
+// mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
+// Commands await the gate, so after it they see ready or failed. Status reports unavailable only once the
+// ACL setup has actually failed; while it is pending it is the hub's own (off) status.
 const remoteStatusOrUnavailable = (): RemoteStatus => !remoteDirFailed
   ? remoteHub.status()
   : { ...remoteHub.status(), state: 'unavailable', reason: 'error', address: null, clients: 0 };
@@ -1541,10 +1539,9 @@ const remoteHubForIpc = {
   revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeAll(); },
   revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeOne(ref); },
 };
-const remoteEventTrusted = (event: Electron.IpcMainInvokeEvent): boolean => !!mainWindow
+registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
-  && event.senderFrame === mainWindow.webContents.mainFrame;
-registerRemoteIpc(ipcMain, remoteHubForIpc, remoteEventTrusted,
+  && event.senderFrame === mainWindow.webContents.mainFrame,
   async () => (await dialog.showMessageBox({
     type: 'warning',
     title: 'Allow phone access?',
@@ -1589,7 +1586,10 @@ async function confirmControlPair(peer: string | null, replacesExisting: boolean
   const shown = win.isMinimized() || !win.isVisible() ? await dialog.showMessageBox(options) : await dialog.showMessageBox(win, options);
   return shown.response === 1;
 }
-registerControlIpc(ipcMain, controlHubForIpc, remoteEventTrusted,
+// Same trusted-window predicate as the remote channels above: the sender must be the main window's main frame.
+registerControlIpc(ipcMain, controlHubForIpc, event => !!mainWindow
+  && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+  && event.senderFrame === mainWindow.webContents.mainFrame,
   async () => (await dialog.showMessageBox({
     type: 'warning',
     title: 'Allow phone control?',
