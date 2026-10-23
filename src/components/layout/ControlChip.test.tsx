@@ -9,7 +9,7 @@ function mkStatus(patch: Partial<ControlStatus> = {}): ControlStatus {
 }
 const store = vi.hoisted(() => ({ dispatch: vi.fn() }));
 vi.mock('../../state/store', () => ({ useAetherStore: () => store }));
-vi.mock('../shared/useColors', () => ({ useColors: () => ({ danger: '#ff6666', warn: '#ff9900', panel: '#222222', panelInset: '#111111' }) }));
+vi.mock('../shared/useColors', () => ({ useColors: () => ({ danger: '#ff6666', warn: '#ff9900', bgBase: '#222222', panelInset: '#111111' }) }));
 
 function install(initial: ControlStatus) {
   let push: (s: ControlStatus) => void = () => {};
@@ -52,6 +52,7 @@ describe('ControlChip', () => {
     expect(btn.textContent).toBe('PHONE CONTROL - 2 connected');
     expect(btn.style.color).toBe('rgb(255, 102, 102)');
     expect(btn.style.borderColor).toBe('rgb(255, 102, 102)');
+    expect(btn.style.background).toBe('rgb(34, 34, 34)');
   });
   it('click opens Settings', async () => {
     install(mkStatus({ connected: 1 }));

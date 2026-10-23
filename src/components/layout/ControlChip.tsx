@@ -27,7 +27,7 @@ export function ControlChip() {
   const description = `Phone control connected (${count} connected). Open phone control settings.`;
   const style: CSSProperties & { WebkitAppRegion: 'no-drag' } = {
     WebkitAppRegion: 'no-drag', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto',
-    padding: '4px 9px', borderRadius: 8, border: `1px solid ${colors.danger}`, background: colors.panel,
+    padding: '4px 9px', borderRadius: 8, border: `1px solid ${colors.danger}`, background: colors.bgBase,
     color: colors.danger, font: `700 11px/1.25 ${fonts.ui}`, letterSpacing: 0.3, cursor: 'pointer', position: 'relative',
   };
   return <>
