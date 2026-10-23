@@ -275,7 +275,11 @@ describe('control hub pairing', () => {
     await hub.setEnabled(true);
     const first = await pairOne(hub);
     expect(confirmPair).toHaveBeenLastCalledWith(PEER, false);
+    const oldBearer = `Bearer ${(first as { token: string }).token}`;
+    const seenAtRecheck: Array<unknown> = [];
+    listener.recheckControl.mockImplementation(() => { seenAtRecheck.push(hub.port.authenticate(oldBearer, PEER)); });
     const second = await pairOne(hub);
+    expect(seenAtRecheck).toEqual([null]); // the store already dropped the old device when recheck ran
     expect(confirmPair).toHaveBeenLastCalledWith(PEER, true);
     expect(hub.status().devices).toHaveLength(1);
     const a = (first as { token: string }).token;
@@ -295,6 +299,57 @@ describe('control hub pairing', () => {
     if (!made.ok) throw new Error('no pairing');
     expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 403 });
     expect(hub.port.authenticate(`Bearer ${(first as { token: string }).token}`, PEER)).not.toBeNull();
+  });
+
+  it('a confirm answered after a user disable is 403 and mints nothing', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub, store } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = hub.port.pair(made.code, PEER);
+    await tick();
+    await hub.setEnabled(false);
+    answer(true);
+    expect(await pending).toEqual({ status: 403 });
+    expect(hub.status().devices).toHaveLength(0);
+    expect(store.saved.flat()).toHaveLength(0);
+  });
+
+  it('a confirm answered after stop (quit) is 403 and mints nothing', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = hub.port.pair(made.code, PEER);
+    await tick();
+    await hub.stop();
+    answer(true);
+    expect(await pending).toEqual({ status: 403 });
+    expect(hub.status().devices).toHaveLength(0);
+  });
+
+  it('a second pair while a confirm is open is 429 and does not open another dialog', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub, confirmPair } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const first = hub.port.pair(made.code, PEER);
+    await tick();
+    expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 429 });
+    expect(confirmPair).toHaveBeenCalledTimes(1);
+    answer(true);
+    expect((await first).status).toBe(200);
+  });
+
+  it('enabling after stop does not re-acquire the listener', async () => {
+    const { hub, listener } = setup();
+    await hub.stop();
+    const s = await hub.setEnabled(true);
+    expect(listener.acquire).not.toHaveBeenCalled();
+    expect(s.state).toBe('unavailable');
   });
 
   it('disabling clears the pairing code', async () => {

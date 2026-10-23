@@ -90,6 +90,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   let autoRetries = 0;
   let stopped = false; // set by stop() (quit path): no timer may be scheduled afterwards
   let chain: Promise<unknown> = Promise.resolve();
+  let generation = 0; // bumped by teardown(): a confirm opened before a disable or quit can never mint a token
+  let confirmPending = false;
   const sessions = new Map<string, ControlSession>();
 
   const gateway = createControlGateway({
@@ -167,6 +169,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   }
 
   async function teardown(): Promise<void> {
+    generation++;
     cancelAuto();
     clearSaveTimer();
     auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
@@ -179,6 +182,11 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   // Acquires the shared listener. Returns the failure reason, or null on success. Never touches the persisted flag.
   async function acquire(): Promise<RemoteUnavailableReason | null> {
     init();
+    if (stopped) {
+      state = 'unavailable';
+      reason = 'error';
+      return 'error';
+    }
     if (state === 'on') return null;
     if (unsaved) await settle(true); // retry a pending revoke save before opening the listener
     let r: Awaited<ReturnType<ListenerPort['acquire']>>;
@@ -255,13 +263,21 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
 
   async function redeem(code: unknown, peer: string | undefined): Promise<ControlPairResult> {
     init();
-    if (state !== 'on') return { status: 401 };
+    if (state !== 'on' || stopped) return { status: 401 };
+    if (confirmPending) return { status: 429 }; // one dialog at a time keeps the REPLACES wording truthful
     const replaces = auth!.list().length > 0;
+    const opened = generation;
     const approve = (): Promise<boolean> => new Promise<boolean>(resolve => {
-      const timer = setT(() => resolve(false), CONTROL_PAIR_CONFIRM_TIMEOUT_MS);
+      confirmPending = true;
+      const done = (ok: boolean): void => {
+        confirmPending = false;
+        // a disable or quit while the dialog was open voids the answer
+        resolve(ok && opened === generation && state === 'on' && !stopped);
+      };
+      const timer = setT(() => done(false), CONTROL_PAIR_CONFIRM_TIMEOUT_MS);
       deps.confirmPair(peer ?? null, replaces).then(
-        ok => { clearT(timer); resolve(ok === true); },
-        () => { clearT(timer); resolve(false); },
+        ok => { clearT(timer); done(ok === true); },
+        () => { clearT(timer); done(false); },
       );
     });
     const r = await auth!.redeemDevice(code, peer, approve);
