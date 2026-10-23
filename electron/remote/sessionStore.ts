@@ -33,7 +33,11 @@ function pick(raw: unknown, withPeer: boolean): StoredSession | null {
   if (typeof hash !== 'string' || !HASH_RE.test(hash)) return null;
   if (!isStamp(created) || !isStamp(expires) || !isStamp(lastSeen)) return null;
   if (expires <= created) return null;
-  if (!withPeer) return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen };
+  // Viewer file: an entry carrying a peer is a device entry; drop it rather than expose it to the viewer scope.
+  if (!withPeer) {
+    if (peer !== undefined) return null;
+    return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen };
+  }
   // Device file: an entry without a valid peer is dropped (fail closed).
   if (typeof peer !== 'string' || !PEER_RE.test(peer)) return null;
   return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen, peer };

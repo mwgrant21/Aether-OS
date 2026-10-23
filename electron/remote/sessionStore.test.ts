@@ -196,11 +196,11 @@ describe('device-mode store (peer)', () => {
     expect(s.load().map((x) => x.hash)).toEqual([H('f')]);
   });
 
-  it('a viewer-mode store ignores peer and never writes it', async () => {
+  it('a viewer-mode store drops entries that carry a peer, on save and on load', async () => {
     const s = createSessionStore(file);
-    await s.save([withPeer('a', '100.94.15.125')]);
-    expect(JSON.parse(readFileSync(file, 'utf8')).sessions[0]).not.toHaveProperty('peer');
-    writeFileSync(file, JSON.stringify({ v: 1, sessions: [withPeer('b', '1.2.3.4')] }));
-    expect(s.load()[0]).not.toHaveProperty('peer');
+    await s.save([withPeer('a', '100.94.15.125'), mk('b')]);
+    expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([mk('b')]);
+    writeFileSync(file, JSON.stringify({ v: 1, sessions: [withPeer('c', '1.2.3.4'), mk('d')] }));
+    expect(s.load().map((x) => x.hash)).toEqual([H('d')]);
   });
 });

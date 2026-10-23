@@ -198,6 +198,8 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     const t = now();
     sessions = loaded
       .filter(isValidStored)
+      // Scope isolation over a shared store: a device entry always has a peer, a viewer entry never does.
+      .filter(s => (device ? typeof s.peer === 'string' && IPV4_RE.test(s.peer) : s.peer === undefined))
       .filter(s => s.expiresAtMs > t && s.expiresAtMs > s.createdAtMs)
       .sort((a, b) => b.createdAtMs - a.createdAtMs)
       .slice(0, maxSessions)
@@ -396,7 +398,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       if (!device) return { ok: false, status: 401 };
       let bound: string | undefined;
       if (typeof peer === 'string' && IPV4_RE.test(normalisePeer(peer))) bound = normalisePeer(peer);
-      if (peerBinding && bound === undefined) return { ok: false, status: 401 };
+      if (bound === undefined) return { ok: false, status: 401 }; // device entries always carry a peer
       const bad = consumeCode(input);
       if (bad !== null) return { ok: false, status: bad };
       let approved = false;

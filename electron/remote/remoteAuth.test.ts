@@ -654,3 +654,72 @@ describe('device auth scope', () => {
     expect(asViewer.list().every((s) => s.peer === undefined)).toBe(true);
   });
 });
+
+describe('device and viewer scopes over one store', () => {
+  const PEER = '100.94.15.125';
+  const bearer = (t: string) => `Bearer ${t}`;
+  async function mintBoth(storeFor: (kind: 'viewer' | 'device') => SessionStorePort) {
+    const viewer = createRemoteAuth({ store: storeFor('viewer'), randomBytes: (n) => Buffer.alloc(n, 1) });
+    const vr = viewer.redeem(viewer.createPairing().code);
+    if (!vr.ok) throw new Error('viewer pair failed');
+    const vToken = vr.cookie.split(';')[0].split('=')[1];
+    await viewer.flush();
+    const device = createDeviceAuth({ store: storeFor('device'), peerBinding: false, randomBytes: (n) => Buffer.alloc(n, 2) });
+    const dr = await device.redeemDevice(device.createPairing().code, PEER, async () => true);
+    if (!dr.ok) throw new Error('device pair failed');
+    await device.flush();
+    return { vToken, dToken: dr.token };
+  }
+
+  it('never see each other\'s sessions over one fake store port', async () => {
+    // One shared port, written by both sides in turn (as two files would not be, but as a mixed list would).
+    const shared = fakeStore();
+    const { vToken, dToken } = await mintBoth(() => shared);
+    shared.current = [
+      { hash: createHash('sha256').update(vToken).digest('hex'), createdAtMs: 1, expiresAtMs: 9e12, lastSeenMs: 1 },
+      { hash: createHash('sha256').update(dToken).digest('hex'), createdAtMs: 2, expiresAtMs: 9e12, lastSeenMs: 2, peer: PEER },
+    ];
+    const v = createRemoteAuth({ store: shared, now: () => 1000 });
+    const d = createDeviceAuth({ store: shared, now: () => 1000, peerBinding: false });
+    expect(v.list().map((s) => s.peer)).toEqual([undefined]);
+    expect(d.list().map((s) => s.peer)).toEqual([PEER]);
+    expect(v.isAuthenticated(`aether_remote=${dToken}`)).toBe(false);
+    expect(d.authenticate(bearer(vToken), PEER)).toBeNull();
+    expect(v.isAuthenticated(`aether_remote=${vToken}`)).toBe(true);
+    expect(d.authenticate(bearer(dToken), PEER)).not.toBeNull();
+  });
+
+  it('never see each other\'s sessions over one real file, in both directions', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createSessionStore } = await import('./sessionStore');
+    const dir = mkdtempSync(join(tmpdir(), 'aether-scope-'));
+    try {
+      const file = join(dir, 'shared.json');
+      // device writes, viewer reads
+      const { dToken } = await mintBoth((k) => (k === 'device' ? createSessionStore(file, { peer: true }) : fakeStore()));
+      const v1 = createRemoteAuth({ store: createSessionStore(file), now: () => 1_000_000 });
+      expect(v1.list()).toHaveLength(0);
+      expect(v1.isAuthenticated(`aether_remote=${dToken}`)).toBe(false);
+      // viewer writes, device reads
+      const { vToken } = await mintBoth((k) => (k === 'viewer' ? createSessionStore(file) : fakeStore()));
+      const d1 = createDeviceAuth({ store: createSessionStore(file, { peer: true }), now: () => 1_000_000, peerBinding: false });
+      expect(d1.list()).toHaveLength(0);
+      expect(d1.authenticate(bearer(vToken), PEER)).toBeNull();
+      expect(d1.authenticate(bearer(vToken), undefined)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a viewer profile never authenticates a bearer, even with peerBinding off', () => {
+    const viewer = createRemoteAuth({ peerBinding: false, randomBytes: (n) => Buffer.alloc(n, 3) });
+    const r = viewer.redeem(viewer.createPairing().code);
+    if (!r.ok) throw new Error('pair failed');
+    const token = r.cookie.split(';')[0].split('=')[1];
+    const asDevice = viewer as unknown as import('./remoteAuth').DeviceAuth;
+    expect(asDevice.authenticate(bearer(token), '1.2.3.4')).toBeNull();
+    expect(asDevice.authenticate(bearer(token), undefined, { touch: true })).toBeNull();
+  });
+});
