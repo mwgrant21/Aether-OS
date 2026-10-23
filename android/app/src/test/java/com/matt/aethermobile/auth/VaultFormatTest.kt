@@ -131,6 +131,38 @@ class VaultFormatTest {
     }
 
     @Test
+    fun readBoundedDistinguishesEmptyOversizeAndUnreadable() {
+        // exists-and-empty: bytes come back empty and decode rejects them (corrupt, may wipe)
+        val empty = VaultFormat.readBounded(java.io.ByteArrayInputStream(ByteArray(0)))
+        assertEquals(0, empty.size)
+        assertNull(VaultFormat.decode(empty))
+        // oversize is structurally bad
+        assertThrows(VaultCorruptException::class.java) {
+            VaultFormat.readBounded(java.io.ByteArrayInputStream(ByteArray(VaultFormat.MAX_TOTAL_BYTES + 1)))
+        }
+        // a read failure is an IOException, which classify leaves alone
+        val failing = object : java.io.InputStream() {
+            override fun read(): Int = throw java.io.IOException("stat/read failed")
+        }
+        val e = assertThrows(java.io.IOException::class.java) { VaultFormat.readBounded(failing) }
+        assertEquals(Outcome.Unavailable, classify(e))
+    }
+
+    @Test
+    fun failedWriteRemovesTheTmpFile() {
+        val dir = java.nio.file.Files.createTempDirectory("vault").toFile()
+        try {
+            val target = java.io.File(dir, "vault.bin")
+            target.mkdir() // a non-empty directory target makes the final move fail
+            java.io.File(target, "x").writeText("x")
+            assertThrows(Exception::class.java) { VaultFormat.writeAtomically(target, byteArrayOf(1, 2, 3)) }
+            assertEquals(false, java.io.File(dir, "vault.bin.tmp").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun availabilityTable() {
         assertEquals(Availability.Available, Availability.fromCode(BiometricManager.BIOMETRIC_SUCCESS))
         assertEquals(Availability.NoHardware, Availability.fromCode(BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE))

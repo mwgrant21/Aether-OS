@@ -159,8 +159,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun dispatch(event: FlowEvent) = applyEffects(controller.dispatch(event))
 
+    private val pendingEffects = ArrayDeque<Effect>()
+    private var applying = false
+
+    /**
+     * FIFO and non-reentrant: an effect that dispatches synchronously (an inline Connect
+     * failure) only enqueues its follow-up effects; the outermost call drains them in order.
+     */
     private fun applyEffects(effects: List<Effect>) {
-        for (effect in effects) run(effect)
+        pendingEffects.addAll(effects)
+        if (applying) return
+        applying = true
+        try {
+            while (true) run(pendingEffects.removeFirstOrNull() ?: break)
+        } finally {
+            applying = false
+        }
         if (!AppFlow.holdsToken(flow)) {
             saveToken = null
             sessionToken = null
@@ -229,7 +243,12 @@ class MainActivity : AppCompatActivity() {
         if (flow != FlowState.Pairing) return
         try {
             io.execute {
-                val result = PairingClient(http, host, ControlProtocol.PORT).pair(code)
+                val result = try {
+                    PairingClient(http, host, ControlProtocol.PORT).pair(code)
+                } catch (t: Throwable) {
+                    if (t is VirtualMachineError) throw t
+                    PairResult.Unreachable
+                }
                 runOnUiThread { onPairResult(result) }
             }
         } catch (_: RuntimeException) {

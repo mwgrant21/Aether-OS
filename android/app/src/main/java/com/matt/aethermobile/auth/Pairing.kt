@@ -8,7 +8,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONException
 import org.json.JSONObject
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** Outcome of parsing a scanned QR payload. Only [Ok] may lead to a network call. */
@@ -129,7 +128,10 @@ class PairingClient private constructor(
                     else -> PairResult.Error(resp.code)
                 }
             }
-        } catch (_: IOException) {
+        } catch (t: Throwable) {
+            // Any transport failure, IO or not, is "unreachable"; only the VM's own errors escape.
+            // Nothing from the exception (text, token, code) is carried out.
+            if (t is VirtualMachineError) throw t
             PairResult.Unreachable
         }
     }

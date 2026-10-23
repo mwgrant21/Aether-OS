@@ -50,6 +50,41 @@ object VaultFormat {
         val ct = bytes.copyOfRange(2 + ivLen, bytes.size)
         return iv to ct
     }
+
+    /**
+     * Reads at most [MAX_TOTAL_BYTES] + 1 bytes from [input] instead of trusting File.length(),
+     * which reports 0 when the stat fails. An unreadable file surfaces as the stream's
+     * IOException (classified Unavailable, never wiped); an empty or oversize file comes back
+     * as bytes that [decode] rejects or as [VaultCorruptException].
+     */
+    fun readBounded(input: java.io.InputStream): ByteArray {
+        val limit = MAX_TOTAL_BYTES + 1
+        val buf = ByteArray(limit)
+        var n = 0
+        while (n < limit) {
+            val r = input.read(buf, n, limit - n)
+            if (r < 0) break
+            n += r
+        }
+        val bytes = buf.copyOf(n)
+        if (bytes.size > MAX_TOTAL_BYTES) throw VaultCorruptException()
+        return bytes
+    }
+
+    /** Write [bytes] to [target] via a sibling .tmp and an atomic move; the .tmp is removed if anything fails. */
+    fun writeAtomically(target: File, bytes: ByteArray) {
+        val tmp = File(target.parentFile, target.name + ".tmp")
+        try {
+            FileOutputStream(tmp).use { out ->
+                out.write(bytes)
+                out.fd.sync()
+            }
+            Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
+    }
 }
 
 /** What to do with the stored vault after a failure. */
@@ -202,8 +237,8 @@ class TokenVault(context: Context) {
 
     /** Size-capped read plus decode. Throws [VaultCorruptException] if structurally bad. */
     private fun readParts(): Pair<ByteArray, ByteArray> {
-        if (file.length() > VaultFormat.MAX_TOTAL_BYTES) throw VaultCorruptException()
-        return VaultFormat.decode(file.readBytes()) ?: throw VaultCorruptException()
+        val bytes = file.inputStream().use { VaultFormat.readBounded(it) }
+        return VaultFormat.decode(bytes) ?: throw VaultCorruptException()
     }
 
     /** Errors (OOM etc.) are never swallowed; everything else goes through [classify]. */
@@ -260,12 +295,7 @@ class TokenVault(context: Context) {
     }
 
     private fun writeAtomically(bytes: ByteArray) {
-        val tmp = File(file.parentFile, "$FILE_NAME.tmp")
-        FileOutputStream(tmp).use { out ->
-            out.write(bytes)
-            out.fd.sync()
-        }
-        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        VaultFormat.writeAtomically(file, bytes)
     }
 
     companion object {

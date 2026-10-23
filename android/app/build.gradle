@@ -22,7 +22,7 @@ def hasAetherSigning = ksPath && ksPassword && ksAlias && ksKeyPassword && new F
 // is the ONLY host the app may dial in cleartext, so it must sit in the
 // Tailscale CGNAT range 100.64.0.0/10 or the build fails.
 def titanIp = (project.findProperty('AETHER_TITAN_TAILNET_IP') ?: signingValue('AETHER_TITAN_TAILNET_IP') ?: '').toString().trim()
-if (titanIp && !(titanIp ==~ /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/)) {
+if (titanIp && !(titanIp ==~ /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/)) {
     throw new GradleException(
         "AETHER_TITAN_TAILNET_IP is not a Tailscale address (expected 100.64.0.0/10, e.g. 100.x.y.z). " +
         "Fix the value in -P, ~/.gradle/gradle.properties, android/local.properties or the environment.")

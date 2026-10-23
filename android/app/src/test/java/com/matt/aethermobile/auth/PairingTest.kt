@@ -170,6 +170,14 @@ class PairingTest {
         assertEquals(PairResult.Unreachable, client(300L).pair("ABCD2345"))
     }
 
+    @Test fun nonIoTransportFailureIsUnreachable() {
+        val boom = OkHttpClient.Builder()
+            .addInterceptor { throw IllegalStateException("secret-token-text") }
+            .build()
+        val c = PairingClient(boom, fakeTailnetHost, server.port)
+        assertEquals(PairResult.Unreachable, c.pair("ABCD2345"))
+    }
+
     @Test fun connectionFailureIsUnreachable() {
         val c = client()
         server.shutdown()

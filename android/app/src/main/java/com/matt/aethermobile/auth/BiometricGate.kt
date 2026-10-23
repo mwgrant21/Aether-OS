@@ -3,8 +3,6 @@ package com.matt.aethermobile.auth
 import android.content.Context
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
 import javax.crypto.Cipher
 
 /** Why a biometric prompt ended without success. Pure mapping, JVM-tested. */
