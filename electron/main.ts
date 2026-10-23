@@ -714,7 +714,10 @@ const baselineQuitGate = createFlushQuitGate(async () => {
     (async () => {
       try {
         if (remoteDirReady) await controlHub.stop();
-      } catch { /* a failed control stop must not skip the remote hub's stop */ }
+      } catch {
+        // A failed control stop must not skip the remote hub's stop.
+        diagLog.write(`[diag] control stop failed at quit at=${new Date().toISOString()}`);
+      }
     })().then(() => (remoteDirReady ? remoteHub.stop() : Promise.resolve())).then(
       () => {
         remoteStopped = true;
