@@ -47,6 +47,8 @@ export function ControlAccessCard() {
   const stateNow = status?.state;
   const stateRef = useRef(stateNow);
   stateRef.current = stateNow;
+  // Bumped on every state change, so a createPairing issued before an off/on cycle is stale.
+  const gen = useRef(0);
 
   const hasDevices = (status?.devices.length ?? 0) > 0;
   // One tick drives the countdown, the expiry drop and the live "last seen" text.
@@ -64,6 +66,7 @@ export function ControlAccessCard() {
 
   // Turning control off (or it becoming unavailable) invalidates any displayed code.
   useEffect(() => {
+    gen.current += 1;
     if (stateNow && stateNow !== 'on') setPairing(null);
   }, [stateNow]);
 
@@ -95,10 +98,11 @@ export function ControlAccessCard() {
   const pair = async () => {
     setMessage(null);
     try {
+      const g = gen.current;
       const r = await control.createPairing();
-      if (stateRef.current !== 'on') return;
+      if (g !== gen.current || stateRef.current !== 'on') return;
       if (r.ok) setPairing(r);
-      else setMessage('Turn phone control on first.');
+      else setMessage('Couldn't create a pairing code.');
     } catch {
       setMessage('Could not create a pairing code.');
     }

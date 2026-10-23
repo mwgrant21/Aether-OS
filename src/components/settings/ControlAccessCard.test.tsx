@@ -163,6 +163,22 @@ describe('ControlAccessCard', () => {
     expect(screen.queryByText('ABCD-1234')).toBeNull();
   });
 
+  it('a createPairing result issued before an off/on cycle is dropped', async () => {
+    let resolve: (r: ControlPairingResult) => void = () => {};
+    const h = install();
+    h.control.createPairing.mockReturnValue(new Promise<ControlPairingResult>(r => { resolve = r; }));
+    render(<ControlAccessCard />);
+    await settle();
+    fireEvent.click(screen.getByText('PAIR AN APP'));
+    act(() => h.push(mkStatus({ state: 'off', address: null })));
+    await settle();
+    act(() => h.push(mkStatus()));
+    await settle();
+    await act(async () => { resolve(okPairing()); });
+    expect(screen.queryByAltText('Pairing QR code')).toBeNull();
+    expect(screen.queryByText('ABCD-1234')).toBeNull();
+  });
+
   it('Done clears the code', async () => {
     await pairFlow();
     fireEvent.click(screen.getByText('Done'));
