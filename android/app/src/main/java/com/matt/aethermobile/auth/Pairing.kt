@@ -14,7 +14,9 @@ import java.util.concurrent.TimeUnit
 /** Outcome of parsing a scanned QR payload. Only [Ok] may lead to a network call. */
 sealed class QrResult {
     /** [code] is canonical: 8 characters, no hyphen. */
-    data class Ok(val host: String, val port: Int, val code: String) : QrResult()
+    data class Ok(val host: String, val port: Int, val code: String) : QrResult() {
+        override fun toString() = "Ok(host=$host, port=$port, code=<redacted>)"
+    }
     object WrongScheme : QrResult()
     object Malformed : QrResult()
     object WrongHost : QrResult()
@@ -24,7 +26,9 @@ sealed class QrResult {
 
 /** Outcome of the pairing call. Never carries the code. */
 sealed class PairResult {
-    data class Paired(val token: String, val expiresAtMs: Long) : PairResult()
+    data class Paired(val token: String, val expiresAtMs: Long) : PairResult() {
+        override fun toString() = "Paired(token=<redacted>, expiresAtMs=$expiresAtMs)"
+    }
     object BadCode : PairResult()
     object Declined : PairResult()
     object Burned : PairResult()
@@ -85,7 +89,7 @@ object Pairing {
  * Blocking pairing call: run on a background thread. No cookies, no Origin,
  * redirects off. Refuses to build a request unless [host] is a tailnet address.
  */
-class PairingClient internal constructor(
+class PairingClient private constructor(
     http: OkHttpClient,
     private val host: String,
     private val port: Int,

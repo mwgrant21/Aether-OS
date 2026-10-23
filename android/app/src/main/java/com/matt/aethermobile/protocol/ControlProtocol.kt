@@ -74,12 +74,13 @@ object ControlProtocol {
         return cleaned
     }
 
-    /** True only for a dotted-quad IPv4 literal inside 100.64.0.0/10. */
+    /** True only for a canonical dotted-quad IPv4 literal (no leading zeros) inside 100.64.0.0/10. */
     fun isTailnetHost(host: String): Boolean {
         val parts = host.split('.')
         if (parts.size != 4) return false
         val octets = parts.map { p ->
             if (p.isEmpty() || p.length > 3 || !p.all { it in '0'..'9' }) return false
+            if (p.length > 1 && p[0] == '0') return false
             p.toInt().also { if (it > 255) return false }
         }
         return octets[0] == 100 && octets[1] in 64..127

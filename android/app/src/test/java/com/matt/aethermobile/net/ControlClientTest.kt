@@ -32,8 +32,11 @@ private class FakeTransport : Transport {
     val closes = mutableListOf<Int>()
     var listener: Transport.Listener? = null
 
+    var openThrows: Throwable? = null
+
     override fun open(url: String, headers: Map<String, String>, listener: Transport.Listener) {
         opens++
+        openThrows?.let { throw it }
         this.url = url
         this.headers = headers
         this.listener = listener
@@ -43,9 +46,22 @@ private class FakeTransport : Transport {
     override fun close(code: Int, reason: String) { closes += code }
 }
 
+private class FakeScheduler {
+    var delayMs: Long? = null
+    var task: (() -> Unit)? = null
+    var cancelled = false
+    val schedule: (Long, () -> Unit) -> (() -> Unit) = { d, t ->
+        delayMs = d
+        task = t
+        cancelled = false
+        ({ cancelled = true })
+    }
+}
+
 class ControlClientTest {
     private val transport = FakeTransport()
     private val states = mutableListOf<ControlState>()
+    private val scheduler = FakeScheduler()
 
     private fun client(host: String = HOST) = ControlClient(
         host = host,
@@ -54,6 +70,7 @@ class ControlClientTest {
         onState = { states += it },
         nonceSource = { NONCE },
         epochSource = { EPOCH },
+        scheduler = scheduler.schedule,
     )
 
     private fun welcome(proof: String?): String {
@@ -317,5 +334,39 @@ class ControlClientTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    @Test fun openThrowingFailsUnreachableWithoutStickingInConnecting() {
+        transport.openThrows = IllegalStateException("secret-in-message $TOKEN")
+        val c = client()
+        c.connect(TOKEN)
+        assertEquals(ControlState.Failed(Failure.Unreachable), c.state)
+        assertFalse(states.toString().contains("secret-in-message"))
+        transport.openThrows = null
+        c.connect(TOKEN)
+        assertEquals(2, transport.opens)
+    }
+
+    @Test fun welcomeBeforeTheDeadlineCancelsTheWatchdog() {
+        val c = opened()
+        assertEquals(8_000L, scheduler.delayMs)
+        transport.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
+        assertTrue(scheduler.cancelled)
+        assertTrue(c.state is ControlState.Connected)
+        assertTrue(transport.closes.isEmpty())
+    }
+
+    @Test fun noWelcomeFiresTheWatchdogAsProtocolFailure() {
+        val c = opened()
+        assertFalse(scheduler.cancelled)
+        scheduler.task!!.invoke()
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+    }
+
+    @Test fun endingTheConnectionCancelsTheWatchdog() {
+        val c = opened()
+        c.close()
+        assertTrue(scheduler.cancelled)
     }
 }
