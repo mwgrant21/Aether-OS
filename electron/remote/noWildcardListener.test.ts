@@ -168,7 +168,10 @@ describe('remote access: no wildcard listener', () => {
   // The ws rule also rejects any other `new ...Server(` (new WS.Server, new http.Server), a second
   // construction, and any alias or indirect use of the WebSocketServer binding.
   it('every ...Server( construction in remoteServer.ts is noServer: true', () => {
-    expect(remoteAnalyses().get('remoteServer.ts')?.facts.wsConstructions).toBe(1);
+    // Viewer (1 KiB frames) and control (/ctl, 64 KiB frames): exactly these two, both noServer. The engine itself
+    // accepts one or two so single-construction text rows stay valid; the exact count is pinned here, on the real file.
+    expect(remoteAnalyses().get('remoteServer.ts')?.facts.wsConstructions).toBe(2);
+    expect(remoteAnalyses().get('remoteServer.ts')?.facts.wsMaxPayloads).toEqual([1024, 65536]);
     expect(remoteViolations(RULES_WS, 'remoteServer.ts')).toEqual([]);
   });
 
@@ -243,7 +246,7 @@ describe('remote access: nothing persisted but the session store', () => {
 // ---------------------------------------------------------------------------------------------
 type Rule = 'syntax' | 'module' | 'fs' | 'ws' | 'listen' | 'wildcard' | 'pty' | 'write' | 'persist' | 'chat-event' | 'escape';
 interface Violation { rule: Rule; msg: string }
-interface RemoteFacts { fsRef: boolean; fsCalls: number; wsRef: boolean; listenCount: number; wsConstructions: number; atomicCalls: number }
+interface RemoteFacts { fsRef: boolean; fsCalls: number; wsRef: boolean; listenCount: number; wsConstructions: number; wsMaxPayloads: number[]; atomicCalls: number }
 interface RemoteAnalysis { violations: Violation[]; facts: RemoteFacts }
 interface OutsideAnalysis { wildcard: string[]; listens: string[][]; listenEscapes: string[] }
 
@@ -410,6 +413,7 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
   let fsCalls = 0;
   let wsRef = false;
   let wsConstructions = 0;
+  const wsMaxPayloads: number[] = [];
   let atomicCalls = 0;
   let assertPos: number | null = null;
   const listens: ts.CallExpression[] = [];
@@ -564,6 +568,8 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
             const ns = o.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && keyText(p.name) === 'noServer');
             if (!ns || ns.initializer.kind !== ts.SyntaxKind.TrueKeyword) v('ws', 'WebSocketServer must set noServer: true as a direct property');
             for (const bad of ['port', 'server', 'host']) if (objectHasKey(o, bad)) v('ws', `WebSocketServer options must not set ${bad}`);
+            const mp = o.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && keyText(p.name) === 'maxPayload');
+            if (mp && ts.isNumericLiteral(mp.initializer)) wsMaxPayloads.push(Number(mp.initializer.text));
           }
         } else v('ws', `server construction other than the ws noServer one: new ${cname}`);
       }
@@ -588,9 +594,9 @@ function analyzeRemote(name: string, text: string): RemoteAnalysis {
       if (!(a.length >= 2 && isAccess(a[0], 'opts', 'port') && isAccess(a[1], 'opts', 'host'))) v('listen', 'listen() must be listen(opts.port, opts.host, ...)');
       if (assertPos === null || assertPos > call.getStart(sf)) v('listen', 'assertBindableHost() must be called before listen()');
     }
-    if (wsConstructions !== 1) v('ws', `expected exactly one WebSocketServer construction, found ${wsConstructions}`);
+    if (wsConstructions < 1 || wsConstructions > 2) v('ws', `expected one or two WebSocketServer constructions, found ${wsConstructions}`);
   }
-  return { violations: [...found.values()], facts: { fsRef, fsCalls, wsRef, listenCount: listens.length, wsConstructions, atomicCalls } };
+  return { violations: [...found.values()], facts: { fsRef, fsCalls, wsRef, listenCount: listens.length, wsConstructions, wsMaxPayloads, atomicCalls } };
 }
 
 /** For a file under electron/ or scripts/ that is NOT in electron/remote: wildcard literals plus each listen() call's argument texts. */
