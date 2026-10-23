@@ -191,4 +191,77 @@ describe('RemoteAccessCard', () => {
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
   });
+
+  it('a push that leaves on drops the code and it does not return', async () => {
+    const { push } = await pairFlow();
+    expect(screen.getByText('ABCD-1234')).toBeTruthy();
+    act(() => push(mkStatus({ state: 'off', address: null })));
+    expect(screen.queryByText('ABCD-1234')).toBeNull();
+    act(() => push(mkStatus()));
+    expect(screen.queryByText('ABCD-1234')).toBeNull();
+  });
+
+  it('a DISABLE readback that leaves on drops the code', async () => {
+    install({ setEnabled: mkStatus({ state: 'off', address: null }) });
+    render(<RemoteAccessCard />);
+    await settle();
+    fireEvent.click(screen.getByText('PAIR A PHONE'));
+    await settle();
+    expect(screen.getByText('ABCD-1234')).toBeTruthy();
+    fireEvent.click(screen.getByText('DISABLE'));
+    await settle();
+    expect(screen.queryByText('ABCD-1234')).toBeNull();
+    expect(screen.getByText('ENABLE')).toBeTruthy();
+  });
+
+  it('a stale readback does not override a newer push', async () => {
+    const { remote, push } = install({ status: mkStatus({ state: 'off', address: null }) });
+    let resolve!: (s: RemoteStatus) => void;
+    remote.setEnabled.mockReturnValue(new Promise<RemoteStatus>((r) => { resolve = r; }));
+    render(<RemoteAccessCard />);
+    await settle();
+    fireEvent.click(screen.getByText('ENABLE'));
+    act(() => push(mkStatus({ state: 'unavailable', reason: 'port-in-use', address: null })));
+    resolve(mkStatus());
+    await settle();
+    expect(screen.getByTestId('remote-status-line').textContent).toBe('unavailable: port in use');
+  });
+
+  it('a pairing result that arrives after leaving on is dropped', async () => {
+    const { remote, push } = install();
+    render(<RemoteAccessCard />);
+    await settle();
+    let resolve!: (r: unknown) => void;
+    remote.createPairing.mockReturnValue(new Promise((r) => { resolve = r; }));
+    fireEvent.click(screen.getByText('PAIR A PHONE'));
+    act(() => push(mkStatus({ state: 'off', address: null })));
+    resolve({ ok: true, url: 'http://100.1.2.3:47821/', code: 'ABCD-1234', qrSvg: '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', expiresAtMs: Date.now() + 90_000 });
+    await settle();
+    expect(screen.queryByText('ABCD-1234')).toBeNull();
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('last seen advances while the card stays open', async () => {
+    vi.useFakeTimers();
+    install({ status: mkStatus({ sessions: [mkSession('abcdef123456', { lastSeenMs: Date.now() - 120_000 })] }) });
+    render(<RemoteAccessCard />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText(/last seen 2 min ago/)).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000); });
+    expect(screen.getByText(/last seen 12 min ago/)).toBeTruthy();
+  });
+
+  it('the last-seen interval clears on unmount and when sessions empty', async () => {
+    vi.useFakeTimers();
+    const { push } = install({ status: mkStatus({ sessions: [mkSession('abcdef123456')] }) });
+    const { unmount } = render(<RemoteAccessCard />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => push(mkStatus({ sessions: [] })));
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => push(mkStatus({ sessions: [mkSession('abcdef123456')] })));
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
