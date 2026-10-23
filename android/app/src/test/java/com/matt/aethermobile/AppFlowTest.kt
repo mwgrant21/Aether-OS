@@ -39,7 +39,7 @@ class AppFlowTest {
     @Test fun notConfiguredHasNoActions() {
         val events = listOf(
             FlowEvent.PairSubmitted, FlowEvent.InputRejected(Notice.BadCode),
-            FlowEvent.PairResult(PairKind.Paired), FlowEvent.SaveDone, FlowEvent.SaveCancelled,
+            FlowEvent.PairResult(PairKind.Paired), FlowEvent.PairedWhileHidden, FlowEvent.DeferredResumed(0), FlowEvent.SaveDone, FlowEvent.SaveCancelled,
             FlowEvent.SaveFailed, FlowEvent.UnlockRequested,
             FlowEvent.UnlockStartResult(UnlockKind.Ready), FlowEvent.UnlockAuthFailed(AuthFail.Other),
             FlowEvent.UnlockDone, FlowEvent.UnlockDecryptFailed(true),
@@ -105,6 +105,35 @@ class AppFlowTest {
         assertEquals(listOf(Effect.DiscardSaveToken), t.effects)
         assertFalse(Effect.Connect in t.effects)
         assertFalse(AppFlow.holdsToken(t.state))
+    }
+
+    @Test fun pairedWhileHiddenDefersTheSaveWithoutPrompting() {
+        val t = step(FlowState.Pairing, FlowEvent.PairedWhileHidden)
+        assertEquals(FlowState.SaveDeferred, t.state)
+        assertTrue(t.effects.isEmpty())
+        assertTrue(AppFlow.holdsToken(t.state))
+    }
+
+    @Test fun deferredSaveResumedInTimePrompts() {
+        val t = step(FlowState.SaveDeferred, FlowEvent.DeferredResumed(ageMs = 59_999))
+        assertEquals(FlowState.SavePrompt, t.state)
+        assertEquals(listOf(Effect.BeginSave), t.effects)
+    }
+
+    @Test fun deferredSaveExpiredDiscardsAndNeverConnects() {
+        for (age in listOf(60_000L, 600_000L, -1L)) {
+            val t = step(FlowState.SaveDeferred, FlowEvent.DeferredResumed(age))
+            assertEquals(FlowState.NeedsPair(Notice.SaveCancelled), t.state)
+            assertEquals(listOf(Effect.DiscardSaveToken), t.effects)
+            assertFalse(Effect.Connect in t.effects)
+            assertFalse(AppFlow.holdsToken(t.state))
+        }
+    }
+
+    @Test fun deferredResumeOutsideDeferredIsIgnored() {
+        val t = step(FlowState.Locked(), FlowEvent.DeferredResumed(0))
+        assertEquals(FlowState.Locked(), t.state)
+        assertTrue(t.effects.isEmpty())
     }
 
     @Test fun onlySavePromptConnectingAndConnectedHoldAToken() {

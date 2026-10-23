@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.android.material.button.MaterialButton
@@ -42,7 +43,8 @@ import javax.crypto.Cipher
  * cold open -> fingerprint -> connected; 60 s background relock. All decisions live in the pure
  * [AppFlow]; this class runs its [Effect]s. No terminal (V2), no WebView, no JavaScript bridge.
  *
- * Token handling: the pairing code is a local that never reaches a field or the UI, and the
+ * Token handling: after every transition, any token field is cleared unless [AppFlow.holdsToken]
+ * says the new state may hold one. The rest: the pairing code is a local that never reaches a field or the UI, and the
  * typed field is cleared on submit. The token String lives in at most two fields: [saveToken]
  * (only between pair success and the end of the save attempt, nulled on every exit path) and
  * [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or logged.
@@ -60,6 +62,9 @@ class MainActivity : AppCompatActivity() {
 
     // Token held only for a save attempt; moved to sessionToken or nulled before the attempt ends.
     private var saveToken: String? = null
+
+    // elapsedRealtime when a pairing finished while the app was hidden (SaveDeferred), else 0.
+    private var deferredAt = 0L
 
     // Token held only for the relock window.
     private var sessionToken: String? = null
@@ -114,6 +119,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // The lifecycle reaches STARTED only after this callback returns; BiometricPrompt refuses
+        // to show before that, so run the start logic on the next main-thread turn.
+        window.decorView.post { if (!isDestroyed && !isFinishing) handleStarted() }
+    }
+
+    private fun handleStarted() {
+        if (flow == FlowState.SaveDeferred) {
+            dispatch(FlowEvent.DeferredResumed(SystemClock.elapsedRealtime() - deferredAt))
+            return
+        }
         if (!started) {
             started = true
             dispatch(FlowEvent.Start(configured = host.isNotEmpty(), hasToken = vaultHasToken()))
@@ -128,6 +143,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         relock.onBackgrounded()
+        // A prompt that cannot survive the stop must not leave a stuck callback or a held token.
+        val wasSaving = flow == FlowState.SavePrompt
+        if (pending != null) {
+            pending = null
+            try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
+        }
+        if (wasSaving) {
+            saveToken = null
+            dispatch(FlowEvent.SaveCancelled)
+        }
         super.onStop()
     }
 
@@ -150,6 +175,10 @@ class MainActivity : AppCompatActivity() {
         val t = AppFlow.reduce(flow, event)
         flow = t.state
         for (effect in t.effects) run(effect)
+        if (!AppFlow.holdsToken(flow)) {
+            saveToken = null
+            sessionToken = null
+        }
         render()
     }
 
@@ -219,6 +248,13 @@ class MainActivity : AppCompatActivity() {
         val kind = when (result) {
             is PairResult.Paired -> {
                 saveToken = result.token
+                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                    // The PC confirm often finishes while the phone is locked: keep the pairing for
+                    // the next start instead of failing a prompt that cannot show.
+                    deferredAt = SystemClock.elapsedRealtime()
+                    dispatch(FlowEvent.PairedWhileHidden)
+                    return
+                }
                 PairKind.Paired
             }
             PairResult.BadCode -> PairKind.BadCode
@@ -334,6 +370,8 @@ class MainActivity : AppCompatActivity() {
     private fun authenticate(cipher: Cipher, titleRes: Int, subtitleRes: Int, callback: BiometricCallback): Boolean {
         val p = prompt ?: return false
         if (isFinishing || isDestroyed || pending != null) return false
+        // BiometricPrompt drops authenticate() silently (no callback) once the state is saved.
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return false
         val available = BiometricManager.from(this)
             .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
         if (available != BiometricManager.BIOMETRIC_SUCCESS) return false
@@ -427,7 +465,7 @@ class MainActivity : AppCompatActivity() {
             FlowState.NotConfigured -> { titleRes = R.string.title_not_configured; body = null }
             is FlowState.NeedsPair -> { titleRes = R.string.title_pair; body = s.notice?.let(::noticeText) }
             FlowState.Pairing -> { titleRes = R.string.title_pairing; body = null }
-            FlowState.SavePrompt -> { titleRes = R.string.title_save; body = getString(R.string.body_save) }
+            FlowState.SavePrompt, FlowState.SaveDeferred -> { titleRes = R.string.title_save; body = getString(R.string.body_save) }
             is FlowState.Locked -> {
                 titleRes = R.string.title_locked
                 body = s.notice?.let(::noticeText) ?: getString(R.string.body_locked)

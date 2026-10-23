@@ -40,7 +40,8 @@
                 android:layout_height="wrap_content"
                 android:importantForAutofill="no"
                 android:imeOptions="actionDone"
-                android:inputType="textCapCharacters|textNoSuggestions"
+                android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
+                android:saveEnabled="false"
                 android:maxLength="9"
                 android:singleLine="true" />
         </com.google.android.material.textfield.TextInputLayout>

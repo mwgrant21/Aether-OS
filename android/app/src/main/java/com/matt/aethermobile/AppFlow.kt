@@ -35,6 +35,8 @@ sealed class FlowState {
     object Pairing : FlowState()
     /** Paired; the fingerprint to save the token is up. */
     object SavePrompt : FlowState()
+    /** Paired while the app was not visible (the PC confirm takes a while); the prompt waits for the next start. */
+    object SaveDeferred : FlowState()
     data class Locked(val notice: Notice? = null) : FlowState()
     object Connecting : FlowState()
     data class Connected(val daysLeft: Int) : FlowState() {
@@ -53,6 +55,10 @@ sealed class FlowEvent {
     /** A scan or typed code was refused before any network call. */
     data class InputRejected(val notice: Notice) : FlowEvent()
     data class PairResult(val kind: PairKind) : FlowEvent()
+    /** Pairing succeeded but the activity is not STARTED, so no prompt can be shown yet. */
+    object PairedWhileHidden : FlowEvent()
+    /** The activity started again; [ageMs] is how long the save has been waiting. */
+    data class DeferredResumed(val ageMs: Long) : FlowEvent()
     object SaveDone : FlowEvent()
     object SaveCancelled : FlowEvent()
     /** beginSave null, completeSave false, or the prompt could not be shown. */
@@ -88,9 +94,12 @@ data class Transition(val state: FlowState, val effects: List<Effect> = emptyLis
 object AppFlow {
     private const val DAY_MS = 86_400_000L
 
+    /** A deferred save older than this is discarded (the relock window). */
+    const val DEFERRED_SAVE_MAX_MS = 60_000L
+
     /** True only in states where the activity legitimately holds a token String. */
     fun holdsToken(state: FlowState): Boolean =
-        state == FlowState.SavePrompt || state == FlowState.Connecting || state is FlowState.Connected
+        state == FlowState.SavePrompt || state == FlowState.SaveDeferred || state == FlowState.Connecting || state is FlowState.Connected
 
     fun daysLeft(expiresAtMs: Long, nowMs: Long): Int {
         val left = expiresAtMs - nowMs
@@ -109,6 +118,12 @@ object AppFlow {
             is FlowEvent.InputRejected ->
                 if (s is FlowState.NeedsPair) Transition(FlowState.NeedsPair(e.notice)) else Transition(s)
             is FlowEvent.PairResult -> pairResult(s, e.kind)
+            FlowEvent.PairedWhileHidden ->
+                if (s == FlowState.Pairing) Transition(FlowState.SaveDeferred) else Transition(s)
+            is FlowEvent.DeferredResumed ->
+                if (s != FlowState.SaveDeferred) Transition(s)
+                else if (e.ageMs in 0 until DEFERRED_SAVE_MAX_MS) Transition(FlowState.SavePrompt, listOf(Effect.BeginSave))
+                else saveEnded(FlowState.SavePrompt, Notice.SaveCancelled)
             FlowEvent.SaveDone ->
                 if (s == FlowState.SavePrompt) Transition(FlowState.Connecting, listOf(Effect.Connect)) else Transition(s)
             FlowEvent.SaveCancelled -> saveEnded(s, Notice.SaveCancelled)
