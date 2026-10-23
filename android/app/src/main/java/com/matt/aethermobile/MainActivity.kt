@@ -1,6 +1,8 @@
 package com.matt.aethermobile
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
@@ -13,6 +15,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.android.material.button.MaterialButton
@@ -25,7 +28,6 @@ import com.matt.aethermobile.auth.PairResult
 import com.matt.aethermobile.auth.Pairing
 import com.matt.aethermobile.auth.PairingClient
 import com.matt.aethermobile.auth.QrResult
-import com.matt.aethermobile.auth.RelockPolicy
 import com.matt.aethermobile.auth.TokenVault
 import com.matt.aethermobile.auth.UnlockStart
 import com.matt.aethermobile.net.ControlClient
@@ -43,28 +45,32 @@ import javax.crypto.Cipher
  * cold open -> fingerprint -> connected; 60 s background relock. All decisions live in the pure
  * [AppFlow]; this class runs its [Effect]s. No terminal (V2), no WebView, no JavaScript bridge.
  *
+ * Lifecycle: this class is a thin adapter. onStart/onStop (and the RESUMED/PAUSED observer)
+ * forward the real callbacks synchronously to [FlowController], which owns relock bookkeeping
+ * and decides when a prompt may show; the activity runs the [Effect]s it returns and owns the
+ * two timers' Handler.postDelayed calls. Nothing is posted to run "after start".
+ *
  * Token handling: after every transition, any token field is cleared unless [AppFlow.holdsToken]
- * says the new state may hold one. The rest: the pairing code is a local that never reaches a field or the UI, and the
- * typed field is cleared on submit. The token String lives in at most two fields: [saveToken]
- * (only between pair success and the end of the save attempt, nulled on every exit path) and
- * [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or logged.
- * All state changes run on the main thread; network callbacks marshal via runOnUiThread.
+ * says the new state may hold one. The pairing code is a local that never reaches a field or the
+ * UI, and the typed field is cleared on submit. The token String lives in at most two fields:
+ * [saveToken] (only between pair success and the end of the save attempt, nulled on every exit
+ * path) and [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or
+ * logged. All state changes run on the main thread; network callbacks marshal via runOnUiThread.
  */
 class MainActivity : AppCompatActivity() {
     private val vault by lazy { TokenVault(this) }
-    private val relock = RelockPolicy(clockMs = SystemClock::elapsedRealtime)
+    private val controller = FlowController(SystemClock::elapsedRealtime)
+    private val handler = Handler(Looper.getMainLooper())
+    private val relockTimer = Runnable { if (!isDestroyed) applyEffects(controller.onRelockTimer()) }
+    private val deferredTimer = Runnable { if (!isDestroyed) applyEffects(controller.onDeferredTimer()) }
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
     private val http = OkHttpClient()
     private val host = BuildConfig.TITAN_IP
 
-    private var flow: FlowState = FlowState.NotConfigured
-    private var started = false
+    private val flow: FlowState get() = controller.state
 
     // Token held only for a save attempt; moved to sessionToken or nulled before the attempt ends.
     private var saveToken: String? = null
-
-    // elapsedRealtime when a pairing finished while the app was hidden (SaveDeferred), else 0.
-    private var deferredAt = 0L
 
     // Token held only for the relock window.
     private var sessionToken: String? = null
@@ -114,49 +120,29 @@ class MainActivity : AppCompatActivity() {
         lockButton.setOnClickListener { dispatch(FlowEvent.LockNow) }
 
         prompt = createPrompt()
+        lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            // Delivered when currentState is already RESUMED / back to STARTED (not inside onResume).
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> applyEffects(controller.onResume())
+                Lifecycle.Event.ON_PAUSE -> controller.onPause()
+                else -> Unit
+            }
+        })
         render()
     }
 
     override fun onStart() {
         super.onStart()
-        // The lifecycle reaches STARTED only after this callback returns; BiometricPrompt refuses
-        // to show before that, so run the start logic on the next main-thread turn.
-        window.decorView.post { if (!isDestroyed && !isFinishing) handleStarted() }
-    }
-
-    private fun handleStarted() {
-        if (flow == FlowState.SaveDeferred) {
-            dispatch(FlowEvent.DeferredResumed(SystemClock.elapsedRealtime() - deferredAt))
-            return
-        }
-        if (!started) {
-            started = true
-            dispatch(FlowEvent.Start(configured = host.isNotEmpty(), hasToken = vaultHasToken()))
-            return
-        }
-        if (relock.onForegrounded()) {
-            dispatch(FlowEvent.RelockDue)
-        } else if (flow is FlowState.Locked && pending == null) {
-            dispatch(FlowEvent.UnlockRequested)
-        }
+        applyEffects(controller.onStart(configured = host.isNotEmpty()) { vaultHasToken() })
     }
 
     override fun onStop() {
-        relock.onBackgrounded()
-        // A prompt that cannot survive the stop must not leave a stuck callback or a held token.
-        val wasSaving = flow == FlowState.SavePrompt
-        if (pending != null) {
-            pending = null
-            try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
-        }
-        if (wasSaving) {
-            saveToken = null
-            dispatch(FlowEvent.SaveCancelled)
-        }
+        applyEffects(controller.onStop())
         super.onStop()
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         connGen++
         try { client?.close() } catch (_: RuntimeException) { }
         client = null
@@ -171,10 +157,10 @@ class MainActivity : AppCompatActivity() {
 
     // ---- flow plumbing -------------------------------------------------------------------
 
-    private fun dispatch(event: FlowEvent) {
-        val t = AppFlow.reduce(flow, event)
-        flow = t.state
-        for (effect in t.effects) run(effect)
+    private fun dispatch(event: FlowEvent) = applyEffects(controller.dispatch(event))
+
+    private fun applyEffects(effects: List<Effect>) {
+        for (effect in effects) run(effect)
         if (!AppFlow.holdsToken(flow)) {
             saveToken = null
             sessionToken = null
@@ -188,12 +174,20 @@ class MainActivity : AppCompatActivity() {
             Effect.BeginUnlock -> beginUnlock()
             Effect.Connect -> connect()
             Effect.CloseSocket -> closeSocket()
-            Effect.DropToken -> {
-                sessionToken = null
-                relock.lockNow()
-            }
+            Effect.DropToken -> sessionToken = null
             Effect.DiscardSaveToken -> saveToken = null
             Effect.ClearVault -> try { vault.clear() } catch (_: Exception) { }
+            Effect.CancelPrompt -> {
+                // A prompt that cannot survive the stop must not leave a stuck callback.
+                if (pending != null) {
+                    pending = null
+                    try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
+                }
+            }
+            Effect.StartRelockTimer -> handler.postDelayed(relockTimer, AppFlow.RELOCK_AFTER_MS)
+            Effect.CancelRelockTimer -> handler.removeCallbacks(relockTimer)
+            Effect.StartDeferredTimer -> handler.postDelayed(deferredTimer, AppFlow.DEFERRED_SAVE_MAX_MS)
+            Effect.CancelDeferredTimer -> handler.removeCallbacks(deferredTimer)
         }
     }
 
@@ -248,13 +242,7 @@ class MainActivity : AppCompatActivity() {
         val kind = when (result) {
             is PairResult.Paired -> {
                 saveToken = result.token
-                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                    // The PC confirm often finishes while the phone is locked: keep the pairing for
-                    // the next start instead of failing a prompt that cannot show.
-                    deferredAt = SystemClock.elapsedRealtime()
-                    dispatch(FlowEvent.PairedWhileHidden)
-                    return
-                }
+                // The controller parks this as SaveDeferred when the activity is not RESUMED.
                 PairKind.Paired
             }
             PairResult.BadCode -> PairKind.BadCode
@@ -371,7 +359,7 @@ class MainActivity : AppCompatActivity() {
         val p = prompt ?: return false
         if (isFinishing || isDestroyed || pending != null) return false
         // BiometricPrompt drops authenticate() silently (no callback) once the state is saved.
-        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return false
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return false
         val available = BiometricManager.from(this)
             .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
         if (available != BiometricManager.BIOMETRIC_SUCCESS) return false
@@ -403,7 +391,6 @@ class MainActivity : AppCompatActivity() {
             dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
             return
         }
-        relock.onUnlocked()
         val gen = ++connGen
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.

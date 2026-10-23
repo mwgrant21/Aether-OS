@@ -58,45 +58,13 @@ interface BiometricCallback {
 }
 
 /**
- * Wraps BiometricPrompt for BIOMETRIC_STRONG only. Device credential / PIN is
- * deliberately not allowed, which is why a negative button is mandatory.
- * Behaviour on a real device is verified at T15, not on the JVM.
+ * BIOMETRIC_STRONG availability check. The prompt itself lives in MainActivity (one reusable
+ * instance); device credential / PIN is deliberately not allowed, which is why its negative
+ * button is mandatory. Behaviour on a real device is verified at T15, not on the JVM.
  */
 object BiometricGate {
     fun canAuthenticate(context: Context): Availability =
         Availability.fromCode(
             BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG),
         )
-
-    fun authenticate(
-        activity: FragmentActivity,
-        cipher: Cipher,
-        title: String,
-        subtitle: String?,
-        callback: BiometricCallback,
-    ) {
-        val executor = ContextCompat.getMainExecutor(activity)
-        val prompt = BiometricPrompt(
-            activity,
-            executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    val authed = result.cryptoObject?.cipher
-                    if (authed == null) callback.onFailure(BiometricFailure.Other) else callback.onSuccess(authed)
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    callback.onFailure(BiometricFailure.fromCode(errorCode))
-                }
-            },
-        )
-        val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(title)
-            .apply { if (subtitle != null) setSubtitle(subtitle) }
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .setNegativeButtonText("Cancel")
-            .setConfirmationRequired(false)
-            .build()
-        prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))
-    }
 }

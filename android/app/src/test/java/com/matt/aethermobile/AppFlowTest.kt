@@ -39,7 +39,7 @@ class AppFlowTest {
     @Test fun notConfiguredHasNoActions() {
         val events = listOf(
             FlowEvent.PairSubmitted, FlowEvent.InputRejected(Notice.BadCode),
-            FlowEvent.PairResult(PairKind.Paired), FlowEvent.PairedWhileHidden, FlowEvent.DeferredResumed(0), FlowEvent.SaveDone, FlowEvent.SaveCancelled,
+            FlowEvent.PairResult(PairKind.Paired), FlowEvent.PairedWhileHidden, FlowEvent.DeferredResumed(0), FlowEvent.DeferredExpired, FlowEvent.SaveDone, FlowEvent.SaveCancelled,
             FlowEvent.SaveFailed, FlowEvent.UnlockRequested,
             FlowEvent.UnlockStartResult(UnlockKind.Ready), FlowEvent.UnlockAuthFailed(AuthFail.Other),
             FlowEvent.UnlockDone, FlowEvent.UnlockDecryptFailed(true),
@@ -318,5 +318,220 @@ class AppFlowTest {
             FlowEvent.ClientConnected(expiresAtMs = 86_400_000L * 30, serverTimeMs = 0),
         )
         assertEquals(FlowState.Connected(30), t.state)
+    }
+
+    // ---- lifecycle sequences (FlowController) --------------------------------------------
+
+    private class Rig {
+        var now = 0L
+        val c = FlowController { now }
+        val state get() = c.state
+
+        fun start(hasToken: Boolean = true) = c.onStart(configured = true) { hasToken }
+
+        /** Resumed on Connected, token in memory. */
+        fun connected(): Rig {
+            start()
+            c.onResume()
+            c.dispatch(FlowEvent.UnlockStartResult(UnlockKind.Ready))
+            c.dispatch(FlowEvent.UnlockDone)
+            c.dispatch(FlowEvent.ClientConnected(expiresAtMs = 86_400_000L * 30, serverTimeMs = 0))
+            return this
+        }
+
+        /** Resumed on the Pairing screen. */
+        fun pairing(): Rig {
+            start(hasToken = false)
+            c.onResume()
+            c.dispatch(FlowEvent.PairSubmitted)
+            return this
+        }
+    }
+
+    private val minute = 60_000L
+
+    @Test fun coldOpenPromptsOnlyOnceResumed() {
+        val r = Rig()
+        val atStart = r.start()
+        assertEquals(FlowState.Locked(), r.state)
+        assertFalse(Effect.BeginUnlock in atStart)
+        assertTrue(r.c.promptWanted)
+        assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
+        assertFalse(r.c.promptWanted)
+    }
+
+    @Test fun backgroundOverAMinuteRelocksOnStartAndPromptsOnlyOnResume() {
+        val r = Rig().connected()
+        assertEquals(listOf(Effect.CancelPrompt, Effect.StartRelockTimer), r.c.onStop())
+        r.now += minute + 1
+        val atStart = r.start()
+        assertEquals(listOf(Effect.CancelRelockTimer, Effect.CloseSocket, Effect.DropToken), atStart)
+        assertEquals(FlowState.Locked(), r.state)
+        assertTrue(r.c.promptWanted)
+        assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
+    }
+
+    @Test fun backgroundUnderAMinuteDoesNotRelock() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.now += minute - 1
+        assertEquals(listOf(Effect.CancelRelockTimer), r.start())
+        assertEquals(FlowState.Connected(30), r.state)
+        assertTrue(r.c.onResume().isEmpty())
+        assertTrue("a late timer must be ignored once foregrounded", r.c.onRelockTimer().isEmpty())
+        assertEquals(FlowState.Connected(30), r.state)
+    }
+
+    @Test fun relockTimerFiresWhileStoppedAndPromptIsParkedNotShown() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.now += minute
+        assertEquals(listOf(Effect.CloseSocket, Effect.DropToken), r.c.onRelockTimer())
+        assertEquals(FlowState.Locked(), r.state)
+        assertFalse(AppFlow.holdsToken(r.state))
+        assertTrue(r.c.promptWanted)
+        // Coming back later: the policy is already locked, nothing is relocked twice.
+        assertTrue(r.start().isEmpty())
+        assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
+    }
+
+    @Test fun startStopBounceBeforeResumeStillRelocksOnTime() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.now += 10_000
+        r.start()
+        // Stopped again before the activity ever resumed: the session must still relock.
+        assertEquals(listOf(Effect.CancelPrompt, Effect.StartRelockTimer), r.c.onStop())
+        r.now += minute
+        assertEquals(listOf(Effect.CloseSocket, Effect.DropToken), r.c.onRelockTimer())
+        assertEquals(FlowState.Locked(), r.state)
+    }
+
+    @Test fun startStopBounceThenHoursLaterRelocksOnTheNextStart() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.start()
+        r.c.onStop()
+        r.now += 180 * minute
+        assertTrue(Effect.DropToken in r.start())
+        assertEquals(FlowState.Locked(), r.state)
+    }
+
+    @Test fun pairedWhileStoppedIsDeferredNotPrompted() {
+        val r = Rig().pairing()
+        r.c.onPause()
+        r.c.onStop()
+        val fx = r.c.dispatch(FlowEvent.PairResult(PairKind.Paired))
+        assertEquals(FlowState.SaveDeferred, r.state)
+        assertEquals(listOf(Effect.StartDeferredTimer), fx)
+        assertTrue(AppFlow.holdsToken(r.state))
+    }
+
+    @Test fun pairedWhileStartedButNotResumedIsDeferred() {
+        val r = Rig().pairing()
+        r.c.onPause()
+        assertEquals(listOf(Effect.StartDeferredTimer), r.c.dispatch(FlowEvent.PairResult(PairKind.Paired)))
+        assertEquals(FlowState.SaveDeferred, r.state)
+    }
+
+    @Test fun deferredSaveExpiryDiscardsTheTokenWithoutALifecycleEvent() {
+        val r = Rig().pairing()
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.PairResult(PairKind.Paired))
+        r.now += minute
+        assertEquals(listOf(Effect.DiscardSaveToken), r.c.onDeferredTimer())
+        assertEquals(FlowState.NeedsPair(Notice.SaveCancelled), r.state)
+        assertFalse(AppFlow.holdsToken(r.state))
+        assertTrue(r.c.onDeferredTimer().isEmpty())
+    }
+
+    @Test fun deferredSaveSurvivesAStartStopBounceThatNeverResumes() {
+        val r = Rig().pairing()
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.PairResult(PairKind.Paired))
+        r.now += 10_000
+        assertTrue(r.start().isEmpty())
+        r.c.onStop()
+        assertEquals(FlowState.SaveDeferred, r.state)
+        r.now += 10_000
+        r.start()
+        assertEquals(listOf(Effect.BeginSave, Effect.CancelDeferredTimer), r.c.onResume())
+        assertEquals(FlowState.SavePrompt, r.state)
+    }
+
+    @Test fun deferredSaveOlderThanAMinuteIsDiscardedOnResumeEvenIfTheTimerNeverRan() {
+        val r = Rig().pairing()
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.PairResult(PairKind.Paired))
+        r.now += minute + 1 // device slept: Handler delays do not count sleep
+        r.start()
+        val fx = r.c.onResume()
+        assertFalse(Effect.BeginSave in fx)
+        assertTrue(Effect.DiscardSaveToken in fx)
+        assertEquals(FlowState.NeedsPair(Notice.SaveCancelled), r.state)
+    }
+
+    @Test fun stopWhileSavePromptIsUpCancelsItAndDiscardsTheToken() {
+        val r = Rig().pairing()
+        assertEquals(listOf(Effect.BeginSave), r.c.dispatch(FlowEvent.PairResult(PairKind.Paired)))
+        assertEquals(listOf(Effect.CancelPrompt, Effect.DiscardSaveToken), r.c.onStop())
+        assertEquals(FlowState.NeedsPair(Notice.SaveCancelled), r.state)
+    }
+
+    @Test fun stopWhileUnlockPromptIsUpReprompsOnTheNextResume() {
+        val r = Rig()
+        r.start()
+        r.c.onResume()
+        r.c.dispatch(FlowEvent.UnlockStartResult(UnlockKind.Ready)) // prompt is up
+        assertEquals(listOf(Effect.CancelPrompt), r.c.onStop())
+        assertTrue(r.c.promptWanted)
+        r.start()
+        assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
+    }
+
+    @Test fun userCancelledUnlockIsNotRepromptedByResume() {
+        val r = Rig()
+        r.start()
+        r.c.onResume()
+        r.c.dispatch(FlowEvent.UnlockStartResult(UnlockKind.Ready))
+        r.c.dispatch(FlowEvent.UnlockAuthFailed(AuthFail.Cancelled))
+        r.c.onPause()
+        r.c.onStop()
+        assertFalse(r.c.promptWanted)
+        r.start()
+        assertTrue(r.c.onResume().isEmpty())
+    }
+
+    @Test fun unlockRequestedWhileNotResumedIsParkedNotRun() {
+        val r = Rig()
+        r.start()
+        r.c.onResume()
+        r.c.dispatch(FlowEvent.UnlockAuthFailed(AuthFail.Cancelled))
+        r.c.onPause()
+        assertTrue(r.c.dispatch(FlowEvent.UnlockRequested).isEmpty())
+        assertTrue(r.c.promptWanted)
+    }
+
+    @Test fun connectLandingWhileStoppedStillArmsTheRelock() {
+        val r = Rig()
+        r.start()
+        r.c.onResume()
+        r.c.dispatch(FlowEvent.UnlockStartResult(UnlockKind.Ready))
+        r.c.onPause()
+        r.c.onStop()
+        assertEquals(listOf(Effect.Connect, Effect.StartRelockTimer), r.c.dispatch(FlowEvent.UnlockDone))
+        r.now += minute
+        assertEquals(listOf(Effect.CloseSocket, Effect.DropToken), r.c.onRelockTimer())
+    }
+
+    @Test fun lockNowDisarmsTheRelockTimer() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.start()
+        r.c.onStop()
+        assertEquals(
+            listOf(Effect.CloseSocket, Effect.DropToken, Effect.CancelRelockTimer),
+            r.c.dispatch(FlowEvent.LockNow),
+        )
     }
 }
