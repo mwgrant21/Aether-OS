@@ -179,6 +179,20 @@ describe('ControlAccessCard', () => {
     expect(screen.queryByText('ABCD-1234')).toBeNull();
   });
 
+  it('PAIR is disabled while a createPairing call is in flight', async () => {
+    let resolve: (r: ControlPairingResult) => void = () => {};
+    const h = install();
+    h.control.createPairing.mockReturnValue(new Promise<ControlPairingResult>(r => { resolve = r; }));
+    render(<ControlAccessCard />);
+    await settle();
+    fireEvent.click(screen.getByText('PAIR AN APP'));
+    await settle();
+    fireEvent.click(screen.getByText('PAIR AN APP'));
+    expect(h.control.createPairing).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(okPairing()); });
+    expect((screen.getByText('PAIR AN APP') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('Done clears the code', async () => {
     await pairFlow();
     fireEvent.click(screen.getByText('Done'));
