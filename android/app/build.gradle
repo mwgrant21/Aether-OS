@@ -75,8 +75,14 @@ tasks.register('verifyAetherSigning') {
         }
     }
 }
+// Generic rule: every package*, sign* and bundle<Variant> task (APK or AAB, any variant)
+// needs the guard, so no packaging path can sign with the default debug key.
 tasks.configureEach { t ->
-    if (t.name == 'packageDebug' || t.name == 'packageRelease') t.dependsOn 'verifyAetherSigning'
+    def n = t.name
+    def intermediate = n ==~ /.*(Classes|Resources|Aar|Jar|Metadata|Libs|Mapping).*/ // compile/test plumbing, not signing
+    if (n != 'verifyAetherSigning' && !intermediate && n ==~ /^(package|sign|bundle)[A-Z]\w*/) {
+        t.dependsOn 'verifyAetherSigning'
+    }
 }
 
 dependencies {

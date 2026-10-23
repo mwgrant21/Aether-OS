@@ -91,8 +91,13 @@ class BridgeAndSourceTest {
     }
 
     @Test fun pageUrlIsAllowListed() {
-        assertEquals("https://appassets.androidplatform.net/terminal/index.html", TerminalWebView.pageUrl("index.html"))
-        assertNull(TerminalWebView.pageUrl("../x.html"))
-        assertNull(TerminalWebView.pageUrl("https://evil.example/"))
+        assertEquals("https://appassets.androidplatform.net/terminal/index.html", TerminalWebView.pageUrl("index.html", false))
+        assertNull(TerminalWebView.pageUrl("../x.html", true))
+        assertNull(TerminalWebView.pageUrl("https://evil.example/", true))
+        assertNull(TerminalWebView.pageUrl("navtest.html", false))
+        assertEquals(
+            "https://appassets.androidplatform.net/terminal/navtest.html",
+            TerminalWebView.pageUrl("navtest.html", true),
+        )
     }
 }

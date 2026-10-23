@@ -2,6 +2,7 @@ package com.matt.aethermobile
 
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import android.webkit.WebView
@@ -28,7 +29,7 @@ import com.matt.aethermobile.term.TerminalWebView
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private val source = FakeTerminalSource()
-    private val limiter = RateLimiter(maxPerSecond = 200, nowMs = System::currentTimeMillis)
+    private val limiter = RateLimiter(maxPerSecond = 200, nowMs = SystemClock::elapsedRealtime)
 
     private val debuggable: Boolean
         get() = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -69,7 +70,7 @@ class MainActivity : AppCompatActivity() {
 
         // Debug builds can open the navigation-block test page: adb ... --es page navtest.html
         val page = if (debuggable) intent.getStringExtra("page") ?: "index.html" else "index.html"
-        webView.loadUrl(TerminalWebView.pageUrl(page) ?: TerminalWebView.pageUrl("index.html")!!)
+        webView.loadUrl(TerminalWebView.pageUrl(page, debuggable) ?: TerminalWebView.pageUrl("index.html", debuggable)!!)
     }
 
     private fun onPageMessage(raw: String?, reply: JavaScriptReplyProxy) {

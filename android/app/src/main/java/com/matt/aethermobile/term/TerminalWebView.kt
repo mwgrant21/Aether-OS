@@ -31,16 +31,17 @@ object TerminalWebView {
     const val ASSET_PREFIX = "/terminal/"
     private const val TAG = "AetherWV"
 
-    /** Pages MainActivity may load; navtest.html ships in the debug source set only. */
-    val ALLOWED_PAGES = setOf("index.html", "navtest.html")
+    /** Pages MainActivity may load; navtest.html (debug source set only) is never listed in release. */
+    fun allowedPages(debuggable: Boolean): Set<String> =
+        if (debuggable) setOf("index.html", "navtest.html") else setOf("index.html")
 
     /** Header form of the CSP; index.html carries the same policy as a meta fallback. */
     const val CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; " +
         "form-action 'none'; frame-ancestors 'none'"
 
-    fun pageUrl(page: String): String? =
-        if (page in ALLOWED_PAGES) "$ORIGIN$ASSET_PREFIX$page" else null
+    fun pageUrl(page: String, debuggable: Boolean): String? =
+        if (page in allowedPages(debuggable)) "$ORIGIN$ASSET_PREFIX$page" else null
 
     /** True only for https://appassets.androidplatform.net/terminal/<no traversal>. */
     fun isServable(uri: Uri): Boolean = isServable(uri.scheme, uri.host, uri.port, uri.path)
