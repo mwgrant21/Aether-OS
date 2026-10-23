@@ -1,0 +1,2449 @@
+[
+ {
+  "id": "T3-fs-0",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "baseline clean",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-1",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "promises as p; p.writeFile",
+  "text": "import { promises as p } from 'node:fs';\nawait p.open(f,'r'); await p.stat(a); await p.writeFile(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-2",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "promises as p; p.symlink (no writer name)",
+  "text": "import { promises as p } from 'node:fs';\nawait p.open(f,'r'); await p.stat(a); await p.symlink(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-3",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import * as fs from fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport * as fs from 'fs'",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-4",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import fsx from fs/promises",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport fsx from 'fs/promises'",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-5",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import fs, {promises} from node:fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport fsy, { promises } from 'node:fs'",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-6",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "require node:fs + writeFileSync",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst f2 = require('node:fs'); f2.writeFileSync(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-7",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "require node:fs + symlinkSync",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst f2 = require('node:fs'); f2.symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-8",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "dynamic import(fs) + writeFile",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst m = await import('fs'); m.writeFile(a,b,()=>{})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-9",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "dynamic import(fs) + symlinkSync",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst m = await import('fs'); m.symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-10",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "Reflect.get(fsp,\"writeFile\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nReflect.get(fsp,'writeFile')(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-11",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "Reflect.get(fsp,\"symlink\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nReflect.get(fsp,'symlink')(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-12",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp[\"writeFile\"]",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp['writeFile'](a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-13",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp[\"symlink\"]",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp['symlink'](a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-14",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "const {writeFile} = fsp",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst { writeFile } = fsp; writeFile(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-15",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "const {symlink} = fsp",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst { symlink } = fsp; symlink(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-16",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.symlink",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp.symlink(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-17",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.chmod",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp.chmod(a,1)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-18",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, flags)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, flags); await fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-19",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f,'w') // 'r' comment",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'w'); // 'r'\nawait fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-20",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, 'r',) trailing comma (false pos)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r',); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-21",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, \"r\") dq (false pos)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, \"r\"); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-22",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, x ? 'w' : 'r')",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, x ? 'w' : 'r'); await fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-23",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f(')'), 'r') paren in string",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f(')'), 'r'); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-24",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, ')' + 'w' + '(')",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, ')' + 'w' + '('); await fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-25",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, 'r' + 'w')",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r' + 'w'); await fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-26",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(f, 'w'), 'r' comma op",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'w'), 'r'; await fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-27",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "const o = fsp.open; o(f,\"w\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst o = fsp.open; o(f,'w')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-28",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp.open.call(null,f,\"w\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp.open.call(null,f,'w')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-29",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "2nd import {promises as q}; q.mkdtemp",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { promises as q } from 'fs'; q.mkdtemp(a)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-30",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import { writeFileSync } from fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { writeFileSync } from 'fs'",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-31",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import { symlinkSync as s } from fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { symlinkSync as s } from 'fs'",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-32",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import { default as ffs } from fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { default as ffs } from 'fs'; ffs.symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-33",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "export * from node:fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nexport * from 'node:fs'",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-34",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "import ffs = require(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport ffs = require('fs'); ffs.symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-35",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "multiline import + symlinkSync",
+  "text": "import {\n promises as fsp,\n symlinkSync,\n} from 'node:fs';\nfsp.open(f,'r');fsp.stat(a)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-fs-36",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp newline .symlink",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp\n.symlink(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-37",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "fsp?.symlink",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp?.symlink(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-38",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "const g = fsp; g.symlink",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst g = fsp; g.symlink(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-fs-39",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "chatFeed.ts",
+  "label": "child_process exec",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nrequire('child_process').exec('echo > x')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-40",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "baseline",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-41",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "base + new (WebSocketServer)({port})",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nconst z = new (WebSocketServer)({ port: 1 })",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-42",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "only new (WebSocketServer)({port})",
+  "text": "import { WebSocketServer } from 'ws'\nconst w = new (WebSocketServer)({ port: 1 })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-43",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "ns import ws.WebSocketServer",
+  "text": "import * as ws from 'ws'\nconst w = new ws.WebSocketServer({ port: 1 })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-44",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "ns import + base",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nimport * as ws from 'ws'\nconst z = new ws.WebSocketServer({ port: 1 })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-45",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "default import WS.Server",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nimport WS from 'ws'\nnew WS.Server({port:1})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-46",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "alias import",
+  "text": "import { WebSocketServer as W } from 'ws'\nnew W({noServer:true})\nnew W({port:1})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-47",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "const W2 = WebSocketServer",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nconst W2 = WebSocketServer; new W2({port:1})",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-48",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "Reflect.construct(WebSocketServer",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nReflect.construct(WebSocketServer, [{port:1}])",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-49",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "new WebSocketServer<X>({port})",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer<X>({port:1})",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-50",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "multiline ctor no noServer",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer(\n{ port: 1 })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-51",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "noServer nested in other key",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer({ port: 1, x: { noServer: true } })",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-52",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "noServer:true + port",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer({ noServer: true, port: 1 })",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-53",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "require ws destructure",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nconst { WebSocketServer: Z } = require('ws')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-54",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "dynamic import ws; new m.WebSocketServer",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nconst m = await import('ws'); new m.WebSocketServer({port:1})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-55",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "import type WebSocketServer only",
+  "text": "import type { WebSocketServer } from 'ws'\nnew WebSocketServer({noServer:true})",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-56",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "http.createServer().listen 0.0.0.0 (not ws)",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nhttp.createServer(h).listen(9, '0.0.0.0')",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-57",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "WebSocketServer({server: s}) added",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer({server: s})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-58",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "new WebSocketServer(opts) var",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer(opts)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "T3-ws-59",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "noServer + ...rest spread",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocketServer({ noServer: true, ...rest })",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "T3-ws-60",
+  "src": "verdict round-1 table (run0.ts)",
+  "file": "remoteServer.ts",
+  "label": "new globalThis.WebSocketServer",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew globalThis.WebSocketServer({port:1})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X001",
+  "src": "verdict round 2 MUST-FIX 1",
+  "file": "chatFeed.ts",
+  "label": "REAL chatFeed: comment-hosted fake fsp import + real alias p; p.symlink",
+  "want": "REJ",
+  "mutate": {
+   "base": "chatFeed.ts",
+   "ops": [
+    {
+     "replace": [
+      "import { promises as fsp } from 'node:fs';",
+      "// import { promises as fsp } from 'node:fs'; fsp.stat(x)\nimport { promises as p } from 'node:fs';"
+     ]
+    },
+    {
+     "append": "\nexport const evil = () => p.symlink('a','b');\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X002",
+  "src": "verdict round 2 MUST-FIX 2",
+  "file": "chatFeed.ts",
+  "label": "REAL chatFeed: import { symlinkSync, // ;\\n} from node:fs",
+  "want": "REJ",
+  "mutate": {
+   "base": "chatFeed.ts",
+   "ops": [
+    {
+     "append": "\nimport { symlinkSync, // ;\n} from 'node:fs';\nexport const evil2 = () => symlinkSync('a','b');\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X003",
+  "src": "verdict round 2 MUST-FIX 2",
+  "file": "chatFeed.ts",
+  "label": "REAL chatFeed: import { chmodSync /* ; */ } + chmodSync()",
+  "want": "REJ",
+  "mutate": {
+   "base": "chatFeed.ts",
+   "ops": [
+    {
+     "replace": [
+      "import { promises as fsp } from 'node:fs';",
+      "import { promises as fsp } from 'node:fs';\nimport { chmodSync /* ; */ } from 'node:fs';"
+     ]
+    },
+    {
+     "append": "\nchmodSync('a',0);\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X004",
+  "src": "verdict round 2 table",
+  "file": "remoteServer.ts",
+  "label": "ws: comment-hosted clean import + real alias",
+  "text": "// import { WebSocketServer } from 'ws'\nimport { WebSocketServer as W } from 'ws'\nnew W({noServer:true}); new W({port:1}); new WebSocketServer({noServer:true})",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X005",
+  "src": "verdict round 2 table",
+  "file": "remoteServer.ts",
+  "label": "ws: second import with /* ; */",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nimport { Server /* ; */ } from 'ws'\nnew Server({port:1})",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X006",
+  "src": "verdict round 2 table",
+  "file": "remoteServer.ts",
+  "label": "ws: alias with /* ; */",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nimport { WebSocketServer as W /* ; */ } from 'ws'\nnew W({port:1})",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X007",
+  "src": "verdict round 2 table",
+  "file": "chatFeed.ts",
+  "label": "string-hosted fake import + real alias p; p.symlink",
+  "text": "const s = \"import { promises as fsp } from 'node:fs'\";\nimport { promises as p } from 'node:fs';\np.open(f,'r'); p.stat(a); p.symlink(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X008",
+  "src": "verdict round 2 table",
+  "file": "chatFeed.ts",
+  "label": "default import fsp2 + promises as fsp",
+  "text": "import fsp2 from 'fs';\nimport { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X009",
+  "src": "verdict round 2 table",
+  "file": "chatFeed.ts",
+  "label": "unicode-escaped identifier \\u0066sp.symlink(a,b)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n\\u0066sp.symlink(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X010",
+  "src": "verdict round 2 table",
+  "file": "chatFeed.ts",
+  "label": "unicode-escaped identifier with bracket access",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n\\u0066sp['symlink'](a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X011",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "process.binding(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nprocess.binding('fs')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X012",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "process.getBuiltinModule(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst m = process.getBuiltinModule('fs'); m.symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X013",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "createRequire(url)(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { createRequire } from 'node:module';\ncreateRequire(url)('fs').symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X014",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "const r = require; r(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst r = require; r('fs').symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X015",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "require(`fs`) backtick specifier",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nrequire(`fs`).symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X016",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "import(`node:fs`) backtick specifier",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst m = await import(`node:fs`); m.symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X017",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "globalThis.require(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nglobalThis.require('fs').symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X018",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "module.require(\"fs\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nmodule.require('fs').symlinkSync(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X019",
+  "src": "verdict round 1/2 nit",
+  "file": "chatFeed.ts",
+  "label": "fsp.open('[','w',']','r')",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open('[','w',']','r'); await fsp.stat(a);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X020",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "fsp.readFile(f, { flag: 'w' })",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(f, { flag: 'w' })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X021",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "fsp.readFile(f, { flag: 'a' })",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(f, { flag: 'a' })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X022",
+  "src": "verdict round 2 nit",
+  "file": "chatFeed.ts",
+  "label": "readFile options quoted 'flag' key",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(f, { 'flag': 'w' })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X023",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "readFile options computed key",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(f, { ['fl' + 'ag']: 'w' })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X024",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "readFile options spread",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(f, { ...o })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X025",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "readFile options variable",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(f, opts)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X026",
+  "src": "verdict round 2 accepted false-reject",
+  "file": "chatFeed.ts",
+  "label": "fsp inside a line comment",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n// fsp.symlink(a, b) would write\n",
+  "want": "PASS",
+  "relaxation": "comment",
+  "old": "REJ"
+ },
+ {
+  "id": "X027",
+  "src": "verdict round 2 accepted false-reject",
+  "file": "chatFeed.ts",
+  "label": "'fsp.symlink' inside a string",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst s = 'fsp.symlink(a, b)';",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "string"
+ },
+ {
+  "id": "X028",
+  "src": "verdict round 2 accepted false-reject",
+  "file": "chatFeed.ts",
+  "label": "fs import mentioned in a block comment",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n/* import fs from 'fs'; fs.writeFileSync(a,b) */",
+  "want": "PASS",
+  "relaxation": "comment",
+  "old": "REJ"
+ },
+ {
+  "id": "X029",
+  "src": "verdict round 2 accepted false-reject",
+  "file": "chatFeed.ts",
+  "label": "type-only import { Stats }",
+  "text": "import type { Stats } from 'node:fs';\nimport { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X030",
+  "src": "verdict round 2",
+  "file": "chatFeed.ts",
+  "label": "inline type specifier next to promises",
+  "text": "import { type Stats, promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "syntax"
+ },
+ {
+  "id": "X031",
+  "src": "verdict round 2 accepted false-reject",
+  "file": "chatFeed.ts",
+  "label": "fsp.open('a,b', 'r') comma in string",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open('a,b', 'r'); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X032",
+  "src": "verdict round 2",
+  "file": "chatFeed.ts",
+  "label": "template literal with a read-only call",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst t = `${await fsp.stat(a)}`;",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X033",
+  "src": "verdict round 2",
+  "file": "chatFeed.ts",
+  "label": "template literal with a write ref",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst t = `${fsp.symlink}`;",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X034",
+  "src": "verdict round 2",
+  "file": "chatFeed.ts",
+  "label": "import split by a block comment",
+  "text": "import { promises as fsp } from /* c */ 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "syntax"
+ },
+ {
+  "id": "X035",
+  "src": "verdict round 2 accepted false-reject",
+  "file": "chatFeed.ts",
+  "label": ".then(fsp.stat) by reference",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\np.then(fsp.stat)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X036",
+  "src": "verdict round 2",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(fsp.stat(a), \"r\") nested read-only",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(fsp.stat(a), 'r');",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X037",
+  "src": "verdict round 2",
+  "file": "chatFeed.ts",
+  "label": "fsp.open(g(fsp.symlink), \"r\")",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(g(fsp.symlink), 'r');",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X038",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "open with 3 args (f,'r',0o600)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r', 0o600);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X039",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "open with spread args",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(...args);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X040",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "open flag 'rs' (not literal 'r')",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'rs');",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X041",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "open flag as no-substitution template `r`",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, `r`); await fsp.stat(a);",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X042",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "open with only one arg (default flag)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X043",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.readFile(a) is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(a);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X044",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.readFile(a, 'utf8') is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(a, 'utf8');",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X045",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.readFile(a, { encoding: 'utf8' }) is allowed (REJ since round 3: readFile options are a string literal only)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readFile(a, { encoding: 'utf8' });",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X046",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.readdir(d) is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readdir(d);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X047",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.access(p) is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.access(p);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X048",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.realpath(p) is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.realpath(p);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X049",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.lstat(p) is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.lstat(p);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X050",
+  "src": "T3 spec: tolerant read-only set",
+  "file": "chatFeed.ts",
+  "label": "fsp.readlink(p) is allowed",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.readlink(p);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X051",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.symlink(a,b) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.symlink(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X052",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.copyFile(a,b) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.copyFile(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X053",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.rename(a,b) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.rename(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X054",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.unlink(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.unlink(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X055",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.mkdir(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.mkdir(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X056",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.rm(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.rm(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X057",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.truncate(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.truncate(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X058",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.appendFile(a,b) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.appendFile(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X059",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.writeFile(a,b) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.writeFile(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X060",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.chmod(a,1) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.chmod(a,1);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X061",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.cp(a,b) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.cp(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X062",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.mkdtemp(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.mkdtemp(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X063",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.createReadStream(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.createReadStream(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X064",
+  "src": "T3 spec / T13 red-proofs",
+  "file": "chatFeed.ts",
+  "label": "fsp.watch(a) is rejected",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nawait fsp.watch(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X065",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named sync read from node:fs",
+  "text": "import { readFileSync } from 'node:fs';\nreadFileSync(a, 'utf8');",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X066",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named sync write from node:fs (unused)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { writeFileSync } from 'node:fs';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X067",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named openSync from node:fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { openSync } from 'node:fs';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X068",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named reads from node:fs/promises",
+  "text": "import { readFile, stat } from 'node:fs/promises';\nawait readFile(a); await stat(b);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X069",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named write from node:fs/promises",
+  "text": "import { writeFile } from 'node:fs/promises';\nawait writeFile(a, b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X070",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named readFile passed by reference",
+  "text": "import { readFile } from 'node:fs/promises';\nconst r = readFile;",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X071",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named readFile optional call",
+  "text": "import { readFile } from 'node:fs/promises';\nreadFile?.(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X072",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "named aliased member (stat as st)",
+  "text": "import { stat as st } from 'node:fs/promises';\nawait st(a);",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "X073",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "bare side-effect import of fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport 'node:fs';",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X074",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "export { promises } from fs",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nexport { promises as fsp2 } from 'node:fs';",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X075",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "export type { Stats } from fs (fails closed)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nexport type { Stats } from 'node:fs';",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X076",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "as-cast on fsp",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n(fsp as any).symlink(a,b)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X077",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "non-null on fsp",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp!.stat(a)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X078",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "(0, fsp.stat)(a) indirect call",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\n(0, fsp.stat)(a)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X079",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "fsp.stat.bind(fsp)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp.stat.bind(fsp)(a)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X080",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "fsp.stat optional call",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nfsp.stat?.(a)",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X081",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "second alias of promises",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport { promises as q } from 'node:fs';\nq.symlink(a,b)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X082",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "import = require form",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nimport ffs = require('node:fs');",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X083",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "import type of fs namespace",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\ntype S = import('node:fs').Stats;",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X084",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "eval",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\neval(\"require('fs')\")",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X085",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "new Function",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nnew Function('return process')()",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X086",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "element access on process",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nprocess['getBuiltin' + 'Module']('fs')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X087",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "FileHandle write method",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst fh = await fsp.open(f, 'r'); await fh.writeFile(x);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X088",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "FileHandle .write receiver fh",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst fh = await fsp.open(f, 'r'); await fh.write(x);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X089",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "FileHandle read + close (what chatFeed does)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst fh = await fsp.open(f, 'r'); await fh.read(buf, 0, 10, 0); await fh.close();",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X090",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "syntax error",
+  "text": "import { promises as fsp from 'node:fs'\nfsp.stat(a)",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X091",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "dynamic import with a variable specifier",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst m = await import(name);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X092",
+  "src": "design",
+  "file": "chatFeed.ts",
+  "label": "require with a concatenated specifier",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nrequire('f' + 's')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X093",
+  "src": "design",
+  "file": "remoteHub.ts",
+  "label": "child_process import (new requirement)",
+  "text": "import { exec } from 'node:child_process';",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X094",
+  "src": "design",
+  "file": "remoteHub.ts",
+  "label": "child_process via import()",
+  "text": "const m = await import('child_process');",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X095",
+  "src": "be0b260 pty rule",
+  "file": "remoteHub.ts",
+  "label": "node-pty import",
+  "text": "import { spawn } from 'node-pty';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X096",
+  "src": "be0b260 pty rule",
+  "file": "remoteHub.ts",
+  "label": "ptyManager import",
+  "text": "import { x } from '../ptyManager';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X097",
+  "src": "be0b260 electron rule",
+  "file": "remoteHub.ts",
+  "label": "electron value import",
+  "text": "import { app } from 'electron';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X098",
+  "src": "be0b260 electron rule",
+  "file": "remoteIpc.ts",
+  "label": "electron type-only import",
+  "text": "import type { IpcMain } from 'electron';",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X099",
+  "src": "be0b260 atomicWrite rule",
+  "file": "remoteHub.ts",
+  "label": "atomicWrite import outside sessionStore",
+  "text": "import { writeFileAtomically } from '../atomicWrite';\nwriteFileAtomically(a,b);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X100",
+  "src": "be0b260 store rule",
+  "file": "remoteHub.ts",
+  "label": "collectorStore import",
+  "text": "import { x } from '../collector/collectorStore';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X101",
+  "src": "be0b260 fs importer rule",
+  "file": "remoteHub.ts",
+  "label": "fs named import in a non-allowed file",
+  "text": "import { statSync } from 'node:fs';\nstatSync(a);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X102",
+  "src": "be0b260 fs importer rule",
+  "file": "x.mjs",
+  "label": "fs default import in an .mjs",
+  "text": "import fs from 'node:fs';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X103",
+  "src": "be0b260 kill rule",
+  "file": "remoteHub.ts",
+  "label": "proc.kill()",
+  "text": "proc.kill();",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X104",
+  "src": "design",
+  "file": "remoteHub.ts",
+  "label": "process.kill(pid)",
+  "text": "process.kill(pid);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X105",
+  "src": "design",
+  "file": "remoteHub.ts",
+  "label": "x['kill']()",
+  "text": "x['kill']();",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X106",
+  "src": "be0b260 write rule",
+  "file": "remoteHub.ts",
+  "label": "res.write allowed",
+  "text": "res.write(x);",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X107",
+  "src": "be0b260 write rule",
+  "file": "remoteServer.ts",
+  "label": "socket.write allowed (template body)",
+  "text": "socket.write(`HTTP/1.1 ${status} ${text}\\r\\n\\r\\n`);\nimport { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X108",
+  "src": "be0b260 write rule",
+  "file": "remoteHub.ts",
+  "label": "term.write rejected",
+  "text": "term.write(x);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X109",
+  "src": "design",
+  "file": "remoteHub.ts",
+  "label": "optional-chained term?.write",
+  "text": "term?.write(x);",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X110",
+  "src": "be0b260 pty:write rule",
+  "file": "remoteHub.ts",
+  "label": "'pty:write' string",
+  "text": "ipc.send('pty:write', d);",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X111",
+  "src": "intended relaxation",
+  "file": "remoteHub.ts",
+  "label": "'pty:write' only in a comment",
+  "text": "// never send pty:write from here\nconst a = 1;",
+  "want": "PASS",
+  "relaxation": "comment",
+  "old": "REJ"
+ },
+ {
+  "id": "X112",
+  "src": "intended relaxation",
+  "file": "remoteHub.ts",
+  "label": ".kill( only in a comment",
+  "text": "// never call .kill(\nconst a = 1;",
+  "want": "PASS",
+  "relaxation": "comment",
+  "old": "REJ"
+ },
+ {
+  "id": "X113",
+  "src": "be0b260 wildcard rule",
+  "file": "remoteHub.ts",
+  "label": "listen to '0.0.0.0'",
+  "text": "srv.listen(1, '0.0.0.0');",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X114",
+  "src": "be0b260 wildcard rule",
+  "file": "remoteHub.ts",
+  "label": "bare \"::\" literal",
+  "text": "const h = \"::\";",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X115",
+  "src": "be0b260 wildcard rule",
+  "file": "remoteHub.ts",
+  "label": "backtick `0.0.0.0` literal",
+  "text": "const h = `0.0.0.0`;",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X116",
+  "src": "be0b260 wildcard rule",
+  "file": "remoteHub.ts",
+  "label": "'0.0.0.0:80' is not exactly the wildcard",
+  "text": "const h = '0.0.0.0:80';",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X117",
+  "src": "intended relaxation",
+  "file": "remoteHub.ts",
+  "label": "'0.0.0.0' only in a comment",
+  "text": "// never bind '0.0.0.0'\nconst a = 1;",
+  "want": "PASS",
+  "relaxation": "comment",
+  "old": "REJ"
+ },
+ {
+  "id": "X118",
+  "src": "be0b260 listen rule",
+  "file": "remoteHub.ts",
+  "label": "listen outside remoteServer.ts",
+  "text": "srv.listen(1, '127.0.0.1');",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X119",
+  "src": "design",
+  "file": "remoteHub.ts",
+  "label": "x['listen'](1) bracket form",
+  "text": "x['listen'](1, '127.0.0.1');",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X120",
+  "src": "be0b260 listen rule",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: host replaced by a literal",
+  "want": "REJ",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "replace": [
+      "server.listen(opts.port, opts.host,",
+      "server.listen(opts.port, '127.0.0.1',"
+     ]
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X121",
+  "src": "be0b260 listen rule",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: host argument dropped",
+  "want": "REJ",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "replace": [
+      "server.listen(opts.port, opts.host,",
+      "server.listen(opts.port,"
+     ]
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X122",
+  "src": "be0b260 listen rule",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: assertBindableHost call removed",
+  "want": "REJ",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "replace": [
+      "assertBindableHost(opts.host)",
+      "void 0"
+     ]
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X123",
+  "src": "T13 red-proof",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: appended new WebSocketServer({ port: 9 })",
+  "want": "REJ",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nnew WebSocketServer({ port: 9 });\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X124",
+  "src": "T13 red-proof",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: appended new WS.Server({ port: 9 })",
+  "want": "REJ",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nnew WS.Server({ port: 9 });\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X125",
+  "src": "T13 red-proof",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: import WebSocketServer as WSS",
+  "want": "REJ",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "replace": [
+      "import { WebSocketServer, type WebSocket } from 'ws'",
+      "import { WebSocketServer as WSS, type WebSocket } from 'ws'"
+     ]
+    },
+    {
+     "replace": [
+      "new WebSocketServer(",
+      "new WSS("
+     ]
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X126",
+  "src": "T13 red-proof",
+  "file": "tailnet.ts",
+  "label": "import { Server } from 'ws' in tailnet.ts",
+  "text": "import { Server } from 'ws';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X127",
+  "src": "be0b260 ws rule",
+  "file": "remoteHub.ts",
+  "label": "import type { WebSocket } from 'ws' outside remoteServer.ts",
+  "text": "import type { WebSocket } from 'ws';",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X128",
+  "src": "design",
+  "file": "remoteServer.ts",
+  "label": "WebSocket imported as a value",
+  "text": "import { WebSocketServer, WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew WebSocket('ws://x')",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X129",
+  "src": "design",
+  "file": "remoteServer.ts",
+  "label": "WebSocketServer used in a type position",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nlet s: WebSocketServer | null = null;",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X130",
+  "src": "design",
+  "file": "remoteServer.ts",
+  "label": "noServer plus extra safe options",
+  "text": "import { WebSocketServer } from 'ws'\nconst w = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false })",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X131",
+  "src": "design",
+  "file": "remoteServer.ts",
+  "label": "http.Server construction",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst w = new WebSocketServer({ noServer: true })\nnew http.Server({ noServer: true })",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X132",
+  "src": "design",
+  "file": "remoteServer.ts",
+  "label": "noServer: false",
+  "text": "import { WebSocketServer } from 'ws'\nnew WebSocketServer({ noServer: false })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X133",
+  "src": "design",
+  "file": "remoteServer.ts",
+  "label": "noServer given as a variable",
+  "text": "import { WebSocketServer } from 'ws'\nnew WebSocketServer({ noServer })",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X134",
+  "src": "be0b260 chat-event rule",
+  "file": "chatFeed.ts",
+  "label": "{ k: 'msg' } built outside chatParser",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst e = { k: 'msg', id: 1 };",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X135",
+  "src": "be0b260 chat-event rule",
+  "file": "chatFeed.ts",
+  "label": "{ 'k': \"traffic\" } quoted key",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, 'r'); await fsp.stat(a);\nconst e = { 'k': \"traffic\" };",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "X136",
+  "src": "be0b260 chat-event rule",
+  "file": "remoteHub.ts",
+  "label": "type literal { k: 'msg' } outside types.ts",
+  "text": "type T = { k: 'msg' };",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "X137",
+  "src": "be0b260 chat-event rule",
+  "file": "chatParser.ts",
+  "label": "{ k: 'msg' } inside chatParser.ts",
+  "text": "const e = { k: 'msg', id: 1 };",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X138",
+  "src": "be0b260 chat-event rule",
+  "file": "types.ts",
+  "label": "{ k: 'msg' } inside types.ts",
+  "text": "export type T = { k: 'msg' };",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "X139",
+  "src": "T13 red-proof",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: appended writeFileSync import + call",
+  "want": "REJ",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(a, b);\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X140",
+  "src": "T13 red-proof",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: appended createWriteStream",
+  "want": "REJ",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nimport { createWriteStream } from 'node:fs';\ncreateWriteStream(a);\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X141",
+  "src": "T13 red-proof",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: appended fs/promises writeFile",
+  "want": "REJ",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nimport { writeFile } from 'node:fs/promises';\nwriteFile(a, b);\n"
+    }
+   ]
+  },
+  "old": "REJ"
+ },
+ {
+  "id": "X142",
+  "src": "be0b260 sessionStore rule",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: writeFileAtomically call removed",
+  "want": "REJ",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "replace": [
+      "writeFileAtomically(filePath, body)",
+      "Promise.resolve()"
+     ]
+    }
+   ]
+  },
+  "old": "PASS"
+ },
+ {
+  "id": "X143",
+  "src": "design",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: writeFileAtomically passed by reference",
+  "want": "REJ",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nconst w = writeFileAtomically;\n"
+    }
+   ]
+  },
+  "old": "PASS"
+ },
+ {
+  "id": "X144",
+  "src": "design",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: renameSync import",
+  "want": "REJ",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "replace": [
+      "import { readFileSync, statSync } from 'node:fs';",
+      "import { readFileSync, statSync, renameSync } from 'node:fs';"
+     ]
+    }
+   ]
+  },
+  "old": "PASS"
+ },
+ {
+  "id": "R2-proto-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile options {__proto__:{flag:\"w\"}} (inherited flag truncates)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { __proto__: { flag: 'w' } });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile options {'__proto__':{flag:'w'}} quoted key",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { '__proto__': { flag: 'w' } });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "Object.prototype.flag = w then readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nObject.prototype.flag = 'w'; await fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "({}).__proto__.flag = w then readFile",
+  "text": "import { promises as fsp } from 'node:fs';\n({}).__proto__.flag = 'w'; await fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-proto-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile options with a non-allow-listed key (mode)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { mode: 1 });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R2-listen-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: const l = srv.listen (not a direct call)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nconst l = srv.listen;\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-listen-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: Reflect.apply(srv.listen, ...)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nReflect.apply(srv.listen, srv, [9]);\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-listen-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: const { listen } = srv",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nconst { listen } = srv;\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-listen-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: srv.listen.call(srv, 9)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nsrv.listen.call(srv, 9);\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import v8 from 'node:v8'",
+  "text": "import { writeHeapSnapshot } from 'node:v8';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import worker_threads",
+  "text": "import { Worker } from 'worker_threads';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import node:sqlite",
+  "text": "import { DatabaseSync } from 'node:sqlite';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import node:path (allowed list is only what the real tree uses)",
+  "text": "import { join } from 'node:path';\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-builtin-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "tailnet.ts",
+  "label": "import node:os is still fine",
+  "text": "import { hostname } from 'node:os';\nexport const h = hostname();\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-atomic-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: writeFileAtomically(\"/etc/x\", b)",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nwriteFileAtomically('/etc/x', 'b');\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R2-tol-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "open(f, `r`) template literal flag",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.open(f, `r`);\n",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "R2-tol-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile(a, 'w') (string options = encoding, EINVAL, no open)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, 'w');\n",
+  "want": "PASS",
+  "old": "REJ",
+  "relaxation": "tolerance"
+ },
+ {
+  "id": "R2-tol-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 8b61e80)",
+  "file": "chatFeed.ts",
+  "label": "readFile(a, { signal }) (REJ since round 3: readFile options are a string literal only)",
+  "text": "import { promises as fsp } from 'node:fs';\nawait fsp.readFile(a, { signal });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "({})['__pro'+'to__'].flag = w (computed concat key) + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\n({})['__pro' + 'to__'].flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "Reflect.get({}, '__proto__').flag = w + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nReflect.get({}, '__proto__').flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "const k = '__proto__'; ({})[k].flag = w + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nconst k = '__proto__'; ({})[k].flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "const {'__proto__': p} = {}; p.flag = w + readFile",
+  "text": "import { promises as fsp } from 'node:fs';\nconst { '__proto__': p } = {}; p.flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-proto-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "chatFeed.ts",
+  "label": "Object[`get${...}Of`]({}).flag = w + readFile (template-computed key)",
+  "text": "import { promises as fsp } from 'node:fs';\nObject[`get${'Prototype'}Of`]({}).flag = 'w';\nawait fsp.readFile(a, { encoding: 'utf8' });\n",
+  "want": "REJ",
+  "old": "REJ"
+ },
+ {
+  "id": "R3-listen-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "assignment-pattern shorthand ({listen} = s)",
+  "text": "let s: any; ({ listen } = s);\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "assignment-pattern renamed ({listen: l} = s); l.call(s, 9)",
+  "text": "let s: any; let l: any; ({ listen: l } = s); l.call(s, 9);\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "declaration with quoted key const {'listen': l} = s",
+  "text": "declare const s: any; const { 'listen': l } = s;\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "declaration with computed-literal key const {['listen']: l} = s",
+  "text": "declare const s: any; const { ['listen']: l } = s;\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "object literal key { listen: fn }",
+  "text": "export const o = { listen: () => 1 };\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-6",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: srv['lis'+'ten'](9) (computed concat key)",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nsrv['lis' + 'ten'](9);\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-listen-7",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "Reflect.get(s, 'lis'+'ten')",
+  "text": "declare const s: any; Reflect.get(s, 'lis' + 'ten');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "(() => {}).constructor('code')() (Function constructor)",
+  "text": "(() => {}).constructor('return 1')();\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "process.report.writeReport('x')",
+  "text": "process.report.writeReport('x');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "import('data:text/javascript,...')",
+  "text": "import('data:text/javascript,export default 1');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-4",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "Object.assign(a, b)",
+  "text": "declare const a: any; Object.assign(a, { x: 1 });\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-5",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "Object.defineProperty(a, 'x', {})",
+  "text": "declare const a: any; Object.defineProperty(a, 'x', {});\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-6",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "object literal constructor key",
+  "text": "export const o = { constructor: 1 };\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-7",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "identifier-keyed element access x[i + 1]",
+  "text": "declare const x: number[]; declare const i: number; export const y = x[i + 1];\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-esc-8",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "import('file:///x.js')",
+  "text": "import('file:///x.js');\n",
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-fp-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: filePath reassigned",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nfilePath = '/etc/x';\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-fp-2",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: second function declaring a filePath parameter",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nexport function f(filePath: string): string { return filePath; }\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-fp-3",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "sessionStore.ts",
+  "label": "REAL sessionStore: top-level let filePath = '/etc/x'",
+  "mutate": {
+   "base": "sessionStore.ts",
+   "ops": [
+    {
+     "append": "\nexport let filePath = '/etc/x';\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "R3-ok-1",
+  "src": "verdict-feat-ast-guard.md (refuter, 3aadcc3)",
+  "file": "tailnet.ts",
+  "label": "literal element access and a plain array index stay allowed",
+  "text": "export const a = [1, 2][0];\nexport const b = ({ k: 1 } as Record<string, number>)['k'];\n",
+  "want": "PASS",
+  "old": "PASS"
+ }
+]
