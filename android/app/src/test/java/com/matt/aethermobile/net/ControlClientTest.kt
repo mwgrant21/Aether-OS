@@ -369,4 +369,12 @@ class ControlClientTest {
         c.close()
         assertTrue(scheduler.cancelled)
     }
+
+    @Test fun watchdogTaskAlreadyRunningCannotFailAWelcomedSession() {
+        val c = opened()
+        transport.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
+        scheduler.task!!.invoke()
+        assertTrue(c.state is ControlState.Connected)
+        assertTrue(transport.closes.isEmpty())
+    }
 }

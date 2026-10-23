@@ -101,7 +101,8 @@ class ControlClient(
             val headers = mapOf("Authorization" to "${ControlProtocol.AUTH_SCHEME} $token")
             try {
                 transport.open(url, headers, s)
-            } catch (_: Exception) {
+            } catch (e: Throwable) {
+                if (e is VirtualMachineError) throw e
                 // Never carries the exception text: it could echo the URL or headers.
                 s.finish(ControlState.Failed(Failure.Unreachable))
             }
@@ -127,6 +128,7 @@ class ControlClient(
         private var cancelWatchdog: (() -> Unit)? = null
         private var helloSent = false
         private var done = false
+        private var welcomed = false
 
         /** Ends the connection once; returns false if it had already ended. */
         fun finish(next: ControlState, closeCode: Int? = null): Boolean {
@@ -151,7 +153,10 @@ class ControlClient(
                     return
                 }
                 cancelWatchdog = scheduler(WELCOME_TIMEOUT_MS) {
-                    finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                    // cancel() cannot stop a task already blocked on this monitor, so re-check here.
+                    synchronized(this@ControlClient) {
+                        if (!done && !welcomed) finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                    }
                 }
             }
         }
@@ -198,6 +203,7 @@ class ControlClient(
                 finish(ControlState.Failed(Failure.ProofMismatch), closeCode = 1008)
                 return
             }
+            welcomed = true
             cancelWatchdog?.invoke()
             cancelWatchdog = null
             publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs))
