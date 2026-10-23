@@ -162,6 +162,7 @@ function analyzeControl(name: string, text: string): Analysis {
 
   // ---- rules 1 and 4: imports ----
   const allowed = allowedImports(name);
+  let validatorImported = false;
   for (const imp of sf.statements) {
     // the validator must come from ./protocol itself: a local `const validateInput = ...` must not satisfy rule 2
     if (ts.isImportDeclaration(imp) && isStrLit(imp.moduleSpecifier) && imp.moduleSpecifier.text === './protocol' && !imp.importClause?.isTypeOnly) {
@@ -183,7 +184,6 @@ function analyzeControl(name: string, text: string): Analysis {
   const sinks: ts.CallExpression[] = [];
   const declCount = new Map<string, number>();
   const validated = new Set<string>();
-  let validatorImported = false;
   const handled = new Set<string>();
   visit(sf, (n) => {
     // names declared (for shadowing detection of the validated binding)
