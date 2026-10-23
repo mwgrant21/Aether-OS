@@ -98,7 +98,11 @@ import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createRemoteHub } from './remote/remoteHub';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
-import type { PairingResult, RemoteStatus } from '../src/shared/remote/types';
+import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
+import { renderQrSvg } from './remote/pairingQr';
+import { createControlHub } from './control/controlHub';
+import { registerControlIpc } from './control/controlIpc';
+import { controlSettingsPath, readReenable, writeReenable } from './controlSettings';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -705,9 +709,19 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
     // A failed ACL setup means the hub never loaded the store; do not let stop() read it at quit either.
-    (remoteDirFailed ? Promise.resolve() : remoteHub.stop()).then(() => {
+    // Phone control stops first (its sockets and listener hold), then the remote hub; control's stop() leaves the
+    // persisted re-enable flag alone. It is skipped unless the private dir is ready, so a pending or failed ACL
+    // never lets it read the device store or the flag.
+    (async () => {
+      try {
+        if (remoteDirReady) await controlHub.stop();
+      } finally {
+        if (!remoteDirFailed) await remoteHub.stop();
+      }
+    })().then(() => {
       remoteStopped = true;
       if (remoteHub.status().notice) diagLog.write(`[diag] remote session store not saved at quit at=${new Date().toISOString()}`);
+      if (controlHub.status().notice) diagLog.write(`[diag] control device store not saved at quit at=${new Date().toISOString()}`);
     }),
   ]);
 }, () => {
@@ -910,10 +924,14 @@ app.whenReady().then(async () => {
     remoteDirFailed = !privateDirOk;
     if (privateDirOk) {
       remoteHub.init();
+      controlHub.init(); // reads remote-devices.json and control-settings.json: only after the ACL
       // A Settings card mounted before this point holds the pre-init status; give it the real one.
       sendToWindow('remote:statusChanged', remoteHub.status());
+      sendToWindow('control:statusChanged', controlHub.status());
     }
     resolveRemotePrivateDir();
+    // Opt-in launch re-enable: acquires only when the persisted flag is true (no confirm, no flag write).
+    if (privateDirOk && !remoteQuitting) void controlHub.autoEnable();
   });
 
   Menu.setApplicationMenu(null);
@@ -1495,6 +1513,23 @@ const remoteHub = createRemoteHub({
 // mutator returns the unchanged status (not-enabled for pairing) instead of reusing the stopped hub.
 // Commands await the gate, so after it they see ready or failed. Status reports unavailable only once the
 // ACL setup has actually failed; while it is pending it is the hub's own (off) status.
+// Phone control (privacy section 17). Same lifecycle as the remote hub: created once, stopped only at quit, and
+// every store or flag access waits for the private-dir ACL. It shares the remote hub's listener through
+// listenerPort(); the port is attached synchronously, before registerRemoteIpc and before any await, because an
+// attach after a viewer-only start fails closed by design.
+const controlHub = createControlHub({
+  listener: remoteHub.listenerPort(),
+  store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
+  settings: {
+    read: () => readReenable(controlSettingsPath(aetherOsDir)),
+    persist: on => writeReenable(aetherOsDir, on),
+  },
+  confirmPair: (peer, replacesExisting) => confirmControlPair(peer, replacesExisting),
+  renderQr: renderQrSvg,
+  log: l => diagLog.write(l),
+  onStatus: s => sendToWindow('control:statusChanged', s),
+});
+remoteHub.attachControl(controlHub.port);
 const remoteStatusOrUnavailable = (): RemoteStatus => !remoteDirFailed
   ? remoteHub.status()
   : { ...remoteHub.status(), state: 'unavailable', reason: 'error', address: null, clients: 0 };
@@ -1506,9 +1541,10 @@ const remoteHubForIpc = {
   revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeAll(); },
   revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? remoteStatusOrUnavailable() : remoteHub.revokeOne(ref); },
 };
-registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
+const remoteEventTrusted = (event: Electron.IpcMainInvokeEvent): boolean => !!mainWindow
   && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
-  && event.senderFrame === mainWindow.webContents.mainFrame,
+  && event.senderFrame === mainWindow.webContents.mainFrame;
+registerRemoteIpc(ipcMain, remoteHubForIpc, remoteEventTrusted,
   async () => (await dialog.showMessageBox({
     type: 'warning',
     title: 'Allow phone access?',
@@ -1516,6 +1552,63 @@ registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
     detail: "Read-only. A paired phone sees your prompts, Claude's replies, agent messages and tool names from the pinned Claude session, with obvious secrets masked (masking is pattern-based and not perfect).\n\n"
       + 'It is reachable by any device on your tailnet that holds a pairing code or an already-paired phone. Paired phones stay paired across restarts until they expire or you revoke them. Access itself turns off when Aether restarts.',
     buttons: ['Cancel', 'Allow read-only access'],
+    defaultId: 0,
+    cancelId: 0,
+  })).response === 1);
+
+// Phone control IPC. Every action waits for the private-dir gate and returns the unchanged status once the quit has
+// begun or the ACL failed (a failed ACL reports unavailable and never touches the store or the flag).
+const controlStatusOrUnavailable = (): ControlStatus => !remoteDirFailed
+  ? controlHub.status()
+  : { ...controlHub.status(), state: 'unavailable', reason: 'error', address: null, connected: 0 };
+const controlHubForIpc = {
+  init: () => { if (remoteDirReady) controlHub.init(); },
+  status: () => controlStatusOrUnavailable(),
+  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setEnabled(on); },
+  setReenableAtLaunch: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setReenableAtLaunch(on); },
+  createPairing: async (): Promise<ControlPairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : controlHub.createPairing(); },
+  revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeAll(); },
+  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeOne(ref); },
+};
+// Native dialogs: the default button is Cancel / Decline in all three.
+async function confirmControlPair(peer: string | null, replacesExisting: boolean): Promise<boolean> {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return false; // no window to answer from: decline, never block
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    title: 'Pair a phone?',
+    message: 'An app wants to control your terminals. Pair it?',
+    detail: `Source address: ${peer ?? 'unknown'}\n\n`
+      + (replacesExisting ? 'This REPLACES the phone that is currently paired. The old phone is disconnected and must pair again.\n\n' : '')
+      + 'Only pair an app you started yourself a moment ago.',
+    buttons: ['Decline', 'Pair this app'],
+    defaultId: 0,
+    cancelId: 0,
+  };
+  // A minimised or hidden parent would hide a modal sheet; show it unparented then so it is still seen.
+  const shown = win.isMinimized() || !win.isVisible() ? await dialog.showMessageBox(options) : await dialog.showMessageBox(win, options);
+  return shown.response === 1;
+}
+registerControlIpc(ipcMain, controlHubForIpc, remoteEventTrusted,
+  async () => (await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Allow phone control?',
+    message: 'Let a paired Android app type into your terminals and approve permission prompts?',
+    detail: 'This is equivalent to your keyboard on this PC: a paired app can type into Terminal, Terminal 2 and Codex and answer their permission prompts.\n\n'
+      + 'It works over Tailscale only, and pairing needs a code AND a confirm on this PC.\n\n'
+      + (controlHub.status().reenableAtLaunch
+        ? 'Re-enable at launch is on, so phone control comes back when Aether restarts.'
+        : 'Phone control turns off when Aether restarts.'),
+    buttons: ['Cancel', 'Allow phone control'],
+    defaultId: 0,
+    cancelId: 0,
+  })).response === 1,
+  async () => (await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Re-enable phone control at launch?',
+    message: 'Turn phone control back on automatically whenever Aether starts?',
+    detail: 'Restarts will turn the listener back on without asking. Turning phone control off in Settings clears this.',
+    buttons: ['Cancel', 'Re-enable at launch'],
     defaultId: 0,
     cancelId: 0,
   })).response === 1);
