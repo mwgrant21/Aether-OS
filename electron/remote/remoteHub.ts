@@ -1,16 +1,25 @@
 // Owns enable/disable, pairing, revocation and status for phone access, composing the chat feed,
-// auth, session store, tailnet guard and server. The only bind host is findTailnetAddress();
+// auth, session store, tailnet guard and server. One listener serves two holders, the viewer
+// (setEnabled) and phone control (listenerPort); it is up while either holds it and the viewer's
+// status describes the viewer only. The only bind host is findTailnetAddress();
 // nothing here reads a configured host. Status and log lines never carry a code, cookie, token,
 // full hash, path or message text; the pairing code appears only in createPairing()'s result.
 import os from 'node:os';
-import { REMOTE_PORT, type PairingResult, type RemoteStatus, type RemoteUnavailableReason } from '../../src/shared/remote/types';
+import {
+  REMOTE_PORT,
+  type ControlPort,
+  type ListenerPort,
+  type PairingResult,
+  type RemoteStatus,
+  type RemoteUnavailableReason,
+} from '../../src/shared/remote/types';
 import { createChatFeed } from './chatFeed';
 import { renderQrSvg } from './pairingQr';
 import { createRemoteAuth, type RemoteAuth } from './remoteAuth';
 import { REMOTE_ASSETS } from './remotePages';
 import { startRemoteServer, type RemoteServerHandle } from './remoteServer';
 import { findTailnetAddress } from './tailnet';
-import type { SessionStorePort } from './types';
+import type { ChatFeed, SessionStorePort } from './types';
 
 export const REVOKE_UNSAVED_NOTICE = 'Revoke not saved to disk yet';
 
@@ -34,6 +43,10 @@ export interface RemoteHub {
   init(): void;
   status(): RemoteStatus;
   setEnabled(on: boolean): Promise<RemoteStatus>;
+  /** Registers the control logic the server hands /ctl to. Call before listenerPort().acquire(). */
+  attachControl(port: ControlPort): void;
+  /** The control hub's handle on the shared listener. */
+  listenerPort(): ListenerPort;
   createPairing(): Promise<PairingResult>;
   revokeAll(): Promise<RemoteStatus>;
   revokeOne(ref: string): Promise<RemoteStatus>;
@@ -59,6 +72,14 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
   let server: RemoteServerHandle | null = null;
   let feed: ReturnType<typeof createChatFeed> | null = null;
   let clientCount = 0;
+  let controlOn = false;
+  let controlPort: ControlPort | null = null;
+  let serverHasControl = false;
+  let ctlCb: ((n: number) => void) | null = null;
+  // Stable proxy handed to the server: delegates to the live feed, or does nothing while the viewer is off.
+  const feedProxy: ChatFeed = {
+    join: (l) => (feed ? feed.join(l) : { leave() {} }),
+  };
   let unsaved = false;
   let retryTimer: unknown = null;
   let retries = 0;
@@ -125,9 +146,41 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     clientCount = 0;
     if (s) {
       try { s.closeClients('disabled'); } catch { /* closing is best effort */ }
+      try { s.closeControlClients('disabled'); } catch { /* closing is best effort */ }
       try { await s.stop(); } catch { /* already down */ }
+      ctlCb?.(0);
     }
     if (f) f.stop(); // clears the replay buffer
+  }
+
+  // Starts the shared server for whichever holder needs it first. Throws on failure.
+  function tailnetAddress(): string {
+    const address = findTailnetAddress(ifaces() as any);
+    if (!address) {
+      const e = new Error('no tailnet address') as NodeJS.ErrnoException;
+      e.code = 'NO_TAILNET';
+      throw e;
+    }
+    return address;
+  }
+
+  async function startShared(address: string): Promise<RemoteServerHandle> {
+    const s = await startServer({
+      host: address,
+      port,
+      auth: auth!,
+      feed: feedProxy,
+      assets: REMOTE_ASSETS,
+      viewerOpen: () => state === 'on',
+      controlOpen: () => controlOn,
+      control: controlPort ?? undefined,
+      onClients: (n) => { clientCount = n; emit(); },
+      onControlClients: (n) => { ctlCb?.(n); },
+      log,
+    });
+    server = s;
+    serverHasControl = controlPort !== null;
+    return s;
   }
 
   async function enable(): Promise<void> {
@@ -135,46 +188,75 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     if (state === 'on') return;
     if (unsaved) await settle(true); // retry a pending revoke save before opening the listener
     let f: ReturnType<typeof createChatFeed> | null = null;
+    const started = server === null;
     try {
-      const address = findTailnetAddress(ifaces() as any);
-      if (!address) {
-        state = 'unavailable';
-        reason = 'no-tailnet-address';
-        log('remote: no tailnet address');
-        return;
-      }
+      const address = server ? '' : tailnetAddress(); // before the feed exists: no tailnet leaves nothing to stop
       f = makeFeed({ resolveSession: deps.resolveSession, log });
       f.start();
-      const s = await startServer({
-        host: address,
-        port,
-        auth: auth!,
-        feed: f,
-        assets: REMOTE_ASSETS,
-        onClients: (n) => { clientCount = n; emit(); },
-        log,
-      });
-      server = s;
+      const s = server ?? (await startShared(address));
       feed = f;
       state = 'on';
       reason = null;
       log(`remote: enabled address=${s.address}`);
     } catch (e) {
       if (f) f.stop();
+      feed = null;
+      if (started && server) { try { await server.stop(); } catch { /* already down */ } server = null; }
       state = 'unavailable';
-      reason = (e as NodeJS.ErrnoException)?.code === 'EADDRINUSE' ? 'port-in-use' : 'error';
-      log(reason === 'port-in-use' ? 'remote: port in use' : 'remote: start failed');
+      reason = mapReason(e);
+      if (reason === 'no-tailnet-address') log('remote: no tailnet address');
+      else log(reason === 'port-in-use' ? 'remote: port in use' : 'remote: start failed');
     }
+  }
+
+  function mapReason(e: unknown): RemoteUnavailableReason {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code === 'NO_TAILNET') return 'no-tailnet-address';
+    return code === 'EADDRINUSE' ? 'port-in-use' : 'error';
   }
 
   async function disable(): Promise<void> {
     init();
     const was = state;
-    await teardown();
+    if (controlOn && server) {
+      // Control still holds the listener: drop only the viewer side.
+      auth?.clearPairing();
+      clientCount = 0;
+      try { server.closeClients('disabled'); } catch { /* closing is best effort */ }
+      const f = feed;
+      feed = null;
+      if (f) f.stop(); // clears the replay buffer
+    } else {
+      clearRetry();
+      await teardown();
+    }
     state = 'off';
     reason = null;
     await settle(false); // one final save attempt; disabling leaves no retry timer behind
     if (was === 'on') log('remote: disabled');
+  }
+
+  async function acquireControl(): Promise<{ ok: true; address: string } | { ok: false; reason: RemoteUnavailableReason }> {
+    init();
+    if (!controlPort) return { ok: false, reason: 'error' };
+    if (server && !serverHasControl) return { ok: false, reason: 'error' };
+    try {
+      const s = server ?? (await startShared(tailnetAddress()));
+      controlOn = true;
+      return { ok: true, address: s.address };
+    } catch (e) {
+      const r = mapReason(e);
+      log(r === 'no-tailnet-address' ? 'remote: no tailnet address' : r === 'port-in-use' ? 'remote: port in use' : 'remote: start failed');
+      return { ok: false, reason: r };
+    }
+  }
+
+  async function releaseControl(): Promise<void> {
+    if (!controlOn) return;
+    controlOn = false;
+    if (server) { try { server.closeControlClients('disabled'); } catch { /* best effort */ } }
+    if (state === 'on') return; // the viewer still holds the listener
+    await teardown();
   }
 
   function queue<T>(fn: () => Promise<T>): Promise<T> {
@@ -192,9 +274,20 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     return status();
   }
 
+  const listener: ListenerPort = {
+    acquire: () => queue(acquireControl),
+    release: () => queue(releaseControl),
+    address: () => (server ? server.address : null),
+    closeControlClients: (r) => { server?.closeControlClients(r); },
+    recheckControl: () => { server?.recheckControl(); },
+    onControlClients: (cb) => { ctlCb = cb; },
+  };
+
   return {
     init,
     status,
+    attachControl(p) { controlPort = p; },
+    listenerPort: () => listener,
     async setEnabled(on) {
       await queue(on ? enable : disable);
       emit();
@@ -217,7 +310,10 @@ export function createRemoteHub(deps: RemoteHubDeps): RemoteHub {
     },
     async stop() {
       stopped = true;
-      await queue(disable);
+      await queue(async () => {
+        controlOn = false;
+        await disable();
+      });
     },
   };
 }
