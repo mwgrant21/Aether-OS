@@ -19,7 +19,7 @@ import type { PermissionDecision, PostToolFlagDecision } from '../electron/permi
 import type { PermissionAutoAllowLevel } from './shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from '../electron/transcriptReader';
 import type { VerifierStatus, VerificationEvent } from './shared/crossEngineTypes';
-import type { PairingResult, RemoteStatus } from './shared/remote/types';
+import type { ControlPairingResult, ControlStatus, PairingResult, RemoteStatus } from './shared/remote/types';
 import type { CommunicationPayload } from './shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from '../electron/communicationBridge/mainIntegration';
 import type { QuotaEfficiency } from './shared/quotaEfficiency';
@@ -46,6 +46,15 @@ declare global {
         revokeAll: () => Promise<RemoteStatus>;
         revokeOne: (ref: string) => Promise<RemoteStatus>;
         onStatus: (callback: (status: RemoteStatus) => void) => () => void;
+      };
+      control: {
+        status: () => Promise<ControlStatus>;
+        setEnabled: (on: boolean) => Promise<ControlStatus>;
+        setReenableAtLaunch: (on: boolean) => Promise<ControlStatus>;
+        createPairing: () => Promise<ControlPairingResult>;
+        revokeAll: () => Promise<ControlStatus>;
+        revokeOne: (ref: string) => Promise<ControlStatus>;
+        onStatus: (cb: (s: ControlStatus) => void) => () => void;
       };
       app: {
         getVersion: () => Promise<string>;

@@ -1,0 +1,77 @@
+{
+  "v": 1,
+  "port": 47821,
+  "paths": {
+    "ctl": "/ctl",
+    "pair": "/api/device/pair"
+  },
+  "auth": {
+    "scheme": "Bearer"
+  },
+  "pairing": {
+    "codeLength": 8,
+    "codeAlphabet": "ABCDEFGHJKMNPQRSTUVWXYZ23456789",
+    "codeTtlMs": 300000,
+    "maxCodeFailures": 5,
+    "bodyCapBytes": 1024,
+    "confirmTimeoutMs": 60000,
+    "qrUri": "aethermobile://pair?host=<ip>&port=<port>&code=XXXX-XXXX"
+  },
+  "token": {
+    "bytes": 32,
+    "encoding": "base64url",
+    "slidingTtlMs": 2592000000,
+    "absoluteTtlMs": 15552000000
+  },
+  "limits": {
+    "helloTimeoutMs": 5000,
+    "maxControlSockets": 2,
+    "ctlMaxPayloadBytes": 65536,
+    "recheckMs": 10000
+  },
+  "messages": {
+    "phoneToTitan": [
+      "hello"
+    ],
+    "titanToPhone": [
+      "welcome",
+      "bye"
+    ],
+    "byeReasons": [
+      "revoked",
+      "disabled",
+      "expired",
+      "superseded",
+      "policy",
+      "slow-consumer",
+      "rate-limit"
+    ]
+  },
+  "pairResponses": {
+    "ok": 200,
+    "badCode": 401,
+    "declined": 403,
+    "burned": 429,
+    "successBody": [
+      "token",
+      "expiresAtMs"
+    ]
+  },
+  "proof": {
+    "label": "server",
+    "separator": "\n",
+    "suffix": "/ctl",
+    "algorithm": "HMAC-SHA256, key = raw 32-byte SHA-256 of the token's UTF-8 text, message = label + sep + nonce + sep + suffix, output lowercase hex",
+    "vectors": {
+      "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "tokenSha256Hex": "ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0",
+      "nonce": "00112233445566778899aabbccddeeff",
+      "proof": "98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20"
+    }
+  },
+  "frames": {
+    "hello": "{\"t\":\"hello\",\"v\":1,\"app\":\"0.2.0-v1\",\"epoch\":\"0123456789abcdef\",\"nonce\":\"00112233445566778899aabbccddeeff\"}",
+    "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[]}",
+    "bye": "{\"t\":\"bye\",\"reason\":\"revoked\"}"
+  }
+}
