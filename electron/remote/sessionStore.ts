@@ -3,15 +3,17 @@ import { writeFileAtomically } from '../atomicWrite';
 import type { SessionStorePort, StoredSession } from './types';
 
 // On-disk home of the paired phone sessions. The file holds a digest and three
-// timestamps per session and nothing else: every read and every write runs each
-// entry through pick(), which selects those four fields by name AND validates
-// their values (hash shape, integer stamps), and both directions cap the list
+// timestamps per session and nothing else (plus, for the device file only, a
+// tailnet IPv4 `peer`): every read and every write runs each entry through
+// pick(), which selects those fields by name AND validates their values (hash
+// shape, integer stamps, peer shape), and both directions cap the list
 // at MAX_ENTRIES. Extra properties or odd values from a caller cannot reach
 // disk. The caller owns the (private) directory.
 
 const MAX_BYTES = 64 * 1024;
 const MAX_ENTRIES = 20;
 const HASH_RE = /^[0-9a-f]{64}$/;
+const PEER_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
 function isStamp(n: unknown): n is number {
   return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
@@ -20,20 +22,25 @@ function isStamp(n: unknown): n is number {
 // Each field is read exactly once into a local and only the locals are
 // validated and returned, so a getter or Proxy that answers differently on a
 // later read cannot slip a value past the check.
-function pick(raw: unknown): StoredSession | null {
+function pick(raw: unknown, withPeer: boolean): StoredSession | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
   const hash = r.hash;
   const created = r.createdAtMs;
   const expires = r.expiresAtMs;
   const lastSeen = r.lastSeenMs;
+  const peer = r.peer;
   if (typeof hash !== 'string' || !HASH_RE.test(hash)) return null;
   if (!isStamp(created) || !isStamp(expires) || !isStamp(lastSeen)) return null;
   if (expires <= created) return null;
-  return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen };
+  if (!withPeer) return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen };
+  // Device file: an entry without a valid peer is dropped (fail closed).
+  if (typeof peer !== 'string' || !PEER_RE.test(peer)) return null;
+  return { hash, createdAtMs: created, expiresAtMs: expires, lastSeenMs: lastSeen, peer };
 }
 
-export function createSessionStore(filePath: string): SessionStorePort {
+export function createSessionStore(filePath: string, opts?: { peer?: boolean }): SessionStorePort {
+  const withPeer = opts?.peer === true;
   let chain: Promise<void> = Promise.resolve();
 
   return {
@@ -46,7 +53,7 @@ export function createSessionStore(filePath: string): SessionStorePort {
         if (d.v !== 1 || !Array.isArray(d.sessions)) return [];
         const out: StoredSession[] = [];
         for (const item of d.sessions) {
-          const s = pick(item);
+          const s = pick(item, withPeer);
           if (s) out.push(s);
           if (out.length >= MAX_ENTRIES) break;
         }
@@ -62,7 +69,7 @@ export function createSessionStore(filePath: string): SessionStorePort {
       // no getter it carries, can change what is written.
       const sessions: StoredSession[] = [];
       for (const item of list) {
-        const s = pick(item);
+        const s = pick(item, withPeer);
         if (s) sessions.push(s);
         if (sessions.length >= MAX_ENTRIES) break;
       }
