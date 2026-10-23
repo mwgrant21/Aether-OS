@@ -1,6 +1,7 @@
 import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
+import { rendererCspPlugin } from './vite-plugins/rendererCsp';
 
 export default defineConfig({
   main: {
@@ -44,6 +45,6 @@ export default defineConfig({
         input: resolve(__dirname, 'index.html'),
       },
     },
-    plugins: [react()],
+    plugins: [react(), rendererCspPlugin()],
   },
 });
