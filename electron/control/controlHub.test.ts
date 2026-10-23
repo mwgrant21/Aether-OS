@@ -382,7 +382,13 @@ describe('control hub pairing', () => {
     await tick();
     expect(confirmPair).toHaveBeenCalledTimes(2);
     answers[0](true); // the first, timed-out dialog is answered late
-    expect(await hub.port.pair(made2.code, PEER)).toEqual({ status: 429 }); // the second dialog is still pending
+    await tick();
+    const made3 = await hub.createPairing();
+    if (!made3.ok) throw new Error('no pairing');
+    const third = hub.port.pair(made3.code, PEER); // the second dialog is still open, so this must not open a third
+    await tick();
+    expect(confirmPair).toHaveBeenCalledTimes(2);
+    expect(await third).toEqual({ status: 429 });
     answers[1](true);
     expect((await second).status).toBe(200);
   });
@@ -393,6 +399,9 @@ describe('control hub pairing', () => {
     const made = await hub.createPairing();
     if (!made.ok) throw new Error('no pairing');
     expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 403 });
+    const again = await hub.createPairing();
+    if (!again.ok) throw new Error('no pairing');
+    expect(await hub.port.pair(again.code, PEER)).toEqual({ status: 403 }); // not stuck behind a pending dialog (429)
     expect(hub.status().devices).toHaveLength(0);
     expect(hub.status().state).toBe('on');
   });
