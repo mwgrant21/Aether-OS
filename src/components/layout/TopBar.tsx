@@ -12,6 +12,7 @@ import { findProjectByKey } from '../projects/projectsMath';
 import type { ProjectsSnapshot } from '../../shared/projectsSnapshot';
 import { CommunicationIndicator } from './CommunicationIndicator';
 import { RemoteChip } from './RemoteChip';
+import { ControlChip } from './ControlChip';
 import { srOnlyStyle } from '../shared/srOnly';
 import { OP_MODES, opModeOnSkin } from '../shared/opModes';
 import { NOTIF_TRIGGER_ATTR, useDropdownFocus } from './useDropdownFocus';
@@ -88,6 +89,7 @@ export function TopBar() {
       <div style={{ flex: 1 }} />
       <CommunicationIndicator />
       <RemoteChip />
+      <ControlChip />
 
       {scopeLabel && (
         <Button

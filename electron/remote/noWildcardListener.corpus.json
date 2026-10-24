@@ -2445,5 +2445,39 @@
   "text": "export const a = [1, 2][0];\nexport const b = ({ k: 1 } as Record<string, number>)['k'];\n",
   "want": "PASS",
   "old": "PASS"
+ },
+ {
+  "id": "M1-ws-1",
+  "src": "aether-mobile-v1 T3",
+  "file": "remoteServer.ts",
+  "label": "REAL remoteServer: a THIRD valid noServer construction",
+  "mutate": {
+   "base": "remoteServer.ts",
+   "ops": [
+    {
+     "append": "\nexport const thirdWss = new WebSocketServer({ noServer: true, maxPayload: 1, perMessageDeflate: false, clientTracking: false });\n"
+    }
+   ]
+  },
+  "want": "REJ",
+  "old": "PASS"
+ },
+ {
+  "id": "M1-ws-2",
+  "src": "aether-mobile-v1 T3",
+  "file": "remoteServer.ts",
+  "label": "two valid noServer constructions (viewer + control)",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst a = new WebSocketServer({ noServer: true, maxPayload: 1024 })\nconst b = new WebSocketServer({ noServer: true, maxPayload: 65536 })\n",
+  "want": "PASS",
+  "old": "PASS"
+ },
+ {
+  "id": "M1-ws-3",
+  "src": "aether-mobile-v1 T3",
+  "file": "remoteServer.ts",
+  "label": "two constructions, the second sets port",
+  "text": "import { WebSocketServer, type WebSocket } from 'ws'\nconst a = new WebSocketServer({ noServer: true, maxPayload: 1024 })\nconst b = new WebSocketServer({ noServer: true, port: 1 })\n",
+  "want": "REJ",
+  "old": "PASS"
  }
 ]

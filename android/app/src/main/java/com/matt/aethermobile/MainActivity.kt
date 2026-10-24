@@ -1,99 +1,541 @@
 package com.matt.aethermobile
 
-import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.View
 import android.view.WindowManager
-import android.webkit.WebView
-import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.webkit.JavaScriptReplyProxy
-import androidx.webkit.WebMessageCompat
-import androidx.webkit.WebViewAssetLoader
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
-import com.matt.aethermobile.term.BridgeValidator
-import com.matt.aethermobile.term.FakeTerminalSource
-import com.matt.aethermobile.term.PageMessage
-import com.matt.aethermobile.term.RateLimiter
-import com.matt.aethermobile.term.TerminalWebView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.matt.aethermobile.auth.BiometricCallback
+import com.matt.aethermobile.auth.BiometricFailure
+import com.matt.aethermobile.auth.PairResult
+import com.matt.aethermobile.auth.Pairing
+import com.matt.aethermobile.auth.PairingClient
+import com.matt.aethermobile.auth.QrResult
+import com.matt.aethermobile.auth.TokenVault
+import com.matt.aethermobile.auth.UnlockStart
+import com.matt.aethermobile.net.ControlClient
+import com.matt.aethermobile.net.ControlState
+import com.matt.aethermobile.net.Failure
+import com.matt.aethermobile.net.OkHttpTransport
+import com.matt.aethermobile.protocol.ControlProtocol
+import okhttp3.OkHttpClient
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import javax.crypto.Cipher
 
 /**
- * V0 walking skeleton: one hardened WebView showing the bundled xterm page, fed by a
- * local fake source. No network, no auth, no titan; those arrive with V1+.
+ * V1 unlock flow: pair (QR or typed code) -> PC confirm -> fingerprint to save -> connected;
+ * cold open -> fingerprint -> connected; 60 s background relock. All decisions live in the pure
+ * [AppFlow]; this class runs its [Effect]s. No terminal (V2), no WebView, no JavaScript bridge.
+ *
+ * Lifecycle: this class is a thin adapter. onStart/onStop (and the RESUMED/PAUSED observer)
+ * forward the real callbacks synchronously to [FlowController], which owns relock bookkeeping
+ * and decides when a prompt may show; the activity runs the [Effect]s it returns and owns the
+ * two timers' Handler.postDelayed calls. Nothing is posted to run "after start".
+ *
+ * Token handling: after every transition, any token field is cleared unless [AppFlow.holdsToken]
+ * says the new state may hold one. The pairing code is a local that never reaches a field or the
+ * UI, and the typed field is cleared on submit. The token String lives in at most two fields:
+ * [saveToken] (only between pair success and the end of the save attempt, nulled on every exit
+ * path) and [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or
+ * logged. All state changes run on the main thread; network callbacks marshal via runOnUiThread.
  */
 class MainActivity : AppCompatActivity() {
-    private lateinit var webView: WebView
-    private val source = FakeTerminalSource()
-    private val limiter = RateLimiter(maxPerSecond = 200, nowMs = SystemClock::elapsedRealtime)
+    private companion object {
+        const val TAG = "AetherFlow"
+    }
 
-    private val debuggable: Boolean
-        get() = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    private val vault by lazy { TokenVault(this) }
+    private val controller = FlowController(SystemClock::elapsedRealtime)
+    private val handler = Handler(Looper.getMainLooper())
+    private val relockTimer = Runnable { if (!isDestroyed) applyEffects(controller.onRelockTimer()) }
+    private val deferredTimer = Runnable { if (!isDestroyed) applyEffects(controller.onDeferredTimer()) }
+    private val io: ExecutorService = Executors.newSingleThreadExecutor()
+    private val http = OkHttpClient()
+    private val host = BuildConfig.TITAN_IP
+
+    private val flow: FlowState get() = controller.state
+
+    // Token held only for a save attempt; moved to sessionToken or nulled before the attempt ends.
+    private var saveToken: String? = null
+
+    // Token held only for the relock window.
+    private var sessionToken: String? = null
+
+    private var client: ControlClient? = null
+    private var connGen = 0
+
+    // ONE prompt instance for the activity's life, reused across relock re-prompts.
+    private var prompt: BiometricPrompt? = null
+    private var pending: BiometricCallback? = null
+
+    private lateinit var title: TextView
+    private lateinit var message: TextView
+    private lateinit var codeLayout: TextInputLayout
+    private lateinit var codeInput: TextInputEditText
+    private lateinit var pairButton: MaterialButton
+    private lateinit var scanButton: MaterialButton
+    private lateinit var unlockButton: MaterialButton
+    private lateinit var retryButton: MaterialButton
+    private lateinit var lockButton: MaterialButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // No screenshots, blank recents thumbnail (design spec 1.4). Must precede content.
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        val root = FrameLayout(this)
-        webView = WebView(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
-        setContentView(root)
-        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+        setContentView(R.layout.activity_main)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             WindowInsetsCompat.CONSUMED
         }
+        title = findViewById(R.id.title)
+        message = findViewById(R.id.message)
+        codeLayout = findViewById(R.id.codeLayout)
+        codeInput = findViewById(R.id.codeInput)
+        pairButton = findViewById(R.id.pairButton)
+        scanButton = findViewById(R.id.scanButton)
+        unlockButton = findViewById(R.id.unlockButton)
+        retryButton = findViewById(R.id.retryButton)
+        lockButton = findViewById(R.id.lockButton)
 
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            // Refuse to run rather than fall back to addJavascriptInterface.
-            Log.e(TAG, "WEB_MESSAGE_LISTENER unsupported by this WebView; not loading")
-            finish()
-            return
-        }
+        pairButton.setOnClickListener { onPairClicked() }
+        scanButton.setOnClickListener { onScanClicked() }
+        unlockButton.setOnClickListener { dispatch(FlowEvent.UnlockRequested) }
+        retryButton.setOnClickListener { dispatch(FlowEvent.Retry(vaultHasToken())) }
+        lockButton.setOnClickListener { dispatch(FlowEvent.LockNow) }
 
-        val loader = WebViewAssetLoader.Builder()
-            .setDomain(TerminalWebView.ASSET_HOST)
-            .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(this))
-            .build()
-        TerminalWebView.harden(webView, loader, debuggable) { runOnUiThread { recreate() } }
-
-        WebViewCompat.addWebMessageListener(
-            webView, BRIDGE_NAME, setOf(TerminalWebView.ORIGIN),
-        ) { _, message, _, isMainFrame, reply ->
-            if (isMainFrame && message.type == WebMessageCompat.TYPE_STRING) onPageMessage(message.data, reply)
-        }
-
-        // Debug builds can open the navigation-block test page: adb ... --es page navtest.html
-        val page = if (debuggable) intent.getStringExtra("page") ?: "index.html" else "index.html"
-        webView.loadUrl(TerminalWebView.pageUrl(page, debuggable) ?: TerminalWebView.pageUrl("index.html", debuggable)!!)
+        prompt = createPrompt()
+        lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            // Delivered when currentState is already RESUMED / back to STARTED (not inside onResume).
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> applyEffects(controller.onResume())
+                Lifecycle.Event.ON_PAUSE -> controller.onPause()
+                else -> Unit
+            }
+        })
+        render()
     }
 
-    private fun onPageMessage(raw: String?, reply: JavaScriptReplyProxy) {
-        if (!limiter.allow()) return
-        when (val msg = BridgeValidator.parse(raw)) {
-            PageMessage.Ready -> reply.postMessage(source.banner())
-            is PageMessage.Input -> source.onInput(msg.data)?.let(reply::postMessage)
-            // Accepted by the validator, no behaviour until their slices (resize V4b, flow control V2, copy V3).
-            is PageMessage.Resize, is PageMessage.Consumed, is PageMessage.Copy -> Unit
-            null -> if (debuggable) Log.w(TAG, "bridge message rejected")
-        }
+    override fun onStart() {
+        super.onStart()
+        applyEffects(controller.onStart(configured = host.isNotEmpty()) { vaultHasToken() })
+    }
+
+    override fun onStop() {
+        applyEffects(controller.onStop())
+        super.onStop()
     }
 
     override fun onDestroy() {
-        if (::webView.isInitialized) {
-            (webView.parent as? FrameLayout)?.removeView(webView)
-            webView.destroy()
-        }
+        handler.removeCallbacksAndMessages(null)
+        connGen++
+        try { client?.close() } catch (_: RuntimeException) { }
+        client = null
+        sessionToken = null
+        saveToken = null
+        pending = null
+        try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
+        prompt = null
+        io.shutdownNow()
         super.onDestroy()
     }
 
-    private companion object {
-        const val TAG = "AetherMobile"
-        const val BRIDGE_NAME = "aetherBridge"
+    // ---- flow plumbing -------------------------------------------------------------------
+
+    private fun dispatch(event: FlowEvent) = applyEffects(controller.dispatch(event))
+
+    private val pendingEffects = ArrayDeque<Effect>()
+    private var applying = false
+
+    /**
+     * FIFO and non-reentrant: an effect that dispatches synchronously (an inline Connect
+     * failure) only enqueues its follow-up effects; the outermost call drains them in order.
+     */
+    private fun applyEffects(effects: List<Effect>) {
+        pendingEffects.addAll(effects)
+        if (applying) return
+        applying = true
+        try {
+            while (true) run(pendingEffects.removeFirstOrNull() ?: break)
+        } finally {
+            applying = false
+        }
+        if (!AppFlow.holdsToken(flow)) {
+            saveToken = null
+            sessionToken = null
+        }
+        render()
+    }
+
+    private fun run(effect: Effect) {
+        Log.d(TAG, "effect $effect")
+        when (effect) {
+            Effect.BeginSave -> beginSave()
+            Effect.BeginUnlock -> beginUnlock()
+            Effect.Connect -> connect()
+            Effect.CloseSocket -> closeSocket()
+            Effect.DropToken -> sessionToken = null
+            Effect.DiscardSaveToken -> saveToken = null
+            Effect.ClearVault -> try { vault.clear() } catch (_: Exception) { }
+            Effect.CancelPrompt -> {
+                // A prompt that cannot survive the stop must not leave a stuck callback.
+                if (pending != null) {
+                    pending = null
+                    try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
+                }
+            }
+            Effect.StartRelockTimer -> handler.postDelayed(relockTimer, AppFlow.RELOCK_AFTER_MS)
+            Effect.CancelRelockTimer -> handler.removeCallbacks(relockTimer)
+            Effect.StartDeferredTimer -> handler.postDelayed(deferredTimer, AppFlow.DEFERRED_SAVE_MAX_MS)
+            Effect.CancelDeferredTimer -> handler.removeCallbacks(deferredTimer)
+        }
+    }
+
+    private fun vaultHasToken(): Boolean = try { vault.hasToken() } catch (_: Exception) { false }
+
+    // ---- pairing -------------------------------------------------------------------------
+
+    private fun onPairClicked() {
+        if (flow !is FlowState.NeedsPair) return
+        val code = Pairing.parseManualCode(codeInput.text?.toString().orEmpty())
+        codeInput.setText("") // cleared on every submit, valid or not
+        if (code == null) dispatch(FlowEvent.InputRejected(Notice.BadCode)) else submitPair(code)
+    }
+
+    private fun onScanClicked() {
+        if (flow !is FlowState.NeedsPair) return
+        try {
+            val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+            GmsBarcodeScanning.getClient(this, options).startScan()
+                .addOnSuccessListener { barcode -> onScanned(barcode.rawValue) }
+                .addOnFailureListener { scanFailed() }
+        } catch (_: RuntimeException) {
+            scanFailed()
+        }
+    }
+
+    private fun scanFailed() {
+        if (!isDestroyed && flow is FlowState.NeedsPair) dispatch(FlowEvent.InputRejected(Notice.ScanFailed))
+    }
+
+    private fun onScanned(raw: String?) {
+        if (isDestroyed || flow !is FlowState.NeedsPair) return
+        val parsed = if (raw == null) null else Pairing.parseQr(raw, host)
+        if (parsed is QrResult.Ok) submitPair(parsed.code) else dispatch(FlowEvent.InputRejected(Notice.WrongQr))
+    }
+
+    private fun submitPair(code: String) {
+        dispatch(FlowEvent.PairSubmitted)
+        if (flow != FlowState.Pairing) return
+        try {
+            io.execute {
+                val result = try {
+                    PairingClient(http, host, ControlProtocol.PORT).pair(code)
+                } catch (t: Throwable) {
+                    if (t is VirtualMachineError) throw t
+                    PairResult.Unreachable
+                }
+                runOnUiThread { onPairResult(result) }
+            }
+        } catch (_: RuntimeException) {
+            dispatch(FlowEvent.PairResult(PairKind.Unreachable))
+        }
+    }
+
+    private fun onPairResult(result: PairResult) {
+        if (isDestroyed || flow != FlowState.Pairing) return
+        val kind = when (result) {
+            is PairResult.Paired -> {
+                saveToken = result.token
+                // The controller parks this as SaveDeferred when the activity is not RESUMED.
+                PairKind.Paired
+            }
+            PairResult.BadCode -> PairKind.BadCode
+            PairResult.Declined -> PairKind.Declined
+            PairResult.Burned -> PairKind.Burned
+            PairResult.Unreachable -> PairKind.Unreachable
+            is PairResult.Error -> PairKind.Other
+        }
+        dispatch(FlowEvent.PairResult(kind))
+    }
+
+    // ---- save / unlock -------------------------------------------------------------------
+
+    private fun beginSave() {
+        val cipher = try { vault.beginSave() } catch (_: Exception) { null }
+        if (cipher == null) {
+            saveToken = null
+            dispatch(FlowEvent.SaveFailed)
+            return
+        }
+        val shown = authenticate(cipher, R.string.prompt_save_title, R.string.prompt_save_subtitle, object : BiometricCallback {
+            override fun onSuccess(cipher: Cipher) {
+                // Take the token out of the field first: no path below can leave it behind.
+                val token = saveToken
+                saveToken = null
+                val saved = token != null && flow == FlowState.SavePrompt &&
+                    try { vault.completeSave(cipher, token) } catch (_: Exception) { false }
+                if (saved) {
+                    sessionToken = token
+                    dispatch(FlowEvent.SaveDone)
+                } else {
+                    dispatch(FlowEvent.SaveFailed)
+                }
+            }
+
+            override fun onFailure(reason: BiometricFailure) {
+                saveToken = null
+                dispatch(if (reason == BiometricFailure.UserCancelled) FlowEvent.SaveCancelled else FlowEvent.SaveFailed)
+            }
+        })
+        if (!shown) {
+            saveToken = null
+            dispatch(FlowEvent.SaveFailed)
+        }
+    }
+
+    private fun beginUnlock() {
+        if (pending != null) return // a prompt is already up; do not stack another
+        when (val start = try { vault.beginUnlock() } catch (_: Exception) { UnlockStart.Unavailable }) {
+            UnlockStart.Empty -> dispatch(FlowEvent.UnlockStartResult(UnlockKind.Empty))
+            UnlockStart.Invalidated -> dispatch(FlowEvent.UnlockStartResult(UnlockKind.Invalidated))
+            UnlockStart.Unavailable -> dispatch(FlowEvent.UnlockStartResult(UnlockKind.Unavailable))
+            is UnlockStart.Ready -> {
+                dispatch(FlowEvent.UnlockStartResult(UnlockKind.Ready))
+                val shown = authenticate(start.cipher, R.string.prompt_unlock_title, R.string.prompt_unlock_subtitle, object : BiometricCallback {
+                    override fun onSuccess(cipher: Cipher) = onUnlockAuthenticated(cipher)
+
+                    override fun onFailure(reason: BiometricFailure) {
+                        dispatch(FlowEvent.UnlockAuthFailed(authFail(reason)))
+                    }
+                })
+                if (!shown) dispatch(FlowEvent.UnlockAuthFailed(AuthFail.Other))
+            }
+        }
+    }
+
+    private fun onUnlockAuthenticated(cipher: Cipher) {
+        val token = try { vault.completeUnlock(cipher) } catch (_: Exception) { null }
+        if (token == null) {
+            // Wiped (corrupt/tampered) -> Pair; transient -> stay Locked with a retry message.
+            dispatch(FlowEvent.UnlockDecryptFailed(vaultWiped = !vaultHasToken()))
+        } else if (flow is FlowState.Locked) {
+            sessionToken = token
+            dispatch(FlowEvent.UnlockDone)
+        }
+    }
+
+    private fun authFail(reason: BiometricFailure): AuthFail = when (reason) {
+        BiometricFailure.UserCancelled -> AuthFail.Cancelled
+        BiometricFailure.Lockout, BiometricFailure.LockoutPermanent -> AuthFail.Lockout
+        BiometricFailure.NoHardware, BiometricFailure.NoneEnrolled -> AuthFail.Unavailable
+        BiometricFailure.Other -> AuthFail.Other
+    }
+
+    /** The prompt constructor throws on a destroyed or finishing activity; never crash on that. */
+    private fun createPrompt(): BiometricPrompt? = try {
+        BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    val cb = pending
+                    pending = null
+                    val cipher = result.cryptoObject?.cipher
+                    if (cb == null) return
+                    if (cipher == null) cb.onFailure(BiometricFailure.Other) else cb.onSuccess(cipher)
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    val cb = pending
+                    pending = null
+                    cb?.onFailure(BiometricFailure.fromCode(errorCode))
+                }
+            },
+        )
+    } catch (_: IllegalStateException) {
+        null
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+
+    /** True when the prompt is up; false (nothing shown, [callback] unused) on any refusal. */
+    private fun authenticate(cipher: Cipher, titleRes: Int, subtitleRes: Int, callback: BiometricCallback): Boolean {
+        val p = prompt ?: return false
+        if (isFinishing || isDestroyed || pending != null) return false
+        // BiometricPrompt drops authenticate() silently (no callback) once the state is saved.
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return false
+        val available = BiometricManager.from(this)
+            .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        if (available != BiometricManager.BIOMETRIC_SUCCESS) return false
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(getString(titleRes))
+            .setSubtitle(getString(subtitleRes))
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText(getString(R.string.prompt_cancel))
+            .setConfirmationRequired(false)
+            .build()
+        pending = callback
+        return try {
+            p.authenticate(info, BiometricPrompt.CryptoObject(cipher))
+            true
+        } catch (_: IllegalStateException) {
+            pending = null
+            false
+        } catch (_: IllegalArgumentException) {
+            pending = null
+            false
+        }
+    }
+
+    // ---- connection ----------------------------------------------------------------------
+
+    private fun connect() {
+        val token = sessionToken
+        if (token == null) {
+            dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+            return
+        }
+        val gen = ++connGen
+        val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
+            // Transport threads: marshal to main, and drop anything from a superseded connection.
+            runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
+        })
+        client = c
+        try {
+            c.connect(token)
+        } catch (_: RuntimeException) {
+            dispatch(FlowEvent.ClientFailed(ErrorKind.Unreachable))
+        }
+    }
+
+    private fun closeSocket() {
+        connGen++ // late callbacks (including our own Closed("local")) are ignored
+        val c = client
+        client = null
+        try { c?.close() } catch (_: RuntimeException) { }
+    }
+
+    /** Names and fixed reasons only, no payload fields: Connected carries expiry/server time and must not be printed. */
+    private fun describe(s: ControlState): String = when (s) {
+        is ControlState.Closed -> "Closed(${s.reason})"
+        is ControlState.Failed -> "Failed(${s.failure.name})"
+        else -> s::class.java.simpleName
+    }
+
+    private fun onClientState(s: ControlState) {
+        Log.d(TAG, "control state ${describe(s)} flow=${flow::class.java.simpleName}")
+        when (s) {
+            ControlState.Idle, ControlState.Connecting -> Unit
+            is ControlState.Connected -> dispatch(FlowEvent.ClientConnected(s.expiresAtMs, s.serverTimeMs))
+            ControlState.Revoked -> dispatch(FlowEvent.ClientRevoked)
+            ControlState.Superseded -> dispatch(FlowEvent.ClientFailed(ErrorKind.Superseded))
+            ControlState.Disabled -> dispatch(FlowEvent.ClientFailed(ErrorKind.Disabled))
+            is ControlState.Closed -> dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+            is ControlState.Failed -> dispatch(FlowEvent.ClientFailed(errorKind(s.failure)))
+        }
+    }
+
+    private fun errorKind(f: Failure): ErrorKind = when (f) {
+        Failure.HostRefused, Failure.Unreachable -> ErrorKind.Unreachable
+        Failure.ConnectionRefused -> ErrorKind.ConnectionRefused
+        Failure.NotListening -> ErrorKind.NotListening
+        Failure.Busy -> ErrorKind.Busy
+        Failure.ProofMismatch -> ErrorKind.ProofMismatch
+        Failure.Protocol -> ErrorKind.Protocol
+    }
+
+    // ---- rendering -----------------------------------------------------------------------
+
+    private fun render() {
+        if (!::title.isInitialized) return
+        val s = flow
+        val pair = s is FlowState.NeedsPair
+        codeLayout.visibility = vis(pair)
+        pairButton.visibility = vis(pair)
+        scanButton.visibility = vis(pair)
+        unlockButton.visibility = vis(s is FlowState.Locked)
+        retryButton.visibility = vis(s is FlowState.Error)
+        lockButton.visibility = vis(s is FlowState.Connected)
+        message.setTextColor(title.currentTextColor)
+
+        val titleRes: Int
+        val body: String?
+        when (s) {
+            FlowState.NotConfigured -> { titleRes = R.string.title_not_configured; body = null }
+            is FlowState.NeedsPair -> { titleRes = R.string.title_pair; body = s.notice?.let(::noticeText) }
+            FlowState.Pairing -> { titleRes = R.string.title_pairing; body = null }
+            FlowState.SavePrompt, FlowState.SaveDeferred -> { titleRes = R.string.title_save; body = getString(R.string.body_save) }
+            is FlowState.Locked -> {
+                titleRes = R.string.title_locked
+                body = s.notice?.let(::noticeText) ?: getString(R.string.body_locked)
+            }
+            FlowState.Connecting -> { titleRes = R.string.title_connecting; body = null }
+            is FlowState.Connected -> { titleRes = R.string.title_connected; body = daysText(s) }
+            is FlowState.Error -> { titleRes = R.string.title_error; body = getString(errorText(s.kind)) }
+        }
+        title.setText(titleRes)
+        message.text = body.orEmpty()
+        message.visibility = vis(body != null)
+        if (s is FlowState.Connected && s.warn) message.setTextColor(ContextCompat.getColor(this, R.color.aether_warn))
+    }
+
+    private fun vis(on: Boolean) = if (on) View.VISIBLE else View.GONE
+
+    private fun daysText(s: FlowState.Connected): String {
+        val days = resources.getQuantityString(R.plurals.days_left, s.daysLeft, s.daysLeft)
+        return if (s.warn) getString(R.string.days_left_warn, days) else days
+    }
+
+    private fun noticeText(n: Notice): String = getString(
+        when (n) {
+            Notice.BadCode -> R.string.notice_bad_code
+            Notice.Declined -> R.string.notice_declined
+            Notice.Burned -> R.string.notice_burned
+            Notice.Unreachable -> R.string.notice_unreachable
+            Notice.ServerError -> R.string.notice_server_error
+            Notice.ScanFailed -> R.string.notice_scan_failed
+            Notice.WrongQr -> R.string.notice_wrong_qr
+            Notice.SaveCancelled -> R.string.notice_save_cancelled
+            Notice.SaveFailed -> R.string.notice_save_failed
+            Notice.Revoked -> R.string.notice_revoked
+            Notice.KeyInvalidated -> R.string.notice_key_invalidated
+            Notice.TryAgain -> R.string.notice_try_again
+            Notice.Cancelled -> R.string.notice_cancelled
+            Notice.Lockout -> R.string.notice_lockout
+            Notice.BiometricUnavailable -> R.string.notice_biometric_unavailable
+        },
+    )
+
+    private fun errorText(k: ErrorKind): Int = when (k) {
+        ErrorKind.Unreachable -> R.string.error_unreachable
+        ErrorKind.ConnectionRefused -> R.string.error_refused
+        ErrorKind.NotListening -> R.string.error_not_listening
+        ErrorKind.Busy -> R.string.error_busy
+        ErrorKind.ProofMismatch -> R.string.error_proof
+        ErrorKind.Protocol -> R.string.error_protocol
+        ErrorKind.Superseded -> R.string.error_superseded
+        ErrorKind.Disabled -> R.string.error_disabled
+        ErrorKind.Closed -> R.string.error_closed
     }
 }

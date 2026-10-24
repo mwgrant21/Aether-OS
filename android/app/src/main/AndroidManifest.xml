@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- V0 declares no permissions at all: the skeleton makes no network calls,
-         and a WebView with no INTERNET permission cannot reach the network even
-         if every other guard failed. INTERNET, ACCESS_NETWORK_STATE and
-         USE_BIOMETRIC arrive with the slices that need them (V1+). -->
+    <!-- V1: network to titan over the tailnet (cleartext only to the baked IP, see
+         the generated network security config) and the biometric gate on the token. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application
         android:allowBackup="false"
@@ -19,7 +20,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|locale|layoutDirection|fontScale|density"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

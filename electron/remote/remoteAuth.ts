@@ -1,7 +1,15 @@
-import { createHash, randomBytes as cryptoRandomBytes, randomInt as cryptoRandomInt, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes as cryptoRandomBytes, randomInt as cryptoRandomInt, timingSafeEqual } from 'node:crypto';
 import {
+  CONTROL_ABSOLUTE_TTL_MS,
+  CONTROL_CODE_TTL_MS,
+  CONTROL_MAX_DEVICES,
+  CONTROL_PROOF_LABEL,
+  CONTROL_PROOF_SUFFIX,
+  CONTROL_SLIDING_TTL_MS,
   REMOTE_MAX_SESSIONS,
   REMOTE_SESSION_TTL_MS,
+  type AuthRejectReason,
+  type ControlIdentity,
   type RemoteSessionInfo,
 } from '../../src/shared/remote/types';
 import type { RemoteAuthGate, SessionStorePort, StoredSession } from './types';
@@ -13,6 +21,9 @@ const CODE_TTL_MS = 60 * 60 * 1000;
 const MAX_CODE_FAILURES = 5;
 const LAST_SEEN_PERSIST_MS = 5 * 60 * 1000;
 const HASH_RE = /^[0-9a-f]{64}$/;
+const BEARER_RE = /^bearer ([A-Za-z0-9_-]{43})$/i;
+const MAPPED_V4_RE = /^::ffff:/i;
+const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
 export interface RemoteAuthOptions {
   now?: () => number;
@@ -22,6 +33,14 @@ export interface RemoteAuthOptions {
   ttlMs?: number;
   maxSessions?: number;
   onChange?: () => void;
+  /** 'viewer' (default) is the cookie scope; 'device' is the bearer scope. */
+  profile?: 'viewer' | 'device';
+  /** Device scope only. */
+  codeTtlMs?: number;
+  slidingMs?: number;
+  absoluteMs?: number;
+  /** Device scope only: bind a token to the address it was issued to. Default true. */
+  peerBinding?: boolean;
 }
 
 export interface RemoteAuth extends RemoteAuthGate {
@@ -34,6 +53,39 @@ export interface RemoteAuth extends RemoteAuthGate {
   counts(): { sessions: number; pairingActive: boolean };
   /** Resolves true when everything is on disk, false when a save failed. Never rejects. */
   flush(): Promise<boolean>;
+}
+
+export type { AuthRejectReason };
+
+export interface DeviceAuth extends RemoteAuth {
+  /** `onReject` names why a call returned null (a diagnostic hook only; it never changes the result). */
+  authenticate(
+    authorization: string | undefined,
+    peer: string | undefined,
+    o?: { touch?: boolean; onReject?: (reason: AuthRejectReason) => void },
+  ): ControlIdentity | null;
+  redeemDevice(
+    code: unknown,
+    peer: string | undefined,
+    approve: () => Promise<boolean>,
+  ): Promise<{ ok: true; token: string; expiresAtMs: number } | { ok: false; status: 401 | 403 | 429 }>;
+}
+
+/** HMAC-SHA256 keyed by the raw digest bytes of the token; the phone checks it to know titan holds the token. */
+export function serverProof(hashHex: string, nonce: string): string {
+  return createHmac('sha256', Buffer.from(hashHex, 'hex'))
+    .update(`${CONTROL_PROOF_LABEL}\n${nonce}\n${CONTROL_PROOF_SUFFIX}`)
+    .digest('hex');
+}
+
+function normalisePeer(peer: string): string {
+  return peer.replace(MAPPED_V4_RE, '');
+}
+
+/** Exactly one `Authorization: Bearer <43 base64url>` value, else undefined. Never throws. */
+function readBearer(header: string | undefined): string | undefined {
+  if (typeof header !== 'string') return undefined;
+  return BEARER_RE.exec(header)?.[1];
 }
 
 function sha256Hex(s: string): string {
@@ -81,8 +133,13 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
   const now = opts.now ?? Date.now;
   const rand = opts.randomBytes ?? ((n: number) => cryptoRandomBytes(n));
   const randInt = opts.randomInt ?? ((max: number) => cryptoRandomInt(max));
+  const device = opts.profile === 'device';
   const ttlMs = opts.ttlMs ?? REMOTE_SESSION_TTL_MS;
-  const maxSessions = opts.maxSessions ?? REMOTE_MAX_SESSIONS;
+  const maxSessions = opts.maxSessions ?? (device ? CONTROL_MAX_DEVICES : REMOTE_MAX_SESSIONS);
+  const codeTtlMs = opts.codeTtlMs ?? (device ? CONTROL_CODE_TTL_MS : CODE_TTL_MS);
+  const slidingMs = opts.slidingMs ?? CONTROL_SLIDING_TTL_MS;
+  const absoluteMs = opts.absoluteMs ?? CONTROL_ABSOLUTE_TTL_MS;
+  const peerBinding = opts.peerBinding ?? true;
   const store = opts.store;
 
   let sessions: StoredSession[] = [];
@@ -105,6 +162,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     dirty = false;
     const snapshot = sessions.map(s => ({
       hash: s.hash, createdAtMs: s.createdAtMs, expiresAtMs: s.expiresAtMs, lastSeenMs: s.lastSeenMs,
+      ...(device && s.peer ? { peer: s.peer } : {}),
     }));
     let p: Promise<void>;
     try {
@@ -148,10 +206,15 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     const t = now();
     sessions = loaded
       .filter(isValidStored)
+      // Scope isolation over a shared store: a device entry always has a peer, a viewer entry never does.
+      .filter(s => (device ? typeof s.peer === 'string' && IPV4_RE.test(s.peer) : s.peer === undefined))
       .filter(s => s.expiresAtMs > t && s.expiresAtMs > s.createdAtMs)
       .sort((a, b) => b.createdAtMs - a.createdAtMs)
       .slice(0, maxSessions)
-      .map(s => ({ hash: s.hash, createdAtMs: s.createdAtMs, expiresAtMs: s.expiresAtMs, lastSeenMs: s.lastSeenMs }));
+      .map(s => ({
+        hash: s.hash, createdAtMs: s.createdAtMs, expiresAtMs: s.expiresAtMs, lastSeenMs: s.lastSeenMs,
+        ...(device && typeof s.peer === 'string' ? { peer: s.peer } : {}),
+      }));
     for (const s of sessions) persistedLastSeen.set(s.hash, s.lastSeenMs);
   }
 
@@ -174,11 +237,47 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     persistedLastSeen.delete(hash);
   }
 
-  return {
+  /** Shared code check. Returns the failure status, or null when the code matched (and is now consumed). */
+  function consumeCode(input: unknown): 401 | 429 | null {
+    if (burned) return 429;
+    if (typeof input !== 'string') return 401;
+    const active = activeCode();
+    if (!active) return 401;
+    const given = Buffer.from(normaliseCode(input), 'utf8');
+    const want = Buffer.from(active.normalised, 'utf8');
+    if (!safeEqual(given, want)) {
+      failures += 1;
+      if (failures >= MAX_CODE_FAILURES) {
+        code = null;
+        burned = true;
+        changed();
+      }
+      return 401;
+    }
+    code = null;
+    failures = 0;
+    return null;
+  }
+
+  function addSession(entry: StoredSession): void {
+    sessions.push(entry);
+    while (sessions.length > maxSessions) {
+      let oldest = 0;
+      // The entry just issued is last and is never the eviction candidate.
+      for (let i = 1; i < sessions.length - 1; i++) {
+        if (sessions[i].createdAtMs < sessions[oldest].createdAtMs) oldest = i;
+      }
+      removeSession(sessions[oldest].hash);
+    }
+    persist();
+    changed();
+  }
+
+  const self: DeviceAuth = {
     createPairing() {
       let out = '';
       for (let i = 0; i < CODE_LENGTH; i++) out += CODE_ALPHABET[randInt(CODE_ALPHABET.length)];
-      const expiresAtMs = now() + CODE_TTL_MS;
+      const expiresAtMs = now() + codeTtlMs;
       code = { normalised: out, expiresAtMs };
       failures = 0;
       burned = false;
@@ -194,36 +293,12 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     },
 
     redeem(input: unknown) {
-      if (burned) return { ok: false, status: 429 };
-      if (typeof input !== 'string') return { ok: false, status: 401 };
-      const active = activeCode();
-      if (!active) return { ok: false, status: 401 };
-      const given = Buffer.from(normaliseCode(input), 'utf8');
-      const want = Buffer.from(active.normalised, 'utf8');
-      if (!safeEqual(given, want)) {
-        failures += 1;
-        if (failures >= MAX_CODE_FAILURES) {
-          code = null;
-          burned = true;
-          changed();
-        }
-        return { ok: false, status: 401 };
-      }
-      code = null;
-      failures = 0;
+      if (device) return { ok: false, status: 401 };
+      const bad = consumeCode(input);
+      if (bad !== null) return { ok: false, status: bad };
       const token = rand(32).toString('base64url');
       const t = now();
-      sessions.push({ hash: sha256Hex(token), createdAtMs: t, expiresAtMs: t + ttlMs, lastSeenMs: t });
-      while (sessions.length > maxSessions) {
-        let oldest = 0;
-        // The entry just issued is last and is never the eviction candidate.
-        for (let i = 1; i < sessions.length - 1; i++) {
-          if (sessions[i].createdAtMs < sessions[oldest].createdAtMs) oldest = i;
-        }
-        removeSession(sessions[oldest].hash);
-      }
-      persist();
-      changed();
+      addSession({ hash: sha256Hex(token), createdAtMs: t, expiresAtMs: t + ttlMs, lastSeenMs: t });
       return {
         ok: true,
         cookie: `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(ttlMs / 1000)}`,
@@ -232,6 +307,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
 
     isAuthenticated(cookieHeader, o) {
       try {
+        if (device) return false;
         const token = readToken(cookieHeader);
         if (!token) return false;
         const session = findByHash(sha256Hex(token));
@@ -262,6 +338,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
           createdAtMs: s.createdAtMs,
           expiresAtMs: s.expiresAtMs,
           lastSeenMs: s.lastSeenMs,
+          ...(device && s.peer ? { peer: s.peer } : {}),
         }));
     },
 
@@ -292,5 +369,71 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       while (inFlight) await inFlight;
       return !dirty;
     },
+
+    authenticate(authorization, peer, o) {
+      const reject = (reason: AuthRejectReason): null => {
+        try {
+          o?.onReject?.(reason);
+        } catch {
+          // a diagnostic hook must never change the auth result
+        }
+        return null;
+      };
+      try {
+        if (!device) return reject('no-device');
+        const token = readBearer(authorization);
+        if (!token) return reject('no-bearer');
+        const session = findByHash(sha256Hex(token));
+        if (!session) return reject('unknown');
+        const t = now();
+        if (t >= session.expiresAtMs) {
+          removeSession(session.hash);
+          persist();
+          changed();
+          return reject('expired');
+        }
+        if (peerBinding && (typeof peer !== 'string' || session.peer !== normalisePeer(peer))) return reject('peer-mismatch');
+        if (o?.touch === true) {
+          session.lastSeenMs = t;
+          session.expiresAtMs = Math.min(t + slidingMs, session.createdAtMs + absoluteMs);
+          const prior = persistedLastSeen.get(session.hash) ?? 0;
+          if (t - prior >= LAST_SEEN_PERSIST_MS) persist();
+        }
+        const hash = session.hash;
+        return {
+          ref: hash.slice(0, 12),
+          expiresAtMs: session.expiresAtMs,
+          proofFor: (nonce: string) => serverProof(hash, nonce),
+        };
+      } catch {
+        return reject('error');
+      }
+    },
+
+    async redeemDevice(input, peer, approve) {
+      if (!device) return { ok: false, status: 401 };
+      let bound: string | undefined;
+      if (typeof peer === 'string' && IPV4_RE.test(normalisePeer(peer))) bound = normalisePeer(peer);
+      if (bound === undefined) return { ok: false, status: 401 }; // device entries always carry a peer
+      const bad = consumeCode(input);
+      if (bad !== null) return { ok: false, status: bad };
+      let approved = false;
+      try { approved = (await approve()) === true; } catch { approved = false; }
+      if (!approved) return { ok: false, status: 403 };
+      const token = rand(32).toString('base64url');
+      const t = now();
+      const expiresAtMs = t + slidingMs;
+      addSession({
+        hash: sha256Hex(token), createdAtMs: t, expiresAtMs, lastSeenMs: t,
+        ...(bound !== undefined ? { peer: bound } : {}),
+      });
+      return { ok: true, token, expiresAtMs };
+    },
   };
+  return self;
+}
+
+/** The bearer-token scope used by the phone control channel. */
+export function createDeviceAuth(opts: Omit<RemoteAuthOptions, 'profile'> = {}): DeviceAuth {
+  return createRemoteAuth({ ...opts, profile: 'device' }) as DeviceAuth;
 }

@@ -376,3 +376,152 @@ describe('remoteHub', () => {
     expect(r.startServer).not.toHaveBeenCalled();
   });
 });
+
+describe('remoteHub shared listener (viewer + control holders)', () => {
+  const fakeControl = { maxSockets: 2, authenticate: () => null, pair: async () => ({ status: 401 as const }), open: () => {} };
+
+  function shared(over: Partial<Parameters<typeof createRemoteHub>[0]> = {}, store = fakeStore()) {
+    const calls = { stop: 0, closeClients: [] as string[], closeControl: [] as string[], recheckControl: 0 };
+    const opts: Parameters<typeof startRemoteServer>[0][] = [];
+    const startServer = vi.fn(async (o: Parameters<typeof startRemoteServer>[0]) => {
+      opts.push(o);
+      return {
+        port: 1, address: `${o.host}:47821`, clients: () => 0, controlClients: () => 0,
+        closeClients: (r: string) => { calls.closeClients.push(r); },
+        closeControlClients: (r: string) => { calls.closeControl.push(r); },
+        recheckAuth: () => {}, recheckControl: () => { calls.recheckControl++; },
+        stop: async () => { calls.stop++; },
+      } as any;
+    });
+    const r = rig(store, { startServer: startServer as any, ...over });
+    r.hub.attachControl(fakeControl);
+    return { ...r, startServer, calls, opts };
+  }
+
+  it('control-only acquire starts the server with the viewer closed and the viewer status off', async () => {
+    const r = shared();
+    expect(await r.hub.listenerPort().acquire()).toEqual({ ok: true, address: `${TAILNET_IP}:47821` });
+    expect(r.startServer).toHaveBeenCalledTimes(1);
+    expect(r.opts[0].host).toBe(TAILNET_IP);
+    expect(r.opts[0].viewerOpen!()).toBe(false);
+    expect(r.opts[0].controlOpen!()).toBe(true);
+    expect(r.opts[0].control).toBe(fakeControl);
+    expect(r.hub.status()).toMatchObject({ state: 'off', address: null, clients: 0 });
+    expect(r.hub.listenerPort().address()).toBe(`${TAILNET_IP}:47821`);
+    expect(r.feeds).toHaveLength(0);
+    expect(r.opts[0].feed.join(() => {})).toEqual({ leave: expect.any(Function) });
+  });
+
+  it('viewer enable reuses the control server; viewer disable keeps it up for control', async () => {
+    const r = shared();
+    await r.hub.listenerPort().acquire();
+    const on = await r.hub.setEnabled(true);
+    expect(r.startServer).toHaveBeenCalledTimes(1);
+    expect(on).toMatchObject({ state: 'on', address: `${TAILNET_IP}:47821` });
+    expect(r.opts[0].viewerOpen!()).toBe(true);
+    expect(r.feeds).toHaveLength(1);
+
+    const off = await r.hub.setEnabled(false);
+    expect(off).toMatchObject({ state: 'off', address: null });
+    expect(r.calls.stop).toBe(0);
+    expect(r.calls.closeClients).toEqual(['disabled']);
+    expect(r.calls.closeControl).toEqual([]);
+    expect(r.opts[0].viewerOpen!()).toBe(false);
+    expect(r.opts[0].controlOpen!()).toBe(true);
+    expect(r.feeds[0].stopped).toBe(1);
+    expect(r.hub.listenerPort().address()).not.toBeNull();
+  });
+
+  it('viewer first then control: one server; control release keeps it for the viewer; last release stops it', async () => {
+    const r = shared();
+    await r.hub.setEnabled(true);
+    expect(await r.hub.listenerPort().acquire()).toMatchObject({ ok: true });
+    expect(r.startServer).toHaveBeenCalledTimes(1);
+    await r.hub.listenerPort().release();
+    expect(r.calls.stop).toBe(0);
+    expect(r.calls.closeControl).toEqual(['disabled']);
+    expect(r.opts[0].controlOpen!()).toBe(false);
+    expect(r.hub.status().state).toBe('on');
+    await r.hub.setEnabled(false);
+    expect(r.calls.stop).toBe(1);
+    expect(r.hub.listenerPort().address()).toBeNull();
+  });
+
+  it('control-only release stops the server', async () => {
+    const r = shared();
+    await r.hub.listenerPort().acquire();
+    await r.hub.listenerPort().release();
+    expect(r.calls.stop).toBe(1);
+    expect(r.hub.listenerPort().address()).toBeNull();
+    await r.hub.listenerPort().acquire(); // a fresh start after the last release
+    expect(r.startServer).toHaveBeenCalledTimes(2);
+  });
+
+  it('acquire without attachControl fails closed and starts nothing', async () => {
+    const r = rig(fakeStore());
+    expect(await r.hub.listenerPort().acquire()).toEqual({ ok: false, reason: 'error' });
+    expect(r.startServer).not.toHaveBeenCalled();
+  });
+
+  it('acquire maps no tailnet, port in use and other errors', async () => {
+    const none = shared({ networkInterfaces: () => ({}) as any });
+    expect(await none.hub.listenerPort().acquire()).toEqual({ ok: false, reason: 'no-tailnet-address' });
+    expect(none.startServer).not.toHaveBeenCalled();
+
+    const busy = shared({ startServer: (async () => { throw Object.assign(new Error('x'), { code: 'EADDRINUSE' }); }) as any });
+    expect(await busy.hub.listenerPort().acquire()).toEqual({ ok: false, reason: 'port-in-use' });
+    const bad = shared({ startServer: (async () => { throw new Error('x'); }) as any });
+    expect(await bad.hub.listenerPort().acquire()).toEqual({ ok: false, reason: 'error' });
+    expect(bad.hub.status().state).toBe('off');
+  });
+
+  it('a viewer status() never starts the server, and stop() closes control clients', async () => {
+    const r = shared();
+    r.hub.status();
+    r.hub.status();
+    expect(r.startServer).not.toHaveBeenCalled();
+    await r.hub.listenerPort().acquire();
+    await r.hub.stop();
+    expect(r.calls.closeControl).toEqual(['disabled']);
+    expect(r.calls.stop).toBe(1);
+  });
+
+  it('delegates control client calls and forwards the control client count', async () => {
+    const r = shared();
+    const counts: number[] = [];
+    r.hub.listenerPort().onControlClients((n) => counts.push(n));
+    await r.hub.listenerPort().acquire();
+    r.opts[0].onControlClients!(2);
+    r.hub.listenerPort().closeControlClients('revoked');
+    r.hub.listenerPort().recheckControl();
+    expect(counts).toEqual([2]);
+    expect(r.calls.closeControl).toEqual(['revoked']);
+    expect(r.calls.recheckControl).toBe(1);
+  });
+
+  it('acquire after stop() fails closed and starts nothing', async () => {
+    const r = shared();
+    await r.hub.stop();
+    expect(await r.hub.listenerPort().acquire()).toEqual({ ok: false, reason: 'error' });
+    expect(r.startServer).not.toHaveBeenCalled();
+  });
+
+  it('a viewer disable while control holds the listener clears a pending save retry', async () => {
+    const now = Date.now();
+    const store = fakeStore([{ hash: 'a'.repeat(64), createdAtMs: now, expiresAtMs: now + 1e9, lastSeenMs: now }]);
+    const timers = new Map<number, () => void>();
+    let next = 1;
+    const r = shared({
+      setTimeoutFn: (fn) => { timers.set(next, fn); return next++; },
+      clearTimeoutFn: (h) => { timers.delete(h); },
+    }, store);
+    await r.hub.listenerPort().acquire();
+    await r.hub.setEnabled(true);
+    store.failSaves = true;
+    await r.hub.revokeAll();
+    expect(timers.size).toBe(1); // the bounded durability retry is pending
+    await r.hub.setEnabled(false);
+    expect(r.calls.stop).toBe(0); // control still holds the listener
+    expect(timers.size).toBe(0);
+  });
+});
