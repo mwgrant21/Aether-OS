@@ -680,6 +680,17 @@ describe('device auth scope', () => {
     expect(reasons).toEqual(['no-device']);
   });
 
+  it('an internal failure during authenticate names the error reason and returns null', async () => {
+    let broken = false;
+    const { auth } = dev({ now: () => { if (broken) throw new Error('clock'); return 1_000_000; } });
+    const { token } = await pairDev(auth);
+    const reasons: string[] = [];
+    const o = { onReject: (r: string) => reasons.push(r) };
+    broken = true;
+    expect(auth.authenticate(bearer(token), PEER, o)).toBeNull();
+    expect(reasons).toEqual(['error']);
+  });
+
   it('a throwing onReject cannot change the result', async () => {
     const { auth } = dev();
     const { token } = await pairDev(auth);

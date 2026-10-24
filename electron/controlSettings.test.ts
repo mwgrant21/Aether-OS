@@ -69,7 +69,7 @@ describe('controlSettings', () => {
     for (const l of lines) {
       expect(l).toMatch(/^control: settings write failed code=[A-Z0-9_]+$/);
       expect(l).not.toContain(dir);
-      expect(l).not.toMatch(/[\/]/);
+      expect(l).not.toMatch(/[\\/]/);
     }
     const boom = (): void => {
       throw new Error('boom');
