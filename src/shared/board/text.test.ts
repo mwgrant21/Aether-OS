@@ -36,6 +36,53 @@ describe('maskSecrets', () => {
     expect(out).toBe('a\n[redacted]');
   });
 
+  const pgpBegin = '-----BEGIN PGP PRIVATE ' + 'KEY BLOCK-----';
+  const pgpEnd = '-----END PGP PRIVATE ' + 'KEY BLOCK-----';
+  const pgpBlock = `${pgpBegin}\nVersion: GnuPG v2\nComment: test\n\nlQOYBF9abcdEFGH\nijklMNOP1234\n=ab12\n${pgpEnd}`;
+
+  it('masks a PGP private key block whole: alone, in prose, and as a key=value value', () => {
+    expect(maskSecrets(pgpBlock)).toBe('[redacted]');
+    expect(maskSecrets(`before\n${pgpBlock}\nafter`)).toBe('before\n[redacted]\nafter');
+    expect(maskSecrets(`secret=${pgpBlock}\nnext`)).toBe('secret=[redacted]\nnext');
+    const json = maskSecrets(JSON.stringify({ private_key: pgpBlock, user: 'bob' }));
+    expect(json).not.toContain('lQOYBF9');
+    expect(json).not.toContain('ijklMNOP1234');
+    expect(json).not.toContain('=ab12');
+    expect(json).toContain('"user":"bob"');
+  });
+
+  it('does not mask PGP public key, signature or message blocks', () => {
+    for (const kind of ['PUBLIC KEY BLOCK', 'SIGNATURE', 'MESSAGE']) {
+      const block = `-----BEGIN PGP ${kind}-----\nVersion: x\n\nmQENBF9abcd\n=ab12\n-----END PGP ${kind}-----`;
+      expect(maskSecrets(block)).toBe(block);
+    }
+  });
+
+  it('masks an unterminated PGP private key block to the end of the input', () => {
+    expect(maskSecrets(`a\n${pgpBegin}\nVersion: x\n\nlQOYBF9abcd\nmore`)).toBe('a\n[redacted]');
+  });
+
+  it('does not let an END line of the other kind close an open private key block', () => {
+    const pemBegin = '-----BEGIN RSA PRIVATE ' + 'KEY-----';
+    expect(maskSecrets(`${pemBegin}\nk1\n${pgpEnd}\ntail1`)).toBe('[redacted]');
+    expect(maskSecrets(`${pgpBegin}\nk1\n-----END RSA PRIVATE ` + `KEY-----\ntail1`)).toBe('[redacted]');
+  });
+
+  it('masks private key blocks in linear time, terminated or not', () => {
+    const body = 'A'.repeat(200000);
+    const cases = [
+      `${pgpBegin}\n${body}\n${pgpEnd}`,
+      `${pgpBegin}\n${body}`,
+      '-----BEGIN ' + 'PGP '.repeat(50000),
+      pgpBegin.slice(0, -5) + ' '.repeat(200000),
+    ];
+    for (const c of cases) {
+      const t0 = performance.now();
+      maskSecrets(c);
+      expect(performance.now() - t0).toBeLessThan(50);
+    }
+  });
+
   it('masks Bearer token but keeps the word', () => {
     expect(maskSecrets('Authorization: Bearer ' + 'x'.repeat(30))).toBe(
       'Authorization: Bearer [redacted]',
@@ -228,6 +275,7 @@ describe('maskSecrets', () => {
       'Bearer ' + 'x'.repeat(30),
       'password=hunter2hunter2',
       'api_key: "abcdef123456"',
+      pgpBlock,
       '-----BEGIN PRIVATE ' + 'KEY-----\nabc',
     ].join('\n');
     const once = maskSecrets(x);

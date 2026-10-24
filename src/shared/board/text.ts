@@ -12,8 +12,15 @@ const REDACTED = '[redacted]';
 // case the replacement keeps the label (Bearer, key name) and masks the value.
 // Unquoted values exclude '[' so a masked value is not re-matched; a masked
 // quoted value may re-match but yields identical output (idempotent).
+// The first rule masks PEM private keys whole (unchanged from before PGP support); the
+// second masks PGP-armored private keys ("PRIVATE KEY BLOCK") whole, headers and checksum
+// included. Running PEM first keeps its masking identical, so a PGP block that encloses
+// a PEM BEGIN line never makes the text after its END visible that PEM masking hid.
+// PEM runs first, so a PGP BEGIN inside an open PEM block is hidden by the PEM mask and the
+// PGP body after the PEM END can stay visible.
 const RULES: Array<[RegExp, string]> = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY BLOCK-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY BLOCK-----|$)/g, REDACTED],
   [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/g, REDACTED],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/g, REDACTED],
   [/\bgithub_pat_[A-Za-z0-9_]{40,}/g, REDACTED],
