@@ -88,7 +88,7 @@ object Pairing {
  * Blocking pairing call: run on a background thread. No cookies, no Origin,
  * redirects off. Refuses to build a request unless [host] is a tailnet address.
  */
-class PairingClient private constructor(
+class PairingClient internal constructor(
     http: OkHttpClient,
     private val host: String,
     private val port: Int,
@@ -100,6 +100,8 @@ class PairingClient private constructor(
 
     private val client: OkHttpClient = http.newBuilder()
         .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
+        // The server holds the response open up to 60 s while the desktop confirm dialog is up.
+        .readTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
         .build()

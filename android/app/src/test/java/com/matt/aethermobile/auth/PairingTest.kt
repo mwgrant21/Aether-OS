@@ -1,5 +1,6 @@
 package com.matt.aethermobile.auth
 
+import com.matt.aethermobile.protocol.ControlProtocol
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -167,7 +168,23 @@ class PairingTest {
 
     @Test fun timeoutIsUnreachable() {
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-        assertEquals(PairResult.Unreachable, client(300L).pair("ABCD2345"))
+        val c = PairingClient(
+            OkHttpClient.Builder().socketFactory(loopbackSockets).build(),
+            fakeTailnetHost,
+            server.port,
+            ControlProtocol::isTailnetHost,
+            300L,
+        )
+        assertEquals(PairResult.Unreachable, c.pair("ABCD2345"))
+    }
+
+    @Test fun slowConfirmOutlivesInheritedReadTimeout() {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"token":"$token","expiresAtMs":1234567}""")
+                .setHeadersDelay(800, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        assertEquals(PairResult.Paired(token, 1234567L), client(200L).pair("ABCD2345"))
     }
 
     @Test fun nonIoTransportFailureIsUnreachable() {
