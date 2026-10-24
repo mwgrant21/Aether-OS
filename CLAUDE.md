@@ -37,6 +37,7 @@ npm run dev            # browser-only mode at http://localhost:5173 (no PTY / li
 npm test                # vitest run (renderer + electron main; collector/ has its own suite)
 npm run typecheck:electron  # tsc over electron/ -- NOT covered by npm run build; CI runs it
 npm run build           # tsc -b && vite build (renderer)
+cd android && ./gradlew testDebugUnitTest lintDebug   # Aether Mobile unit tests + lint (needs android/local.properties, untracked; use gradlew.bat on Windows)
 npm run electron:build  # electron-vite build (main + preload + renderer, for the Electron app)
 npm run dist            # electron-vite build + electron-builder --win -> release/Aether OS Setup <ver>.exe
 npm run dist:dir        # same, but stops at release/win-unpacked/ (no installer; fast smoke test)
@@ -109,12 +110,19 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     remotePages.ts / pairingQr.ts   phone HTML/JS/CSS (textContent only) and the pairing QR.
     remoteIpc.ts / types.ts   trusted IPC for Settings; shared wire types.
     noWildcardListener.test.ts   AST guard, parses with the TypeScript compiler API (no wildcard bind, no pty, no stray fs write).
-  control/              opt-in phone CONTROL over Tailscale (privacy §17). PLANNED, not built yet; only the guard exists.
+  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 built: pairing + authenticated /ctl handshake only.
+    protocol.ts           closed message set and the hello/welcome proof.
+    controlGateway.ts     hello/welcome, 5 s hello deadline.
+    controlHub.ts         enable/disable, pairing, device auth, revoke, persisted re-enable.
+    controlIpc.ts         trusted IPC for the Settings block.
     controlBoundary.test.ts   AST guard for this directory: import allow-list, one input sink, closed message set, escape hatches.
-    (planned) protocol / controlGateway / inputRouter / controlHub / controlIpc; the ONLY place the phone writes to a terminal is inputRouter -> terminalHub.
+    (planned) inputRouter; the ONLY place the phone writes to a terminal is inputRouter -> terminalHub.
+  controlSettings.ts    owner of ~/.aether-os/control-settings.json (the one persisted re-enable boolean).
   terminalHub.ts / permissionBroker.ts   PLANNED: the seam over the pty managers and the permission prompts (the hub is the only importer of the pty managers besides main.ts).
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
+android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection only, no terminal.
+protocol/mobile-protocol.json   shared wire contract + proof vectors, read by electron/control/ tests and the Android JVM tests.
 docs/superpowers/
   specs/         design specs, one per feature, YYYY-MM-DD-<topic>-design.md.
   plans/         implementation plans consumed by subagent-driven-development,
@@ -253,8 +261,8 @@ before designing anything that persists or transmits data. The short version:
   only `listen(` under `electron/remote` is in `remoteServer.ts`, after `assertBindableHost`), is off at every launch, needs a
   native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
   `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind, and never add a pty/write path under `electron/remote/`.
-  **Separate second opt-in: phone control** (privacy §17, approved 2026-10-22, not yet built): terminal input and permission answers from a paired Android app over the same tailnet-only
-  listener. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
+  **Separate second opt-in: phone control** (privacy §17): V1 is built (pairing + an authenticated `/ctl` handshake from a paired Android app over the same tailnet-only
+  listener); terminal input and permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
   to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Treat as R3.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
@@ -266,7 +274,7 @@ before designing anything that persists or transmits data. The short version:
   rest of the chat model call path — the surface they guarded no longer exists.
 
 Single-user also **deletes** a lot of scope permanently: no account or multi-user auth model (the only
-auth is the phone-pairing gates of the opt-in remote view and phone control, privacy §16 and §17), no multi-tenant schema, no
+auth is the phone-pairing gates of the opt-in remote view and phone control, privacy §16 and §17; phone control's terminal and approval paths are still planned), no multi-tenant schema, no
 shared folder or report writing, no roll-up, no sharing links, no cloud sync. TokenMonitor is the
 fleet product and writes per-seat reports to a shared folder by design; Aether OS has no equivalent
 and should never grow one.
