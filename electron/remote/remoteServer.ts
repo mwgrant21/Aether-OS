@@ -253,7 +253,9 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
     const peer = req.socket.remoteAddress
     let identity: ControlIdentity | null = null
     try {
-      identity = control.authenticate(authorization, peer, { touch: true })
+      // Held in a variable, not a literal: ControlPort's option type (src/shared/remote/types.ts) predates onReject.
+      const o = { touch: true, onReject: (r: string) => log(`remote: control reject reason=${r}`) }
+      identity = control.authenticate(authorization, peer, o)
     } catch {
       identity = null
     }
@@ -447,7 +449,8 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
     for (const c of [...ctlClients]) {
       let still = false
       try {
-        still = control.authenticate(c.authorization, c.peer, { touch: true }) !== null
+        const o = { touch: true, onReject: (r: string) => log(`remote: control recheck reject reason=${r}`) }
+        still = control.authenticate(c.authorization, c.peer, o) !== null
       } catch {
         still = false
       }

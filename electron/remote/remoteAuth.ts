@@ -54,8 +54,15 @@ export interface RemoteAuth extends RemoteAuthGate {
   flush(): Promise<boolean>;
 }
 
+export type AuthRejectReason = 'no-device' | 'no-bearer' | 'unknown' | 'expired' | 'peer-mismatch' | 'error';
+
 export interface DeviceAuth extends RemoteAuth {
-  authenticate(authorization: string | undefined, peer: string | undefined, o?: { touch?: boolean }): ControlIdentity | null;
+  /** `onReject` names why a call returned null (a diagnostic hook only; it never changes the result). */
+  authenticate(
+    authorization: string | undefined,
+    peer: string | undefined,
+    o?: { touch?: boolean; onReject?: (reason: AuthRejectReason) => void },
+  ): ControlIdentity | null;
   redeemDevice(
     code: unknown,
     peer: string | undefined,
@@ -363,20 +370,28 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     },
 
     authenticate(authorization, peer, o) {
+      const reject = (reason: AuthRejectReason): null => {
+        try {
+          o?.onReject?.(reason);
+        } catch {
+          // a diagnostic hook must never change the auth result
+        }
+        return null;
+      };
       try {
-        if (!device) return null;
+        if (!device) return reject('no-device');
         const token = readBearer(authorization);
-        if (!token) return null;
+        if (!token) return reject('no-bearer');
         const session = findByHash(sha256Hex(token));
-        if (!session) return null;
+        if (!session) return reject('unknown');
         const t = now();
         if (t >= session.expiresAtMs) {
           removeSession(session.hash);
           persist();
           changed();
-          return null;
+          return reject('expired');
         }
-        if (peerBinding && (typeof peer !== 'string' || session.peer !== normalisePeer(peer))) return null;
+        if (peerBinding && (typeof peer !== 'string' || session.peer !== normalisePeer(peer))) return reject('peer-mismatch');
         if (o?.touch === true) {
           session.lastSeenMs = t;
           session.expiresAtMs = Math.min(t + slidingMs, session.createdAtMs + absoluteMs);
@@ -390,7 +405,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
           proofFor: (nonce: string) => serverProof(hash, nonce),
         };
       } catch {
-        return null;
+        return reject('error');
       }
     },
 

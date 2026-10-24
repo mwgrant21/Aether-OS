@@ -485,7 +485,9 @@ function fakeControl(maxSockets = 2): FakeControl {
     closes: 0,
     authenticate(authorization, peer, o) {
       c.auths.push({ authorization, peer, touch: o?.touch })
-      return c.valid && authorization === BEARER ? identity : null
+      if (c.valid && authorization === BEARER) return identity
+      ;(o as { onReject?: (r: string) => void } | undefined)?.onReject?.(authorization ? 'unknown' : 'no-bearer')
+      return null
     },
     async pair(code, peer) {
       c.pairs.push({ code, peer })
@@ -666,6 +668,25 @@ describe('/ctl upgrade', () => {
     expect(await upgradeStatus(closed.h, '/ctl', { Authorization: BEARER })).toBe(404)
     const none = await boot()
     expect(await upgradeStatus(none.h, '/ctl', { Authorization: BEARER })).toBe(404)
+  })
+
+  it('logs exactly one fixed reason line for a rejected control upgrade and still answers 401', async () => {
+    const lines: string[] = []
+    const { h } = await bootCtl({ log: (l) => lines.push(l) })
+    expect(await upgradeStatus(h, '/ctl', { Authorization: 'Bearer bad' })).toBe(401)
+    expect(lines).toEqual(['remote: control reject reason=unknown'])
+  })
+
+  it('logs the recheck reject reason before the revoked bye', async () => {
+    const lines: string[] = []
+    const { h, ctl } = await bootCtl({ log: (l) => lines.push(l) })
+    const c = ctlOpen(h)
+    await c.opened
+    ctl.valid = false
+    h.recheckControl()
+    expect(await c.closed).toBe(1000)
+    expect(c.msgs).toEqual([{ t: 'bye', reason: 'revoked' }])
+    expect(lines).toContain('remote: control recheck reject reason=unknown')
   })
 
   it('refuses a bearer on /ws: the viewer gate only knows its cookie', async () => {
