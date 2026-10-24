@@ -28,6 +28,7 @@ export interface StoredSession {
   createdAtMs: number;
   expiresAtMs: number;
   lastSeenMs: number;
+  peer?: string; // device scope only: tailnet address the token is bound to
 }
 export interface SessionStorePort {
   load(): StoredSession[];

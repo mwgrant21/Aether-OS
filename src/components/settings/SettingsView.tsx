@@ -12,6 +12,7 @@ import { RetentionCard } from './RetentionCard';
 import { CommunicationCard } from './CommunicationCard';
 import { MemoryExtractionCard } from './MemoryExtractionCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
+import { ControlAccessCard } from './ControlAccessCard';
 
 export function SettingsView() {
   return (
@@ -27,6 +28,7 @@ export function SettingsView() {
         <CommunicationCard />
         <MemoryExtractionCard />
         <RemoteAccessCard />
+        <ControlAccessCard />
         <CostGuardCard />
         <RetentionCard />
       </div>

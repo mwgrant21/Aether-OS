@@ -117,8 +117,22 @@ describe('remote preload and main wiring', () => {
     expect(ipc).toContain('!remoteDirFailed');
     expect(main).toMatch(/remoteHub[.]init[(][)];.{0,200}sendToWindow[(]'remote:statusChanged', remoteHub[.]status[(][)][)]/s);
     // A failed setup never reads the store, not even through stop() at quit.
-    expect(main).toContain('(remoteDirFailed ? Promise.resolve() : remoteHub.stop())');
+    expect(main).toContain('(remoteDirReady ? remoteHub.stop() : Promise.resolve())');
+    const quitGate = main.slice(main.indexOf('const baselineQuitGate'), main.indexOf('let lastStallCheckMs'));
+    expect(quitGate).not.toContain('remoteDirFailed');
     expect(ipc).toMatch(/status: [(][)] => remoteStatusOrUnavailable[(][)]/);
+  });
+
+  it('main pushes the unavailable status when the private dir ACL failed', () => {
+    const start = main.indexOf('void privateDirReady.then(');
+    const block = main.slice(start, main.indexOf('resolveRemotePrivateDir();', start));
+    expect(block).toMatch(/\} else \{\s*sendToWindow\('remote:statusChanged', remoteStatusOrUnavailable\(\)\);/);
+  });
+
+  it('a rejected stop is logged as a failure, not a timeout', () => {
+    const gate = main.slice(main.indexOf('const baselineQuitGate'), main.indexOf('let lastStallCheckMs'));
+    expect(gate).toContain('remote stop failed at quit');
+    expect(gate.match(/remoteStopped = true/g)).toHaveLength(2);
   });
 
   it('main inits the hub only after the private dir, from one hub created at start', () => {

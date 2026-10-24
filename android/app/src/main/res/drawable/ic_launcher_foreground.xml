@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A prompt chevron over an underscore: the terminal mark. Inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path
+        android:strokeColor="#4FD1C5" android:strokeWidth="7"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M38,40 L56,54 L38,68" />
+    <path
+        android:strokeColor="#4FD1C5" android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:pathData="M62,70 L74,70" />
+</vector>

@@ -176,3 +176,31 @@ describe('sessionStore', () => {
     expect(src).not.toMatch(/ChatEvent|text:|cookie|token/i);
   });
 });
+
+describe('device-mode store (peer)', () => {
+  const withPeer = (c: string, peer: string, n = 1000) => ({ ...mk(c, n), peer });
+
+  it('round-trips peer and writes exactly the five fields', async () => {
+    const s = createSessionStore(file, { peer: true });
+    await s.save([withPeer('a', '100.94.15.125')]);
+    const doc = JSON.parse(readFileSync(file, 'utf8'));
+    expect(doc).toEqual({ v: 1, sessions: [{ hash: H('a'), createdAtMs: 1000, expiresAtMs: 6000, lastSeenMs: 1010, peer: '100.94.15.125' }] });
+    expect(s.load()).toEqual([withPeer('a', '100.94.15.125')]);
+  });
+
+  it('drops entries with a missing or bad peer, on save and on load', async () => {
+    const s = createSessionStore(file, { peer: true });
+    await s.save([mk('a'), withPeer('b', 'not-an-ip'), withPeer('c', '1.2.3.4')]);
+    expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toHaveLength(1);
+    writeFileSync(file, JSON.stringify({ v: 1, sessions: [mk('d'), withPeer('e', '1.2.3.4;x'), withPeer('f', '9.9.9.9')] }));
+    expect(s.load().map((x) => x.hash)).toEqual([H('f')]);
+  });
+
+  it('a viewer-mode store drops entries that carry a peer, on save and on load', async () => {
+    const s = createSessionStore(file);
+    await s.save([withPeer('a', '100.94.15.125'), mk('b')]);
+    expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([mk('b')]);
+    writeFileSync(file, JSON.stringify({ v: 1, sessions: [withPeer('c', '1.2.3.4'), mk('d')] }));
+    expect(s.load().map((x) => x.hash)).toEqual([H('d')]);
+  });
+});

@@ -7,7 +7,7 @@ subordinate to this document.
 
 ## 1. The stance
 
-**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14). The one deliberate inbound exception is the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16).**
+**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14). The one deliberate inbound exception is the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16), and, separately, the opt-in tailnet-only phone control path (§17), which unlike the viewer may be set to re-enable at launch (V1 is built: pairing, device auth and the `/ctl` handshake; terminals, typing and approvals are planned, not built; see §17).**
 
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
@@ -18,9 +18,9 @@ externally-reachable listener — `electron/permissionServer.ts` does run a loca
 only, reachable only from this machine, with no port exposed externally. Loopback is reachable by
 every local process and by browser pages, so since 2026-10-04 every request and response is
 mutually authenticated with a per-launch HMAC secret held only in the user-only port file, which
-is deleted on quit (`electron/permissionAuth.ts`; see §3). The single exception is the opt-in remote chat view (§16): a read-only listener bound to the
+is deleted on quit (`electron/permissionAuth.ts`; see §3). The listener exception is the opt-in remote chat view (§16): a read-only listener bound to the
 Tailscale interface address only, off at every launch, enabled through a native confirmation, and gated by a pairing code and a
-session cookie; it never binds a wildcard or LAN address. The single-user constraint is not a smaller version of TokenMonitor's
+session cookie; it never binds a wildcard or LAN address. Phone control (§17) shares that tailnet-only listener and adds a separate bearer-token `/ctl` input path with its own toggle, token store and code directory; both bind only the Tailscale IPv4 address, never a wildcard or LAN address (V1 built for pairing and the handshake only; terminals and approvals planned; see §17). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
 **Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
@@ -56,6 +56,8 @@ also opted in via `codexTerminalCfg.enabled`, default `false`. See §11 for the 
 it is a live differentiator: `agent-flow`, one of the two comparable agent-trace visualizers,
 ships anonymous telemetry **enabled by default**.
 
+**The main renderer window carries a Content Security Policy.** The renderer build injects it as a `<meta http-equiv>` tag (`vite-plugins/rendererCsp.ts`). In the packaged build it starts from `default-src 'none'` and allows only same-origin scripts, styles, images and fonts (images may also be `data:`), so the renderer cannot load or run script from anywhere else and cannot execute inline script. `connect-src 'none'` means renderer code cannot open its own `fetch`, XHR, WebSocket or EventSource connection to any host. (The §16 phone pages are served by the main process under their own, separate policy.) `object-src`, `base-uri` and `form-action` are `'none'`. Styles keep `'unsafe-inline'` because xterm.js injects a `<style>` element without nonce support; that affects CSS only, not scripts. The dev-server policy differs in exactly two places (inline script for React Fast Refresh, and a loopback WebSocket for HMR), and neither reaches the packaged build. This is a restriction on what the renderer page can load and connect to, not a navigation guard: it does not stop the window from being navigated or from opening other windows, which is a separate control.
+
 ---
 
 ## 2. What the single-user constraint deletes
@@ -73,7 +75,7 @@ Bank these as removed from scope, permanently:
   **One deliberate, opt-in exception:** the read-only phone chat view (`electron/remote/`) listens on
   the Tailscale interface address only (never `0.0.0.0`, `::` or a LAN address), is off at every
   launch, needs a native confirmation to enable, and requires a pairing code and session cookie;
-  see §16
+  see §16, and phone control, §17 (planned)
 
 Every one of those is an attack surface that now simply does not exist.
 
@@ -253,6 +255,8 @@ designed as such:
   symlink (or a junction on Windows), its real target is what gets secured. A failure is logged,
   not fatal.
 - `~/.aether-os/remote-sessions.json` holds the paired phones for the remote chat view: a SHA-256 hash and three timestamps per phone, nothing else (§16). It is auth configuration, so Settings → Purge leaves it; REVOKE ALL PHONES empties it.
+- `~/.aether-os/remote-devices.json` holds the paired phone-control apps: a SHA-256 hash, three timestamps and the phone's tailnet address per app, nothing else (§17). Same rules as `remote-sessions.json`: Purge leaves it, REVOKE ALL empties it (§17).
+- `~/.aether-os/control-settings.json` holds `{"v":1,"reenableAtLaunch":boolean}` and nothing else: the one persisted phone-control setting (§17). It is auth configuration, not collected data, so Settings → Purge leaves it, like `remote-sessions.json` (Purge runs only the collector purge and the diag-log purge). A user disable from Settings clears the flag; quitting the app does not.
 - The SQLite store is **not** encrypted, and the README should say so plainly rather than implying
   otherwise. Given §4, its contents are paths, names, timestamps and integers — the honest position
   is "here is exactly what is in it," not a security claim the implementation does not back.
@@ -714,7 +718,7 @@ No query results are persisted. Refresh runs locally and makes no model call.
 
 ## 16. Remote read-only chat view over Tailscale — the one opt-in listener
 
-Added with the mobile remote-access feature (2026-10-21; plan `~/.claude/handoffs/aether-os/2026-10-21-mobile-remote-access-plan.md`, outside the repo). It lets a paired phone on the owner's own tailnet read the chat of the pinned Claude session. It is the single deliberate exception to "no externally-reachable listener" (§1, §2). Code: `electron/remote/`.
+Added with the mobile remote-access feature (2026-10-21; plan `~/.claude/handoffs/aether-os/2026-10-21-mobile-remote-access-plan.md`, outside the repo). It lets a paired phone on the owner's own tailnet read the chat of the pinned Claude session (read-only; typing and approvals are §17). It is the single deliberate exception to "no externally-reachable listener" (§1, §2), together with phone control, §17 (built in V1 for pairing and the connection handshake; terminals and approvals planned), which shares this listener. Code: `electron/remote/`.
 
 **What is exposed.** Human prompts, Claude replies, agent-to-agent messages (dispatches, SendMessage posts, hand-backs, shown as traffic cards) and the **names** of the tools Claude called, for the one pinned Claude session. Never tool inputs, tool results, thinking blocks or file contents. No Codex session, no Terminal 2, no session picker and no subagent transcripts in v1.
 
@@ -722,9 +726,10 @@ Added with the mobile remote-access feature (2026-10-21; plan `~/.claude/handoff
 
 **Boundary.**
 - Tailnet only. The server binds to the Tailscale interface's IPv4 address (`100.64.0.0/10`, found by interface name containing "tailscale"), port 47821, via `findTailnetAddress()`; no host is configurable. `assertBindableHost` refuses anything else (it also accepts 127.0.0.0/8, for tests). If no tailnet address exists, enabling reports "unavailable" and nothing listens. It never falls back to `0.0.0.0`, `::` or a LAN address. The address is chosen at enable time and is not re-bound if it changes; toggle off and on.
+- **The viewer routes open only when the viewer is enabled.** `/pair`, `/assets/*`, the chat page and `/ws` stay closed unless the read-only viewer itself is enabled; enabling phone control (§17) does not open them (fail-closed).
 - **Off at every launch.** Whether it is enabled is never persisted. Enabling needs a native confirm dialog in the main process and a request from the trusted app window.
 - HTTP, not TLS, inside the WireGuard-encrypted tailnet. The session cookie is therefore not `Secure`; it is `HttpOnly; SameSite=Strict; Path=/` with a 30-day `Max-Age`.
-- Every request (404s and the WebSocket upgrade included) is checked against the bound address as `Host`; the pairing POST and the upgrade also require a matching `Origin`. Only `GET /pair`, `GET /assets/pair.js`, `GET /assets/app.css` and `POST /api/pair` are public; the chat page, `viewer.js` and `/ws` need a valid cookie. At most 3 live connections, a 1 KiB pairing body, 10 s request and header timeouts. Responses are `no-store` with a restrictive CSP.
+- Every request (404s and the WebSocket upgrade included) is checked against the bound address as `Host`; the pairing POST and the upgrade also require a matching `Origin`. Only `GET /pair`, `GET /assets/pair.js`, `GET /assets/app.css` and `POST /api/pair` are public; the chat page, `viewer.js` and `/ws` need a valid cookie. At most 3 live viewer connections (control sockets are counted separately, at most 2, §17), a 1 KiB pairing body, 10 s request and header timeouts. Responses are `no-store` with a restrictive CSP.
 - The `ws` server is `noServer: true` and the protocol has no phone-to-server message: any inbound frame (1 KiB max) closes the socket. A client is also dropped for pinging faster than 20 per second (queued auto-pongs cannot grow server memory) and when its unsent backlog passes 1 MiB (slow-consumer close).
 
 **Auth model.**
@@ -752,3 +757,45 @@ If a revoke cannot be saved, it still takes effect in memory at once, the status
 - Treat it as R3-class: the chat can contain anything said in the session.
 
 **Not verified by unit tests.** Phone layout and legibility, the top-bar chip at narrow widths, Windows Firewall behaviour on first enable, how Chrome and Samsung Internet treat an `http://100.x` address, and a packaged-build run.
+
+---
+
+## 17. Phone control over Tailscale — the one opt-in input path
+
+**Status: V1 built (pairing, device auth, `/ctl` hello/welcome with server proof, Settings block, chip, persisted re-enable); terminals, typing and approvals are not yet built (planned, V2+).** This section is the binding description the build is held to (docs land before capability code). Each slice that changes behaviour updates it in the same change. Plan: `~/.claude/handoffs/aether-os/2026-10-22-aether-mobile-design.md` (outside the repo).
+
+Added with Aether Mobile. A paired Android app on the owner's tailnet (at most 2 live control sockets at once) can see and type into the three terminal slots (Terminal, Terminal 2, Codex) and answer Claude permission prompts. **This is equivalent to the owner's keyboard on this machine: a connected, unlocked phone can run arbitrary commands as the owner.** It is separate from §16: its own toggle, pairing scope, token store and code directory (`electron/control/`). `electron/remote/` stays read-only, and the viewer keeps its off-at-every-launch rule (§16). The Android client lives in `android/` in this repository.
+
+**Exposed.** None of the Exposed items below exist in V1; V1 only authenticates a socket.
+- Raw output of the three terminal slots, unmasked (the terminal is the content, as on the desktop).
+- Input bytes into running slots, and starting a not-started fixed slot (Terminal, Terminal 2, and Codex only if the Codex terminal is enabled, `codexTerminalCfg.enabled`). Never replacing a running one.
+- Claude permission prompts raised through the permission hook. The hook is global, so a prompt can come from any Claude session on this machine that carries it, not only the three slots, which is why the originating session is shown: tool name, risk, the originating session (the hook's `session_id`, passed through so the phone can label the prompt) and a masked 1200-character summary of the command or path, with Allow and Deny buttons. Approval stays one tap even for HIGH-risk tools (rm, sudo, curl-pipe-sh).
+- Codex has no brokered prompts: its approvals are answered inside the Codex terminal, with a quick-key row on the phone (y, n, Enter, Esc, arrows).
+- Terminal size: the phone mirrors the PC's PTY size by default. A "fit to phone" button resizes the PTYs while the phone is attached (the desktop terminal follows) and the desktop layout is restored on detach.
+
+**Never exposed.** Killing or replacing a session, editing an approval, the auto-allow level, any setting, the communication bridge, files, transcripts, boards, the clipboard, arbitrary new sessions or commands, or any model call. The message set is a closed allow-list (`MESSAGE_TYPES.phoneToTitan`); a new verb fails the guard until the list, a test and this section change together.
+
+**Boundary.**
+- Shares §16's tailnet-only listener and port (47821): one `listen()`, never a wildcard or LAN address. `/ctl` accepts only a bearer token, never a cookie and never an `Origin`; a viewer cookie can never open `/ctl` and a control token can never open the viewer socket.
+- **Off by default, with one opt-in persistence.** A fresh install starts with phone control off, and so does every launch unless the owner has turned on a separate setting. The owner may turn on "re-enable phone control at launch", so that a restart (an update, a crash, a reboot) while away from the desk does not strand the phone. That setting is default off, needs its own native confirm in the main process and a request from the trusted app window, and is stored as a single boolean and nothing else about the feature's state. The persisted flag is cleared when phone control is disabled from Settings, so after a manual disable the owner must opt in again, with the native confirm. That clearing is the fail-closed choice; it was observed working on the S25 build on 2026-10-23 (flag false after a disable, true across a real quit), but the owner has not explicitly confirmed the policy. The setting applies to phone control only. If the tailnet address is missing at launch, nothing listens. Pairing a new app always needs the desktop (below).
+- While only phone control is enabled, `/pair`, `/assets/*`, the chat page, `POST /api/pair` and `/ws` all return 404; enabling control never opens them (§16).
+- `POST /api/device/pair` is unauthenticated and answers whenever control is on (404 when it is off); it can succeed only while a pairing code is active (otherwise 401, or 429 once the code is burned); it allows no `Origin`; the response contains the token exactly once; the token is never logged.
+- At most 2 live control sockets, counted separately from the 3 viewer connections (§16); at most 1 paired app (`CONTROL_MAX_DEVICES = 1`): pairing a new phone REPLACES the existing one, only after a native confirm that says so.
+- HTTP and WebSocket, not TLS, inside the WireGuard-encrypted tailnet. The Android app connects to titan's tailnet IP, fixed at build time, with cleartext permitted to that one address only. No MagicDNS name, no `tailscale cert` (which would publish the tailnet hostname in public certificate-transparency logs). If the tailnet IP ever changes the app must be rebuilt.
+- **Tailscale ACL (the owner's responsibility; Aether cannot enforce it).** Restrict `titan:47821` to the phone's node only, for example (placeholders, node names to be filled in at setup): `{"acls":[{"action":"accept","src":["<phone-node>"],"dst":["<titan-node>:47821"]}]}`. Without it any node the tailnet allows can reach the pairing endpoint; the token and the redeem-time confirm are what stop it.
+
+**Auth.** Pairing code: 8 characters, memory-only, 5-minute TTL, single use, burned after 5 wrong attempts, issued only from a desktop click, plus a native confirm on the desktop at redeem time ("Allow this app to control your terminals?"), so a photographed QR is not enough. Token: 256-bit; only its SHA-256 hash is stored; sliding 30-day expiry, absolute 180 days; bound to the phone's tailnet source address; verified on the S25 on 2026-10-23: titan sees the phone's own tailnet IP (100.x) as the connection's source address, stored as `peer` and enforced on every device-token authentication. The phone holds the token encrypted under a hardware-backed key that requires a fingerprint to decrypt it on every cold open and after 60 seconds in the background; inside that window the app keeps the decrypted token in memory only and may reconnect silently once if Android drops its socket; "Lock now" and a revoked or expired token discard it at once. Revoke from the desktop (REVOKE and REVOKE ALL) takes effect at once and closes the socket; disabling control closes all control sockets but does not revoke.
+
+**On disk.** `~/.aether-os/remote-devices.json`: `{"v":1,"sessions":[{"hash","createdAtMs","expiresAtMs","lastSeenMs","peer"}]}` and nothing else (same field-by-field validator, size cap and atomic write as §16; `peer` is the phone's tailnet address). Plus `~/.aether-os/control-settings.json` = `{"v":1,"reenableAtLaunch":boolean}` and nothing else (the single persisted boolean above; cleared by a user disable from Settings, not by quit). No keystrokes, output, prompts, tokens, pairing codes or summaries are ever written, by the app or in `diag.log`.
+
+**In memory only.** Per terminal: a headless screen mirror (at most 2000 lines) and a 256 KB output ring, cleared on disable, quit and slot exit; pending-prompt summaries until answered or expired; per-connection input counters.
+
+**Visibility.** A warning-coloured top-bar chip (`PHONE CONTROL - connected`) while an app is connected, and a separate warning-coloured block in the Settings remote-access card (toggle with its native confirm text, PAIR AN APP with QR, code and a 5-minute countdown, PAIRED APPS list with REVOKE and REVOKE ALL). `diag.log` gets metadata-only lines: connect, disconnect, prompt decisions as tool plus verb, input byte counts.
+
+**Limits, stated plainly.**
+- The unlock window on a lost phone is real. Kill switches: revoke from the desktop, or disable the device in Tailscale.
+- Works only while the machine is awake with Aether open; with re-enable at launch it also recovers after a restart, but nothing wakes the PC.
+- Terminal output is not masked, so a secret that appears on the terminal appears on the phone.
+- Treat it as R3: a connected, unlocked phone is the owner's keyboard.
+
+**Guarded by.** `electron/control/controlBoundary.test.ts` (imports, input sink, message allow-list, escape hatches, file set for `electron/control/`), alongside `electron/remote/noWildcardListener.test.ts` (which also keeps `electron/remote/` free of any pty or write path and every wildcard bind out of `electron/` and `scripts/`).
