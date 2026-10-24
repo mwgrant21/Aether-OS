@@ -3,10 +3,10 @@
     <string name="app_name">Aether</string>
 
     <string name="title_pair">Pair with titan</string>
-    <string name="title_pairing">Confirm on titan...</string>
+    <string name="title_pairing">Confirm on titan&#8230;</string>
     <string name="title_save">Saving the pairing</string>
     <string name="title_locked">Locked</string>
-    <string name="title_connecting">Connecting to titan...</string>
+    <string name="title_connecting">Connecting to titan&#8230;</string>
     <string name="title_connected">Connected to titan</string>
     <string name="title_error">Not connected</string>
     <string name="title_not_configured">Titan address not configured in this build</string>

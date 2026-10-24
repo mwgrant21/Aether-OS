@@ -16,6 +16,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 
@@ -81,7 +82,7 @@ object TerminalWebView {
         webView.webChromeClient = LockedChrome(debuggable)
     }
 
-    private fun hostOf(url: String?): String = runCatching { Uri.parse(url).host }.getOrNull() ?: "?"
+    private fun hostOf(url: String?): String = url?.toUri()?.host ?: "?"
 
     private class LockedClient(
         private val loader: WebViewAssetLoader,
