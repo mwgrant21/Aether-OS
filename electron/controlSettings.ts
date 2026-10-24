@@ -33,7 +33,15 @@ export function writeReenable(aetherDir: string, on: boolean, log?: (line: strin
     mkdirSync(aetherDir, { recursive: true });
     writeFileSync(tmpPath, JSON.stringify({ v: 1, reenableAtLaunch: on }), 'utf8');
     renameSync(tmpPath, targetPath);
-  } catch {
+  } catch (err) {
+    // Fixed string plus the errno code only: never the message, a path or the value.
+    const raw = (err as NodeJS.ErrnoException | undefined)?.code;
+    const code = typeof raw === 'string' && /^[A-Z0-9_]+$/.test(raw) ? raw : 'unknown';
+    try {
+      log?.(`control: settings write failed code=${code}`);
+    } catch {
+      // a logger must not break the never-throws contract
+    }
     try {
       rmSync(tmpPath, { force: true });
     } catch {
