@@ -558,7 +558,7 @@ describe('POST /api/device/pair', () => {
 
   it('maps a refusal to a bare status and never echoes a token', async () => {
     const { h, ctl } = await bootCtl()
-    for (const status of [401, 403, 429] as const) {
+    for (const status of [401, 403, 409, 429] as const) {
       ctl.pairResult = { status }
       const r = await postPair(h)
       expect(r.status).toBe(status)

@@ -265,7 +265,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   async function redeem(code: unknown, peer: string | undefined): Promise<ControlPairResult> {
     init();
     if (state !== 'on' || stopped) return { status: 401 };
-    if (confirmPending) return { status: 429 }; // one dialog at a time keeps the REPLACES wording truthful
+    if (confirmPending) return { status: 409 }; // 409 busy (429 means burned): one dialog at a time keeps the REPLACES wording truthful
     const replaces = auth!.list().length > 0;
     const opened = generation;
     const approve = (): Promise<boolean> => new Promise<boolean>(resolve => {

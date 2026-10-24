@@ -394,7 +394,7 @@ describe('control hub pairing', () => {
     const third = hub.port.pair(made3.code, PEER); // the second dialog is still open, so this must not open a third
     await tick();
     expect(confirmPair).toHaveBeenCalledTimes(2);
-    expect(await third).toEqual({ status: 429 });
+    expect(await third).toEqual({ status: 409 });
     answers[1](true);
     expect((await second).status).toBe(200);
   });
@@ -407,12 +407,12 @@ describe('control hub pairing', () => {
     expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 403 });
     const again = await hub.createPairing();
     if (!again.ok) throw new Error('no pairing');
-    expect(await hub.port.pair(again.code, PEER)).toEqual({ status: 403 }); // not stuck behind a pending dialog (429)
+    expect(await hub.port.pair(again.code, PEER)).toEqual({ status: 403 }); // not stuck behind a pending dialog (409)
     expect(hub.status().devices).toHaveLength(0);
     expect(hub.status().state).toBe('on');
   });
 
-  it('a second pair while a confirm is open is 429 and does not open another dialog', async () => {
+  it('a second pair while a confirm is open is 409 and does not open another dialog', async () => {
     let answer: (ok: boolean) => void = () => {};
     const { hub, confirmPair } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
     await hub.setEnabled(true);
@@ -420,7 +420,7 @@ describe('control hub pairing', () => {
     if (!made.ok) throw new Error('no pairing');
     const first = hub.port.pair(made.code, PEER);
     await tick();
-    expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 429 });
+    expect(await hub.port.pair(made.code, PEER)).toEqual({ status: 409 });
     expect(confirmPair).toHaveBeenCalledTimes(1);
     answer(true);
     expect((await first).status).toBe(200);
