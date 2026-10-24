@@ -2445,7 +2445,7 @@
   "text": "export const a = [1, 2][0];\nexport const b = ({ k: 1 } as Record<string, number>)['k'];\n",
   "want": "PASS",
   "old": "PASS"
- },
+ },
  {
   "id": "M1-ws-1",
   "src": "aether-mobile-v1 T3",

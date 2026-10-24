@@ -98,7 +98,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     now,
     setTimeoutFn: deps.setTimeoutFn,
     clearTimeoutFn: deps.clearTimeoutFn,
-    log: (m, r) => { log(`control: ${m} ref=${r}`); },
+    log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
   function status(): ControlStatus {
@@ -247,9 +247,10 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     }
   }
 
-  async function revoke(fn: () => void): Promise<ControlStatus> {
+  async function revoke(line: string, fn: () => void): Promise<ControlStatus> {
     init();
     fn();
+    log(line);
     deps.listener.recheckControl();
     await settle(true);
     emit();
@@ -296,6 +297,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     if (opened !== generation || state !== 'on' || stopped) {
       // a disable or quit landed between the approval and the mint: nothing may stay paired (cap 1, so this is the one device)
       auth!.revokeAll();
+      log('control: revoke after-approval-race');
       deps.listener.recheckControl();
       await settle(false);
       emit();
@@ -361,8 +363,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       const uri = `aethermobile://pair?host=${host}&port=${portText}&code=${made.code}`;
       return { ok: true, uri, code: made.code, qrSvg: deps.renderQr(uri), expiresAtMs: made.expiresAtMs };
     },
-    revokeAll: () => revoke(() => { auth!.revokeAll(); }),
-    revokeOne: ref => revoke(() => { auth!.revokeOne(ref); }),
+    revokeAll: () => revoke('control: revoke all', () => { auth!.revokeAll(); }),
+    revokeOne: ref => revoke(`control: revoke one ref=${ref}`, () => { auth!.revokeOne(ref); }),
     async retrySave() {
       init();
       await settle(true);

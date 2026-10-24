@@ -1,10 +1,13 @@
 // @vitest-environment node
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_ENABLE_RETRY_MS, CONTROL_REVOKE_UNSAVED_NOTICE } from './controlHub';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import type { ControlSocket, ListenerPort, RemoteUnavailableReason } from '../../src/shared/remote/types';
 
+const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
 const ADDR = '100.84.175.105:47821';
 const tick = () => new Promise<void>(r => setImmediate(r));
@@ -23,15 +26,17 @@ function fakeStore() {
   return s;
 }
 
-function fakeSocket(): ControlSocket & { sent: string[]; closes: number[]; drop(): void } {
+function fakeSocket(): ControlSocket & { sent: string[]; closes: number[]; drop(): void; feed(t: string): void } {
   let onClose: () => void = () => {};
+  let onMsg: (t: string) => void = () => {};
   const s = {
     sent: [] as string[],
     closes: [] as number[],
     send: (t: string) => { s.sent.push(t); },
     close: (c: number) => { s.closes.push(c); },
     bufferedBytes: () => 0,
-    onMessage: () => {},
+    onMessage: (cb: (t: string) => void) => { onMsg = cb; },
+    feed: (t: string) => onMsg(t),
     onClose: (cb: () => void) => { onClose = cb; },
     drop: () => onClose(),
   };
@@ -459,6 +464,50 @@ describe('control hub sessions and revoke', () => {
     expect(hub.status().connected).toBe(0);
     expect(logs.some(l => l === `control: connect ref=${id.ref} peer=${PEER}`)).toBe(true);
     expect(logs.some(l => l === `control: disconnect ref=${id.ref}`)).toBe(true);
+  });
+
+  it('gateway-originated log lines carry the control: prefix exactly once', async () => {
+    const { hub, logs } = setup();
+    await hub.setEnabled(true);
+    const r = await pairOne(hub);
+    const id = hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    hub.port.open(s, id);
+    s.feed(helloFrame);
+    s.feed(helloFrame); // a violation line goes through the same wrapper
+    expect(logs).toContain(`control: hello accepted ref=${id.ref}`);
+    expect(logs).toContain(`control: repeated hello ref=${id.ref}`);
+    expect(logs.some(l => l.startsWith('control: control:'))).toBe(false);
+  });
+
+  it('revokeAll and revokeOne log a fixed line (ref only) and never a token or full hash', async () => {
+    const { hub, logs } = setup();
+    await hub.setEnabled(true);
+    const r = await pairOne(hub);
+    const ref = hub.status().devices[0].ref;
+    await hub.revokeOne(ref);
+    expect(logs).toContain(`control: revoke one ref=${ref}`);
+    await pairOne(hub);
+    await hub.revokeAll();
+    expect(logs).toContain('control: revoke all');
+    const all = logs.join(' ');
+    expect(all).not.toContain((r as { token: string }).token);
+    expect(all).not.toMatch(/[0-9a-f]{64}/);
+  });
+
+  it('a disable between approval and mint logs the after-approval-race revoke', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub, logs } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = hub.port.pair(made.code, PEER);
+    await tick();
+    answer(true);
+    const disabling = hub.setEnabled(false);
+    expect(await pending).toEqual({ status: 403 });
+    await disabling;
+    expect(logs).toContain('control: revoke after-approval-race');
   });
 
   it('disable closes live sessions with bye disabled', async () => {
