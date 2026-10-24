@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
@@ -58,6 +59,10 @@ import javax.crypto.Cipher
  * logged. All state changes run on the main thread; network callbacks marshal via runOnUiThread.
  */
 class MainActivity : AppCompatActivity() {
+    private companion object {
+        const val TAG = "AetherFlow"
+    }
+
     private val vault by lazy { TokenVault(this) }
     private val controller = FlowController(SystemClock::elapsedRealtime)
     private val handler = Handler(Looper.getMainLooper())
@@ -183,6 +188,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun run(effect: Effect) {
+        Log.d(TAG, "effect $effect")
         when (effect) {
             Effect.BeginSave -> beginSave()
             Effect.BeginUnlock -> beginUnlock()
@@ -430,7 +436,15 @@ class MainActivity : AppCompatActivity() {
         try { c?.close() } catch (_: RuntimeException) { }
     }
 
+    /** Type names only: Connected carries expiry/server time and must not be printed. */
+    private fun describe(s: ControlState): String = when (s) {
+        is ControlState.Closed -> "Closed(${s.reason})"
+        is ControlState.Failed -> "Failed(${s.failure.name})"
+        else -> s::class.java.simpleName
+    }
+
     private fun onClientState(s: ControlState) {
+        Log.d(TAG, "control state ${describe(s)} flow=${flow::class.java.simpleName}")
         when (s) {
             ControlState.Idle, ControlState.Connecting -> Unit
             is ControlState.Connected -> dispatch(FlowEvent.ClientConnected(s.expiresAtMs, s.serverTimeMs))
