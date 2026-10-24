@@ -26,7 +26,7 @@ export function readReenable(filePath: string): boolean {
  * Atomic tmp-then-rename write, then returns the READBACK from disk, never the requested value: a failed write
  * shows whatever the file still says. Never throws.
  */
-export function writeReenable(aetherDir: string, on: boolean): boolean {
+export function writeReenable(aetherDir: string, on: boolean, log?: (line: string) => void): boolean {
   const targetPath = controlSettingsPath(aetherDir);
   const tmpPath = uniqueSiblingPath(targetPath, 'aethertmp');
   try {

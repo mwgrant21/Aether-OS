@@ -50,4 +50,30 @@ describe('controlSettings', () => {
     writeFileSync(blocker, 'x');
     expect(writeReenable(join(blocker, 'sub'), true)).toBe(false);
   });
+
+  it('logs one fixed code-only line per failed write, nothing on success, and survives a throwing log', () => {
+    const lines: string[] = [];
+    const log = (l: string): void => {
+      lines.push(l);
+    };
+    expect(writeReenable(dir, true, log)).toBe(true);
+    expect(lines).toEqual([]);
+    rmSync(controlSettingsPath(dir));
+    mkdirSync(controlSettingsPath(dir));
+    expect(writeReenable(dir, true, log)).toBe(false);
+    rmSync(controlSettingsPath(dir), { recursive: true });
+    const blocker = join(dir, 'blocker');
+    writeFileSync(blocker, 'x');
+    expect(writeReenable(join(blocker, 'sub'), true, log)).toBe(false);
+    expect(lines).toHaveLength(2);
+    for (const l of lines) {
+      expect(l).toMatch(/^control: settings write failed code=[A-Z0-9_]+$/);
+      expect(l).not.toContain(dir);
+      expect(l).not.toMatch(/[\/]/);
+    }
+    const boom = (): void => {
+      throw new Error('boom');
+    };
+    expect(writeReenable(join(blocker, 'sub'), true, boom)).toBe(false);
+  });
 });
