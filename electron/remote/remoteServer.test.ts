@@ -486,7 +486,7 @@ function fakeControl(maxSockets = 2): FakeControl {
     authenticate(authorization, peer, o) {
       c.auths.push({ authorization, peer, touch: o?.touch })
       if (c.valid && authorization === BEARER) return identity
-      ;(o as { onReject?: (r: string) => void } | undefined)?.onReject?.(authorization ? 'unknown' : 'no-bearer')
+      ;o?.onReject?.(authorization ? 'unknown' : 'no-bearer')
       return null
     },
     async pair(code, peer) {

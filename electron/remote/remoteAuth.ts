@@ -8,6 +8,7 @@ import {
   CONTROL_SLIDING_TTL_MS,
   REMOTE_MAX_SESSIONS,
   REMOTE_SESSION_TTL_MS,
+  type AuthRejectReason,
   type ControlIdentity,
   type RemoteSessionInfo,
 } from '../../src/shared/remote/types';
@@ -54,7 +55,7 @@ export interface RemoteAuth extends RemoteAuthGate {
   flush(): Promise<boolean>;
 }
 
-export type AuthRejectReason = 'no-device' | 'no-bearer' | 'unknown' | 'expired' | 'peer-mismatch' | 'error';
+export type { AuthRejectReason };
 
 export interface DeviceAuth extends RemoteAuth {
   /** `onReject` names why a call returned null (a diagnostic hook only; it never changes the result). */
