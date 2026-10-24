@@ -259,15 +259,15 @@ class FlowController(private val clockMs: () -> Long) {
         private set
     var promptWanted = false
         private set
+    /** A socket close arrived while stopped inside the relock window; [onStart] reconnects (or relocks). */
+    var reconnectPending = false
+        private set
 
     private var started = false
     private var resumed = false
     private var firstStartSeen = false
     private var relockArmed = false
 
-    /** A socket close arrived while stopped inside the relock window; [onStart] reconnects (or relocks). */
-    var reconnectPending = false
-        private set
     private var deferredArmed = false
     private var deferredAt = 0L
 

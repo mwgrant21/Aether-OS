@@ -628,6 +628,28 @@ class AppFlowTest {
         assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
     }
 
+    @Test fun revokedWhileReconnectPendingClearsTheFlag() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        assertTrue(r.c.reconnectPending)
+        r.c.dispatch(FlowEvent.ClientRevoked)
+        assertEquals(FlowState.NeedsPair(Notice.Revoked), r.state)
+        assertFalse(r.c.reconnectPending)
+        assertFalse(r.start().contains(Effect.Connect))
+    }
+
+    @Test fun lockNowWhileReconnectPendingClearsTheFlag() {
+        val r = Rig().connected()
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        assertTrue(r.c.reconnectPending)
+        r.c.dispatch(FlowEvent.LockNow)
+        assertEquals(FlowState.Locked(), r.state)
+        assertFalse(r.c.reconnectPending)
+        assertFalse(r.start().contains(Effect.Connect))
+    }
+
     @Test fun foregroundReconnectFailureShowsError() {
         val r = Rig().connected()
         val t0 = r.now

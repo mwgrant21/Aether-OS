@@ -436,7 +436,7 @@ class MainActivity : AppCompatActivity() {
         try { c?.close() } catch (_: RuntimeException) { }
     }
 
-    /** Type names only: Connected carries expiry/server time and must not be printed. */
+    /** Names and fixed reasons only, no payload fields: Connected carries expiry/server time and must not be printed. */
     private fun describe(s: ControlState): String = when (s) {
         is ControlState.Closed -> "Closed(${s.reason})"
         is ControlState.Failed -> "Failed(${s.failure.name})"
