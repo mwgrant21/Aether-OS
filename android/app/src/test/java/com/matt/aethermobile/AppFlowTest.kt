@@ -295,6 +295,19 @@ class AppFlowTest {
         }
     }
 
+    @Test fun reconnectOnlyFromLiveStates() {
+        for (s in listOf(connected, FlowState.Connecting)) {
+            val x = step(s, FlowEvent.Reconnect)
+            assertEquals(FlowState.Connecting, x.state)
+            assertEquals(listOf(Effect.Connect), x.effects)
+        }
+        for (s in listOf(FlowState.Locked(), FlowState.NeedsPair(), FlowState.Error(ErrorKind.Closed), FlowState.Pairing)) {
+            val x = step(s, FlowEvent.Reconnect)
+            assertEquals(s, x.state)
+            assertTrue(x.effects.isEmpty())
+        }
+    }
+
     @Test fun lockNowClosesAndDropsButDoesNotPromptByItself() {
         val t = step(connected, FlowEvent.LockNow)
         assertEquals(FlowState.Locked(), t.state)
@@ -533,5 +546,100 @@ class AppFlowTest {
             listOf(Effect.CloseSocket, Effect.DropToken, Effect.CancelRelockTimer),
             r.c.dispatch(FlowEvent.LockNow),
         )
+    }
+
+    // ---- silent reconnect on resume ------------------------------------------------------
+
+    private val longLived = FlowEvent.ClientConnected(expiresAtMs = 86_400_000L * 30, serverTimeMs = 0)
+
+    @Test fun closedWhileStoppedInsideWindowKeepsTokenAndTimer() {
+        val r = Rig().connected()
+        val t0 = r.now
+        assertEquals(listOf(Effect.CancelPrompt, Effect.StartRelockTimer), r.c.onStop())
+        r.now += 5_000
+        val fx = r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        assertTrue(fx.isEmpty())
+        assertEquals(FlowState.Connected(30), r.state)
+        assertTrue(AppFlow.holdsToken(r.state))
+        assertTrue(r.c.reconnectPending)
+        r.now = t0 + minute
+        assertEquals(listOf(Effect.CloseSocket, Effect.DropToken), r.c.onRelockTimer())
+        assertEquals(FlowState.Locked(), r.state)
+    }
+
+    @Test fun returnInsideWindowReconnectsWithoutPrompt() {
+        val r = Rig().connected()
+        val t0 = r.now
+        r.c.onStop()
+        r.now += 5_000
+        r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        r.now = t0 + 59_900
+        assertEquals(listOf(Effect.CancelRelockTimer, Effect.Connect), r.start())
+        assertEquals(FlowState.Connecting, r.state)
+        assertFalse(r.c.promptWanted)
+        assertTrue(r.c.onResume().isEmpty())
+        assertFalse(r.c.reconnectPending)
+        r.c.dispatch(longLived)
+        assertEquals(FlowState.Connected(30), r.state)
+        assertEquals(listOf(Effect.CancelPrompt, Effect.StartRelockTimer), r.c.onStop())
+    }
+
+    @Test fun returnAtSixtySecondsRelocksEvenWithAPendingReconnect() {
+        val r = Rig().connected()
+        val t0 = r.now
+        r.c.onStop()
+        r.now += 5_000
+        r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        r.now = t0 + minute
+        assertEquals(listOf(Effect.CancelRelockTimer, Effect.CloseSocket, Effect.DropToken), r.start())
+        assertEquals(FlowState.Locked(), r.state)
+        assertTrue(r.c.promptWanted)
+        assertFalse(r.c.reconnectPending)
+        assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
+    }
+
+    @Test fun closedWhileForegroundedStillErrors() {
+        val r = Rig().connected()
+        assertEquals(listOf(Effect.CloseSocket, Effect.DropToken), r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed)))
+        assertEquals(FlowState.Error(ErrorKind.Closed), r.state)
+        assertFalse(r.c.reconnectPending)
+    }
+
+    @Test fun otherFailuresWhileStoppedStillError() {
+        val r = Rig().connected()
+        r.c.onStop()
+        assertEquals(
+            listOf(Effect.CloseSocket, Effect.DropToken, Effect.CancelRelockTimer),
+            r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Unreachable)),
+        )
+        assertEquals(FlowState.Error(ErrorKind.Unreachable), r.state)
+        assertFalse(r.c.reconnectPending)
+    }
+
+    @Test fun relockTimerWhileReconnectPendingLocksAndNeverReconnects() {
+        val r = Rig().connected()
+        val t0 = r.now
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        r.now = t0 + minute
+        assertEquals(listOf(Effect.CloseSocket, Effect.DropToken), r.c.onRelockTimer())
+        assertFalse(r.c.reconnectPending)
+        assertTrue(r.start().isEmpty())
+        assertEquals(listOf(Effect.BeginUnlock), r.c.onResume())
+    }
+
+    @Test fun foregroundReconnectFailureShowsError() {
+        val r = Rig().connected()
+        val t0 = r.now
+        r.c.onStop()
+        r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Closed))
+        r.now = t0 + 10_000
+        r.start()
+        assertEquals(FlowState.Connecting, r.state)
+        assertEquals(
+            listOf(Effect.CloseSocket, Effect.DropToken),
+            r.c.dispatch(FlowEvent.ClientFailed(ErrorKind.Unreachable)),
+        )
+        assertEquals(FlowState.Error(ErrorKind.Unreachable), r.state)
     }
 }

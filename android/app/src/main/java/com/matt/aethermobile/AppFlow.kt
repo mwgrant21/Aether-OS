@@ -81,6 +81,8 @@ sealed class FlowEvent {
     data class ClientFailed(val kind: ErrorKind) : FlowEvent()
     object RelockDue : FlowEvent()
     object LockNow : FlowEvent()
+    /** The socket died while stopped inside the relock window; reconnect with the held token, no prompt. */
+    object Reconnect : FlowEvent()
     data class Retry(val hasToken: Boolean) : FlowEvent()
 }
 
@@ -182,6 +184,8 @@ object AppFlow {
             FlowEvent.LockNow ->
                 if (live(s)) Transition(FlowState.Locked(), listOf(Effect.CloseSocket, Effect.DropToken))
                 else Transition(s)
+            FlowEvent.Reconnect ->
+                if (live(s)) Transition(FlowState.Connecting, listOf(Effect.Connect)) else Transition(s)
             is FlowEvent.Retry ->
                 if (s !is FlowState.Error) Transition(s)
                 else if (e.hasToken) Transition(FlowState.Locked(), listOf(Effect.BeginUnlock))
@@ -241,6 +245,9 @@ object AppFlow {
  *    bookkeeping), never from a posted runnable.
  *  - A prompt effect never leaves here unless the activity is RESUMED; otherwise the request is
  *    parked in [promptWanted] and replayed by the next [onResume].
+ *  - A socket close ([ErrorKind.Closed]) while stopped inside the armed relock window is deferred:
+ *    token and timer stay, and the next [onStart] reconnects without a prompt unless
+ *    [RelockPolicy] says the 60 s window has passed.
  *  - SaveDeferred and a backgrounded live session each carry their own 60 s timer (the
  *    Start/Cancel...Timer effects); [RelockPolicy]'s elapsed check backstops the relock timer
  *    because Handler delays do not count device sleep.
@@ -257,10 +264,19 @@ class FlowController(private val clockMs: () -> Long) {
     private var resumed = false
     private var firstStartSeen = false
     private var relockArmed = false
+
+    /** A socket close arrived while stopped inside the relock window; [onStart] reconnects (or relocks). */
+    var reconnectPending = false
+        private set
     private var deferredArmed = false
     private var deferredAt = 0L
 
     fun dispatch(event: FlowEvent): List<Effect> {
+        // Closed while stopped inside the armed relock window: keep token and timer, decide in onStart.
+        if (event is FlowEvent.ClientFailed && event.kind == ErrorKind.Closed && !started && relockArmed) {
+            reconnectPending = true
+            return emptyList()
+        }
         // A paired token cannot be saved without a visible prompt: park it instead.
         val e = if (event is FlowEvent.PairResult && event.kind == PairKind.Paired && !resumed) {
             FlowEvent.PairedWhileHidden
@@ -292,6 +308,9 @@ class FlowController(private val clockMs: () -> Long) {
             out.addAll(dispatch(FlowEvent.Start(configured, hasToken())))
         } else if (relock.onForegrounded()) {
             out.addAll(dispatch(FlowEvent.RelockDue))
+        } else if (reconnectPending) {
+            reconnectPending = false
+            out.addAll(dispatch(FlowEvent.Reconnect))
         }
         return out
     }
@@ -339,6 +358,7 @@ class FlowController(private val clockMs: () -> Long) {
         val s = state
         if (s !is FlowState.Locked) promptWanted = false
         val live = s == FlowState.Connecting || s is FlowState.Connected
+        if (!live) reconnectPending = false
         if (live && !started && !relockArmed) {
             relock.onBackgrounded() // a Connect that lands while stopped must not erase the background start
             relockArmed = true
