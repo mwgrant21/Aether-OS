@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_ENABLE_RETRY_MS, CONTROL_REVOKE_UNSAVED_NOTICE } from './controlHub';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
+import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
 import type { ControlSocket, ListenerPort, RemoteUnavailableReason } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
@@ -478,6 +479,28 @@ describe('control hub sessions and revoke', () => {
     expect(logs).toContain(`control: hello accepted ref=${id.ref}`);
     expect(logs).toContain(`control: repeated hello ref=${id.ref}`);
     expect(logs.some(l => l.startsWith('control: control:'))).toBe(false);
+  });
+  it('each channel violation logs its own fixed line with the ref', async () => {
+    const { hub, logs, timers } = setup();
+    await hub.setEnabled(true);
+    const r = await pairOne(hub);
+    const id = hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const violate = (feed: (s: ReturnType<typeof fakeSocket>) => void): string[] => {
+      const before = logs.length;
+      const s = fakeSocket();
+      hub.port.open(s, id);
+      feed(s);
+      return logs.slice(before).filter(l => !l.startsWith('control: connect') && !l.startsWith('control: disconnect'));
+    };
+    expect(violate(s => s.feed('x'.repeat(CONTROL_CTL_MAX_PAYLOAD + 1)))).toEqual([`control: oversize frame ref=${id.ref}`]);
+    expect(violate(s => s.feed('not json'))).toEqual([`control: invalid frame ref=${id.ref}`]);
+    expect(violate(s => { s.feed(helloFrame); s.feed(helloFrame); })).toEqual([
+      `control: hello accepted ref=${id.ref}`,
+      `control: repeated hello ref=${id.ref}`,
+    ]);
+    expect(violate(() => {
+      timers.filter(t => t.ms === CONTROL_HELLO_TIMEOUT_MS).at(-1)!.fn();
+    })).toEqual([`control: hello deadline expired ref=${id.ref}`]);
   });
 
   it('revokeAll and revokeOne log a fixed line (ref only) and never a token or full hash', async () => {
