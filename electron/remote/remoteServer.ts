@@ -253,7 +253,10 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
     const peer = req.socket.remoteAddress
     let identity: ControlIdentity | null = null
     try {
-      identity = control.authenticate(authorization, peer, { touch: true })
+      identity = control.authenticate(authorization, peer, {
+        touch: true,
+        onReject: (r) => log(`remote: control reject reason=${r}`),
+      })
     } catch {
       identity = null
     }
@@ -447,7 +450,11 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
     for (const c of [...ctlClients]) {
       let still = false
       try {
-        still = control.authenticate(c.authorization, c.peer, { touch: true }) !== null
+        still =
+          control.authenticate(c.authorization, c.peer, {
+            touch: true,
+            onReject: (r) => log(`remote: control recheck reject reason=${r}`),
+          }) !== null
       } catch {
         still = false
       }

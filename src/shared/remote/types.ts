@@ -78,12 +78,13 @@ export interface ControlIdentity {
 export type ControlPairResult =
   | { status: 200; token: string; expiresAtMs: number }
   | { status: 400 | 401 | 403 | 429 };
+export type AuthRejectReason = 'no-device' | 'no-bearer' | 'unknown' | 'expired' | 'peer-mismatch' | 'error';
 export interface ControlPort {
   maxSockets: number;
   authenticate(
     authorization: string | undefined,
     peer: string | undefined,
-    o?: { touch?: boolean },
+    o?: { touch?: boolean; onReject?: (reason: AuthRejectReason) => void },
   ): ControlIdentity | null;
   pair(code: unknown, peer: string | undefined): Promise<ControlPairResult>;
   open(socket: ControlSocket, identity: ControlIdentity): void;

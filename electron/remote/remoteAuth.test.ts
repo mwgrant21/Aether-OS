@@ -653,6 +653,40 @@ describe('device auth scope', () => {
     const asViewer = createRemoteAuth({ store, now: () => 1_000_000 + MIN });
     expect(asViewer.list().every((s) => s.peer === undefined)).toBe(true);
   });
+
+  it('names the reason through onReject for every null, never for a valid call', async () => {
+    const { auth, clock } = dev();
+    const { token } = await pairDev(auth);
+    const reasons: string[] = [];
+    const o = { onReject: (r: string) => reasons.push(r) };
+    expect(auth.authenticate(undefined, PEER, o)).toBeNull();
+    expect(auth.authenticate(bearer('A'.repeat(43)), PEER, o)).toBeNull();
+    expect(auth.authenticate(bearer(token), '100.94.15.126', o)).toBeNull();
+    expect(reasons).toEqual(['no-bearer', 'unknown', 'peer-mismatch']);
+    reasons.length = 0;
+    expect(auth.authenticate(bearer(token), PEER, o)).not.toBeNull();
+    expect(reasons).toEqual([]);
+    clock.advance(31 * DAY);
+    expect(auth.authenticate(bearer(token), PEER, o)).toBeNull();
+    expect(reasons).toEqual(['expired']);
+    reasons.length = 0;
+    const t2 = (await pairDev(auth)).token;
+    expect(auth.revokeOne(auth.list()[0].ref)).toBe(true);
+    expect(auth.authenticate(bearer(t2), PEER, o)).toBeNull();
+    expect(reasons).toEqual(['unknown']);
+    const viewer = createRemoteAuth({ store: fakeStore(), now: () => 1000 }) as unknown as import('./remoteAuth').DeviceAuth;
+    reasons.length = 0;
+    expect(viewer.authenticate(bearer(token), PEER, o)).toBeNull();
+    expect(reasons).toEqual(['no-device']);
+  });
+
+  it('a throwing onReject cannot change the result', async () => {
+    const { auth } = dev();
+    const { token } = await pairDev(auth);
+    const o = { onReject: () => { throw new Error('boom'); } };
+    expect(auth.authenticate(undefined, PEER, o)).toBeNull();
+    expect(auth.authenticate(bearer(token), PEER, o)).not.toBeNull();
+  });
 });
 
 describe('device and viewer scopes over one store', () => {
