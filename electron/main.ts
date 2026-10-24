@@ -1526,7 +1526,7 @@ const controlHub = createControlHub({
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
-    persist: on => writeReenable(aetherOsDir, on),
+    persist: on => writeReenable(aetherOsDir, on, l => diagLog.write(l)),
   },
   confirmPair: (peer, replacesExisting) => confirmControlPair(peer, replacesExisting),
   renderQr: renderQrSvg,
