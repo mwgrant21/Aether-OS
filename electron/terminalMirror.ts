@@ -18,6 +18,10 @@ interface HeadlessTerm {
   resize(cols: number, rows: number): void;
   loadAddon(addon: unknown): void;
   dispose(): void;
+  buffer: { active: {
+    viewportY: number; cursorX: number; cursorY: number;
+    getLine(y: number): { translateToString(trimRight?: boolean): string } | undefined;
+  } };
 }
 interface SerializerLike {
   serialize(o?: { scrollback?: number }): string;
@@ -56,13 +60,32 @@ export function createTerminalMirror(opts: {
 
   const encodedLength = (s: string): number => JSON.stringify(s).length;
 
-  // Lower the scrollback until the JSON-escaped length fits; at 0 return the visible screen anyway.
+  // Lower the scrollback until the JSON-escaped length fits. If even scrollback 0 is over the
+  // cap (the cap is a hard protocol limit), fall back to a plain-text viewport: visible rows
+  // without colours plus a cursor-position escape, with whole rows dropped from the top if needed.
   function serializeBounded(): string {
     let lines = TERMINAL_SNAPSHOT_SCROLLBACK_LINES;
     let d = serializer.serialize({ scrollback: lines });
     while (encodedLength(d) > TERMINAL_SNAPSHOT_BYTES && lines > 0) {
       lines = lines > 16 ? Math.floor(lines / 2) : 0;
       d = serializer.serialize({ scrollback: lines });
+    }
+    return encodedLength(d) > TERMINAL_SNAPSHOT_BYTES ? plainViewport() : d;
+  }
+
+  function plainViewport(): string {
+    const b = term.buffer.active;
+    const rows: string[] = [];
+    for (let y = 0; y < term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
+    let dropped = 0;
+    const build = (): string => {
+      const row = Math.max(0, b.cursorY - dropped);
+      return `${rows.slice(dropped).join('\r\n')}\x1b[${row + 1};${b.cursorX + 1}H`;
+    };
+    let d = build();
+    while (encodedLength(d) > TERMINAL_SNAPSHOT_BYTES && dropped < rows.length) {
+      dropped++;
+      d = build();
     }
     return d;
   }

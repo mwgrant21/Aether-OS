@@ -163,4 +163,30 @@ describe('terminalMirror', () => {
     expect(m.pendingBytes()).toBe(0);
     m.dispose();
   }, 120000);
+
+  it('(e) falls back to a plain-text viewport when scrollback 0 still exceeds the cap', async () => {
+    const cols = 300, rows = 120;
+    const m = createTerminalMirror({ cols, rows, scrollback: 0 });
+    let s = '';
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const n = r * cols + c;
+        s += `\x1b[38;2;${n % 256};${(n >> 8) % 256};${r}m\x1b[48;2;${c % 256};${(n * 7) % 256};${(n >> 4) % 256}m${String.fromCharCode(65 + (n % 26))}`;
+      }
+      if (r < rows - 1) s += '\r\n';
+    }
+    s += '\x1b[0m\x1b[5;10H';
+    m.write(s);
+    const snap = await m.snapshot();
+    expect(enc(snap.d)).toBeLessThanOrEqual(TERMINAL_SNAPSHOT_BYTES);
+    expect(snap.d).not.toContain('\x1b[38');
+    const ref = fresh(cols, rows);
+    ref.write(s);
+    await settle(ref);
+    const copy = await replay(snap.d, snap.cols, snap.rows);
+    expect(visible(copy)).toEqual(visible(ref));
+    expect([copy.buffer.active.cursorX, copy.buffer.active.cursorY])
+      .toEqual([ref.buffer.active.cursorX, ref.buffer.active.cursorY]);
+    m.dispose();
+  });
 });
