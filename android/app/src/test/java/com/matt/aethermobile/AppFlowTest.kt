@@ -75,7 +75,8 @@ class AppFlowTest {
     @Test fun pairFailuresReturnToPairWithTheirNotice() {
         val cases = mapOf(
             PairKind.BadCode to Notice.BadCode, PairKind.Declined to Notice.Declined,
-            PairKind.Burned to Notice.Burned, PairKind.Unreachable to Notice.Unreachable,
+            PairKind.Burned to Notice.Burned, PairKind.Busy to Notice.PairBusy,
+            PairKind.Unreachable to Notice.Unreachable,
             PairKind.Other to Notice.ServerError,
         )
         for ((kind, notice) in cases) {
