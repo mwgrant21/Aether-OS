@@ -1,28 +1,94 @@
-// Aether Mobile terminal page: display + keyboard only (design spec 2.8, 4.4).
+// Aether Mobile terminal page: display only in V2 (design spec 2.8, 4.4, D7).
 // Every byte of I/O goes through the Kotlin-side bridge (addWebMessageListener); the
 // page has no network (CSP connect-src 'none'). No clipboard addon (OSC 52 off), no
-// link handling, no title handling.
+// link handling, no title handling. One xterm per slot, created on first use.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { installReplySuppression, applySnap, applySize } from './replySuppression.js';
 
-const SESSION = 'claude'; // V0: one fake session; tabs arrive in V2
+const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
+const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
+const MIN_FONT = 6;
+const MAX_FONT = 24;
 const bridge = window.aetherBridge;
 const send = (m) => bridge.postMessage(JSON.stringify(m));
 const utf8Len = (s) => new TextEncoder().encode(s).length;
+const root = document.getElementById('term');
 
-const term = new Terminal({
-  scrollback: 2000,
-  cursorBlink: true,
-  fontFamily: 'ui-monospace, "Cascadia Mono", Menlo, monospace',
-  fontSize: 14,
-  theme: { background: '#0A0E14', foreground: '#D5DEE8', cursor: '#4FD1C5' },
-});
-const fit = new FitAddon();
-term.loadAddon(fit);
-term.open(document.getElementById('term'));
+const slots = new Map();
+let visible = DEFAULT_SLOT;
+let zoomPx = 14; // 0 = fit width
 
-term.onData((d) => send({ t: 'input', s: SESSION, d }));
-term.onResize(({ cols, rows }) => send({ t: 'resize', s: SESSION, cols, rows }));
+function slotFor(id) {
+  let slot = slots.get(id);
+  if (slot) return slot;
+  const el = document.createElement('div');
+  el.className = 'slot';
+  el.hidden = id !== visible;
+  root.appendChild(el);
+  const term = new Terminal({
+    scrollback: 2000,
+    cursorBlink: false,
+    disableStdin: true, // D7: the phone does not type in V2; V3 flips this via a bridge message
+    allowProposedApi: false,
+    fontFamily: FONT_FAMILY,
+    fontSize: zoomPx || 14,
+    theme: { background: '#0A0E14', foreground: '#D5DEE8', cursor: '#4FD1C5' },
+  });
+  installReplySuppression(term);
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  term.open(el);
+  slot = { id, el, term, fit, sized: false };
+  // Dormant in V2: stdin is disabled and the size always comes from titan. Wired for V3/V4b;
+  // resize is reported only while the page is fitting itself (V0 demo).
+  term.onData((d) => send({ t: 'input', s: id, d }));
+  term.onResize(({ cols, rows }) => {
+    if (!slot.sized) send({ t: 'resize', s: id, cols, rows });
+  });
+  slots.set(id, slot);
+  return slot;
+}
+
+// Width of one monospace cell per px of font size, measured once.
+let cellRatio = 0;
+function ratio() {
+  if (!cellRatio) {
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `100px ${FONT_FAMILY}`;
+    cellRatio = ctx.measureText('W').width / 100 || 0.6;
+  }
+  return cellRatio;
+}
+
+function applyZoom(slot) {
+  let px = zoomPx;
+  if (!px) {
+    const cols = slot.sized ? slot.term.cols : 0;
+    px = cols ? Math.floor(root.clientWidth / (cols * ratio())) : 14;
+    px = Math.min(MAX_FONT, Math.max(MIN_FONT, px));
+  }
+  if (slot.term.options.fontSize !== px) slot.term.options.fontSize = px;
+}
+
+// sized is set synchronously so the onResize wired above stays silent; the resize itself
+// is applied in order behind pending output (see applySize / applySnap).
+function setSize(slot, cols, rows) {
+  slot.sized = true;
+  applySize(slot.term, cols, rows, () => applyZoom(slot));
+}
+
+function show(id) {
+  visible = id;
+  for (const [sid, slot] of slots) slot.el.hidden = sid !== id;
+  const slot = slotFor(id);
+  slot.el.hidden = false;
+  applyZoom(slot);
+  if (!slot.sized) slot.fit.fit();
+}
+
+const isSlot = (v) => typeof v === 'string' && v.length > 0;
+const isDim = (v) => Number.isInteger(v) && v > 0;
 
 bridge.onmessage = (ev) => {
   let m;
@@ -31,13 +97,45 @@ bridge.onmessage = (ev) => {
   } catch {
     return;
   }
-  if (m && m.t === 'out' && m.s === SESSION && typeof m.d === 'string') {
-    // Credit back to Kotlin once xterm has consumed the chunk (flow control, used from V2).
-    term.write(m.d, () => send({ t: 'consumed', s: SESSION, bytes: utf8Len(m.d) }));
+  if (!m || typeof m !== 'object') return;
+  switch (m.t) {
+    case 'snap': {
+      if (!isSlot(m.s) || !isDim(m.cols) || !isDim(m.rows) || typeof m.d !== 'string') return;
+      const slot = slotFor(m.s);
+      slot.sized = true;
+      applySnap(slot.term, m.cols, m.rows, m.d, () => applyZoom(slot));
+      return;
+    }
+    case 'out': {
+      if (!isSlot(m.s) || typeof m.d !== 'string') return;
+      const { d, s } = m;
+      // Credit back to Kotlin once xterm has consumed the chunk (flow control).
+      slotFor(s).term.write(d, () => send({ t: 'consumed', s, bytes: utf8Len(d) }));
+      return;
+    }
+    case 'size':
+      if (isSlot(m.s) && isDim(m.cols) && isDim(m.rows)) setSize(slotFor(m.s), m.cols, m.rows);
+      return;
+    case 'show':
+      if (isSlot(m.s)) show(m.s);
+      return;
+    case 'zoom':
+      if (m.px === 0 || (Number.isFinite(m.px) && m.px >= 8 && m.px <= MAX_FONT)) {
+        zoomPx = m.px;
+        for (const slot of slots.values()) applyZoom(slot);
+      }
+      return;
+    default:
   }
 };
 
-new ResizeObserver(() => fit.fit()).observe(document.getElementById('term'));
-fit.fit();
-term.focus();
+// V0 fit behaviour, only for slots that never received a size or snap.
+new ResizeObserver(() => {
+  for (const slot of slots.values()) {
+    if (!slot.sized && !slot.el.hidden) slot.fit.fit();
+    else if (zoomPx === 0) applyZoom(slot);
+  }
+}).observe(root);
+
+show(DEFAULT_SLOT);
 send({ t: 'ready' });
