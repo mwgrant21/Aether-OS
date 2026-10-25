@@ -131,6 +131,129 @@ class ControlProtocolTest {
         assertNull(ControlProtocol.parseBye("{"))
     }
 
+    @Test fun terminalConstantsEqualTheSharedJson() {
+        val term = spec.getJSONObject("terminals")
+        assertEquals(term.getInt("chunkMaxBytes"), ControlProtocol.CHUNK_MAX_BYTES)
+        assertEquals(term.getInt("ringBytes"), ControlProtocol.RING_BYTES)
+        assertEquals(term.getInt("snapshotBytes"), ControlProtocol.SNAPSHOT_BYTES)
+        assertEquals(term.getInt("snapshotScrollbackLines"), ControlProtocol.SNAPSHOT_SCROLLBACK_LINES)
+        assertEquals(term.getInt("mirrorScrollbackLines"), ControlProtocol.MIRROR_SCROLLBACK_LINES)
+        assertEquals(strings(term.getJSONArray("states")), ControlProtocol.SlotState.values().map { it.wire })
+        val slots = term.getJSONArray("slots")
+        assertEquals(slots.length(), ControlProtocol.SLOTS.size)
+        for (i in 0 until slots.length()) {
+            assertEquals(slots.getJSONObject(i).getString("s"), ControlProtocol.SLOTS[i].s)
+            assertEquals(slots.getJSONObject(i).getString("label"), ControlProtocol.SLOTS[i].label)
+        }
+        val msgs = spec.getJSONObject("messages")
+        assertEquals(listOf("hello", "attach", "detach"), strings(msgs.getJSONArray("phoneToTitan")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state"), strings(msgs.getJSONArray("titanToPhone")))
+    }
+
+    // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.
+    @Test fun buildAttachAndDetachAreByteIdenticalToTheGoldens() {
+        assertEquals(frames.getString("attach"), ControlProtocol.buildAttach("claude"))
+        assertEquals(frames.getString("attachResume"), ControlProtocol.buildAttach("claude", 123))
+        assertEquals(frames.getString("detach"), ControlProtocol.buildDetach("claude"))
+    }
+
+    @Test fun buildAttachOmitsQEntirelyWhenAbsent() {
+        val absent = ControlProtocol.buildAttach("codex", null)
+        assertFalse(absent, absent.contains("\"q\""))
+        assertFalse(absent, absent.contains("null"))
+        assertEquals("""{"t":"attach","s":"codex","q":0}""", ControlProtocol.buildAttach("codex", 0))
+    }
+
+    @Test fun buildAttachAndDetachRejectUnknownSlotsAndBadQ() {
+        for (bad in listOf("", "Claude", "claude ", "bash")) {
+            assertFailsIllegal { ControlProtocol.buildAttach(bad) }
+            assertFailsIllegal { ControlProtocol.buildDetach(bad) }
+        }
+        assertFailsIllegal { ControlProtocol.buildAttach("claude", -1) }
+        assertFailsIllegal { ControlProtocol.buildAttach("claude", 9_007_199_254_740_992L) }
+    }
+
+    private fun assertFailsIllegal(block: () -> Unit) {
+        try { block() } catch (_: IllegalArgumentException) { return }
+        throw AssertionError("expected IllegalArgumentException")
+    }
+
+    @Test fun terminalGoldensParse() {
+        // The goldens contain JSON escapes (\u001b, \r\n); the parsed d is the real control bytes.
+        assertEquals(
+            ControlProtocol.TerminalFrame.Snap("claude", 124, 100, 30, "\u001b[1mhi\u001b[0m\r\n"),
+            ControlProtocol.parseTerminalFrame(frames.getString("snap")),
+        )
+        assertEquals(
+            ControlProtocol.TerminalFrame.Out("claude", 125, "\u001b[32mok\u001b[0m\r\n"),
+            ControlProtocol.parseTerminalFrame(frames.getString("out")),
+        )
+        assertEquals(
+            ControlProtocol.TerminalFrame.Size("claude", 120, 40),
+            ControlProtocol.parseTerminalFrame(frames.getString("size")),
+        )
+        assertEquals(
+            ControlProtocol.TerminalFrame.State("claude", ControlProtocol.SlotState.RUNNING),
+            ControlProtocol.parseTerminalFrame(frames.getString("state")),
+        )
+    }
+
+    @Test fun terminalFramesIgnoreUnknownFieldsButRejectMistypedOnes() {
+        assertEquals(
+            ControlProtocol.TerminalFrame.Out("codex", 4, "x"),
+            ControlProtocol.parseTerminalFrame("""{"t":"out","s":"codex","q":4,"d":"x","future":[1]}"""),
+        )
+        val bad = listOf(
+            """{"t":"out","s":"codex","q":4}""",                       // no d
+            """{"t":"out","s":"codex","q":4,"d":5}""",                 // d not a string
+            """{"t":"out","s":"codex","q":"4","d":"x"}""",             // q a string
+            """{"t":"out","s":"codex","q":4.5,"d":"x"}""",             // q fractional
+            """{"t":"out","s":"codex","q":4.0,"d":"x"}""",             // q a float literal
+            """{"t":"out","s":"codex","q":-1,"d":"x"}""",              // q negative
+            """{"t":"out","s":"codex","q":9007199254740992,"d":"x"}""", // q beyond 2^53-1
+            """{"t":"out","s":"nope","q":4,"d":"x"}""",                // unknown slot
+            """{"t":"out","q":4,"d":"x"}""",                           // no slot
+            """{"t":"out","s":7,"q":4,"d":"x"}""",                     // slot not a string
+            """{"t":"snap","s":"claude","q":1,"cols":100,"d":""}""",   // no rows
+            """{"t":"snap","s":"claude","q":1,"cols":"100","rows":30,"d":""}""",
+            """{"t":"snap","s":"claude","q":1,"cols":10.5,"rows":30,"d":""}""",
+            """{"t":"snap","s":"claude","q":1,"cols":-1,"rows":30,"d":""}""",
+            """{"t":"size","s":"claude","cols":120}""",
+            """{"t":"size","s":"claude","cols":120,"rows":null}""",
+            """{"t":"state","s":"claude","state":"paused"}""",
+            """{"t":"state","s":"claude"}""",
+            """{"t":"hello","s":"claude"}""",
+            """{"t":"welcome","proof":"ab"}""",
+            """{"s":"claude","q":1,"d":"x"}""",
+            "not json",
+            "",
+        )
+        for (f in bad) assertNull(f, ControlProtocol.parseTerminalFrame(f))
+    }
+
+    @Test fun welcomeSessionsGoldenParsesToThreeSessionInfos() {
+        val w = ControlProtocol.parseWelcome(frames.getString("welcomeSessions"))!!
+        assertEquals(
+            listOf(
+                ControlProtocol.SessionInfo("claude", "Terminal", ControlProtocol.SlotState.RUNNING, 100, 30, 12),
+                ControlProtocol.SessionInfo("terminal2", "Terminal 2", ControlProtocol.SlotState.NOT_STARTED, 0, 0, 0),
+                ControlProtocol.SessionInfo("codex", "Codex", ControlProtocol.SlotState.EXITED, 80, 24, 5),
+            ),
+            w.sessions,
+        )
+        assertEquals(vec.getString("proof"), w.proof)
+        assertEquals(emptyList<ControlProtocol.SessionInfo>(), ControlProtocol.parseWelcome(frames.getString("welcome"))!!.sessions)
+    }
+
+    @Test fun malformedSessionEntriesAreSkippedNotFatal() {
+        val w = ControlProtocol.parseWelcome(
+            """{"t":"welcome","proof":"ab","sessions":[{"s":"claude","label":"T","state":"running","cols":1.5,"rows":2,"q":0},""" +
+                """{"s":"nope","label":"T","state":"running","cols":1,"rows":2,"q":0},7,""" +
+                """{"s":"codex","label":"Codex","state":"running","cols":1,"rows":2,"q":3}]}""",
+        )!!
+        assertEquals(listOf("codex"), w.sessions.map { it.s })
+    }
+
     @Test fun epochAndNonceAreFreshLowercaseHexOfTheRightLength() {
         val rnd = SecureRandom()
         val e = ControlProtocol.newEpoch(rnd)

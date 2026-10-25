@@ -48,6 +48,51 @@ object ControlProtocol {
     const val EPOCH_BYTES = 8
     const val NONCE_BYTES = 16
 
+    // terminals.* in the JSON.
+    const val CHUNK_MAX_BYTES = 16_384
+    const val RING_BYTES = 262_144
+    const val SNAPSHOT_BYTES = 262_144
+    const val SNAPSHOT_SCROLLBACK_LINES = 1000
+    const val MIRROR_SCROLLBACK_LINES = 2000
+
+    /** terminals.slots, in wire order. */
+    data class Slot(val s: String, val label: String)
+
+    val SLOTS: List<Slot> = listOf(
+        Slot("claude", "Terminal"),
+        Slot("terminal2", "Terminal 2"),
+        Slot("codex", "Codex"),
+    )
+
+    /** terminals.states, in the JSON's order. */
+    enum class SlotState(val wire: String) {
+        NOT_STARTED("not-started"),
+        RUNNING("running"),
+        EXITED("exited"),
+    }
+
+    /** One entry of `welcome.sessions`. */
+    data class SessionInfo(
+        val s: String,
+        val label: String,
+        val state: SlotState,
+        val cols: Int,
+        val rows: Int,
+        val q: Long,
+    )
+
+    /** Titan-to-phone terminal frames. Slot ids are always members of [SLOTS]. */
+    sealed class TerminalFrame {
+        abstract val s: String
+        data class Snap(override val s: String, val q: Long, val cols: Int, val rows: Int, val d: String) : TerminalFrame()
+        data class Out(override val s: String, val q: Long, val d: String) : TerminalFrame()
+        data class Size(override val s: String, val cols: Int, val rows: Int) : TerminalFrame()
+        data class State(override val s: String, val state: SlotState) : TerminalFrame()
+    }
+
+    /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
+    private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+
     /** Wire names of titan's `bye` reasons, in the JSON's order. */
     enum class ByeReason(val wire: String) {
         REVOKED("revoked"),
@@ -59,7 +104,12 @@ object ControlProtocol {
         RATE_LIMIT("rate-limit"),
     }
 
-    data class Welcome(val proof: String, val expiresAtMs: Long, val serverTimeMs: Long)
+    data class Welcome(
+        val proof: String,
+        val expiresAtMs: Long,
+        val serverTimeMs: Long,
+        val sessions: List<SessionInfo> = emptyList(),
+    )
 
     private val secureRandom: SecureRandom by lazy { SecureRandom() }
 
@@ -117,7 +167,7 @@ object ControlProtocol {
         if (o.optString("t") != "welcome") return null
         val proof = o.opt("proof") as? String ?: return null
         if (proof.isEmpty()) return null
-        return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L))
+        return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L), parseSessions(o.optJSONArray("sessions")))
     }
 
     /** Null unless the frame is a `bye` with a known reason. */
@@ -126,6 +176,87 @@ object ControlProtocol {
         if (o.optString("t") != "bye") return null
         val reason = o.optString("reason")
         return ByeReason.values().firstOrNull { it.wire == reason }
+    }
+
+    /**
+     * `{"t":"attach","s":...}` with `,"q":N` only when [q] is given (key absent, never null).
+     * Built by hand so the bytes do not depend on JSONObject key order.
+     */
+    fun buildAttach(s: String, q: Long? = null): String {
+        require(isSlot(s)) { "unknown slot" }
+        require(q == null || q in 0..MAX_SAFE_INTEGER) { "q out of range" }
+        val qPart = if (q == null) "" else ",\"q\":$q"
+        return "{\"t\":\"attach\",\"s\":${JSONObject.quote(s)}$qPart}"
+    }
+
+    fun buildDetach(s: String): String {
+        require(isSlot(s)) { "unknown slot" }
+        return "{\"t\":\"detach\",\"s\":${JSONObject.quote(s)}}"
+    }
+
+    /**
+     * Null unless the frame is a well-formed snap/out/size/state: known slot,
+     * string `d`, whole-number numerics (a JSON 1.5 or 1.0 is rejected), q within
+     * 0..2^53-1, known state. Unknown extra fields are ignored.
+     */
+    fun parseTerminalFrame(text: String): TerminalFrame? {
+        val o = parseObject(text) ?: return null
+        val s = o.opt("s") as? String ?: return null
+        if (!isSlot(s)) return null
+        return when (o.opt("t")) {
+            "snap" -> {
+                val q = whole(o.opt("q"), MAX_SAFE_INTEGER) ?: return null
+                val cols = whole(o.opt("cols"), Int.MAX_VALUE.toLong()) ?: return null
+                val rows = whole(o.opt("rows"), Int.MAX_VALUE.toLong()) ?: return null
+                val d = o.opt("d") as? String ?: return null
+                TerminalFrame.Snap(s, q, cols.toInt(), rows.toInt(), d)
+            }
+            "out" -> {
+                val q = whole(o.opt("q"), MAX_SAFE_INTEGER) ?: return null
+                val d = o.opt("d") as? String ?: return null
+                TerminalFrame.Out(s, q, d)
+            }
+            "size" -> {
+                val cols = whole(o.opt("cols"), Int.MAX_VALUE.toLong()) ?: return null
+                val rows = whole(o.opt("rows"), Int.MAX_VALUE.toLong()) ?: return null
+                TerminalFrame.Size(s, cols.toInt(), rows.toInt())
+            }
+            "state" -> {
+                val st = SlotState.values().firstOrNull { it.wire == o.opt("state") } ?: return null
+                TerminalFrame.State(s, st)
+            }
+            else -> null
+        }
+    }
+
+    private fun isSlot(s: String) = SLOTS.any { it.s == s }
+
+    /** A JSON integer (Int or Long, never Double or String) in 0..max, else null. */
+    private fun whole(v: Any?, max: Long): Long? {
+        val n = when (v) {
+            is Int -> v.toLong()
+            is Long -> v
+            else -> return null
+        }
+        return if (n in 0..max) n else null
+    }
+
+    /** Well-formed entries only; a malformed entry is skipped, like an unknown field. */
+    private fun parseSessions(a: org.json.JSONArray?): List<SessionInfo> {
+        if (a == null) return emptyList()
+        val out = ArrayList<SessionInfo>()
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            val s = o.opt("s") as? String ?: continue
+            val label = o.opt("label") as? String ?: continue
+            if (!isSlot(s)) continue
+            val state = SlotState.values().firstOrNull { it.wire == o.opt("state") } ?: continue
+            val cols = whole(o.opt("cols"), Int.MAX_VALUE.toLong()) ?: continue
+            val rows = whole(o.opt("rows"), Int.MAX_VALUE.toLong()) ?: continue
+            val q = whole(o.opt("q"), MAX_SAFE_INTEGER) ?: continue
+            out += SessionInfo(s, label, state, cols.toInt(), rows.toInt(), q)
+        }
+        return out
     }
 
     fun newEpoch(random: SecureRandom = secureRandom): String = randomHex(random, EPOCH_BYTES)
