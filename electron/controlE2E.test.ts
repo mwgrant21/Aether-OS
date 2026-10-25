@@ -396,6 +396,8 @@ describe('phone control end to end: terminals', () => {
     expect(spy).toEqual({ retained: 1, attached: 1, detached: 0 });
     await controlHub.revokeOne(controlHub.status().devices[0].ref);
     expect(await ctl.closed).toBe(1000);
+    // the client sees the close frame before the server's own 'close' event (end of the handshake) runs the gateway teardown
+    await waitFor(() => spy.detached === 1);
     expect(spy).toEqual({ retained: 1, attached: 1, detached: 1 });
     await controlHub.setEnabled(false);
     expect(spy.retained).toBe(0);
