@@ -117,9 +117,16 @@ class TerminalHost(
                 val known = sizes[frame.s]
                 val (cols, rows) = if (frame.cols > 0 && frame.rows > 0) frame.cols to frame.rows else known ?: (80 to 24)
                 if (frame.cols > 0 && frame.rows > 0) sizes[frame.s] = cols to rows
+                try {
+                    post(BridgeOut.snap(frame.s, frame.q, cols, rows, frame.d))
+                } catch (e: Exception) {
+                    // The page did not reset: no baseline, and let the next gap re-attach once.
+                    feed.forget(frame.s)
+                    awaitingSnap.remove(frame.s)
+                    throw e
+                }
                 feed.onSnap(frame.s, frame.q)
                 awaitingSnap.remove(frame.s)
-                post(BridgeOut.snap(frame.s, frame.q, cols, rows, frame.d))
             }
             is TerminalFrame.Out -> when (feed.onOut(frame.s, frame.q)) {
                 TerminalFeed.Verdict.Accept -> try {

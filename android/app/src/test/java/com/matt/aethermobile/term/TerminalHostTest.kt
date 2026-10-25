@@ -24,6 +24,7 @@ class TerminalHostTest {
         feed = feed,
     )
 
+    // Both sides are re-parsed from strings, so Long vs Integer cannot false-fail.
     // Type-aware, order-free: class + value per key, recursive, extra/missing keys fail.
     private fun norm(v: Any?): Any? = when (v) {
         is JSONObject -> v.keys().asSequence().associateWith { norm(v.get(it)) }
@@ -213,6 +214,35 @@ class TerminalHostTest {
         throwOnPost = false
         host.onFrame(TerminalFrame.Out("claude", 3, "next"))
         assertEquals(listOf("attach claude -"), calls)
+    }
+
+    @Test fun failedPostOfSnapForgetsBaselineAndNextOutReattachesOnce() {
+        ready(); host.select("claude")
+        calls.clear()
+        throwOnPost = true
+        host.onFrame(TerminalFrame.Snap("claude", 3, 100, 30, "S"))
+        throwOnPost = false
+        host.onFrame(TerminalFrame.Out("claude", 4, "x"))
+        host.onFrame(TerminalFrame.Out("claude", 5, "y"))
+        assertEquals(listOf("attach claude -"), calls)
+        host.onFrame(TerminalFrame.Snap("claude", 5, 100, 30, "S2"))
+        host.onFrame(TerminalFrame.Out("claude", 5, "dup"))
+        host.onFrame(TerminalFrame.Out("claude", 6, "z"))
+        val written = posts.map { JSONObject(it) }.filter { it.getString("t") != "show" }.map { it.getString("d") }
+        assertEquals(listOf("S2", "z"), written)
+    }
+
+    @Test fun failedSnapPostWithExistingBaselineDoesNotAcceptStaleOut() {
+        ready(); host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 1, 100, 30, "S"))
+        calls.clear()
+        throwOnPost = true
+        host.onFrame(TerminalFrame.Snap("claude", 2, 100, 30, "S2"))
+        throwOnPost = false
+        host.onFrame(TerminalFrame.Out("claude", 2, "x"))
+        host.onFrame(TerminalFrame.Out("claude", 3, "y"))
+        assertEquals(listOf("attach claude -"), calls)
+        assertEquals(listOf("S"), posts.map { JSONObject(it) }.filter { it.getString("t") != "show" }.map { it.getString("d") })
     }
 
     @Test fun typeRegressionInBuilderIsCaughtByAssertJson() {
