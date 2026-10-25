@@ -12,6 +12,9 @@ import { createRemoteHub, type RemoteHub } from './remote/remoteHub';
 import { startRemoteServer } from './remote/remoteServer';
 import { createControlHub, type ControlHub } from './control/controlHub';
 import type { StoredSession } from './remote/types';
+import { createTerminalHub } from './terminalHub';
+import type { PtyLike } from './ptyLifecycle';
+import type { TerminalReadPort, TerminalSlotId } from '../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../protocol/mobile-protocol.json'), 'utf8'));
 const HELLO: string = spec.frames.hello;
@@ -90,10 +93,31 @@ let controlHub: ControlHub;
 let deviceStore: ReturnType<typeof memStore>;
 let confirmPair: ReturnType<typeof vi.fn>;
 let flag: boolean;
+let terminalHub: ReturnType<typeof createTerminalHub>;
+// Counts what control does to the real read port: outstanding retains and attachments that were never detached.
+let spy: { retained: number; attached: number; detached: number };
 
 beforeEach(() => {
   deviceStore = memStore();
   flag = false;
+  terminalHub = createTerminalHub();
+  spy = { retained: 0, attached: 0, detached: 0 };
+  const real = terminalHub.readPort();
+  const terminals: TerminalReadPort = {
+    list: () => real.list(),
+    onState: cb => real.onState(cb),
+    attach: (s, q, tap) => {
+      spy.attached += 1;
+      const h = real.attach(s, q, tap);
+      return { detach: () => { spy.detached += 1; h.detach(); } };
+    },
+    retain: () => {
+      spy.retained += 1;
+      const release = real.retain();
+      let done = false;
+      return () => { if (!done) { done = true; spy.retained -= 1; } release(); };
+    },
+  };
   confirmPair = vi.fn(async () => true);
   remoteHub = createRemoteHub({
     resolveSession: () => null,
@@ -105,6 +129,7 @@ beforeEach(() => {
     listener: remoteHub.listenerPort(),
     store: deviceStore,
     settings: { read: () => flag, persist: on => { flag = on; return flag; } },
+    terminals,
     confirmPair: (peer, replaces) => confirmPair(peer, replaces),
     renderQr: () => '<svg/>',
   });
@@ -147,7 +172,11 @@ describe('phone control end to end (real ws)', () => {
     ctl.ws.send(HELLO);
     await waitFor(() => ctl.msgs.length === 1);
     const welcome = ctl.msgs[0];
-    expect(welcome).toMatchObject({ t: 'welcome', v: 1, sessions: [], applied: {}, prompts: [] });
+    expect(welcome).toMatchObject({ t: 'welcome', v: 1, sessions: [
+      { s: 'claude', label: 'Terminal', state: 'not-started', cols: 0, rows: 0, q: 0 },
+      { s: 'terminal2', label: 'Terminal 2', state: 'not-started', cols: 0, rows: 0, q: 0 },
+      { s: 'codex', label: 'Codex', state: 'not-started', cols: 0, rows: 0, q: 0 },
+    ], applied: {}, prompts: [] });
     expect(welcome.proof).toBe(expectedProof(token, NONCE));
     expect(welcome.expiresAtMs as number).toBeGreaterThan(Date.now());
     expect(controlHub.status().connected).toBe(1);
@@ -252,4 +281,172 @@ describe('phone control end to end (real ws)', () => {
     // a control token is not a viewer cookie
     expect(await openWs(address, '/ws', { Cookie: `aether_remote=${token}`, Origin: `http://${address}` })).toEqual({ status: 401 });
   });
+});
+
+// ---- terminals: the real terminalHub read port behind the real gateway, over a real ws client ----
+
+const of = (c: Ctl, t: string, s?: string): Array<Record<string, unknown>> => c.msgs.filter(m => m.t === t && (s === undefined || m.s === s));
+const settle = (ms = 60) => new Promise<void>(r => setTimeout(r, ms));
+const tick = () => new Promise<void>(r => setTimeout(r, 0));
+
+function fakePty(): PtyLike & { sizes: Array<[number, number]>; data(d: string): void; exit(): void } {
+  let onData: (d: string) => void = () => {};
+  let onExit: () => void = () => {};
+  const p = {
+    sizes: [] as Array<[number, number]>,
+    onData: (cb: (d: string) => void) => { onData = cb; },
+    onExit: (cb: () => void) => { onExit = cb; },
+    kill: () => {}, write: () => {},
+    resize: (c: number, r: number) => { p.sizes.push([c, r]); },
+    data: (d: string) => onData(d),
+    exit: () => onExit(),
+  };
+  return p;
+}
+
+/** Starts a slot on the real hub and records what the PC-side (renderer) handler receives. */
+function startSlot(id: TerminalSlotId, size = { cols: 100, rows: 30 }) {
+  const pty = fakePty();
+  const pc: string[] = [];
+  terminalHub.slot(id).start(() => pty, { onData: d => { pc.push(d); }, onAlive: () => {}, onExit: () => {} }, size);
+  return { pty, pc };
+}
+
+async function connectAndHello(address: string, token: string): Promise<Ctl> {
+  const ctl = await connectCtl(address, token);
+  ctl.ws.send(HELLO);
+  await waitFor(() => ctl.msgs.length >= 1);
+  return ctl;
+}
+const attach = (c: Ctl, s: string, q?: number) => c.ws.send(JSON.stringify(q === undefined ? { t: 'attach', s } : { t: 'attach', s, q }));
+
+describe('phone control end to end: terminals', () => {
+  it('welcome lists the three slots; attach gives a snap then live out; size, state, detach, resume and restart behave', async () => {
+    const { address, token } = await pairDevice();
+    expect(spy.retained).toBe(1);
+    const claude = startSlot('claude');
+    claude.pty.data('hello world');
+    const ctl = await connectAndHello(address, token);
+    const w = ctl.msgs[0] as { t: string; sessions: Array<{ s: string; state: string; cols: number; rows: number; q: number }> };
+    expect(w.t).toBe('welcome');
+    expect(w.sessions.map(x => [x.s, x.state])).toEqual([['claude', 'running'], ['terminal2', 'not-started'], ['codex', 'not-started']]);
+    expect(w.sessions[0]).toMatchObject({ cols: 100, rows: 30 });
+
+    attach(ctl, 'claude');
+    await waitFor(() => of(ctl, 'snap').length === 1);
+    const snap = of(ctl, 'snap')[0] as { q: number; cols: number; rows: number; d: string };
+    expect(snap).toMatchObject({ s: 'claude', cols: 100, rows: 30 });
+    expect(snap.d).toContain('hello world');
+    expect(snap.q).toBe(w.sessions[0].q);
+
+    claude.pty.data('more');
+    await waitFor(() => of(ctl, 'out', 'claude').length === 1);
+    expect(of(ctl, 'out')[0]).toMatchObject({ q: snap.q + 1, d: 'more' });
+
+    terminalHub.slot('claude').resize(120, 40);
+    await waitFor(() => of(ctl, 'size', 'claude').length === 1);
+    expect(of(ctl, 'size')[0]).toMatchObject({ cols: 120, rows: 40 });
+    expect(claude.pty.sizes).toEqual([[120, 40]]);
+
+    claude.pty.data('after-resize');
+    await waitFor(() => of(ctl, 'out', 'claude').length === 2);
+    const lastQ = of(ctl, 'out', 'claude')[1].q as number;
+    expect(lastQ).toBe(snap.q + 2);
+
+    // state reaches a ready socket for every slot, whether or not it is attached
+    const t2 = startSlot('terminal2');
+    await waitFor(() => of(ctl, 'state', 'terminal2').length === 1);
+    expect(of(ctl, 'state')[0]).toEqual({ t: 'state', s: 'terminal2', state: 'running' });
+    t2.pty.exit();
+    await waitFor(() => of(ctl, 'state', 'terminal2').length === 2);
+    expect(of(ctl, 'state', 'terminal2')[1]).toMatchObject({ state: 'exited' });
+    expect(of(ctl, 'out', 'terminal2')).toEqual([]); // never attached: no terminal frames for it
+
+    // detach -> silence; re-attach with q -> exact resume of what was missed, no snap
+    ctl.ws.send(JSON.stringify({ t: 'detach', s: 'claude' }));
+    await settle();
+    const before = ctl.msgs.length;
+    claude.pty.data('while-away');
+    await settle();
+    expect(ctl.msgs.length).toBe(before);
+    attach(ctl, 'claude', lastQ);
+    await waitFor(() => of(ctl, 'out', 'claude').length === 3);
+    expect(of(ctl, 'out', 'claude')[2]).toEqual({ t: 'out', s: 'claude', q: lastQ + 1, d: 'while-away' });
+    expect(of(ctl, 'snap')).toHaveLength(1);
+
+    // restart of an attached slot -> snap with empty d at a fresh q
+    const second = startSlot('claude');
+    await waitFor(() => of(ctl, 'snap', 'claude').length === 2);
+    expect(of(ctl, 'snap', 'claude')[1]).toMatchObject({ s: 'claude', d: '', q: lastQ + 2 });
+    second.pty.data('fresh');
+    await waitFor(() => of(ctl, 'out', 'claude').length === 4);
+    expect(of(ctl, 'out', 'claude')[3]).toMatchObject({ q: lastQ + 3, d: 'fresh' });
+
+    // the PC-side handler saw every chunk of the first pty regardless of the phone
+    expect(claude.pc).toEqual(['hello world', 'more', 'after-resize', 'while-away']);
+    expect(second.pc).toEqual(['fresh']);
+  });
+
+  it('revoke closes the socket and detaches its attachments; the retain stays until control is disabled, then returns to 0', async () => {
+    const { address, token } = await pairDevice();
+    startSlot('claude').pty.data('x');
+    const ctl = await connectAndHello(address, token);
+    attach(ctl, 'claude');
+    await waitFor(() => of(ctl, 'snap').length === 1);
+    expect(spy).toEqual({ retained: 1, attached: 1, detached: 0 });
+    await controlHub.revokeOne(controlHub.status().devices[0].ref);
+    expect(await ctl.closed).toBe(1000);
+    expect(spy).toEqual({ retained: 1, attached: 1, detached: 1 });
+    await controlHub.setEnabled(false);
+    expect(spy.retained).toBe(0);
+  });
+
+  it('disabling control drops the mirror: nothing more is sent, and a later attach starts from an empty mirror', async () => {
+    const { address, token } = await pairDevice();
+    const claude = startSlot('claude');
+    claude.pty.data('secret-ish history');
+    const first = await connectAndHello(address, token);
+    attach(first, 'claude');
+    await waitFor(() => of(first, 'snap').length === 1);
+    expect((of(first, 'snap')[0] as { d: string }).d).toContain('secret-ish history');
+
+    await controlHub.setEnabled(false);
+    expect(await first.closed).toBe(1000);
+    expect(spy.retained).toBe(0);
+    const seen = first.msgs.length;
+    claude.pty.data('output while off');
+    await settle();
+    expect(first.msgs.length).toBe(seen);
+
+    const on = await controlHub.setEnabled(true); // disabling does not revoke the device
+    expect(spy.retained).toBe(1);
+    const second = await connectAndHello(on.address!, token);
+    attach(second, 'claude');
+    await waitFor(() => of(second, 'snap').length === 1);
+    const resnap = of(second, 'snap')[0] as { d: string };
+    expect(resnap.d).not.toContain('secret-ish history');
+    expect(resnap.d).not.toContain('output while off');
+    expect(claude.pc).toEqual(['secret-ish history', 'output while off']);
+  });
+
+  it('a 5 MB escape-dense flood while attached is delivered whole, with no slow-consumer bye, and the PC handler sees every chunk', async () => {
+    const { address, token } = await pairDevice();
+    const claude = startSlot('claude');
+    const ctl = await connectAndHello(address, token);
+    attach(ctl, 'claude');
+    await waitFor(() => of(ctl, 'snap').length === 1);
+    const baseQ = (of(ctl, 'snap')[0] as { q: number }).q;
+
+    // every character is an escape byte, so the JSON-escaped wire form is 6x the raw size (D5)
+    const chunk = '\u001b[0m'.repeat(8192).slice(0, 16 * 1024);
+    const total = Math.ceil((5 * 1024 * 1024) / chunk.length);
+    for (let i = 0; i < total; i++) {
+      claude.pty.data(chunk);
+      await tick();
+    }
+    await waitFor(() => of(ctl, 'out', 'claude').length === total, 20000);
+    expect(of(ctl, 'out', 'claude').map(m => m.q)).toEqual(Array.from({ length: total }, (_, i) => baseQ + 1 + i));
+    expect(ctl.msgs.some(m => m.t === 'bye')).toBe(false);
+    expect(claude.pc.join('')).toBe(chunk.repeat(total));
+  }, 60000);
 });
