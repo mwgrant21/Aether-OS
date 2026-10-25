@@ -24,11 +24,16 @@ class TerminalHostTest {
         feed = feed,
     )
 
-    private fun fields(o: JSONObject): Map<String, String> =
-        o.keys().asSequence().associateWith { o.get(it).toString() }
+    // Type-aware, order-free: class + value per key, recursive, extra/missing keys fail.
+    private fun norm(v: Any?): Any? = when (v) {
+        is JSONObject -> v.keys().asSequence().associateWith { norm(v.get(it)) }
+        is org.json.JSONArray -> (0 until v.length()).map { norm(v.get(it)) }
+        null -> null
+        else -> v.javaClass to v
+    }
 
     private fun assertJson(expected: String, actual: String) =
-        assertEquals(fields(JSONObject(expected)), fields(JSONObject(actual)))
+        assertEquals(norm(JSONObject(expected)), norm(JSONObject(actual)))
 
     private fun info(s: String, st: SlotState = SlotState.RUNNING, cols: Int = 100, rows: Int = 30) =
         SessionInfo(s, s, st, cols, rows, 0)
@@ -177,6 +182,43 @@ class TerminalHostTest {
         host.onPage(PageMessage.Consumed("codex", 1))
         assertEquals(15L, host.consumed("claude"))
         assertEquals(16L, host.consumedTotal)
+    }
+
+    @Test fun failedAttachLeavesNothingAttachedAndReselectRetries() {
+        ready()
+        attachResult = false
+        host.select("claude")
+        attachResult = true
+        host.select("claude")
+        assertEquals(listOf("attach claude -", "attach claude -"), calls)
+        host.select("claude") // now attached: shortcut, no third attach
+        assertEquals(2, calls.size)
+    }
+
+    @Test fun throwingAttachOnSelectAlsoRetries() {
+        ready()
+        throwOnAttach = true
+        host.select("claude")
+        throwOnAttach = false
+        host.select("claude")
+        assertEquals(listOf("attach claude -"), calls)
+    }
+
+    @Test fun failedPostOfAcceptedOutForgetsBaselineSoNextFrameReattaches() {
+        ready(); host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 1, 100, 30, ""))
+        calls.clear()
+        throwOnPost = true
+        host.onFrame(TerminalFrame.Out("claude", 2, "lost"))
+        throwOnPost = false
+        host.onFrame(TerminalFrame.Out("claude", 3, "next"))
+        assertEquals(listOf("attach claude -"), calls)
+    }
+
+    @Test fun typeRegressionInBuilderIsCaughtByAssertJson() {
+        val bad = JSONObject().put("t", "size").put("s", "claude").put("cols", "80").put("rows", 24).toString()
+        val threw = try { assertJson("""{"t":"size","s":"claude","cols":80,"rows":24}""", bad); false } catch (_: AssertionError) { true }
+        assertTrue(threw)
     }
 
     @Test fun zoomPostsOnlyValidValues() {

@@ -79,9 +79,10 @@ class TerminalHost(
             feed.forget(prev)
             awaitingSnap.remove(prev)
         }
-        attached = slot
         val q = feed.lastQ(slot)
         val sent = safe { attach(slot, q) } ?: false
+        // A failed attach leaves nothing attached, so selecting the same slot again retries.
+        attached = if (sent) slot else null
         // A null-q attach asks for a snapshot; out frames before it are covered by it.
         if (sent && q == null) awaitingSnap.add(slot) else awaitingSnap.remove(slot)
         safe { post(BridgeOut.show(slot)) }
@@ -121,7 +122,13 @@ class TerminalHost(
                 post(BridgeOut.snap(frame.s, frame.q, cols, rows, frame.d))
             }
             is TerminalFrame.Out -> when (feed.onOut(frame.s, frame.q)) {
-                TerminalFeed.Verdict.Accept -> post(BridgeOut.out(frame.s, frame.q, frame.d))
+                TerminalFeed.Verdict.Accept -> try {
+                    post(BridgeOut.out(frame.s, frame.q, frame.d))
+                } catch (e: Exception) {
+                    // The page never got it: drop the baseline so the next frame re-attaches for a snapshot.
+                    feed.forget(frame.s)
+                    throw e
+                }
                 TerminalFeed.Verdict.Duplicate -> Unit
                 TerminalFeed.Verdict.Gap -> {
                     // One re-attach per gap; while its snapshot is pending, further gaps are dropped.
