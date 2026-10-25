@@ -19,6 +19,8 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 8;
 const CODE_TTL_MS = 60 * 60 * 1000;
 const MAX_CODE_FAILURES = 5;
+/** Device scope: wrong guesses across all addresses that burn the code (each address locks at MAX_CODE_FAILURES). */
+const MAX_CODE_FAILURES_TOTAL = 15;
 const LAST_SEEN_PERSIST_MS = 5 * 60 * 1000;
 const HASH_RE = /^[0-9a-f]{64}$/;
 const BEARER_RE = /^bearer ([A-Za-z0-9_-]{43})$/i;
@@ -149,6 +151,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
   let code: { normalised: string; expiresAtMs: number } | null = null;
   let failures = 0;
   let burned = false;
+  const peerFailures = new Map<string, number>();
 
   // Coalesced saving: one save in flight, at most one more queued behind it.
   let inFlight: Promise<void> | null = null;
@@ -238,16 +241,18 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
   }
 
   /** Shared code check. Returns the failure status, or null when the code matched (and is now consumed). */
-  function consumeCode(input: unknown): 401 | 429 | null {
+  function consumeCode(input: unknown, peerKey?: string): 401 | 429 | null {
     if (burned) return 429;
     if (typeof input !== 'string') return 401;
     const active = activeCode();
     if (!active) return 401;
+    if (peerKey !== undefined && (peerFailures.get(peerKey) ?? 0) >= MAX_CODE_FAILURES) return 429;
     const given = Buffer.from(normaliseCode(input), 'utf8');
     const want = Buffer.from(active.normalised, 'utf8');
     if (!safeEqual(given, want)) {
       failures += 1;
-      if (failures >= MAX_CODE_FAILURES) {
+      if (peerKey !== undefined) peerFailures.set(peerKey, (peerFailures.get(peerKey) ?? 0) + 1);
+      if (failures >= (peerKey === undefined ? MAX_CODE_FAILURES : MAX_CODE_FAILURES_TOTAL)) {
         code = null;
         burned = true;
         changed();
@@ -256,6 +261,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     }
     code = null;
     failures = 0;
+    peerFailures.clear();
     return null;
   }
 
@@ -280,6 +286,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       const expiresAtMs = now() + codeTtlMs;
       code = { normalised: out, expiresAtMs };
       failures = 0;
+      peerFailures.clear();
       burned = false;
       changed();
       return { code: `${out.slice(0, 4)}-${out.slice(4)}`, expiresAtMs };
@@ -288,6 +295,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     clearPairing() {
       code = null;
       failures = 0;
+      peerFailures.clear();
       burned = false;
       changed();
     },
@@ -415,7 +423,7 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       let bound: string | undefined;
       if (typeof peer === 'string' && IPV4_RE.test(normalisePeer(peer))) bound = normalisePeer(peer);
       if (bound === undefined) return { ok: false, status: 401 }; // device entries always carry a peer
-      const bad = consumeCode(input);
+      const bad = consumeCode(input, bound);
       if (bad !== null) return { ok: false, status: bad };
       let approved = false;
       try { approved = (await approve()) === true; } catch { approved = false; }

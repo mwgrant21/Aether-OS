@@ -698,6 +698,45 @@ describe('device auth scope', () => {
     expect(auth.authenticate(undefined, PEER, o)).toBeNull();
     expect(auth.authenticate(bearer(token), PEER, o)).not.toBeNull();
   });
+
+  describe('per-address failure counting', () => {
+    const OTHER = '100.64.0.9';
+    const wrong = async (auth: ReturnType<typeof createDeviceAuth>, peer: string, n: number) => {
+      for (let i = 0; i < n; i++) expect(await auth.redeemDevice('ZZZZ-ZZZZ', peer, async () => true)).toEqual({ ok: false, status: 401 });
+    };
+
+    it('five wrong guesses from one address lock only that address', async () => {
+      const { auth } = dev();
+      const { code } = auth.createPairing();
+      await wrong(auth, OTHER, 5);
+      expect(await auth.redeemDevice(code, OTHER, async () => true)).toEqual({ ok: false, status: 429 });
+      expect(auth.counts().pairingActive).toBe(true);
+      expect((await auth.redeemDevice(code, PEER, async () => true)).ok).toBe(true);
+    });
+
+    it('fifteen wrong guesses across addresses burn the code for everyone', async () => {
+      const { auth } = dev();
+      const first = auth.createPairing();
+      await wrong(auth, '100.64.0.1', 5);
+      await wrong(auth, '100.64.0.2', 5);
+      await wrong(auth, '100.64.0.3', 4);
+      expect((await auth.redeemDevice(first.code, '100.64.0.4', async () => true)).ok).toBe(true);
+      const second = auth.createPairing();
+      await wrong(auth, '100.64.0.1', 5);
+      await wrong(auth, '100.64.0.2', 5);
+      await wrong(auth, '100.64.0.3', 5);
+      expect(await auth.redeemDevice(second.code, '100.64.0.4', async () => true)).toEqual({ ok: false, status: 429 });
+      expect(auth.counts().pairingActive).toBe(false);
+    });
+
+    it('a new pairing code lifts every address lockout', async () => {
+      const { auth } = dev();
+      auth.createPairing();
+      await wrong(auth, OTHER, 5);
+      const next = auth.createPairing();
+      expect((await auth.redeemDevice(next.code, OTHER, async () => true)).ok).toBe(true);
+    });
+  });
 });
 
 describe('device and viewer scopes over one store', () => {
