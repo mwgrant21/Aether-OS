@@ -1,2 +1,6 @@
 html, body { margin: 0; height: 100%; background: #0A0E14; overflow: hidden; }
 #term { position: absolute; inset: 0; }
+/* One container per slot; only the shown one is visible. A mirrored PTY is cols x rows
+   wide, so the container scrolls horizontally instead of reflowing. */
+.slot { position: absolute; inset: 0; overflow-x: auto; overflow-y: hidden; }
+.slot[hidden] { display: none; }
