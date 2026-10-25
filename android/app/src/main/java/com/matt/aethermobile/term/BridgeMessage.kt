@@ -90,3 +90,23 @@ class RateLimiter(private val maxPerSecond: Int, private val nowMs: () -> Long) 
         return count <= maxPerSecond
     }
 }
+
+/**
+ * Kotlin -> page messages (A2 bridge contract), built with org.json so page data is
+ * always escaped, never concatenated into JSON.
+ */
+object BridgeOut {
+    fun snap(s: String, q: Long, cols: Int, rows: Int, d: String): String =
+        JSONObject().put("t", "snap").put("s", s).put("q", q).put("cols", cols).put("rows", rows).put("d", d).toString()
+
+    fun out(s: String, q: Long, d: String): String =
+        JSONObject().put("t", "out").put("s", s).put("q", q).put("d", d).toString()
+
+    fun size(s: String, cols: Int, rows: Int): String =
+        JSONObject().put("t", "size").put("s", s).put("cols", cols).put("rows", rows).toString()
+
+    fun show(s: String): String = JSONObject().put("t", "show").put("s", s).toString()
+
+    /** px 0 = fit width, else 8..24 (the host validates). */
+    fun zoom(px: Int): String = JSONObject().put("t", "zoom").put("px", px).toString()
+}
