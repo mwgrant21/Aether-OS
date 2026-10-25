@@ -110,18 +110,20 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     remotePages.ts / pairingQr.ts   phone HTML/JS/CSS (textContent only) and the pairing QR.
     remoteIpc.ts / types.ts   trusted IPC for Settings; shared wire types.
     noWildcardListener.test.ts   AST guard, parses with the TypeScript compiler API (no wildcard bind, no pty, no stray fs write).
-  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 built: pairing + authenticated /ctl handshake only.
+  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 pairing + authenticated /ctl handshake; V2 read path: attach/detach, snap/out/size/state frames, welcome.sessions (read-only, no input).
     protocol.ts           closed message set and the hello/welcome proof.
-    controlGateway.ts     hello/welcome, 5 s hello deadline.
+    controlGateway.ts     hello/welcome, 5 s hello deadline; attach/detach drive a TerminalReadPort (never a write path).
     controlHub.ts         enable/disable, pairing, device auth, revoke, persisted re-enable.
     controlIpc.ts         trusted IPC for the Settings block.
     controlBoundary.test.ts   AST guard for this directory: import allow-list, one input sink, closed message set, escape hatches.
     (planned) inputRouter; the ONLY place the phone writes to a terminal is inputRouter -> terminalHub.
   controlSettings.ts    owner of ~/.aether-os/control-settings.json (the one persisted re-enable boolean).
-  terminalHub.ts / permissionBroker.ts   PLANNED: the seam over the pty managers and the permission prompts (the hub is the only importer of the pty managers besides main.ts).
+  terminalHub.ts        BUILT (V2): owns the three pty slots; main hands control only readPort() (list/attach/onState/retain). Mirror + 256 KB ring exist only while control is retained; cleared on release, quit, slot exit. Importers of the pty managers are guarded by controlBoundary rule 6.
+  terminalMirror.ts     BUILT (V2): headless xterm screen model + bounded snapshot (the only @xterm/headless importer).
+  permissionBroker.ts   PLANNED: the seam over the permission prompts.
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
-android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection only, no terminal.
+android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, but the Activity UI is not built yet (no terminal on the phone).
 protocol/mobile-protocol.json   shared wire contract + proof vectors, read by electron/control/ tests and the Android JVM tests.
 docs/superpowers/
   specs/         design specs, one per feature, YYYY-MM-DD-<topic>-design.md.
@@ -262,7 +264,7 @@ before designing anything that persists or transmits data. The short version:
   native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
   `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind, and never add a pty/write path under `electron/remote/`.
   **Separate second opt-in: phone control** (privacy §17): V1 is built (pairing + an authenticated `/ctl` handshake from a paired Android app over the same tailnet-only
-  listener); terminal input and permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
+  listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); terminal input and permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
   to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Treat as R3.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
@@ -274,7 +276,7 @@ before designing anything that persists or transmits data. The short version:
   rest of the chat model call path — the surface they guarded no longer exists.
 
 Single-user also **deletes** a lot of scope permanently: no account or multi-user auth model (the only
-auth is the phone-pairing gates of the opt-in remote view and phone control, privacy §16 and §17; phone control's terminal and approval paths are still planned), no multi-tenant schema, no
+auth is the phone-pairing gates of the opt-in remote view and phone control, privacy §16 and §17; phone control's terminal output is built read-only in V2; its input and approval paths are still planned), no multi-tenant schema, no
 shared folder or report writing, no roll-up, no sharing links, no cloud sync. TokenMonitor is the
 fleet product and writes per-seat reports to a shared folder by design; Aether OS has no equivalent
 and should never grow one.
