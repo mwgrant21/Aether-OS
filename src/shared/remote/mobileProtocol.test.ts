@@ -102,6 +102,32 @@ describe('pairing code alphabet', () => {
   })
 })
 
+describe('terminal frame goldens', () => {
+  it('every golden t is in the right messages list', () => {
+    for (const k of ['attach', 'attachResume', 'detach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['welcome', 'welcomeSessions', 'bye', 'snap', 'out', 'size', 'state']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
+  })
+  it('messages lists are exactly the declared verbs, in order', () => {
+    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach'])
+    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state'])
+  })
+  it('welcomeSessions lists the three slots in TERMINAL_SLOTS order with the six documented keys', () => {
+    const f = JSON.parse(spec.frames.welcomeSessions)
+    expect(f.sessions.map((x: { s: string }) => x.s)).toEqual(T.TERMINAL_SLOTS.map((x) => x.s))
+    expect(f.sessions.map((x: { label: string }) => x.label)).toEqual(T.TERMINAL_SLOTS.map((x) => x.label))
+    for (const x of f.sessions) {
+      expect(Object.keys(x)).toEqual(['s', 'label', 'state', 'cols', 'rows', 'q'])
+      expect(spec.terminals.states).toContain(x.state)
+    }
+  })
+  it('frame key order', () => {
+    expect(Object.keys(JSON.parse(spec.frames.snap))).toEqual(['t', 's', 'q', 'cols', 'rows', 'd'])
+    expect(Object.keys(JSON.parse(spec.frames.out))).toEqual(['t', 's', 'q', 'd'])
+    expect(Object.keys(JSON.parse(spec.frames.size))).toEqual(['t', 's', 'cols', 'rows'])
+    expect(Object.keys(JSON.parse(spec.frames.state))).toEqual(['t', 's', 'state'])
+  })
+})
+
 describe('terminals section', () => {
   const states = ['not-started', 'running', 'exited'] as const satisfies readonly T.TerminalSlotState[]
   // Exhaustive table: adding a TerminalSlotState member makes this fail to compile until it is listed.
