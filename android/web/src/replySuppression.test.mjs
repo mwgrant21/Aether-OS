@@ -141,7 +141,7 @@ describe('reply suppression', () => {
     applySize(term, 40, 10);
     await feed(term, '');
     expect([term.cols, term.rows]).toEqual([40, 10]);
-    // laid out at 80 columns then reflowed to 40: Z wraps to row 1, column 30. Resized first it would clamp to column 40 of row 0.
-    expect(term.buffer.active.getLine(1).translateToString(true)).toHaveLength(30);
+    // Z went to column 70 of an 80-column row, which the shrink then truncates. Resized first, the cursor would clamp and Z would survive at column 40.
+    expect(screen(term)).toBe('');
   });
 });
