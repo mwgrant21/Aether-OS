@@ -113,6 +113,12 @@ describe('parsePhoneMessage', () => {
     expect(parse({ ...ok, nonce: 'g0112233445566778899aabbccddeeff' })).toBeNull();
   });
 
+  it('normalises a JSON -0 attach q to +0', () => {
+    const m = parsePhoneMessage('{"t":"attach","s":"claude","q":-0}');
+    expect(m).toMatchObject({ t: 'attach', s: 'claude' });
+    expect(Object.is((m as { q: number }).q, 0)).toBe(true);
+  });
+
   it('accepts an app string of exactly 32 characters', () => {
     expect(parse({ ...ok, app: 'x'.repeat(32) })).not.toBeNull();
   });

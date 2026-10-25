@@ -22,6 +22,7 @@ import type {
   ListenerPort,
   RemoteSessionInfo,
   RemoteUnavailableReason,
+  TerminalReadPort,
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
@@ -44,6 +45,8 @@ export interface ControlHubDeps {
   listener: ListenerPort;
   store: RemoteAuthOptions['store'];
   settings: ControlSettingsPort;
+  /** Read-only terminal port (never the hub itself). retain() is held exactly while control is on. */
+  terminals: TerminalReadPort;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -93,11 +96,13 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   let generation = 0; // bumped by teardown(): a confirm opened before a disable or quit can never mint a token
   let confirmPending = false;
   const sessions = new Map<string, ControlSession>();
+  let releaseTerminals: (() => void) | null = null; // non-null exactly while this hub holds a terminals.retain()
 
   const gateway = createControlGateway({
     now,
     setTimeoutFn: deps.setTimeoutFn,
     clearTimeoutFn: deps.clearTimeoutFn,
+    terminals: deps.terminals,
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
@@ -165,7 +170,17 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   function closeSessions(reasonText: 'revoked' | 'disabled' | 'superseded'): void {
     const open = [...sessions.values()];
     sessions.clear();
-    for (const s of open) s.close(reasonText);
+    for (const s of open) {
+      try { s.close(reasonText); } catch { /* one socket that fails to close must not keep the others, or the teardown, from finishing */ }
+    }
+  }
+
+  // Drops the terminals retain exactly once per acquisition: the slot is cleared before the call, so a throwing
+  // release or a second teardown (disable then stop) can never release twice.
+  function dropTerminals(): void {
+    const release = releaseTerminals;
+    releaseTerminals = null;
+    try { release?.(); } catch { /* releasing is best effort; the hub no longer holds it */ }
   }
 
   async function teardown(): Promise<void> {
@@ -174,7 +189,11 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     clearSaveTimer();
     auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
     try { deps.listener.closeControlClients('disabled'); } catch { /* closing is best effort */ }
-    closeSessions('disabled');
+    try {
+      closeSessions('disabled');
+    } finally {
+      dropTerminals(); // privacy section 17: the retain never outlives a disable, whatever closing the sockets did
+    }
     try { await deps.listener.release(); } catch { /* already down */ }
     address = null;
   }
@@ -205,6 +224,9 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     state = 'on';
     reason = null;
     address = r.address;
+    if (releaseTerminals === null) {
+      try { releaseTerminals = deps.terminals.retain(); } catch { log('control: terminals unavailable'); }
+    }
     log('control: enabled');
     return null;
   }

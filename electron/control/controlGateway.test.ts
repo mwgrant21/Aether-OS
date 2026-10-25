@@ -345,6 +345,38 @@ describe('control gateway terminal verbs', () => {
     expect(s.closes).toEqual([1000]);
   });
 
+  it('a throwing onState unsubscribe does not skip the bye or the close', () => {
+    const fp = fakePort(INFO);
+    const port: TerminalReadPort = { ...fp.port, onState: () => () => { throw new Error('unsub failed'); } };
+    const s = fakeSocket();
+    const session = createControlGateway({ now: () => 1790000000000, terminals: port }).attach(s, identity);
+    s.feed(helloFrame);
+    expect(() => session.close('disabled')).not.toThrow();
+    expect(s.sent.map((x) => JSON.parse(x).t)).toEqual(['welcome', 'bye']);
+    expect(s.closes).toEqual([1000]);
+    expect(() => s.drop()).not.toThrow(); // the socket-close path tears down too
+  });
+
+  it('a late handle.detach() that throws (socket closed during attach) does not escape the message handler', () => {
+    const s = fakeSocket();
+    const detach = vi.fn(() => { throw new Error('late detach failed'); });
+    const port: TerminalReadPort = {
+      ...fakePort(INFO).port,
+      attach: () => { s.drop(); return { detach }; },
+    };
+    createControlGateway({ now: () => 1790000000000, terminals: port }).attach(s, identity);
+    s.feed(helloFrame);
+    expect(() => s.feed(attachFrame('claude'))).not.toThrow();
+    expect(detach).toHaveBeenCalledTimes(1);
+  });
+
+  it('an attach q of JSON -0 reaches the port as +0', () => {
+    const { fp, s } = setup();
+    s.feed(helloFrame);
+    s.feed('{"t":"attach","s":"claude","q":-0}');
+    expect(Object.is(fp.attaches[0].lastQ, 0)).toBe(true);
+  });
+
   it('state broadcast reaches a ready socket and not one that has not said hello', () => {
     const fp = fakePort(INFO);
     const gw = createControlGateway({ now: () => 0, terminals: fp.port });

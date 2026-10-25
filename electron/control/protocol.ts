@@ -62,7 +62,7 @@ export function parsePhoneMessage(text: string): PhoneMessage | null {
     const q = o.q;
     if (q === undefined) return { t: 'attach', s };
     if (typeof q !== 'number' || !Number.isSafeInteger(q) || q < 0) return null;
-    return { t: 'attach', s, q };
+    return { t: 'attach', s, q: q === 0 ? 0 : q }; // JSON "-0" parses to -0: normalise so the port never sees it
   }
   const { v, app, epoch, nonce } = o;
   if (v !== PROTOCOL_VERSION) return null;

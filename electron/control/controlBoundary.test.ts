@@ -20,9 +20,9 @@
 // transitive imports (a permitted module that itself does something unsafe) and test files, which are
 // not analysed (they may import vitest and fs), but their names are allow-listed.
 //
-// Rules deliberately NOT written here (their subject does not exist yet): the "terminalHub.ts and main.ts are
-// the only pty-manager importers" rule (V2, needs terminalHub) and "the phone path touches only
-// permissionBroker.respond" (V5, needs the broker). The permissionServer shape (single listen on 127.0.0.1)
+// Rule 6 (last describe block) is the pty-importer allow-list over all of electron/. Rule deliberately NOT
+// written here (its subject does not exist yet): "the phone path touches only permissionBroker.respond"
+// (V5, needs the broker). The permissionServer shape (single listen on 127.0.0.1)
 // is already pinned by LISTEN_ALLOWLIST in noWildcardListener.test.ts, and that file's wildcard and listen
 // scans already cover electron/control/ because they walk all of electron/.
 import { describe, it, expect } from 'vitest';
@@ -507,6 +507,43 @@ const CROSS: Array<{ id: string; files: Record<string, string>; expectViolation:
   },
 ];
 
+// ---- Rule 6: who may import the pty managers (design 5.3 item 6) ----
+// Design text says terminalHub.ts and main.ts only; the tree at the V2 pin has four importers (spec D8), so the
+// allow-list is the four that exist. A fifth importer, a type-only import, a re-export and a dynamic import all fail.
+const PTY_MODULE = /node-pty|ptyManager|codexPtyManager|ptyLifecycle/;
+const PTY_MANAGER_FILES: ReadonlySet<string> = new Set(['ptyManager.ts', 'codexPtyManager.ts', 'ptyLifecycle.ts']);
+const PTY_IMPORTERS: readonly string[] = [
+  'communicationBridge/connectedPromptObserver.ts', // ptyLifecycle (types)
+  'communicationBridge/launchConfig.ts', // buildPtyEnv from ptyManager
+  'main.ts',
+  'terminalHub.ts',
+];
+const SKIP_DIRS: ReadonlySet<string> = new Set([...RESERVED_DIRS, '__fixtures__']);
+const isProductionTs = (rel: string): boolean => /\.(?:ts|tsx|mts)$/.test(rel) && !/\.(?:test|spec)\.[a-z]+$/.test(rel) && !rel.endsWith('.d.ts');
+
+/** Importer set (paths relative to electron/) of the pty managers over in-memory sources; the managers themselves are excluded. */
+function ptyImporters(sources: ReadonlyMap<string, string>): string[] {
+  const out: string[] = [];
+  for (const [rel, text] of sources) {
+    if (!isProductionTs(rel) || PTY_MANAGER_FILES.has(rel)) continue;
+    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    if (moduleRefs(sf).some((r) => r.spec !== null && PTY_MODULE.test(r.spec))) out.push(rel);
+  }
+  return out.sort();
+}
+
+function readElectronTree(dir: string, rel = ''): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      for (const [k, v] of readElectronTree(dir, r)) m.set(k, v);
+    } else if (e.isFile() && isProductionTs(r)) m.set(r, fs.readFileSync(path.join(dir, r), 'utf8'));
+  }
+  return m;
+}
+
 const fmt = (a: Analysis): string[] => a.violations.map((x) => `[${x.rule}] ${x.msg}`);
 
 describe('phone control: real electron/control tree', () => {
@@ -623,5 +660,43 @@ describe('phone control: directory-level rules on a scratch copy', () => {
       try { fs.symlinkSync(path.join(d, 'protocol.ts'), path.join(d, 'controlIpc2.ts')); } catch { return; /* no symlink privilege on this machine */ }
       expect(scanControlDir(d).violations.join('\n')).toContain('controlIpc2.ts: [file] symlink');
     });
+  });
+});
+
+describe('phone control: rule 6, only the known modules import the pty managers', () => {
+  it('the importer set over electron/ equals the allow-list exactly', () => {
+    const tree = readElectronTree(path.join(REPO, 'electron'));
+    expect(tree.has('main.ts')).toBe(true); // the scan really reaches the tree
+    expect(tree.has('ptyManager.ts')).toBe(true);
+    expect(ptyImporters(tree)).toEqual([...PTY_IMPORTERS]);
+  });
+
+  const src = (spec: string, form = 'import') =>
+    form === 'type' ? `import type { X } from '${spec}';\nexport type Y = X;`
+    : form === 'dynamic' ? `export const load = () => import('${spec}');`
+    : form === 'export-from' ? `export { spawnPty } from '${spec}';`
+    : form === 'require' ? `const m = require('${spec}');\nexport default m;`
+    : `import { spawnPty } from '${spec}';\nexport const s = spawnPty;`;
+
+  it('a planted fifth importer is reported, in every import form', () => {
+    for (const form of ['import', 'type', 'dynamic', 'export-from', 'require']) {
+      for (const spec of ['./ptyManager', '../codexPtyManager', './ptyLifecycle', 'node-pty']) {
+        const got = ptyImporters(new Map([['main.ts', src('./ptyManager')], ['sneaky.ts', src(spec, form)]]));
+        expect({ form, spec, got }).toEqual({ form, spec, got: ['main.ts', 'sneaky.ts'] });
+      }
+    }
+  });
+
+  it('managers, tests and unrelated modules are not importers', () => {
+    const got = ptyImporters(new Map([
+      ['ptyManager.ts', src('node-pty')],
+      ['ptyLifecycle.ts', src('node-pty')],
+      ['codexPtyManager.ts', src('node-pty')],
+      ['x.test.ts', src('./ptyManager')],
+      ['d.d.ts', src('./ptyManager')],
+      ['plain.ts', src('./atomicWrite')],
+      ['dyn.ts', 'export const f = (n: string) => import(n);'],
+    ]));
+    expect(got).toEqual([]);
   });
 });
