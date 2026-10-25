@@ -2,9 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import headlessPkg from '@xterm/headless';
 import serializePkg from '@xterm/addon-serialize';
-import {
-  createTerminalMirror, TERMINAL_SNAPSHOT_BYTES, TERMINAL_SNAPSHOT_SCROLLBACK_LINES,
-} from './terminalMirror';
+import { createTerminalMirror } from './terminalMirror';
+import { TERMINAL_SNAPSHOT_BYTES, TERMINAL_SNAPSHOT_SCROLLBACK_LINES } from '../src/shared/remote/types';
 
 type T = {
   cols: number; rows: number;
@@ -202,10 +201,22 @@ describe('terminalMirror', () => {
     return s;
   };
 
+  // Plain text just over the byte cap (270 x 1000 cells): the viewport fallback must drop whole rows.
+  // One colour escape per row keeps the content cheap to generate and still proves colours are stripped.
+  const WIDE = { cols: 1000, rows: 270 };
+  const wide = (): string => {
+    let s = '';
+    for (let r = 0; r < WIDE.rows; r++) {
+      s += `\x1b[38;5;${r % 256}m${String.fromCharCode(65 + (r % 26)).repeat(WIDE.cols)}`;
+      if (r < WIDE.rows - 1) s += '\r\n';
+    }
+    return s;
+  };
+
   it('(f) drops whole rows from the top and keeps the cursor on the same content line', async () => {
-    const cols = 2000, rows = 300;
+    const { cols, rows } = WIDE;
     const m = createTerminalMirror({ cols, rows, scrollback: 0 });
-    const s = heavy(cols, rows) + '\x1b[0m\x1b[250;100H';
+    const s = wide() + '\x1b[0m\x1b[250;100H';
     m.write(s);
     const snap = await m.snapshot();
     expect(enc(snap.d)).toBeLessThanOrEqual(TERMINAL_SNAPSHOT_BYTES);
@@ -219,18 +230,17 @@ describe('terminalMirror', () => {
     expect(cb.getLine(cb.cursorY)!.translateToString(true)).toBe(rb.getLine(rb.cursorY)!.translateToString(true));
     expect(cb.cursorX).toBe(rb.cursorX);
     m.dispose();
-  }, 60_000);
+  });
 
   it('(f2) clamps the cursor row to 0 when it sits in the dropped rows', async () => {
-    const cols = 2000, rows = 300;
-    const m = createTerminalMirror({ cols, rows, scrollback: 0 });
-    m.write(heavy(cols, rows) + '\x1b[0m\x1b[2;5H');
+    const m = createTerminalMirror({ ...WIDE, scrollback: 0 });
+    m.write(wide() + '\x1b[0m\x1b[2;5H');
     const snap = await m.snapshot();
     expect(enc(snap.d)).toBeLessThanOrEqual(TERMINAL_SNAPSHOT_BYTES);
     const copy = await replay(snap.d, snap.cols, snap.rows);
     expect([copy.buffer.active.cursorX, copy.buffer.active.cursorY]).toEqual([4, 0]);
     m.dispose();
-  }, 60_000);
+  });
 
   it('(g) an oversized alt-screen snapshot replays into the alternate buffer', async () => {
     const m = createTerminalMirror({ cols: 300, rows: 120, scrollback: 0 });
@@ -242,5 +252,23 @@ describe('terminalMirror', () => {
     expect(copy.buffer.active.type).toBe('alternate');
     expect([copy.buffer.active.cursorX, copy.buffer.active.cursorY]).toEqual([8, 8]);
     m.dispose();
+  });
+
+  it('paces writes: a backlog larger than the high-water mark is queued, not handed to xterm, and drains in order', async () => {
+    const m = createTerminalMirror({ cols: 40, rows: 5 });
+    const chunk = 'line\r\n'.repeat(2000);
+    for (let i = 0; i < 400; i++) m.write(chunk); // ~4.8 MB in one tick
+    m.write('LAST');
+    expect(m.pendingBytes()).toBeGreaterThan(4_000_000);
+    const snap = await m.snapshot();
+    expect(snap.d).toContain('LAST');
+    expect(m.pendingBytes()).toBe(0);
+    m.dispose();
+  }, 60_000);
+
+  it('snapshot of a disposed mirror reports cols 0 (no snapshot)', async () => {
+    const m = createTerminalMirror({ cols: 10, rows: 3 });
+    m.dispose();
+    expect(await m.snapshot()).toEqual({ cols: 0, rows: 0, d: '' });
   });
 });

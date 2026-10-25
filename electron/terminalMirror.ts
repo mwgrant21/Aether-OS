@@ -1,15 +1,17 @@
 // Headless screen model of one PTY stream. Pure: no I/O, no logging, and it never
 // subscribes to the mirror's onData, so query replies cannot reach a PTY.
-// write/resize/snapshot run in call order: resize and snapshot are queued behind earlier
-// writes with term.write('', cb), whose callback fires after every earlier chunk is parsed.
+// write/resize/snapshot run in call order through one queue: writes are paced by the parse callback,
+// and resize/snapshot wait until every earlier write has been parsed.
 import headlessPkg from '@xterm/headless';
 import serializePkg from '@xterm/addon-serialize';
 
-// Mirrors section 2.1 of the V2 spec (src/shared/remote/types.ts, added by T1);
-// T4 should import these from types.ts and drop the local copies.
-export const TERMINAL_SNAPSHOT_BYTES = 256 * 1024;
-export const TERMINAL_SNAPSHOT_SCROLLBACK_LINES = 1000;
-export const TERMINAL_MIRROR_SCROLLBACK_LINES = 2000;
+import {
+  TERMINAL_MIRROR_SCROLLBACK_LINES, TERMINAL_SNAPSHOT_BYTES, TERMINAL_SNAPSHOT_SCROLLBACK_LINES,
+} from '../src/shared/remote/types';
+
+// Flow control: writes beyond this many UTF-16 units already handed to xterm wait in our own queue
+// (xterm discards its backlog past about 50 MB); parse-completion callbacks release them in order.
+const WRITE_HIGH_WATER = 1024 * 1024;
 
 interface HeadlessTerm {
   cols: number;
@@ -31,13 +33,14 @@ interface SerializerLike {
 const { Terminal } = headlessPkg as unknown as { Terminal: new (o: Record<string, unknown>) => HeadlessTerm };
 const { SerializeAddon } = serializePkg as unknown as { SerializeAddon: new () => SerializerLike };
 
+/** cols 0 means "no snapshot" (mirror disposed or serialization failed): d is empty and the caller must not use it. */
 export interface TerminalSnapshot { cols: number; rows: number; d: string }
 export interface TerminalMirror {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   snapshot(): Promise<TerminalSnapshot>;
   dispose(): void;
-  /** UTF-16 units written but not yet parsed; for load measurement. */
+  /** UTF-16 units written but not yet parsed (queued here plus in xterm); for load measurement. */
   pendingBytes(): number;
 }
 
@@ -55,8 +58,16 @@ export function createTerminalMirror(opts: {
   const serializer = new SerializeAddon();
   term.loadAddon(serializer);
   let disposed = false;
-  let pending = 0;
-  const waiting = new Set<() => void>();
+  let inTerm = 0;   // handed to xterm, not yet parsed
+  let queued = 0;   // waiting in our queue
+  type Op =
+    | { k: 'w'; data: string }
+    | { k: 'r'; cols: number; rows: number }
+    | { k: 's'; resolve: (s: TerminalSnapshot) => void };
+  let queue: Op[] = [];
+  let head = 0;
+  let pumping = false;
+  const NO_SNAPSHOT: TerminalSnapshot = { cols: 0, rows: 0, d: '' };
 
   const encodedLength = (s: string): number => JSON.stringify(s).length;
 
@@ -94,35 +105,67 @@ export function createTerminalMirror(opts: {
     return d;
   }
 
+  function pump(): void {
+    if (disposed || pumping) return;
+    pumping = true;
+    try {
+      while (head < queue.length) {
+        const op = queue[head];
+        if (op.k === 'w') {
+          if (inTerm >= WRITE_HIGH_WATER) break;
+          head++;
+          const n = op.data.length;
+          queued -= n;
+          inTerm += n;
+          term.write(op.data, () => { inTerm -= n; pump(); });
+        } else {
+          if (inTerm > 0) break; // every earlier write must be parsed first
+          head++;
+          if (op.k === 'r') {
+            term.resize(op.cols, op.rows);
+          } else {
+            let snap = NO_SNAPSHOT;
+            try { snap = { cols: term.cols, rows: term.rows, d: serializeBounded() }; } catch { /* no snapshot */ }
+            op.resolve(snap);
+          }
+        }
+      }
+      if (head > 1024 && head * 2 > queue.length) { queue = queue.slice(head); head = 0; }
+    } finally {
+      pumping = false;
+    }
+  }
+
   return {
     write(data) {
       if (disposed || data.length === 0) return;
-      pending += data.length;
-      term.write(data, () => { pending -= data.length; });
+      queued += data.length;
+      queue.push({ k: 'w', data });
+      pump();
     },
     resize(cols, rows) {
       if (disposed) return;
-      term.write('', () => { if (!disposed) term.resize(cols, rows); });
+      queue.push({ k: 'r', cols, rows });
+      pump();
     },
     snapshot() {
-      if (disposed) return Promise.resolve({ cols: 0, rows: 0, d: '' });
+      if (disposed) return Promise.resolve(NO_SNAPSHOT);
       return new Promise<TerminalSnapshot>((resolve) => {
-        const empty = (): void => resolve({ cols: 0, rows: 0, d: '' });
-        waiting.add(empty);
-        term.write('', () => {
-          waiting.delete(empty);
-          if (disposed) return empty();
-          resolve({ cols: term.cols, rows: term.rows, d: serializeBounded() });
-        });
+        queue.push({ k: 's', resolve });
+        pump();
       });
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const w of waiting) w();
-      waiting.clear();
+      for (let i = head; i < queue.length; i++) {
+        const op = queue[i];
+        if (op.k === 's') op.resolve(NO_SNAPSHOT);
+      }
+      queue = [];
+      head = 0;
       term.dispose();
     },
-    pendingBytes: () => pending,
+    pendingBytes: () => queued + inTerm,
   };
 }
