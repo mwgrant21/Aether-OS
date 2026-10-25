@@ -1,4 +1,5 @@
-import { PtyLifecycle, type PtyLike, type PtyLifecycleHandlers } from '../ptyLifecycle';
+import type { PtyLike, PtyLifecycleHandlers } from '../ptyLifecycle';
+import type { TerminalSlot } from '../terminalHub';
 import type { CommunicationBridgeIntegration } from './mainIntegration';
 import { createTrustPromptMatcher } from './trustPromptMatcher';
 
@@ -6,7 +7,7 @@ import { createTrustPromptMatcher } from './trustPromptMatcher';
  * the bytes. This never derives readiness, absence, or exit from matcher state. */
 export class ConnectedPromptObserver {
   private current: { pty: PtyLike; launchId: string; matcher: ReturnType<typeof createTrustPromptMatcher>; resizeDepth: number; resizeAmbiguous: boolean } | undefined;
-  constructor(private readonly lifecycle: PtyLifecycle,
+  constructor(private readonly lifecycle: Pick<TerminalSlot, 'start' | 'resize' | 'current'>,
     private readonly bridge: Pick<CommunicationBridgeIntegration, 'currentLaunchId' | 'observePrompt'>) {}
 
   start(launchId: string, dimensions: { cols: number; rows: number }, spawn: () => PtyLike, handlers: PtyLifecycleHandlers): void {
@@ -38,7 +39,7 @@ export class ConnectedPromptObserver {
           }
           handlers.onExit();
         },
-      });
+      }, dimensions);
     } catch (error) {
       if (this.current === owner) this.current = undefined;
       this.bridge.observePrompt(launchId, 'unknown');

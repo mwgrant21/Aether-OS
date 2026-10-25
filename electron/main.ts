@@ -1394,7 +1394,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
       sendToWindow('pty:exit', undefined);
       planUsageScraper.reset(); // a new pty means a fresh /usage read next time
     },
-  });
+  }, { cols, rows });
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
   pinnedPtyExited = false;
@@ -1436,7 +1436,7 @@ ipcMain.handle('codexPty:start', (event, { cols, rows }: { cols: number; rows: n
     },
     onAlive: () => sendToWindow('codexPty:alive', undefined),
     onExit: () => sendToWindow('codexPty:exit', undefined),
-  });
+  }, { cols, rows });
 });
 
 ipcMain.on('codexPty:write', (_event, input: string) => {
@@ -1462,7 +1462,7 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
     // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
     onAlive: () => {},
     onExit: () => {},
-  });
+  }, { cols, rows });
 });
 
 ipcMain.on('terminal2Pty:write', (_event, input: string) => {

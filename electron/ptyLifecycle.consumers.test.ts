@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { describe, it, expect, vi } from 'vitest';
-import { PtyLifecycle, type PtyLike } from './ptyLifecycle';
+import type { PtyLike } from './ptyLifecycle';
+import { createTerminalHub } from './terminalHub';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import capture from './__fixtures__/trust-prompt-capture.json';
 
@@ -39,7 +40,7 @@ function fakePty() {
   } satisfies PtyLike & { fireData(value: string): void; fireExit(): void };
 }
 function fixture() {
-  const ptyLifecycle = new PtyLifecycle(), codexPtyLifecycle = new PtyLifecycle(), terminal2PtyLifecycle = new PtyLifecycle();
+  const hub = createTerminalHub(), ptyLifecycle = hub.slot('claude'), codexPtyLifecycle = hub.slot('codex'), terminal2PtyLifecycle = hub.slot('terminal2');
   const spawnPty = vi.fn(), spawnCodexPty = vi.fn(), send = vi.fn(), sendToWindow = vi.fn();
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
   let launchId: string | undefined = 'launch-1';
