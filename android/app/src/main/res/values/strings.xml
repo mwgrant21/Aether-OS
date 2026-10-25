@@ -58,4 +58,9 @@
     <string name="error_superseded">Another connection replaced this one.</string>
     <string name="error_disabled">Phone control was turned off on titan.</string>
     <string name="error_closed">The connection closed.</string>
+    <string name="action_zoom_out">A-</string>
+    <string name="action_zoom_in">A+</string>
+    <string name="action_fit">Fit</string>
+    <string name="status_not_started">Not started on titan</string>
+    <string name="status_exited">Exited</string>
 </resources>

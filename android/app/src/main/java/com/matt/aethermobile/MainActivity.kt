@@ -7,6 +7,9 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
+import android.content.pm.ApplicationInfo
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
@@ -35,7 +38,11 @@ import com.matt.aethermobile.net.ControlClient
 import com.matt.aethermobile.net.ControlState
 import com.matt.aethermobile.net.Failure
 import com.matt.aethermobile.net.OkHttpTransport
+import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol
+import com.matt.aethermobile.protocol.ControlProtocol.SlotState
+import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.term.TerminalScreen
 import okhttp3.OkHttpClient
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -44,7 +51,9 @@ import javax.crypto.Cipher
 /**
  * V1 unlock flow: pair (QR or typed code) -> PC confirm -> fingerprint to save -> connected;
  * cold open -> fingerprint -> connected; 60 s background relock. All decisions live in the pure
- * [AppFlow]; this class runs its [Effect]s. No terminal (V2), no WebView, no JavaScript bridge.
+ * [AppFlow]; this class runs its [Effect]s. V2 adds the live terminal view: while the flow is
+ * Connected, [TerminalScreen] (hardened WebView, pre-warmed in onCreate) is fed by a per-connection
+ * [TerminalHost]; leaving Connected disconnects the host and reloads the page clean. No input (V3).
  *
  * Lifecycle: this class is a thin adapter. onStart/onStop (and the RESUMED/PAUSED observer)
  * forward the real callbacks synchronously to [FlowController], which owns relock bookkeeping
@@ -96,6 +105,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var unlockButton: MaterialButton
     private lateinit var retryButton: MaterialButton
     private lateinit var lockButton: MaterialButton
+    private lateinit var formScroll: View
+    private lateinit var terminalContainer: View
+    private lateinit var statusLine: TextView
+    private lateinit var tabButtons: List<MaterialButton>
+    private lateinit var screen: TerminalScreen
+
+    // Terminal state. The host is rebuilt per connection (fresh TerminalFeed); touched on the main thread.
+    private var termHost: TerminalHost? = null
+    private var selected = "claude"
+    private var zoomPx = 0 // 0 = fit width
+    private var snapLogged = false
+    private var terminalLive = false
+    private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // No screenshots, blank recents thumbnail (design spec 1.4). Must precede content.
@@ -117,6 +139,26 @@ class MainActivity : AppCompatActivity() {
         unlockButton = findViewById(R.id.unlockButton)
         retryButton = findViewById(R.id.retryButton)
         lockButton = findViewById(R.id.lockButton)
+        formScroll = findViewById(R.id.formScroll)
+        terminalContainer = findViewById(R.id.terminalContainer)
+        statusLine = findViewById(R.id.statusLine)
+        tabButtons = listOf(R.id.tab0, R.id.tab1, R.id.tab2).map { findViewById<MaterialButton>(it) }
+        tabButtons.forEachIndexed { i, b ->
+            b.setOnClickListener { selectSlot(ControlProtocol.SLOTS[i].s) }
+        }
+        findViewById<View>(R.id.zoomOutButton).setOnClickListener { stepZoom(-2) }
+        findViewById<View>(R.id.zoomInButton).setOnClickListener { stepZoom(2) }
+        findViewById<View>(R.id.fitButton).setOnClickListener { setZoom(0) }
+        screen = TerminalScreen(
+            this,
+            debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
+            onPage = { termHost?.onPage(it) },
+            onRenderGone = { if (!isDestroyed) onRenderGone() },
+        )
+        findViewById<FrameLayout>(R.id.webHolder).addView(
+            screen.webView,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
 
         pairButton.setOnClickListener { onPairClicked() }
         scanButton.setOnClickListener { onScanClicked() }
@@ -156,6 +198,9 @@ class MainActivity : AppCompatActivity() {
         pending = null
         try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
         prompt = null
+        termHost?.onDisconnected()
+        termHost = null
+        if (::screen.isInitialized) screen.destroy()
         io.shutdownNow()
         super.onDestroy()
     }
@@ -341,6 +386,7 @@ class MainActivity : AppCompatActivity() {
             // Wiped (corrupt/tampered) -> Pair; transient -> stay Locked with a retry message.
             dispatch(FlowEvent.UnlockDecryptFailed(vaultWiped = !vaultHasToken()))
         } else if (flow is FlowState.Locked) {
+            Log.d(TAG, "unlock_ok")
             sessionToken = token
             dispatch(FlowEvent.UnlockDone)
         }
@@ -418,11 +464,20 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val gen = ++connGen
+        val th = newHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
             runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
+        }, onFrame = { f ->
+            th.onFrame(f) // transport thread; the host is synchronized and ignores frames once disconnected
+            if (f is ControlProtocol.TerminalFrame.Snap && !snapLogged) {
+                snapLogged = true
+                Log.d(TAG, "first_snap_rendered")
+            }
         })
         client = c
+        termHost = th
+        snapLogged = false
         try {
             c.connect(token)
         } catch (_: RuntimeException) {
@@ -432,6 +487,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun closeSocket() {
         connGen++ // late callbacks (including our own Closed("local")) are ignored
+        endTerminal()
         val c = client
         client = null
         try { c?.close() } catch (_: RuntimeException) { }
@@ -448,7 +504,11 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "control state ${describe(s)} flow=${flow::class.java.simpleName}")
         when (s) {
             ControlState.Idle, ControlState.Connecting -> Unit
-            is ControlState.Connected -> dispatch(FlowEvent.ClientConnected(s.expiresAtMs, s.serverTimeMs))
+            is ControlState.Connected -> {
+                Log.d(TAG, "welcome")
+                dispatch(FlowEvent.ClientConnected(s.expiresAtMs, s.serverTimeMs))
+                if (flow is FlowState.Connected) startTerminal(s.sessions)
+            }
             ControlState.Revoked -> dispatch(FlowEvent.ClientRevoked)
             ControlState.Superseded -> dispatch(FlowEvent.ClientFailed(ErrorKind.Superseded))
             ControlState.Disabled -> dispatch(FlowEvent.ClientFailed(ErrorKind.Disabled))
@@ -466,6 +526,88 @@ class MainActivity : AppCompatActivity() {
         Failure.Protocol -> ErrorKind.Protocol
     }
 
+    // ---- terminal ------------------------------------------------------------------------
+
+    private fun newHost(): TerminalHost {
+        var th: TerminalHost? = null
+        th = TerminalHost(
+            attach = { s, q -> client?.attach(s, q) ?: false },
+            detach = { s -> client?.detach(s) ?: false },
+            post = screen::post, // posts to the UI thread; never waits under the host monitor
+            feed = TerminalFeed(),
+            onTabsChanged = { handler.post { if (!isDestroyed && termHost === th) renderTabs() } },
+        )
+        return th
+    }
+
+    private fun startTerminal(sessions: List<ControlProtocol.SessionInfo>) {
+        val th = termHost ?: return
+        lastSessions = sessions
+        terminalLive = true
+        th.onSessions(sessions)
+        selected = sessions.firstOrNull { it.state == SlotState.RUNNING }?.s ?: "claude"
+        th.select(selected)
+        th.zoom(zoomPx)
+        renderTabs()
+    }
+
+    /** The flow left Connected (lock, relock, error, socket closed): stop frames and drop what the page rendered. */
+    private fun endTerminal() {
+        if (!terminalLive) return
+        terminalLive = false
+        termHost?.onDisconnected()
+        termHost = null
+        screen.reset()
+    }
+
+    private fun onRenderGone() {
+        // The page lost its state: rebuild the host (fresh feed) and re-attach from a snapshot.
+        val old = termHost ?: return
+        old.onDisconnected()
+        termHost = newHost()
+        if (flow is FlowState.Connected) startTerminal(lastSessions)
+    }
+
+    private fun selectSlot(s: String) {
+        selected = s
+        termHost?.select(s)
+        renderTabs()
+    }
+
+    private fun setZoom(px: Int) {
+        zoomPx = px
+        termHost?.zoom(px)
+    }
+
+    private fun stepZoom(delta: Int) {
+        val base = if (zoomPx == 0) 14 else zoomPx
+        setZoom((base + delta).coerceIn(8, 24))
+    }
+
+    private fun renderTabs() {
+        val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
+        val density = resources.displayMetrics.density
+        tabs.forEachIndexed { i, t ->
+            val b = tabButtons[i]
+            val running = t.state == SlotState.RUNNING
+            b.text = (if (running) "● " else "○ ") + t.label
+            b.alpha = if (running) 1f else 0.5f
+            b.strokeWidth = ((if (t.s == selected) 3 else 1) * density).toInt()
+        }
+        val cur = tabs.firstOrNull { it.s == selected }
+        val s = flow
+        statusLine.setTextColor(title.currentTextColor)
+        statusLine.text = when {
+            cur?.state == SlotState.NOT_STARTED -> getString(R.string.status_not_started)
+            cur?.state == SlotState.EXITED -> getString(R.string.status_exited)
+            s is FlowState.Connected -> daysText(s)
+            else -> ""
+        }
+        if (s is FlowState.Connected && s.warn && cur?.state == SlotState.RUNNING) {
+            statusLine.setTextColor(ContextCompat.getColor(this, R.color.aether_warn))
+        }
+    }
+
     // ---- rendering -----------------------------------------------------------------------
 
     private fun render() {
@@ -478,6 +620,9 @@ class MainActivity : AppCompatActivity() {
         unlockButton.visibility = vis(s is FlowState.Locked)
         retryButton.visibility = vis(s is FlowState.Error)
         lockButton.visibility = vis(s is FlowState.Connected)
+        formScroll.visibility = vis(s !is FlowState.Connected)
+        terminalContainer.visibility = vis(s is FlowState.Connected)
+        if (s !is FlowState.Connected) endTerminal() else renderTabs()
         message.setTextColor(title.currentTextColor)
 
         val titleRes: Int

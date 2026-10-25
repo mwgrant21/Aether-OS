@@ -65,8 +65,8 @@ android {
         applicationId "com.matt.aethermobile"
         minSdk 31
         targetSdk 35
-        versionCode 2
-        versionName "0.2.0-v1"
+        versionCode 3
+        versionName "0.3.0-v2"
         buildConfigField 'String', 'TITAN_IP', "\"${titanIp}\""
     }
 
