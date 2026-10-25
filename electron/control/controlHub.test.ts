@@ -6,7 +6,7 @@ import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ListenerPort, RemoteUnavailableReason } from '../../src/shared/remote/types';
+import type { ControlSocket, ListenerPort, RemoteUnavailableReason, TerminalReadPort } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -44,7 +44,27 @@ function fakeSocket(): ControlSocket & { sent: string[]; closes: number[]; drop(
   return s;
 }
 
-function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean> } = {}) {
+/** Read-port stub that counts retains and releases; release is idempotent like the real one unless throwOnRelease is set. */
+function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean } = {}) {
+  const t = { retains: 0, releases: 0 };
+  const port: TerminalReadPort = {
+    list: () => [],
+    attach: () => ({ detach: () => {} }),
+    onState: () => () => {},
+    retain: () => {
+      if (opts.throwOnRetain) throw new Error('retain failed');
+      t.retains += 1;
+      return () => {
+        t.releases += 1;
+        if (opts.throwOnRelease) throw new Error('release failed');
+      };
+    },
+  };
+  return { port, t };
+}
+
+function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals> } = {}) {
+  const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
   const listener = {
@@ -61,13 +81,14 @@ function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confir
   const logs: string[] = [];
   const hub = createControlHub({
     listener, store, settings, confirmPair,
+    terminals: terms.port,
     renderQr: t => `<svg>${t.length}</svg>`,
     log: l => { logs.push(l); },
     setTimeoutFn: (fn, ms) => { const id = nextId++; timers.push({ id, fn, ms }); return id; },
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
   });
-  return { hub, listener, settings, store, confirmPair, timers, logs };
+  return { hub, listener, settings, store, confirmPair, timers, logs, terms: terms.t };
 }
 
 async function pairOne(hub: ReturnType<typeof setup>['hub']) {
@@ -595,6 +616,91 @@ describe('control hub sessions and revoke', () => {
     expect(all).not.toContain((r as { token: string }).token);
     expect(all).not.toContain(made.code);
     expect(all).not.toMatch(/[0-9a-f]{64}/);
+  });
+});
+
+describe('control hub terminals retain balance', () => {
+  it('retains when control turns on, not before, and once however often enable is repeated', async () => {
+    const { hub, terms } = setup();
+    hub.init();
+    expect(terms.retains).toBe(0);
+    await hub.setEnabled(true);
+    await hub.setEnabled(true);
+    expect(terms).toEqual({ retains: 1, releases: 0 });
+  });
+
+  it('a user disable releases once; a later stop() does not release again', async () => {
+    const { hub, terms } = setup();
+    await hub.setEnabled(true);
+    await hub.setEnabled(false);
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+    await hub.stop();
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+  });
+
+  it('stop() at quit releases once, and a repeated stop() does not', async () => {
+    const { hub, terms } = setup();
+    await hub.setEnabled(true);
+    await hub.stop();
+    await hub.stop();
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+  });
+
+  it('never retains when the listener is unavailable (reason, or acquire throwing), and stop() releases nothing', async () => {
+    const a = setup({ acquire: async () => ({ ok: false, reason: 'port-in-use' }) });
+    await a.hub.setEnabled(true);
+    await a.hub.stop();
+    expect(a.terms).toEqual({ retains: 0, releases: 0 });
+    const b = setup({ acquire: async () => { throw new Error('boom'); } });
+    await b.hub.setEnabled(true);
+    await b.hub.setEnabled(false);
+    expect(b.terms).toEqual({ retains: 0, releases: 0 });
+  });
+
+  it('a failed launch attempt followed by a successful retry holds exactly one retain', async () => {
+    let n = 0;
+    const { hub, terms } = setup({ flag: true, acquire: async () => (n++ === 0 ? { ok: false, reason: 'no-tailnet-address' } : { ok: true, address: ADDR }) });
+    await hub.autoEnable();
+    expect(terms.retains).toBe(0);
+    await hub.setEnabled(true);
+    expect(terms).toEqual({ retains: 1, releases: 0 });
+    await hub.stop();
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+  });
+
+  it('a disable while a pairing confirm is open releases once, and the late answer neither re-retains nor releases', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const { hub, terms } = setup({ confirm: () => new Promise<boolean>(r => { answer = r; }) });
+    await hub.setEnabled(true);
+    const made = await hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = hub.port.pair(made.code, PEER);
+    await tick();
+    await hub.setEnabled(false);
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+    answer(true);
+    expect(await pending).toEqual({ status: 403 });
+    await hub.stop();
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+  });
+
+  it('a throwing release does not break the disable, and the next enable retains afresh and balances again', async () => {
+    const terminals = fakeTerminals({ throwOnRelease: true });
+    const { hub, terms } = setup({ terminals });
+    await hub.setEnabled(true);
+    await expect(hub.setEnabled(false)).resolves.toMatchObject({ state: 'off' });
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+    await hub.setEnabled(true);
+    await hub.stop();
+    expect(terms).toEqual({ retains: 2, releases: 2 });
+  });
+
+  it('a throwing retain leaves control on, logs a fixed line and attempts no release', async () => {
+    const { hub, terms, logs } = setup({ terminals: fakeTerminals({ throwOnRetain: true }) });
+    await expect(hub.setEnabled(true)).resolves.toMatchObject({ state: 'on' });
+    expect(logs).toContain('control: terminals unavailable');
+    await hub.stop();
+    expect(terms).toEqual({ retains: 0, releases: 0 });
   });
 });
 

@@ -1524,6 +1524,7 @@ const remoteHub = createRemoteHub({
 // attach after a viewer-only start fails closed by design.
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
+  terminals: terminalHub.readPort(), // the read-only port, never terminalHub or a slot
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),

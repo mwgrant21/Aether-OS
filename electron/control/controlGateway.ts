@@ -76,7 +76,11 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       attachments.clear();
       const unsub = unsubscribeState;
       unsubscribeState = null;
-      unsub?.();
+      try {
+        unsub?.();
+      } catch {
+        // a failing unsubscribe must not skip the bye or the close that follow
+      }
     };
 
     const close = (reason: ByeReason): void => {
@@ -137,7 +141,14 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       };
       const handle = port.attach(slot, lastQ, tap);
       if (entry.live) entry.handle = handle;
-      else handle.detach(); // detached or closed while attach() was still replaying synchronously
+      else {
+        // detached or closed while attach() was still replaying synchronously
+        try {
+          handle.detach();
+        } catch {
+          // a failing late detach must not escape into the message handler
+        }
+      }
     };
 
     socket.onMessage((text) => {
