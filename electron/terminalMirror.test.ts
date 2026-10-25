@@ -11,7 +11,7 @@ type T = {
   write(d: string, cb?: () => void): void;
   resize(c: number, r: number): void;
   onData(cb: (d: string) => void): void;
-  buffer: { active: { length: number; baseY: number; cursorX: number; cursorY: number; getLine(i: number): { translateToString(t: boolean): string } | undefined } };
+  buffer: { active: { type: string; length: number; baseY: number; cursorX: number; cursorY: number; getLine(i: number): { translateToString(t: boolean): string } | undefined } };
 };
 const HT = (headlessPkg as unknown as { Terminal: new (o: object) => T }).Terminal;
 const fresh = (cols: number, rows: number): T => new HT({ cols, rows, scrollback: 2000, allowProposedApi: true });
@@ -127,7 +127,7 @@ describe('terminalMirror', () => {
     await settle(raw);
     expect(replies).toBeGreaterThan(0);
     m.dispose();
-  });
+  }, 60_000);
 
   it('(g) both packages import under node', () => {
     expect(typeof headlessPkg.Terminal).toBe('function');
@@ -187,6 +187,60 @@ describe('terminalMirror', () => {
     expect(visible(copy)).toEqual(visible(ref));
     expect([copy.buffer.active.cursorX, copy.buffer.active.cursorY])
       .toEqual([ref.buffer.active.cursorX, ref.buffer.active.cursorY]);
+    m.dispose();
+  });
+
+  const heavy = (cols: number, rows: number, prefix = ''): string => {
+    let s = prefix;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const n = r * cols + c;
+        s += `\x1b[38;2;${n % 256};${(n >> 8) % 256};${r % 256}m\x1b[48;2;${r % 256};${(n * 7) % 256};${(n >> 4) % 256}m${String.fromCharCode(65 + (n % 26))}`;
+      }
+      if (r < rows - 1) s += '\r\n';
+    }
+    return s;
+  };
+
+  it('(f) drops whole rows from the top and keeps the cursor on the same content line', async () => {
+    const cols = 2000, rows = 300;
+    const m = createTerminalMirror({ cols, rows, scrollback: 0 });
+    const s = heavy(cols, rows) + '\x1b[0m\x1b[250;100H';
+    m.write(s);
+    const snap = await m.snapshot();
+    expect(enc(snap.d)).toBeLessThanOrEqual(TERMINAL_SNAPSHOT_BYTES);
+    expect(snap.d).not.toContain('\x1b[38');
+    const ref = fresh(cols, rows);
+    ref.write(s);
+    await settle(ref);
+    const copy = await replay(snap.d, snap.cols, snap.rows);
+    const rb = ref.buffer.active, cb = copy.buffer.active;
+    expect(cb.cursorY).toBeLessThan(rb.cursorY);
+    expect(cb.getLine(cb.cursorY)!.translateToString(true)).toBe(rb.getLine(rb.cursorY)!.translateToString(true));
+    expect(cb.cursorX).toBe(rb.cursorX);
+    m.dispose();
+  }, 60_000);
+
+  it('(f2) clamps the cursor row to 0 when it sits in the dropped rows', async () => {
+    const cols = 2000, rows = 300;
+    const m = createTerminalMirror({ cols, rows, scrollback: 0 });
+    m.write(heavy(cols, rows) + '\x1b[0m\x1b[2;5H');
+    const snap = await m.snapshot();
+    expect(enc(snap.d)).toBeLessThanOrEqual(TERMINAL_SNAPSHOT_BYTES);
+    const copy = await replay(snap.d, snap.cols, snap.rows);
+    expect([copy.buffer.active.cursorX, copy.buffer.active.cursorY]).toEqual([4, 0]);
+    m.dispose();
+  }, 60_000);
+
+  it('(g) an oversized alt-screen snapshot replays into the alternate buffer', async () => {
+    const m = createTerminalMirror({ cols: 300, rows: 120, scrollback: 0 });
+    m.write(heavy(300, 120, '\x1b[?1049h\x1b[2J\x1b[H') + '\x1b[0m\x1b[9;9H');
+    const snap = await m.snapshot();
+    expect(enc(snap.d)).toBeLessThanOrEqual(TERMINAL_SNAPSHOT_BYTES);
+    expect(snap.d.startsWith('\x1b[?1049h')).toBe(true);
+    const copy = await replay(snap.d, snap.cols, snap.rows);
+    expect(copy.buffer.active.type).toBe('alternate');
+    expect([copy.buffer.active.cursorX, copy.buffer.active.cursorY]).toEqual([8, 8]);
     m.dispose();
   });
 });

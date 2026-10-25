@@ -19,7 +19,7 @@ interface HeadlessTerm {
   loadAddon(addon: unknown): void;
   dispose(): void;
   buffer: { active: {
-    viewportY: number; cursorX: number; cursorY: number;
+    type: string; viewportY: number; cursorX: number; cursorY: number;
     getLine(y: number): { translateToString(trimRight?: boolean): string } | undefined;
   } };
 }
@@ -63,6 +63,9 @@ export function createTerminalMirror(opts: {
   // Lower the scrollback until the JSON-escaped length fits. If even scrollback 0 is over the
   // cap (the cap is a hard protocol limit), fall back to a plain-text viewport: visible rows
   // without colours plus a cursor-position escape, with whole rows dropped from the top if needed.
+  // An alternate-screen terminal gets a \x1b[?1049h prefix (other DEC modes are not carried).
+  // A pending-wrap cursor (cursorX == cols) lands on the last column. Dropping rows shifts
+  // content up, so the client shows blank rows at the bottom.
   function serializeBounded(): string {
     let lines = TERMINAL_SNAPSHOT_SCROLLBACK_LINES;
     let d = serializer.serialize({ scrollback: lines });
@@ -77,10 +80,11 @@ export function createTerminalMirror(opts: {
     const b = term.buffer.active;
     const rows: string[] = [];
     for (let y = 0; y < term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
+    const prefix = b.type === 'alternate' ? '\x1b[?1049h' : '';
     let dropped = 0;
     const build = (): string => {
       const row = Math.max(0, b.cursorY - dropped);
-      return `${rows.slice(dropped).join('\r\n')}\x1b[${row + 1};${b.cursorX + 1}H`;
+      return `${prefix}${rows.slice(dropped).join('\r\n')}\x1b[${row + 1};${b.cursorX + 1}H`;
     };
     let d = build();
     while (encodedLength(d) > TERMINAL_SNAPSHOT_BYTES && dropped < rows.length) {
