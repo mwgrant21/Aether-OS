@@ -110,3 +110,28 @@ export interface ControlStatus {
 export type ControlPairingResult =
   | { ok: true; uri: string; code: string; qrSvg: string; expiresAtMs: number }
   | { ok: false; reason: 'not-enabled' };
+
+// ---- Terminal slots (mobile V2). Pinned by mobileProtocol.test.ts against protocol/mobile-protocol.json `terminals`.
+export const TERMINAL_SLOTS = [
+  { s: 'claude', label: 'Terminal' }, { s: 'terminal2', label: 'Terminal 2' }, { s: 'codex', label: 'Codex' },
+] as const;
+export type TerminalSlotId = (typeof TERMINAL_SLOTS)[number]['s'];
+export type TerminalSlotState = 'not-started' | 'running' | 'exited';
+export const TERMINAL_CHUNK_MAX_BYTES = 16 * 1024;          // raw, per out frame
+export const TERMINAL_RING_BYTES = 256 * 1024;              // JSON-escaped length, per slot
+export const TERMINAL_SNAPSHOT_BYTES = 256 * 1024;          // JSON-escaped length of snap.d
+export const TERMINAL_SNAPSHOT_SCROLLBACK_LINES = 1000;
+export const TERMINAL_MIRROR_SCROLLBACK_LINES = 2000;
+export interface TerminalInfo { s: TerminalSlotId; label: string; state: TerminalSlotState; cols: number; rows: number; q: number }
+export interface TerminalTap {                               // callbacks are delivered in order, never re-entrantly
+  snap(e: { q: number; cols: number; rows: number; d: string }): void;   // replaces the phone terminal content
+  out(e: { q: number; d: string }): void;                                // q strictly +1 after the last snap/out
+  size(e: { cols: number; rows: number }): void;
+}
+export interface TerminalAttachment { detach(): void }
+export interface TerminalReadPort {
+  list(): TerminalInfo[];
+  attach(s: TerminalSlotId, lastQ: number | null, tap: TerminalTap): TerminalAttachment;   // snapshot (async inside) or exact resume
+  onState(cb: (e: { s: TerminalSlotId; state: TerminalSlotState }) => void): () => void;  // returns unsubscribe
+  retain(): () => void;                                      // refcounted; returns release (idempotent)
+}

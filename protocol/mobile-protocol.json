@@ -70,6 +70,20 @@
       "proof": "98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20"
     }
   },
+  "terminals": {
+    "slots": [
+      { "s": "claude", "label": "Terminal" },
+      { "s": "terminal2", "label": "Terminal 2" },
+      { "s": "codex", "label": "Codex" }
+    ],
+    "states": ["not-started", "running", "exited"],
+    "chunkMaxBytes": 16384,
+    "ringBytes": 262144,
+    "snapshotBytes": 262144,
+    "snapshotScrollbackLines": 1000,
+    "mirrorScrollbackLines": 2000,
+    "sizeUnit": "json-escaped length"
+  },
   "frames": {
     "hello": "{\"t\":\"hello\",\"v\":1,\"app\":\"0.2.0-v1\",\"epoch\":\"0123456789abcdef\",\"nonce\":\"00112233445566778899aabbccddeeff\"}",
     "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[]}",

@@ -101,3 +101,24 @@ describe('pairing code alphabet', () => {
     expect(a).not.toMatch(/[0O1IL]/)
   })
 })
+
+describe('terminals section', () => {
+  const states = ['not-started', 'running', 'exited'] as const satisfies readonly T.TerminalSlotState[]
+  // Exhaustive table: adding a TerminalSlotState member makes this fail to compile until it is listed.
+  const stateTable: Record<T.TerminalSlotState, true> = { 'not-started': true, running: true, exited: true }
+  it('slots equal TERMINAL_SLOTS in order with labels', () => {
+    expect(spec.terminals.slots).toEqual(T.TERMINAL_SLOTS.map((x) => ({ s: x.s, label: x.label })))
+  })
+  it('states equal the union literals', () => {
+    expect(spec.terminals.states).toEqual([...states])
+    expect(Object.keys(stateTable).sort()).toEqual([...states].sort())
+  })
+  it('caps equal the exported constants', () => {
+    expect(spec.terminals.chunkMaxBytes).toBe(T.TERMINAL_CHUNK_MAX_BYTES)
+    expect(spec.terminals.ringBytes).toBe(T.TERMINAL_RING_BYTES)
+    expect(spec.terminals.snapshotBytes).toBe(T.TERMINAL_SNAPSHOT_BYTES)
+    expect(spec.terminals.snapshotScrollbackLines).toBe(T.TERMINAL_SNAPSHOT_SCROLLBACK_LINES)
+    expect(spec.terminals.mirrorScrollbackLines).toBe(T.TERMINAL_MIRROR_SCROLLBACK_LINES)
+    expect(spec.terminals.sizeUnit).toBe('json-escaped length')
+  })
+})
