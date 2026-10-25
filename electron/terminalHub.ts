@@ -227,10 +227,9 @@ export function createTerminalHub(opts: { createMirror?: MirrorFactory } = {}): 
       }
       fanOut(r, { k: 'out', q: e.q, d: e.d });
     } else if (e.kind === 'size') {
-      if (retained) {
-        if (r.box) { try { r.box.m.resize(e.cols, e.rows); } catch { /* see above */ } }
-        r.lastResizeQ = r.fedQ + 1; // a client must have seen output after the resize to resume across it
-      }
+      if (retained && r.box) { try { r.box.m.resize(e.cols, e.rows); } catch { /* see above */ } }
+      // recorded even while unretained, so a later retain cannot resume a client across it
+      r.lastResizeQ = r.fedQ + 1; // a client must have seen output after the resize to resume across it
       fanOut(r, { k: 'size', cols: e.cols, rows: e.rows });
     } else if (e.kind === 'start') {
       r.fedQ = e.q;
@@ -328,7 +327,6 @@ export function createTerminalHub(opts: { createMirror?: MirrorFactory } = {}): 
       for (const r of reads.values()) {
         r.gen += 1;
         resetRing(r);
-        r.lastResizeQ = 0;
         r.box = newBox(r.slot.info());
       }
     }

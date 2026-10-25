@@ -350,6 +350,23 @@ describe('terminalHub read port', () => {
     expect(await snapshotOnly(before)).toBe('snap');
   });
 
+  it('refuses resume across a resize that happened while the port was unretained', async () => {
+    const { port, slot, pty, fm, start } = readSetup();
+    const release = port.retain();
+    start();
+    pty.fireData('a');
+    const q = slot.info().q;
+    release();
+    slot.resize(120, 40);
+    port.retain();
+    const rec = recorder();
+    port.attach('claude', q, rec.tap);
+    expect(rec.ev).toEqual([]); // not resumed to nothing: a snapshot is pending
+    fm.made[fm.made.length - 1].resolvers[0]();
+    await flush();
+    expect(rec.ev).toEqual([`snap ${q} 120x40 ""`]); // content was dropped at release
+  });
+
   it('trims the ring at the JSON-escaped budget', () => {
     const { port, pty, fm, start } = readSetup();
     port.retain();
