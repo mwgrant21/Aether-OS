@@ -80,9 +80,9 @@ describe('terminalHub', () => {
 
   it('never splits a surrogate pair at the byte boundary', () => {
     const emoji = '\u{1F600}'; // 4 bytes
-    const data = 'a'.repeat(TERMINAL_CHUNK_MAX_BYTES - 2) + emoji + 'b';
+    const data = 'a'.repeat(TERMINAL_CHUNK_MAX_BYTES - 3) + emoji + 'b';
     const pieces = splitUtf8(data, TERMINAL_CHUNK_MAX_BYTES);
-    expect(pieces).toEqual(['a'.repeat(TERMINAL_CHUNK_MAX_BYTES - 2), emoji + 'b']);
+    expect(pieces).toEqual(['a'.repeat(TERMINAL_CHUNK_MAX_BYTES - 3), emoji + 'b']);
     expect(pieces.join('')).toBe(data);
     for (const p of pieces) expect(Buffer.byteLength(p)).toBeLessThanOrEqual(TERMINAL_CHUNK_MAX_BYTES);
   });
