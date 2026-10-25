@@ -695,6 +695,40 @@ describe('control hub terminals retain balance', () => {
     expect(terms).toEqual({ retains: 2, releases: 2 });
   });
 
+  it('a session whose socket send and close both throw cannot keep the retain or the listener: disable then stop() balance', async () => {
+    const { hub, terms, listener } = setup();
+    await hub.setEnabled(true);
+    const r = await pairOne(hub);
+    const id = hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const bad = fakeSocket();
+    bad.send = () => { throw new Error('send gone'); };
+    bad.close = () => { throw new Error('close gone'); };
+    hub.port.open(bad, id);
+    await expect(hub.setEnabled(false)).resolves.toMatchObject({ state: 'off' });
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+    expect(listener.release).toHaveBeenCalledTimes(1);
+    await hub.stop();
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+    expect(hub.status().state).toBe('off');
+  });
+
+  it('when the first of two sessions fails to close, the second is still closed with bye disabled', async () => {
+    const { hub, terms } = setup();
+    await hub.setEnabled(true);
+    const r = await pairOne(hub);
+    const id = hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const first = fakeSocket();
+    first.send = () => { throw new Error('send gone'); };
+    first.close = () => { throw new Error('close gone'); };
+    const second = fakeSocket();
+    hub.port.open(first, id);
+    hub.port.open(second, { ...id, ref: 'ffffffffffff' });
+    await hub.setEnabled(false);
+    expect(second.sent.at(-1)).toBe(JSON.stringify({ t: 'bye', reason: 'disabled' }));
+    expect(second.closes).toEqual([1000]);
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+  });
+
   it('a throwing retain leaves control on, logs a fixed line and attempts no release', async () => {
     const { hub, terms, logs } = setup({ terminals: fakeTerminals({ throwOnRetain: true }) });
     await expect(hub.setEnabled(true)).resolves.toMatchObject({ state: 'on' });

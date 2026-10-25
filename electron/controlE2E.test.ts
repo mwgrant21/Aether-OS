@@ -441,6 +441,7 @@ describe('phone control end to end: terminals', () => {
     const chunk = '\u001b[0m'.repeat(8192).slice(0, 16 * 1024);
     const total = Math.ceil((5 * 1024 * 1024) / chunk.length);
     for (let i = 0; i < total; i++) {
+      // the per-chunk yield models node-pty: one data event per read, never a synchronous 5 MB burst
       claude.pty.data(chunk);
       await tick();
     }

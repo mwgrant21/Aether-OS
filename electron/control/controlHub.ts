@@ -170,7 +170,9 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   function closeSessions(reasonText: 'revoked' | 'disabled' | 'superseded'): void {
     const open = [...sessions.values()];
     sessions.clear();
-    for (const s of open) s.close(reasonText);
+    for (const s of open) {
+      try { s.close(reasonText); } catch { /* one socket that fails to close must not keep the others, or the teardown, from finishing */ }
+    }
   }
 
   // Drops the terminals retain exactly once per acquisition: the slot is cleared before the call, so a throwing
@@ -187,8 +189,11 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     clearSaveTimer();
     auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
     try { deps.listener.closeControlClients('disabled'); } catch { /* closing is best effort */ }
-    closeSessions('disabled');
-    dropTerminals();
+    try {
+      closeSessions('disabled');
+    } finally {
+      dropTerminals(); // privacy section 17: the retain never outlives a disable, whatever closing the sockets did
+    }
     try { await deps.listener.release(); } catch { /* already down */ }
     address = null;
   }
