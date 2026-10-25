@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import headless from '@xterm/headless';
-import { installReplySuppression, SUPPRESSORS } from './replySuppression.js';
+import { installReplySuppression, applySnap, applySize, SUPPRESSORS } from './replySuppression.js';
 
 const { Terminal } = headless;
 const ESC = '\x1b';
@@ -43,6 +43,10 @@ const QUERIES = [
   ['DECRQM DEC', `${ESC}[?25$p`, 'DECRQM-DEC', csi('?', '$', 'p'), true],
   ['OSC 11 query', `${ESC}]11;?\x07`, 'OSC-colour-query', ['osc', 11], false],
   ['OSC 4 query', `${ESC}]4;1;?\x07`, 'OSC-colour-query', ['osc', 4], false],
+  ['OSC 10 query', `${ESC}]10;?\x07`, 'OSC-colour-query', ['osc', 10], false],
+  ['OSC 12 query', `${ESC}]12;?\x07`, 'OSC-colour-query', ['osc', 12], false],
+  ['OSC 104 query', `${ESC}]104;?\x07`, 'OSC-colour-query', ['osc', 104], false],
+  ['OSC 112 query', `${ESC}]112;?\x07`, 'OSC-colour-query', ['osc', 112], false],
   ['DECRQSS', `${ESC}P$qm${ESC}\\`,'DECRQSS', ['dcs', { intermediates: '$', final: 'q' }], true],
 ];
 
@@ -69,6 +73,7 @@ describe('reply suppression', () => {
     expect(r.replies.length > 0).toBe(live);
   });
 
+  // (b) only sees onData; DA3/XTVERSION/OSC never reply in headless, their coverage is (a) + (d) via the probes.
   it('(b) the whole transcript yields zero onData bytes when suppressed', async () => {
     const { term, replies } = make();
     installReplySuppression(term);
@@ -108,5 +113,35 @@ describe('reply suppression', () => {
 
   it('every suppressor owns at least one query in the table', () => {
     for (const s of SUPPRESSORS) expect(QUERIES.some((q) => q[2] === s.name), s.name).toBe(true);
+  });
+
+  // Ordering: reset/resize act immediately but do not clear xterm's write queue, so snap and
+  // size must be queued behind pending output or stale bytes land after the reset.
+  const screen = (term) =>
+    Array.from({ length: term.rows }, (_, i) => term.buffer.active.getLine(i)?.translateToString(true) ?? '')
+      .join('|')
+      .split('|')
+      .filter(Boolean)
+      .join('|');
+
+  it('applySnap: output queued before a snapshot never appears after it', async () => {
+    const { term } = make();
+    term.write('OLDPENDING-A');
+    term.write('OLDPENDING-B');
+    applySnap(term, 40, 10, 'SNAP');
+    await feed(term, '');
+    expect(term.cols).toBe(40);
+    expect(term.rows).toBe(10);
+    expect(screen(term)).toBe('SNAP');
+  });
+
+  it('applySize: pending output is parsed at the old size, then the size changes', async () => {
+    const { term } = make();
+    term.write(`${ESC}[1;70HZ`); // cursor to column 70, valid only at the old 80-column width
+    applySize(term, 40, 10);
+    await feed(term, '');
+    expect([term.cols, term.rows]).toEqual([40, 10]);
+    // laid out at 80 columns then reflowed to 40: Z wraps to row 1, column 30. Resized first it would clamp to column 40 of row 0.
+    expect(term.buffer.active.getLine(1).translateToString(true)).toHaveLength(30);
   });
 });

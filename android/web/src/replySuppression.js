@@ -48,3 +48,23 @@ export const SUPPRESSORS = [
 export function installReplySuppression(term, only = SUPPRESSORS) {
   return only.flatMap((s) => s.install(term));
 }
+
+// Snapshot and size changes must land BEHIND bytes xterm has already accepted but not yet
+// parsed: reset() and resize() act immediately and do not clear the write queue, so an
+// unordered reset would parse stale `out` chunks after it, at the new size. An empty write
+// queues the change in order. `after` runs once the change has been applied.
+export function applySnap(term, cols, rows, data, after = () => {}) {
+  term.write('', () => {
+    term.reset();
+    term.resize(cols, rows);
+    after();
+  });
+  term.write(data);
+}
+
+export function applySize(term, cols, rows, after = () => {}) {
+  term.write('', () => {
+    term.resize(cols, rows);
+    after();
+  });
+}

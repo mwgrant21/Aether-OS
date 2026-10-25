@@ -4,7 +4,7 @@
 // link handling, no title handling. One xterm per slot, created on first use.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { installReplySuppression } from './replySuppression.js';
+import { installReplySuppression, applySnap, applySize } from './replySuppression.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -71,10 +71,11 @@ function applyZoom(slot) {
   if (slot.term.options.fontSize !== px) slot.term.options.fontSize = px;
 }
 
+// sized is set synchronously so the onResize wired above stays silent; the resize itself
+// is applied in order behind pending output (see applySize / applySnap).
 function setSize(slot, cols, rows) {
   slot.sized = true;
-  slot.term.resize(cols, rows);
-  applyZoom(slot);
+  applySize(slot.term, cols, rows, () => applyZoom(slot));
 }
 
 function show(id) {
@@ -101,9 +102,8 @@ bridge.onmessage = (ev) => {
     case 'snap': {
       if (!isSlot(m.s) || !isDim(m.cols) || !isDim(m.rows) || typeof m.d !== 'string') return;
       const slot = slotFor(m.s);
-      slot.term.reset();
-      setSize(slot, m.cols, m.rows);
-      slot.term.write(m.d);
+      slot.sized = true;
+      applySnap(slot.term, m.cols, m.rows, m.d, () => applyZoom(slot));
       return;
     }
     case 'out': {
