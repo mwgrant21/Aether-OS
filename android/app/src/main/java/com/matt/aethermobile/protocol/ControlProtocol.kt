@@ -39,6 +39,7 @@ object ControlProtocol {
     const val PAIR_BAD_CODE = 401
     const val PAIR_DECLINED = 403
     const val PAIR_BURNED = 429
+    const val PAIR_BUSY = 409
 
     const val PROOF_LABEL = "server"
     const val PROOF_SEPARATOR = "\n"

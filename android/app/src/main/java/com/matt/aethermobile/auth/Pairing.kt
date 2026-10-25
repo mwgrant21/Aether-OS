@@ -31,6 +31,7 @@ sealed class PairResult {
     object BadCode : PairResult()
     object Declined : PairResult()
     object Burned : PairResult()
+    object Busy : PairResult()
     object Unreachable : PairResult()
     data class Error(val status: Int) : PairResult()
 }
@@ -127,6 +128,7 @@ class PairingClient internal constructor(
                     ControlProtocol.PAIR_BAD_CODE -> PairResult.BadCode
                     ControlProtocol.PAIR_DECLINED -> PairResult.Declined
                     ControlProtocol.PAIR_BURNED -> PairResult.Burned
+                    ControlProtocol.PAIR_BUSY -> PairResult.Busy
                     else -> PairResult.Error(resp.code)
                 }
             }

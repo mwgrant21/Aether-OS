@@ -15,7 +15,7 @@ import com.matt.aethermobile.auth.RelockPolicy
 
 /** Why the user is looking at a message on Pair or Locked. Mapped to strings by the activity. */
 enum class Notice {
-    BadCode, Declined, Burned, Unreachable, ServerError, ScanFailed, WrongQr,
+    BadCode, Declined, Burned, PairBusy, Unreachable, ServerError, ScanFailed, WrongQr,
     SaveCancelled, SaveFailed, Revoked, KeyInvalidated,
     TryAgain, Cancelled, Lockout, BiometricUnavailable,
 }
@@ -26,7 +26,7 @@ enum class ErrorKind {
     Superseded, Disabled, Closed,
 }
 
-enum class PairKind { Paired, BadCode, Declined, Burned, Unreachable, Other }
+enum class PairKind { Paired, BadCode, Declined, Burned, Busy, Unreachable, Other }
 
 enum class UnlockKind { Ready, Empty, Invalidated, Unavailable }
 
@@ -208,6 +208,7 @@ object AppFlow {
             PairKind.BadCode -> Notice.BadCode
             PairKind.Declined -> Notice.Declined
             PairKind.Burned -> Notice.Burned
+            PairKind.Busy -> Notice.PairBusy
             PairKind.Unreachable -> Notice.Unreachable
             PairKind.Other -> Notice.ServerError
         }

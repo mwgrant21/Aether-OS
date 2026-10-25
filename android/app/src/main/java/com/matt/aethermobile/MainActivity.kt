@@ -273,6 +273,7 @@ class MainActivity : AppCompatActivity() {
             PairResult.BadCode -> PairKind.BadCode
             PairResult.Declined -> PairKind.Declined
             PairResult.Burned -> PairKind.Burned
+            PairResult.Busy -> PairKind.Busy
             PairResult.Unreachable -> PairKind.Unreachable
             is PairResult.Error -> PairKind.Other
         }
@@ -512,6 +513,7 @@ class MainActivity : AppCompatActivity() {
             Notice.BadCode -> R.string.notice_bad_code
             Notice.Declined -> R.string.notice_declined
             Notice.Burned -> R.string.notice_burned
+            Notice.PairBusy -> R.string.notice_pair_busy
             Notice.Unreachable -> R.string.notice_unreachable
             Notice.ServerError -> R.string.notice_server_error
             Notice.ScanFailed -> R.string.notice_scan_failed

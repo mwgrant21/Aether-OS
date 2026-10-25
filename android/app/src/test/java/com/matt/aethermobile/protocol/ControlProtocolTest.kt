@@ -46,6 +46,7 @@ class ControlProtocolTest {
         assertEquals(resp.getInt("badCode"), ControlProtocol.PAIR_BAD_CODE)
         assertEquals(resp.getInt("declined"), ControlProtocol.PAIR_DECLINED)
         assertEquals(resp.getInt("burned"), ControlProtocol.PAIR_BURNED)
+        assertEquals(resp.getInt("busy"), ControlProtocol.PAIR_BUSY)
         assertEquals(proof.getString("label"), ControlProtocol.PROOF_LABEL)
         assertEquals(proof.getString("separator"), ControlProtocol.PROOF_SEPARATOR)
         assertEquals(proof.getString("suffix"), ControlProtocol.PROOF_SUFFIX)

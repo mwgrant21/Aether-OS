@@ -35,6 +35,7 @@
     <string name="notice_bad_code">That code was not accepted. Check it and try again.</string>
     <string name="notice_declined">The pairing was declined on titan.</string>
     <string name="notice_burned">That code has expired or was used. Create a new one on titan.</string>
+    <string name="notice_pair_busy">Titan is already asking about another pairing. Answer it on the PC or wait a minute, then try again.</string>
     <string name="notice_unreachable">Could not reach titan. Check the tailnet and try again.</string>
     <string name="notice_server_error">Titan sent an unexpected answer. Try again.</string>
     <string name="notice_scan_failed">The scanner is unavailable. Type the code instead.</string>

@@ -139,6 +139,7 @@ class PairingTest {
         assertEquals(PairResult.BadCode, statusFor(401))
         assertEquals(PairResult.Declined, statusFor(403))
         assertEquals(PairResult.Burned, statusFor(429))
+        assertEquals(PairResult.Busy, statusFor(409))
         assertEquals(PairResult.Error(500), statusFor(500))
         assertEquals(PairResult.Error(400), statusFor(400))
     }
