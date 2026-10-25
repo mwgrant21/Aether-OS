@@ -46,7 +46,11 @@ enum class Failure {
 sealed class ControlState {
     object Idle : ControlState()
     object Connecting : ControlState()
-    data class Connected(val expiresAtMs: Long, val serverTimeMs: Long) : ControlState()
+    data class Connected(
+        val expiresAtMs: Long,
+        val serverTimeMs: Long,
+        val sessions: List<ControlProtocol.SessionInfo> = emptyList(),
+    ) : ControlState()
 
     /** bye revoked/expired, or HTTP 401 on upgrade: the stored token is dead. */
     object Revoked : ControlState()
@@ -61,10 +65,13 @@ sealed class ControlState {
 /**
  * V1 /ctl client: dials only the baked tailnet host, sends exactly one `hello`,
  * and reports Connected only after the welcome proof verifies against the nonce
- * this client sent. No reconnect (V4), no terminal I/O.
+ * this client sent. After that it forwards terminal frames to [onFrame] and
+ * sends attach/detach. No reconnect (V4), no input.
  *
  * Threading: [onState] is invoked on transport threads (OkHttp), serially per
- * connection; the UI must marshal to the main thread. [state] is safe to read
+ * connection; the UI must marshal to the main thread. [onFrame] runs on the
+ * same thread, in arrival order, outside the client lock. Frame bodies are
+ * never logged. [state] is safe to read
  * from any thread. The first terminal state of a connection wins: a later
  * transport close can never overwrite a bye.
  *
@@ -76,6 +83,7 @@ class ControlClient(
     private val appVersion: String,
     private val transport: Transport,
     private val onState: (ControlState) -> Unit = {},
+    private val onFrame: (ControlProtocol.TerminalFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
@@ -113,6 +121,23 @@ class ControlClient(
     fun close() {
         val s = synchronized(this) { session } ?: return
         s.finish(ControlState.Closed("local"), closeCode = 1000)
+    }
+
+    /** Asks titan to stream [s] (full snapshot when [q] is null, else resume after [q]). False if not Connected, bad args, or not queued. */
+    fun attach(s: String, q: Long? = null): Boolean {
+        val frame = try { ControlProtocol.buildAttach(s, q) } catch (_: IllegalArgumentException) { return false }
+        return sendWhenConnected(frame)
+    }
+
+    /** Stops streaming [s]. False if not Connected, unknown slot, or not queued. */
+    fun detach(s: String): Boolean {
+        val frame = try { ControlProtocol.buildDetach(s) } catch (_: IllegalArgumentException) { return false }
+        return sendWhenConnected(frame)
+    }
+
+    private fun sendWhenConnected(frame: String): Boolean = synchronized(this) {
+        if (state !is ControlState.Connected) return false
+        transport.send(frame)
     }
 
     private fun publish(next: ControlState) {
@@ -162,6 +187,7 @@ class ControlClient(
         }
 
         override fun onMessage(text: String) {
+            var deliver: ControlProtocol.TerminalFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -171,9 +197,20 @@ class ControlClient(
                 when (frameType(text)) {
                     "bye" -> onBye(text)
                     "welcome" -> onWelcome(text)
+                    "snap", "out", "size", "state" -> {
+                        val frame = if (welcomed) ControlProtocol.parseTerminalFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliver = frame
+                        }
+                    }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                 }
             }
+            // Outside the lock so a callback may call attach/detach/close freely; the
+            // transport delivers onMessage serially per connection, so order holds.
+            deliver?.let(onFrame)
         }
 
         private fun onBye(text: String) {
@@ -206,7 +243,7 @@ class ControlClient(
             welcomed = true
             cancelWatchdog?.invoke()
             cancelWatchdog = null
-            publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs))
+            publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs, welcome.sessions))
         }
 
         override fun onClosed(code: Int, reason: String) {

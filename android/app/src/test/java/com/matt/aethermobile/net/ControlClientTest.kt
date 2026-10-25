@@ -63,11 +63,14 @@ class ControlClientTest {
     private val states = mutableListOf<ControlState>()
     private val scheduler = FakeScheduler()
 
+    private val frames = mutableListOf<ControlProtocol.TerminalFrame>()
+
     private fun client(host: String = HOST) = ControlClient(
         host = host,
         appVersion = "0.2.0-v1",
         transport = transport,
         onState = { states += it },
+        onFrame = { frames += it },
         nonceSource = { NONCE },
         epochSource = { EPOCH },
         scheduler = scheduler.schedule,
@@ -376,5 +379,122 @@ class ControlClientTest {
         scheduler.task!!.invoke()
         assertTrue(c.state is ControlState.Connected)
         assertTrue(transport.closes.isEmpty())
+    }
+
+    private val golden = JSONObject(java.io.File("../../protocol/mobile-protocol.json").readText(Charsets.UTF_8)).getJSONObject("frames")
+
+    private fun connected(): ControlClient {
+        val c = opened()
+        transport.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
+        assertTrue(c.state is ControlState.Connected)
+        return c
+    }
+
+    @Test fun framesReachOnFrameInOrderAfterConnected() {
+        connected()
+        val l = transport.listener!!
+        l.onMessage(golden.getString("snap"))
+        l.onMessage(golden.getString("out"))
+        l.onMessage(golden.getString("size"))
+        l.onMessage(golden.getString("state"))
+        assertEquals(
+            listOf(
+                ControlProtocol.TerminalFrame.Snap("claude", 124, 100, 30, "\u001b[1mhi\u001b[0m\r\n"),
+                ControlProtocol.TerminalFrame.Out("claude", 125, "\u001b[32mok\u001b[0m\r\n"),
+                ControlProtocol.TerminalFrame.Size("claude", 120, 40),
+                ControlProtocol.TerminalFrame.State("claude", ControlProtocol.SlotState.RUNNING),
+            ),
+            frames,
+        )
+        assertTrue(transport.closes.isEmpty())
+    }
+
+    @Test fun welcomeSessionsRideOnConnected() {
+        val c = opened()
+        val w = JSONObject(golden.getString("welcomeSessions")).put("proof", ControlProtocol.serverProof(TOKEN, NONCE))
+        transport.listener!!.onMessage(w.toString())
+        assertEquals(3, (c.state as ControlState.Connected).sessions.size)
+        assertEquals("terminal2", (c.state as ControlState.Connected).sessions[1].s)
+    }
+
+    @Test fun terminalFrameBeforeTheProofVerifiesIsAProtocolFailure() {
+        for (f in listOf("snap", "out", "size", "state")) {
+            val t = FakeTransport()
+            val seen = mutableListOf<ControlProtocol.TerminalFrame>()
+            val c = ControlClient(HOST, "0.2.0-v1", t, onFrame = { seen += it }, nonceSource = { NONCE }, epochSource = { EPOCH })
+            c.connect(TOKEN)
+            t.listener!!.onOpen()
+            t.listener!!.onMessage(golden.getString(f))
+            assertEquals(f, ControlState.Failed(Failure.Protocol), c.state)
+            assertEquals(f, listOf(1008), t.closes)
+            assertTrue(f, seen.isEmpty())
+        }
+    }
+
+    @Test fun malformedTerminalFrameClosesWith1008AndIsNotDelivered() {
+        val c = connected()
+        transport.listener!!.onMessage("""{"t":"out","s":"claude","q":"125","d":"x"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+        assertTrue(frames.isEmpty())
+    }
+
+    @Test fun unknownSlotTerminalFrameClosesWith1008() {
+        val c = connected()
+        transport.listener!!.onMessage("""{"t":"state","s":"bash","state":"running"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+    }
+
+    @Test fun attachAndDetachBeforeConnectedReturnFalseAndSendNothing() {
+        val idle = client()
+        assertFalse(idle.attach("claude", null))
+        assertFalse(idle.detach("claude"))
+        assertTrue(transport.sent.isEmpty())
+        val c = opened() // hello sent, welcome not yet verified
+        val helloOnly = transport.sent.toList()
+        assertFalse(c.attach("claude", 3))
+        assertFalse(c.detach("claude"))
+        assertEquals(helloOnly, transport.sent)
+    }
+
+    @Test fun attachAndDetachSendTheExactBytesWhenConnected() {
+        val c = connected()
+        val before = transport.sent.size
+        assertTrue(c.attach("claude", null))
+        assertTrue(c.attach("claude", 123))
+        assertTrue(c.detach("claude"))
+        assertEquals(
+            listOf(golden.getString("attach"), golden.getString("attachResume"), golden.getString("detach")),
+            transport.sent.drop(before),
+        )
+    }
+
+    @Test fun attachWithAnUnknownSlotOrBadQSendsNothing() {
+        val c = connected()
+        val before = transport.sent.size
+        assertFalse(c.attach("bash", null))
+        assertFalse(c.attach("claude", -1))
+        assertFalse(c.detach("bash"))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun attachAfterTheConnectionEndedReturnsFalse() {
+        val c = connected()
+        transport.listener!!.onMessage(bye("revoked"))
+        val before = transport.sent.size
+        assertFalse(c.attach("claude", null))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun anOnFrameCallbackMayCallAttachWithoutDeadlock() {
+        val t = FakeTransport()
+        lateinit var c: ControlClient
+        c = ControlClient(HOST, "0.2.0-v1", t, onFrame = { c.attach(it.s, null) }, nonceSource = { NONCE }, epochSource = { EPOCH })
+        c.connect(TOKEN)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
+        t.listener!!.onMessage(golden.getString("out"))
+        assertEquals(golden.getString("attach"), t.sent.last())
     }
 }
