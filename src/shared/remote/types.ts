@@ -61,7 +61,7 @@ export const CONTROL_BYE_REASONS = [
   'slow-consumer',
   'rate-limit',
 ] as const;
-export const CONTROL_PAIR_STATUS = { ok: 200, badCode: 401, declined: 403, burned: 429 } as const;
+export const CONTROL_PAIR_STATUS = { ok: 200, badCode: 401, declined: 403, burned: 429, busy: 409 } as const;
 
 export interface ControlSocket {
   send(text: string): void; // no-op after close
@@ -77,7 +77,7 @@ export interface ControlIdentity {
 }
 export type ControlPairResult =
   | { status: 200; token: string; expiresAtMs: number }
-  | { status: 400 | 401 | 403 | 429 };
+  | { status: 400 | 401 | 403 | 429 | 409 };
 export type AuthRejectReason = 'no-device' | 'no-bearer' | 'unknown' | 'expired' | 'peer-mismatch' | 'error';
 export interface ControlPort {
   maxSockets: number;

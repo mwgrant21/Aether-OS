@@ -52,6 +52,7 @@
     "badCode": 401,
     "declined": 403,
     "burned": 429,
+    "busy": 409,
     "successBody": [
       "token",
       "expiresAtMs"
