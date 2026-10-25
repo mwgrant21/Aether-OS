@@ -1,13 +1,17 @@
 // electron/control/controlGateway.ts
 //
-// Per-socket protocol state for /ctl. V1 handles hello only: the first valid hello cancels the deadline and is
-// answered with a welcome whose proof comes from the identity (ControlIdentity.proofFor; the HMAC lives in
-// remoteAuth, never here). Anything else, including a second hello, an unknown verb or an oversize frame, is
-// answered with bye(policy) and closes 1008. Nothing here reaches a terminal. The nonce, proof and credentials are
-// never logged; log lines are fixed strings plus the identity ref.
+// Per-socket protocol state for /ctl. The first valid hello cancels the deadline and is answered with a welcome
+// whose proof comes from the identity (ControlIdentity.proofFor; the HMAC lives in remoteAuth, never here) and
+// whose sessions come from the read port; only then does the socket start receiving state frames. After hello the
+// phone may attach/detach a terminal slot (at most one attachment per slot). Anything else, including a second
+// hello, attach/detach before hello, an unknown verb or an oversize frame, is answered with bye(policy) and closes
+// 1008. The only terminal handle held here is a TerminalReadPort (list/attach/onState): this file cannot write,
+// resize or start a terminal. Without a port (the option is optional) every attach is a policy violation and
+// welcome.sessions is empty. The nonce, proof, credentials and terminal content are never logged; log lines are
+// fixed strings plus the slot id and the identity ref.
 import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket } from '../../src/shared/remote/types';
-import { encodeBye, encodeWelcome, parsePhoneMessage } from './protocol';
+import type { ControlIdentity, ControlSocket, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
+import { encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
@@ -21,6 +25,8 @@ export interface ControlGatewayOptions {
   clearTimeoutFn?: (handle: unknown) => void;
   log?: (msg: string, ref: string) => void;
   helloTimeoutMs?: number;
+  /** Read-only terminal access. Absent = fail closed: sessions stay empty and attach is a policy violation. */
+  terminals?: TerminalReadPort;
 }
 
 export interface ControlGateway {
@@ -30,26 +36,54 @@ export interface ControlGateway {
 const CLOSE_NORMAL = 1000;
 const CLOSE_POLICY = 1008;
 
+interface Attached {
+  live: boolean;
+  handle: TerminalAttachment | null;
+}
+
 export function createControlGateway(opts: ControlGatewayOptions): ControlGateway {
   const setTimer = opts.setTimeoutFn ?? ((fn: () => void, ms: number): unknown => setTimeout(fn, ms));
   const clearTimer = opts.clearTimeoutFn ?? ((handle: unknown): void => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const helloTimeoutMs = opts.helloTimeoutMs ?? CONTROL_HELLO_TIMEOUT_MS;
   const log = opts.log;
+  const terminals = opts.terminals;
 
   function attach(socket: ControlSocket, identity: ControlIdentity): ControlSession {
     let closed = false;
     let helloSeen = false;
     let deadline: unknown = null;
+    let unsubscribeState: (() => void) | null = null;
+    const attachments = new Map<TerminalSlotId, Attached>();
 
     const cancelDeadline = (): void => {
       if (deadline !== null) clearTimer(deadline);
       deadline = null;
     };
 
+    const release = (a: Attached): void => {
+      a.live = false;
+      const handle = a.handle;
+      a.handle = null;
+      try {
+        handle?.detach();
+      } catch {
+        // a failing detach must not keep the socket (or the other attachments) from being torn down
+      }
+    };
+
+    const teardown = (): void => {
+      for (const a of attachments.values()) release(a);
+      attachments.clear();
+      const unsub = unsubscribeState;
+      unsubscribeState = null;
+      unsub?.();
+    };
+
     const close = (reason: ByeReason): void => {
       if (closed) return;
       closed = true;
       cancelDeadline();
+      teardown();
       try {
         socket.send(encodeBye(reason));
       } finally {
@@ -71,7 +105,40 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     socket.onClose(() => {
       closed = true;
       cancelDeadline();
+      teardown();
     });
+
+    const startAttachment = (slot: TerminalSlotId, lastQ: number | null, port: TerminalReadPort): void => {
+      const prior = attachments.get(slot);
+      if (prior) release(prior);
+      const entry: Attached = { live: true, handle: null };
+      attachments.set(slot, entry);
+      let mode: 'snap' | 'resume' | null = null;
+      const note = (m: 'snap' | 'resume'): void => {
+        if (mode !== null) return;
+        mode = m;
+        log?.(`control: attach slot=${slot} mode=${m}`, identity.ref);
+      };
+      const tap: TerminalTap = {
+        snap: (e) => {
+          if (!entry.live || closed) return;
+          note('snap');
+          socket.send(encodeSnap({ s: slot, q: e.q, cols: e.cols, rows: e.rows, d: e.d }));
+        },
+        out: (e) => {
+          if (!entry.live || closed) return;
+          note('resume');
+          socket.send(encodeOut({ s: slot, q: e.q, d: e.d }));
+        },
+        size: (e) => {
+          if (!entry.live || closed) return;
+          socket.send(encodeSize({ s: slot, cols: e.cols, rows: e.rows }));
+        },
+      };
+      const handle = port.attach(slot, lastQ, tap);
+      if (entry.live) entry.handle = handle;
+      else handle.detach(); // detached or closed while attach() was still replaying synchronously
+    };
 
     socket.onMessage((text) => {
       if (closed) return;
@@ -79,7 +146,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       const msg = parsePhoneMessage(text);
       if (msg === null) return violation('control: invalid frame');
       switch (msg.t) {
-        case 'hello':
+        case 'hello': {
           if (helloSeen) return violation('control: repeated hello');
           helloSeen = true;
           cancelDeadline();
@@ -88,10 +155,32 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
               proof: identity.proofFor(msg.nonce),
               serverTimeMs: opts.now(),
               expiresAtMs: identity.expiresAtMs,
+              sessions: terminals ? terminals.list() : [],
             }),
           );
           log?.('control: hello accepted', identity.ref);
+          if (terminals) {
+            unsubscribeState = terminals.onState((e) => {
+              if (closed) return;
+              socket.send(encodeState({ s: e.s, state: e.state }));
+            });
+          }
           return;
+        }
+        case 'attach':
+          if (!helloSeen) return violation('control: attach before hello');
+          if (!terminals) return violation('control: no terminal port');
+          startAttachment(msg.s, msg.q ?? null, terminals);
+          return;
+        case 'detach': {
+          if (!helloSeen) return violation('control: detach before hello');
+          const a = attachments.get(msg.s);
+          if (!a) return;
+          attachments.delete(msg.s);
+          release(a);
+          log?.(`control: detach slot=${msg.s}`, identity.ref);
+          return;
+        }
         default:
           return violation('control: unhandled frame type');
       }
