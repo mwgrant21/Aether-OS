@@ -13,7 +13,7 @@ import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
-import { PtyLifecycle } from './ptyLifecycle';
+import { createTerminalHub } from './terminalHub';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, READ_BUSY_TIMEOUT_MS, type CollectorUsageEvent } from './collectorStore';
@@ -1318,7 +1318,8 @@ ipcMain.handle('app:getVersion', () => {
 // Holds the single active pty and the superseded-exit rule -- see
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
-const ptyLifecycle = new PtyLifecycle();
+const terminalHub = createTerminalHub();
+const ptyLifecycle = terminalHub.slot('claude');
 const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
 // A detached renderer retains its fitted xterm geometry. Replacement must use
 // that geometry even when reattaching produces no new xterm resize event.
@@ -1393,7 +1394,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
       sendToWindow('pty:exit', undefined);
       planUsageScraper.reset(); // a new pty means a fresh /usage read next time
     },
-  });
+  }, { cols, rows });
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
   pinnedPtyExited = false;
@@ -1425,7 +1426,7 @@ ipcMain.handle('plan:sync', async () => {
 
 // Fully independent from the Claude pty's ptyLifecycle above: separate
 // instance, separate channels, never shares state.
-const codexPtyLifecycle = new PtyLifecycle();
+const codexPtyLifecycle = terminalHub.slot('codex');
 
 ipcMain.handle('codexPty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
@@ -1435,7 +1436,7 @@ ipcMain.handle('codexPty:start', (event, { cols, rows }: { cols: number; rows: n
     },
     onAlive: () => sendToWindow('codexPty:alive', undefined),
     onExit: () => sendToWindow('codexPty:exit', undefined),
-  });
+  }, { cols, rows });
 });
 
 ipcMain.on('codexPty:write', (_event, input: string) => {
@@ -1450,7 +1451,7 @@ ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: num
 // pinned terminal (spawnPty, no bridge) but deliberately unmonitored: it never
 // feeds pinnedPtyExited, liveAgentTracker, planUsageScraper or the
 // communication bridge, which all stay bound to the pinned pty above.
-const terminal2PtyLifecycle = new PtyLifecycle();
+const terminal2PtyLifecycle = terminalHub.slot('terminal2');
 
 ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
@@ -1461,7 +1462,7 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
     // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
     onAlive: () => {},
     onExit: () => {},
-  });
+  }, { cols, rows });
 });
 
 ipcMain.on('terminal2Pty:write', (_event, input: string) => {
