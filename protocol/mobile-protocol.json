@@ -31,11 +31,17 @@
   },
   "messages": {
     "phoneToTitan": [
-      "hello"
+      "hello",
+      "attach",
+      "detach"
     ],
     "titanToPhone": [
       "welcome",
-      "bye"
+      "bye",
+      "snap",
+      "out",
+      "size",
+      "state"
     ],
     "byeReasons": [
       "revoked",
@@ -87,6 +93,14 @@
   "frames": {
     "hello": "{\"t\":\"hello\",\"v\":1,\"app\":\"0.2.0-v1\",\"epoch\":\"0123456789abcdef\",\"nonce\":\"00112233445566778899aabbccddeeff\"}",
     "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[]}",
-    "bye": "{\"t\":\"bye\",\"reason\":\"revoked\"}"
+    "bye": "{\"t\":\"bye\",\"reason\":\"revoked\"}",
+    "welcomeSessions": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[{\"s\":\"claude\",\"label\":\"Terminal\",\"state\":\"running\",\"cols\":100,\"rows\":30,\"q\":12},{\"s\":\"terminal2\",\"label\":\"Terminal 2\",\"state\":\"not-started\",\"cols\":0,\"rows\":0,\"q\":0},{\"s\":\"codex\",\"label\":\"Codex\",\"state\":\"exited\",\"cols\":80,\"rows\":24,\"q\":5}],\"applied\":{},\"prompts\":[]}",
+    "attach": "{\"t\":\"attach\",\"s\":\"claude\"}",
+    "attachResume": "{\"t\":\"attach\",\"s\":\"claude\",\"q\":123}",
+    "detach": "{\"t\":\"detach\",\"s\":\"claude\"}",
+    "snap": "{\"t\":\"snap\",\"s\":\"claude\",\"q\":124,\"cols\":100,\"rows\":30,\"d\":\"\\u001b[1mhi\\u001b[0m\\r\\n\"}",
+    "out": "{\"t\":\"out\",\"s\":\"claude\",\"q\":125,\"d\":\"\\u001b[32mok\\u001b[0m\\r\\n\"}",
+    "size": "{\"t\":\"size\",\"s\":\"claude\",\"cols\":120,\"rows\":40}",
+    "state": "{\"t\":\"state\",\"s\":\"claude\",\"state\":\"running\"}"
   }
 }

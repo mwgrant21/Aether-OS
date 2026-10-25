@@ -49,8 +49,8 @@ export const CONTROL_RECHECK_MS = 10000;
 export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
-  phoneToTitan: ['hello'],
-  titanToPhone: ['welcome', 'bye'],
+  phoneToTitan: ['hello', 'attach', 'detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state'],
 } as const;
 export const CONTROL_BYE_REASONS = [
   'revoked',
