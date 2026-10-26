@@ -42,6 +42,77 @@ class TerminalHostTest {
     private fun ready(vararg i: SessionInfo = arrayOf(info("claude"), info("terminal2"), info("codex"))) =
         host.onSessions(i.toList())
 
+    private fun waiting(s: String) = host.tabs().first { it.s == s }.awaitingOutput
+
+    @Test fun emptySnapshotForRunningSlotAwaitsOutput() {
+        ready()
+        host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 1, 100, 30, ""))
+        assertTrue(waiting("claude"))
+        host.onFrame(TerminalFrame.Out("claude", 2, "hi"))
+        assertTrue(!waiting("claude"))
+        host.onFrame(TerminalFrame.Snap("claude", 3, 100, 30, ""))
+        assertTrue(waiting("claude"))
+        host.onFrame(TerminalFrame.Snap("claude", 4, 100, 30, "text"))
+        assertTrue(!waiting("claude"))
+    }
+
+    @Test fun nonEmptySnapshotNeverAwaitsOutput() {
+        ready()
+        host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 1, 100, 30, "text"))
+        assertTrue(!waiting("claude"))
+    }
+
+    @Test fun deliveryQueuedBeforeResetNeverReachesTheNextPage() {
+        val got = ArrayList<String>()
+        val box = PageOutbox(4) {}
+        val gen = box.generation
+        box.reset() // lock / endTerminal while the main-looper delivery is still pending
+        box.ready { got.add(it) }
+        box.submit(gen, "stale")
+        box.submit(box.generation, "fresh")
+        assertEquals(listOf("fresh"), got)
+    }
+
+    @Test fun backlogOverflowResyncsHostOnceAfterPageReady() {
+        var resyncs = 0
+        val box = PageOutbox(2) { resyncs++ }
+        for (i in 1..3) box.submit(box.generation, "m$i")
+        assertEquals(0, resyncs)
+        val got = ArrayList<String>()
+        box.ready { got.add(it) }
+        assertEquals(1, resyncs)
+        assertTrue(got.isEmpty())
+    }
+
+    @Test fun resyncShowsZoomsAndReattachesForSnapshot() {
+        ready()
+        host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 5, 100, 30, "a"))
+        host.zoom(16)
+        posts.clear(); calls.clear()
+        host.resync()
+        assertEquals(listOf("attach claude -"), calls)
+        assertJson("""{"t":"show","s":"claude"}""", posts.first())
+        assertJson("""{"t":"zoom","px":16}""", posts.last())
+    }
+
+    @Test fun frameRouterSendsToReplacedHostNotTheOldOne() {
+        val router = FrameRouter()
+        val old = host
+        router.host = old
+        val seen = ArrayList<String>()
+        val fresh = TerminalHost({ s, _ -> seen.add("attach $s"); true }, { true }, { seen.add(it) }, TerminalFeed())
+        fresh.onSessions(listOf(info("claude")))
+        fresh.select("claude")
+        old.onDisconnected()
+        router.host = fresh
+        seen.clear()
+        router.route(TerminalFrame.Snap("claude", 1, 100, 30, "x"))
+        assertTrue(seen.isNotEmpty())
+    }
+
     @Test fun selectDetachesPreviousThenAttachesWithLastQAndShows() {
         ready()
         host.select("claude")

@@ -20,15 +20,18 @@ class TerminalHost(
     private val feed: TerminalFeed,
     private val onTabsChanged: () -> Unit = {},
 ) {
-    data class Tab(val s: String, val label: String, val state: SlotState)
+    data class Tab(val s: String, val label: String, val state: SlotState, val awaitingOutput: Boolean = false)
 
     private val states = HashMap<String, SlotState>()
     private val labels = HashMap<String, String>()
     private val sizes = HashMap<String, Pair<Int, Int>>()
     private val consumedBySlot = HashMap<String, Long>()
     private val awaitingSnap = HashSet<String>()
+    /** Running slots whose latest snapshot was empty and have shown no output since. */
+    private val awaitingOutput = HashSet<String>()
     private var active = false
     private var attached: String? = null
+    private var zoomPx = 0
 
     /** Total bytes the page reported consumed; a plain counter for the V4 backpressure work. */
     @get:Synchronized
@@ -38,7 +41,7 @@ class TerminalHost(
     /** Always one tab per known slot, in wire order; a slot missing from `sessions` is not-started. */
     @Synchronized
     fun tabs(): List<Tab> = ControlProtocol.SLOTS.map {
-        Tab(it.s, labels[it.s] ?: it.label, states[it.s] ?: SlotState.NOT_STARTED)
+        Tab(it.s, labels[it.s] ?: it.label, states[it.s] ?: SlotState.NOT_STARTED, it.s in awaitingOutput)
     }
 
     @Synchronized
@@ -46,7 +49,7 @@ class TerminalHost(
 
     @Synchronized
     fun onSessions(list: List<ControlProtocol.SessionInfo>) {
-        states.clear(); labels.clear(); sizes.clear(); awaitingSnap.clear()
+        states.clear(); labels.clear(); sizes.clear(); awaitingSnap.clear(); awaitingOutput.clear()
         for (i in list) {
             if (ControlProtocol.SLOTS.none { it.s == i.s }) continue
             states[i.s] = i.state
@@ -64,6 +67,7 @@ class TerminalHost(
         active = false
         attached = null
         awaitingSnap.clear()
+        awaitingOutput.clear()
     }
 
     @Synchronized
@@ -78,6 +82,7 @@ class TerminalHost(
             safe { detach(prev) }
             feed.forget(prev)
             awaitingSnap.remove(prev)
+            awaitingOutput.remove(prev)
         }
         val q = feed.lastQ(slot)
         val sent = safe { attach(slot, q) } ?: false
@@ -91,7 +96,25 @@ class TerminalHost(
     @Synchronized
     fun zoom(px: Int) {
         if (px != 0 && px !in 8..24) return
+        zoomPx = px
         safe { post(BridgeOut.zoom(px)) }
+    }
+
+    /**
+     * The page dropped queued messages (backlog overflow before it was ready), so the host's view of
+     * what the page holds is wrong: re-show, re-zoom and re-attach for a fresh snapshot.
+     */
+    @Synchronized
+    fun resync() {
+        val slot = attached ?: return
+        if (!active) return
+        feed.forget(slot)
+        safe { post(BridgeOut.show(slot)) }
+        if (zoomPx != 0) safe { post(BridgeOut.zoom(zoomPx)) }
+        if (safe { attach(slot, null) } == true) awaitingSnap.add(slot) else {
+            awaitingSnap.remove(slot)
+            attached = null
+        }
     }
 
     @Synchronized
@@ -103,6 +126,7 @@ class TerminalHost(
     private fun handle(frame: TerminalFrame) {
         if (frame is TerminalFrame.State) {
             states[frame.s] = frame.state
+            if (frame.state != SlotState.RUNNING) awaitingOutput.remove(frame.s)
             onTabsChanged()
             return
         }
@@ -127,10 +151,13 @@ class TerminalHost(
                 }
                 feed.onSnap(frame.s, frame.q)
                 awaitingSnap.remove(frame.s)
+                val wait = frame.d.isEmpty() && states[frame.s] == SlotState.RUNNING
+                if (if (wait) awaitingOutput.add(frame.s) else awaitingOutput.remove(frame.s)) onTabsChanged()
             }
             is TerminalFrame.Out -> when (feed.onOut(frame.s, frame.q)) {
                 TerminalFeed.Verdict.Accept -> try {
                     post(BridgeOut.out(frame.s, frame.q, frame.d))
+                    if (frame.d.isNotEmpty() && awaitingOutput.remove(frame.s)) onTabsChanged()
                 } catch (e: Exception) {
                     // The page never got it: drop the baseline so the next frame re-attaches for a snapshot.
                     feed.forget(frame.s)
@@ -163,4 +190,14 @@ class TerminalHost(
     }
 
     private inline fun <T> safe(block: () -> T): T? = try { block() } catch (_: Exception) { null }
+}
+
+/** Sends transport-thread frames to whichever host is current; a replaced host never sees them. */
+class FrameRouter {
+    @Volatile
+    var host: TerminalHost? = null
+
+    fun route(frame: TerminalFrame) {
+        host?.onFrame(frame)
+    }
 }
