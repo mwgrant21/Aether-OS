@@ -114,11 +114,11 @@ describe('production pinned-session id wiring', () => {
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'connected-id');
   });
 
-  it('launches Terminal 2 tagged unmonitored, without a session id or touching the pinned tracker', () => {
+  it('launches Terminal 2 tagged unmonitored with its own fresh session id, without touching the pinned tracker', () => {
     const f = fixture();
     f.spawnPty.mockReturnValueOnce(fakePty());
     f.terminal2(f.event, { cols: 80, rows: 24 });
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' });
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id', { AETHER_STATUSLINE_NO_PERSIST: '1' });
     expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
   });
 });

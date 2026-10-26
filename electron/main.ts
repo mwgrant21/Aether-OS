@@ -101,6 +101,7 @@ import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
 import { renderQrSvg } from './remote/pairingQr';
 import { createControlHub } from './control/controlHub';
+import { createThreadPort } from './thread/threadPort';
 import { registerControlIpc } from './control/controlIpc';
 import { controlSettingsPath, readReenable, writeReenable } from './controlSettings';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
@@ -502,6 +503,8 @@ let cachedStatuslineSnapshot: StatuslineSnapshot | null = null;
 // The --session-id the pinned Claude terminal was last launched with (ordinary
 // or connected). Filters the shared statusline file down to that terminal.
 let pinnedLaunchSessionId: string | null = null;
+// Context percentage of the last pinned statusline snapshot; read only by the thread port's statuslineCtx.
+let lastPinnedContextPct: number | null = null;
 
 // Same startup-race workaround as cachedStatuslineSnapshot above: the first
 // scan can finish before the renderer's useLedgerSync listener is registered,
@@ -974,6 +977,7 @@ app.whenReady().then(async () => {
     // sample (below); only the dashboard snapshot is limited to the pinned terminal.
     const pinned = isPinnedStatusline(snapshot.sessionId, pinnedLaunchSessionId);
     if (pinned) cachedStatuslineSnapshot = snapshot;
+    if (pinned) lastPinnedContextPct = snapshot.contextUsedPercentage;
     // The seven-day window is the quota cost basis (the five-hour one stays a
     // live depletion gauge and is never fitted). A payload without it -- an
     // older Claude Code, or a session before the first rate-limit report --
@@ -1055,6 +1059,7 @@ app.whenReady().then(async () => {
       // itself) lives in notificationHandler.ts, unit-tested there. This
       // callback is just the Electron-specific wiring: badge/flash/counter
       // side effects, which need mainWindow directly.
+      threadPort.noteNotification(sessionId, notificationType);
       handleNotification(
         { sessionId, notificationType },
         readOwnSessionId(ownSessionFilePath(aetherOsDir)),
@@ -1452,16 +1457,23 @@ ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: num
 // feeds pinnedPtyExited, liveAgentTracker, planUsageScraper or the
 // communication bridge, which all stay bound to the pinned pty above.
 const terminal2PtyLifecycle = terminalHub.slot('terminal2');
+// Known only so the thread feed can find Terminal 2's transcript; deliberately not pinned or tracked.
+let terminal2SessionId: string | null = null;
 
 ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
-  terminal2PtyLifecycle.start(() => spawnPty(cols, rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
+  terminal2PtyLifecycle.start(() => {
+    const id = crypto.randomUUID();
+    const pty = spawnPty(cols, rows, undefined, id, UNMONITORED_TERMINAL_ENV);
+    terminal2SessionId = id;
+    return pty;
+  }, {
     onData: (data) => {
       if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
     },
     // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
     onAlive: () => {},
-    onExit: () => {},
+    onExit: () => { terminal2SessionId = null; },
   }, { cols, rows });
 });
 
@@ -1518,6 +1530,17 @@ const remoteHub = createRemoteHub({
   onStatus: s => sendToWindow('remote:statusChanged', s),
   log: l => diagLog.write(l),
 });
+// Read-only thread feed over the pinned Claude session and Terminal 2's transcript; control consumes it
+// through ThreadReadPort only. Declared before controlHub, which takes it.
+const threadPort = createThreadPort({
+  resolve: slot => {
+    const id = slot === 'claude' ? liveAgentTracker.getPinnedSessionId() : slot === 'terminal2' ? terminal2SessionId : null;
+    return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
+  },
+  statuslineCtx: slot => (slot === 'claude' && lastPinnedContextPct !== null ? { pct: lastPinnedContextPct } : null),
+  now: () => Date.now(),
+  log: l => diagLog.write(l),
+});
 // Phone control (privacy section 17). Created once at start like the remote hub, stopped only at quit, and
 // every store or flag access waits for the private-dir ACL. It shares the remote hub's listener through
 // listenerPort(); the port is attached synchronously, before registerRemoteIpc and before any await, because an
@@ -1525,6 +1548,7 @@ const remoteHub = createRemoteHub({
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
   terminals: terminalHub.readPort(), // the read-only port, never terminalHub or a slot
+  threads: threadPort,
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
