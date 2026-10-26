@@ -68,8 +68,8 @@ class InputSender(
     }
 
     /**
-     * The desktop refused frame ([s], [c]) with [reason]. Its chars are reported not sent (reason first,
-     * then the count) and are not an ack. An unknown or already-settled cseq is ignored. Never resent;
+     * The desktop refused frame ([s], [c]) with [reason]. Its chars are reported not sent (count first,
+     * then the reason) and are not an ack. An unknown or already-settled cseq is ignored. Never resent;
      * [nextC] is untouched because the rejected frame consumed its number.
      */
     fun onNak(s: String, c: Long, reason: NakReason) {
@@ -78,13 +78,13 @@ class InputSender(
         if (i < 0) return
         val chars = list.removeAt(i).chars
         unsent += chars
+        onNotSent(chars)
         onRefused(
             when (reason) {
                 NakReason.NOT_RUNNING -> Refusal.NOT_RUNNING
                 NakReason.TYPING_OFF -> Refusal.TYPING_OFF
             },
         )
-        onNotSent(chars)
     }
 
     /** The link dropped: whatever is still unacked is reported not sent. Nothing is resent. */

@@ -11,6 +11,7 @@ class InputSenderTest {
     private val frames = ArrayList<Triple<String, Long, String>>()
     private val notSent = ArrayList<Int>()
     private val refusals = ArrayList<InputSender.Refusal>()
+    private val events = ArrayList<String>()
     private var acks = 0
     private var linkUp = true
     private var failAfter = Int.MAX_VALUE
@@ -20,8 +21,8 @@ class InputSenderTest {
             if (!linkUp || frames.size >= failAfter) false else { frames.add(Triple(s, c, d)); true }
         },
         nowMs = { 0L },
-        onNotSent = { notSent.add(it) },
-        onRefused = { refusals.add(it) },
+        onNotSent = { notSent.add(it); events.add("notSent($it)") },
+        onRefused = { refusals.add(it); events.add("refused($it)") },
         onAcked = { acks++ },
     )
 
@@ -139,9 +140,10 @@ class InputSenderTest {
         assertEquals(1, acks)
     }
 
-    @Test fun nakRemovesExactlyThatChunkAndReportsReasonThenCountNeverAnAck() {
+    @Test fun nakRemovesExactlyThatChunkAndReportsCountThenReasonNeverAnAck() {
         sender.send("claude", "abc"); sender.send("claude", "de")
         sender.onNak("claude", 2, NakReason.NOT_RUNNING)
+        assertEquals(listOf("notSent(2)", "refused(NOT_RUNNING)"), events) // count first: add() clears a reason
         assertEquals(listOf(InputSender.Refusal.NOT_RUNNING), refusals)
         assertEquals(listOf(2), notSent)
         assertEquals(0, acks)
