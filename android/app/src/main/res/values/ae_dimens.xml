@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spacing, radii, sizes and type scale used across the phone designs. 1 CSS px = 1 dp. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="UnusedResources">
+    <dimen name="ae_screen_pad">12dp</dimen>
+    <dimen name="ae_card_pad">15dp</dimen>
+    <dimen name="ae_gap_xs">4dp</dimen>
+    <dimen name="ae_gap_s">6dp</dimen>
+    <dimen name="ae_gap_m">10dp</dimen>
+    <dimen name="ae_gap_l">12dp</dimen>
+    <dimen name="ae_gap_xl">18dp</dimen>
+
+    <dimen name="ae_r_chip">4dp</dimen>
+    <dimen name="ae_r_tile">9dp</dimen>
+    <dimen name="ae_r_row">12dp</dimen>
+    <dimen name="ae_r_card">14dp</dimen>
+    <dimen name="ae_r_panel">16dp</dimen>
+    <dimen name="ae_r_sheet">24dp</dimen>
+    <dimen name="ae_r_pill">34dp</dimen>
+
+    <dimen name="ae_header_h">60dp</dimen>
+    <dimen name="ae_tab_h">44dp</dimen>
+    <dimen name="ae_touch_min">44dp</dimen>
+    <dimen name="ae_button_h">48dp</dimen>
+    <dimen name="ae_header_core">40dp</dimen>
+    <dimen name="ae_dash_core">236dp</dimen>
+    <dimen name="ae_menu_w">288dp</dimen>
+
+    <!-- Type: Rajdhani = display/UI, Space Mono = data -->
+    <dimen name="ae_t_hero">34sp</dimen>       <!-- Space Mono 700, big totals -->
+    <dimen name="ae_t_title">18sp</dimen>      <!-- Rajdhani 700, header title, ls 1 -->
+    <dimen name="ae_t_row">16sp</dimen>        <!-- Rajdhani 600, row names -->
+    <dimen name="ae_t_body">15sp</dimen>       <!-- Rajdhani 500, body -->
+    <dimen name="ae_t_meta">13sp</dimen>       <!-- Rajdhani 500, secondary -->
+    <dimen name="ae_t_label">12sp</dimen>      <!-- Rajdhani 600, section labels, ls 3 -->
+    <dimen name="ae_t_data">13sp</dimen>       <!-- Space Mono 700, numbers -->
+    <dimen name="ae_t_data_s">11sp</dimen>     <!-- Space Mono 400, meta / timestamps (floor) -->
+</resources>
