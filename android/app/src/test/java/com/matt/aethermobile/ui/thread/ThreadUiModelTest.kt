@@ -156,6 +156,35 @@ class ThreadUiModelTest {
         assertEquals(false, ThreadUiModel.termDot(meta()))
     }
 
+    @Test fun rowIdsAreDistinctEvenWithDiffBlocks() {
+        val entries = listOf(
+            ThreadEntry.User("1:0", 1, "hi", false),
+            tool(id = "2:0", n = "Edit", df = listOf("-" to "a", "+" to "b")),
+            tool(id = "3:0", n = "Write", df = listOf("+" to "c")),
+            ThreadEntry.Thinking("4:0", 0, 500, false),
+        )
+        val ids = ThreadUiModel.rowsFor(entries).map { it.id }
+        assertEquals(ids.size, ids.toSet().size)
+        assertEquals("2:0#diff", ids[2])
+    }
+
+    @Test fun smallValuesNeverRenderAsZero() {
+        assertEquals("CTX 73.4k tok", ThreadUiModel.ctxText(meta(ctxPct = 0.04, ctxTok = 73_400)))
+        assertNull(ThreadUiModel.ctxText(meta(ctxPct = 0.04)))
+        assertEquals("CTX 0.1%", ThreadUiModel.ctxText(meta(ctxPct = 0.05)))
+        val t = ThreadEntry.Thinking("4:0", 0, 500, true)
+        assertEquals("<1 s", (ThreadUiModel.rowsFor(listOf(t)).single() as ThreadRow.ThinkingRow).durationText)
+        assertEquals("Working", ThreadUiModel.workingText(meta(work = Work.WORKING, tok = 0), 5, 0))
+    }
+
+    @Test fun bannerStringNamesExistInStringsXml() {
+        val xml = java.io.File("src/main/res/values/strings_thread.xml").readText()
+        for (w in listOf(Wait.PERM, Wait.QUIET)) {
+            val name = ThreadUiModel.bannerFor(meta(wait = w), ThreadViewMode.THREAD)!!.stringName
+            assertTrue("missing $name", xml.contains("<string name=\"$name\">"))
+        }
+    }
+
     // ---- MarkdownLite ----
 
     private fun p(vararg s: Span): Block = Block.Paragraph(s.toList())

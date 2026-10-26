@@ -86,7 +86,7 @@ object ThreadUiModel {
                     if (!df.isNullOrEmpty()) {
                         out.add(
                             ThreadRow.DiffBlock(
-                                id = e.id,
+                                id = "${e.id}#diff",
                                 lines = df.map { DiffLine(added = it.first == "+", text = it.second) },
                                 moreLines = max(0, e.dn ?: 0),
                             ),
@@ -128,7 +128,7 @@ object ThreadUiModel {
         val pct = meta.ctxPct
         if (pct != null && !pct.isNaN() && pct > 0.0) {
             val tenths = Math.round(min(pct, 100.0) * 10.0)
-            return "CTX ${tenths / 10}.${tenths % 10}%"
+            if (tenths > 0) return "CTX ${tenths / 10}.${tenths % 10}%"
         }
         val tok = meta.ctxTok
         return if (tok != null && tok > 0) "CTX ${count(tok)} tok" else null
@@ -142,7 +142,7 @@ object ThreadUiModel {
         val since = meta.since
         if (since != null && since > 0) parts.add(elapsed(max(0L, nowMs + offsetMs - since) / 1000))
         val tok = meta.tok
-        if (tok != null && tok >= 0) parts.add("${count(tok)} tok")
+        if (tok != null && tok > 0) parts.add("${count(tok)} tok")
         return parts.joinToString(" · ")
     }
 
@@ -180,7 +180,7 @@ object ThreadUiModel {
         else -> "${totalSec / 3600}h ${(totalSec % 3600) / 60}m"
     }
 
-    private fun shortDuration(sec: Long): String = if (sec < 60) "$sec s" else elapsed(sec)
+    private fun shortDuration(sec: Long): String = if (sec < 1) "<1 s" else if (sec < 60) "$sec s" else elapsed(sec)
 
     /** 812 -> "812", 18_400 -> "18.4k", 1_234_567 -> "1.2M"; rounds half up, never prints "1000.0k". */
     private fun count(n: Long): String {
