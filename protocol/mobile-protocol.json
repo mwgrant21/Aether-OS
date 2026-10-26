@@ -47,7 +47,12 @@
       "out",
       "size",
       "state",
-      "ack"
+      "ack",
+      "nak"
+    ],
+    "nakReasons": [
+      "not-running",
+      "typing-off"
     ],
     "byeReasons": [
       "revoked",
@@ -110,6 +115,8 @@
     "state": "{\"t\":\"state\",\"s\":\"claude\",\"state\":\"running\"}",
     "in": "{\"t\":\"in\",\"s\":\"claude\",\"c\":1,\"d\":\"echo hi\\r\"}",
     "ack": "{\"t\":\"ack\",\"s\":\"claude\",\"c\":3}",
+    "nakNotRunning": "{\"t\":\"nak\",\"s\":\"claude\",\"c\":4,\"reason\":\"not-running\"}",
+    "nakTypingOff": "{\"t\":\"nak\",\"s\":\"terminal2\",\"c\":9,\"reason\":\"typing-off\"}",
     "welcomeApplied": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{\"claude\":3},\"prompts\":[]}"
   }
 }

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeNak, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
 import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES } from '../../src/shared/remote/types';
 import type { TerminalInfo } from '../../src/shared/remote/types';
 
@@ -74,6 +74,10 @@ describe('input verbs', () => {
   it('golden ack and welcomeApplied are reproduced byte for byte', () => {
     expect(encodeAck({ s: 'claude', c: 3 })).toBe(spec.frames.ack);
     expect(encodeWelcome({ proof: w.proof, serverTimeMs: w.serverTimeMs, expiresAtMs: w.expiresAtMs, applied: { claude: 3 } })).toBe(spec.frames.welcomeApplied);
+  });
+  it('golden nak frames are reproduced byte for byte', () => {
+    expect(encodeNak({ s: 'claude', c: 4, reason: 'not-running' })).toBe(spec.frames.nakNotRunning);
+    expect(encodeNak({ s: 'terminal2', c: 9, reason: 'typing-off' })).toBe(spec.frames.nakTypingOff);
   });
   it('rejects a cseq that is not a safe integer >= 1', () => {
     for (const c of [0, 1.5, -1, '1', null, NaN, 2 ** 53]) expect(p({ t: 'in', s: 'claude', c, d: 'a' })).toBeNull();

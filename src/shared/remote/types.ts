@@ -54,8 +54,10 @@ export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
   phoneToTitan: ['hello', 'attach', 'detach', 'in'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak'],
 } as const;
+export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
+export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
 export const CONTROL_BYE_REASONS = [
   'revoked',
   'disabled',
