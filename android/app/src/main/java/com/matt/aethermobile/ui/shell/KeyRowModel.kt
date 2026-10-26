@@ -27,16 +27,17 @@ val KEY_ORDER: List<Key> = listOf(
 )
 
 /**
- * Mirrors the host's typing gate (connected, the slot RUNNING): the row is disabled whenever the host would
- * drop the keys. The host re-checks (active, attached, RUNNING) in sendKeys; this keeps the UI honest.
+ * The row is enabled only when the host would accept the keys: [hostAccepts] is TerminalHost.typingAccepted()
+ * (active, attached, RUNNING); connected and the selected tab RUNNING are kept as belt and braces.
  */
-fun keysEnabled(cur: TerminalHost.Tab?, flow: FlowState.Connected?): Boolean =
-    flow != null && cur != null && cur.state == SlotState.RUNNING
+fun keysEnabled(cur: TerminalHost.Tab?, flow: FlowState.Connected?, hostAccepts: Boolean): Boolean =
+    hostAccepts && flow != null && cur != null && cur.state == SlotState.RUNNING
 
 /** Chars not sent since the last successful ack or slot switch, and why the last whole-input refusal happened. */
 data class NotSentNotice(val chars: Int = 0, val refusal: InputSender.Refusal? = null) {
     val visible: Boolean get() = chars > 0
-    fun add(n: Int) = copy(chars = chars + n)
+    /** More chars not sent from a new cause: the old refusal reason no longer describes them (set it after, via [refused]). */
+    fun add(n: Int) = copy(chars = chars + n, refusal = null)
     fun refused(r: InputSender.Refusal) = copy(refusal = r)
     companion object {
         val NONE = NotSentNotice()

@@ -302,6 +302,24 @@ class TerminalHostTest {
         assertTrue(sent.isEmpty())
     }
 
+    @Test fun failedAttachMeansTypingIsNotAcceptedAndKeysAreReportedNotSent() {
+        attachResult = false
+        ready(); host.select("claude")
+        assertTrue(!host.typingAccepted())
+        host.sendKeys("[A")
+        assertTrue(sent.isEmpty())
+        assertEquals(listOf(3), notSent)
+    }
+
+    @Test fun typingIsAcceptedOnlyForAnAttachedRunningSlot() {
+        ready()
+        assertTrue(!host.typingAccepted()) // between onSessions and select
+        host.select("claude")
+        assertTrue(host.typingAccepted())
+        host.onFrame(TerminalFrame.State("claude", SlotState.EXITED))
+        assertTrue(!host.typingAccepted())
+    }
+
     @Test fun ctrlLatchTurnsOneLetterIntoAControlCharOnceThenClears() {
         ready(); host.select("claude")
         host.setCtrlLatch(true)

@@ -83,7 +83,8 @@ data class ShellUiState(
     val selected: String,
     val flow: FlowState.Connected?,
     val ctrlOn: Boolean = false,
-    val notice: NotSentNotice = NotSentNotice.NONE,
+    /** TerminalHost.typingAccepted(): the host's own gate (active, attached, RUNNING). */
+    val hostAccepts: Boolean = false,
 )
 
 class ShellActions(
@@ -138,7 +139,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     )
                 }
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
-                if (state.connected) KeyRow(keysEnabled(cur, state.flow), state.ctrlOn, state.notice, actions)
+                if (state.connected) KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
                 if (state.connected) ZoomRow(actions)
             }
         }

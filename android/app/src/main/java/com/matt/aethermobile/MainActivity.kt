@@ -12,6 +12,10 @@ import android.widget.FrameLayout
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import com.matt.aethermobile.ui.shell.NotSentLine
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
@@ -133,6 +137,7 @@ class MainActivity : AppCompatActivity() {
         val tabs: List<TerminalHost.Tab>,
         val selected: String,
         val ctrlOn: Boolean = false,
+        val hostAccepts: Boolean = false,
         val notice: NotSentNotice = NotSentNotice.NONE,
     )
 
@@ -455,9 +460,10 @@ class MainActivity : AppCompatActivity() {
         }
         val gen = ++connGen
         // One sender per connection: its cseq must follow the desktop's per-epoch counter across host rebuilds.
-        notice = NotSentNotice.NONE
-        // Callbacks arrive on transport or host threads: marshal to main and drop a superseded connection's.
-        fun onMain(f: () -> Unit) = runOnUiThread { if (gen == connGen && !isDestroyed) { f(); renderTabs() } }
+        // Callbacks arrive on transport or host threads: marshal to main. The notice is NOT cleared here and
+        // the not-sent report is not gen-filtered: the dying connection's drop report (closeSocket bumps connGen
+        // first) must reach the screen. Only an ack, a slot switch or a dismiss clears it.
+        fun onMain(f: () -> Unit) = runOnUiThread { if (!isDestroyed) { f(); renderTabs() } }
         inputSender = InputSender(
             { s, c, d -> client?.sendInput(s, c, d) ?: false },
             { System.currentTimeMillis() },
@@ -531,7 +537,7 @@ class MainActivity : AppCompatActivity() {
     // ---- terminal ------------------------------------------------------------------------
 
     private var inputSender: InputSender? = null
-    /** Chars not sent, shown until the next ack, a slot switch or a new connection (main thread only). */
+    /** Chars not sent, shown until the next ack, a slot switch or a dismiss; survives a drop (main thread only). */
     private var notice = NotSentNotice.NONE
 
     private fun newHost(): TerminalHost {
@@ -582,6 +588,11 @@ class MainActivity : AppCompatActivity() {
         renderTabs()
     }
 
+    private fun dismissNotice() {
+        notice = NotSentNotice.NONE
+        renderTabs()
+    }
+
     private fun sendKey(bytes: String) {
         termHost?.sendKeys(bytes)
         renderTabs() // a latched Ctrl is consumed by the key
@@ -604,7 +615,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, notice)
+        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice)
     }
 
     // ---- rendering -----------------------------------------------------------------------
@@ -624,7 +635,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.notice),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -647,6 +658,8 @@ class MainActivity : AppCompatActivity() {
                         ),
                     )
                 }
+                // Above every screen, so a drop that tears the key row down still shows what was not sent.
+                NotSentLine(snap.notice, ::dismissNotice, Modifier.align(Alignment.TopCenter).padding(top = 60.dp))
             }
         }
     }

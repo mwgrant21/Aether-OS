@@ -30,15 +30,30 @@ class KeyRowModelTest {
     }
 
     @Test fun enabledOnlyForConnectedRunningSlot() {
-        assertTrue(keysEnabled(tab(SlotState.RUNNING), ok))
-        assertFalse(keysEnabled(tab(SlotState.NOT_STARTED), ok))
-        assertFalse(keysEnabled(tab(SlotState.EXITED), ok))
-        assertFalse(keysEnabled(tab(SlotState.RUNNING), null)) // disconnected
-        assertFalse(keysEnabled(null, ok)) // no such tab
+        assertTrue(keysEnabled(tab(SlotState.RUNNING), ok, true))
+        assertFalse(keysEnabled(tab(SlotState.NOT_STARTED), ok, true))
+        assertFalse(keysEnabled(tab(SlotState.EXITED), ok, true))
+        assertFalse(keysEnabled(tab(SlotState.RUNNING), null, true)) // disconnected
+        assertFalse(keysEnabled(null, ok, true)) // no such tab
+    }
+
+    @Test fun enabledNeedsTheHostGateEvenForAConnectedRunningSlot() {
+        assertFalse(keysEnabled(tab(SlotState.RUNNING), ok, false)) // attach failed / not yet attached
+    }
+
+    @Test fun laterNotSentCharsDoNotKeepAStaleRefusalReason() {
+        val n = NotSentNotice.NONE.add(8193).refused(InputSender.Refusal.TOO_LARGE).add(4)
+        assertEquals(8197, n.chars)
+        assertEquals(null, n.refusal)
+    }
+
+    @Test fun refusalAfterAddKeepsItsReason() {
+        // InputSender reports the count first, then the reason.
+        assertEquals(InputSender.Refusal.TOO_LARGE, NotSentNotice.NONE.add(8193).refused(InputSender.Refusal.TOO_LARGE).refusal)
     }
 
     @Test fun noticeAccumulatesAndRemembersRefusal() {
-        val n = NotSentNotice.NONE.add(3).refused(InputSender.Refusal.TOO_LARGE).add(2)
+        val n = NotSentNotice.NONE.add(3).add(2).refused(InputSender.Refusal.TOO_LARGE)
         assertEquals(5, n.chars)
         assertEquals(InputSender.Refusal.TOO_LARGE, n.refusal)
         assertTrue(n.visible)

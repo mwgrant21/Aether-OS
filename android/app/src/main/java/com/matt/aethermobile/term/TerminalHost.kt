@@ -91,6 +91,10 @@ class TerminalHost(
     private fun canType(slot: String?): Boolean =
         active && slot != null && slot == attached && states[slot] == SlotState.RUNNING
 
+    /** True when keys would be accepted right now: the same gate [sendKeys] applies. The UI drives the key row from it. */
+    @Synchronized
+    fun typingAccepted(): Boolean = canType(attached)
+
     /** Tells the page whether stdin is on; posts only on a change. */
     private fun syncStdin() {
         val on = canType(attached)
@@ -110,12 +114,14 @@ class TerminalHost(
     /** Key-row bytes (Esc, arrows, ...): same gates and sender as page input. */
     @Synchronized
     fun sendKeys(bytes: String) {
-        val slot = attached ?: return
+        val slot = attached
+        if (slot == null) { if (bytes.isNotEmpty()) safe { inputSender.reject(bytes.length) }; return }
         typeInto(slot, bytes)
     }
 
     private fun typeInto(slot: String, data: String) {
-        if (!canType(slot) || data.isEmpty()) return
+        if (data.isEmpty()) return
+        if (!canType(slot)) { safe { inputSender.reject(data.length) }; return }
         var out = data
         if (ctrlLatch) {
             ctrlLatch = false
@@ -149,6 +155,7 @@ class TerminalHost(
         if (sent && q == null) awaitingSnap.add(slot) else awaitingSnap.remove(slot)
         safe { post(BridgeOut.show(slot)) }
         syncStdin()
+        safe { onTabsChanged() } // attached may have changed: the key row follows it
     }
 
     @Synchronized
@@ -176,6 +183,7 @@ class TerminalHost(
             attached = null
         }
         syncStdin()
+        safe { onTabsChanged() }
     }
 
     @Synchronized

@@ -10,7 +10,7 @@ class InputSender(
     private val send: (String, Long, String) -> Boolean,
     private val nowMs: () -> Long,
     private val onNotSent: (Int) -> Unit = {},
-    /** Why [send] refused a whole input (before any frame); called just before [onNotSent]. */
+    /** Why [send] refused a whole input (before any frame); called right after [onNotSent] for the same input. */
     private val onRefused: (Refusal) -> Unit = {},
     /** A cumulative ack retired at least one pending frame. */
     private val onAcked: () -> Unit = {},
@@ -37,8 +37,9 @@ class InputSender(
             else -> null
         }
         if (refusal != null) {
+            val r = fail(SendResult(0, 0, text.length))
             onRefused(refusal)
-            return fail(SendResult(0, 0, text.length))
+            return r
         }
         var i = 0
         var frames = 0
@@ -52,6 +53,11 @@ class InputSender(
             i = end
         }
         return fail(SendResult(frames, i, text.length - i))
+    }
+
+    /** Input that never reached [send] (the host's gate was closed): counted and reported as not sent. */
+    fun reject(chars: Int) {
+        if (chars > 0) fail(SendResult(0, 0, chars))
     }
 
     /** Cumulative ack: every pending frame with cseq <= [c] for [s] was processed. */

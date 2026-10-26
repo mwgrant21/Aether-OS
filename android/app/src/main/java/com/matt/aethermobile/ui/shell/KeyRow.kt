@@ -1,5 +1,6 @@
 package com.matt.aethermobile.ui.shell
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,17 +25,8 @@ import com.matt.aethermobile.ui.components.aeActive
 
 /** Native key row: sends through the same gated host path as page input. Only composed while connected. */
 @Composable
-fun KeyRow(enabled: Boolean, ctrlOn: Boolean, notice: NotSentNotice, actions: ShellActions) {
+fun KeyRow(enabled: Boolean, ctrlOn: Boolean, actions: ShellActions) {
     Column(Modifier.fillMaxWidth()) {
-        if (notice.visible) {
-            val count = pluralStringResource(R.plurals.not_sent_chars, notice.chars, notice.chars)
-            val why = when (notice.refusal) {
-                InputSender.Refusal.TOO_LARGE -> stringResource(R.string.not_sent_too_large)
-                InputSender.Refusal.LONE_SURROGATE -> stringResource(R.string.not_sent_bad_text)
-                null -> null
-            }
-            AeNoticeBox(if (why == null) count else "$count. $why", amber = true, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-        }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -56,6 +48,26 @@ fun KeyRow(enabled: Boolean, ctrlOn: Boolean, notice: NotSentNotice, actions: Sh
             }
         }
     }
+}
+
+/**
+ * Amber "N chars not sent" line. Composed by the activity above every screen (locked, error, connected), so a
+ * drop that tears the key row down still shows it. Tap to dismiss.
+ */
+@Composable
+fun NotSentLine(notice: NotSentNotice, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    if (!notice.visible) return
+    val count = pluralStringResource(R.plurals.not_sent_chars, notice.chars, notice.chars)
+    val why = when (notice.refusal) {
+        InputSender.Refusal.TOO_LARGE -> stringResource(R.string.not_sent_too_large)
+        InputSender.Refusal.LONE_SURROGATE -> stringResource(R.string.not_sent_bad_text)
+        null -> null
+    }
+    AeNoticeBox(
+        if (why == null) count else "$count. $why",
+        amber = true,
+        modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp).clickable(onClick = onDismiss),
+    )
 }
 
 private fun labelRes(k: Key): Int = when (k) {
