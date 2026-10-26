@@ -1525,7 +1525,7 @@ const remoteHub = createRemoteHub({
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
   terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
-  input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; desktop pty:write does not use it
+  input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
