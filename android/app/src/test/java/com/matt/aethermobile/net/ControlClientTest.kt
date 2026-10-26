@@ -497,4 +497,36 @@ class ControlClientTest {
         t.listener!!.onMessage(golden.getString("out"))
         assertEquals(golden.getString("attach"), t.sent.last())
     }
+
+    @Test fun sendInputBeforeConnectedAndAfterCloseReturnsFalseAndSendsNothing() {
+        val idle = client()
+        assertFalse(idle.sendInput("claude", 1, "x"))
+        assertTrue(transport.sent.isEmpty())
+        val c = opened() // hello sent, welcome not yet verified
+        val helloOnly = transport.sent.toList()
+        assertFalse(c.sendInput("claude", 1, "x"))
+        assertEquals(helloOnly, transport.sent)
+        val d = connected()
+        d.close()
+        val before = transport.sent.size
+        assertFalse(d.sendInput("claude", 1, "x"))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun sendInputPutsExactlyOneGoldenFrameOnTheTransportWhenConnected() {
+        val c = connected()
+        val before = transport.sent.size
+        assertTrue(c.sendInput("claude", 1, "echo hi\r"))
+        assertEquals(listOf(golden.getString("in")), transport.sent.drop(before))
+        assertFalse(c.sendInput("bash", 2, "x"))
+        assertFalse(c.sendInput("claude", 0, "x"))
+        assertEquals(before + 1, transport.sent.size)
+    }
+
+    @Test fun ackFrameIsDeliveredToOnFrame() {
+        connected()
+        transport.listener!!.onMessage(golden.getString("ack"))
+        assertEquals(listOf<ControlProtocol.TerminalFrame>(ControlProtocol.TerminalFrame.Ack("claude", 3)), frames)
+        assertTrue(transport.closes.isEmpty())
+    }
 }

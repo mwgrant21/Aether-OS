@@ -173,6 +173,7 @@ class TerminalHost(
             }
             is TerminalFrame.Size -> post(BridgeOut.size(frame.s, frame.cols, frame.rows))
             is TerminalFrame.State -> Unit
+            is TerminalFrame.Ack -> Unit // consumed by the input path (T5); nothing for the page
         }
     }
 

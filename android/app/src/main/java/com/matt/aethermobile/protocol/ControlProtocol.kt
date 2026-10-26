@@ -88,6 +88,8 @@ object ControlProtocol {
         data class Out(override val s: String, val q: Long, val d: String) : TerminalFrame()
         data class Size(override val s: String, val cols: Int, val rows: Int) : TerminalFrame()
         data class State(override val s: String, val state: SlotState) : TerminalFrame()
+        /** Cumulative: every `in` frame with cseq <= [c] on [s] has been processed. */
+        data class Ack(override val s: String, val c: Long) : TerminalFrame()
     }
 
     /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
@@ -109,6 +111,8 @@ object ControlProtocol {
         val expiresAtMs: Long,
         val serverTimeMs: Long,
         val sessions: List<SessionInfo> = emptyList(),
+        /** `welcome.applied`: last applied input cseq per slot for this device and epoch. */
+        val applied: Map<String, Long> = emptyMap(),
     )
 
     private val secureRandom: SecureRandom by lazy { SecureRandom() }
@@ -167,7 +171,7 @@ object ControlProtocol {
         if (o.optString("t") != "welcome") return null
         val proof = o.opt("proof") as? String ?: return null
         if (proof.isEmpty()) return null
-        return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L), parseSessions(o.optJSONArray("sessions")))
+        return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L), parseSessions(o.optJSONArray("sessions")), parseApplied(o.optJSONObject("applied")))
     }
 
     /** Null unless the frame is a `bye` with a known reason. */
@@ -195,7 +199,18 @@ object ControlProtocol {
     }
 
     /**
-     * Null unless the frame is a well-formed snap/out/size/state: known slot,
+     * `{"t":"in","s":...,"c":N,"d":...}`. Built by hand like attach so key order is fixed;
+     * `d` goes through JSONObject.quote, which escapes quotes, backslash and control chars.
+     */
+    fun buildIn(s: String, c: Long, d: String): String {
+        require(isSlot(s)) { "unknown slot" }
+        require(c in 1..MAX_SAFE_INTEGER) { "c out of range" }
+        require(d.isNotEmpty()) { "empty input" }
+        return "{\"t\":\"in\",\"s\":${JSONObject.quote(s)},\"c\":$c,\"d\":${JSONObject.quote(d)}}"
+    }
+
+    /**
+     * Null unless the frame is a well-formed snap/out/size/state/ack: known slot,
      * string `d`, whole-number numerics (a JSON 1.5 or 1.0 is rejected), q within
      * 0..2^53-1, known state. Unknown extra fields are ignored.
      */
@@ -225,6 +240,11 @@ object ControlProtocol {
                 val st = SlotState.values().firstOrNull { it.wire == o.opt("state") } ?: return null
                 TerminalFrame.State(s, st)
             }
+            "ack" -> {
+                val c = whole(o.opt("c"), MAX_SAFE_INTEGER) ?: return null
+                if (c < 1) return null
+                TerminalFrame.Ack(s, c)
+            }
             else -> null
         }
     }
@@ -239,6 +259,17 @@ object ControlProtocol {
             else -> return null
         }
         return if (n in 0..max) n else null
+    }
+
+    /** Known slots with whole-number cseq only; anything else is skipped, like an unknown field. */
+    private fun parseApplied(o: JSONObject?): Map<String, Long> {
+        if (o == null) return emptyMap()
+        val out = LinkedHashMap<String, Long>()
+        for (k in o.keys()) {
+            if (!isSlot(k)) continue
+            out[k] = whole(o.opt(k), MAX_SAFE_INTEGER) ?: continue
+        }
+        return out
     }
 
     /** Well-formed entries only; a malformed entry is skipped, like an unknown field. */
