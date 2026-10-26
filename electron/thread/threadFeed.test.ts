@@ -222,7 +222,7 @@ describe('threadFeed snapshot/tick boundary (nothing lost or duplicated)', () =>
     attA.detach();
   });
 
-  it('does not re-read bytes the seed already consumed (red-proof target: offset after seed)', async () => {
+  it('does not re-read bytes the seed already consumed', async () => {
     const r = rig({ initial: prompt('only') });
     const p = phone();
     r.feed.attach(p.tap);
