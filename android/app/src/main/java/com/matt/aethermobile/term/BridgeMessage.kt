@@ -107,6 +107,9 @@ object BridgeOut {
 
     fun show(s: String): String = JSONObject().put("t", "show").put("s", s).toString()
 
+    /** Page keyboard on/off: on only while a running slot is attached over a live connection. */
+    fun stdin(on: Boolean): String = JSONObject().put("t", "stdin").put("on", on).toString()
+
     /** px 0 = fit width, else 8..24 (the host validates). */
     fun zoom(px: Int): String = JSONObject().put("t", "zoom").put("px", px).toString()
 }

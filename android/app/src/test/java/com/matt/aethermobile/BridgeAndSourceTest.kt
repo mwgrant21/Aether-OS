@@ -16,6 +16,11 @@ import org.junit.Test
 class BridgeAndSourceTest {
     private fun parse(s: String?) = BridgeValidator.parse(s)
 
+    @Test fun stdinBridgeMessageCarriesAStrictBoolean() {
+        assertEquals("{\"t\":\"stdin\",\"on\":true}", com.matt.aethermobile.term.BridgeOut.stdin(true))
+        assertEquals("{\"t\":\"stdin\",\"on\":false}", com.matt.aethermobile.term.BridgeOut.stdin(false))
+    }
+
     @Test fun acceptsEachFixedMessageType() {
         assertEquals(PageMessage.Ready, parse("""{"t":"ready"}"""))
         assertEquals(PageMessage.Input("codex", "ls\r"), parse("""{"t":"input","s":"codex","d":"ls\r"}"""))

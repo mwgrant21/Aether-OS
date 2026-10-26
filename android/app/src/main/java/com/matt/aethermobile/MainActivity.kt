@@ -518,6 +518,7 @@ class MainActivity : AppCompatActivity() {
             detach = { s -> client?.detach(s) ?: false },
             post = screen::post, // posts to the UI thread; never waits under the host monitor
             feed = TerminalFeed(),
+            sendInput = { s, c, d -> client?.sendInput(s, c, d) ?: false },
             onTabsChanged = { handler.post { if (!isDestroyed && termHost === th) renderTabs() } },
         )
         return th
