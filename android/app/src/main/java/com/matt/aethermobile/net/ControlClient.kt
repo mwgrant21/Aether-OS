@@ -50,6 +50,8 @@ sealed class ControlState {
         val expiresAtMs: Long,
         val serverTimeMs: Long,
         val sessions: List<ControlProtocol.SessionInfo> = emptyList(),
+        /** welcome.caps; the thread frames are only used when it contains [ControlProtocol.CAP_THREAD]. */
+        val caps: Set<String> = emptySet(),
     ) : ControlState()
 
     /** bye revoked/expired, or HTTP 401 on upgrade: the stored token is dead. */
@@ -66,11 +68,12 @@ sealed class ControlState {
  * V1 /ctl client: dials only the baked tailnet host, sends exactly one `hello`,
  * and reports Connected only after the welcome proof verifies against the nonce
  * this client sent. After that it forwards terminal frames to [onFrame] and
- * sends attach/detach. No reconnect (V4), no input.
+ * sends attach/detach, plus the read-only thread verbs when titan advertised
+ * the `thread` cap. No reconnect (V4), no input.
  *
  * Threading: [onState] is invoked on transport threads (OkHttp), serially per
  * connection; the UI must marshal to the main thread. [onFrame] runs on the
- * same thread, in arrival order, outside the client lock. Frame bodies are
+ * same thread, in arrival order, outside the client lock; so is [onThreadFrame]. Frame bodies are
  * never logged. [state] is safe to read
  * from any thread. The first terminal state of a connection wins: a later
  * transport close can never overwrite a bye.
@@ -84,6 +87,7 @@ class ControlClient(
     private val transport: Transport,
     private val onState: (ControlState) -> Unit = {},
     private val onFrame: (ControlProtocol.TerminalFrame) -> Unit = {},
+    private val onThreadFrame: (ControlProtocol.ThreadFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
@@ -135,6 +139,30 @@ class ControlClient(
         return sendWhenConnected(frame)
     }
 
+    /** Subscribes to [s]'s thread. False if not Connected, titan did not advertise the thread cap, unknown slot, or not queued. */
+    fun attachThread(s: String): Boolean {
+        val frame = try { ControlProtocol.buildTattach(s) } catch (_: IllegalArgumentException) { return false }
+        return sendThreadVerb(frame)
+    }
+
+    /** Unsubscribes from [s]'s thread. Same false cases as [attachThread]. */
+    fun detachThread(s: String): Boolean {
+        val frame = try { ControlProtocol.buildTdetach(s) } catch (_: IllegalArgumentException) { return false }
+        return sendThreadVerb(frame)
+    }
+
+    /** Asks for the tap-to-expand detail of entry [id]. Same false cases as [attachThread], plus a malformed id. */
+    fun getDetail(s: String, id: String): Boolean {
+        val frame = try { ControlProtocol.buildTget(s, id) } catch (_: IllegalArgumentException) { return false }
+        return sendThreadVerb(frame)
+    }
+
+    private fun sendThreadVerb(frame: String): Boolean = synchronized(this) {
+        val st = state
+        if (st !is ControlState.Connected || ControlProtocol.CAP_THREAD !in st.caps) return false
+        transport.send(frame)
+    }
+
     private fun sendWhenConnected(frame: String): Boolean = synchronized(this) {
         if (state !is ControlState.Connected) return false
         transport.send(frame)
@@ -154,6 +182,7 @@ class ControlClient(
         private var helloSent = false
         private var done = false
         private var welcomed = false
+        private var threadCap = false
 
         /** Ends the connection once; returns false if it had already ended. */
         fun finish(next: ControlState, closeCode: Int? = null): Boolean {
@@ -188,6 +217,7 @@ class ControlClient(
 
         override fun onMessage(text: String) {
             var deliver: ControlProtocol.TerminalFrame? = null
+            var deliverThread: ControlProtocol.ThreadFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -205,12 +235,21 @@ class ControlClient(
                             deliver = frame
                         }
                     }
+                    "tsnap", "tadd", "tupd", "tmeta", "tdet" -> {
+                        val frame = if (welcomed && threadCap) ControlProtocol.parseThreadFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverThread = frame
+                        }
+                    }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                 }
             }
             // Outside the lock so a callback may call attach/detach/close freely; the
             // transport delivers onMessage serially per connection, so order holds.
             deliver?.let(onFrame)
+            deliverThread?.let(onThreadFrame)
         }
 
         private fun onBye(text: String) {
@@ -241,9 +280,10 @@ class ControlClient(
                 return
             }
             welcomed = true
+            threadCap = ControlProtocol.CAP_THREAD in welcome.caps
             cancelWatchdog?.invoke()
             cancelWatchdog = null
-            publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs, welcome.sessions))
+            publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs, welcome.sessions, welcome.caps))
         }
 
         override fun onClosed(code: Int, reason: String) {

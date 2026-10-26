@@ -64,6 +64,7 @@ class ControlClientTest {
     private val scheduler = FakeScheduler()
 
     private val frames = mutableListOf<ControlProtocol.TerminalFrame>()
+    private val threadFrames = mutableListOf<ControlProtocol.ThreadFrame>()
 
     private fun client(host: String = HOST) = ControlClient(
         host = host,
@@ -71,6 +72,7 @@ class ControlClientTest {
         transport = transport,
         onState = { states += it },
         onFrame = { frames += it },
+        onThreadFrame = { threadFrames += it },
         nonceSource = { NONCE },
         epochSource = { EPOCH },
         scheduler = scheduler.schedule,
@@ -496,5 +498,118 @@ class ControlClientTest {
         t.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
         t.listener!!.onMessage(golden.getString("out"))
         assertEquals(golden.getString("attach"), t.sent.last())
+    }
+
+    private fun connectedWithCaps(): ControlClient {
+        val c = opened()
+        val w = JSONObject(golden.getString("welcomeCaps")).put("proof", ControlProtocol.serverProof(TOKEN, NONCE))
+        transport.listener!!.onMessage(w.toString())
+        assertEquals(setOf("thread"), (c.state as ControlState.Connected).caps)
+        return c
+    }
+
+    @Test fun welcomeWithoutCapsLeavesTheSetEmpty() {
+        val c = connected()
+        assertEquals(emptySet<String>(), (c.state as ControlState.Connected).caps)
+    }
+
+    @Test fun threadFrameBeforeTheProofVerifiesIsAProtocolFailure() {
+        for (f in listOf("tsnap", "tadd", "tupd", "tmeta", "tdet")) {
+            val t = FakeTransport()
+            val seen = mutableListOf<ControlProtocol.ThreadFrame>()
+            val c = ControlClient(HOST, "0.2.0-v1", t, onThreadFrame = { seen += it }, nonceSource = { NONCE }, epochSource = { EPOCH })
+            c.connect(TOKEN)
+            t.listener!!.onOpen()
+            t.listener!!.onMessage(golden.getString(f))
+            assertEquals(f, ControlState.Failed(Failure.Protocol), c.state)
+            assertEquals(f, listOf(1008), t.closes)
+            assertTrue(f, seen.isEmpty())
+        }
+    }
+
+    @Test fun threadFrameWithoutTheCapIsAProtocolFailure() {
+        val c = connected()
+        transport.listener!!.onMessage(golden.getString("tmeta"))
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+        assertTrue(threadFrames.isEmpty())
+    }
+
+    @Test fun threadFramesReachOnThreadFrameInOrderWhenTheCapIsPresent() {
+        connectedWithCaps()
+        val l = transport.listener!!
+        val names = listOf("tsnap", "tadd", "tupd", "tmeta", "tdet")
+        for (f in names) l.onMessage(golden.getString(f))
+        val expected = names.map { ControlProtocol.parseThreadFrame(golden.getString(it)) }
+        assertTrue(expected.none { it == null })
+        assertEquals(expected, threadFrames)
+        assertTrue(transport.closes.isEmpty())
+    }
+
+    @Test fun malformedThreadFrameClosesWith1008AndIsNotDelivered() {
+        val c = connectedWithCaps()
+        transport.listener!!.onMessage(golden.getString("tadd").replace("\"q\":58", "\"q\":58.0"))
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+        assertTrue(threadFrames.isEmpty())
+    }
+
+    @Test fun terminalOnlySlotThreadFrameClosesWith1008() {
+        val c = connectedWithCaps()
+        transport.listener!!.onMessage(golden.getString("tmeta").replace("\"claude\"", "\"codex\""))
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+        assertTrue(threadFrames.isEmpty())
+    }
+
+    @Test fun threadVerbsReturnFalseAndSendNothingWithoutTheCapOrConnection() {
+        val idle = client()
+        assertFalse(idle.attachThread("claude"))
+        assertFalse(idle.detachThread("claude"))
+        assertFalse(idle.getDetail("claude", "1:0"))
+        assertTrue(transport.sent.isEmpty())
+        val c = connected() // welcome without caps
+        val before = transport.sent.size
+        assertFalse(c.attachThread("claude"))
+        assertFalse(c.detachThread("claude"))
+        assertFalse(c.getDetail("claude", "123456:0"))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun threadVerbsSendTheExactBytesWhenTheCapIsPresent() {
+        val c = connectedWithCaps()
+        val before = transport.sent.size
+        assertTrue(c.attachThread("claude"))
+        assertTrue(c.detachThread("terminal2"))
+        assertTrue(c.getDetail("claude", "123456:0"))
+        assertEquals(
+            listOf(golden.getString("tattach"), golden.getString("tdetach"), golden.getString("tget")),
+            transport.sent.drop(before),
+        )
+    }
+
+    @Test fun threadVerbsWithBadSlotOrIdSendNothing() {
+        val c = connectedWithCaps()
+        val before = transport.sent.size
+        assertFalse(c.attachThread("codex"))
+        assertFalse(c.detachThread("bash"))
+        assertFalse(c.getDetail("codex", "1:0"))
+        assertFalse(c.getDetail("claude", "x"))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun threadVerbsAfterTheConnectionEndedReturnFalse() {
+        val c = connectedWithCaps()
+        transport.listener!!.onMessage(bye("revoked"))
+        val before = transport.sent.size
+        assertFalse(c.attachThread("claude"))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun terminalFramesStillFlowOnAThreadCapableConnection() {
+        connectedWithCaps()
+        transport.listener!!.onMessage(golden.getString("out"))
+        assertEquals(1, frames.size)
+        assertTrue(threadFrames.isEmpty())
     }
 }
