@@ -4,6 +4,7 @@ import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol.SessionInfo
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.protocol.ControlProtocol.TerminalFrame
+import com.matt.aethermobile.protocol.ControlProtocol.NakReason
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -371,6 +372,21 @@ class TerminalHostTest {
         host.onFrame(TerminalFrame.Ack("claude", 2))
         host.onDisconnected()
         assertTrue(notSent.isEmpty())
+    }
+
+    @Test fun nakReachesTheSenderForAttachedAndDetachedSlotsAndCseqContinuesAfterIt() {
+        val frames = ArrayList<Long>(); val ns = ArrayList<Int>(); val why = ArrayList<InputSender.Refusal>()
+        val shared = InputSender({ _, c, _ -> frames.add(c); true }, { 0L }, { ns.add(it) }, { why.add(it) })
+        val h = TerminalHost(attach = { _, _ -> true }, detach = { true }, post = {}, feed = TerminalFeed(), sharedSender = shared)
+        h.onSessions(listOf(info("claude"), info("codex"))); h.select("claude")
+        h.onPage(PageMessage.Input("claude", "abc")); h.onPage(PageMessage.Input("claude", "de"))
+        h.onFrame(TerminalFrame.Nak("claude", 1, NakReason.NOT_RUNNING))
+        h.select("codex") // claude is no longer attached
+        h.onFrame(TerminalFrame.Nak("claude", 2, NakReason.TYPING_OFF))
+        assertEquals(listOf(3, 2), ns)
+        assertEquals(listOf(InputSender.Refusal.NOT_RUNNING, InputSender.Refusal.TYPING_OFF), why)
+        h.select("claude"); h.onPage(PageMessage.Input("claude", "f"))
+        assertEquals(listOf(1L, 2L, 3L), frames) // the nak'd numbers are never reused
     }
 
     @Test fun sendInputReturningFalseCountsAsNotSent() {

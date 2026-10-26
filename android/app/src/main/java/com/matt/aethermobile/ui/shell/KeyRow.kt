@@ -61,6 +61,8 @@ fun NotSentLine(notice: NotSentNotice, onDismiss: () -> Unit, modifier: Modifier
     val why = when (notice.refusal) {
         InputSender.Refusal.TOO_LARGE -> stringResource(R.string.not_sent_too_large)
         InputSender.Refusal.LONE_SURROGATE -> stringResource(R.string.not_sent_bad_text)
+        InputSender.Refusal.NOT_RUNNING -> stringResource(R.string.not_sent_not_running)
+        InputSender.Refusal.TYPING_OFF -> stringResource(R.string.not_sent_typing_off)
         null -> null
     }
     AeNoticeBox(

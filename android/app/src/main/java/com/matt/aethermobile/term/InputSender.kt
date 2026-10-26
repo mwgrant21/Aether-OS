@@ -1,5 +1,7 @@
 package com.matt.aethermobile.term
 
+import com.matt.aethermobile.protocol.ControlProtocol.NakReason
+
 /**
  * Turns typed text into cseq-numbered `in` frames. Pure JVM, no android.* imports.
  * Ordered, at-most-once: a frame is sent once and never resent (design 2.3). Unacked frames are
@@ -15,7 +17,7 @@ class InputSender(
     /** A cumulative ack retired at least one pending frame. */
     private val onAcked: () -> Unit = {},
 ) {
-    enum class Refusal { TOO_LARGE, LONE_SURROGATE }
+    enum class Refusal { TOO_LARGE, LONE_SURROGATE, NOT_RUNNING, TYPING_OFF }
 
     /** [sentChars] reached `send`; [notSentChars] did not (refused input, or the link refused a frame). */
     data class SendResult(val frames: Int, val sentChars: Int, val notSentChars: Int)
@@ -63,6 +65,26 @@ class InputSender(
     /** Cumulative ack: every pending frame with cseq <= [c] for [s] was processed. */
     fun onAck(s: String, c: Long) {
         if (pending[s]?.removeAll { it.c <= c } == true) onAcked()
+    }
+
+    /**
+     * The desktop refused frame ([s], [c]) with [reason]. Its chars are reported not sent (reason first,
+     * then the count) and are not an ack. An unknown or already-settled cseq is ignored. Never resent;
+     * [nextC] is untouched because the rejected frame consumed its number.
+     */
+    fun onNak(s: String, c: Long, reason: NakReason) {
+        val list = pending[s] ?: return
+        val i = list.indexOfFirst { it.c == c }
+        if (i < 0) return
+        val chars = list.removeAt(i).chars
+        unsent += chars
+        onRefused(
+            when (reason) {
+                NakReason.NOT_RUNNING -> Refusal.NOT_RUNNING
+                NakReason.TYPING_OFF -> Refusal.TYPING_OFF
+            },
+        )
+        onNotSent(chars)
     }
 
     /** The link dropped: whatever is still unacked is reported not sent. Nothing is resent. */

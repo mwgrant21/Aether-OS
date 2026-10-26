@@ -1,5 +1,6 @@
 package com.matt.aethermobile.term
 
+import com.matt.aethermobile.protocol.ControlProtocol.NakReason
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -136,5 +137,39 @@ class InputSenderTest {
         sender.onAck("claude", 1)
         sender.onAck("codex", 5)
         assertEquals(1, acks)
+    }
+
+    @Test fun nakRemovesExactlyThatChunkAndReportsReasonThenCountNeverAnAck() {
+        sender.send("claude", "abc"); sender.send("claude", "de")
+        sender.onNak("claude", 2, NakReason.NOT_RUNNING)
+        assertEquals(listOf(InputSender.Refusal.NOT_RUNNING), refusals)
+        assertEquals(listOf(2), notSent)
+        assertEquals(0, acks)
+        assertEquals(2, sender.unsentChars())
+        sender.onDisconnected()
+        assertEquals(listOf(2, 3), notSent) // chunk 1 only; chunk 2 is not counted again
+    }
+
+    @Test fun nakMapsTypingOffAndIgnoresAnUnknownCseq() {
+        sender.send("claude", "abc")
+        sender.onNak("claude", 9, NakReason.TYPING_OFF)
+        sender.onNak("codex", 1, NakReason.TYPING_OFF)
+        assertTrue(refusals.isEmpty() && notSent.isEmpty())
+        sender.onNak("claude", 1, NakReason.TYPING_OFF)
+        assertEquals(listOf(InputSender.Refusal.TYPING_OFF), refusals)
+        sender.onNak("claude", 1, NakReason.TYPING_OFF) // replay: already settled
+        assertEquals(listOf(3), notSent)
+    }
+
+    @Test fun cseqKeepsAdvancingAfterANakAndALaterAckClearsOnlyTheOthers() {
+        sender.send("claude", "a"); sender.send("claude", "bb"); sender.send("claude", "ccc")
+        sender.onNak("claude", 2, NakReason.NOT_RUNNING)
+        sender.send("claude", "d")
+        assertEquals(listOf(1L, 2L, 3L, 4L), frames.map { it.second })
+        sender.onAck("claude", 3)
+        assertEquals(1, acks)
+        sender.onDisconnected()
+        assertEquals(listOf(2, 1), notSent) // nak'd chunk, then only the unacked c=4
+        assertEquals(3, sender.unsentChars())
     }
 }

@@ -462,14 +462,15 @@ class MainActivity : AppCompatActivity() {
         // One sender per connection: its cseq must follow the desktop's per-epoch counter across host rebuilds.
         // Callbacks arrive on transport or host threads: marshal to main. The notice is NOT cleared here and
         // the not-sent report is not gen-filtered: the dying connection's drop report (closeSocket bumps connGen
-        // first) must reach the screen. Only an ack, a slot switch or a dismiss clears it.
+        // first) must reach the screen. Only an ack (gen-filtered: a late ack must not clear a newer notice), a slot
+        // switch or a dismiss clears it.
         fun onMain(f: () -> Unit) = runOnUiThread { if (!isDestroyed) { f(); renderTabs() } }
         inputSender = InputSender(
             { s, c, d -> client?.sendInput(s, c, d) ?: false },
             { System.currentTimeMillis() },
             onNotSent = { n -> onMain { notice = notice.add(n) } },
             onRefused = { r -> onMain { notice = notice.refused(r) } },
-            onAcked = { onMain { notice = NotSentNotice.NONE } },
+            onAcked = { runOnUiThread { if (gen == connGen && !isDestroyed) { notice = NotSentNotice.NONE; renderTabs() } } },
         )
         val th = newHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->

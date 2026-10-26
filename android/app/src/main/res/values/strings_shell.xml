@@ -30,4 +30,6 @@
     </plurals>
     <string name="not_sent_too_large">Input over 64 KB was refused. Paste it in smaller parts.</string>
     <string name="not_sent_bad_text">Input with a broken character was refused.</string>
+    <string name="not_sent_not_running">Terminal not connected on the PC.</string>
+    <string name="not_sent_typing_off">Typing is switched off on the PC.</string>
 </resources>

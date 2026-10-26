@@ -207,6 +207,10 @@ class TerminalHost(
             inputSender.onAck(frame.s, frame.c)
             return
         }
+        if (frame is TerminalFrame.Nak) {
+            inputSender.onNak(frame.s, frame.c, frame.reason)
+            return
+        }
         if (frame.s != attached) return
         when (frame) {
             is TerminalFrame.Snap -> {
@@ -248,7 +252,7 @@ class TerminalHost(
             is TerminalFrame.Size -> post(BridgeOut.size(frame.s, frame.cols, frame.rows))
             is TerminalFrame.State -> Unit
             is TerminalFrame.Ack -> Unit // handled before the attached-slot filter, above
-            is TerminalFrame.Nak -> Unit
+            is TerminalFrame.Nak -> Unit // handled before the attached-slot filter, above
         }
     }
 
