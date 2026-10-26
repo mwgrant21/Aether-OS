@@ -4,6 +4,7 @@ import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol.SessionInfo
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.protocol.ControlProtocol.TerminalFrame
+import com.matt.aethermobile.protocol.ControlProtocol.NakReason
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,12 +17,17 @@ class TerminalHostTest {
     private var attachResult = true
     private var throwOnPost = false
     private var throwOnAttach = false
+    private val sent = ArrayList<Triple<String, Long, String>>()
+    private val notSent = ArrayList<Int>()
+    private var sendOk = true
 
     private val host = TerminalHost(
         attach = { s, q -> if (throwOnAttach) error("boom"); calls.add("attach $s ${q ?: "-"}"); attachResult },
         detach = { s -> calls.add("detach $s"); true },
         post = { m -> if (throwOnPost) error("boom"); posts.add(m) },
         feed = feed,
+        sendInput = { s, c, d -> if (sendOk) sent.add(Triple(s, c, d)); sendOk },
+        onNotSent = { notSent.add(it) },
     )
 
     // Both sides are re-parsed from strings, so Long vs Integer cannot false-fail.
@@ -164,7 +170,7 @@ class TerminalHostTest {
         host.onFrame(TerminalFrame.Snap("terminal2", 8, 100, 30, "SNAP"))
         host.onFrame(TerminalFrame.Out("terminal2", 8, "dup"))
         host.onFrame(TerminalFrame.Out("terminal2", 9, "C"))
-        val written = posts.map { JSONObject(it) }.filter { it.getString("t") != "show" }
+        val written = posts.map { JSONObject(it) }.filter { it.getString("t") !in setOf("show", "stdin") }
             .map { it.getString("s") + ":" + it.getString("d") }
         assertEquals(listOf("claude:A", "claude:B", "terminal2:SNAP", "terminal2:C"), written)
         assertEquals(listOf("attach claude -", "detach claude", "attach terminal2 -"), calls) // no extra re-attach
@@ -242,10 +248,9 @@ class TerminalHostTest {
         assertEquals(80, m.getInt("cols")); assertEquals(24, m.getInt("rows"))
     }
 
-    @Test fun inputAndResizeFromPageAreDroppedConsumedCounted() {
+    @Test fun resizeFromPageIsDroppedConsumedCounted() {
         ready(); host.select("claude")
         calls.clear(); posts.clear()
-        host.onPage(PageMessage.Input("claude", "ls\r"))
         host.onPage(PageMessage.Resize("claude", 10, 10))
         host.onPage(PageMessage.Ready)
         assertTrue(calls.isEmpty() && posts.isEmpty())
@@ -254,6 +259,191 @@ class TerminalHostTest {
         host.onPage(PageMessage.Consumed("codex", 1))
         assertEquals(15L, host.consumed("claude"))
         assertEquals(16L, host.consumedTotal)
+    }
+
+    private fun typed() = sent.map { it.third }
+    private fun stdins() = posts.map { JSONObject(it) }.filter { it.getString("t") == "stdin" }.map { it.getBoolean("on") }
+
+    @Test fun inputIsAcceptedOnlyForTheAttachedRunningSlot() {
+        ready(info("claude"), info("terminal2", SlotState.NOT_STARTED), info("codex", SlotState.EXITED))
+        host.onPage(PageMessage.Input("claude", "a")) // nothing attached yet
+        host.select("claude")
+        host.onPage(PageMessage.Input("codex", "b")) // other slot
+        host.onPage(PageMessage.Input("terminal2", "c")) // other slot, not started
+        assertTrue(sent.isEmpty())
+        host.onPage(PageMessage.Input("claude", "d"))
+        assertEquals(listOf("d"), typed())
+        host.select("terminal2")
+        host.onPage(PageMessage.Input("terminal2", "e")) // attached but not started
+        host.select("codex")
+        host.onPage(PageMessage.Input("codex", "f")) // attached but exited
+        host.onDisconnected()
+        host.onPage(PageMessage.Input("codex", "g")) // inactive
+        assertEquals(listOf("d"), typed())
+    }
+
+    @Test fun inputToASlotThatExitsIsDroppedAfterTheStateFrame() {
+        ready(); host.select("claude")
+        host.onFrame(TerminalFrame.State("claude", SlotState.EXITED))
+        host.onPage(PageMessage.Input("claude", "x"))
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test fun pageInputAndKeyRowShareOneOrderedCseqSequence() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "a"))
+        host.sendKeys("\u001b[A")
+        host.onPage(PageMessage.Input("claude", "b"))
+        assertEquals(listOf(1L, 2L, 3L), sent.map { it.second })
+        assertEquals(listOf("a", "\u001b[A", "b"), typed())
+    }
+
+    @Test fun sendKeysIsGatedLikePageInput() {
+        ready(info("claude", SlotState.EXITED)); host.sendKeys("x"); host.select("claude"); host.sendKeys("x")
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test fun failedAttachMeansTypingIsNotAcceptedAndKeysAreReportedNotSent() {
+        attachResult = false
+        ready(); host.select("claude")
+        assertTrue(!host.typingAccepted())
+        host.sendKeys("[A")
+        assertTrue(sent.isEmpty())
+        assertEquals(listOf(3), notSent)
+    }
+
+    @Test fun typingIsAcceptedOnlyForAnAttachedRunningSlot() {
+        ready()
+        assertTrue(!host.typingAccepted()) // between onSessions and select
+        host.select("claude")
+        assertTrue(host.typingAccepted())
+        host.onFrame(TerminalFrame.State("claude", SlotState.EXITED))
+        assertTrue(!host.typingAccepted())
+    }
+
+    @Test fun ctrlLatchTurnsOneLetterIntoAControlCharOnceThenClears() {
+        ready(); host.select("claude")
+        host.setCtrlLatch(true)
+        assertTrue(host.ctrlLatched())
+        host.onPage(PageMessage.Input("claude", "c"))
+        host.onPage(PageMessage.Input("claude", "c"))
+        assertEquals(listOf("\u0003", "c"), typed())
+        assertTrue(!host.ctrlLatched())
+    }
+
+    @Test fun ctrlLatchMapsTheSpecialPunctuationAndIgnoresOtherKeys() {
+        ready(); host.select("claude")
+        for (k in listOf("[", "\\", "]", "^", "_", "@")) { host.setCtrlLatch(true); host.onPage(PageMessage.Input("claude", k)) }
+        assertEquals(listOf(0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0), typed().map { it[0].code })
+        sent.clear()
+        host.setCtrlLatch(true); host.onPage(PageMessage.Input("claude", "1"))
+        assertEquals(listOf("1"), typed())
+    }
+
+    @Test fun ctrlLatchIsIgnoredForMultiCharDataButStillClears() {
+        ready(); host.select("claude")
+        host.setCtrlLatch(true)
+        host.onPage(PageMessage.Input("claude", "ls"))
+        assertEquals(listOf("ls"), typed())
+        assertTrue(!host.ctrlLatched())
+    }
+
+    @Test fun disconnectDropsTheLatchAndSendsNothingAfterward() {
+        ready(); host.select("claude")
+        host.setCtrlLatch(true)
+        host.onDisconnected()
+        assertTrue(!host.ctrlLatched())
+        host.sendKeys("x"); host.onPage(PageMessage.Input("claude", "y"))
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test fun disconnectWithUnackedInputReportsNotSentAndNeverResendsOnReconnect() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "abc")); host.onPage(PageMessage.Input("claude", "de"))
+        host.onDisconnected()
+        assertEquals(listOf(5), notSent)
+        ready(); host.select("claude") // reconnect: onSessions again
+        assertEquals(2, sent.size) // no replay
+    }
+
+    @Test fun ackFrameClearsPendingInput() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "abc")); host.onPage(PageMessage.Input("claude", "de"))
+        host.onFrame(TerminalFrame.Ack("claude", 2))
+        host.onDisconnected()
+        assertTrue(notSent.isEmpty())
+    }
+
+    @Test fun nakReachesTheSenderForAttachedAndDetachedSlotsAndCseqContinuesAfterIt() {
+        val frames = ArrayList<Long>(); val ns = ArrayList<Int>(); val why = ArrayList<InputSender.Refusal>()
+        val shared = InputSender({ _, c, _ -> frames.add(c); true }, { 0L }, { ns.add(it) }, { why.add(it) })
+        val h = TerminalHost(attach = { _, _ -> true }, detach = { true }, post = {}, feed = TerminalFeed(), sharedSender = shared)
+        h.onSessions(listOf(info("claude"), info("codex"))); h.select("claude")
+        h.onPage(PageMessage.Input("claude", "abc")); h.onPage(PageMessage.Input("claude", "de"))
+        h.onFrame(TerminalFrame.Nak("claude", 1, NakReason.NOT_RUNNING))
+        h.select("codex") // claude is no longer attached
+        h.onFrame(TerminalFrame.Nak("claude", 2, NakReason.TYPING_OFF))
+        assertEquals(listOf(3, 2), ns)
+        assertEquals(listOf(InputSender.Refusal.NOT_RUNNING, InputSender.Refusal.TYPING_OFF), why)
+        h.select("claude"); h.onPage(PageMessage.Input("claude", "f"))
+        assertEquals(listOf(1L, 2L, 3L), frames) // the nak'd numbers are never reused
+    }
+
+    @Test fun sendInputReturningFalseCountsAsNotSent() {
+        ready(); host.select("claude")
+        sendOk = false
+        host.onPage(PageMessage.Input("claude", "abc"))
+        assertEquals(listOf(3), notSent)
+    }
+
+    @Test fun stdinIsPostedOnWhenARunningSlotIsAttachedAndOffOnExitAndDisconnect() {
+        ready(info("claude"), info("terminal2", SlotState.NOT_STARTED), info("codex"))
+        assertTrue(stdins().isEmpty())
+        host.select("claude")
+        assertEquals(listOf(true), stdins())
+        host.select("terminal2")
+        assertEquals(listOf(true, false), stdins())
+        host.select("codex")
+        host.onFrame(TerminalFrame.State("codex", SlotState.EXITED))
+        assertEquals(listOf(true, false, true, false), stdins())
+        host.onDisconnected()
+        assertEquals(listOf(true, false, true, false), stdins()) // already off: no repeat
+        ready(); host.select("claude"); host.onDisconnected()
+        assertEquals(listOf(true, false, true, false, true, false), stdins())
+    }
+
+    private fun hostOn(sender: InputSender) = TerminalHost(
+        attach = { _, _ -> true }, detach = { true }, post = {}, feed = TerminalFeed(), sharedSender = sender,
+    ).also { it.onSessions(listOf(info("claude"))); it.select("claude") }
+
+    @Test fun twoHostsOnOneConnectionShareOneSenderSoCseqContinues() {
+        val frames = ArrayList<Long>()
+        val shared = InputSender({ _, c, _ -> frames.add(c); true }, { 0L })
+        val h1 = hostOn(shared)
+        for (k in 1..3) h1.onPage(PageMessage.Input("claude", "k"))
+        h1.onFrame(TerminalFrame.Ack("claude", 3))
+        h1.onDisconnected(connectionLost = false) // render gone
+        val h2 = hostOn(shared)
+        h2.onPage(PageMessage.Input("claude", "k"))
+        assertEquals(listOf(1L, 2L, 3L, 4L), frames)
+    }
+
+    @Test fun aSecondOnSessionsOnOneConnectionDoesNotRestartCseq() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "a")); host.onPage(PageMessage.Input("claude", "b"))
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "c"))
+        assertEquals(listOf(1L, 2L, 3L), sent.map { it.second })
+    }
+
+    @Test fun renderGoneRebuildReportsNothingNotSentButARealDisconnectDoes() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "abc"))
+        host.onDisconnected(connectionLost = false)
+        assertTrue(notSent.isEmpty())
+        ready(); host.select("claude")
+        host.onDisconnected()
+        assertEquals(listOf(3), notSent) // still pending: the shared sender kept it
     }
 
     @Test fun failedAttachLeavesNothingAttachedAndReselectRetries() {
@@ -299,7 +489,7 @@ class TerminalHostTest {
         host.onFrame(TerminalFrame.Snap("claude", 5, 100, 30, "S2"))
         host.onFrame(TerminalFrame.Out("claude", 5, "dup"))
         host.onFrame(TerminalFrame.Out("claude", 6, "z"))
-        val written = posts.map { JSONObject(it) }.filter { it.getString("t") != "show" }.map { it.getString("d") }
+        val written = posts.map { JSONObject(it) }.filter { it.getString("t") !in setOf("show", "stdin") }.map { it.getString("d") }
         assertEquals(listOf("S2", "z"), written)
     }
 
@@ -313,7 +503,7 @@ class TerminalHostTest {
         host.onFrame(TerminalFrame.Out("claude", 2, "x"))
         host.onFrame(TerminalFrame.Out("claude", 3, "y"))
         assertEquals(listOf("attach claude -"), calls)
-        assertEquals(listOf("S"), posts.map { JSONObject(it) }.filter { it.getString("t") != "show" }.map { it.getString("d") })
+        assertEquals(listOf("S"), posts.map { JSONObject(it) }.filter { it.getString("t") !in setOf("show", "stdin") }.map { it.getString("d") })
     }
 
     @Test fun typeRegressionInBuilderIsCaughtByAssertJson() {

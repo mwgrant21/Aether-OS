@@ -2,6 +2,7 @@ package com.matt.aethermobile
 
 import com.matt.aethermobile.term.BridgeValidator
 import com.matt.aethermobile.term.FakeTerminalSource
+import com.matt.aethermobile.term.InputSender
 import com.matt.aethermobile.term.PageMessage
 import com.matt.aethermobile.term.RateLimiter
 import com.matt.aethermobile.term.TerminalWebView
@@ -15,6 +16,11 @@ import org.junit.Test
 
 class BridgeAndSourceTest {
     private fun parse(s: String?) = BridgeValidator.parse(s)
+
+    @Test fun stdinBridgeMessageCarriesAStrictBoolean() {
+        assertEquals("{\"t\":\"stdin\",\"on\":true}", com.matt.aethermobile.term.BridgeOut.stdin(true))
+        assertEquals("{\"t\":\"stdin\",\"on\":false}", com.matt.aethermobile.term.BridgeOut.stdin(false))
+    }
 
     @Test fun acceptsEachFixedMessageType() {
         assertEquals(PageMessage.Ready, parse("""{"t":"ready"}"""))
@@ -44,12 +50,17 @@ class BridgeAndSourceTest {
     }
 
     @Test fun inputSizeCapIsInUtf8Bytes() {
+        fun input(d: String) = JSONObject().put("t", "input").put("s", "claude").put("d", d).toString()
+        // Over the sender's cap still parses, so the sender can refuse it visibly.
+        assertNotNull(parse(input("a".repeat(InputSender.MAX_INPUT_BYTES + 1))))
         val ok = "a".repeat(BridgeValidator.MAX_INPUT_BYTES)
-        assertNotNull(parse(JSONObject().put("t", "input").put("s", "claude").put("d", ok).toString()))
-        assertNull(parse(JSONObject().put("t", "input").put("s", "claude").put("d", ok + "a").toString()))
-        // 4097 two-byte chars = 8194 bytes: under the char count, over the byte cap.
-        val wide = "é".repeat(4097)
-        assertNull(parse(JSONObject().put("t", "input").put("s", "claude").put("d", wide).toString()))
+        assertNotNull(parse(input(ok)))
+        assertNull(parse(input(ok + "a")))
+        // Worst-case JSON escaping of a max paste (~393 K chars) stays under the raw cap.
+        assertNotNull(parse(input("\u001b".repeat(InputSender.MAX_INPUT_BYTES))))
+        // 131073 two-byte chars = 262146 bytes: under the char count, over the byte ceiling.
+        assertNull(parse(input("\u00e9".repeat(BridgeValidator.MAX_INPUT_BYTES / 2 + 1))))
+        assertNull(parse("x".repeat(BridgeValidator.MAX_RAW_CHARS + 1)))
     }
 
     @Test fun rateLimiterCapsPerSecondAndResetsOnNextWindow() {

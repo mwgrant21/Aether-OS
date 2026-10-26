@@ -18,9 +18,11 @@ sealed class PageMessage {
  */
 object BridgeValidator {
     val SESSIONS = setOf("claude", "terminal2", "codex")
-    const val MAX_INPUT_BYTES = 8 * 1024
+    /** Hostile-page ceiling, deliberately above InputSender's cap so an over-cap paste reaches the sender and is reported. */
+    const val MAX_INPUT_BYTES = 256 * 1024
     const val MAX_COPY_BYTES = 64 * 1024
-    const val MAX_RAW_CHARS = 128 * 1024
+    /** JSON-escape worst case: every char of a max paste as a 6-char escape, plus envelope slack. */
+    const val MAX_RAW_CHARS = 6 * InputSender.MAX_INPUT_BYTES + 1024
     const val MAX_COLS = 500
     const val MAX_ROWS = 300
     const val MAX_CONSUMED = 16 * 1024 * 1024
@@ -106,6 +108,9 @@ object BridgeOut {
         JSONObject().put("t", "size").put("s", s).put("cols", cols).put("rows", rows).toString()
 
     fun show(s: String): String = JSONObject().put("t", "show").put("s", s).toString()
+
+    /** Page keyboard on/off: on only while a running slot is attached over a live connection. */
+    fun stdin(on: Boolean): String = JSONObject().put("t", "stdin").put("on", on).toString()
 
     /** px 0 = fit width, else 8..24 (the host validates). */
     fun zoom(px: Int): String = JSONObject().put("t", "zoom").put("px", px).toString()

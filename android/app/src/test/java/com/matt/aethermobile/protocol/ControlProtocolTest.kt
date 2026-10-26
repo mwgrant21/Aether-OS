@@ -146,8 +146,8 @@ class ControlProtocolTest {
             assertEquals(slots.getJSONObject(i).getString("label"), ControlProtocol.SLOTS[i].label)
         }
         val msgs = spec.getJSONObject("messages")
-        assertEquals(listOf("hello", "attach", "detach"), strings(msgs.getJSONArray("phoneToTitan")))
-        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state"), strings(msgs.getJSONArray("titanToPhone")))
+        assertEquals(listOf("hello", "attach", "detach", "in"), strings(msgs.getJSONArray("phoneToTitan")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak"), strings(msgs.getJSONArray("titanToPhone")))
     }
 
     // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.
@@ -262,5 +262,62 @@ class ControlProtocolTest {
         assertTrue(Regex("^[0-9a-f]{32}$").matches(n))
         assertFalse(n == ControlProtocol.newNonce(rnd))
         assertTrue(Regex("^[0-9a-f]{32}$").matches(ControlProtocol.newNonce()))
+    }
+
+    @Test fun buildInIsByteIdenticalToTheGolden() {
+        assertEquals(frames.getString("in"), ControlProtocol.buildIn("claude", 1, "echo hi\r"))
+    }
+
+    @Test fun buildInEscapesQuotesBackslashEscAndKeepsNonBmp() {
+        val d = "a\"b\\\u001b[A😀"
+        val built = ControlProtocol.buildIn("codex", 7, d)
+        val o = JSONObject(built)
+        assertEquals(d, o.getString("d"))
+        assertEquals(7, o.getInt("c"))
+        assertTrue(built, built.contains("\\u001b"))
+        assertTrue(built.startsWith("""{"t":"in","s":"codex","c":7,"d":"a\"b\\"""))
+    }
+
+    @Test fun buildInRejectsUnknownSlotBadCseqAndEmptyInput() {
+        assertFailsIllegal { ControlProtocol.buildIn("bash", 1, "x") }
+        assertFailsIllegal { ControlProtocol.buildIn("claude", 0, "x") }
+        assertFailsIllegal { ControlProtocol.buildIn("claude", 9_007_199_254_740_992L, "x") }
+        assertFailsIllegal { ControlProtocol.buildIn("claude", 1, "") }
+    }
+
+    @Test fun ackGoldenParsesAndBadAcksAreNull() {
+        assertEquals(ControlProtocol.TerminalFrame.Ack("claude", 3), ControlProtocol.parseTerminalFrame(frames.getString("ack")))
+        for (bad in listOf(
+            """{"t":"ack","s":"claude","c":0}""",
+            """{"t":"ack","s":"claude","c":1.5}""",
+            """{"t":"ack","s":"claude","c":"3"}""",
+            """{"t":"ack","s":"claude"}""",
+            """{"t":"ack","s":"bash","c":1}""",
+        )) assertNull(bad, ControlProtocol.parseTerminalFrame(bad))
+    }
+
+    @Test fun nakGoldensParseAndBadNaksAreNull() {
+        assertEquals(
+            ControlProtocol.TerminalFrame.Nak("claude", 4, ControlProtocol.NakReason.NOT_RUNNING),
+            ControlProtocol.parseTerminalFrame(frames.getString("nakNotRunning")),
+        )
+        assertEquals(
+            ControlProtocol.TerminalFrame.Nak("terminal2", 9, ControlProtocol.NakReason.TYPING_OFF),
+            ControlProtocol.parseTerminalFrame(frames.getString("nakTypingOff")),
+        )
+        for (bad in listOf(
+            """{"t":"nak","s":"claude","c":4,"reason":"bogus"}""",
+            """{"t":"nak","s":"claude","c":4}""",
+            """{"t":"nak","s":"claude","c":0,"reason":"not-running"}""",
+            """{"t":"nak","s":"claude","c":1.5,"reason":"not-running"}""",
+            """{"t":"nak","s":"bash","c":1,"reason":"not-running"}""",
+        )) assertNull(bad, ControlProtocol.parseTerminalFrame(bad))
+    }
+
+    @Test fun welcomeAppliedGoldenParsesAndOmittedMeansEmpty() {
+        assertEquals(mapOf("claude" to 3L), ControlProtocol.parseWelcome(frames.getString("welcomeApplied"))!!.applied)
+        assertEquals(emptyMap<String, Long>(), ControlProtocol.parseWelcome(frames.getString("welcome"))!!.applied)
+        val w = ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","applied":{"bash":2,"codex":1.5,"claude":4}}""")!!
+        assertEquals(mapOf("claude" to 4L), w.applied)
     }
 }

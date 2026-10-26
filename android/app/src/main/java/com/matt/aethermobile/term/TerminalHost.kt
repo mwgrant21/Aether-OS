@@ -19,7 +19,15 @@ class TerminalHost(
     private val post: (String) -> Unit,
     private val feed: TerminalFeed,
     private val onTabsChanged: () -> Unit = {},
+    sendInput: (String, Long, String) -> Boolean = { _, _, _ -> false },
+    onNotSent: (Int) -> Unit = {},
+    /**
+     * The sender for the current connection. cseq continuity belongs to the connection (one epoch on the
+     * desktop), so a host rebuilt on the same connection must share it; a new connection makes a new one.
+     */
+    sharedSender: InputSender? = null,
 ) {
+    private val inputSender = sharedSender ?: InputSender(sendInput, { System.currentTimeMillis() }, onNotSent)
     data class Tab(val s: String, val label: String, val state: SlotState, val awaitingOutput: Boolean = false)
 
     private val states = HashMap<String, SlotState>()
@@ -32,6 +40,8 @@ class TerminalHost(
     private var active = false
     private var attached: String? = null
     private var zoomPx = 0
+    private var ctrlLatch = false
+    private var stdinOn = false
 
     /** Total bytes the page reported consumed; a plain counter for the V4 backpressure work. */
     @get:Synchronized
@@ -58,16 +68,69 @@ class TerminalHost(
         }
         attached = null
         active = true
+        ctrlLatch = false
+        syncStdin()
         safe { onTabsChanged() }
     }
 
     /** The connection ended: ignore frames (a late one may still arrive) until the next [onSessions]. */
     @Synchronized
-    fun onDisconnected() {
+    fun onDisconnected(connectionLost: Boolean = true) {
         active = false
         attached = null
         awaitingSnap.clear()
         awaitingOutput.clear()
+        ctrlLatch = false
+        syncStdin()
+        // Unacked frames are reported not sent on a real disconnect; a host rebuild on the same connection
+        // (render gone) keeps them pending. Nothing is ever resent.
+        if (connectionLost) safe { inputSender.onDisconnected() }
+    }
+
+    /** Keys may leave the phone only for the attached slot while active and RUNNING. */
+    private fun canType(slot: String?): Boolean =
+        active && slot != null && slot == attached && states[slot] == SlotState.RUNNING
+
+    /** True when keys would be accepted right now: the same gate [sendKeys] applies. The UI drives the key row from it. */
+    @Synchronized
+    fun typingAccepted(): Boolean = canType(attached)
+
+    /** Tells the page whether stdin is on; posts only on a change. */
+    private fun syncStdin() {
+        val on = canType(attached)
+        if (on == stdinOn) return
+        stdinOn = on
+        safe { post(BridgeOut.stdin(on)) }
+    }
+
+    @Synchronized
+    fun setCtrlLatch(on: Boolean) {
+        ctrlLatch = on
+    }
+
+    @Synchronized
+    fun ctrlLatched(): Boolean = ctrlLatch
+
+    /** Key-row bytes (Esc, arrows, ...): same gates and sender as page input. */
+    @Synchronized
+    fun sendKeys(bytes: String) {
+        val slot = attached
+        if (slot == null) { if (bytes.isNotEmpty()) safe { inputSender.reject(bytes.length) }; return }
+        typeInto(slot, bytes)
+    }
+
+    private fun typeInto(slot: String, data: String) {
+        if (data.isEmpty()) return
+        if (!canType(slot)) { safe { inputSender.reject(data.length) }; return }
+        var out = data
+        if (ctrlLatch) {
+            ctrlLatch = false
+            val ch = data[0]
+            if (data.length == 1 && (ch in 'a'..'z' || ch in 'A'..'Z' || ch in "@[\\]^_")) {
+                out = (ch.code and 0x1f).toChar().toString()
+            }
+        }
+        safe { inputSender.send(slot, out) }
     }
 
     @Synchronized
@@ -91,6 +154,8 @@ class TerminalHost(
         // A null-q attach asks for a snapshot; out frames before it are covered by it.
         if (sent && q == null) awaitingSnap.add(slot) else awaitingSnap.remove(slot)
         safe { post(BridgeOut.show(slot)) }
+        syncStdin()
+        safe { onTabsChanged() } // attached may have changed: the key row follows it
     }
 
     @Synchronized
@@ -110,11 +175,15 @@ class TerminalHost(
         if (!active) return
         feed.forget(slot)
         safe { post(BridgeOut.show(slot)) }
+        // The page may have rebuilt and forgotten its stdin state: re-assert it before the attach can change it.
+        if (stdinOn) safe { post(BridgeOut.stdin(true)) }
         if (zoomPx != 0) safe { post(BridgeOut.zoom(zoomPx)) }
         if (safe { attach(slot, null) } == true) awaitingSnap.add(slot) else {
             awaitingSnap.remove(slot)
             attached = null
         }
+        syncStdin()
+        safe { onTabsChanged() }
     }
 
     @Synchronized
@@ -127,11 +196,20 @@ class TerminalHost(
         if (frame is TerminalFrame.State) {
             states[frame.s] = frame.state
             if (frame.state != SlotState.RUNNING) awaitingOutput.remove(frame.s)
+            syncStdin()
             onTabsChanged()
             return
         }
         if (frame is TerminalFrame.Size && frame.cols > 0 && frame.rows > 0) {
             sizes[frame.s] = frame.cols to frame.rows
+        }
+        if (frame is TerminalFrame.Ack) {
+            inputSender.onAck(frame.s, frame.c)
+            return
+        }
+        if (frame is TerminalFrame.Nak) {
+            inputSender.onNak(frame.s, frame.c, frame.reason)
+            return
         }
         if (frame.s != attached) return
         when (frame) {
@@ -173,6 +251,8 @@ class TerminalHost(
             }
             is TerminalFrame.Size -> post(BridgeOut.size(frame.s, frame.cols, frame.rows))
             is TerminalFrame.State -> Unit
+            is TerminalFrame.Ack -> Unit // handled before the attached-slot filter, above
+            is TerminalFrame.Nak -> Unit // handled before the attached-slot filter, above
         }
     }
 
@@ -183,9 +263,10 @@ class TerminalHost(
                 consumedTotal += msg.bytes
                 consumedBySlot[msg.session] = (consumedBySlot[msg.session] ?: 0L) + msg.bytes
             }
-            // Input is dropped until V3 (no `in` verb); Resize until V4b (no `resize` verb).
+            is PageMessage.Input -> typeInto(msg.session, msg.data)
+            // Resize is dropped until V4b (no `resize` verb).
             // Ready and Copy are handled by the Android glue, not here.
-            is PageMessage.Input, is PageMessage.Resize, is PageMessage.Ready, is PageMessage.Copy -> Unit
+            is PageMessage.Resize, is PageMessage.Ready, is PageMessage.Copy -> Unit
         }
     }
 

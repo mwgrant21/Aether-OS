@@ -12,6 +12,10 @@ import android.widget.FrameLayout
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import com.matt.aethermobile.ui.shell.NotSentLine
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
@@ -48,10 +52,12 @@ import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.FrameRouter
+import com.matt.aethermobile.term.InputSender
 import com.matt.aethermobile.ui.components.AeScreenBackground
 import com.matt.aethermobile.ui.auth.AuthActions
 import com.matt.aethermobile.ui.auth.AuthScreen
 import com.matt.aethermobile.ui.auth.authScreenFor
+import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
@@ -126,7 +132,14 @@ class MainActivity : AppCompatActivity() {
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
 
     /** Everything the Compose tree reads; replaced wholesale by [renderTabs] (main thread only). */
-    private class UiSnapshot(val flow: FlowState, val tabs: List<TerminalHost.Tab>, val selected: String)
+    private class UiSnapshot(
+        val flow: FlowState,
+        val tabs: List<TerminalHost.Tab>,
+        val selected: String,
+        val ctrlOn: Boolean = false,
+        val hostAccepts: Boolean = false,
+        val notice: NotSentNotice = NotSentNotice.NONE,
+    )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
 
@@ -446,6 +459,19 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val gen = ++connGen
+        // One sender per connection: its cseq must follow the desktop's per-epoch counter across host rebuilds.
+        // Callbacks arrive on transport or host threads: marshal to main. The notice is NOT cleared here and
+        // the not-sent report is not gen-filtered: the dying connection's drop report (closeSocket bumps connGen
+        // first) must reach the screen. Only an ack (gen-filtered: a late ack must not clear a newer notice), a slot
+        // switch or a dismiss clears it.
+        fun onMain(f: () -> Unit) = runOnUiThread { if (!isDestroyed) { f(); renderTabs() } }
+        inputSender = InputSender(
+            { s, c, d -> client?.sendInput(s, c, d) ?: false },
+            { System.currentTimeMillis() },
+            onNotSent = { n -> onMain { notice = notice.add(n) } },
+            onRefused = { r -> onMain { notice = notice.refused(r) } },
+            onAcked = { runOnUiThread { if (gen == connGen && !isDestroyed) { notice = NotSentNotice.NONE; renderTabs() } } },
+        )
         val th = newHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
@@ -511,6 +537,10 @@ class MainActivity : AppCompatActivity() {
 
     // ---- terminal ------------------------------------------------------------------------
 
+    private var inputSender: InputSender? = null
+    /** Chars not sent, shown until the next ack, a slot switch or a dismiss; survives a drop (main thread only). */
+    private var notice = NotSentNotice.NONE
+
     private fun newHost(): TerminalHost {
         var th: TerminalHost? = null
         th = TerminalHost(
@@ -518,6 +548,7 @@ class MainActivity : AppCompatActivity() {
             detach = { s -> client?.detach(s) ?: false },
             post = screen::post, // posts to the UI thread; never waits under the host monitor
             feed = TerminalFeed(),
+            sharedSender = inputSender,
             onTabsChanged = { handler.post { if (!isDestroyed && termHost === th) renderTabs() } },
         )
         return th
@@ -546,14 +577,30 @@ class MainActivity : AppCompatActivity() {
     private fun onRenderGone() {
         // The page lost its state: rebuild the host (fresh feed) and re-attach from a snapshot.
         val old = termHost ?: return
-        old.onDisconnected()
+        old.onDisconnected(connectionLost = false) // same connection: unacked input is not "not sent"
         termHost = newHost()
         if (flow is FlowState.Connected) startTerminal(lastSessions)
     }
 
     private fun selectSlot(s: String) {
         selected = s
+        notice = NotSentNotice.NONE
         termHost?.select(s)
+        renderTabs()
+    }
+
+    private fun dismissNotice() {
+        notice = NotSentNotice.NONE
+        renderTabs()
+    }
+
+    private fun sendKey(bytes: String) {
+        termHost?.sendKeys(bytes)
+        renderTabs() // a latched Ctrl is consumed by the key
+    }
+
+    private fun toggleCtrl() {
+        termHost?.let { it.setCtrlLatch(!it.ctrlLatched()) }
         renderTabs()
     }
 
@@ -569,7 +616,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        ui = UiSnapshot(flow, tabs, selected)
+        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice)
     }
 
     // ---- rendering -----------------------------------------------------------------------
@@ -589,13 +636,15 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
                         onZoomOut = { stepZoom(-2) },
                         onZoomIn = { stepZoom(2) },
                         onFit = { setZoom(0) },
+                        onKey = ::sendKey,
+                        onCtrlToggle = ::toggleCtrl,
                     ),
                     terminalHolder = webHolder,
                 )
@@ -610,6 +659,8 @@ class MainActivity : AppCompatActivity() {
                         ),
                     )
                 }
+                // Above every screen, so a drop that tears the key row down still shows what was not sent.
+                NotSentLine(snap.notice, ::dismissNotice, Modifier.align(Alignment.TopCenter).padding(top = 60.dp))
             }
         }
     }

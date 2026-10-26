@@ -65,8 +65,9 @@ sealed class ControlState {
 /**
  * V1 /ctl client: dials only the baked tailnet host, sends exactly one `hello`,
  * and reports Connected only after the welcome proof verifies against the nonce
- * this client sent. After that it forwards terminal frames to [onFrame] and
- * sends attach/detach. No reconnect (V4), no input.
+ * this client sent. After that it forwards terminal frames (snap/out/size/state/ack/nak) to [onFrame] and
+ * sends attach/detach/input. No reconnect (V4), no queueing, no resend: input
+ * is sent only while Connected and an unacked frame is never replayed.
  *
  * Threading: [onState] is invoked on transport threads (OkHttp), serially per
  * connection; the UI must marshal to the main thread. [onFrame] runs on the
@@ -135,6 +136,12 @@ class ControlClient(
         return sendWhenConnected(frame)
     }
 
+    /** Sends one `in` frame for [s] with cseq [c]. False if not Connected, bad args, or not queued; nothing is buffered. The body is never logged. */
+    fun sendInput(s: String, c: Long, d: String): Boolean {
+        val frame = try { ControlProtocol.buildIn(s, c, d) } catch (_: IllegalArgumentException) { return false }
+        return sendWhenConnected(frame)
+    }
+
     private fun sendWhenConnected(frame: String): Boolean = synchronized(this) {
         if (state !is ControlState.Connected) return false
         transport.send(frame)
@@ -197,7 +204,7 @@ class ControlClient(
                 when (frameType(text)) {
                     "bye" -> onBye(text)
                     "welcome" -> onWelcome(text)
-                    "snap", "out", "size", "state" -> {
+                    "snap", "out", "size", "state", "ack", "nak" -> {
                         val frame = if (welcomed) ControlProtocol.parseTerminalFrame(text) else null
                         if (frame == null) {
                             finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
