@@ -483,6 +483,23 @@ describe('phone control end to end: typed input', () => {
     expect(pty.written).toEqual(['echo hi\r']);
   });
 
+  it('in for an attached slot that is not running is nak not-running and unwritten; once it runs the next cseq is written and acked', async () => {
+    const { address, token } = await pairDevice();
+    const ctl = await connectAndHello(address, token);
+    attach(ctl, 'claude');
+    await waitFor(() => of(ctl, 'snap').length === 1);
+    sendIn(ctl, 'claude', 1, 'lost');
+    await waitFor(() => of(ctl, 'nak', 'claude').length === 1);
+    expect(of(ctl, 'nak', 'claude')[0]).toEqual({ t: 'nak', s: 'claude', c: 1, reason: 'not-running' });
+    expect(of(ctl, 'ack', 'claude')).toEqual([]);
+    expect(ctl.ws.readyState).toBe(1);
+    const started = startSlot('claude');
+    sendIn(ctl, 'claude', 2, 'kept');
+    await waitFor(() => of(ctl, 'ack', 'claude').length === 1);
+    expect(of(ctl, 'ack', 'claude')[0]).toEqual({ t: 'ack', s: 'claude', c: 2 });
+    expect(started.pty.written).toEqual(['kept']);
+  });
+
   it('in for a slot this socket has not attached closes the socket 1008 and writes nothing', async () => {
     const { ctl, pty } = await attached('claude');
     const other = startSlot('terminal2');

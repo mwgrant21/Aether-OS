@@ -3,13 +3,14 @@ import { describe, it, expect } from 'vitest';
 import { createInputRouter } from './inputRouter';
 import type { TerminalSlotId } from '../../src/shared/remote/types';
 
-function setup(running = true) {
+function setup(running = true, typing: { on: boolean } = { on: true }) {
   const writes: Array<[TerminalSlotId, string]> = [];
   const logs: string[] = [];
   let t = 1000;
   const router = createInputRouter({
     terminals: { write: (s, d) => { if (!running) return false; writes.push([s, d]); return true; } },
     now: () => t,
+    typingEnabled: () => typing.on,
     log: (m) => { logs.push(m); },
   });
   return { router, writes, logs, tick: (ms: number) => { t += ms; } };
@@ -104,13 +105,56 @@ describe('inputRouter', () => {
     expect(s.input('claude', 101, 'a')).toEqual({ kind: 'applied', ack: 101 });
   });
 
-  it('acks a frame for a non-running slot, writes nothing and logs one dropped line', () => {
+  it('rejects a frame for a non-running slot with not-running, writes nothing and logs one line per reason', () => {
     const { router, writes, logs } = setup(false);
     const s = router.open('dev', 'e1');
-    expect(s.input('claude', 1, 'a')).toEqual({ kind: 'applied', ack: 1 });
-    expect(s.input('claude', 2, 'b')).toEqual({ kind: 'applied', ack: 2 });
+    expect(s.input('claude', 1, 'a')).toEqual({ kind: 'rejected', c: 1, reason: 'not-running' });
+    expect(s.input('claude', 2, 'b')).toEqual({ kind: 'rejected', c: 2, reason: 'not-running' });
     expect(writes).toHaveLength(0);
-    expect(logs.filter((l) => l.startsWith('control: input dropped'))).toEqual(['control: input dropped slot=claude']);
+    expect(logs).toEqual(['control: input rejected slot=claude reason=not-running']);
+  });
+
+  it('a rejected frame consumes its cseq: the next frame is applied once, and a replay of the rejected one writes nothing', () => {
+    const port = { ok: false };
+    const writes: string[] = [];
+    const router = createInputRouter({ terminals: { write: (_s, d) => { if (!port.ok) return false; writes.push(d); return true; } }, now: () => 1000 });
+    const s = router.open('dev', 'e1');
+    expect(s.input('claude', 1, 'a')).toEqual({ kind: 'rejected', c: 1, reason: 'not-running' });
+    expect(s.applied()).toEqual({ claude: 1 });
+    port.ok = true;
+    expect(s.input('claude', 2, 'b')).toEqual({ kind: 'applied', ack: 2 });
+    expect(s.input('claude', 1, 'a')).toEqual({ kind: 'duplicate', ack: 2 });
+    expect(writes).toEqual(['b']);
+  });
+
+  it('typing off rejects with typing-off without calling the port, and flips live', () => {
+    const typing = { on: false };
+    const { router, writes, logs } = setup(true, typing);
+    const s = router.open('dev', 'e1');
+    expect(s.input('claude', 1, 'a')).toEqual({ kind: 'rejected', c: 1, reason: 'typing-off' });
+    expect(writes).toHaveLength(0);
+    expect(logs).toEqual(['control: input rejected slot=claude reason=typing-off']);
+    typing.on = true;
+    expect(s.input('claude', 2, 'b')).toEqual({ kind: 'applied', ack: 2 });
+    expect(writes).toEqual([['claude', 'b']]);
+  });
+
+  it('rejected frames still count toward the rate limit', () => {
+    const { router } = setup(true, { on: false });
+    const s = router.open('dev', 'e1');
+    for (let c = 1; c <= 100; c++) expect(s.input('claude', c, 'a').kind).toBe('rejected');
+    expect(s.input('claude', 101, 'a').kind).toBe('rate-limit');
+  });
+
+  it('invalid input while typing is off is still a violation', () => {
+    const { router } = setup(true, { on: false });
+    expect(router.open('dev', 'e1').input('claude', 1, 'a'.repeat(9000))).toEqual({ kind: 'violation', why: 'control: invalid input' });
+  });
+
+  it('does not log first input for a rejected frame', () => {
+    const { router, logs } = setup(false);
+    router.open('dev', 'e1').input('claude', 1, 'a');
+    expect(logs.some((l) => l.startsWith('control: first input'))).toBe(false);
   });
 
   it('logs the first input as a byte count only, never the data', () => {
@@ -122,9 +166,10 @@ describe('inputRouter', () => {
     expect(logs.join('\n')).not.toContain('HUNTER2');
   });
 
-  it('never logs the data on the dropped line either', () => {
+  it('never logs the data on the rejected line either', () => {
     const { router, logs } = setup(false);
     router.open('dev', 'e1').input('claude', 1, 'HUNTER2-SENTINEL');
+    expect(logs.join('\n')).toContain('input rejected');
     expect(logs.join('\n')).not.toContain('HUNTER2');
   });
 });

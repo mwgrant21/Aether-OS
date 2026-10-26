@@ -8,12 +8,13 @@
 // 1008. The only terminal handle held here is a TerminalReadPort (list/attach/onState): this file cannot write,
 // resize or start a terminal. A typed `in` frame is only routed, never applied: it must target a slot this socket
 // has attached and goes to the injected InputPort (inputRouter owns dedupe, rate limits and the single pty write);
-// the gateway only schedules the coalesced ack the port's result calls for. Without a terminal port every attach is
+// the gateway only schedules the coalesced ack the port's result calls for, and answers a rejected frame with a nak
+// after flushing any pending ack for that slot (so the nak is never followed by an older ack). Without a terminal port every attach is
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
 // fixed strings plus the slot id and the identity ref.
 import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
 import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
-import { encodeAck, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
+import { encodeAck, encodeBye, encodeNak, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
@@ -184,6 +185,15 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }, CONTROL_ACK_COALESCE_MS);
     };
 
+    // Send the pending ack for a slot now, so a frame sent after it (a nak) cannot be followed by an older ack.
+    const flushAck = (slot: TerminalSlotId): void => {
+      const pending = ackTimers.get(slot);
+      if (!pending) return;
+      clearTimer(pending.handle);
+      ackTimers.delete(slot);
+      socket.send(encodeAck({ s: slot, c: pending.c }));
+    };
+
     socket.onMessage((text) => {
       if (closed) return;
       if (text.length > CONTROL_CTL_MAX_PAYLOAD) return violation('control: oversize frame');
@@ -241,6 +251,11 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           if (r.kind === 'rate-limit') {
             log?.('control: input rate limit', identity.ref);
             return close('rate-limit');
+          }
+          if (r.kind === 'rejected') {
+            flushAck(msg.s);
+            socket.send(encodeNak({ s: msg.s, c: r.c, reason: r.reason }));
+            return;
           }
           scheduleAck(msg.s, r.ack);
           return;

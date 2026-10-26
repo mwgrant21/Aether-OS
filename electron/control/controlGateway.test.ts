@@ -373,6 +373,43 @@ describe('control gateway input verb', () => {
     expect(closes()).toBe(1);
   });
 
+  it('a rejected result sends exactly one nak matching the golden and arms no ack timer', () => {
+    const { s } = setup([{ kind: 'rejected', c: 4, reason: 'not-running' }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    const before = s.sent.length;
+    s.feed(inFrame('claude', 4));
+    expect(s.sent.slice(before)).toEqual([spec.frames.nakNotRunning]);
+    vi.advanceTimersByTime(100);
+    expect(s.sent.slice(before)).toEqual([spec.frames.nakNotRunning]);
+  });
+
+  it('a rejected result flushes the pending ack first: ack c=1 then nak c=2, and no later ack follows', () => {
+    const { s } = setup([{ kind: 'applied', ack: 1 }, { kind: 'rejected', c: 2, reason: 'typing-off' }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    const before = s.sent.length;
+    s.feed(inFrame('claude', 1));
+    vi.advanceTimersByTime(10);
+    s.feed(inFrame('claude', 2));
+    vi.advanceTimersByTime(100);
+    expect(s.sent.slice(before)).toEqual([
+      JSON.stringify({ t: 'ack', s: 'claude', c: 1 }),
+      JSON.stringify({ t: 'nak', s: 'claude', c: 2, reason: 'typing-off' }),
+    ]);
+  });
+
+  it('a rejected result after close() sends nothing', () => {
+    const { s, session } = setup([{ kind: 'rejected', c: 1, reason: 'not-running' }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    session.close('revoked');
+    const before = s.sent.length;
+    s.feed(inFrame('claude', 1));
+    vi.advanceTimersByTime(100);
+    expect(s.sent.slice(before)).toEqual([]);
+  });
+
   it('welcome carries the input session applied map', () => {
     const { s } = setup([], true, { claude: 3 });
     s.feed(helloFrame);

@@ -139,6 +139,7 @@ export interface TerminalAttachment { detach(): void }
 export interface TerminalWritePort { write(s: TerminalSlotId, d: string): boolean }
 export type InputResult =
   | { kind: 'applied' | 'duplicate'; ack: number }   // ack = the cumulative cseq to report
+  | { kind: 'rejected'; c: number; reason: NakReason }   // cseq consumed, nothing written; the gateway answers with a nak
   | { kind: 'violation'; why: string }
   | { kind: 'rate-limit' };
 export interface InputSession {
