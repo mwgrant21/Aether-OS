@@ -67,7 +67,7 @@ android {
         minSdk 31
         targetSdk 35
         versionCode 4
-        versionName "0.4.0-v3a1"
+        versionName "0.5.0-v3type"
         buildConfigField 'String', 'TITAN_IP', "\"${titanIp}\""
     }
 

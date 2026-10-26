@@ -110,20 +110,20 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     remotePages.ts / pairingQr.ts   phone HTML/JS/CSS (textContent only) and the pairing QR.
     remoteIpc.ts / types.ts   trusted IPC for Settings; shared wire types.
     noWildcardListener.test.ts   AST guard, parses with the TypeScript compiler API (no wildcard bind, no pty, no stray fs write).
-  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 pairing + authenticated /ctl handshake; V2 read path: attach/detach, snap/out/size/state frames, welcome.sessions (read-only, no input).
+  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 pairing + authenticated /ctl handshake; V2 read path: attach/detach, snap/out/size/state frames, welcome.sessions (read-only, no input). V3 Type adds phone typing: `in`/`ack`/`nak` verbs and a desktop typing switch.
     protocol.ts           closed message set and the hello/welcome proof.
     controlGateway.ts     hello/welcome, 5 s hello deadline; attach/detach drive a TerminalReadPort (never a write path).
     controlHub.ts         enable/disable, pairing, device auth, revoke, persisted re-enable.
     controlIpc.ts         trusted IPC for the Settings block.
     controlBoundary.test.ts   AST guard for this directory: import allow-list, one input sink, closed message set, escape hatches.
-    (planned) inputRouter; the ONLY place the phone writes to a terminal is inputRouter -> terminalHub.
-  controlSettings.ts    owner of ~/.aether-os/control-settings.json (the one persisted re-enable boolean).
+    inputRouter.ts        BUILT (V3 Type): dedupe, ordering, rate limits; the ONLY phone write site, via `terminalHub.writePort()`.
+  controlSettings.ts    owner of ~/.aether-os/control-settings.json (two persisted booleans: `reenableAtLaunch` and `phoneTyping`).
   terminalHub.ts        BUILT (V2): owns the three pty slots; main hands control only readPort() (list/attach/onState/retain). Mirror + 256 KB ring exist only while control is retained; cleared on release, quit, slot exit. Importers of the pty managers are guarded by controlBoundary rule 6.
   terminalMirror.ts     BUILT (V2): headless xterm screen model + bounded snapshot (the only @xterm/headless importer).
   permissionBroker.ts   PLANNED: the seam over the permission prompts.
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
-android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, and V3-A1 adds the Compose shell (header + burger menu, restyled pairing/lock/error screens; Compose BOM 2026.06.01, ui/foundation only, no material3). UI lives in `app/.../ui/`: `theme/` (design tokens, type), `components/` (shared Ae* widgets), `StormCore` + `StormCoreMath` (animated core, maths unit-tested), `auth/` (auth screens), `shell/` (header, burger, ShellModel). Fonts (Rajdhani, Space Mono) are in `res/font`, their OFL licences in `android/licenses/`.
+android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, and V3-A1 adds the Compose shell (header + burger menu, restyled pairing/lock/error screens; Compose BOM 2026.06.01, ui/foundation only, no material3). UI lives in `app/.../ui/`: `theme/` (design tokens, type), `components/` (shared Ae* widgets), `StormCore` + `StormCoreMath` (animated core, maths unit-tested), `auth/` (auth screens), `shell/` (header, burger, ShellModel). V3 Type adds phone typing: `InputSender` (chunked 4 KiB frames, 64 KiB paste cap, per-connection cseq), the key row (`ui/shell/KeyRow*`), `AetherWebView` (IME flags), a page stdin switch with a mouse/focus filter (`android/web/src/inputFilter.js`), and a not-sent notice. Fonts (Rajdhani, Space Mono) are in `res/font`, their OFL licences in `android/licenses/`.
 protocol/mobile-protocol.json   shared wire contract + proof vectors, read by electron/control/ tests and the Android JVM tests.
 docs/superpowers/
   specs/         design specs, one per feature, YYYY-MM-DD-<topic>-design.md.
@@ -264,7 +264,7 @@ before designing anything that persists or transmits data. The short version:
   native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
   `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind, and never add a pty/write path under `electron/remote/`.
   **Separate second opt-in: phone control** (privacy §17): V1 is built (pairing + an authenticated `/ctl` handshake from a paired Android app over the same tailnet-only
-  listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); terminal input and permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
+  listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); V3 Type adds phone typing (privacy §17); permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
   to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Treat as R3.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
