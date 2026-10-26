@@ -3,6 +3,7 @@ import { createHash, createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as T from './types'
+import * as TH from './threadTypes'
 
 const spec = JSON.parse(readFileSync(resolve(__dirname, '../../../protocol/mobile-protocol.json'), 'utf8'))
 
@@ -108,8 +109,8 @@ describe('terminal frame goldens', () => {
     for (const k of ['welcome', 'welcomeSessions', 'bye', 'snap', 'out', 'size', 'state']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
   })
   it('messages lists are exactly the declared verbs, in order', () => {
-    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach'])
-    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state'])
+    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'tattach', 'tdetach', 'tget'])
+    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'tsnap', 'tadd', 'tupd', 'tmeta', 'tdet'])
   })
   it('welcomeSessions lists the three slots in TERMINAL_SLOTS order with the six documented keys', () => {
     const f = JSON.parse(spec.frames.welcomeSessions)
@@ -146,5 +147,50 @@ describe('terminals section', () => {
     expect(spec.terminals.snapshotScrollbackLines).toBe(T.TERMINAL_SNAPSHOT_SCROLLBACK_LINES)
     expect(spec.terminals.mirrorScrollbackLines).toBe(T.TERMINAL_MIRROR_SCROLLBACK_LINES)
     expect(spec.terminals.sizeUnit).toBe('json-escaped length')
+  })
+})
+
+describe('threads section', () => {
+  it('slots and caps equal the exported constants', () => {
+    const t = spec.threads
+    expect(t.slots).toEqual([...TH.THREAD_SLOTS])
+    expect(t.historyEntries).toBe(TH.THREAD_HISTORY_ENTRIES)
+    expect(t.snapshotBytes).toBe(TH.THREAD_SNAPSHOT_BYTES)
+    expect(t.textCap).toBe(TH.THREAD_TEXT_CAP)
+    expect(t.labelCap).toBe(TH.THREAD_LABEL_CAP)
+    expect(t.diffInlineLines).toBe(TH.THREAD_DIFF_INLINE_LINES)
+    expect(t.detailBytes).toBe(TH.THREAD_DETAIL_BYTES)
+    expect(t.detailLines).toBe(TH.THREAD_DETAIL_LINES)
+    expect(t.inputBytes).toBe(TH.THREAD_INPUT_BYTES)
+    expect(t.inputLines).toBe(TH.THREAD_INPUT_LINES)
+    expect(t.detailStoreBytes).toBe(TH.THREAD_DETAIL_STORE_BYTES)
+    expect(t.pollMs).toBe(TH.THREAD_POLL_MS)
+    expect(t.quietMs).toBe(TH.THREAD_QUIET_MS)
+    expect(t.permClearMs).toBe(TH.THREAD_PERM_CLEAR_MS)
+    expect(t.ratePerS).toBe(TH.THREAD_RATE_PER_S)
+    expect(t.rateBurst).toBe(TH.THREAD_RATE_BURST)
+    expect(Object.keys(t)).toHaveLength(17)
+  })
+  it('thread golden types sit in the right messages lists', () => {
+    for (const k of ['tattach', 'tdetach', 'tget']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['tsnap', 'tsnapUnavailable', 'tadd', 'tupd', 'tmeta', 'tdet', 'tdetNull']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
+  })
+  it('thread frame key order', () => {
+    const keys = (k: string) => Object.keys(JSON.parse(spec.frames[k]))
+    expect(keys('tattach')).toEqual(['t', 's'])
+    expect(keys('tget')).toEqual(['t', 's', 'id'])
+    expect(keys('tsnap')).toEqual(['t', 's', 'q', 'avail', 'why', 'entries', 'm'])
+    expect(keys('tadd')).toEqual(['t', 's', 'q', 'e'])
+    expect(keys('tmeta')).toEqual(['t', 's', 'm'])
+    expect(keys('tdet')).toEqual(['t', 's', 'id', 'input', 'inMore', 'x', 'more'])
+    expect(Object.keys(JSON.parse(spec.frames.tsnap).m)).toEqual(['ctxTok', 'ctxPct', 'work', 'since', 'tok', 'last', 'wait'])
+  })
+  it('the snapshot golden covers every entry kind and fits the budget', () => {
+    const f = JSON.parse(spec.frames.tsnap)
+    expect(f.entries.map((e: { k: string }) => e.k)).toEqual(['u', 'a', 'th', 't', 't'])
+    expect(JSON.stringify(f.entries).length).toBeLessThanOrEqual(spec.threads.snapshotBytes)
+  })
+  it('welcomeCaps is the plain welcome plus caps', () => {
+    expect(JSON.parse(spec.frames.welcomeCaps)).toEqual({ ...JSON.parse(spec.frames.welcome), caps: ['thread'] })
   })
 })

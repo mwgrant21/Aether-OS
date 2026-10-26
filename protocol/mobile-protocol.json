@@ -33,7 +33,10 @@
     "phoneToTitan": [
       "hello",
       "attach",
-      "detach"
+      "detach",
+      "tattach",
+      "tdetach",
+      "tget"
     ],
     "titanToPhone": [
       "welcome",
@@ -41,7 +44,12 @@
       "snap",
       "out",
       "size",
-      "state"
+      "state",
+      "tsnap",
+      "tadd",
+      "tupd",
+      "tmeta",
+      "tdet"
     ],
     "byeReasons": [
       "revoked",
@@ -90,6 +98,25 @@
     "mirrorScrollbackLines": 2000,
     "sizeUnit": "json-escaped length"
   },
+  "threads": {
+    "slots": ["claude", "terminal2"],
+    "historyEntries": 200,
+    "snapshotBytes": 131072,
+    "textCap": 4000,
+    "labelCap": 80,
+    "diffInlineLines": 8,
+    "detailBytes": 4096,
+    "detailLines": 60,
+    "inputBytes": 2048,
+    "inputLines": 30,
+    "detailStoreBytes": 1048576,
+    "pollMs": 1000,
+    "quietMs": 10000,
+    "permClearMs": 900000,
+    "ratePerS": 5,
+    "rateBurst": 10,
+    "sizeUnit": "json text length of the entries array"
+  },
   "frames": {
     "hello": "{\"t\":\"hello\",\"v\":1,\"app\":\"0.2.0-v1\",\"epoch\":\"0123456789abcdef\",\"nonce\":\"00112233445566778899aabbccddeeff\"}",
     "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[]}",
@@ -101,6 +128,17 @@
     "snap": "{\"t\":\"snap\",\"s\":\"claude\",\"q\":124,\"cols\":100,\"rows\":30,\"d\":\"\\u001b[1mhi\\u001b[0m\\r\\n\"}",
     "out": "{\"t\":\"out\",\"s\":\"claude\",\"q\":125,\"d\":\"\\u001b[32mok\\u001b[0m\\r\\n\"}",
     "size": "{\"t\":\"size\",\"s\":\"claude\",\"cols\":120,\"rows\":40}",
-    "state": "{\"t\":\"state\",\"s\":\"claude\",\"state\":\"running\"}"
+    "state": "{\"t\":\"state\",\"s\":\"claude\",\"state\":\"running\"}",
+    "tattach": "{\"t\":\"tattach\",\"s\":\"claude\"}",
+    "tdetach": "{\"t\":\"tdetach\",\"s\":\"terminal2\"}",
+    "tget": "{\"t\":\"tget\",\"s\":\"claude\",\"id\":\"123456:0\"}",
+    "tsnap": "{\"t\":\"tsnap\",\"s\":\"claude\",\"q\":57,\"avail\":true,\"why\":null,\"entries\":[{\"id\":\"100:0\",\"ts\":1790000000000,\"k\":\"u\",\"x\":\"fix the login bug\",\"tr\":false},{\"id\":\"200:0\",\"ts\":1790000001000,\"k\":\"a\",\"x\":\"Looking at auth.ts.\",\"tr\":false},{\"id\":\"300:0\",\"ts\":1790000002000,\"k\":\"th\",\"ms\":14000,\"d\":false},{\"id\":\"400:0\",\"ts\":1790000003000,\"k\":\"t\",\"n\":\"Edit\",\"l\":\"auth.ts\",\"st\":\"ok\",\"sz\":18400,\"d\":true,\"df\":[[\"-\",\"const a = 1;\"],[\"+\",\"const a = 2;\"]],\"dn\":3},{\"id\":\"500:0\",\"ts\":1790000004000,\"k\":\"t\",\"n\":\"Bash\",\"l\":\"npm test\",\"st\":\"run\",\"sz\":null,\"d\":false}],\"m\":{\"ctxTok\":73400,\"ctxPct\":36.9,\"work\":\"working\",\"since\":1790000000000,\"tok\":38200,\"last\":1790000100000,\"wait\":null}}",
+    "tsnapUnavailable": "{\"t\":\"tsnap\",\"s\":\"terminal2\",\"q\":0,\"avail\":false,\"why\":\"no-session\",\"entries\":[],\"m\":{\"ctxTok\":null,\"ctxPct\":null,\"work\":\"unknown\",\"since\":null,\"tok\":null,\"last\":null,\"wait\":null}}",
+    "tadd": "{\"t\":\"tadd\",\"s\":\"claude\",\"q\":58,\"e\":{\"id\":\"200:0\",\"ts\":1790000001000,\"k\":\"a\",\"x\":\"Looking at auth.ts.\",\"tr\":false}}",
+    "tupd": "{\"t\":\"tupd\",\"s\":\"claude\",\"q\":59,\"e\":{\"id\":\"500:0\",\"ts\":1790000004000,\"k\":\"t\",\"n\":\"Bash\",\"l\":\"npm test\",\"st\":\"ok\",\"sz\":512,\"d\":true}}",
+    "tmeta": "{\"t\":\"tmeta\",\"s\":\"claude\",\"m\":{\"ctxTok\":73400,\"ctxPct\":36.9,\"work\":\"working\",\"since\":1790000000000,\"tok\":38200,\"last\":1790000100000,\"wait\":null}}",
+    "tdet": "{\"t\":\"tdet\",\"s\":\"claude\",\"id\":\"500:0\",\"input\":\"npm test\",\"inMore\":0,\"x\":\"PASS 12 tests\",\"more\":0}",
+    "tdetNull": "{\"t\":\"tdet\",\"s\":\"claude\",\"id\":\"999:0\",\"input\":null,\"inMore\":0,\"x\":null,\"more\":0}",
+    "welcomeCaps": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[],\"caps\":[\"thread\"]}"
   }
 }

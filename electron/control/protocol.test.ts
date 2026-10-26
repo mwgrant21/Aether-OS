@@ -2,7 +2,8 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, encodeTadd, encodeTdet, encodeTmeta, encodeTsnap, encodeTupd, parsePhoneMessage, threadEntriesJsonLength } from './protocol';
+import type { ThreadEntry, ThreadMeta } from '../../src/shared/remote/threadTypes';
 import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES } from '../../src/shared/remote/types';
 import type { TerminalInfo } from '../../src/shared/remote/types';
 
@@ -121,5 +122,60 @@ describe('parsePhoneMessage', () => {
 
   it('accepts an app string of exactly 32 characters', () => {
     expect(parse({ ...ok, app: 'x'.repeat(32) })).not.toBeNull();
+  });
+});
+
+describe('thread frames', () => {
+  const g = (k: string) => spec.frames[k] as string;
+  const snap = JSON.parse(g('tsnap'));
+  const meta = snap.m as ThreadMeta;
+  const entries = snap.entries as ThreadEntry[];
+
+  it('tattach, tdetach and tget goldens parse back', () => {
+    expect(parsePhoneMessage(g('tattach'))).toEqual(JSON.parse(g('tattach')));
+    expect(parsePhoneMessage(g('tdetach'))).toEqual(JSON.parse(g('tdetach')));
+    expect(parsePhoneMessage(g('tget'))).toEqual(JSON.parse(g('tget')));
+  });
+  it('a bad slot (codex, unknown, missing) is not a thread frame', () => {
+    for (const t of ['tattach', 'tdetach']) {
+      for (const s of ['codex', 'nope', 7, null]) expect(parsePhoneMessage(JSON.stringify({ t, s }))).toBeNull();
+      expect(parsePhoneMessage(JSON.stringify({ t }))).toBeNull();
+    }
+    expect(parsePhoneMessage('{"t":"tget","s":"codex","id":"1:0"}')).toBeNull();
+  });
+  it('tget id must match digits:digits', () => {
+    for (const id of ['', 'abc', '12', '1:', ':1', '1:2:3', '-1:0', '1234567890123:0', '1:12345', '../x', '1:0\n', 12]) {
+      expect(parsePhoneMessage(JSON.stringify({ t: 'tget', s: 'claude', id }))).toBeNull();
+    }
+    expect(parsePhoneMessage('{"t":"tget","s":"terminal2","id":"1:0"}')).toEqual({ t: 'tget', s: 'terminal2', id: '1:0' });
+    expect(parsePhoneMessage('{"t":"tget","s":"claude"}')).toBeNull();
+  });
+  it('extra keys on tattach are ignored', () => {
+    expect(parsePhoneMessage('{"t":"tattach","s":"claude","q":5,"junk":true}')).toEqual({ t: 'tattach', s: 'claude' });
+  });
+  it('tsnap, tadd, tupd, tmeta and tdet are reproduced byte for byte', () => {
+    expect(encodeTsnap({ s: 'claude', q: 57, avail: true, why: null, entries, m: meta })).toBe(g('tsnap'));
+    expect(encodeTadd({ s: 'claude', q: 58, e: entries[1] })).toBe(g('tadd'));
+    expect(encodeTupd({ s: 'claude', q: 59, e: { ...(entries[4] as Extract<ThreadEntry, { k: 't' }>), st: 'ok', sz: 512, d: true } })).toBe(g('tupd'));
+    expect(encodeTmeta({ s: 'claude', m: meta })).toBe(g('tmeta'));
+    expect(encodeTdet({ s: 'claude', id: '500:0', input: 'npm test', inMore: 0, x: 'PASS 12 tests', more: 0 })).toBe(g('tdet'));
+    expect(encodeTdet({ s: 'claude', id: '999:0', input: null, inMore: 0, x: null, more: 0 })).toBe(g('tdetNull'));
+  });
+  it('an unavailable snapshot sends no entries even if some are passed', () => {
+    const empty: ThreadMeta = { ctxTok: null, ctxPct: null, work: 'unknown', since: null, tok: null, last: null, wait: null };
+    expect(encodeTsnap({ s: 'terminal2', q: 0, avail: false, why: 'no-session', entries, m: empty })).toBe(g('tsnapUnavailable'));
+  });
+  it('entries are rebuilt key by key, so a stray property never reaches the wire', () => {
+    const dirty = { ...entries[0], cwd: 'C:/secret', sessionId: 'abc' } as unknown as ThreadEntry;
+    const out = JSON.parse(encodeTadd({ s: 'claude', q: 1, e: dirty }));
+    expect(Object.keys(out.e)).toEqual(['id', 'ts', 'k', 'x', 'tr']);
+  });
+  it('welcome carries caps only when given, and stays byte-identical otherwise', () => {
+    expect(encodeWelcome({ proof: w.proof, serverTimeMs: w.serverTimeMs, expiresAtMs: w.expiresAtMs, caps: ['thread'] })).toBe(g('welcomeCaps'));
+    expect(encodeWelcome({ proof: w.proof, serverTimeMs: w.serverTimeMs, expiresAtMs: w.expiresAtMs, caps: [] })).toBe(spec.frames.welcome);
+  });
+  it('threadEntriesJsonLength is the JSON text length of the entries array', () => {
+    expect(threadEntriesJsonLength(entries)).toBe(JSON.stringify(snap.entries).length);
+    expect(threadEntriesJsonLength([])).toBe(2);
   });
 });
