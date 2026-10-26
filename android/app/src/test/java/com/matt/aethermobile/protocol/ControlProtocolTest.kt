@@ -147,7 +147,7 @@ class ControlProtocolTest {
         }
         val msgs = spec.getJSONObject("messages")
         assertEquals(listOf("hello", "attach", "detach", "in"), strings(msgs.getJSONArray("phoneToTitan")))
-        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack"), strings(msgs.getJSONArray("titanToPhone")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak"), strings(msgs.getJSONArray("titanToPhone")))
     }
 
     // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.
@@ -293,6 +293,24 @@ class ControlProtocolTest {
             """{"t":"ack","s":"claude","c":"3"}""",
             """{"t":"ack","s":"claude"}""",
             """{"t":"ack","s":"bash","c":1}""",
+        )) assertNull(bad, ControlProtocol.parseTerminalFrame(bad))
+    }
+
+    @Test fun nakGoldensParseAndBadNaksAreNull() {
+        assertEquals(
+            ControlProtocol.TerminalFrame.Nak("claude", 4, ControlProtocol.NakReason.NOT_RUNNING),
+            ControlProtocol.parseTerminalFrame(frames.getString("nakNotRunning")),
+        )
+        assertEquals(
+            ControlProtocol.TerminalFrame.Nak("terminal2", 9, ControlProtocol.NakReason.TYPING_OFF),
+            ControlProtocol.parseTerminalFrame(frames.getString("nakTypingOff")),
+        )
+        for (bad in listOf(
+            """{"t":"nak","s":"claude","c":4,"reason":"bogus"}""",
+            """{"t":"nak","s":"claude","c":4}""",
+            """{"t":"nak","s":"claude","c":0,"reason":"not-running"}""",
+            """{"t":"nak","s":"claude","c":1.5,"reason":"not-running"}""",
+            """{"t":"nak","s":"bash","c":1,"reason":"not-running"}""",
         )) assertNull(bad, ControlProtocol.parseTerminalFrame(bad))
     }
 

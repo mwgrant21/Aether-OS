@@ -248,6 +248,7 @@ class TerminalHost(
             is TerminalFrame.Size -> post(BridgeOut.size(frame.s, frame.cols, frame.rows))
             is TerminalFrame.State -> Unit
             is TerminalFrame.Ack -> Unit // handled before the attached-slot filter, above
+            is TerminalFrame.Nak -> Unit
         }
     }
 

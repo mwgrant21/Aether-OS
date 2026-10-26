@@ -65,7 +65,7 @@ sealed class ControlState {
 /**
  * V1 /ctl client: dials only the baked tailnet host, sends exactly one `hello`,
  * and reports Connected only after the welcome proof verifies against the nonce
- * this client sent. After that it forwards terminal frames to [onFrame] and
+ * this client sent. After that it forwards terminal frames (snap/out/size/state/ack/nak) to [onFrame] and
  * sends attach/detach/input. No reconnect (V4), no queueing, no resend: input
  * is sent only while Connected and an unacked frame is never replayed.
  *
@@ -204,7 +204,7 @@ class ControlClient(
                 when (frameType(text)) {
                     "bye" -> onBye(text)
                     "welcome" -> onWelcome(text)
-                    "snap", "out", "size", "state", "ack" -> {
+                    "snap", "out", "size", "state", "ack", "nak" -> {
                         val frame = if (welcomed) ControlProtocol.parseTerminalFrame(text) else null
                         if (frame == null) {
                             finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)

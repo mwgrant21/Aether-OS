@@ -529,4 +529,28 @@ class ControlClientTest {
         assertEquals(listOf<ControlProtocol.TerminalFrame>(ControlProtocol.TerminalFrame.Ack("claude", 3)), frames)
         assertTrue(transport.closes.isEmpty())
     }
+
+    @Test fun nakFrameIsDeliveredAndKeepsTheConnectionUp() {
+        val c = connected()
+        transport.listener!!.onMessage(golden.getString("nakNotRunning"))
+        assertEquals(
+            listOf<ControlProtocol.TerminalFrame>(ControlProtocol.TerminalFrame.Nak("claude", 4, ControlProtocol.NakReason.NOT_RUNNING)),
+            frames,
+        )
+        assertTrue(c.state is ControlState.Connected)
+        assertTrue(transport.closes.isEmpty())
+    }
+
+    @Test fun nakWithBogusReasonFailsAsProtocol() {
+        val c = connected()
+        transport.listener!!.onMessage("""{"t":"nak","s":"claude","c":4,"reason":"bogus"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertTrue(frames.isEmpty())
+    }
+
+    @Test fun unknownFrameTypeStillFailsAsProtocol() {
+        val c = connected()
+        transport.listener!!.onMessage("""{"t":"bogus","s":"claude"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+    }
 }

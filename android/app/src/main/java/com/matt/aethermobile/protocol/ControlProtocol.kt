@@ -81,6 +81,8 @@ object ControlProtocol {
         val q: Long,
     )
 
+    enum class NakReason(val wire: String) { NOT_RUNNING("not-running"), TYPING_OFF("typing-off") }
+
     /** Titan-to-phone terminal frames. Slot ids are always members of [SLOTS]. */
     sealed class TerminalFrame {
         abstract val s: String
@@ -90,6 +92,8 @@ object ControlProtocol {
         data class State(override val s: String, val state: SlotState) : TerminalFrame()
         /** Cumulative: every `in` frame with cseq <= [c] on [s] has been processed. */
         data class Ack(override val s: String, val c: Long) : TerminalFrame()
+        /** The desktop refused the `in` frame with cseq [c] on [s]; that cseq is consumed. */
+        data class Nak(override val s: String, val c: Long, val reason: NakReason) : TerminalFrame()
     }
 
     /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
@@ -210,7 +214,7 @@ object ControlProtocol {
     }
 
     /**
-     * Null unless the frame is a well-formed snap/out/size/state/ack: known slot,
+     * Null unless the frame is a well-formed snap/out/size/state/ack/nak: known slot,
      * string `d`, whole-number numerics (a JSON 1.5 or 1.0 is rejected), q within
      * 0..2^53-1, known state. Unknown extra fields are ignored.
      */
@@ -244,6 +248,12 @@ object ControlProtocol {
                 val c = whole(o.opt("c"), MAX_SAFE_INTEGER) ?: return null
                 if (c < 1) return null
                 TerminalFrame.Ack(s, c)
+            }
+            "nak" -> {
+                val c = whole(o.opt("c"), MAX_SAFE_INTEGER) ?: return null
+                if (c < 1) return null
+                val reason = NakReason.values().firstOrNull { it.wire == o.opt("reason") } ?: return null
+                TerminalFrame.Nak(s, c, reason)
             }
             else -> null
         }
