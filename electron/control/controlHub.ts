@@ -23,11 +23,13 @@ import type {
   RemoteSessionInfo,
   RemoteUnavailableReason,
   TerminalReadPort,
+  TerminalWritePort,
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
 import { createControlGateway } from './controlGateway';
 import type { ControlSession } from './controlGateway';
+import { createInputRouter } from './inputRouter';
 
 export const CONTROL_REVOKE_UNSAVED_NOTICE = 'Revoke not saved to disk yet';
 /** Flip to false only if the on-device check finds titan cannot see the phone's own 100.x as the source address. */
@@ -47,6 +49,8 @@ export interface ControlHubDeps {
   settings: ControlSettingsPort;
   /** Read-only terminal port (never the hub itself). retain() is held exactly while control is on. */
   terminals: TerminalReadPort;
+  /** Narrow write handle (write only); inputRouter is the single phone-to-pty write site. Distinct from the read-only `terminals`. */
+  input: TerminalWritePort;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -98,11 +102,13 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   const sessions = new Map<string, ControlSession>();
   let releaseTerminals: (() => void) | null = null; // non-null exactly while this hub holds a terminals.retain()
 
+  const router = createInputRouter({ terminals: deps.input, now, log: (m, r) => { log(`${m} ref=${r}`); } });
   const gateway = createControlGateway({
     now,
     setTimeoutFn: deps.setTimeoutFn,
     clearTimeoutFn: deps.clearTimeoutFn,
     terminals: deps.terminals,
+    input: router,
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
@@ -172,6 +178,18 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     sessions.clear();
     for (const s of open) {
       try { s.close(reasonText); } catch { /* one socket that fails to close must not keep the others, or the teardown, from finishing */ }
+    }
+  }
+
+  // A revoke (or a pairing that replaces the device) must stop typed input at once, not when the ws close event
+  // arrives: between ws.close() and that event the gateway would still route `in` frames to the router. So the hub
+  // closes the gateway session of every ref that is no longer a paired device, before the listener recheck.
+  function dropRevokedSessions(): void {
+    const live = new Set((auth?.list() ?? []).map(d => d.ref));
+    for (const [ref, s] of [...sessions]) {
+      if (live.has(ref)) continue;
+      sessions.delete(ref);
+      try { s.close('revoked'); } catch { /* the listener recheck still closes the socket */ }
     }
   }
 
@@ -273,6 +291,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     init();
     fn();
     log(line);
+    dropRevokedSessions();
     deps.listener.recheckControl();
     await settle(true);
     emit();
@@ -320,12 +339,14 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       // a disable or quit landed between the approval and the mint: nothing may stay paired (cap 1, so this is the one device)
       auth!.revokeAll();
       log('control: revoke after-approval-race');
+      dropRevokedSessions();
       deps.listener.recheckControl();
       await settle(false);
       emit();
       return { status: 403 };
     }
     log('control: paired');
+    dropRevokedSessions();
     deps.listener.recheckControl(); // a superseded device's live sockets stop authenticating
     await settle(true);
     emit();

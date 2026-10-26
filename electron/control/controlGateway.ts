@@ -12,7 +12,7 @@
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
 // fixed strings plus the slot id and the identity ref.
 import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket, InputPort, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
 import { encodeAck, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
@@ -171,7 +171,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     const scheduleAck = (slot: TerminalSlotId, c: number): void => {
       const pending = ackTimers.get(slot);
       if (pending) {
-        pending.c = c;
+        pending.c = Math.max(pending.c, c); // a late duplicate carries a lower cumulative value; an ack never regresses
         return;
       }
       const entry = { handle: null as unknown, c };
@@ -231,7 +231,12 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           if (!helloSeen) return violation('control: input before hello');
           if (!input || !inputSession) return violation('control: no input port');
           if (!attachments.has(msg.s)) return violation('control: input to unattached slot');
-          const r = inputSession.input(msg.s, msg.c, msg.d);
+          let r: InputResult;
+          try {
+            r = inputSession.input(msg.s, msg.c, msg.d);
+          } catch {
+            return violation('control: input failed'); // a throwing router closes this socket, never the gateway; nothing is logged from it
+          }
           if (r.kind === 'violation') return violation(r.why);
           if (r.kind === 'rate-limit') {
             log?.('control: input rate limit', identity.ref);

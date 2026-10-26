@@ -315,6 +315,30 @@ describe('control gateway input verb', () => {
     expect(acks(s)).toEqual([JSON.stringify({ t: 'ack', s: 'claude', c: 2 }), JSON.stringify({ t: 'ack', s: 'claude', c: 2 })]);
   });
 
+  it('a lower ack inside the coalesce window never regresses the pending ack', () => {
+    const { s } = setup([{ kind: 'applied', ack: 3 }, { kind: 'duplicate', ack: 2 }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 3));
+    s.feed(inFrame('claude', 2));
+    vi.advanceTimersByTime(30);
+    expect(acks(s)).toEqual([JSON.stringify({ t: 'ack', s: 'claude', c: 3 })]);
+  });
+
+  it('a router that throws closes this socket with bye policy and does not escape the gateway', () => {
+    const throwing: InputPort = { open: () => ({ input: () => { throw new Error('boom HUNTER2-SENTINEL'); }, applied: () => ({}), close: () => {} }) };
+    const logs: string[] = [];
+    const gw = createControlGateway({ now: () => 1790000000000, log: (m) => { logs.push(m); }, terminals: fakePort(INFO).port, input: throwing });
+    const s = fakeSocket();
+    gw.attach(s, identity);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    expect(() => s.feed(inFrame('claude', 1))).not.toThrow();
+    expect(bye(s)).toEqual([{ t: 'bye', reason: 'policy' }]);
+    expect(s.closes).toEqual([1008]);
+    expect(logs.join('\n')).not.toContain('HUNTER2');
+  });
+
   it('a rate-limit result closes with bye rate-limit and sends no ack', () => {
     const { s } = setup([{ kind: 'rate-limit' }]);
     s.feed(helloFrame);

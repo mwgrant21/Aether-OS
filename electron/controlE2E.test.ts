@@ -130,6 +130,7 @@ beforeEach(() => {
     store: deviceStore,
     settings: { read: () => flag, persist: on => { flag = on; return flag; } },
     terminals,
+    input: terminalHub.writePort(),
     confirmPair: (peer, replaces) => confirmPair(peer, replaces),
     renderQr: () => '<svg/>',
   });
@@ -289,14 +290,15 @@ const of = (c: Ctl, t: string, s?: string): Array<Record<string, unknown>> => c.
 const settle = (ms = 60) => new Promise<void>(r => setTimeout(r, ms));
 const tick = () => new Promise<void>(r => setTimeout(r, 0));
 
-function fakePty(): PtyLike & { sizes: Array<[number, number]>; data(d: string): void; exit(): void } {
+function fakePty(): PtyLike & { sizes: Array<[number, number]>; written: string[]; data(d: string): void; exit(): void } {
   let onData: (d: string) => void = () => {};
   let onExit: () => void = () => {};
   const p = {
     sizes: [] as Array<[number, number]>,
     onData: (cb: (d: string) => void) => { onData = cb; },
     onExit: (cb: () => void) => { onExit = cb; },
-    kill: () => {}, write: () => {},
+    kill: () => {}, write: (d: string) => { p.written.push(d); },
+    written: [] as string[],
     resize: (c: number, r: number) => { p.sizes.push([c, r]); },
     data: (d: string) => onData(d),
     exit: () => onExit(),
@@ -452,4 +454,60 @@ describe('phone control end to end: terminals', () => {
     expect(ctl.msgs.some(m => m.t === 'bye')).toBe(false);
     expect(claude.pc.join('')).toBe(chunk.repeat(total));
   }, 60000);
+});
+
+// ---- typed input: a phone `in` frame becomes exactly one slot.write on the real hub, nothing after revoke ----
+
+const sendIn = (c: Ctl, s: string, n: number, d: string) => c.ws.send(JSON.stringify({ t: 'in', s, c: n, d }));
+
+describe('phone control end to end: typed input', () => {
+  async function attached(slot: TerminalSlotId = 'claude') {
+    const { address, token } = await pairDevice();
+    const started = startSlot(slot);
+    const ctl = await connectAndHello(address, token);
+    attach(ctl, slot);
+    await waitFor(() => of(ctl, 'snap').length === 1);
+    return { ctl, pty: started.pty };
+  }
+
+  it('in c=1 writes the exact string to the pty once and acks; a resent c=1 writes nothing more', async () => {
+    const { ctl, pty } = await attached();
+    sendIn(ctl, 'claude', 1, 'echo hi\r');
+    await waitFor(() => of(ctl, 'ack', 'claude').length === 1);
+    expect(pty.written).toEqual(['echo hi\r']);
+    expect(of(ctl, 'ack', 'claude')[0]).toEqual({ t: 'ack', s: 'claude', c: 1 });
+
+    sendIn(ctl, 'claude', 1, 'echo hi\r');
+    await waitFor(() => of(ctl, 'ack', 'claude').length === 2);
+    expect(of(ctl, 'ack', 'claude')[1]).toEqual({ t: 'ack', s: 'claude', c: 1 });
+    expect(pty.written).toEqual(['echo hi\r']);
+  });
+
+  it('in for a slot this socket has not attached closes the socket 1008 and writes nothing', async () => {
+    const { ctl, pty } = await attached('claude');
+    const other = startSlot('terminal2');
+    sendIn(ctl, 'terminal2', 1, 'x');
+    expect(await ctl.closed).toBe(1008);
+    expect(other.pty.written).toEqual([]);
+    expect(pty.written).toEqual([]);
+  });
+
+  it('an in frame sent right after a revoke writes nothing', async () => {
+    const { ctl, pty } = await attached();
+    sendIn(ctl, 'claude', 1, 'a');
+    await waitFor(() => pty.written.length === 1);
+    await controlHub.revokeOne(controlHub.status().devices[0].ref);
+    sendIn(ctl, 'claude', 2, 'b'); // the close handshake is still in flight; the server has already closed the session
+    expect(await ctl.closed).toBe(1000);
+    await settle();
+    expect(pty.written).toEqual(['a']);
+  });
+
+  it('101 frames in one burst end in bye rate-limit', async () => {
+    const { ctl } = await attached();
+    for (let i = 1; i <= 101; i++) sendIn(ctl, 'claude', i, 'a');
+    await waitFor(() => ctl.msgs.some(m => m.t === 'bye'));
+    expect(ctl.msgs.filter(m => m.t === 'bye')).toEqual([{ t: 'bye', reason: 'rate-limit' }]);
+    expect(await ctl.closed).toBe(1000);
+  });
 });

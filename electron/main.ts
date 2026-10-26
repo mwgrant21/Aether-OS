@@ -1524,7 +1524,8 @@ const remoteHub = createRemoteHub({
 // attach after a viewer-only start fails closed by design.
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
-  terminals: terminalHub.readPort(), // the read-only port, never terminalHub or a slot
+  terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
+  input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; desktop pty:write does not use it
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),

@@ -6,7 +6,7 @@ import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ListenerPort, RemoteUnavailableReason, TerminalReadPort } from '../../src/shared/remote/types';
+import type { ControlSocket, ListenerPort, RemoteUnavailableReason, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -79,16 +79,18 @@ function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confir
   const store = fakeStore();
   const confirmPair = vi.fn(over.confirm ?? (async () => true));
   const logs: string[] = [];
+  const writes: string[] = [];
   const hub = createControlHub({
     listener, store, settings, confirmPair,
     terminals: terms.port,
+    input: { write: (s: TerminalSlotId, d: string) => { writes.push(`${s}|${d}`); return true; } },
     renderQr: t => `<svg>${t.length}</svg>`,
     log: l => { logs.push(l); },
     setTimeoutFn: (fn, ms) => { const id = nextId++; timers.push({ id, fn, ms }); return id; },
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
   });
-  return { hub, listener, settings, store, confirmPair, timers, logs, terms: terms.t };
+  return { hub, listener, settings, store, confirmPair, timers, logs, writes, terms: terms.t };
 }
 
 async function pairOne(hub: ReturnType<typeof setup>['hub']) {
@@ -735,6 +737,53 @@ describe('control hub terminals retain balance', () => {
     expect(logs).toContain('control: terminals unavailable');
     await hub.stop();
     expect(terms).toEqual({ retains: 0, releases: 0 });
+  });
+});
+
+describe('control hub input wiring', () => {
+  const inFrame = (c: number, d: string): string => JSON.stringify({ t: 'in', s: 'claude', c, d });
+  async function connect(h: ReturnType<typeof setup>) {
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    s.feed(JSON.stringify({ t: 'attach', s: 'claude' }));
+    return { s, id };
+  }
+
+  it('passes the input port through: an in frame from an attached socket reaches the fake write port once', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    s.feed(inFrame(1, 'ls\r'));
+    expect(h.writes).toEqual(['claude|ls\r']);
+  });
+
+  it('writes the data to no log line, and router lines carry ref=', async () => {
+    const h = setup();
+    const { s, id } = await connect(h);
+    s.feed(inFrame(1, 'HUNTER2-SENTINEL'));
+    expect(h.logs.join(' ')).not.toContain('HUNTER2');
+    expect(h.logs).toContain(`control: first input slot=claude bytes=16 ref=${id.ref}`);
+  });
+
+  it('after disable no write is possible: the socket is closed and a later in frame writes nothing', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    await h.hub.setEnabled(false);
+    s.feed(inFrame(1, 'x'));
+    expect(h.writes).toEqual([]);
+  });
+
+  it('revokeAll closes the gateway session itself (bye revoked) so an in frame in the ws close window writes nothing', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    s.feed(inFrame(1, 'a'));
+    await h.hub.revokeAll();
+    expect(s.sent.at(-1)).toBe(JSON.stringify({ t: 'bye', reason: 'revoked' }));
+    s.feed(inFrame(2, 'b'));
+    expect(h.writes).toEqual(['claude|a']);
   });
 });
 
