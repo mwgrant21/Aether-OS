@@ -21,8 +21,13 @@ class TerminalHost(
     private val onTabsChanged: () -> Unit = {},
     sendInput: (String, Long, String) -> Boolean = { _, _, _ -> false },
     onNotSent: (Int) -> Unit = {},
+    /**
+     * The sender for the current connection. cseq continuity belongs to the connection (one epoch on the
+     * desktop), so a host rebuilt on the same connection must share it; a new connection makes a new one.
+     */
+    sharedSender: InputSender? = null,
 ) {
-    private val inputSender = InputSender(sendInput, { System.currentTimeMillis() }, onNotSent)
+    private val inputSender = sharedSender ?: InputSender(sendInput, { System.currentTimeMillis() }, onNotSent)
     data class Tab(val s: String, val label: String, val state: SlotState, val awaitingOutput: Boolean = false)
 
     private val states = HashMap<String, SlotState>()
@@ -63,7 +68,6 @@ class TerminalHost(
         }
         attached = null
         active = true
-        inputSender.reset()
         ctrlLatch = false
         syncStdin()
         safe { onTabsChanged() }
@@ -71,15 +75,16 @@ class TerminalHost(
 
     /** The connection ended: ignore frames (a late one may still arrive) until the next [onSessions]. */
     @Synchronized
-    fun onDisconnected() {
+    fun onDisconnected(connectionLost: Boolean = true) {
         active = false
         attached = null
         awaitingSnap.clear()
         awaitingOutput.clear()
         ctrlLatch = false
         syncStdin()
-        // Unacked frames are reported not sent; nothing is resent after this.
-        safe { inputSender.onDisconnected() }
+        // Unacked frames are reported not sent on a real disconnect; a host rebuild on the same connection
+        // (render gone) keeps them pending. Nothing is ever resent.
+        if (connectionLost) safe { inputSender.onDisconnected() }
     }
 
     /** Keys may leave the phone only for the attached slot while active and RUNNING. */

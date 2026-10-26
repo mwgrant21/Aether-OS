@@ -345,8 +345,6 @@ class TerminalHostTest {
         assertEquals(listOf(5), notSent)
         ready(); host.select("claude") // reconnect: onSessions again
         assertEquals(2, sent.size) // no replay
-        host.onPage(PageMessage.Input("claude", "f"))
-        assertEquals(1L, sent.last().second) // new connection restarts cseq
     }
 
     @Test fun ackFrameClearsPendingInput() {
@@ -378,6 +376,40 @@ class TerminalHostTest {
         assertEquals(listOf(true, false, true, false), stdins()) // already off: no repeat
         ready(); host.select("claude"); host.onDisconnected()
         assertEquals(listOf(true, false, true, false, true, false), stdins())
+    }
+
+    private fun hostOn(sender: InputSender) = TerminalHost(
+        attach = { _, _ -> true }, detach = { true }, post = {}, feed = TerminalFeed(), sharedSender = sender,
+    ).also { it.onSessions(listOf(info("claude"))); it.select("claude") }
+
+    @Test fun twoHostsOnOneConnectionShareOneSenderSoCseqContinues() {
+        val frames = ArrayList<Long>()
+        val shared = InputSender({ _, c, _ -> frames.add(c); true }, { 0L })
+        val h1 = hostOn(shared)
+        for (k in 1..3) h1.onPage(PageMessage.Input("claude", "k"))
+        h1.onFrame(TerminalFrame.Ack("claude", 3))
+        h1.onDisconnected(connectionLost = false) // render gone
+        val h2 = hostOn(shared)
+        h2.onPage(PageMessage.Input("claude", "k"))
+        assertEquals(listOf(1L, 2L, 3L, 4L), frames)
+    }
+
+    @Test fun aSecondOnSessionsOnOneConnectionDoesNotRestartCseq() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "a")); host.onPage(PageMessage.Input("claude", "b"))
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "c"))
+        assertEquals(listOf(1L, 2L, 3L), sent.map { it.second })
+    }
+
+    @Test fun renderGoneRebuildReportsNothingNotSentButARealDisconnectDoes() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "abc"))
+        host.onDisconnected(connectionLost = false)
+        assertTrue(notSent.isEmpty())
+        ready(); host.select("claude")
+        host.onDisconnected()
+        assertEquals(listOf(3), notSent) // still pending: the shared sender kept it
     }
 
     @Test fun failedAttachLeavesNothingAttachedAndReselectRetries() {

@@ -23,7 +23,7 @@ class InputSender(
     /** Chars reported not sent since construction (refused, link refused, or unacked at a drop). */
     fun unsentChars(): Int = unsent
 
-    /** A new connection: cseq restarts at 1 (the desktop epoch is per connection) and pending is forgotten. */
+    /** Restarts cseq at 1 and forgets pending. Only for a new epoch; the host never calls it (a new connection builds a new sender). */
     fun reset() {
         nextC.clear()
         pending.clear()
