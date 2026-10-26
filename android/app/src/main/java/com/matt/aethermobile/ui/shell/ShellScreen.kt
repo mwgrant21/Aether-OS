@@ -162,7 +162,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         headerStart = { ModeSwitch(mode, true, ThreadUiModel.termDot(meta), actions.onSetMode) },
                     )
-                } else if (termMode && showSwitch(state.selected)) {
+                } else if (termMode && showSwitch(state.selected) && ControlProtocol.CAP_THREAD in state.caps) {
                     TermModeRow(state, mode, actions)
                 }
                 // Always composed, in every mode: a conditional host could leave the pre-warmed WebView unattached.

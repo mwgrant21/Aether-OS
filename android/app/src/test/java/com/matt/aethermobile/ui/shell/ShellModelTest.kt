@@ -120,6 +120,11 @@ class ShellModelTest {
         assertTrue(threadWanted("terminal2", withThread, null))
     }
 
+    @Test fun terminal2UnavailableWithTermChoiceIsTermAndDetached() {
+        assertEquals(ThreadViewMode.TERM, viewModeFor("terminal2", withThread, false, ThreadViewMode.TERM))
+        assertFalse(threadWanted("terminal2", withThread, ThreadViewMode.TERM))
+    }
+
     @Test fun threadAssumedReadableUntilFirstSnapshot() {
         assertTrue(threadAvail(com.matt.aethermobile.thread.ThreadState()))
     }

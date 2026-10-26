@@ -601,6 +601,8 @@ class MainActivity : AppCompatActivity() {
         selected = sessions.firstOrNull { it.state == SlotState.RUNNING }?.s ?: "claude"
         th.select(selected)
         th.zoom(zoomPx)
+        // `selected` may have changed (renderer rebuild picks the first running slot): the thread must follow it.
+        syncThread()
         renderTabs()
     }
 
