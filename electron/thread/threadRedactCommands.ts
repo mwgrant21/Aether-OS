@@ -299,8 +299,11 @@ export function maskCommands(text: string): string {
     re.lastIndex = 0;
     const spans: Range[] = [];
     let m: RegExpExecArray | null;
+    let seen = 0; // the previous window already covered every token up to here
     while ((m = re.exec(out)) !== null) {
+      if (m.index < seen) continue;
       const toks = tokenize(out, m.index + m[0].length);
+      seen = toks.length > 0 ? toks[toks.length - 1]!.end : m.index + m[0].length;
       for (const r of pick(toks, out)) if (!isReference(out.slice(r.start, r.end))) spans.push(r);
     }
     if (spans.length > 0) out = splice(out, spans);
