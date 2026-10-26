@@ -7,6 +7,8 @@ import org.junit.Test
 class InputSenderTest {
     private val frames = ArrayList<Triple<String, Long, String>>()
     private val notSent = ArrayList<Int>()
+    private val refusals = ArrayList<InputSender.Refusal>()
+    private var acks = 0
     private var linkUp = true
     private var failAfter = Int.MAX_VALUE
 
@@ -16,19 +18,14 @@ class InputSenderTest {
         },
         nowMs = { 0L },
         onNotSent = { notSent.add(it) },
+        onRefused = { refusals.add(it) },
+        onAcked = { acks++ },
     )
 
     @Test fun cseqsAreConsecutiveAndPerSlot() {
         sender.send("claude", "a"); sender.send("claude", "b"); sender.send("codex", "c"); sender.send("claude", "d")
         assertEquals(listOf(1L, 2L, 1L, 3L), frames.map { it.second })
         assertEquals(listOf("claude", "claude", "codex", "claude"), frames.map { it.first })
-    }
-
-    @Test fun resetRestartsCseqAtOne() {
-        sender.send("claude", "a"); sender.send("claude", "b")
-        sender.reset()
-        sender.send("claude", "c")
-        assertEquals(1L, frames.last().second)
     }
 
     @Test fun maxPasteSplitsIntoChunksOfAtMost4096BytesWithJoinedPayloadEqualInput() {
@@ -47,7 +44,7 @@ class InputSenderTest {
         assertTrue(frames.all { it.third.toByteArray().size <= 4096 })
         assertTrue(frames.all { f -> f.third.none { Character.isSurrogate(it) } || f.third.length % 2 == 0 })
         assertEquals(text, frames.joinToString("") { it.third })
-        frames.clear(); sender.reset()
+        frames.clear()
         val euro = "€".repeat(2700) // 3 bytes each: 8100 bytes, chunk = 1365 chars (4095 bytes)
         sender.send("claude", euro)
         assertEquals(listOf(1365, 1335), frames.map { it.third.length })
@@ -103,5 +100,20 @@ class InputSenderTest {
         linkUp = true; failAfter = Int.MAX_VALUE
         sender.send("claude", "y")
         assertEquals(2L, frames.last().second) // refused frame did not burn a cseq
+    }
+
+    @Test fun refusalReportsItsReason() {
+        sender.send("claude", "x".repeat(8193))
+        sender.send("claude", "a" + 0xD83D.toChar())
+        sender.send("claude", "ok")
+        assertEquals(listOf(InputSender.Refusal.TOO_LARGE, InputSender.Refusal.LONE_SURROGATE), refusals)
+    }
+
+    @Test fun ackNotifiesOnlyWhenItRetiresAPendingFrame() {
+        sender.send("claude", "abc")
+        sender.onAck("claude", 1)
+        sender.onAck("claude", 1)
+        sender.onAck("codex", 5)
+        assertEquals(1, acks)
     }
 }

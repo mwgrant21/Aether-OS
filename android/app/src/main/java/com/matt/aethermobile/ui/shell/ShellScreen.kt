@@ -82,6 +82,8 @@ data class ShellUiState(
     val tabs: List<TerminalHost.Tab>,
     val selected: String,
     val flow: FlowState.Connected?,
+    val ctrlOn: Boolean = false,
+    val notice: NotSentNotice = NotSentNotice.NONE,
 )
 
 class ShellActions(
@@ -90,6 +92,8 @@ class ShellActions(
     val onZoomOut: () -> Unit,
     val onZoomIn: () -> Unit,
     val onFit: () -> Unit,
+    val onKey: (String) -> Unit,
+    val onCtrlToggle: () -> Unit,
 )
 
 private val dims = AetherDimens()
@@ -133,6 +137,8 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                         update = { it.visibility = if (state.connected) View.VISIBLE else View.GONE },
                     )
                 }
+                // Only composed while connected, so a locked or dropped session shows no keys at all.
+                if (state.connected) KeyRow(keysEnabled(cur, state.flow), state.ctrlOn, state.notice, actions)
                 if (state.connected) ZoomRow(actions)
             }
         }

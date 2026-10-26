@@ -53,6 +53,7 @@ import com.matt.aethermobile.ui.components.AeScreenBackground
 import com.matt.aethermobile.ui.auth.AuthActions
 import com.matt.aethermobile.ui.auth.AuthScreen
 import com.matt.aethermobile.ui.auth.authScreenFor
+import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
@@ -127,7 +128,13 @@ class MainActivity : AppCompatActivity() {
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
 
     /** Everything the Compose tree reads; replaced wholesale by [renderTabs] (main thread only). */
-    private class UiSnapshot(val flow: FlowState, val tabs: List<TerminalHost.Tab>, val selected: String)
+    private class UiSnapshot(
+        val flow: FlowState,
+        val tabs: List<TerminalHost.Tab>,
+        val selected: String,
+        val ctrlOn: Boolean = false,
+        val notice: NotSentNotice = NotSentNotice.NONE,
+    )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
 
@@ -448,7 +455,16 @@ class MainActivity : AppCompatActivity() {
         }
         val gen = ++connGen
         // One sender per connection: its cseq must follow the desktop's per-epoch counter across host rebuilds.
-        inputSender = InputSender({ s, c, d -> client?.sendInput(s, c, d) ?: false }, { System.currentTimeMillis() })
+        notice = NotSentNotice.NONE
+        // Callbacks arrive on transport or host threads: marshal to main and drop a superseded connection's.
+        fun onMain(f: () -> Unit) = runOnUiThread { if (gen == connGen && !isDestroyed) { f(); renderTabs() } }
+        inputSender = InputSender(
+            { s, c, d -> client?.sendInput(s, c, d) ?: false },
+            { System.currentTimeMillis() },
+            onNotSent = { n -> onMain { notice = notice.add(n) } },
+            onRefused = { r -> onMain { notice = notice.refused(r) } },
+            onAcked = { onMain { notice = NotSentNotice.NONE } },
+        )
         val th = newHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
@@ -515,6 +531,8 @@ class MainActivity : AppCompatActivity() {
     // ---- terminal ------------------------------------------------------------------------
 
     private var inputSender: InputSender? = null
+    /** Chars not sent, shown until the next ack, a slot switch or a new connection (main thread only). */
+    private var notice = NotSentNotice.NONE
 
     private fun newHost(): TerminalHost {
         var th: TerminalHost? = null
@@ -559,7 +577,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectSlot(s: String) {
         selected = s
+        notice = NotSentNotice.NONE
         termHost?.select(s)
+        renderTabs()
+    }
+
+    private fun sendKey(bytes: String) {
+        termHost?.sendKeys(bytes)
+        renderTabs() // a latched Ctrl is consumed by the key
+    }
+
+    private fun toggleCtrl() {
+        termHost?.let { it.setCtrlLatch(!it.ctrlLatched()) }
         renderTabs()
     }
 
@@ -575,7 +604,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        ui = UiSnapshot(flow, tabs, selected)
+        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, notice)
     }
 
     // ---- rendering -----------------------------------------------------------------------
@@ -595,13 +624,15 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.notice),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
                         onZoomOut = { stepZoom(-2) },
                         onZoomIn = { stepZoom(2) },
                         onFit = { setZoom(0) },
+                        onKey = ::sendKey,
+                        onCtrlToggle = ::toggleCtrl,
                     ),
                     terminalHolder = webHolder,
                 )

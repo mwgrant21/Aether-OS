@@ -4,4 +4,30 @@
     <string name="menu_terminals">Terminals</string>
     <string name="menu_open">Open menu</string>
     <string name="menu_close">Close menu</string>
+
+    <string name="key_row_label">Keys</string>
+    <string name="key_esc">Esc</string>
+    <string name="key_tab">Tab</string>
+    <string name="key_ctrl">Ctrl</string>
+    <string name="key_up">↑</string>
+    <string name="key_down">↓</string>
+    <string name="key_left">←</string>
+    <string name="key_right">→</string>
+    <string name="key_pipe">|</string>
+    <string name="key_slash">/</string>
+    <string name="key_dash">-</string>
+    <string name="key_y">y</string>
+    <string name="key_n">n</string>
+    <string name="key_up_desc">Up arrow</string>
+    <string name="key_down_desc">Down arrow</string>
+    <string name="key_left_desc">Left arrow</string>
+    <string name="key_right_desc">Right arrow</string>
+    <string name="key_ctrl_on_desc">Ctrl latched</string>
+
+    <plurals name="not_sent_chars">
+        <item quantity="one">%d char not sent</item>
+        <item quantity="other">%d chars not sent</item>
+    </plurals>
+    <string name="not_sent_too_large">Input over 8192 bytes was refused.</string>
+    <string name="not_sent_bad_text">Input with a broken character was refused.</string>
 </resources>

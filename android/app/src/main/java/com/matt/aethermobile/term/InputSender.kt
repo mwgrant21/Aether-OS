@@ -10,7 +10,13 @@ class InputSender(
     private val send: (String, Long, String) -> Boolean,
     private val nowMs: () -> Long,
     private val onNotSent: (Int) -> Unit = {},
+    /** Why [send] refused a whole input (before any frame); called just before [onNotSent]. */
+    private val onRefused: (Refusal) -> Unit = {},
+    /** A cumulative ack retired at least one pending frame. */
+    private val onAcked: () -> Unit = {},
 ) {
+    enum class Refusal { TOO_LARGE, LONE_SURROGATE }
+
     /** [sentChars] reached `send`; [notSentChars] did not (refused input, or the link refused a frame). */
     data class SendResult(val frames: Int, val sentChars: Int, val notSentChars: Int)
 
@@ -23,15 +29,15 @@ class InputSender(
     /** Chars reported not sent since construction (refused, link refused, or unacked at a drop). */
     fun unsentChars(): Int = unsent
 
-    /** Restarts cseq at 1 and forgets pending. Only for a new epoch; the host never calls it (a new connection builds a new sender). */
-    fun reset() {
-        nextC.clear()
-        pending.clear()
-    }
-
     fun send(s: String, text: String): SendResult {
         if (text.isEmpty()) return SendResult(0, 0, 0)
-        if (text.toByteArray(Charsets.UTF_8).size > MAX_INPUT_BYTES || hasLoneSurrogate(text)) {
+        val refusal = when {
+            text.toByteArray(Charsets.UTF_8).size > MAX_INPUT_BYTES -> Refusal.TOO_LARGE
+            hasLoneSurrogate(text) -> Refusal.LONE_SURROGATE
+            else -> null
+        }
+        if (refusal != null) {
+            onRefused(refusal)
             return fail(SendResult(0, 0, text.length))
         }
         var i = 0
@@ -50,7 +56,7 @@ class InputSender(
 
     /** Cumulative ack: every pending frame with cseq <= [c] for [s] was processed. */
     fun onAck(s: String, c: Long) {
-        pending[s]?.removeAll { it.c <= c }
+        if (pending[s]?.removeAll { it.c <= c } == true) onAcked()
     }
 
     /** The link dropped: whatever is still unacked is reported not sent. Nothing is resent. */
