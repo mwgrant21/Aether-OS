@@ -4,14 +4,16 @@
 // whose proof comes from the identity (ControlIdentity.proofFor; the HMAC lives in remoteAuth, never here) and
 // whose sessions come from the read port; only then does the socket start receiving state frames. After hello the
 // phone may attach/detach a terminal slot (at most one attachment per slot). Anything else, including a second
-// hello, attach/detach before hello, an unknown verb or an oversize frame, is answered with bye(policy) and closes
+// hello, attach/detach/in before hello, an unknown verb or an oversize frame, is answered with bye(policy) and closes
 // 1008. The only terminal handle held here is a TerminalReadPort (list/attach/onState): this file cannot write,
-// resize or start a terminal. Without a port (the option is optional) every attach is a policy violation and
-// welcome.sessions is empty. The nonce, proof, credentials and terminal content are never logged; log lines are
+// resize or start a terminal. A typed `in` frame is only routed, never applied: it must target a slot this socket
+// has attached and goes to the injected InputPort (inputRouter owns dedupe, rate limits and the single pty write);
+// the gateway only schedules the coalesced ack the port's result calls for. Without a terminal port every attach is
+// a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
 // fixed strings plus the slot id and the identity ref.
-import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
-import { encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
+import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
+import type { ControlIdentity, ControlSocket, InputPort, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
+import { encodeAck, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
@@ -27,6 +29,8 @@ export interface ControlGatewayOptions {
   helloTimeoutMs?: number;
   /** Read-only terminal access. Absent = fail closed: sessions stay empty and attach is a policy violation. */
   terminals?: TerminalReadPort;
+  /** Typed-input router. Absent = fail closed: every `in` frame is a policy violation. */
+  input?: InputPort;
 }
 
 export interface ControlGateway {
@@ -47,6 +51,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
   const helloTimeoutMs = opts.helloTimeoutMs ?? CONTROL_HELLO_TIMEOUT_MS;
   const log = opts.log;
   const terminals = opts.terminals;
+  const input = opts.input;
 
   function attach(socket: ControlSocket, identity: ControlIdentity): ControlSession {
     let closed = false;
@@ -54,6 +59,8 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     let deadline: unknown = null;
     let unsubscribeState: (() => void) | null = null;
     const attachments = new Map<TerminalSlotId, Attached>();
+    let inputSession: InputSession | null = null;
+    const ackTimers = new Map<TerminalSlotId, { handle: unknown; c: number }>();
 
     const cancelDeadline = (): void => {
       if (deadline !== null) clearTimer(deadline);
@@ -74,6 +81,15 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     const teardown = (): void => {
       for (const a of attachments.values()) release(a);
       attachments.clear();
+      for (const t of ackTimers.values()) clearTimer(t.handle);
+      ackTimers.clear();
+      const is = inputSession;
+      inputSession = null;
+      try {
+        is?.close();
+      } catch {
+        // a failing session close must not skip the unsubscribe, bye or close that follow
+      }
       const unsub = unsubscribeState;
       unsubscribeState = null;
       try {
@@ -151,6 +167,23 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    // Trailing coalesce: one pending timer per slot; the ack carries the newest cseq seen before it fires.
+    const scheduleAck = (slot: TerminalSlotId, c: number): void => {
+      const pending = ackTimers.get(slot);
+      if (pending) {
+        pending.c = c;
+        return;
+      }
+      const entry = { handle: null as unknown, c };
+      ackTimers.set(slot, entry);
+      entry.handle = setTimer(() => {
+        if (ackTimers.get(slot) !== entry) return;
+        ackTimers.delete(slot);
+        if (closed) return;
+        socket.send(encodeAck({ s: slot, c: entry.c }));
+      }, CONTROL_ACK_COALESCE_MS);
+    };
+
     socket.onMessage((text) => {
       if (closed) return;
       if (text.length > CONTROL_CTL_MAX_PAYLOAD) return violation('control: oversize frame');
@@ -161,12 +194,14 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           if (helloSeen) return violation('control: repeated hello');
           helloSeen = true;
           cancelDeadline();
+          inputSession = input ? input.open(identity.ref, msg.epoch) : null;
           socket.send(
             encodeWelcome({
               proof: identity.proofFor(msg.nonce),
               serverTimeMs: opts.now(),
               expiresAtMs: identity.expiresAtMs,
               sessions: terminals ? terminals.list() : [],
+              applied: inputSession ? inputSession.applied() : {},
             }),
           );
           log?.('control: hello accepted', identity.ref);
@@ -190,6 +225,19 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           attachments.delete(msg.s);
           release(a);
           log?.(`control: detach slot=${msg.s}`, identity.ref);
+          return;
+        }
+        case 'in': {
+          if (!helloSeen) return violation('control: input before hello');
+          if (!input || !inputSession) return violation('control: no input port');
+          if (!attachments.has(msg.s)) return violation('control: input to unattached slot');
+          const r = inputSession.input(msg.s, msg.c, msg.d);
+          if (r.kind === 'violation') return violation(r.why);
+          if (r.kind === 'rate-limit') {
+            log?.('control: input rate limit', identity.ref);
+            return close('rate-limit');
+          }
+          scheduleAck(msg.s, r.ack);
           return;
         }
         default:

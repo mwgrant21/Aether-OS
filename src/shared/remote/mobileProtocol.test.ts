@@ -34,6 +34,10 @@ describe('mobile-protocol.json matches the TypeScript constants', () => {
       maxControlSockets: T.CONTROL_MAX_SOCKETS,
       ctlMaxPayloadBytes: T.CONTROL_CTL_MAX_PAYLOAD,
       recheckMs: T.CONTROL_RECHECK_MS,
+      inputMaxBytes: T.CONTROL_INPUT_MAX_BYTES,
+      inputMaxBytesPerSec: T.CONTROL_INPUT_MAX_BYTES_PER_SEC,
+      inputMaxFramesPerSec: T.CONTROL_INPUT_MAX_FRAMES_PER_SEC,
+      ackCoalesceMs: T.CONTROL_ACK_COALESCE_MS,
     })
   })
   it('messages, bye reasons, pair status codes', () => {
@@ -104,12 +108,12 @@ describe('pairing code alphabet', () => {
 
 describe('terminal frame goldens', () => {
   it('every golden t is in the right messages list', () => {
-    for (const k of ['attach', 'attachResume', 'detach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
-    for (const k of ['welcome', 'welcomeSessions', 'bye', 'snap', 'out', 'size', 'state']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['attach', 'attachResume', 'detach', 'in']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
   })
   it('messages lists are exactly the declared verbs, in order', () => {
-    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach'])
-    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state'])
+    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'in'])
+    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack'])
   })
   it('welcomeSessions lists the three slots in TERMINAL_SLOTS order with the six documented keys', () => {
     const f = JSON.parse(spec.frames.welcomeSessions)
@@ -125,6 +129,8 @@ describe('terminal frame goldens', () => {
     expect(Object.keys(JSON.parse(spec.frames.out))).toEqual(['t', 's', 'q', 'd'])
     expect(Object.keys(JSON.parse(spec.frames.size))).toEqual(['t', 's', 'cols', 'rows'])
     expect(Object.keys(JSON.parse(spec.frames.state))).toEqual(['t', 's', 'state'])
+    expect(Object.keys(JSON.parse(spec.frames.in))).toEqual(['t', 's', 'c', 'd'])
+    expect(Object.keys(JSON.parse(spec.frames.ack))).toEqual(['t', 's', 'c'])
   })
 })
 

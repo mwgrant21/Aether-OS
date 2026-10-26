@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { createControlGateway } from './controlGateway';
 import { MESSAGE_TYPES } from './protocol';
-import type { ControlIdentity, ControlSocket, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap } from '../../src/shared/remote/types';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap } from '../../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const vec = spec.proof.vectors;
@@ -219,6 +219,142 @@ const INFO: TerminalInfo[] = [
 ];
 const attachFrame = (s: string, q?: number): string => JSON.stringify(q === undefined ? { t: 'attach', s } : { t: 'attach', s, q });
 const detachFrame = (s: string): string => JSON.stringify({ t: 'detach', s });
+
+const inFrame = (s: string, c: number, d = 'x'): string => JSON.stringify({ t: 'in', s, c, d });
+
+describe('control gateway input verb', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function setup(results: InputResult[] = [], withPort = true, applied: Record<string, number> = {}) {
+    const fp = fakePort(INFO);
+    const calls: string[] = [];
+    const opens: string[] = [];
+    let closes = 0;
+    const input: InputPort = {
+      open: (ref, epoch) => {
+        opens.push(`${ref}|${epoch}`);
+        return {
+          input: (s, c, d) => { calls.push(`${s}|${c}|${d}`); return results.shift() ?? { kind: 'applied', ack: c }; },
+          applied: () => applied,
+          close: () => { closes += 1; },
+        };
+      },
+    };
+    const logs: string[] = [];
+    const gw = createControlGateway({ now: () => 1790000000000, log: (m) => { logs.push(m); }, terminals: fp.port, ...(withPort ? { input } : {}) });
+    const s = fakeSocket();
+    const session = gw.attach(s, identity);
+    return { s, session, calls, opens, closes: () => closes, logs };
+  }
+  const bye = (s: { sent: string[] }): unknown[] => s.sent.map((x) => JSON.parse(x)).filter((m) => m.t === 'bye');
+  const acks = (s: { sent: string[] }): string[] => s.sent.filter((x) => JSON.parse(x).t === 'ack');
+
+  it('in before hello is bye policy and never reaches the port', () => {
+    const { s, calls, opens } = setup();
+    s.feed(inFrame('claude', 1));
+    expect(bye(s)).toEqual([{ t: 'bye', reason: 'policy' }]);
+    expect(s.closes).toEqual([1008]);
+    expect([calls, opens]).toEqual([[], []]);
+  });
+
+  it('in for a slot this socket has not attached is bye policy and never reaches the port', () => {
+    const { s, calls } = setup();
+    s.feed(helloFrame);
+    s.feed(attachFrame('codex'));
+    s.feed(inFrame('claude', 1));
+    expect(bye(s)).toEqual([{ t: 'bye', reason: 'policy' }]);
+    expect(s.closes).toEqual([1008]);
+    expect(calls).toEqual([]);
+  });
+
+  it('in after detach is a violation', () => {
+    const { s, calls } = setup();
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(detachFrame('claude'));
+    s.feed(inFrame('claude', 1));
+    expect(s.closes).toEqual([1008]);
+    expect(calls).toEqual([]);
+  });
+
+  it('in with no input port fails closed with bye policy', () => {
+    const { s } = setup([], false);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 1));
+    expect(bye(s)).toEqual([{ t: 'bye', reason: 'policy' }]);
+    expect(s.closes).toEqual([1008]);
+  });
+
+  it('three rapid frames reach the port and produce one coalesced ack after 30 ms carrying the last c', () => {
+    const { s, calls, opens } = setup();
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 1, 'a'));
+    s.feed(inFrame('claude', 2, 'b'));
+    s.feed(inFrame('claude', 3, 'c'));
+    expect(calls).toEqual(['claude|1|a', 'claude|2|b', 'claude|3|c']);
+    expect(opens).toEqual([`${identity.ref}|0123456789abcdef`]);
+    vi.advanceTimersByTime(29);
+    expect(acks(s)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(acks(s)).toEqual([JSON.stringify({ t: 'ack', s: 'claude', c: 3 })]);
+    vi.advanceTimersByTime(1000);
+    expect(acks(s)).toHaveLength(1);
+  });
+
+  it('a duplicate result re-acks the cumulative value', () => {
+    const { s } = setup([{ kind: 'applied', ack: 2 }, { kind: 'duplicate', ack: 2 }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 2));
+    vi.advanceTimersByTime(30);
+    s.feed(inFrame('claude', 1));
+    vi.advanceTimersByTime(30);
+    expect(acks(s)).toEqual([JSON.stringify({ t: 'ack', s: 'claude', c: 2 }), JSON.stringify({ t: 'ack', s: 'claude', c: 2 })]);
+  });
+
+  it('a rate-limit result closes with bye rate-limit and sends no ack', () => {
+    const { s } = setup([{ kind: 'rate-limit' }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 1));
+    expect(bye(s)).toEqual([{ t: 'bye', reason: 'rate-limit' }]);
+    expect(s.closes).toEqual([1000]);
+    vi.advanceTimersByTime(100);
+    expect(acks(s)).toEqual([]);
+  });
+
+  it('a violation result closes policy and logs only its fixed reason', () => {
+    const { s, logs } = setup([{ kind: 'violation', why: 'control: input gap' }]);
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 5, 'HUNTER2-SENTINEL'));
+    expect(s.closes).toEqual([1008]);
+    expect(logs.join('\n')).toContain('control: input gap');
+    expect(logs.join('\n')).not.toContain('HUNTER2');
+  });
+
+  it('after close() an in frame reaches the port zero times, the pending ack is cancelled and the session closes once', () => {
+    const { s, session, calls, closes } = setup();
+    s.feed(helloFrame);
+    s.feed(attachFrame('claude'));
+    s.feed(inFrame('claude', 1));
+    session.close('revoked');
+    s.feed(inFrame('claude', 2));
+    vi.advanceTimersByTime(100);
+    expect(calls).toEqual(['claude|1|x']);
+    expect(acks(s)).toEqual([]);
+    expect(closes()).toBe(1);
+  });
+
+  it('welcome carries the input session applied map', () => {
+    const { s } = setup([], true, { claude: 3 });
+    s.feed(helloFrame);
+    expect(JSON.parse(s.sent[0]).applied).toEqual({ claude: 3 });
+  });
+});
 
 describe('control gateway terminal verbs', () => {
   beforeEach(() => { vi.useFakeTimers(); });

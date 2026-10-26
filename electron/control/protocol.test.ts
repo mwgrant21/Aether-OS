@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
 import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES } from '../../src/shared/remote/types';
 import type { TerminalInfo } from '../../src/shared/remote/types';
 
@@ -55,12 +55,48 @@ describe('terminal frames match the goldens byte for byte', () => {
     expect(encodeState({ s: 'claude', state: 'running' })).toBe(spec.frames.state);
   });
   it('every titan-to-phone golden type is declared', () => {
-    for (const k of ['welcome', 'bye', 'snap', 'out', 'size', 'state']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t);
+    for (const k of ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t);
   });
   it('attach, attachResume and detach goldens parse back', () => {
     expect(parsePhoneMessage(spec.frames.attach)).toEqual({ t: 'attach', s: 'claude' });
     expect(parsePhoneMessage(spec.frames.attachResume)).toEqual({ t: 'attach', s: 'claude', q: 123 });
     expect(parsePhoneMessage(spec.frames.detach)).toEqual({ t: 'detach', s: 'claude' });
+  });
+});
+
+describe('input verbs', () => {
+  const p = (o: unknown): ReturnType<typeof parsePhoneMessage> => parsePhoneMessage(JSON.stringify(o));
+  it('golden in parses back and round-trips', () => {
+    const m = parsePhoneMessage(spec.frames.in);
+    expect(m).toEqual({ t: 'in', s: 'claude', c: 1, d: 'echo hi\r' });
+    expect(JSON.stringify(m)).toBe(spec.frames.in);
+  });
+  it('golden ack and welcomeApplied are reproduced byte for byte', () => {
+    expect(encodeAck({ s: 'claude', c: 3 })).toBe(spec.frames.ack);
+    expect(encodeWelcome({ proof: w.proof, serverTimeMs: w.serverTimeMs, expiresAtMs: w.expiresAtMs, applied: { claude: 3 } })).toBe(spec.frames.welcomeApplied);
+  });
+  it('rejects a cseq that is not a safe integer >= 1', () => {
+    for (const c of [0, 1.5, -1, '1', null, NaN, 2 ** 53]) expect(p({ t: 'in', s: 'claude', c, d: 'a' })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', d: 'a' })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: Number.MAX_SAFE_INTEGER, d: 'a' })).not.toBeNull();
+  });
+  it('rejects an empty, non-string, oversize or lone-surrogate d', () => {
+    expect(p({ t: 'in', s: 'claude', c: 1, d: '' })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: 5 })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: 'a'.repeat(8193) })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: 'a'.repeat(8192) })).not.toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: '€'.repeat(2731) })).toBeNull(); // 8193 bytes in 2731 UTF-16 units
+    expect(parsePhoneMessage('{"t":"in","s":"claude","c":1,"d":"x\\ud800"}')).toBeNull();
+  });
+  it('rejects an unknown slot and ignores extra keys', () => {
+    expect(p({ t: 'in', s: 'nope', c: 1, d: 'a' })).toBeNull();
+    expect(p({ t: 'in', s: 'codex', c: 2, d: 'a', x: 1 })).toEqual({ t: 'in', s: 'codex', c: 2, d: 'a' });
+  });
+  it('validateInput accepts control bytes, escapes and emoji, and throws RangeError on a lone surrogate', () => {
+    for (const d of ['\x03', '\x1b[A', '\x7f', '\0', '😀']) expect(validateInput(d)).toBe(d);
+    expect(() => validateInput('\ud800')).toThrow(RangeError);
+    expect(() => validateInput('')).toThrow(RangeError);
+    expect(() => validateInput(undefined)).toThrow(RangeError);
   });
 });
 

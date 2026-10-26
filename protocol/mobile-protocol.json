@@ -27,13 +27,18 @@
     "helloTimeoutMs": 5000,
     "maxControlSockets": 2,
     "ctlMaxPayloadBytes": 65536,
-    "recheckMs": 10000
+    "recheckMs": 10000,
+    "inputMaxBytes": 8192,
+    "inputMaxBytesPerSec": 262144,
+    "inputMaxFramesPerSec": 100,
+    "ackCoalesceMs": 30
   },
   "messages": {
     "phoneToTitan": [
       "hello",
       "attach",
-      "detach"
+      "detach",
+      "in"
     ],
     "titanToPhone": [
       "welcome",
@@ -41,7 +46,8 @@
       "snap",
       "out",
       "size",
-      "state"
+      "state",
+      "ack"
     ],
     "byeReasons": [
       "revoked",
@@ -101,6 +107,9 @@
     "snap": "{\"t\":\"snap\",\"s\":\"claude\",\"q\":124,\"cols\":100,\"rows\":30,\"d\":\"\\u001b[1mhi\\u001b[0m\\r\\n\"}",
     "out": "{\"t\":\"out\",\"s\":\"claude\",\"q\":125,\"d\":\"\\u001b[32mok\\u001b[0m\\r\\n\"}",
     "size": "{\"t\":\"size\",\"s\":\"claude\",\"cols\":120,\"rows\":40}",
-    "state": "{\"t\":\"state\",\"s\":\"claude\",\"state\":\"running\"}"
+    "state": "{\"t\":\"state\",\"s\":\"claude\",\"state\":\"running\"}",
+    "in": "{\"t\":\"in\",\"s\":\"claude\",\"c\":1,\"d\":\"echo hi\\r\"}",
+    "ack": "{\"t\":\"ack\",\"s\":\"claude\",\"c\":3}",
+    "welcomeApplied": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{\"claude\":3},\"prompts\":[]}"
   }
 }
