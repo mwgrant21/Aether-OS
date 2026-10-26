@@ -3,8 +3,8 @@
 // second answer from this xterm would reach the program as stray input. Each suppressor
 // below consumes (returns true) one family of query sequences so xterm never replies.
 //
-// Not covered on purpose (V3 interface item): focus-event mode (DECSET 1004) and the mouse
-// report modes. They only produce onData when stdin is on, and V2 keeps stdin disabled.
+// Not covered here on purpose: focus-event mode (DECSET 1004) and the mouse report modes.
+// They produce onData when stdin is on, so inputFilter.js drops them before `input` is sent.
 
 const hasQuery = (data) => typeof data === 'string' && data.includes('?');
 const consume = () => true;
