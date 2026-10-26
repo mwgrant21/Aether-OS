@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { ThreadReadPort } from '../../src/shared/remote/threadTypes';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
@@ -63,7 +64,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals> } = {}) {
+function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -82,6 +83,7 @@ function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confir
   const hub = createControlHub({
     listener, store, settings, confirmPair,
     terminals: terms.port,
+    threads: over.threads,
     renderQr: t => `<svg>${t.length}</svg>`,
     log: l => { logs.push(l); },
     setTimeoutFn: (fn, ms) => { const id = nextId++; timers.push({ id, fn, ms }); return id; },
@@ -750,5 +752,39 @@ describe('device auth peer binding', () => {
     expect(await auth.redeemDevice(code, undefined, approve)).toEqual({ ok: false, status: 401 });
     expect(await auth.redeemDevice(code, '::1', approve)).toEqual({ ok: false, status: 401 });
     expect(approve).not.toHaveBeenCalled();
+  });
+});
+
+describe('control hub thread port', () => {
+  const fakeThreads = (): { port: ThreadReadPort; stops: number } => {
+    const t = { stops: 0, port: null as unknown as ThreadReadPort };
+    t.port = { attach: () => ({ detach: () => {} }), detail: () => null, noteNotification: () => {}, stopAll: () => { t.stops += 1; } };
+    return t;
+  };
+
+  it('a user disable calls stopAll once, and enabling does not', async () => {
+    const th = fakeThreads();
+    const { hub } = setup({ threads: th.port });
+    await hub.setEnabled(true);
+    expect(th.stops).toBe(0);
+    await hub.setEnabled(false);
+    expect(th.stops).toBe(1);
+  });
+
+  it('stop() at quit calls stopAll, and a throwing stopAll does not break the teardown or the terminals release', async () => {
+    const th = fakeThreads();
+    th.port.stopAll = () => { th.stops += 1; throw new Error('boom'); };
+    const { hub, terms } = setup({ threads: th.port });
+    await hub.setEnabled(true);
+    await hub.stop();
+    expect(th.stops).toBe(1);
+    expect(terms).toEqual({ retains: 1, releases: 1 });
+  });
+
+  it('a hub without a thread port tears down normally', async () => {
+    const { hub, terms } = setup();
+    await hub.setEnabled(true);
+    await hub.setEnabled(false);
+    expect(terms).toEqual({ retains: 1, releases: 1 });
   });
 });

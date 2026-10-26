@@ -26,6 +26,7 @@ import type {
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
+import type { ThreadReadPort } from '../../src/shared/remote/threadTypes';
 import { createControlGateway } from './controlGateway';
 import type { ControlSession } from './controlGateway';
 
@@ -47,6 +48,8 @@ export interface ControlHubDeps {
   settings: ControlSettingsPort;
   /** Read-only terminal port (never the hub itself). retain() is held exactly while control is on. */
   terminals: TerminalReadPort;
+  /** Read-only thread port. Absent = no thread caps. stopAll() runs on every teardown (disable or quit). */
+  threads?: ThreadReadPort;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -103,6 +106,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     setTimeoutFn: deps.setTimeoutFn,
     clearTimeoutFn: deps.clearTimeoutFn,
     terminals: deps.terminals,
+    threads: deps.threads,
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
@@ -192,6 +196,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     try {
       closeSessions('disabled');
     } finally {
+      try { deps.threads?.stopAll(); } catch { /* stopping is best effort */ }
       dropTerminals(); // privacy section 17: the retain never outlives a disable, whatever closing the sockets did
     }
     try { await deps.listener.release(); } catch { /* already down */ }

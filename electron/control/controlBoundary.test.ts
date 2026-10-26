@@ -57,6 +57,7 @@ function allowedImports(file: string): Map<string, { typeOnly: boolean }> {
   m.set('electron/terminalHub', { typeOnly: true });
   m.set('electron', { typeOnly: true });
   m.set('src/shared/remote/types', { typeOnly: false });
+  m.set('src/shared/remote/threadTypes', { typeOnly: false });
   m.set('src/shared/board/text', { typeOnly: false }); // maskSecrets
   // controlHub owns the device auth instance and store (design 5.1), which are the parametrised remote modules.
   if (file === 'controlHub.ts') {
@@ -488,6 +489,13 @@ const CROSS: Array<{ id: string; files: Record<string, string>; expectViolation:
     files: {
       'protocol.ts': "export const MESSAGE_TYPES = { phoneToTitan: ['hello', 'in'] } as const;",
       'controlGateway.ts': "export const f = (m: { t: string }) => m.t === 'hello';",
+    },
+  },
+  {
+    id: 'thread-verb-declared-not-handled', expectViolation: true, has: 'unhandled: [tget]',
+    files: {
+      'protocol.ts': "export const MESSAGE_TYPES = { phoneToTitan: ['hello', 'tattach', 'tdetach', 'tget'] } as const;",
+      'controlGateway.ts': "export const f = (m: { t: string }) => { switch (m.t) { case 'hello': return 1; case 'tattach': return 2; case 'tdetach': return 3; default: return 0; } };",
     },
   },
   {
