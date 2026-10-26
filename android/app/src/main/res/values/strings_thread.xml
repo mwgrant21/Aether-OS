@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="thread_switch_thread">THREAD</string>
+    <string name="thread_switch_term">TERM</string>
+    <string name="thread_banner_perm">Waiting on terminal: a prompt needs your answer.</string>
+    <string name="thread_banner_quiet">No reply for 10 s. It may be waiting on a prompt in the terminal.</string>
+    <string name="thread_open_terminal">OPEN TERMINAL</string>
+    <string name="thread_thinking">Thinking</string>
+    <string name="thread_detail_loading">Loading...</string>
+    <string name="thread_detail_unavailable">Not available</string>
+    <string name="thread_detail_more">... %1$d more lines</string>
+    <string name="thread_diff_more">+ %1$d more lines</string>
+    <string name="thread_new_pill">New</string>
+    <string name="thread_read_only">Read-only. Reply in the terminal.</string>
+    <string name="thread_hint_no_session">No session running in this slot.</string>
+    <string name="thread_hint_starting">Session is starting.</string>
+    <string name="thread_hint_unreadable">Transcript is not readable.</string>
+</resources>
