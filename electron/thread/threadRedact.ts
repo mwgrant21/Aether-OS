@@ -91,10 +91,11 @@ function maskBlocks(text: string): string {
 
 // name <sep> value, where name is an identifier chain that may carry a flag prefix (-, --, /)
 // or a PowerShell variable prefix ($, $env:). The lookbehind keeps a name from starting inside
-// a path or another identifier. Group 4 is the closing quote of a quoted key ("name":), 5 the
-// optional marker of a TS property (name?:).
+// a path or another identifier. Groups: 1 flag, 2 $ prefix, 3 name, 4 an index after the name
+// (user[password]=x names the index, not user), 5 the closing quote of a quoted key ("name":),
+// 6 the optional marker of a TS property (name?:), 7 the separator.
 const ASSIGN_RE =
-  /(?<![\w$/\\.-])(-{1,2}(?=[A-Za-z_])|\/(?=[A-Za-z]))?(\$(?:[A-Za-z]+:)?)?([A-Za-z0-9_][\w.-]*)(\\?["']?)\]?(\??)([ \t]*(?:=>|:=|=(?!=)|:(?!:))[ \t]*)/g;
+  /(?<![\w$/\\.-])(-{1,2}(?=[A-Za-z_])|\/(?=[A-Za-z]))?(\$(?:[A-Za-z]+:)?)?([A-Za-z0-9_][\w.-]*)(\[\w{0,16}\])?(\\?["']?)[\]}]?(\??)([ \t]*(?:=>|:=|=(?!=)|:(?!:))[ \t]*)/g;
 // -Name value and --name value: a flag followed by whitespace. Any other name takes a bare
 // space only before a quoted literal (Gradle: password 'x'; SQL: PASSWORD 'x').
 const FLAG_RE = /(?<![\w$/\\.-])(-{1,2}(?=[A-Za-z_])|\/(?=[A-Za-z]))([A-Za-z_][\w.-]*)([ \t]+)(?=\S)/g;
@@ -130,7 +131,8 @@ const DECL_RE =
   /(?<![\w-])(?:const|let|var|val|final|readonly|private|public|protected|static|def|my|local|return|async|function|func|fn|param|using|this)\b/;
 const CALL_RE = /^(?:(?:new|await)\s+)?[A-Za-z_$][\w$.]*[([]/;
 const CHAIN_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
-const IDENT_RE = /^[A-Za-z_$][A-Za-z_$]*$/; // no digits: pw1 is a literal, not a variable
+const IDENT_RE = /^[A-Za-z_$][A-Za-z_$]*!?$/; // no digits: pw1 is a literal, not a variable
+const CODE_FOLLOW_RE = /^[ \t]*(?:;[ \t]*(?:$|\r|\n|\/\/|\})|\?\?|\|\||&&|\?[ \t.]|\+[ \t])/;
 const AUTH_SCHEME_RE = /^(?:bearer|basic|digest|token|negotiate|ntlm|hmac|apikey|oauth|jwt|aws4-hmac-sha256)$/i;
 // A line that is nothing but an assignment: .env, INI, YAML, export/set/ENV, "- name: v".
 const LINE_PREFIX_RE = /^[ \t]*(?:(?:export|set|declare|local|readonly|env|setenv|arg)[ \t]+(?:-[A-Za-z]+[ \t]+)*)?(?:-[ \t]+)*$/i;
@@ -155,7 +157,10 @@ function lineEnd(text: string, from: number): number {
 // A quoted value: "..." or '...' (backslash escapes, '' inside PowerShell single quotes) or an
 // escaped pair \"...\" from stringified JSON. start/end are the INNER range; an unterminated
 // quote runs to the end of the line, never across lines.
-function readQuoted(text: string, p: number): Span | null {
+function readQuoted(text: string, from: number): Span | null {
+  // A string prefix: Python f"..", r'..', b"..", PowerShell @"..
+  const prefix = /^(?:[rRbBfFuU]{1,2}|@)(?=["'`])/.exec(text.slice(from, from + 3));
+  const p = from + (prefix ? prefix[0].length : 0);
   const c = text.charAt(p);
   if (c === '\\') {
     const q = text.charAt(p + 1);
@@ -164,7 +169,7 @@ function readQuoted(text: string, p: number): Span | null {
     const eol = lineEnd(text, p);
     return { start: p + 2, end: stop >= 0 && stop <= eol ? stop : eol };
   }
-  if (c !== '"' && c !== "'") return null;
+  if (c !== '"' && c !== "'" && c !== '`') return null;
   let i = p + 1;
   for (; i < text.length; i += 1) {
     const ch = text[i]!;
@@ -212,12 +217,18 @@ function isCodeValue(text: string, p: number, tok: string, c: Candidate, level: 
   const lower = /[a-z]/.test(c.name);
   const colon = c.sep.includes(':') && !c.sep.includes('=');
   if (TYPE_WORDS.has(tok.toLowerCase()) && (colon || lower)) return true;
-  if (level < 2 && /^\d{1,5}$/.test(tok)) return true;
+  if (level < 2 && /^\d[\d_]*$/.test(tok) && tok.replace(/_/g, '').length <= 5) return true;
   if (c.sep === '') return false;
   if (colon && isTypeAnnotation(tok)) return true;
   if (!lower) return false; // ENV_STYLE names are always masked
   if (CALL_RE.test(text.slice(p, p + 120))) return true;
-  const ctx = codeContext(text, c);
+  // A value that the statement goes on to use (x = a.b ?? c; ...) is an expression, not a literal.
+  const after = text.slice(p + tok.length, p + tok.length + 12);
+  // (not after a ";": Server=a;Password=hunter; is a connection string, not a statement)
+  const ctx =
+    codeContext(text, c) ||
+    (CODE_FOLLOW_RE.test(after) && text.charAt(c.index - 1) !== ';') ||
+    (colon && after.startsWith(','));
   if (CHAIN_RE.test(tok) && (ctx || CODE_ROOTS.has(tok.slice(0, tok.indexOf('.')).toLowerCase()))) return true;
   return ctx && IDENT_RE.test(tok);
 }
@@ -227,6 +238,34 @@ function atLineStart(text: string, index: number): boolean {
   return index - ls <= 40 && LINE_PREFIX_RE.test(text.slice(ls, index));
 }
 
+const INTERPOLATION_RE = /^(?:(?:bearer|basic|token)\s+)?(?:\$\{[^}]*\}|\$[A-Za-z_]\w*|\{\{[^}]*\}\}|\{[^{}]*\}|%[A-Za-z_]\w*%)$/i;
+
+// YAML "password: |" followed by indented lines: the value is the indented block.
+const BLOCK_SCALAR_RE = /^[|>][+-]?\d?[ \t]*(?:#.*)?$/;
+function blockScalar(text: string, c: Candidate, p: number): Span | null {
+  const keyLineStart = c.index === 0 ? 0 : text.lastIndexOf('\n', c.index - 1) + 1;
+  const keyIndent = /^[ \t]*/.exec(text.slice(keyLineStart, keyLineStart + 80))![0].length;
+  let end = -1;
+  let at = lineEnd(text, p);
+  for (let n = 0; n < 200; n += 1) {
+    const nl = text.indexOf('\n', at);
+    if (nl < 0) break;
+    const le = lineEnd(text, nl + 1);
+    const line = text.slice(nl + 1, le);
+    if (line.trim() !== '') {
+      if (/^[ \t]*/.exec(line)![0].length <= keyIndent) break;
+      end = le;
+    }
+    at = le;
+  }
+  return end < 0 ? null : { start: nextLineStart(text, p), end };
+}
+// The block starts on the line after the key: mask from the first line of the block.
+function nextLineStart(text: string, p: number): number {
+  const nl = text.indexOf('\n', p);
+  return nl < 0 ? p : nl + 1;
+}
+
 // The range of the secret value after a recognised secret name, or null when it is not one.
 function valueSpan(text: string, c: Candidate): Span | null {
   const level = secretLevel(c.name, c.query);
@@ -234,11 +273,17 @@ function valueSpan(text: string, c: Candidate): Span | null {
   const p = c.valueAt;
   const first = text.charAt(p);
   if (first === '' || first === '\r' || first === '\n') return null;
+  if ((first === '|' || first === '>') && c.sep === ':' && BLOCK_SCALAR_RE.test(text.slice(p, lineEnd(text, p)))) {
+    return blockScalar(text, c, p);
+  }
 
   const quoted = readQuoted(text, p);
   if (quoted) {
     const inner = text.slice(quoted.start, quoted.end);
-    return inner === '' || inner === R ? null : quoted;
+    if (inner === '' || inner === R) return null;
+    // "Bearer ${token}", "$DB_PASS", f"Bearer {token}": the value is a variable, not a literal.
+    // Single quotes do not interpolate, so 'x$y' stays a literal.
+    return text.charAt(quoted.start - 1) !== "'" && INTERPOLATION_RE.test(inner) ? null : quoted;
   }
   // Compound values (arrays, objects, expressions), variable references and masked values.
   // A crypt hash ($2b$12$..., $argon2id$...) also starts with $ and is not a reference.
@@ -296,10 +341,10 @@ function maskKeyValues(text: string): string {
     const dollar = m[2] !== undefined;
     return {
       index: m.index,
-      name: m[3]!,
+      name: m[4] !== undefined && secretLevel(m[3]!) === 0 ? m[4].slice(1, -1) : m[3]!,
       flag,
       dollar,
-      sep: m[6]!.trim(),
+      sep: m[7]!.trim(),
       valueAt: m.index + m[0].length,
       query: !flag && !dollar && prev !== '' && '?&#'.includes(prev),
     };
@@ -322,7 +367,20 @@ function maskKeyValues(text: string): string {
     valueAt: m.index + m[0].length,
     query: false,
   }));
+  // {"name": "DB_PASSWORD", "value": "x"} and "- name: DB_PASSWORD" / "  value: x" (k8s env, appsettings).
+  out = scan(out, NAME_VALUE_RE, (m) => ({
+    index: m.index + m[0].length - m[2]!.length,
+    name: m[1]!,
+    flag: false,
+    dollar: false,
+    sep: ':',
+    valueAt: m.index + m[0].length,
+    query: false,
+  }));
   out = out.replace(ENV_SPACE_RE, (m, head: string, name: string, ws: string, value: string) =>
+    secretLevel(name) > 0 && !isReference(value) ? `${head}${name}${ws}${R}` : m,
+  );
+  out = out.replace(ENV_TABLE_RE, (m, head: string, name: string, ws: string, value: string) =>
     secretLevel(name) > 0 && !isReference(value) ? `${head}${name}${ws}${R}` : m,
   );
   return out.replace(CALL_PAIR_RE, (m, head: string, _q: string, name: string, lit: string) =>
@@ -333,29 +391,46 @@ function maskKeyValues(text: string): string {
 // setHeader('Authorization', 'Bearer x'), env.set("API_KEY", "x"): a name literal then a value literal.
 const CALL_PAIR_RE = /(\(\s*(["'])([\w.-]+)\2\s*,\s*)("[^"\r\n]*"|'[^'\r\n]*')/g;
 // Dockerfile ENV API_TOKEN value (a space instead of =).
-const ENV_SPACE_RE = /^([ \t]*(?:ENV|ARG|setenv)[ \t]+)([A-Za-z_][\w.-]*)([ \t]+)([^\r\n=]*\S)$/gim;
+const ENV_SPACE_RE = /^([ \t]*(?:ENV|ARG|setenv|#define|define)[ \t]+)([A-Za-z_][\w.-]*)([ \t]+)([^\r\n=]*\S)$/gim;
+// Get-ChildItem Env: prints "NAME<spaces>value" rows.
+const ENV_TABLE_RE = /^([ \t]*)([A-Z][A-Z0-9_]*)([ \t]{2,})(?![=:])([^\r\n]*\S)$/gm;
+// A name entry followed by its value entry: "name": "X", "value": "..." (JSON, YAML lists, C#).
+const NAME_VALUE_RE =
+  /(?<![\w$.-])["']?(?:name|key|variable)["']?[ \t]*[:=][ \t]*["']?([A-Za-z_][\w.-]*)["']?[^\r\n]{0,80}?(?:\r?\n[ \t]*-?[ \t]*)?(["']?value["']?[ \t]*[:=][ \t]*)/gi;
 
 // <password>PW</password>, <add key="secret" value="PW"/>, <setting name="ApiKey"><value>PW</value>
 const XML_TEXT_RE = /<([A-Za-z_][\w:.-]*)((?:\s[^<>]*)?)>([^<>]+)<\/\1\s*>/g;
 const XML_TAG_RE = /<[A-Za-z_][\w:.-]*(?:\s[^<>]*)?>/g;
 const XML_ATTR_RE = /([A-Za-z_][\w:.-]*)(\s*=\s*)("[^"]*"|'[^']*')/g;
 const XML_VALUE_CHILD_RE = /(<[A-Za-z_][\w:.-]*\s[^<>]*?\b(?:key|name)\s*=\s*(["'])([^"']*)\2[^<>]*>\s*<value>)([^<]+)(<\/value>)/gi;
-const isMaskableText = (t: string): boolean => t !== '' && !t.startsWith(R) && !/^[$%]/.test(t);
+const PLIST_RE = /(<key>([^<]+)<\/key>\s*<string>)([^<]+)(<\/string>)/g;
+const isMaskableText =(t: string): boolean => t !== '' && !t.startsWith(R) && !/^[$%]/.test(t);
+
+// <string name="api_key">x</string>: a key/name attribute that holds a secret name.
+function namesSecret(attrs: string): boolean {
+  for (const a of attrs.matchAll(XML_ATTR_RE)) {
+    if (/^(?:key|name|id|variable|n)$/i.test(a[1]!) && secretLevel(a[3]!.slice(1, -1)) > 0) return true;
+  }
+  return false;
+}
 
 function maskXml(text: string): string {
   if (!text.includes('<')) return text;
   let out = text.replace(XML_TEXT_RE, (m, tag: string, attrs: string, body: string) =>
-    secretLevel(tag) > 0 && isMaskableText(body.trim()) ? `<${tag}${attrs}>${R}</${tag}>` : m,
+    (secretLevel(tag) > 0 || namesSecret(attrs)) && isMaskableText(body.trim()) ? `<${tag}${attrs}>${R}</${tag}>` : m,
   );
   out = out.replace(XML_VALUE_CHILD_RE, (m, head: string, _q: string, name: string, body: string, tail: string) =>
     secretLevel(name) > 0 && isMaskableText(body.trim()) ? `${head}${R}${tail}` : m,
+  );
+  out = out.replace(PLIST_RE, (m, head: string, name: string, body: string, tail: string) =>
+    secretLevel(name.trim()) > 0 && isMaskableText(body.trim()) ? `${head}${R}${tail}` : m,
   );
   return out.replace(XML_TAG_RE, (tag) => {
     let secret = false;
     for (const a of tag.matchAll(XML_ATTR_RE)) {
       const attr = a[1]!.toLowerCase();
       const v = a[3]!.slice(1, -1);
-      if ((/^(?:key|name|id|variable)$/.test(attr) && secretLevel(v) > 0) || (attr === 'type' && v.toLowerCase() === 'password')) {
+      if ((/^(?:key|name|id|variable|n)$/.test(attr) && secretLevel(v) > 0) || (attr === 'type' && v.toLowerCase() === 'password')) {
         secret = true;
       }
     }
@@ -391,7 +466,7 @@ function maskUrls(text: string): string {
 const ENTROPY_RE = /[A-Za-z0-9+/_-]{18,}={0,2}/g;
 const HEX_RE = /^[0-9a-fA-F]{7,64}$/;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const WORD_RE = /[A-Z]?[a-z]{2,}|(?<![A-Za-z0-9])[A-Z]{3,8}(?![A-Za-z0-9])/g;
+const WORD_RE = /[A-Z]?[a-z]{2,}|(?<![A-Za-z0-9])[A-Z]{3,12}(?![A-Za-z0-9])/g;
 
 // 60% or more of the letters sit in readable words: ThreadMessageHandler, max_old_space_size.
 function isWordy(core: string): boolean {

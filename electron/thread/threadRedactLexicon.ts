@@ -22,7 +22,6 @@ const STRONG_WORDS = new Set([
   'credentials',
 ]);
 const WEAK_WORDS = new Set([
-  'pass',
   'token',
   'apikey',
   'auth',
@@ -32,9 +31,9 @@ const WEAK_WORDS = new Set([
   'signature',
   'sas',
   'bearer',
+  'psk',
   'dsn',
   'connectionstring',
-  'session',
   'sessionid',
   'sessid',
   'jsessionid',
@@ -79,6 +78,9 @@ const KEY_QUALIFIERS = new Set([
   'pgp',
 ]);
 
+// `pat` is a personal access token only next to one of these (GITHUB_PAT); alone it is a pattern.
+const PAT_QUALIFIERS = new Set(['github', 'gh', 'gitlab', 'azure', 'ado', 'devops', 'personal', 'pypi', 'npm', 'docker']);
+
 // A name that ends in one of these refers to a secret instead of holding one:
 // password_file, token_url, secret_name, auth_type, token_ttl.
 const REFERENCE_TAILS = new Set([
@@ -109,6 +111,8 @@ const REFERENCE_TAILS = new Set([
   'placeholder',
   'hint',
   'regex',
+  're',
+  'rx',
   'pattern',
   'rule',
   'rules',
@@ -120,6 +124,26 @@ const REFERENCE_TAILS = new Set([
   'timeout',
   'stdin',
   'fd',
+  'id',
+  'ms',
+  'sec',
+  'secs',
+  'seconds',
+  'minutes',
+  'hours',
+  'days',
+  'interval',
+  'delay',
+  'retries',
+  'attempts',
+  'free',
+  'cache',
+  'user',
+  'username',
+  'helper',
+  'provider',
+  'domain',
+  'realm',
 ]);
 
 // Extra names that only mean a secret inside a URL query or fragment: ?code=, ?key=, ?sid=.
@@ -147,12 +171,17 @@ function levelOf(segs: string[], query: boolean): SecretLevel {
     const prev = i > 0 ? segs[i - 1] : '';
     if (STRONG_WORDS.has(s) || FLAT_STRONG_RE.test(s)) level = 2;
     else if (WEAK_WORDS.has(s) || FLAT_WEAK_RE.test(s) || (FLAT_PASS_RE.test(s) && !NOT_PASS.has(s))) level = Math.max(level, 1) as SecretLevel;
+    else if (s === 'pass' && i === last) level = Math.max(level, 1) as SecretLevel; // db_pass, not pass_through
     else if (s === 'key' && i === last && KEY_QUALIFIERS.has(prev!)) level = Math.max(level, 1) as SecretLevel;
     else if (s === 'string' && prev === 'connection') level = Math.max(level, 1) as SecretLevel;
     else if (s === 'id' && prev === 'session') level = Math.max(level, 1) as SecretLevel;
+    else if (s === 'session' && segs.length === 1) level = Math.max(level, 1) as SecretLevel; // a bare session=... cookie value
+    else if (s === 'pat' && PAT_QUALIFIERS.has(prev!)) level = Math.max(level, 1) as SecretLevel;
   }
   if (level === 0 && query && QUERY_NAMES.has(segs.join(''))) level = 1;
-  if (level > 0 && REFERENCE_TAILS.has(segs[last]!)) return 0;
+  // credentialsId and token_url name a secret; session_id IS one.
+  const tail = segs[last]!;
+  if (level > 0 && REFERENCE_TAILS.has(tail) && !(tail === 'id' && segs[last - 1] === 'session')) return 0;
   return level;
 }
 

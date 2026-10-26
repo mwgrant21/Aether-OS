@@ -281,8 +281,9 @@ describe('isSensitivePath', () => {
 
 // ---------------------------------------------------------------------------------------
 // Engine corpora (redesign 2026-10-26). Each case is [label, input, substring that must vanish].
-// Three independent probes: round 1 (86 shapes), round 2 (110 shapes, UNC and registry paths as
-// real backslashes) and the engine probe written against the lexicon (every syntax family).
+// Four independent probes: round 1 (86 shapes), round 2 (110 shapes, UNC and registry paths as
+// real backslashes), the engine probe written against the lexicon (every syntax family) and a
+// tool-output probe (docker, k8s, aws, azure, java, go, CI shapes).
 // Every secret is an obvious FAKE. The keep lists are over-redaction negatives: they must come
 // back unchanged.
 // ---------------------------------------------------------------------------------------
@@ -729,10 +730,163 @@ const RAW = 'Qh7Zr1LmN8xWc3VbT5yHd9KfJ2sPa6GeU4oXiR0tYnMvB1cQw8ZkL3hDfS5jA7uEg';
   return { cases, keep };
 })();
 
+const TOOLS = (() => {
+
+const PW = 'Qm7xKd2Lp9Zr';
+const PW2 = 'Vt4nBc8Hw1Ys';
+const RAW = 'rT5yHd9KfJ2sPa6GeU4oXiR0tYnMvB1cQw8ZkL3hDfS5jA7uEgQh7Zr1LmN8xWc3Vb';
+const B64 = 'cGFzc3dvcmQxMjM0NTY3ODkw';
+
+  const cases: Case[] = [
+  ['docker inspect env', `"Env": [\n  "DB_PASSWORD=${PW}",\n  "PATH=/usr/bin"\n]`, PW],
+  ['k8s secret yaml', `apiVersion: v1\nkind: Secret\ndata:\n  password: ${B64}\n  username: YWRtaW4=\n`, B64],
+  ['sts json', `{"Credentials": {"AccessKeyId": "x", "SecretAccessKey": "${RAW.slice(0, 40)}", "SessionToken": "${RAW.slice(0, 30)}"}}`, RAW.slice(0, 30)],
+  ['az sp json', `{\n  "appId": "x",\n  "password": "${PW}",\n  "tenant": "t"\n}`, PW],
+  ['tf plan', `  + secret_key = "${PW}"`, PW],
+  ['http body', `POST /login HTTP/1.1\r\nHost: x\r\n\r\nusername=u&password=${PW}`, PW],
+  ['python repr', `{'user': 'u', 'password': '${PW}'}`, PW],
+  ['python namespace', `Namespace(password='${PW}', user='u')`, PW],
+  ['java toString', `User{id=1, name='bob', password=${PW}, role=ADMIN}`, PW],
+  ['go struct', `{Name:bob Password:${PW} Token:${PW2}}`, PW2],
+  ['env table', `Name                           Value\nOPENAI_KEY_X                   x\nGITHUB_PAT    ${PW}\nPATH   C:\\x`, PW],
+  ['systemd env', `Environment=API_KEY=${PW}`, PW],
+  ['s3cfg', `[default]\naccess_key = ${PW}\nsecret_key = ${PW2}\n`, PW2],
+  ['my.cnf', `[client]\nuser=root\npassword=${PW}\n`, PW],
+  ['set-variable', `Set-Variable -Name dbPassword -Value '${PW}' -Scope Global`, PW],
+  ['k8s env name/value', `env:\n  - name: DB_PASSWORD\n    value: ${PW}\n  - name: MODE\n    value: prod`, PW],
+  ['k8s env flow', `- {name: API_TOKEN, value: ${PW}}`, PW],
+  ['appsettings array', `[{"name": "Stripe__SecretKey", "value": "${PW}", "slotSetting": false}]`, PW],
+  ['json key/value', `{ "Key": "ApiKey", "Value": "${PW}" }`, PW],
+  ['yaml block scalar', `stringData:\n  password: |\n    ${PW}\n    ${PW2}\n  other: x`, PW2],
+  ['yaml folded', `password: >-\n  ${PW}\nnext: 1`, PW],
+  ['clixml', `<S N="UserName">bob</S><SS N="Password">${RAW.slice(0, 40)}</SS>`, RAW.slice(0, 40)],
+  ['html password input', `<input name="pw" type="password" value="${PW}"/>`, PW],
+  ['maven settings', `<server><id>x</id><username>u</username><password>${PW}</password></server>`, PW],
+  ['yarnrc', `npmAuthToken: "${PW}"`, PW],
+  ['spring yaml', `jwt:\n  secret: ${PW}\n`, PW],
+  ['ansible', `ansible_become_pass: ${PW}\nansible_password: ${PW2}`, PW2],
+  ['totp uri', `otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=y`, 'JBSWY3DPEHPK3PXP'],
+  ['curl cookie jar flag', `curl -b "sid=${PW}; x=1" https://x`, PW],
+  ['curl --cookie', `curl --cookie "${PW}=1" https://x`, PW],
+  ['wget header', `wget --header="X-Api-Key: ${PW}" https://x`, PW],
+  ['gh auth status', `  - Token: gho_${RAW.slice(0, 36)}`, RAW.slice(0, 36)],
+  ['json one-line pw', `{"user":"u","pwd":"${PW}"}`, PW],
+  ['cs conn', `Data Source=h;Initial Catalog=d;User ID=u;Pwd=${PW};Encrypt=True;`, PW],
+  ['odbc', `Driver={SQL Server};Server=h;Uid=u;Pwd=${PW};`, PW],
+  ['ldap url', `ldap://cn=admin,dc=x:${PW}@h:389`, PW],
+  ['git credential store', `https://bob:${PW}@github.com`, PW],
+  ['proxy env', `export https_proxy=http://bob:${PW}@proxy:8080`, PW],
+  ['github actions env', `env:\n  NPM_TOKEN: ${PW}\n`, PW],
+  ['gha with', `with:\n  password: ${PW}\n`, PW],
+  ['ps pscredential variable', `$cred = New-Object PSCredential('bob', (ConvertTo-SecureString '${PW}' -AsPlainText -Force))`, PW],
+  ['ps invoke-webrequest', `Invoke-WebRequest -Uri https://x -Headers @{Authorization = "Basic ${B64}"}`, B64],
+  ['ps convertfrom', `$p = ConvertTo-SecureString '${PW}' -AsPlainText -Force; $c = New-Object PSCredential('u',$p)`, PW],
+  ['bash curl here', `curl -s -X POST -d 'client_secret=${PW}&grant_type=client_credentials' https://x`, PW],
+  ['wget ftp', `wget --ftp-user=u --ftp-password=${PW} ftp://h/f`, PW],
+  ['lftp', `lftp -u bob,${PW} sftp://h`, PW],
+  ['mongosh', `mongosh "mongodb://h" --username u --password ${PW}`, PW],
+  ['psql url', `psql postgresql://u:${PW}@h:5432/db`, PW],
+  ['azcopy sas', `azcopy copy "https://a.blob.core.windows.net/c?sv=2022&sig=${RAW.slice(0, 30)}%3D&sp=r" .`, RAW.slice(0, 30)],
+  ['nmap script', `nmap --script smb-brute --script-args userdb=u.txt,passdb=p.txt,smbpassword=${PW} h`, PW],
+  ['hydra', `hydra -l bob -p ${PW} ssh://h`, PW],
+  ['vault login', `vault login -method=userpass username=bob password=${PW}`, PW],
+  ['bw login', `bw login bob@x.com ${PW}`, PW],
+  ['wifi', `netsh wlan add profile name=x key=${PW}`, PW],
+  ['redis auth', `redis-cli -u redis://:${PW}@h:6379`, PW],
+  ['rabbit', `amqp://guest:${PW}@h:5672/`, PW],
+  ['jdbc pw prop', `-Dspring.datasource.password=${PW}`, PW],
+  ['java -D', `java -Djavax.net.ssl.keyStorePassword=${PW} -jar a.jar`, PW],
+  ['maven -D', `mvn deploy -Dgpg.passphrase=${PW}`, PW],
+  ['gradle -P', `gradle publish -PsigningPassword=${PW}`, PW],
+  ['dotnet user-secrets', `dotnet user-secrets set "ConnectionStrings:Db" "Server=a;Password=${PW}"`, PW],
+  ['dotnet user-secrets2', `dotnet user-secrets set "Stripe:SecretKey" "${PW}"`, PW],
+  ['az webapp settings', `az webapp config appsettings set --settings DB_PASSWORD=${PW} MODE=x`, PW],
+  ['az functionapp key', `x-functions-key=${PW}`, PW],
+  ['smtp auth', `AUTH PLAIN ${B64}`, B64],
+  ['base64 basic header lowercase', `authorization: basic ${B64}`, B64],
+  ['nuget config', `<add key="ClearTextPassword" value="${PW}" />`, PW],
+  ['xml attr password', `<connection user="u" password="${PW}" />`, PW],
+  ['plist', `<key>password</key>\n<string>${PW}</string>`, PW],
+  ['psk kv', `wifi.psk=${PW}`, PW],
+  ['nmcli psk', `nmcli connection modify x wifi-sec.psk ${PW}`, PW],
+  ['wpa_passphrase', `wpa_passphrase MyNet ${PW}`, PW],
+  ['set-itemproperty', `Set-ItemProperty -Path HKCU:\\X -Name Password -Value '${PW}'`, PW],
+  ['certutil -p', `certutil -importpfx -p ${PW} c.pfx`, PW],
+  ['signtool /p', `signtool sign /f c.pfx /p ${PW} app.exe`, PW],
+  ['sqlplus', `sqlplus system/${PW}@orcl`, PW],
+  ['sqlplus quoted', `sqlplus "sys/${PW}@orcl as sysdba"`, PW],
+  ['rman', `rman target sys/${PW}@db`, PW],
+  ['c define', `#define API_KEY ${PW}`, PW],
+  ['c define quoted', `#define DB_PASSWORD "${PW}"`, PW],
+  ['android string', `<string name="api_key">${PW}</string>`, PW],
+  ['perl env hash', `$ENV{API_KEY} = '${PW}';`, PW],
+  ['php define', `define('DB_PASSWORD', '${PW}');`, PW],
+  ['php array', `$cfg = ['password' => '${PW}'];`, PW],
+  ['go assign', `token := "${PW}"`, PW],
+  ['rust let', `let api_key = "${PW}";`, PW],
+  ['helm set', `helm install x y --set mysql.auth.rootPassword=${PW}`, PW],
+  ['vpncmd', `vpncmd /CLIENT localhost /CMD AccountPasswordSet vpn /PASSWORD:${PW}`, PW],
+  ['docker build-arg', `docker build --build-arg NPM_TOKEN=${PW} .`, PW],
+  ['set quoted', `set "PASSWORD=${PW}"`, PW],
+  ['kubectl docker-registry', `kubectl create secret docker-registry r --docker-password=${PW}`, PW],
+  ['aws rds master pw', `aws rds create-db-instance --master-user-password ${PW}`, PW],
+  ['rails nested param', `user[password]=${PW}&user[email]=a`, PW],
+  ['array param', `password[]=${PW}`, PW],
+  ];
+  const keep: string[] = [
+  `credential.helper=manager`,
+  `credential.username=bob`,
+  `credentialsId: 'jenkins-github'`,
+  `user.name=Matt`,
+  `session_id: 5`,
+  `  imagePullSecrets:\n    - name: regcred`,
+  `kind: Secret`,
+  `type: Opaque`,
+  `secretKeyRef:\n  name: db\n  key: password`,
+  `{"name": "bob", "value": "abc"}`,
+  `- name: MODE\n  value: prod`,
+  `export const API_KEYS = ['a', 'b'];`,
+  `authenticated: true`,
+  `token_type: Bearer`,
+  `expires_in: 3600`,
+  `passwordless: true`,
+  `PASSWORD_MIN_LENGTH=12`,
+  `Name                           Value\nPATH                           C:\\x\nTEMP    C:\\tmp`,
+  `HOME=/home/matt`,
+  `SHELL=/bin/bash`,
+  `LS_COLORS=rs=0:di=01;34`,
+  `TERM=xterm-256color`,
+  `sessionStorage.setItem('theme', 'dark')`,
+  `console.log('auth ok')`,
+  `Authentication succeeded for user bob`,
+  `password reset email sent`,
+  `if (!token) return;`,
+  `git log --format='%an %s' -3`,
+  `import { signToken } from './jwt';`,
+  `const SECRET_NAMES = ['a'];`,
+  `<div class="password-field"></div>`,
+  `<label for="password">Password</label>`,
+  `<input type="text" name="user" value="bob">`,
+  `#define MAX_TOKEN_LEN 5`,
+  `const MAX_TOKENS = 4096;`,
+  `PassThrough streams emit 'data' events`,
+  `for pass in 1 2 3; do echo $pass; done`,
+  `pass: true`,
+  `export const AUTH_PROBE_TIMEOUT_MS = 15_000;`,
+  `spawnedSessionId = sessionId;`,
+  `pinnedLaunchSessionId = bundle.sessionId ?? null;`,
+  `sessionUpdate: 'agent_message_chunk'`,
+  `auth: auth!,`,
+  `// Token-free: prints one line`,
+  ];
+  return { cases, keep };
+})();
+
 const PROBES: Array<[string, { cases: Case[]; keep: string[] }]> = [
   ['round 1', ROUND1],
   ['round 2', ROUND2],
   ['engine', ENGINE],
+  ['tool output', TOOLS],
 ];
 
 for (const [round, { cases, keep }] of PROBES) {
@@ -762,13 +916,14 @@ describe('engine layer 2: the secret-name lexicon', () => {
     'AccountKey', 'SharedAccessKey', 'secret_key_base', 'AWS_SECRET_ACCESS_KEY', 'private_key', 'authToken', '_authToken',
     'refresh_token', 'access_token', 'id_token', 'Authorization', 'Proxy-Authorization', 'Set-Cookie', 'sig',
     'signature', 'sas', 'credentials', 'connection-string', 'ConnectionString', 'SENTRY_DSN', 'session_id', 'sessionId',
-    'JSESSIONID', 'RAILS_MASTER_KEY', 'storepass', 'cOoKiE',
+    'JSESSIONID', 'RAILS_MASTER_KEY', 'storepass', 'cOoKiE', 'GITHUB_PAT', 'npmAuthToken', 'ansible_become_pass',
   ];
   const plainNames = [
     'tokenizer', 'keyboard', 'author', 'authors', 'Authentication', 'sortKey', 'key', 'event.key', 'monkey', 'bypass',
     'compass', 'passthrough', 'maxTokens', 'tokenCount', 'THREAD_TOKEN_LIMIT', 'password_file', 'passwordField',
     'secret_name', 'token_url', 'auth_type', 'accessKeyId', 'client_id', 'private_key_id', 'secretary', 'keyMap',
-    'username', 'user', 'name', 'value',
+    'username', 'user', 'name', 'value', 'credentialsId', 'credential.helper', 'credential.username', 'pat',
+    'session_timeout', 'passwordless',
   ];
   for (const n of secretNames) it(`${n} is a secret name`, () => expect(secretLevel(n)).toBeGreaterThan(0));
   for (const n of plainNames) it(`${n} is not a secret name`, () => expect(secretLevel(n)).toBe(0));
@@ -843,6 +998,9 @@ describe('engine layer 3: one tokenizer across every syntax', () => {
       '-Password $securePw',
       '-Credential (Get-Credential)',
       'password: ${DB_PASSWORD}',
+      'password="$DB_PASS"',
+      'headers = {"Authorization": f"Bearer {token}"}',
+      'Authorization: `Bearer ${token}`',
     ];
     for (const s of unchanged) expect(redactText(s), s).toBe(s);
     const masked: Array<[string, string]> = [
@@ -853,6 +1011,16 @@ describe('engine layer 3: one tokenizer across every syntax', () => {
       ['pwd=123456', '123456'],
     ];
     for (const [s, gone] of masked) expect(redactText(s), s).not.toContain(gone);
+  });
+
+  it('masks a YAML block scalar, a name entry followed by its value entry, and a prefixed string', () => {
+    expect(redactText('password: |\n  line1secret\n  line2secret\nnext: 1')).toBe('password: |\n[redacted]\nnext: 1');
+    expect(redactText('env:\n  - name: DB_PASSWORD\n    value: hunter2hunter2\n  - name: MODE\n    value: prod')).toBe(
+      'env:\n  - name: DB_PASSWORD\n    value: [redacted]\n  - name: MODE\n    value: prod',
+    );
+    expect(redactText('{"name": "bob", "value": "abc"}')).toBe('{"name": "bob", "value": "abc"}');
+    expect(redactText('password = f"hunter2hunter2"')).toBe('password = f"[redacted]"');
+    expect(redactText('Authorization: `Bearer abc12345def`')).toBe('Authorization: `[redacted]`');
   });
 
   it('masks a whole header or .env line but stops at the quote that opened before the name', () => {

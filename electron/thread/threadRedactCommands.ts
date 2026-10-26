@@ -100,8 +100,8 @@ const first: Pick = (t) => t.slice(0, 1);
 
 // net use [Z:] \\srv\share PW /user:bob   -> the first positional that is not a target.
 const netUse: Pick = (t) => t.filter((x) => !isSwitch(x) && !isTarget(x)).slice(0, 1);
-// net user bob PW /add                    -> the second positional.
-const netUser: Pick = (t) => {
+// net user bob PW /add, bw login me@x.com PW -> the second positional.
+const secondPositional: Pick = (t) => {
   const pos = t.filter((x) => !isSwitch(x) && x.text !== '*');
   return pos.length >= 2 ? [pos[1]!] : [];
 };
@@ -137,9 +137,10 @@ const userCredential =
   };
 const curlUser = either(
   userCredential(/^(?:-u|-U|--user|--proxy-user)$/, /^(?:--user=|--proxy-user=|-u(?=[^\s-])|-U(?=[^\s-]))/, ':'),
-  after(/^--oauth2-bearer$/),
+  after(/^(?:--oauth2-bearer|-b|--cookie)$/),
 );
 const smbUser = userCredential(/^(?:-U|--user)$/, /^(?:--user=|-U(?=[^\s-]))/, '%');
+const lftpUser = userCredential(/^-u$/, /^-u(?=[^\s-])/, ',');
 
 // ConvertTo-SecureString "PW" -AsPlainText -Force: every literal argument is the secret.
 const FLAGS_WITH_VALUE = /^-(?:ErrorAction|EA|WarningAction|WA|InformationAction|IA|Key|SecureKey|OutVariable|OV|ErrorVariable|EV)$/i;
@@ -163,6 +164,23 @@ const namedValue: Pick = (t) => {
   return pos.length >= 2 && secretLevel(pos[0]!.text) > 0 ? [pos[1]!] : [];
 };
 
+// nmcli connection modify x wifi-sec.psk PW: any secret-named token takes the next one.
+const nameThenValue: Pick = (t) => {
+  const out: Range[] = [];
+  for (let i = 0; i + 1 < t.length; i += 1) {
+    if (!t[i]!.quoted && !isSwitch(t[i]!) && secretLevel(t[i]!.text) > 0) out.push(t[i + 1]!);
+  }
+  return out;
+};
+
+// Set-Variable -Name pw -Value 'x'
+const setVariable: Pick = (t) => {
+  const n = t.findIndex((x) => !x.quoted && /^-Name$/i.test(x.text));
+  if (n < 0 || !t[n + 1] || secretLevel(t[n + 1]!.text) === 0) return [];
+  const v = t.findIndex((x) => !x.quoted && /^-Value$/i.test(x.text));
+  return v >= 0 && t[v + 1] ? [t[v + 1]!] : [];
+};
+
 // reg add KEY /v Password /d PW
 const regAdd: Pick = (t) => {
   const v = t.findIndex((x) => !x.quoted && /^\/v$/i.test(x.text));
@@ -173,7 +191,7 @@ const regAdd: Pick = (t) => {
 
 const COMMANDS: Array<[RegExp, Pick]> = [
   [/(?<![\w-])net1?[ \t]+use\b/gi, netUse],
-  [/(?<![\w-])net1?[ \t]+user\b/gi, netUser],
+  [/(?<![\w-])net1?[ \t]+user\b/gi, secondPositional],
   [/(?<![\w-])(?:sqlcmd|osql|bcp|isql)(?:\.exe)?(?![\w-])/gi, either(after(/^-P$/), glued(/^-P/))],
   [/(?<![\w-])(?:mysql\w*|mariadb\w*|7z[a-z]?|7za|u?nrar|rar)(?:\.exe)?(?![\w-])/gi, glued(/^-p/)],
   [/(?<![\w-])(?:un)?zip(?:\.exe)?(?![\w-])/gi, after(/^-P$/)],
@@ -195,6 +213,12 @@ const COMMANDS: Array<[RegExp, Pick]> = [
   [/(?<![\w-])aws[ \t]+configure[ \t]+set\b/gi, namedValue],
   [/(?<![\w-])(?:npm|yarn|pnpm)[ \t]+config[ \t]+set\b/gi, namedValue],
   [/(?<![\w-])reg(?:\.exe)?[ \t]+add\b/gi, regAdd],
+  [/(?<![\w-])(?:Set|New)-Variable(?![\w-])/gi, setVariable],
+  [/(?<![\w-])(?:Set|New)-ItemProperty(?![\w-])/gi, setVariable],
+  [/(?<![\w-])certutil(?:\.exe)?(?![\w-])/gi, after(/^-p$/i)],
+  [/(?<![\w-])signtool(?:\.exe)?(?![\w-])/gi, after(/^[-/]p$/i)],
+  [/(?<![\w-])wpa_passphrase(?![\w-])/gi, secondPositional],
+  [/(?<![\w-])nmcli(?![\w-])/gi, nameThenValue],
   [/(?<![\w-])secret[ \t]+set\b/gi, either(after(/^(?:--value|--body|-b)$/), glued(/^--(?:value|body)=/))],
   [/(?<![\w-])put-parameter\b/gi, either(after(/^--value$/), glued(/^--value=/))],
   [/(?<![\w-])create[ \t]+secret\b/gi, glued(/^--from-literal=[^=]+=/)],
@@ -206,6 +230,11 @@ const COMMANDS: Array<[RegExp, Pick]> = [
   [/(?<![\w-])rdesktop(?![\w-])/gi, after(/^-p$/)],
   [/(?<![\w-])smbclient(?![\w-])/gi, smbUser],
   [/(?<![\w-])rclone[ \t]+obscure\b/gi, first],
+  [/(?<![\w-])lftp(?![\w-])/gi, lftpUser],
+  [/(?<![\w-])bw[ \t]+login\b/gi, secondPositional],
+  [/(?<![\w-])netsh(?![\w-])/gi, glued(/^key=/i)],
+  [/(?<![\w-])hydra(?![\w-])/gi, after(/^-p$/)],
+  [/(?<![\w-])user-secrets[ \t]+set\b/gi, namedValue],
 ];
 
 function splice(text: string, spans: Range[]): string {
@@ -235,6 +264,11 @@ const REGEX_RULES: Array<[RegExp, (m: string, ...g: string[]) => string]> = [
       'gi',
     ),
     (_m, head, lit) => `${head}${maskLiteral(lit)}`,
+  ],
+  // sqlplus user/PW@db, rman target sys/PW
+  [
+    /((?<![\w-])(?:sqlplus(?:64)?|rman[ \t]+target|expdp|impdp)[ \t]+(?:-\w+[ \t]+)*"?[\w$#.]+\/)([^@\s"'/]+)(?=@|\s|"|$)/gi,
+    (_m, head, pw) => `${head}${isReference(pw) ? pw : MASK}`,
   ],
   // requests.get(url, auth=('u', 'PW'))
   [
