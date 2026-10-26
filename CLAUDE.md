@@ -116,6 +116,8 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     controlHub.ts         enable/disable, pairing, device auth, revoke, persisted re-enable.
     controlIpc.ts         trusted IPC for the Settings block.
     controlBoundary.test.ts   AST guard for this directory: import allow-list, one input sink, closed message set, escape hatches.
+  thread/               V3-A3 read-only session thread for Claude slots (privacy §17): one transcript, redacted, handed to control through ThreadReadPort. Reads only while a phone is attached to that slot (seed last 512 KB, poll 1 s). May NOT import pty managers, `electron/remote`, `electron/control`, http/net/ws/child_process or electron, and may not write; fs only in `threadFeed.ts`; entries are built only in `threadParser.ts` (redact, then cap). `threadBoundary.test.ts` enforces this.
+    threadFeed / threadPort / threadParser / threadRedact   tail + gap-free polling, the port, transcript -> entries, the one redactor.
     (planned) inputRouter; the ONLY place the phone writes to a terminal is inputRouter -> terminalHub.
   controlSettings.ts    owner of ~/.aether-os/control-settings.json (the one persisted re-enable boolean).
   terminalHub.ts        BUILT (V2): owns the three pty slots; main hands control only readPort() (list/attach/onState/retain). Mirror + 256 KB ring exist only while control is retained; cleared on release, quit, slot exit. Importers of the pty managers are guarded by controlBoundary rule 6.
@@ -123,7 +125,7 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
   permissionBroker.ts   PLANNED: the seam over the permission prompts.
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
-android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, and V3-A1 adds the Compose shell (header + burger menu, restyled pairing/lock/error screens; Compose BOM 2026.06.01, ui/foundation only, no material3). UI lives in `app/.../ui/`: `theme/` (design tokens, type), `components/` (shared Ae* widgets), `StormCore` + `StormCoreMath` (animated core, maths unit-tested), `auth/` (auth screens), `shell/` (header, burger, ShellModel). Fonts (Rajdhani, Space Mono) are in `res/font`, their OFL licences in `android/licenses/`.
+android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, and V3-A1 adds the Compose shell (header + burger menu, restyled pairing/lock/error screens; Compose BOM 2026.06.01, ui/foundation only, no material3). UI lives in `app/.../ui/`: `theme/` (design tokens, type), `components/` (shared Ae* widgets), `StormCore` + `StormCoreMath` (animated core, maths unit-tested), `auth/` (auth screens), `shell/` (header, burger, ShellModel). V3-A3 (on `feat/v3-a3-a1`..`a5`, not in every checkout) adds `thread/` (ThreadHost, ThreadState: per-connection thread state fed by `tsnap`/`tadd`/`tupd`/`tmeta`/`tdet`), `ui/thread/` (ThreadScreen, rows, MarkdownLite, ThreadUiModel) and the `caps` / `tattach` / `tdetach` / `tget` protocol additions; read-only, no text field. Fonts (Rajdhani, Space Mono) are in `res/font`, their OFL licences in `android/licenses/`.
 protocol/mobile-protocol.json   shared wire contract + proof vectors, read by electron/control/ tests and the Android JVM tests.
 docs/superpowers/
   specs/         design specs, one per feature, YYYY-MM-DD-<topic>-design.md.
@@ -264,7 +266,7 @@ before designing anything that persists or transmits data. The short version:
   native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
   `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind, and never add a pty/write path under `electron/remote/`.
   **Separate second opt-in: phone control** (privacy §17): V1 is built (pairing + an authenticated `/ctl` handshake from a paired Android app over the same tailnet-only
-  listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); terminal input and permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
+  listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); terminal input and permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. V3-A3 adds a read-only, redacted session thread for Claude slots from `electron/thread/` (verbs `tattach`/`tdetach`/`tget`; privacy §17 "Session thread" and "Thread redaction and limits"; guarded by `threadBoundary.test.ts`). It may be set
   to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Treat as R3.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
