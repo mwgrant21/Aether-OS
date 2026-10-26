@@ -179,7 +179,7 @@ describe('threadParser tools', () => {
     expect(upd.detail).toMatchObject({ x: '[redacted: sensitive file]', more: 0 });
     expect(upd.detail!.input).toContain('/home/me/.env');
     expect(upd.detail!.input).toContain('[redacted: sensitive file]');
-    expect(upd.e.d).toBe(true);
+    expect((upd.e as ThreadToolEntry).d).toBe(true);
     const all = JSON.stringify(ops);
     for (const s of ['hunter2', 'PRIVATEBODY', 'OLDBODY', 'NEWBODY']) expect(all).not.toContain(s);
     expect(entry(ops, 't').every((e) => (e as ThreadToolEntry).df === undefined)).toBe(true);
