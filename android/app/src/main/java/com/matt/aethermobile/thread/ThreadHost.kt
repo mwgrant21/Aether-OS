@@ -14,6 +14,9 @@ import com.matt.aethermobile.protocol.ControlProtocol.ThreadFrame
  * currently attached by [select]. [onDisconnected] (connection loss, lock, relock) clears every
  * held entry, detail and expansion. The slot the view wants is remembered across it, so the next
  * [onSessions] attaches it again. [onFrame] never throws.
+ *
+ * [onChanged] runs under the host monitor: the receiver must not block in it or call back into the host,
+ * and should post to the main thread.
  */
 class ThreadHost(
     private val attach: (String) -> Boolean,
@@ -170,12 +173,15 @@ class ThreadHost(
     }
 
     private fun clear() {
+        val held = states.keys.toList()
         states.clear()
         ControlProtocol.THREAD_SLOTS.forEach { feed.forget(it) }
         attached = null
         awaitingSnap.clear()
         queued.clear()
         inFlight = null
+        // a mirror of state(slot) must see the reset, or it keeps the old text
+        held.forEach { changed(it) }
     }
 
     private fun changed(slot: String) {

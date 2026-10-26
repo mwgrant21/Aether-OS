@@ -232,6 +232,38 @@ class ThreadHostTest {
         assertEquals(ThreadState(), host.state("claude"))
     }
 
+    @Test fun disconnectNotifiesTheClearedSlot() {
+        attached()
+        host.onFrame(snap(1, user("1:0")))
+        changed.clear()
+        host.onDisconnected()
+        assertTrue("claude" in changed)
+        assertEquals(ThreadState(), host.state("claude"))
+    }
+
+    @Test fun reconnectNotifiesTheClearedSlot() {
+        attached()
+        host.onFrame(snap(1, user("1:0")))
+        changed.clear()
+        host.onSessions(caps, sessions)
+        assertTrue("claude" in changed)
+        assertTrue(host.state("claude").entries.isEmpty())
+    }
+
+    @Test fun queuedDetailDoesNotSurviveDisconnect() {
+        attached()
+        host.onFrame(snap(1, tool("1:0"), tool("2:0")))
+        host.requestDetail("claude", "1:0")
+        host.requestDetail("claude", "2:0")
+        host.onDisconnected()
+        calls.clear()
+        host.onSessions(caps, sessions)
+        host.onFrame(snap(1, tool("1:0"), tool("2:0")))
+        host.onFrame(detail("1:0"))
+        assertEquals(listOf("attach claude"), calls)
+        assertTrue(host.state("claude").details.isEmpty())
+    }
+
     @Test fun reconnectReattachesTheWantedSlotWithNoStaleState() {
         attached()
         host.onFrame(snap(1, user("1:0")))
