@@ -116,6 +116,10 @@ class InputSender(
 
     companion object {
         const val CHUNK_BYTES = 4096
-        const val MAX_INPUT_BYTES = 8192
+        /**
+         * Largest paste accepted: 64 KiB = 16 frames of [CHUNK_BYTES]. The desktop allows 262144 B and
+         * 100 frames per second, so one max paste uses 25% / 16% of that window and three still fit.
+         */
+        const val MAX_INPUT_BYTES = 65536
     }
 }

@@ -18,9 +18,11 @@ sealed class PageMessage {
  */
 object BridgeValidator {
     val SESSIONS = setOf("claude", "terminal2", "codex")
-    const val MAX_INPUT_BYTES = 8 * 1024
+    /** Hostile-page ceiling, deliberately above InputSender's cap so an over-cap paste reaches the sender and is reported. */
+    const val MAX_INPUT_BYTES = 256 * 1024
     const val MAX_COPY_BYTES = 64 * 1024
-    const val MAX_RAW_CHARS = 128 * 1024
+    /** JSON-escape worst case: every char of a max paste as a 6-char escape, plus envelope slack. */
+    const val MAX_RAW_CHARS = 6 * InputSender.MAX_INPUT_BYTES + 1024
     const val MAX_COLS = 500
     const val MAX_ROWS = 300
     const val MAX_CONSUMED = 16 * 1024 * 1024

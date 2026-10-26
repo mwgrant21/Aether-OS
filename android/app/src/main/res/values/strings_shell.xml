@@ -28,6 +28,6 @@
         <item quantity="one">%d char not sent</item>
         <item quantity="other">%d chars not sent</item>
     </plurals>
-    <string name="not_sent_too_large">Input over 8192 bytes was refused.</string>
+    <string name="not_sent_too_large">Input over 64 KB was refused. Paste it in smaller parts.</string>
     <string name="not_sent_bad_text">Input with a broken character was refused.</string>
 </resources>
