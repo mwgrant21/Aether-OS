@@ -217,6 +217,11 @@ class ThreadProtocolTest {
         assertNull(ControlProtocol.parseThreadFrame(mutate("tsnap") { it.getJSONArray("entries").getJSONObject(1).put("tr", "no") }))
     }
 
+    @Test fun emptyToolNameStillParses() {
+        val f = ControlProtocol.parseThreadFrame(mutate("tupd") { it.getJSONObject("e").put("n", "") }) as ThreadFrame.Upd
+        assertEquals("", (f.e as ThreadEntry.Tool).n)
+    }
+
     @Test fun toolDiffIsBoundedAndOptional() {
         val tooMany = JSONArray().also { a -> repeat(ControlProtocol.THREAD_DIFF_INLINE_LINES + 1) { a.put(JSONArray().put("+").put("l")) } }
         assertNull(ControlProtocol.parseThreadFrame(mutate("tupd") { it.getJSONObject("e").put("df", tooMany) }))

@@ -398,7 +398,7 @@ object ControlProtocol {
                 if (o.opt("k") == "u") ThreadEntry.User(id, ts, x, tr) else ThreadEntry.Assistant(id, ts, x, tr)
             }
             "t" -> {
-                val n = text(o, "n", THREAD_TEXT_CAP)?.takeIf { it.isNotEmpty() } ?: return null
+                val n = text(o, "n", THREAD_TEXT_CAP) ?: return null
                 val l = text(o, "l", THREAD_LABEL_CAP) ?: return null
                 val st = ToolState.values().firstOrNull { it.wire == o.opt("st") } ?: return null
                 val sz = nullableWhole(o, "sz", MAX_SAFE_INTEGER) ?: return null
