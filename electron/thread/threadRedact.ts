@@ -60,12 +60,26 @@ const CLI_SECRET_FLAG_RE =
 
 // Short -p password flags, only for the tools where -p means password (not ports).
 const SHORT_P_RE =
-  /\b((?:docker|podman)[ \t]+login\b[^\r\n]*?[ \t]-p[ \t]*|sshpass[ \t]+-p[ \t]*|mysql\w*\b[^\r\n]*?[ \t]-p(?=\S))("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/g;
+  /\b((?:docker|podman|az)[ \t]+login\b[^\r\n]*?[ \t]-p[ \t]*|sshpass[ \t]+-p[ \t]*|(?:mysql\w*|7z[a-z]?|7za)\b[^\r\n]*?[ \t]-p(?=\S))("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/g;
+
+// PowerShell: -Password x, ConvertTo-SecureString "x" (argument and pipe forms).
+const PS_PARAM_RE =
+  /(?<![\w-])(-(?:Password|Pwd|Pass|Passphrase|Secret|Token|ApiKey|AccessToken|SecretKey|Credential)\b)([ \t]+)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"'()$|-][^\s"'()|]*)/gi;
+const PS_SECURESTRING_ARG_RE =
+  /(ConvertTo-SecureString[ \t]+(?:-String[ \t]+)?)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"'()$|-][^\s)|]*)/gi;
+const PS_SECURESTRING_PIPE_RE = /("[^"\r\n]*"|'[^'\r\n]*')([ \t]*\|[ \t]*ConvertTo-SecureString)/gi;
+const OPENSSL_PASS_RE = /(-pass(?:in|out)?[ \t]+pass:)("[^"\r\n]*"|'[^'\r\n]*'|\S+)/g;
+const SETX_RE =
+  /(\bsetx[ \t]+(?:\/M[ \t]+)?[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASS|PWD|CREDENTIAL|AUTH|PRIVATE|DSN)[A-Za-z0-9_]*[ \t]+)("[^"\r\n]*"|'[^'\r\n]*'|\S+)/gi;
+const NETRC_RE = /(\blogin[ \t]+\S+[ \t]+password[ \t]+)(\S+)/g;
+const NETRC_LINE_RE = /^([ \t]*password[ \t]+)\S+[ \t]*$/gm;
+const HTPASSWD_RE =
+  /\b(htpasswd[ \t]+(?=(?:-\w+[ \t]+)*-\w*b)(?:-\w+[ \t]+)*\S+[ \t]+\S+[ \t]+)(\S+)/g;
 
 // Rule 3: .env-style assignments. Line form masks to end of line; the inline form
 // (VAR=value cmd) masks one token or quoted string.
 const ENV_NAME =
-  '[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH|PRIVATE|DSN|CONNECTION_?STRING)[A-Z0-9_]*';
+  '[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASS|PW|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH|PRIVATE|DSN|CONNECTION_?STRING)[A-Z0-9_]*';
 const ENV_LINE_RE = new RegExp(
   `^([ \\t]*(?:export[ \\t]+|set[ \\t]+|\\$env:)?${ENV_NAME}[ \\t]*=[ \\t]*)[^\\r\\n]*$`,
   'gm',
@@ -94,11 +108,19 @@ function isCodeShape(v: string): boolean {
   return v.split('|').every((p) => TYPE_WORDS.has(p.trim().toLowerCase()));
 }
 
+// Bare values that are code, not secrets, for names that are not env-style uppercase:
+// calls (getSecret()), well-known member chains (process.env.X), PascalCase type names.
+function isCodeExpr(v: string, sep: string): boolean {
+  if (/^[A-Za-z_$][\w$.]*\(.*\)?;?$/.test(v)) return true;
+  if (/^(?:process\.env|import\.meta\.env|this|props|self|config|options|opts|ctx|req|args|os\.environ)\.[\w$.]+;?$/.test(v)) return true;
+  return sep.includes(':') && /^(?:[A-Z][a-z]+){2,}$/.test(v);
+}
+
 // Rule 5: URLs.
 const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^\s/@:]*):([^\s/@]+)@/gi;
 const URL_USER_ONLY_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([A-Za-z0-9._~%-]{20,})@/gi;
 const URL_PARAM_RE =
-  /([?&#;])((?:[A-Za-z0-9_.-]*?(?:token|key|sig|signature|secret|password|passwd|pwd|credential|auth|session))|code)=([^&\s#"'<>]*)/gi;
+  /([?&#;])((?:[A-Za-z0-9_.-]*?(?:token|key|sig|signature|secret|password|passwd|pass|pwd|credential|auth|session))|code)=([^&\s#"'<>]*)/gi;
 const CONN_STRING_RE =
   /(?<![A-Za-z0-9])((?:[A-Za-z]*(?:Password|Pwd|AccountKey|SharedAccessKey|SharedAccessSignature|Secret))[ \t]*=[ \t]*)("[^"\r\n]*"?|'[^'\r\n]*'?|[^;\r\n]*)/gi;
 
@@ -131,6 +153,14 @@ export function redactText(s: string): string {
   );
 
   out = out.replace(SHORT_P_RE, `$1${R}`);
+  out = out.replace(PS_PARAM_RE, `$1$2${R}`);
+  out = out.replace(PS_SECURESTRING_ARG_RE, `$1${R}`);
+  out = out.replace(PS_SECURESTRING_PIPE_RE, `${R}$2`);
+  out = out.replace(OPENSSL_PASS_RE, `$1${R}`);
+  out = out.replace(SETX_RE, `$1${R}`);
+  out = out.replace(NETRC_RE, `$1${R}`);
+  out = out.replace(NETRC_LINE_RE, `$1${R}`);
+  out = out.replace(HTPASSWD_RE, `$1${R}`);
 
   // Rule 3
   out = out.replace(ENV_LINE_RE, (_m, head: string) => `${head}${R}`);
@@ -145,6 +175,7 @@ export function redactText(s: string): string {
       }
       const v = vu ?? '';
       if (isCodeShape(v)) return m;
+      if (/[a-z]/.test(name) && isCodeExpr(v, sep)) return m;
       return `${name}${q1}${sep}${R}`;
     },
   );
@@ -154,6 +185,11 @@ export function redactText(s: string): string {
   out = out.replace(URL_USER_ONLY_RE, `$1${R}@`);
   out = out.replace(URL_PARAM_RE, (_m, lead: string, name: string) => `${lead}${name}=${R}`);
   out = out.replace(CONN_STRING_RE, (_m, head: string) => `${head}${R}`);
+
+  // A key wrapped across a line break: absorb the tail run after a masked line end.
+  out = out.replace(/(\[redacted\][ \t]*\r?\n)([A-Za-z0-9+/_=-]{8,})(?=[ \t]|\r?\n|$)/g, (m, head: string, run: string) =>
+    /\d/.test(run) || (run.length >= 16 && /[A-Z]/.test(run) && /[a-z]/.test(run)) ? head + R : m,
+  );
 
   // Rule 6 last, so it only sees what the earlier rules left.
   out = out.replace(ENTROPY_RE, highEntropy);
@@ -211,7 +247,12 @@ const SENSITIVE_PATH_RES: RegExp[] = [
   /(^|\/)\.envrc$/i,
   /\.(pem|key|pfx|p12|ppk|kdbx|jks|keystore|tfvars)$/i,
   /id_(rsa|ed25519|ecdsa|dsa)/i,
-  /(^|\/)(credentials|secrets?)(\.|$)/i,
+  /(^|\/)\.?(credentials|secrets?)(\.|\/|$)/i,
+  /\.(pypirc|vault-token)$/i,
+  /service[-_]?account[^/]*\.json$/i,
+  /(^|\/)\.claude\.json$/i,
+  /(^|\/)\.config\/gh\/hosts\.yml$/i,
+  /(^|\/)local\.settings\.json$/i,
   /(^|\/)\.(npmrc|netrc|pgpass|git-credentials|htpasswd)$/i,
   /(^|\/)\.(ssh|aws|gnupg|kube|azure)(\/|$)/i,
   /(^|\/)\.docker\/config\.json$/i,
