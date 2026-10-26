@@ -60,11 +60,7 @@ const CLI_SECRET_FLAG_RE =
 
 // Short -p password flags, only for the tools where -p means password (not ports).
 const SHORT_P_RE =
-  /((?:docker|podman)[ 	]+login[^
-]*?[ 	]-p[ 	]*|sshpass[ 	]+-p[ 	]*|mysql\w*[^
-]*?[ 	]-p(?=\S))("[^"
-]*"|'[^'
-]*'|[^\s"']+)/g;
+  /\b((?:docker|podman)[ \t]+login\b[^\r\n]*?[ \t]-p[ \t]*|sshpass[ \t]+-p[ \t]*|mysql\w*\b[^\r\n]*?[ \t]-p(?=\S))("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/g;
 
 // Rule 3: .env-style assignments. Line form masks to end of line; the inline form
 // (VAR=value cmd) masks one token or quoted string.
