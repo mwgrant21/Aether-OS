@@ -5,7 +5,7 @@ import { ControlAccessCard } from './ControlAccessCard';
 import type { ControlPairingResult, ControlStatus, RemoteSessionInfo } from '../../shared/remote/types';
 
 function mkStatus(patch: Partial<ControlStatus> = {}): ControlStatus {
-  return { state: 'on', reason: null, address: '100.1.2.3:47821', connected: 1, devices: [], pairingActive: false, reenableAtLaunch: false, notice: null, ...patch };
+  return { state: 'on', reason: null, address: '100.1.2.3:47821', connected: 1, devices: [], pairingActive: false, reenableAtLaunch: false, phoneTyping: true, notice: null, ...patch };
 }
 function mkDevice(ref: string, patch: Partial<RemoteSessionInfo> = {}): RemoteSessionInfo {
   return { ref, createdAtMs: Date.now() - 3600_000, expiresAtMs: Date.now() + 86400_000 * 20, lastSeenMs: Date.now() - 120_000, peer: '100.94.15.125', ...patch };

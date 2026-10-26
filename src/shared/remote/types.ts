@@ -111,6 +111,7 @@ export interface ControlStatus {
   devices: RemoteSessionInfo[];
   pairingActive: boolean;
   reenableAtLaunch: boolean;
+  phoneTyping: boolean;
   notice: string | null;
 }
 export type ControlPairingResult =

@@ -41,6 +41,10 @@ export interface ControlSettingsPort {
   read(): boolean;
   /** Persists the flag and returns the READBACK (what is actually stored), never the requested value. */
   persist(on: boolean): boolean;
+  /** Phone-typing switch (default ON). Optional so existing ports keep working. */
+  readTyping?(): boolean;
+  /** Persists the switch and returns the READBACK. */
+  persistTyping?(on: boolean): boolean;
 }
 
 export interface ControlHubDeps {
@@ -68,6 +72,7 @@ export interface ControlHub {
   status(): ControlStatus;
   setEnabled(on: boolean): Promise<ControlStatus>;
   setReenableAtLaunch(on: boolean): Promise<ControlStatus>;
+  setPhoneTyping(on: boolean): Promise<ControlStatus>;
   createPairing(): Promise<ControlPairingResult>;
   revokeAll(): Promise<ControlStatus>;
   revokeOne(ref: string): Promise<ControlStatus>;
@@ -90,6 +95,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   let reason: RemoteUnavailableReason | null = null;
   let address: string | null = null;
   let reenable = false;
+  let typing = true;
   let unsaved = false;
   let saveTimer: unknown = null;
   let saveRetries = 0;
@@ -102,7 +108,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   const sessions = new Map<string, ControlSession>();
   let releaseTerminals: (() => void) | null = null; // non-null exactly while this hub holds a terminals.retain()
 
-  const router = createInputRouter({ terminals: deps.input, now, log: (m, r) => { log(`${m} ref=${r}`); } });
+  const router = createInputRouter({ terminals: deps.input, now, log: (m, r) => { log(`${m} ref=${r}`); }, typingEnabled: () => typing });
   const gateway = createControlGateway({
     now,
     setTimeoutFn: deps.setTimeoutFn,
@@ -122,6 +128,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       devices: auth ? auth.list() : [],
       pairingActive: counts.pairingActive,
       reenableAtLaunch: reenable,
+      phoneTyping: typing,
       notice: unsaved ? CONTROL_REVOKE_UNSAVED_NOTICE : null,
     };
   }
@@ -141,6 +148,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       peerBinding: PEER_BINDING_ENFORCED,
     });
     reenable = deps.settings.read() === true;
+    typing = deps.settings.readTyping ? deps.settings.readTyping() !== false : true;
   }
 
   function clearSaveTimer(): void {
@@ -393,6 +401,12 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       init();
       if (state !== 'on') return status();
       reenable = deps.settings.persist(on) === true; // report the readback, never the requested value
+      emit();
+      return status();
+    },
+    async setPhoneTyping(on) {
+      init();
+      typing = deps.settings.persistTyping ? deps.settings.persistTyping(on) !== false : on; // report the readback, never the requested value
       emit();
       return status();
     },

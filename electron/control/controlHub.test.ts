@@ -6,7 +6,7 @@ import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ListenerPort, RemoteUnavailableReason, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
+import type { ControlSocket, ControlStatus, ListenerPort, RemoteUnavailableReason, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -63,7 +63,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals> } = {}) {
+function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals> } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -76,12 +76,15 @@ function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confir
     onControlClients: vi.fn(),
   };
   const settings = { flag: over.flag ?? false, read: vi.fn(() => settings.flag), persist: vi.fn((on: boolean) => { settings.flag = on; return settings.flag; }) };
+  const typing = { stored: over.typing?.stored ?? true, readTyping: vi.fn(() => typing.stored), persistTyping: vi.fn((on: boolean) => { const rb = over.typing?.persist ? over.typing.persist(on) : on; typing.stored = rb; return rb; }) };
+  const emitted: ControlStatus[] = [];
   const store = fakeStore();
   const confirmPair = vi.fn(over.confirm ?? (async () => true));
   const logs: string[] = [];
   const writes: string[] = [];
   const hub = createControlHub({
-    listener, store, settings, confirmPair,
+    listener, store, settings: over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings, confirmPair,
+    onStatus: s => { emitted.push(s); },
     terminals: terms.port,
     input: { write: (s: TerminalSlotId, d: string) => { writes.push(`${s}|${d}`); return true; } },
     renderQr: t => `<svg>${t.length}</svg>`,
@@ -90,7 +93,7 @@ function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confir
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
   });
-  return { hub, listener, settings, store, confirmPair, timers, logs, writes, terms: terms.t };
+  return { hub, listener, settings, store, confirmPair, timers, logs, writes, terms: terms.t, typing, emitted };
 }
 
 async function pairOne(hub: ReturnType<typeof setup>['hub']) {
@@ -784,6 +787,62 @@ describe('control hub input wiring', () => {
     expect(s.sent.at(-1)).toBe(JSON.stringify({ t: 'bye', reason: 'revoked' }));
     s.feed(inFrame(2, 'b'));
     expect(h.writes).toEqual(['claude|a']);
+  });
+
+  it('a typing-off hub answers an in frame with nak typing-off and writes nothing; switching back on writes the next frame; the socket stays open', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    s.feed(inFrame(1, 'a'));
+    await h.hub.setPhoneTyping(false);
+    s.feed(inFrame(2, 'b'));
+    expect(s.sent.at(-1)).toBe(JSON.stringify({ t: 'nak', s: 'claude', c: 2, reason: 'typing-off' }));
+    expect(h.writes).toEqual(['claude|a']);
+    s.feed(inFrame(2, 'b')); // replay of the rejected cseq: duplicate, never a second nak
+    expect(s.sent.filter(m => m.includes('"nak"'))).toHaveLength(1);
+    await h.hub.setPhoneTyping(true);
+    s.feed(inFrame(3, 'c'));
+    expect(h.writes).toEqual(['claude|a', 'claude|c']);
+    expect(s.closes).toEqual([]);
+  });
+
+  it('a user disable and re-enable of control leaves the typing switch as set', async () => {
+    const h = setup();
+    await h.hub.setPhoneTyping(false);
+    await h.hub.setEnabled(true);
+    await h.hub.setEnabled(false);
+    expect(h.hub.status().phoneTyping).toBe(false);
+    await h.hub.setEnabled(true);
+    expect(h.hub.status().phoneTyping).toBe(false);
+  });
+});
+
+describe('control hub phone typing switch', () => {
+  it('defaults ON; setPhoneTyping(false) returns false, emits, and works while control is off', async () => {
+    const h = setup();
+    expect(h.hub.status().phoneTyping).toBe(true);
+    const s = await h.hub.setPhoneTyping(false);
+    expect(s).toMatchObject({ state: 'off', phoneTyping: false });
+    expect(h.hub.status().phoneTyping).toBe(false);
+    expect(h.emitted.at(-1)?.phoneTyping).toBe(false);
+  });
+
+  it('the persisted readback wins when persistTyping reports the old value (failed write)', async () => {
+    const h = setup({ typing: { stored: true, persist: () => true } });
+    const s = await h.hub.setPhoneTyping(false);
+    expect(s.phoneTyping).toBe(true);
+  });
+
+  it('persists the requested value through persistTyping and reports its readback', async () => {
+    const h = setup({ typing: { stored: true } });
+    await h.hub.setPhoneTyping(false);
+    expect(h.typing.persistTyping).toHaveBeenCalledWith(false);
+    expect(h.typing.stored).toBe(false);
+  });
+
+  it('init reads a stored false', () => {
+    const h = setup({ typing: { stored: false } });
+    h.hub.init();
+    expect(h.hub.status().phoneTyping).toBe(false);
   });
 });
 

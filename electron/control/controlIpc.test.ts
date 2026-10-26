@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { registerControlIpc, type ControlHubLike } from './controlIpc';
 import type { ControlStatus } from '../../src/shared/remote/types';
 
-const STATUS: ControlStatus = { state: 'off', reason: null, address: null, connected: 0, devices: [], pairingActive: false, reenableAtLaunch: false, notice: null };
+const STATUS: ControlStatus = { state: 'off', reason: null, address: null, connected: 0, devices: [], pairingActive: false, reenableAtLaunch: false, phoneTyping: true, notice: null };
 
 function setup(opts: { trusted?: boolean; confirmEnable?: boolean; confirmReenable?: boolean } = {}) {
   const hub = {
