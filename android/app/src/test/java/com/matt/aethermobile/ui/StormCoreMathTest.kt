@@ -34,7 +34,7 @@ class StormCoreMathTest {
         val disp = 24f
         for (depth in 1..5) {
             var bound = 0f
-            for (k in 0 until depth) bound += disp / 2 * StormCoreMath.DISPLACEMENT_DECAY.pow(k)
+            for (k in 0 until depth) bound += disp / 2 * 0.55f.pow(k)
             for (seed in 0 until 40) {
                 val dev = bolt(seed, depth, disp).pts.maxOf { abs(it.y - 20f) }
                 assertTrue("depth $depth seed $seed dev $dev > $bound", dev <= bound + 1e-3f)
