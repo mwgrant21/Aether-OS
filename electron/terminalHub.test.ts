@@ -544,3 +544,35 @@ describe('terminalHub read port', () => {
     expect(rec.ev[0]).toMatch(/^snap /);
   }, 300_000);
 });
+
+describe('terminalHub writePort', () => {
+  it('writes to a running slot and reports true', () => {
+    const hub = createTerminalHub();
+    const pty = fakePty();
+    hub.slot('codex').start(() => pty, handlers());
+    expect(hub.writePort().write('codex', 'hi\r')).toBe(true);
+    expect(vi.mocked(pty.write).mock.calls).toEqual([['hi\r']]);
+  });
+
+  it('returns false for not-started and exited slots, without touching the pty', () => {
+    const hub = createTerminalHub();
+    expect(hub.writePort().write('claude', 'x')).toBe(false);
+    const pty = fakePty();
+    hub.slot('claude').start(() => pty, handlers());
+    pty.fireExit();
+    expect(hub.writePort().write('claude', 'x')).toBe(false);
+    expect(pty.write).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the pty write throws', () => {
+    const hub = createTerminalHub();
+    const pty = fakePty();
+    (pty.write as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('dead pty'); });
+    hub.slot('terminal2').start(() => pty, handlers());
+    expect(hub.writePort().write('terminal2', 'x')).toBe(false);
+  });
+
+  it('exposes only write', () => {
+    expect(Object.keys(createTerminalHub().writePort())).toEqual(['write']);
+  });
+});

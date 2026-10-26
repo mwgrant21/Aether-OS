@@ -2,7 +2,7 @@ import { PtyLifecycle, type PtyLike, type PtyLifecycleHandlers } from './ptyLife
 import { createTerminalMirror, type TerminalMirror } from './terminalMirror';
 import {
   TERMINAL_CHUNK_MAX_BYTES, TERMINAL_RING_BYTES, TERMINAL_SLOTS,
-  type TerminalAttachment, type TerminalInfo, type TerminalReadPort, type TerminalSlotId,
+  type TerminalAttachment, type TerminalInfo, type TerminalReadPort, type TerminalSlotId, type TerminalWritePort,
   type TerminalSlotState, type TerminalTap,
 } from '../src/shared/remote/types';
 
@@ -148,6 +148,8 @@ export interface TerminalHub {
   slot(id: TerminalSlotId): TerminalSlot;
   /** Read-only view for the remote gateway: list / attach / onState / retain, nothing else. */
   readPort(): TerminalReadPort;
+  /** Write-only handle for the phone input router: `write` to a running slot, nothing else (no slot, no hub). */
+  writePort(): TerminalWritePort;
 }
 
 const NOOP_ATTACHMENT: TerminalAttachment = { detach() { /* nothing attached */ } };
@@ -355,5 +357,13 @@ export function createTerminalHub(opts: { createMirror?: MirrorFactory } = {}): 
     retain,
   };
 
-  return { slot: (id) => slots.get(id) as TerminalSlot, readPort: () => port };
+  const writePort: TerminalWritePort = {
+    write(s, d) {
+      const slot = slots.get(s);
+      if (!slot || slot.info().state !== 'running') return false;
+      try { slot.write(d); return true; } catch { return false; }
+    },
+  };
+
+  return { slot: (id) => slots.get(id) as TerminalSlot, readPort: () => port, writePort: () => writePort };
 }
