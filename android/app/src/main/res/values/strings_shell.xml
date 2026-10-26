@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="status_running">Running</string>
+    <string name="menu_terminals">Terminals</string>
+    <string name="menu_open">Open menu</string>
+    <string name="menu_close">Close menu</string>
+</resources>
