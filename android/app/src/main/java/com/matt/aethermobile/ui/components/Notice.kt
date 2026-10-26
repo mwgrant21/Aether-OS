@@ -20,14 +20,20 @@ private val AmberFill = Color(255, 176, 32, 15)
 private val InfoBorder = Color(70, 180, 215, 77)
 private val InfoFill = Color(70, 180, 215, 15)
 
+private val dims = AetherDimens()
+private val type = AetherType()
+private val NoticeShape = RoundedCornerShape(dims.rRow)
+private val AmberBody = type.body.copy(color = AetherColors.warnSoft)
+private val InfoBody = type.body.copy(color = AetherColors.textDim)
+
 /** Notice box: amber for warnings, cyan info otherwise. */
 @Composable
 fun AeNoticeBox(text: String, amber: Boolean, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(AetherDimens().rRow)
+    val shape = NoticeShape
     val border = if (amber) AmberBorder else InfoBorder
     val fill = if (amber) AmberFill else InfoFill
-    val color = if (amber) AetherColors.warnSoft else AetherColors.textDim
+    val style = if (amber) AmberBody else InfoBody
     Box(modifier.fillMaxWidth().background(fill, shape).border(1.dp, border, shape).padding(12.dp)) {
-        BasicText(text, style = AetherType().body.copy(color = color))
+        BasicText(text, style = style)
     }
 }

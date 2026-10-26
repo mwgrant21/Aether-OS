@@ -51,6 +51,17 @@ class ShellModelTest {
         assertFalse(amber(tab(SlotState.RUNNING), null))
     }
 
+    @Test fun slotRowsEmptyTabsGiveNoRows() {
+        assertTrue(slotRows(emptyList(), "a").isEmpty())
+    }
+
+    @Test fun slotRowsUnknownSelectedMarksNothing() {
+        val tabs = listOf(tab(SlotState.RUNNING, s = "a"), tab(SlotState.EXITED, s = "b"))
+        val rows = slotRows(tabs, "zz")
+        assertEquals(listOf("a", "b"), rows.map { it.s })
+        assertEquals(listOf(false, false), rows.map { it.selected })
+    }
+
     @Test fun slotRowsMarkSelectedAndDotPerState() {
         val rows = slotRows(
             listOf(tab(SlotState.RUNNING, s = "a"), tab(SlotState.NOT_STARTED, s = "b"), tab(SlotState.EXITED, s = "c")),

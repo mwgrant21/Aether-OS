@@ -18,7 +18,9 @@ fun StatusDot(style: DotStyle, modifier: Modifier = Modifier) {
         val r = size.minDimension / 2
         when (style) {
             DotStyle.LiveGlow -> {
-                drawCircle(AetherColors.success.copy(alpha = 0.25f), radius = r * 2f, center = c)
+                if (style.glows) {
+                    drawCircle(AetherColors.success.copy(alpha = 0.25f), radius = r * 2f, center = c)
+                }
                 drawCircle(AetherColors.success, radius = r, center = c)
             }
             DotStyle.HollowRing -> drawCircle(

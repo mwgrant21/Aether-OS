@@ -40,10 +40,14 @@ private fun buttonText(color: Color) = TextStyle(
     textAlign = TextAlign.Center,
 )
 
-/** Every button keeps at least the 44dp touch target (touchMin) on both axes. */
+/**
+ * Every button keeps at least the 44dp touch target (touchMin) on both axes. The guard leads the chain in the
+ * composables ([touchGuard], before the caller's modifier) so a caller's size modifier cannot undercut it.
+ */
+private fun Modifier.touchGuard(): Modifier = sizeIn(minWidth = dims.touchMin, minHeight = dims.touchMin)
+
 private fun Modifier.buttonBase(enabled: Boolean, onClick: () -> Unit): Modifier =
-    sizeIn(minWidth = dims.touchMin, minHeight = dims.touchMin)
-        .height(dims.buttonH)
+    height(dims.buttonH)
         .alpha(if (enabled) 1f else DISABLED_ALPHA)
         .clip(ButtonShape)
         .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
@@ -51,7 +55,9 @@ private fun Modifier.buttonBase(enabled: Boolean, onClick: () -> Unit): Modifier
 @Composable
 fun AePrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Box(
-        modifier
+        Modifier
+            .touchGuard()
+            .then(modifier)
             .fillMaxWidth()
             .buttonBase(enabled, onClick)
             .background(Brush.horizontalGradient(listOf(AetherColors.cyanCore, AetherColors.cyanDeep)), ButtonShape)
@@ -63,7 +69,9 @@ fun AePrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
 @Composable
 fun AeSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Box(
-        modifier
+        Modifier
+            .touchGuard()
+            .then(modifier)
             .fillMaxWidth()
             .buttonBase(enabled, onClick)
             .border(1.dp, AetherColors.activeBorder, ButtonShape)

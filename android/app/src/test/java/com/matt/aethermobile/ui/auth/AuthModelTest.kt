@@ -10,6 +10,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuthModelTest {
+    @Test fun lockedDefaultsToNoNotice() {
+        assertEquals(AuthScreen.Locked(null), authScreenFor(FlowState.Locked()))
+    }
+
     @Test fun everyNonConnectedStateMapsToItsScreen() {
         assertEquals(AuthScreen.NotConfigured, authScreenFor(FlowState.NotConfigured))
         assertEquals(AuthScreen.Pair(null), authScreenFor(FlowState.NeedsPair()))
