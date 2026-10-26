@@ -36,6 +36,9 @@ const POSITIVE: Array<[string, string, string]> = [
   ['curl -u quoted', `curl -u "admin:TEST pass3" https://x.test`, 'TEST pass3'],
   ['--password flag', 'tool login --password TESTflagpass', 'TESTflagpass'],
   ['--token=', 'tool --token=TESTflagtoken', 'TESTflagtoken'],
+  ['docker login -p', 'docker login -u me -p TESTdockerpw reg.test', 'TESTdockerpw'],
+  ['mysql -p', 'mysql -h db -u root -pTESTmysqlpw app', 'TESTmysqlpw'],
+  ['sshpass -p', 'sshpass -p TESTsshpw ssh host', 'TESTsshpw'],
   ['aws secret env', 'AWS_SECRET_ACCESS_KEY=TESTawssecret/value+x', 'TESTawssecret'],
   ['export openai env', 'export OPENAI_API_KEY=TESTopenaikeyvalue', 'TESTopenaikeyvalue'],
   ['env with spaces in value', 'DB_PASSWORD=TEST pass with spaces', 'TEST pass with spaces'],
@@ -87,6 +90,7 @@ const NEGATIVE: string[] = [
   'for (let i = 0; i < 10; i++) {}',
   'import { redactText } from "./threadRedact";',
   'ls -la /home/matt',
+  'mkdir -p build/out && docker run -p 8080:80 img',
 ];
 
 describe('redactText positive corpus', () => {
