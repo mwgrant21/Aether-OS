@@ -25,7 +25,7 @@ class TerminalScreen(
     private val onResync: () -> Unit = {},
 ) {
     private val appContext = context
-    var webView: WebView = WebView(context)
+    var webView: WebView = AetherWebView(context)
         private set
     private val main = Handler(Looper.getMainLooper())
     private val limiter = RateLimiter(500, SystemClock::elapsedRealtime)
@@ -94,7 +94,7 @@ class TerminalScreen(
         val index = parent?.indexOfChild(old) ?: -1
         parent?.removeView(old)
         old.destroy()
-        val fresh = WebView(appContext)
+        val fresh = AetherWebView(appContext)
         webView = fresh
         setUp(fresh)
         if (parent != null) parent.addView(fresh, if (index >= 0) index else parent.childCount, lp)
