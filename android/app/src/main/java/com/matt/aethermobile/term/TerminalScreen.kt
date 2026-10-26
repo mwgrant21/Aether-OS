@@ -5,8 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.ViewGroup
 import android.webkit.WebView
-import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
@@ -22,23 +22,29 @@ class TerminalScreen(
     private val debuggable: Boolean,
     private val onPage: (PageMessage) -> Unit,
     private val onRenderGone: () -> Unit,
+    private val onResync: () -> Unit = {},
 ) {
-    val webView: WebView = WebView(context)
+    private val appContext = context
+    var webView: WebView = WebView(context)
+        private set
     private val main = Handler(Looper.getMainLooper())
     private val limiter = RateLimiter(500, SystemClock::elapsedRealtime)
-    private var proxy: JavaScriptReplyProxy? = null
-    private val queued = ArrayList<String>()
-    private var overflowed = false
+    private val outbox = PageOutbox(MAX_QUEUED) { onResync() }
     private var supported = false
 
     init {
+        setUp(webView)
+        load()
+    }
+
+    private fun setUp(webView: WebView) {
         val loader = WebViewAssetLoader.Builder()
             .setDomain(TerminalWebView.ASSET_HOST)
             .addPathHandler(TerminalWebView.ASSET_PREFIX) { path ->
-                WebViewAssetLoader.AssetsPathHandler(context).handle("terminal/$path")
+                WebViewAssetLoader.AssetsPathHandler(appContext).handle("terminal/$path")
             }
             .build()
-        TerminalWebView.harden(webView, loader, debuggable) { reset(); onRenderGone() }
+        TerminalWebView.harden(webView, loader, debuggable) { rebuild(); onRenderGone() }
         webView.setBackgroundColor(0xFF0A0E14.toInt())
         supported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
         if (supported) {
@@ -49,15 +55,13 @@ class TerminalScreen(
                 if (!limiter.allow()) return@addWebMessageListener
                 val m = BridgeValidator.parse(message.data) ?: return@addWebMessageListener
                 if (m === PageMessage.Ready) {
-                    proxy = replyProxy
-                    flush()
+                    outbox.ready { replyProxy.postMessage(it) }
                 }
                 onPage(m)
             }
         } else {
             Log.w(TAG, "WEB_MESSAGE_LISTENER unsupported; terminal page not loaded")
         }
-        load()
     }
 
     /** Pre-warm: called at construction, before the biometric prompt. */
@@ -68,42 +72,37 @@ class TerminalScreen(
 
     /** TerminalHost -> page. Safe from any thread and under the host's monitor: posts, never waits. */
     fun post(msg: String) {
-        main.post { deliver(msg) }
+        val gen = outbox.generation
+        main.post { outbox.submit(gen, msg) }
     }
 
-    private fun deliver(msg: String) {
-        val p = proxy
-        if (p != null) {
-            p.postMessage(msg)
-            return
-        }
-        // Page not ready yet (pre-warm still loading): hold a bounded backlog, flushed on 'ready'.
-        if (overflowed) return
-        if (queued.size >= MAX_QUEUED) {
-            queued.clear()
-            overflowed = true
-            return
-        }
-        queued.add(msg)
-    }
-
-    private fun flush() {
-        val p = proxy ?: return
-        queued.forEach { p.postMessage(it) }
-        queued.clear()
-    }
-
-    /** Drop the page and everything it rendered (lock, disconnect, renderer crash) and reload it clean. */
+    /** Drop the page and everything it rendered (lock, disconnect) and reload it clean. */
     fun reset() {
-        proxy = null
-        queued.clear()
-        overflowed = false
+        outbox.reset()
+        load()
+    }
+
+    /**
+     * The renderer died: that WebView cannot be reused. Replace it with a freshly hardened one in the
+     * same parent and drop everything queued for the old page.
+     */
+    fun rebuild() {
+        outbox.reset()
+        val old = webView
+        val parent = old.parent as? ViewGroup
+        val lp = old.layoutParams
+        val index = parent?.indexOfChild(old) ?: -1
+        parent?.removeView(old)
+        old.destroy()
+        val fresh = WebView(appContext)
+        webView = fresh
+        setUp(fresh)
+        if (parent != null) parent.addView(fresh, if (index >= 0) index else parent.childCount, lp)
         load()
     }
 
     fun destroy() {
-        proxy = null
-        queued.clear()
+        outbox.reset()
         webView.destroy()
     }
 

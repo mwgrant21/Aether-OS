@@ -41,6 +41,7 @@ import com.matt.aethermobile.net.OkHttpTransport
 import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
+import com.matt.aethermobile.term.FrameRouter
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.term.TerminalScreen
 import okhttp3.OkHttpClient
@@ -90,7 +91,7 @@ class MainActivity : AppCompatActivity() {
     private var sessionToken: String? = null
 
     private var client: ControlClient? = null
-    private var connGen = 0
+    @Volatile private var connGen = 0
 
     // ONE prompt instance for the activity's life, reused across relock re-prompts.
     private var prompt: BiometricPrompt? = null
@@ -113,6 +114,8 @@ class MainActivity : AppCompatActivity() {
 
     // Terminal state. The host is rebuilt per connection (fresh TerminalFeed); touched on the main thread.
     private var termHost: TerminalHost? = null
+        set(v) { field = v; router.host = v }
+    private val router = FrameRouter()
     private var selected = "claude"
     private var zoomPx = 0 // 0 = fit width
     private var snapLogged = false
@@ -154,6 +157,7 @@ class MainActivity : AppCompatActivity() {
             debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
             onPage = { termHost?.onPage(it) },
             onRenderGone = { if (!isDestroyed) onRenderGone() },
+            onResync = { termHost?.resync() },
         )
         findViewById<FrameLayout>(R.id.webHolder).addView(
             screen.webView,
@@ -469,7 +473,8 @@ class MainActivity : AppCompatActivity() {
             // Transport threads: marshal to main, and drop anything from a superseded connection.
             runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
         }, onFrame = { f ->
-            th.onFrame(f) // transport thread; the host is synchronized and ignores frames once disconnected
+            // Transport thread: route to the CURRENT host (it is replaced on renderer loss), and only for this connection.
+            if (gen == connGen) router.route(f)
             if (f is ControlProtocol.TerminalFrame.Snap && !snapLogged) {
                 snapLogged = true
                 Log.d(TAG, "first_snap_rendered")

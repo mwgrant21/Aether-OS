@@ -31,6 +31,7 @@ class TerminalHost(
     private val awaitingOutput = HashSet<String>()
     private var active = false
     private var attached: String? = null
+    private var zoomPx = 0
 
     /** Total bytes the page reported consumed; a plain counter for the V4 backpressure work. */
     @get:Synchronized
@@ -95,7 +96,25 @@ class TerminalHost(
     @Synchronized
     fun zoom(px: Int) {
         if (px != 0 && px !in 8..24) return
+        zoomPx = px
         safe { post(BridgeOut.zoom(px)) }
+    }
+
+    /**
+     * The page dropped queued messages (backlog overflow before it was ready), so the host's view of
+     * what the page holds is wrong: re-show, re-zoom and re-attach for a fresh snapshot.
+     */
+    @Synchronized
+    fun resync() {
+        val slot = attached ?: return
+        if (!active) return
+        feed.forget(slot)
+        safe { post(BridgeOut.show(slot)) }
+        if (zoomPx != 0) safe { post(BridgeOut.zoom(zoomPx)) }
+        if (safe { attach(slot, null) } == true) awaitingSnap.add(slot) else {
+            awaitingSnap.remove(slot)
+            attached = null
+        }
     }
 
     @Synchronized
@@ -171,4 +190,14 @@ class TerminalHost(
     }
 
     private inline fun <T> safe(block: () -> T): T? = try { block() } catch (_: Exception) { null }
+}
+
+/** Sends transport-thread frames to whichever host is current; a replaced host never sees them. */
+class FrameRouter {
+    @Volatile
+    var host: TerminalHost? = null
+
+    fun route(frame: TerminalFrame) {
+        host?.onFrame(frame)
+    }
 }
