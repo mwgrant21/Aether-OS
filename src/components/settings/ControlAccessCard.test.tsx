@@ -16,6 +16,7 @@ interface Opts {
   status?: ControlStatus;
   setEnabled?: ControlStatus;
   setReenableAtLaunch?: ControlStatus;
+  setPhoneTyping?: ControlStatus;
   pairing?: ControlPairingResult;
 }
 function install(o: Opts = {}) {
@@ -24,6 +25,7 @@ function install(o: Opts = {}) {
     status: vi.fn().mockResolvedValue(o.status ?? mkStatus()),
     setEnabled: vi.fn().mockResolvedValue(o.setEnabled ?? mkStatus()),
     setReenableAtLaunch: vi.fn().mockResolvedValue(o.setReenableAtLaunch ?? mkStatus()),
+    setPhoneTyping: vi.fn().mockResolvedValue(o.setPhoneTyping ?? mkStatus()),
     createPairing: vi.fn().mockResolvedValue(o.pairing ?? okPairing()),
     revokeAll: vi.fn().mockResolvedValue(mkStatus()),
     revokeOne: vi.fn().mockResolvedValue(mkStatus()),
@@ -64,6 +66,7 @@ describe('ControlAccessCard', () => {
     expect(screen.getByText('ENABLE')).toBeTruthy();
     expect(screen.queryByText('PAIR AN APP')).toBeNull();
     expect(screen.queryByText('RE-ENABLE AT LAUNCH')).toBeNull();
+    expect(screen.queryByText('ALLOW PHONE TYPING')).toBeNull();
     expect(screen.getByText(/id abcdef/)).toBeTruthy();
     expect(screen.getByTestId('control-status-line').textContent).toBe('off');
     expect(screen.getByText(/equivalent to your keyboard/)).toBeTruthy();
@@ -105,6 +108,38 @@ describe('ControlAccessCard', () => {
     expect(control.setReenableAtLaunch).toHaveBeenCalledWith(true);
     expect((screen.getByLabelText('RE-ENABLE AT LAUNCH') as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText(/Disabling phone control clears this setting/)).toBeTruthy();
+  });
+
+  it('typing checkbox follows status.phoneTyping and clicking calls setPhoneTyping(false) once and adopts the result', async () => {
+    const { control } = install({ status: mkStatus({ phoneTyping: true }), setPhoneTyping: mkStatus({ phoneTyping: false }) });
+    render(<ControlAccessCard />);
+    await settle();
+    const box = screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
+    await settle();
+    expect(control.setPhoneTyping).toHaveBeenCalledTimes(1);
+    expect(control.setPhoneTyping).toHaveBeenCalledWith(false);
+    expect((screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/anything it types is refused/)).toBeTruthy();
+  });
+
+  it('typing checkbox shows unchecked when the status says typing is off', async () => {
+    install({ status: mkStatus({ phoneTyping: false }) });
+    render(<ControlAccessCard />);
+    await settle();
+    expect((screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('a rejected setPhoneTyping shows an error message and keeps the old state', async () => {
+    const { control } = install({ status: mkStatus({ phoneTyping: true }) });
+    control.setPhoneTyping.mockRejectedValueOnce(new Error('x'));
+    render(<ControlAccessCard />);
+    await settle();
+    fireEvent.click(screen.getByLabelText('ALLOW PHONE TYPING'));
+    await settle();
+    expect(screen.getByRole('alert').textContent).toBe('Could not change the typing setting.');
+    expect((screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement).checked).toBe(true);
   });
 
   it('pairing shows QR image, code, countdown and the confirm hint, never a link', async () => {

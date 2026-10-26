@@ -97,6 +97,14 @@ export function ControlAccessCard() {
       setMessage('Could not change the launch setting.');
     }
   };
+  const setTyping = async (value: boolean) => {
+    setMessage(null);
+    try {
+      adopt(await control.setPhoneTyping(value));
+    } catch {
+      setMessage('Could not change the typing setting.');
+    }
+  };
   const pair = async () => {
     setMessage(null);
     setPairingBusy(true);
@@ -149,6 +157,21 @@ export function ControlAccessCard() {
       {on && (
         <p style={{ ...hintStyle(colors), marginTop: 4 }}>
           When checked, phone control turns itself back on the next time Aether starts. Disabling phone control clears this setting.
+        </p>
+      )}
+      {on && (
+        <label style={{ ...hintStyle(colors), display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={status.phoneTyping}
+            onChange={e => void setTyping(e.target.checked)}
+          />
+          ALLOW PHONE TYPING
+        </label>
+      )}
+      {on && (
+        <p style={{ ...hintStyle(colors), marginTop: 4 }}>
+          When off, a connected phone can still watch terminals but anything it types is refused and nothing reaches the terminal.
         </p>
       )}
 
