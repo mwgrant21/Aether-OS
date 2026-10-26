@@ -109,11 +109,14 @@ describe('pairing code alphabet', () => {
 describe('terminal frame goldens', () => {
   it('every golden t is in the right messages list', () => {
     for (const k of ['attach', 'attachResume', 'detach', 'in']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
-    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nakNotRunning', 'nakTypingOff']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
   })
   it('messages lists are exactly the declared verbs, in order', () => {
     expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'in'])
-    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack'])
+    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak'])
+  })
+  it('nakReasons match CONTROL_NAK_REASONS', () => {
+    expect(spec.messages.nakReasons).toEqual([...T.CONTROL_NAK_REASONS])
   })
   it('welcomeSessions lists the three slots in TERMINAL_SLOTS order with the six documented keys', () => {
     const f = JSON.parse(spec.frames.welcomeSessions)
@@ -131,6 +134,8 @@ describe('terminal frame goldens', () => {
     expect(Object.keys(JSON.parse(spec.frames.state))).toEqual(['t', 's', 'state'])
     expect(Object.keys(JSON.parse(spec.frames.in))).toEqual(['t', 's', 'c', 'd'])
     expect(Object.keys(JSON.parse(spec.frames.ack))).toEqual(['t', 's', 'c'])
+    expect(Object.keys(JSON.parse(spec.frames.nakNotRunning))).toEqual(['t', 's', 'c', 'reason'])
+    expect(Object.keys(JSON.parse(spec.frames.nakTypingOff))).toEqual(['t', 's', 'c', 'reason'])
   })
 })
 

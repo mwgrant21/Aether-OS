@@ -1,15 +1,15 @@
 // electron/control/protocol.ts
 //
 // Wire frames for phone CONTROL (/ctl). The phone speaks hello, attach, detach and in (typed input); titan answers with welcome,
-// bye, snap, out, size, state and ack. There is no start or prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
+// bye, snap, out, size, state, ack and nak. There is no start or prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
 // below statically and requires the gateway to handle exactly phoneToTitan, so a new verb is a reviewed edit to both
 // files. protocol/mobile-protocol.json pins these values from the outside (protocol.test.ts).
 import { CONTROL_BYE_REASONS, CONTROL_INPUT_MAX_BYTES, TERMINAL_SLOTS } from '../../src/shared/remote/types';
-import type { TerminalInfo, TerminalSlotId, TerminalSlotState } from '../../src/shared/remote/types';
+import type { NakReason, TerminalInfo, TerminalSlotId, TerminalSlotState } from '../../src/shared/remote/types';
 
 export const MESSAGE_TYPES = {
   phoneToTitan: ['hello', 'attach', 'detach', 'in'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak'],
 } as const;
 
 export const PROTOCOL_VERSION = 1;
@@ -118,6 +118,10 @@ export function encodeWelcome(o: { proof: string; serverTimeMs: number; expiresA
 
 export function encodeAck(o: { s: TerminalSlotId; c: number }): string {
   return JSON.stringify({ t: 'ack', s: o.s, c: o.c });
+}
+
+export function encodeNak(o: { s: TerminalSlotId; c: number; reason: NakReason }): string {
+  return JSON.stringify({ t: 'nak', s: o.s, c: o.c, reason: o.reason });
 }
 
 export function encodeBye(reason: ByeReason): string {
