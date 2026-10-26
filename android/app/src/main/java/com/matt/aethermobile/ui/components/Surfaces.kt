@@ -15,9 +15,9 @@ import com.matt.aethermobile.ui.theme.AetherDimens
 
 private val dims = AetherDimens()
 
-private fun surface(r: Dp, top: Color, bottom: Color, border: Color): Modifier {
+private fun Modifier.surface(r: Dp, top: Color, bottom: Color, border: Color): Modifier {
     val shape = RoundedCornerShape(r)
-    return Modifier
+    return this
         .clip(shape)
         .background(Brush.verticalGradient(listOf(top, bottom)), shape)
         .border(1.dp, border, shape)
@@ -25,15 +25,15 @@ private fun surface(r: Dp, top: Color, bottom: Color, border: Color): Modifier {
 
 /** Main card: r16 panel gradient + border. */
 fun Modifier.aePanel(): Modifier =
-    then(surface(dims.rPanel, AetherColors.panelTop, AetherColors.panelBottom, AetherColors.border))
+    surface(dims.rPanel, AetherColors.panelTop, AetherColors.panelBottom, AetherColors.border)
 
 /** List row: r12 soft panel. */
 fun Modifier.aeSoftRow(): Modifier =
-    then(surface(dims.rRow, AetherColors.panelSoftTop, AetherColors.panelSoftBottom, AetherColors.border))
+    surface(dims.rRow, AetherColors.panelSoftTop, AetherColors.panelSoftBottom, AetherColors.border)
 
 /** Inset tile: r9. */
 fun Modifier.aeInset(): Modifier =
-    then(surface(dims.rTile, AetherColors.insetTop, AetherColors.insetBottom, AetherColors.border))
+    surface(dims.rTile, AetherColors.insetTop, AetherColors.insetBottom, AetherColors.border)
 
 /** Selected/active row: r12 cyan fill + active border. */
 fun Modifier.aeActive(): Modifier {
