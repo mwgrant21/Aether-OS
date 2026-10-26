@@ -5,6 +5,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { installReplySuppression, applySnap, applySize } from './replySuppression.js';
+import { shouldSend, applyStdin } from './inputFilter.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -18,6 +19,7 @@ const root = document.getElementById('term');
 const slots = new Map();
 let visible = DEFAULT_SLOT;
 let zoomPx = 14; // 0 = fit width
+let stdinOn = false; // fail closed: Kotlin turns typing on with {t:'stdin', on:true}
 
 function slotFor(id) {
   let slot = slots.get(id);
@@ -29,7 +31,7 @@ function slotFor(id) {
   const term = new Terminal({
     scrollback: 2000,
     cursorBlink: false,
-    disableStdin: true, // D7: the phone does not type in V2; V3 flips this via a bridge message
+    disableStdin: !stdinOn, // fail closed; the `stdin` bridge message flips it
     allowProposedApi: false,
     fontFamily: FONT_FAMILY,
     fontSize: zoomPx || 14,
@@ -40,9 +42,11 @@ function slotFor(id) {
   term.loadAddon(fit);
   term.open(el);
   slot = { id, el, term, fit, sized: false };
-  // Dormant in V2: stdin is disabled and the size always comes from titan. Wired for V3/V4b;
-  // resize is reported only while the page is fitting itself (V0 demo).
-  term.onData((d) => send({ t: 'input', s: id, d }));
+  // Input only while stdin is on, and never mouse/focus reports (inputFilter). Resize is
+  // reported only while the page is fitting itself (V0 demo); titan owns the size otherwise.
+  term.onData((d) => {
+    if (shouldSend(d)) send({ t: 'input', s: id, d });
+  });
   term.onResize(({ cols, rows }) => {
     if (!slot.sized) send({ t: 'resize', s: id, cols, rows });
   });
@@ -118,6 +122,13 @@ bridge.onmessage = (ev) => {
       return;
     case 'show':
       if (isSlot(m.s)) show(m.s);
+      return;
+    case 'stdin':
+      stdinOn = applyStdin(
+        [...slots.values()].map((s) => s.term),
+        m.on,
+        stdinOn,
+      );
       return;
     case 'zoom':
       if (m.px === 0 || (Number.isFinite(m.px) && m.px >= 8 && m.px <= MAX_FONT)) {
