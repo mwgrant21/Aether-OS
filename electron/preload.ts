@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     status: (): Promise<ControlStatus> => ipcRenderer.invoke('control:status'),
     setEnabled: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setEnabled', on),
     setReenableAtLaunch: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setReenableAtLaunch', on),
+    setPhoneTyping: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setPhoneTyping', on),
     createPairing: (): Promise<ControlPairingResult> => ipcRenderer.invoke('control:createPairing'),
     revokeAll: (): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeAll'),
     revokeOne: (ref: string): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeOne', ref),

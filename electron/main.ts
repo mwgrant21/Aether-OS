@@ -102,7 +102,7 @@ import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult }
 import { renderQrSvg } from './remote/pairingQr';
 import { createControlHub } from './control/controlHub';
 import { registerControlIpc } from './control/controlIpc';
-import { controlSettingsPath, readReenable, writeReenable } from './controlSettings';
+import { controlSettingsPath, readPhoneTyping, readReenable, writePhoneTyping, writeReenable } from './controlSettings';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -1530,6 +1530,8 @@ const controlHub = createControlHub({
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
     persist: on => writeReenable(aetherOsDir, on, l => diagLog.write(l)),
+    readTyping: () => readPhoneTyping(controlSettingsPath(aetherOsDir)),
+    persistTyping: on => writePhoneTyping(aetherOsDir, on, l => diagLog.write(l)),
   },
   confirmPair: (peer, replacesExisting) => confirmControlPair(peer, replacesExisting),
   renderQr: renderQrSvg,
@@ -1577,6 +1579,7 @@ const controlHubForIpc = {
   status: () => controlStatusOrUnavailable(),
   setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setEnabled(on); },
   setReenableAtLaunch: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setReenableAtLaunch(on); },
+  setPhoneTyping: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setPhoneTyping(on); },
   createPairing: async (): Promise<ControlPairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : controlHub.createPairing(); },
   revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeAll(); },
   revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeOne(ref); },
