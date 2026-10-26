@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -145,7 +147,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
             }
             AnimatedVisibility(
                 visible = menuOpen,
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = dims.headerH + 6.dp, end = 12.dp),
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = dims.headerH + 6.dp, end = 12.dp, bottom = 12.dp),
                 enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { -slideOffsetPx },
                 exit = fadeOut(tween(120)) + slideOutVertically(tween(120)) { 0 },
             ) {
@@ -265,6 +267,8 @@ private fun Dropdown(
                     size = Size(size.width, band * 2),
                 )
             }
+            // Bounded by the space below the header (see the caller's bottom padding), so short windows scroll.
+            .verticalScroll(rememberScrollState())
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
