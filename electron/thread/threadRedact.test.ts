@@ -39,6 +39,23 @@ const POSITIVE: Array<[string, string, string]> = [
   ['docker login -p', 'docker login -u me -p TESTdockerpw reg.test', 'TESTdockerpw'],
   ['mysql -p', 'mysql -h db -u root -pTESTmysqlpw app', 'TESTmysqlpw'],
   ['sshpass -p', 'sshpass -p TESTsshpw ssh host', 'TESTsshpw'],
+  ['ps -Password bare', 'Connect-Foo -User bob -Password hunter22xx', 'hunter22xx'],
+  ['ps -Password quoted', "Connect-Foo -Password 'S3cretPwd99'", 'S3cretPwd99'],
+  ['ps ConvertTo-SecureString arg', 'ConvertTo-SecureString "P@ssw0rd!Hunter" -AsPlainText -Force', 'P@ssw0rd!Hunter'],
+  ['ps ConvertTo-SecureString pipe', '$s = "hunter2hunter2" | ConvertTo-SecureString -AsPlainText', 'hunter2hunter2'],
+  ['ps PSCredential', 'New-Object PSCredential("bob",(ConvertTo-SecureString "Tr0ub4dor&3x" -AsPlainText))', 'Tr0ub4dor'],
+  ['env DB_PASS', 'DB_PASS=hunter2hunter2', 'hunter2hunter2'],
+  ['env SSHPASS inline', 'SSHPASS=hunter2hunter2 sshpass -e ssh h', 'hunter2hunter2'],
+  ['url pass param', 'https://x.test/login?user=bob&pass=correcthorse', 'correcthorse'],
+  ['line-wrapped sk-ant tail', 'key sk-ant-' + 'TESTabcdefghijklmnopqrstuv\nStUvWxYz0123456789_-AbCdEf done', 'StUvWxYz0123456789'],
+  ['line-wrapped ghp tail', 'ghp_' + 'TESTabcdefghijklmnopqrstuvwx\nyz0123456789ABCD', 'yz0123456789ABCD'],
+  ['az login -p', 'az login -u x -p hunter2hunter2', 'hunter2hunter2'],
+  ['7z -p', '7z a out.7z in -pSECRETTEST1', 'SECRETTEST1'],
+  ['openssl -pass pass:', 'openssl enc -aes256 -pass pass:TESTsslpw -in a', 'TESTsslpw'],
+  ['setx secret', 'setx MY_SECRET TESTsetxvalue', 'TESTsetxvalue'],
+  ['netrc one line', 'machine h login u password TESTnetrcpw', 'TESTnetrcpw'],
+  ['netrc multi line', 'machine h\nlogin u\npassword TESTnetrcpw2\n', 'TESTnetrcpw2'],
+  ['htpasswd -b', 'htpasswd -b .htpasswd bob TESThtpw', 'TESThtpw'],
   ['aws secret env', 'AWS_SECRET_ACCESS_KEY=TESTawssecret/value+x', 'TESTawssecret'],
   ['export openai env', 'export OPENAI_API_KEY=TESTopenaikeyvalue', 'TESTopenaikeyvalue'],
   ['env with spaces in value', 'DB_PASSWORD=TEST pass with spaces', 'TEST pass with spaces'],
@@ -90,6 +107,9 @@ const NEGATIVE: string[] = [
   'for (let i = 0; i < 10; i++) {}',
   'import { redactText } from "./threadRedact";',
   'ls -la /home/matt',
+  'auth: AuthState',
+  'const sessionId = useSessionId()',
+  'line one\nplain next line',
   'mkdir -p build/out && docker run -p 8080:80 img',
 ];
 
@@ -115,6 +135,15 @@ describe('redactText negative corpus', () => {
       expect(redactText(s)).toBe(s);
     });
   }
+});
+
+describe('redactText env-style names stay masked', () => {
+  it('masks an uppercase env name even when the value looks like code', () => {
+    expect(redactText('API_KEY=process.env.TESTvalue')).not.toContain('process.env');
+  });
+  it('does not absorb the next line after a masked line when it is ordinary text', () => {
+    expect(redactText('Authorization: Bearer x\nContent-Type: json')).toContain('Content-Type');
+  });
 });
 
 describe('redactText properties', () => {
@@ -215,6 +244,14 @@ describe('redactToolInput caps (S7/S8)', () => {
 
 describe('isSensitivePath', () => {
   const yes = [
+    'C:\\Users\\u\\.claude\\.credentials.json',
+    'app/secrets/foo.txt',
+    '/home/u/.pypirc',
+    '/home/u/.vault-token',
+    'gcp/service-account-prod.json',
+    '/home/u/.claude.json',
+    '/home/u/.config/gh/hosts.yml',
+    'fn/local.settings.json',
     '/app/.env',
     'C:\\proj\\.env.local',
     'a/b/.env.production',
