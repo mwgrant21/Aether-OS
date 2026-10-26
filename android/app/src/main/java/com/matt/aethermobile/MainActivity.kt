@@ -600,6 +600,7 @@ class MainActivity : AppCompatActivity() {
         statusLine.text = when {
             cur?.state == SlotState.NOT_STARTED -> getString(R.string.status_not_started)
             cur?.state == SlotState.EXITED -> getString(R.string.status_exited)
+            cur?.awaitingOutput == true -> getString(R.string.status_waiting_output)
             s is FlowState.Connected -> daysText(s)
             else -> ""
         }

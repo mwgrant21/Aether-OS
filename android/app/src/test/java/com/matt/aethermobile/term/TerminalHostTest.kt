@@ -42,6 +42,28 @@ class TerminalHostTest {
     private fun ready(vararg i: SessionInfo = arrayOf(info("claude"), info("terminal2"), info("codex"))) =
         host.onSessions(i.toList())
 
+    private fun waiting(s: String) = host.tabs().first { it.s == s }.awaitingOutput
+
+    @Test fun emptySnapshotForRunningSlotAwaitsOutput() {
+        ready()
+        host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 1, 100, 30, ""))
+        assertTrue(waiting("claude"))
+        host.onFrame(TerminalFrame.Out("claude", 2, "hi"))
+        assertTrue(!waiting("claude"))
+        host.onFrame(TerminalFrame.Snap("claude", 3, 100, 30, ""))
+        assertTrue(waiting("claude"))
+        host.onFrame(TerminalFrame.Snap("claude", 4, 100, 30, "text"))
+        assertTrue(!waiting("claude"))
+    }
+
+    @Test fun nonEmptySnapshotNeverAwaitsOutput() {
+        ready()
+        host.select("claude")
+        host.onFrame(TerminalFrame.Snap("claude", 1, 100, 30, "text"))
+        assertTrue(!waiting("claude"))
+    }
+
     @Test fun selectDetachesPreviousThenAttachesWithLastQAndShows() {
         ready()
         host.select("claude")

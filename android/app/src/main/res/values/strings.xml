@@ -63,4 +63,5 @@
     <string name="action_fit">Fit</string>
     <string name="status_not_started">Not started on titan</string>
     <string name="status_exited">Exited</string>
+    <string name="status_waiting_output">Waiting for output from titan</string>
 </resources>
