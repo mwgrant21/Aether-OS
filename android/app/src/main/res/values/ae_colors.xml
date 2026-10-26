@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aether OS tokens (from the Aether OS design system tokens/aether.css + repo src/styles). -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="UnusedResources">
+    <!-- Surfaces -->
+    <color name="ae_bg_void">#FF020A10</color>
+    <color name="ae_bg_deep">#FF04121A</color>
+    <color name="ae_bg_abyss">#FF0A2634</color>
+    <color name="ae_panel_top">#F00A222D</color>      <!-- rgba(10,34,45,.94) -->
+    <color name="ae_panel_bottom">#F006141C</color>   <!-- rgba(6,20,28,.94) -->
+    <color name="ae_panel_soft_top">#D1081A24</color> <!-- rgba(8,26,36,.82) -->
+    <color name="ae_panel_soft_bottom">#D1051018</color>
+    <color name="ae_inset_top">#990C2834</color>      <!-- rgba(12,40,52,.6) -->
+    <color name="ae_inset_bottom">#66081A22</color>   <!-- rgba(8,26,34,.4) -->
+    <!-- Lines & glows -->
+    <color name="ae_border">#2946B4D7</color>         <!-- rgba(70,180,215,.16) -->
+    <color name="ae_border_mid">#3D46B4D7</color>     <!-- .24 -->
+    <color name="ae_border_strong">#4746B4D7</color>  <!-- .28 -->
+    <color name="ae_border_glow">#665FDCFF</color>    <!-- rgba(95,220,255,.4) -->
+    <color name="ae_active_fill">#2150DCFF</color>    <!-- rgba(80,220,255,.13) -->
+    <color name="ae_active_border">#7378E6FF</color>  <!-- rgba(120,230,255,.45) -->
+    <!-- Text -->
+    <color name="ae_text_bright">#FFEAFCFF</color>
+    <color name="ae_text">#FFD8F6FF</color>
+    <color name="ae_text_dim">#FF9FC4D1</color>
+    <color name="ae_text_muted">#FF5F8A97</color>
+    <color name="ae_text_label">#FF4E7C8B</color>
+    <!-- Accents -->
+    <color name="ae_cyan_bright">#FFBFF4FF</color>
+    <color name="ae_cyan_core">#FF7EF0FF</color>
+    <color name="ae_cyan">#FF7FD8EF</color>
+    <color name="ae_cyan_deep">#FF17B8D8</color>
+    <color name="ae_cyan_ink">#FF04202B</color>       <!-- text on cyan buttons -->
+    <color name="ae_success">#FF3BE0A0</color>
+    <color name="ae_warn">#FFFFB020</color>
+    <color name="ae_warn_soft">#FFFFCF6B</color>
+    <color name="ae_danger">#FFFF6B6B</color>
+    <color name="ae_danger_soft">#FFFF9D9D</color>
+    <!-- Memory kind tiers (memoryMath.ts KIND_TIER_COLOR) -->
+    <color name="ae_kind_overrule">#FFF5C66B</color>
+    <color name="ae_kind_decision">#FF3BE0A0</color>
+    <color name="ae_kind_revision">#FF8FD6FF</color>
+    <color name="ae_kind_habit">#FF9FC4D1</color>
+</resources>

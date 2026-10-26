@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="aether_bg">#0A0E14</color>
-    <color name="aether_accent">#4FD1C5</color>
+    <color name="aether_accent">#7EF0FF</color>
 </resources>
