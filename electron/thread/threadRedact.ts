@@ -86,7 +86,7 @@ function maskBlocks(text: string): string {
 }
 
 // ---------------------------------------------------------------------------------------
-// Layer 3: the key-value tokenizer
+// Layer 3: the key-value tokenizer (layer 2, the name lexicon, is threadRedactLexicon.ts)
 // ---------------------------------------------------------------------------------------
 
 // name <sep> value, where name is an identifier chain that may carry a flag prefix (-, --, /)
@@ -106,7 +106,7 @@ interface Candidate {
   name: string;
   flag: boolean;
   dollar: boolean;
-  sep: string; // '' for the whitespace-separated flag form
+  sep: string; // '' when the value follows whitespace only: -Name value, name 'value'
   valueAt: number;
   query: boolean; // directly after ? & # in a URL
 }
@@ -212,7 +212,8 @@ function codeContext(text: string, c: Candidate): boolean {
 }
 
 // A bare value that is code, not a literal: a type, a short number, a call, a member chain
-// (process.env.X), or an identifier inside a declaration or a call. Quoted values never get here.
+// (process.env.X), or an identifier in a declaration, a call or a longer expression. Quoted
+// values never get here.
 function isCodeValue(text: string, p: number, tok: string, c: Candidate, level: SecretLevel): boolean {
   const lower = /[a-z]/.test(c.name);
   const colon = c.sep.includes(':') && !c.sep.includes('=');
@@ -220,11 +221,11 @@ function isCodeValue(text: string, p: number, tok: string, c: Candidate, level: 
   if (level < 2 && /^\d[\d_]*$/.test(tok) && tok.replace(/_/g, '').length <= 5) return true;
   if (c.sep === '') return false;
   if (colon && isTypeAnnotation(tok)) return true;
-  if (!lower) return false; // ENV_STYLE names are always masked
+  if (!lower) return false; // a name with no lowercase letter (API_KEY) gets no code exemption
   if (CALL_RE.test(text.slice(p, p + 120))) return true;
-  // A value that the statement goes on to use (x = a.b ?? c; ...) is an expression, not a literal.
+  // A value the statement goes on to use (x = a.b ?? c;) is an expression, not a literal; but not
+  // after a ";": Server=a;Password=hunter; is a connection string, not a statement.
   const after = text.slice(p + tok.length, p + tok.length + 12);
-  // (not after a ";": Server=a;Password=hunter; is a connection string, not a statement)
   const ctx =
     codeContext(text, c) ||
     (CODE_FOLLOW_RE.test(after) && text.charAt(c.index - 1) !== ';') ||
@@ -404,7 +405,7 @@ const XML_TAG_RE = /<[A-Za-z_][\w:.-]*(?:\s[^<>]*)?>/g;
 const XML_ATTR_RE = /([A-Za-z_][\w:.-]*)(\s*=\s*)("[^"]*"|'[^']*')/g;
 const XML_VALUE_CHILD_RE = /(<[A-Za-z_][\w:.-]*\s[^<>]*?\b(?:key|name)\s*=\s*(["'])([^"']*)\2[^<>]*>\s*<value>)([^<]+)(<\/value>)/gi;
 const PLIST_RE = /(<key>([^<]+)<\/key>\s*<string>)([^<]+)(<\/string>)/g;
-const isMaskableText =(t: string): boolean => t !== '' && !t.startsWith(R) && !/^[$%]/.test(t);
+const isMaskableText = (t: string): boolean => t !== '' && !t.startsWith(R) && !/^[$%]/.test(t);
 
 // <string name="api_key">x</string>: a key/name attribute that holds a secret name.
 function namesSecret(attrs: string): boolean {
@@ -461,8 +462,9 @@ function maskUrls(text: string): string {
 // Layer 4: entropy
 // ---------------------------------------------------------------------------------------
 
-// A run of 20+ token characters with at least two of {upper, lower, digit} that does not read
-// as a path, a hex digest, a UUID or a word-built identifier (camelCase, snake_case).
+// A run of 20+ token characters (= padding counts) with at least two of {upper, lower, digit}
+// that does not read as a path, a hex digest of 7-64 digits, a UUID or a word-built identifier
+// (camelCase, snake_case).
 const ENTROPY_RE = /[A-Za-z0-9+/_-]{18,}={0,2}/g;
 const HEX_RE = /^[0-9a-fA-F]{7,64}$/;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
