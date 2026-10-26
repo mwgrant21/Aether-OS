@@ -58,6 +58,14 @@ const CURL_USER_RE =
 const CLI_SECRET_FLAG_RE =
   /(--(?:password|passwd|pass|token|secret|api-?key|client-secret|access-token|auth-token|private-key|key|credentials?|bearer|cookie|sas-token|account-key|connection-string)\b)(=|\s+)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/gi;
 
+// Short -p password flags, only for the tools where -p means password (not ports).
+const SHORT_P_RE =
+  /((?:docker|podman)[ 	]+login[^
+]*?[ 	]-p[ 	]*|sshpass[ 	]+-p[ 	]*|mysql\w*[^
+]*?[ 	]-p(?=\S))("[^"
+]*"|'[^'
+]*'|[^\s"']+)/g;
+
 // Rule 3: .env-style assignments. Line form masks to end of line; the inline form
 // (VAR=value cmd) masks one token or quoted string.
 const ENV_NAME =
@@ -125,6 +133,8 @@ export function redactText(s: string): string {
     CLI_SECRET_FLAG_RE,
     (m, flag: string, sep: string, val: string) => (val.startsWith('-') ? m : `${flag}${sep}${R}`),
   );
+
+  out = out.replace(SHORT_P_RE, `$1${R}`);
 
   // Rule 3
   out = out.replace(ENV_LINE_RE, (_m, head: string) => `${head}${R}`);
