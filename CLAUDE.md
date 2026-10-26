@@ -123,7 +123,7 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
   permissionBroker.ts   PLANNED: the seam over the permission prompts.
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
                          TokenMonitor's convention — do not monkey-patch).
-android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, but the Activity UI is not built yet (no terminal on the phone).
+android/                Aether Mobile app (Gradle project). V1 = pairing + biometric-gated connection; V2 adds the protocol client, terminal page and host logic, and V3-A1 adds the Compose shell (header + burger menu, restyled pairing/lock/error screens; Compose BOM 2026.06.01, ui/foundation only, no material3). UI lives in `app/.../ui/`: `theme/` (design tokens, type), `components/` (shared Ae* widgets), `StormCore` + `StormCoreMath` (animated core, maths unit-tested), `auth/` (auth screens), `shell/` (header, burger, ShellModel). Fonts (Rajdhani, Space Mono) are in `res/font`, their OFL licences in `android/licenses/`.
 protocol/mobile-protocol.json   shared wire contract + proof vectors, read by electron/control/ tests and the Android JVM tests.
 docs/superpowers/
   specs/         design specs, one per feature, YYYY-MM-DD-<topic>-design.md.
