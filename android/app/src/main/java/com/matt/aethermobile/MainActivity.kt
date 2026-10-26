@@ -48,6 +48,8 @@ import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.FrameRouter
+import com.matt.aethermobile.thread.ThreadHost
+import com.matt.aethermobile.thread.ThreadState
 import com.matt.aethermobile.ui.components.AeScreenBackground
 import com.matt.aethermobile.ui.auth.AuthActions
 import com.matt.aethermobile.ui.auth.AuthScreen
@@ -55,6 +57,8 @@ import com.matt.aethermobile.ui.auth.authScreenFor
 import com.matt.aethermobile.ui.shell.ShellActions
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
+import com.matt.aethermobile.ui.shell.threadWanted
+import com.matt.aethermobile.ui.thread.ThreadViewMode
 import com.matt.aethermobile.ui.theme.AetherTheme
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.term.TerminalScreen
@@ -125,8 +129,23 @@ class MainActivity : AppCompatActivity() {
     private var terminalLive = false
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
 
+    // Thread state. The host is rebuilt per connection (frames come from the transport thread, hence volatile);
+    // everything else is touched on the main thread. The choice is in memory only, never persisted.
+    @Volatile private var threadHost: ThreadHost? = null
+    private var threadCaps: Set<String> = emptySet()
+    private var serverOffsetMs = 0L
+    private val viewChoice = HashMap<String, ThreadViewMode>()
+
     /** Everything the Compose tree reads; replaced wholesale by [renderTabs] (main thread only). */
-    private class UiSnapshot(val flow: FlowState, val tabs: List<TerminalHost.Tab>, val selected: String)
+    private class UiSnapshot(
+        val flow: FlowState,
+        val tabs: List<TerminalHost.Tab>,
+        val selected: String,
+        val caps: Set<String> = emptySet(),
+        val thread: ThreadState = ThreadState(),
+        val choice: ThreadViewMode? = null,
+        val serverOffsetMs: Long = 0L,
+    )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
 
@@ -183,6 +202,8 @@ class MainActivity : AppCompatActivity() {
         prompt = null
         termHost?.onDisconnected()
         termHost = null
+        threadHost?.onDisconnected()
+        threadHost = null
         if (::screen.isInitialized) screen.destroy()
         io.shutdownNow()
         super.onDestroy()
@@ -447,6 +468,7 @@ class MainActivity : AppCompatActivity() {
         }
         val gen = ++connGen
         val th = newHost()
+        val tth = newThreadHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
             runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
@@ -457,9 +479,13 @@ class MainActivity : AppCompatActivity() {
                 snapLogged = true
                 Log.d(TAG, "first_snap_rendered")
             }
+        }, onThreadFrame = { f ->
+            // Transport thread: only for this connection; the host posts its change callback to the main thread.
+            if (gen == connGen) threadHost?.onFrame(f)
         })
         client = c
         termHost = th
+        threadHost = tth
         snapLogged = false
         try {
             c.connect(token)
@@ -490,7 +516,10 @@ class MainActivity : AppCompatActivity() {
             is ControlState.Connected -> {
                 Log.d(TAG, "welcome")
                 dispatch(FlowEvent.ClientConnected(s.expiresAtMs, s.serverTimeMs))
-                if (flow is FlowState.Connected) startTerminal(s.sessions)
+                if (flow is FlowState.Connected) {
+                    startTerminal(s.sessions)
+                    startThread(s)
+                }
             }
             ControlState.Revoked -> dispatch(FlowEvent.ClientRevoked)
             ControlState.Superseded -> dispatch(FlowEvent.ClientFailed(ErrorKind.Superseded))
@@ -523,6 +552,47 @@ class MainActivity : AppCompatActivity() {
         return th
     }
 
+    private fun newThreadHost(): ThreadHost {
+        var th: ThreadHost? = null
+        th = ThreadHost(
+            attach = { s -> client?.attachThread(s) ?: false },
+            detach = { s -> client?.detachThread(s) ?: false },
+            get = { s, id -> client?.getDetail(s, id) ?: false },
+            // Runs under the host monitor: only post, never touch the host here.
+            onChanged = { handler.post { if (!isDestroyed && threadHost === th) renderTabs() } },
+        )
+        return th
+    }
+
+    /** A welcome arrived: hand titan's caps and slots to the thread host, which attaches the selected slot if it wants THREAD. */
+    private fun startThread(s: ControlState.Connected) {
+        threadCaps = s.caps
+        serverOffsetMs = s.serverTimeMs - System.currentTimeMillis()
+        threadHost?.onSessions(s.caps, s.sessions)
+        syncThread()
+        renderTabs()
+    }
+
+    /** The thread follows the selected slot's choice, not the view actually shown, so an unreadable thread does not flap. */
+    private fun syncThread() {
+        val slot = selected
+        threadHost?.select(if (threadWanted(slot, threadCaps, viewChoice[slot])) slot else null)
+    }
+
+    private fun setViewMode(mode: ThreadViewMode) {
+        viewChoice[selected] = mode
+        syncThread()
+        renderTabs()
+    }
+
+    private fun toggleThreadRow(id: String) {
+        val th = threadHost ?: return
+        val slot = selected
+        val wasOpen = id in th.state(slot).expanded
+        th.toggleExpanded(slot, id)
+        if (!wasOpen) th.requestDetail(slot, id)
+    }
+
     private fun startTerminal(sessions: List<ControlProtocol.SessionInfo>) {
         val th = termHost ?: return
         lastSessions = sessions
@@ -540,6 +610,8 @@ class MainActivity : AppCompatActivity() {
         terminalLive = false
         termHost?.onDisconnected()
         termHost = null
+        threadHost?.onDisconnected()
+        threadHost = null
         screen.reset()
     }
 
@@ -554,6 +626,7 @@ class MainActivity : AppCompatActivity() {
     private fun selectSlot(s: String) {
         selected = s
         termHost?.select(s)
+        syncThread()
         renderTabs()
     }
 
@@ -569,7 +642,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        ui = UiSnapshot(flow, tabs, selected)
+        ui = UiSnapshot(
+            flow, tabs, selected, threadCaps,
+            threadHost?.state(selected) ?: ThreadState(), viewChoice[selected], serverOffsetMs,
+        )
     }
 
     // ---- rendering -----------------------------------------------------------------------
@@ -589,13 +665,15 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.caps, snap.thread, snap.choice, snap.serverOffsetMs),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
                         onZoomOut = { stepZoom(-2) },
                         onZoomIn = { stepZoom(2) },
                         onFit = { setZoom(0) },
+                        onSetMode = ::setViewMode,
+                        onToggleRow = ::toggleThreadRow,
                     ),
                     terminalHolder = webHolder,
                 )

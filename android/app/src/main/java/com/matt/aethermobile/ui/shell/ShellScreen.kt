@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -64,7 +67,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.R
+import com.matt.aethermobile.protocol.ControlProtocol
+import com.matt.aethermobile.protocol.ControlProtocol.ThreadMeta
+import com.matt.aethermobile.protocol.ControlProtocol.Why
+import com.matt.aethermobile.protocol.ControlProtocol.Work
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.thread.ThreadState
+import com.matt.aethermobile.ui.thread.ThreadScreen
+import com.matt.aethermobile.ui.thread.ThreadUiModel
+import com.matt.aethermobile.ui.thread.ThreadViewMode
 import com.matt.aethermobile.ui.StormCore
 import com.matt.aethermobile.ui.StormMode
 import com.matt.aethermobile.ui.components.AeSecondaryButton
@@ -82,6 +93,14 @@ data class ShellUiState(
     val tabs: List<TerminalHost.Tab>,
     val selected: String,
     val flow: FlowState.Connected?,
+    /** welcome.caps; `thread` in it enables the THREAD view. */
+    val caps: Set<String> = emptySet(),
+    /** The selected slot's thread (empty when none is attached). */
+    val thread: ThreadState = ThreadState(),
+    /** The user's per-slot THREAD/TERM choice for the selected slot; null = default. */
+    val choice: ThreadViewMode? = null,
+    /** serverTimeMs - phone clock at Connected. */
+    val serverOffsetMs: Long = 0L,
 )
 
 class ShellActions(
@@ -90,6 +109,8 @@ class ShellActions(
     val onZoomOut: () -> Unit,
     val onZoomIn: () -> Unit,
     val onFit: () -> Unit,
+    val onSetMode: (ThreadViewMode) -> Unit = {},
+    val onToggleRow: (String) -> Unit = {},
 )
 
 private val dims = AetherDimens()
@@ -108,6 +129,9 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
+    val mode = viewModeFor(state.selected, state.caps, threadAvail(state.thread), state.choice)
+    val threadMode = state.connected && mode == ThreadViewMode.THREAD
+    val termMode = state.connected && !threadMode
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
 
@@ -125,15 +149,32 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 )
             }
             Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
-                // Always composed: a conditional host could leave the pre-warmed WebView unattached.
-                Box(if (state.connected) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
+                if (threadMode) {
+                    // ThreadScreen draws its own backdrop; the THREAD | TERM switch rides in its header.
+                    val rows = remember(state.thread) { threadRows(state.thread) }
+                    val meta = state.thread.meta ?: EmptyMeta
+                    ThreadScreen(
+                        rows = rows,
+                        meta = meta,
+                        serverOffsetMs = state.serverOffsetMs,
+                        onToggle = actions.onToggleRow,
+                        onOpenTerminal = { actions.onSetMode(ThreadViewMode.TERM) },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        headerStart = { ModeSwitch(mode, true, ThreadUiModel.termDot(meta), actions.onSetMode) },
+                    )
+                } else if (termMode && showSwitch(state.selected)) {
+                    TermModeRow(state, mode, actions)
+                }
+                // Always composed, in every mode: a conditional host could leave the pre-warmed WebView unattached.
+                // THREAD mode only collapses it (0 size, GONE); it is never removed.
+                Box(if (termMode) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
                     AndroidView(
                         factory = { terminalHolder.also { (it.parent as? ViewGroup)?.removeView(it) } },
                         modifier = Modifier.fillMaxSize(),
-                        update = { it.visibility = if (state.connected) View.VISIBLE else View.GONE },
+                        update = { it.visibility = if (termMode) View.VISIBLE else View.GONE },
                     )
                 }
-                if (state.connected) ZoomRow(actions)
+                if (termMode) ZoomRow(actions)
             }
         }
         if (state.connected) {
@@ -160,6 +201,63 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 )
             }
         }
+    }
+}
+
+private val EmptyMeta = ThreadMeta(null, null, Work.UNKNOWN, null, null, null, null)
+private val SwitchShape = RoundedCornerShape(10.dp)
+
+/** TERM view of a threadable slot: the switch (THREAD disabled when unreadable) and the reason as a hint. */
+@Composable
+private fun TermModeRow(state: ShellUiState, mode: ThreadViewMode, actions: ShellActions) {
+    val enabled = threadWanted(state.selected, state.caps, null) && threadAvail(state.thread)
+    val hint = if (state.thread.meta != null && !state.thread.avail) state.thread.why else null
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        ModeSwitch(mode, enabled, ThreadUiModel.termDot(state.thread.meta ?: EmptyMeta), actions.onSetMode)
+        if (hint != null && state.caps.contains(ControlProtocol.CAP_THREAD)) {
+            BasicText(
+                stringResource(
+                    when (hint) {
+                        Why.NO_SESSION -> R.string.thread_hint_no_session
+                        Why.STARTING -> R.string.thread_hint_starting
+                        Why.UNREADABLE -> R.string.thread_hint_unreadable
+                    },
+                ),
+                style = type.meta.copy(color = AetherColors.textMuted),
+            )
+        }
+    }
+}
+
+/** Two 44 dp segments. THREAD is disabled (not clickable) when [threadEnabled] is false; a dot on TERM marks a waiting prompt. */
+@Composable
+private fun ModeSwitch(mode: ThreadViewMode, threadEnabled: Boolean, termDot: Boolean, onSet: (ThreadViewMode) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Segment(stringResource(R.string.thread_switch_thread), mode == ThreadViewMode.THREAD, threadEnabled, false) { onSet(ThreadViewMode.THREAD) }
+        Segment(stringResource(R.string.thread_switch_term), mode == ThreadViewMode.TERM, true, termDot) { onSet(ThreadViewMode.TERM) }
+    }
+}
+
+@Composable
+private fun Segment(label: String, selected: Boolean, enabled: Boolean, dot: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .heightIn(min = dims.touchMin)
+            .widthIn(min = dims.touchMin)
+            .clip(SwitchShape)
+            .then(if (selected) Modifier.aeActive() else Modifier.border(1.dp, BurgerBorder, SwitchShape))
+            .clickable(enabled = enabled, role = Role.Tab, onClick = onClick)
+            .semantics(mergeDescendants = true) { this.selected = selected }
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        BasicText(
+            label,
+            style = type.label.copy(color = if (!enabled) AetherColors.textMuted.copy(alpha = 0.5f) else if (selected) AetherColors.textBright else AetherColors.textLabel),
+            maxLines = 1,
+        )
+        if (dot) StatusDot(DotStyle.LiveGlow)
     }
 }
 

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -98,8 +97,7 @@ fun ThreadScreen(
     val last = rows.lastOrNull()
     LaunchedEffect(last, rows.size) {
         if (follow && rows.isNotEmpty()) {
-            listState.scrollToItem(rows.size - 1)
-            listState.scrollBy(100_000f)
+            listState.scrollToItem(rows.size - 1, Int.MAX_VALUE)
         }
     }
     val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
@@ -153,8 +151,7 @@ fun ThreadScreen(
                                     follow = true
                                     scope.launch {
                                         if (rows.isNotEmpty()) {
-                                            listState.scrollToItem(rows.size - 1)
-                                            listState.scrollBy(100_000f)
+                                            listState.scrollToItem(rows.size - 1, Int.MAX_VALUE)
                                         }
                                     }
                                 }

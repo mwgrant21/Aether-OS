@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -68,11 +69,6 @@ private val ToolBorder = Color(70, 180, 215, 51)
 private val DiffAddBg = Color(59, 224, 160, 20)
 private val DiffDelBg = Color(95, 138, 151, 20)
 private val CodeBg = Color(80, 220, 255, 24)
-
-// Not in strings_thread.xml (owned by A3); moving them there is a one-line change per label.
-private const val LABEL_INPUT = "INPUT"
-private const val LABEL_OUTPUT = "OUTPUT"
-private const val LABEL_NO_TEXT = "No text"
 
 private val ToolShape = RoundedCornerShape(10.dp)
 private val BubbleShape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp)
@@ -154,11 +150,13 @@ private fun annotate(spans: List<MarkdownLite.Span>): AnnotatedString = buildAnn
 @Composable
 private fun ToolRowView(row: ThreadRow.ToolRow, onToggle: (String) -> Unit, modifier: Modifier) {
     Column(modifier.fillMaxWidth()) {
-        val stateName = when (row.state) {
-            ToolState.RUN -> "running"
-            ToolState.OK -> "done"
-            ToolState.ERR -> "failed"
-        }
+        val stateName = stringResource(
+            when (row.state) {
+                ToolState.RUN -> R.string.thread_state_running
+                ToolState.OK -> R.string.thread_state_done
+                ToolState.ERR -> R.string.thread_state_failed
+            },
+        )
         Row(
             Modifier
                 .fillMaxWidth()
@@ -189,7 +187,7 @@ private fun ToolRowView(row: ThreadRow.ToolRow, onToggle: (String) -> Unit, modi
             StateGlyph(row.state)
         }
         if (row.expanded) {
-            DetailPanel(row.detail, showInput = true, emptyText = null)
+            DetailPanel(row.detail, showInput = true, emptyText = stringResource(R.string.thread_detail_no_output))
         }
     }
 }
@@ -212,25 +210,29 @@ private fun ThinkingRowView(row: ThreadRow.ThinkingRow, onToggle: (String) -> Un
             BasicText(text, style = MonoStyle.copy(fontSize = 12.sp, color = AetherColors.textMuted))
         }
         if (row.expanded) {
-            DetailPanel(row.detail, showInput = false, emptyText = LABEL_NO_TEXT)
+            DetailPanel(row.detail, showInput = false, emptyText = stringResource(R.string.thread_detail_no_text))
         }
     }
 }
 
 /** Button + expanded state when [expandable]; a plain labelled row otherwise. */
-private fun Modifier.rowToggle(expandable: Boolean, expanded: Boolean, label: String, onClick: () -> Unit): Modifier =
-    if (expandable) {
+@Composable
+private fun Modifier.rowToggle(expandable: Boolean, expanded: Boolean, label: String, onClick: () -> Unit): Modifier {
+    val expandedText = stringResource(R.string.thread_state_expanded)
+    val collapsedText = stringResource(R.string.thread_state_collapsed)
+    return if (expandable) {
         this.clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) {
                 contentDescription = label
-                stateDescription = if (expanded) "Expanded" else "Collapsed"
+                stateDescription = if (expanded) expandedText else collapsedText
             }
     } else {
         this.semantics(mergeDescendants = true) { contentDescription = label }
     }
+}
 
 @Composable
-private fun DetailPanel(detail: ThreadDetail?, showInput: Boolean, emptyText: String?) {
+private fun DetailPanel(detail: ThreadDetail?, showInput: Boolean, emptyText: String) {
     val maxH = with(LocalDensity.current) { (DETAIL_MAX_LINES * DetailStyle.lineHeight.value).sp.toDp() }
     Column(
         Modifier
@@ -252,14 +254,14 @@ private fun DetailPanel(detail: ThreadDetail?, showInput: Boolean, emptyText: St
             is ThreadDetail.Ready -> {
                 val input = detail.input
                 if (showInput && !input.isNullOrEmpty()) {
-                    SectionLabel(LABEL_INPUT)
+                    SectionLabel(stringResource(R.string.thread_label_input))
                     BasicText(input, style = DetailStyle)
                     MoreNote(detail.inMore)
-                    SectionLabel(LABEL_OUTPUT)
+                    SectionLabel(stringResource(R.string.thread_label_output))
                 }
                 val out = detail.output
                 if (out.isNullOrEmpty()) {
-                    BasicText(emptyText ?: stringResource(R.string.thread_detail_unavailable), style = DetailStyle)
+                    BasicText(emptyText, style = DetailStyle)
                 } else {
                     BasicText(out, style = DetailStyle)
                 }
@@ -280,7 +282,7 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun MoreNote(n: Int) {
     if (n > 0) {
-        BasicText(stringResource(R.string.thread_detail_more, "$n lines"), style = DetailStyle.copy(color = AetherColors.textMuted))
+        BasicText(stringResource(R.string.thread_detail_more, pluralStringResource(R.plurals.thread_lines, n, n)), style = DetailStyle.copy(color = AetherColors.textMuted))
     }
 }
 
@@ -297,7 +299,7 @@ private fun DiffBlockView(row: ThreadRow.DiffBlock, modifier: Modifier) {
         }
         if (row.moreLines > 0) {
             BasicText(
-                stringResource(R.string.thread_diff_more, "${row.moreLines} lines"),
+                stringResource(R.string.thread_diff_more, pluralStringResource(R.plurals.thread_lines, row.moreLines, row.moreLines)),
                 style = DiffStyle.copy(color = AetherColors.textMuted),
                 modifier = Modifier.padding(horizontal = 12.dp),
             )

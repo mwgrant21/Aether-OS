@@ -4,6 +4,7 @@ import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.TerminalHost.Tab
 import com.matt.aethermobile.ui.components.DotStyle
+import com.matt.aethermobile.ui.thread.ThreadViewMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -90,5 +91,36 @@ class ShellModelTest {
         assertFalse(open.onBack().open)
         assertFalse(open.onScrim().open)
         assertFalse(closed.onBack().open)
+    }
+
+    private val withThread = setOf("thread")
+
+    @Test fun codexAlwaysTermWithNoSwitch() {
+        assertFalse(showSwitch("codex"))
+        assertTrue(showSwitch("claude") && showSwitch("terminal2"))
+        assertEquals(ThreadViewMode.TERM, viewModeFor("codex", withThread, true, ThreadViewMode.THREAD))
+        assertFalse(threadWanted("codex", withThread, null))
+    }
+
+    @Test fun missingThreadCapMeansTerm() {
+        assertEquals(ThreadViewMode.TERM, viewModeFor("claude", emptySet(), true, null))
+        assertFalse(threadWanted("claude", emptySet(), null))
+    }
+
+    @Test fun unavailableThreadMeansTermButStaysWanted() {
+        assertEquals(ThreadViewMode.TERM, viewModeFor("claude", withThread, false, null))
+        assertTrue(threadWanted("claude", withThread, null))
+    }
+
+    @Test fun choiceIsPerSlotAndDefaultsToThread() {
+        assertEquals(ThreadViewMode.THREAD, viewModeFor("claude", withThread, true, null))
+        assertEquals(ThreadViewMode.TERM, viewModeFor("claude", withThread, true, ThreadViewMode.TERM))
+        assertEquals(ThreadViewMode.THREAD, viewModeFor("terminal2", withThread, true, null))
+        assertFalse(threadWanted("claude", withThread, ThreadViewMode.TERM))
+        assertTrue(threadWanted("terminal2", withThread, null))
+    }
+
+    @Test fun threadAssumedReadableUntilFirstSnapshot() {
+        assertTrue(threadAvail(com.matt.aethermobile.thread.ThreadState()))
     }
 }

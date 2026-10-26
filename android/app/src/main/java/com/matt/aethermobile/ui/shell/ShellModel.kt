@@ -1,10 +1,17 @@
 package com.matt.aethermobile.ui.shell
 
 import com.matt.aethermobile.FlowState
+import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
+import com.matt.aethermobile.thread.DetailState
+import com.matt.aethermobile.thread.ThreadState
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.ui.components.DotStyle
 import com.matt.aethermobile.ui.components.dotStyleFor
+import com.matt.aethermobile.ui.thread.ThreadDetail
+import com.matt.aethermobile.ui.thread.ThreadRow
+import com.matt.aethermobile.ui.thread.ThreadUiModel
+import com.matt.aethermobile.ui.thread.ThreadViewMode
 
 /** What the header subline says. [Days] is rendered with the days_left / days_left_warn resources. */
 sealed interface StatusLine {
@@ -67,3 +74,33 @@ data class MenuState(val open: Boolean = false) {
     fun onBack() = copy(open = false)
     fun onScrim() = copy(open = false)
 }
+
+/** Codex has no transcript: it never gets the THREAD/TERM switch. */
+fun showSwitch(slot: String): Boolean = slot in ControlProtocol.THREAD_SLOTS
+
+/** True when this slot's thread should be attached: a threadable slot, `thread` in [caps], and the user has not chosen TERM. */
+fun threadWanted(slot: String, caps: Set<String>, choice: ThreadViewMode?): Boolean =
+    showSwitch(slot) && ControlProtocol.CAP_THREAD in caps && choice != ThreadViewMode.TERM
+
+/**
+ * Which view the slot shows. THREAD only for a threadable slot whose titan advertises `thread`, whose
+ * session is readable ([threadAvail]) and where the user has not chosen TERM ([choice] null = default THREAD).
+ */
+fun viewModeFor(slot: String, caps: Set<String>, threadAvail: Boolean, choice: ThreadViewMode?): ThreadViewMode =
+    if (threadWanted(slot, caps, choice) && threadAvail) ThreadViewMode.THREAD else ThreadViewMode.TERM
+
+/** Display rows for the thread screen: the slot's entries with its expansion and fetched details. */
+fun threadRows(st: ThreadState): List<ThreadRow> = ThreadUiModel.rowsFor(
+    st.entries,
+    st.expanded,
+    st.details.mapValues { (_, d) ->
+        when (d) {
+            DetailState.Loading -> ThreadDetail.Loading
+            DetailState.Unavailable -> ThreadDetail.Unavailable
+            is DetailState.Ready -> ThreadDetail.Ready(d.input, d.inMore, d.text, d.more)
+        }
+    },
+)
+
+/** Before the first snapshot the thread is assumed readable, so attaching does not flash the terminal. */
+fun threadAvail(st: ThreadState): Boolean = st.meta == null || st.avail
