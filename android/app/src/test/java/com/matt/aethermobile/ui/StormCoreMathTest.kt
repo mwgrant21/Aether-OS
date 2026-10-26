@@ -3,6 +3,7 @@ package com.matt.aethermobile.ui
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.pow
+import kotlin.math.sqrt
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -111,5 +112,29 @@ class StormCoreMathTest {
         assertEquals(16, p.size)
         assertEquals(setOf(0, 1, 2), p.map { it.hue }.toSet())
         assertEquals(p.map { it.r }, StormCoreMath.seedPuffs(Random(3)).map { it.r })
+    }
+
+    @Test fun advancePhaseAccumulates() {
+        val p = StormCoreMath.advancePhase(StormCoreMath.advancePhase(0.0, 600.0, 2.4f), 600.0, 2.4f)
+        assertEquals(0.5, p, 1e-6)
+    }
+
+    @Test fun advancePhaseWrapsIntoUnitRange() {
+        assertEquals(0.15, StormCoreMath.advancePhase(0.9, 600.0, 2.4f), 1e-6)
+        var p = 0.0
+        repeat(500) {
+            p = StormCoreMath.advancePhase(p, 37.0, 1.1f)
+            assertTrue(p >= 0.0 && p < 1.0)
+        }
+    }
+
+    @Test fun periodChangeDoesNotJumpPhase() {
+        val p = StormCoreMath.advancePhase(0.0, 1000.0, 3.6f)
+        assertEquals(p, StormCoreMath.advancePhase(p, 0.0, 1.15f), 0.0)
+        assertEquals(p + 100.0 / 1150.0, StormCoreMath.advancePhase(p, 100.0, 1.15f), 1e-6)
+    }
+
+    @Test fun glowRadiusIsFarthestCorner() {
+        assertEquals(StormGeo.C * sqrt(2f), StormGeo.GLOW_R, 0.05f)
     }
 }

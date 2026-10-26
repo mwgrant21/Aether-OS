@@ -77,9 +77,9 @@ import javax.crypto.Cipher
  *
  * Token handling: after every transition, any token field is cleared unless [AppFlow.holdsToken]
  * says the new state may hold one. The pairing code is a local that never reaches a field or the
- * UI, and the typed field (compose state in AuthScreens) is cleared on submit. The token String lives in at most two fields:
- * [saveToken] (only between pair success and the end of the save attempt, nulled on every exit
- * path) and [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or
+ * UI, and the typed field (compose state in AuthScreens) is cleared on submit. The token String lives in at
+ * most two fields: [saveToken] (only between pair success and the end of the save attempt, nulled on every
+ * exit path) and [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or
  * logged. All state changes run on the main thread; network callbacks marshal via runOnUiThread.
  */
 class MainActivity : AppCompatActivity() {
@@ -587,7 +587,7 @@ class MainActivity : AppCompatActivity() {
         val connected = snap.flow as? FlowState.Connected
         AeScreenBackground {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
-                // Always composed (D6): the holder is attached once and never torn down by a state change.
+                // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
                     state = ShellUiState(connected != null, snap.tabs, snap.selected, connected),
                     actions = ShellActions(

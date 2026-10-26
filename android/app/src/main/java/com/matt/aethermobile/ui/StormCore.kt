@@ -80,7 +80,8 @@ fun StormCore(
         }
     }
 
-    // The Box is the tap target (at least hitDp); the Canvas stays sizeDp, centred. Default hitDp = sizeDp is the old layout.
+    // The Box is the tap target (at least hitDp); the Canvas stays sizeDp, centred.
+    // Default hitDp = sizeDp is the old layout.
     Box(
         modifier.size(maxOf(hitDp, sizeDp)).pointerInput(Unit) {
             detectTapGestures {
@@ -107,7 +108,8 @@ private class StormState {
     var reduced = false
     var elapsedMs = 0.0
     var motionMs = 0.0
-    var pulseMs = 0.0
+    var breathPhase = 0.0
+    var swirlPhase = 0.0
     var strikesLeft = 0
     var nextStrikeAt = 0.0
     var tick by mutableLongStateOf(0L)
@@ -124,9 +126,11 @@ private class StormState {
 
     fun advance(dtMs: Float, mode: Int, sizeDp: Float) {
         elapsedMs += dtMs
-        pulseMs += if (reduced) dtMs * 0.5 else dtMs.toDouble()
+        val pulseSec = StormCoreMath.pulseSecFor(mode)
+        breathPhase = StormCoreMath.advancePhase(breathPhase, if (reduced) dtMs * 0.5 else dtMs.toDouble(), pulseSec)
         if (!reduced) {
             motionMs += dtMs
+            swirlPhase = StormCoreMath.advancePhase(swirlPhase, dtMs.toDouble(), pulseSec * 4f)
             val step = StormCoreMath.stepFor(dtMs)
             val cap = StormCoreMath.maxBolts(sizeDp)
             if (bolts.size < cap && StormCoreMath.shouldSpawn(random, mode, step)) {
@@ -164,7 +168,7 @@ private val ARC_SEGS = arrayOf(
 
 private val GLOW_BRUSH = Brush.radialGradient(
     0f to rgba(95, 240, 255, 0.26f), 0.66f to Color.Transparent,
-    center = Offset(StormGeo.C, StormGeo.C), radius = StormGeo.C,
+    center = Offset(StormGeo.C, StormGeo.C), radius = StormGeo.GLOW_R,
 )
 private val SWEEP_BRUSH = Brush.sweepGradient(
     0f to Color.Transparent, 292f / 360f to Color.Transparent,
@@ -196,7 +200,6 @@ private fun DrawScope.drawStorm(st: StormState, mode: Int, sizeDp: Float) {
     withTransform({ scale(s, s, Offset.Zero) }) {
         val c = Offset(StormGeo.C, StormGeo.C)
         val t = st.motionMs
-        val pulseSec = StormCoreMath.pulseSecFor(mode)
 
         drawCircle(GLOW_BRUSH, radius = StormGeo.C, center = c)
 
@@ -232,7 +235,7 @@ private fun DrawScope.drawStorm(st: StormState, mode: Int, sizeDp: Float) {
         drawCircle(CYAN.copy(alpha = 0.6f), 2.5f, Offset(c.x - ox, c.y - oy))
 
         // Sphere with coreBreath.
-        val ph = (0.5 - 0.5 * cos(2 * PI * st.pulseMs / (pulseSec * 1000.0))).toFloat()
+        val ph = (0.5 - 0.5 * cos(2 * PI * st.breathPhase)).toFloat()
         val scale = 0.955f + (1.05f - 0.955f) * ph
         val bright = 0.9f + (1.24f - 0.9f) * ph
         withTransform({ scale(scale, scale, c) }) {
@@ -245,7 +248,7 @@ private fun DrawScope.drawStorm(st: StormState, mode: Int, sizeDp: Float) {
             )
             drawCircle(SPHERE_BRUSH, radius = StormGeo.R, center = c)
             clipPath(st.spherePath) {
-                val swirlDeg = (t / (pulseSec * 4000.0) * 360.0).toFloat() - 90f
+                val swirlDeg = (st.swirlPhase * 360.0).toFloat() - 90f
                 rotate(swirlDeg, c) {
                     drawCircle(SWIRL_BRUSH, radius = StormGeo.R * 1.3f, center = c, alpha = 0.8f, blendMode = BlendMode.Screen)
                 }

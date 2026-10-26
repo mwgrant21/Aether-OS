@@ -2,6 +2,7 @@ package com.matt.aethermobile.ui
 
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -18,6 +19,9 @@ object StormGeo {
     const val C = 134f
     const val R = 71f
     const val RING = 118f
+
+    /** CSS farthest-corner radius of the 268 box (134 * sqrt 2); the JS glow gradient is sized by it. */
+    const val GLOW_R = 189.5f
 }
 
 data class Pt(val x: Float, val y: Float)
@@ -56,6 +60,12 @@ object StormCoreMath {
     fun rateFor(m: Int): Float = RATES[clampMode(m)]
     fun powerFor(m: Int): Float = POWERS[clampMode(m)]
     fun pulseSecFor(m: Int): Float = PULSE_SEC[clampMode(m)]
+
+    /** Accumulates a 0..1 cycle phase so a period change continues from the current phase. */
+    fun advancePhase(phase: Double, dtMs: Double, periodSec: Float): Double {
+        val p = phase + dtMs / (periodSec * 1000.0)
+        return p - floor(p)
+    }
 
     /** Header-size cores skip nebula puffs and cap bolts (cost). */
     fun drawsPuffs(sizeDp: Float): Boolean = sizeDp > 48f

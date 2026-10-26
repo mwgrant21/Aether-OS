@@ -75,7 +75,7 @@ import com.matt.aethermobile.ui.theme.AetherDimens
 import com.matt.aethermobile.ui.theme.AetherType
 
 data class ShellUiState(
-    /** False hides all chrome and collapses the terminal area to 0x0; the holder stays composed (D6). */
+    /** False hides all chrome and collapses the terminal area to 0x0; the holder stays composed. */
     val connected: Boolean,
     val tabs: List<TerminalHost.Tab>,
     val selected: String,
@@ -103,14 +103,15 @@ private val MenuShape = RoundedCornerShape(dims.rPanel)
 fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: ViewGroup, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(MenuState()) }
     val menuOpen = menu.open && state.connected
-    // ShellScreen stays composed while Locked (D6): a menu left open must not reappear on reconnect.
+    // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
 
     Box(modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
+        Column(Modifier.fillMaxSize()) {
+            // The header sits outside the blur and the scrim so the burger stays bright and tappable.
             if (state.connected) {
                 Header(
                     title = titleFor(state.tabs, state.selected),
@@ -121,20 +122,22 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     onBurger = { menu = menu.onBurger() },
                 )
             }
-            // Always composed (D6): a conditional host could leave the pre-warmed WebView unattached.
-            Box(if (state.connected) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
-                AndroidView(
-                    factory = { terminalHolder.also { (it.parent as? ViewGroup)?.removeView(it) } },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { it.visibility = if (state.connected) View.VISIBLE else View.GONE },
-                )
+            Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
+                // Always composed: a conditional host could leave the pre-warmed WebView unattached.
+                Box(if (state.connected) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
+                    AndroidView(
+                        factory = { terminalHolder.also { (it.parent as? ViewGroup)?.removeView(it) } },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { it.visibility = if (state.connected) View.VISIBLE else View.GONE },
+                    )
+                }
+                if (state.connected) ZoomRow(actions)
             }
-            if (state.connected) ZoomRow(actions)
         }
         if (state.connected) {
             if (menuOpen) {
                 Box(
-                    Modifier.fillMaxSize().background(Scrim).clickable(
+                    Modifier.fillMaxSize().padding(top = dims.headerH).background(Scrim).clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) { menu = menu.onScrim() },
