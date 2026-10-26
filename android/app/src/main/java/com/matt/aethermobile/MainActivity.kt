@@ -5,26 +5,32 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.view.View
 import android.view.WindowManager
 import android.content.pm.ApplicationInfo
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.TextView
+import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
-import com.google.android.material.button.MaterialButton
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.matt.aethermobile.auth.BiometricCallback
 import com.matt.aethermobile.auth.BiometricFailure
@@ -42,6 +48,14 @@ import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.FrameRouter
+import com.matt.aethermobile.ui.components.AeScreenBackground
+import com.matt.aethermobile.ui.auth.AuthActions
+import com.matt.aethermobile.ui.auth.AuthScreen
+import com.matt.aethermobile.ui.auth.authScreenFor
+import com.matt.aethermobile.ui.shell.ShellActions
+import com.matt.aethermobile.ui.shell.ShellScreen
+import com.matt.aethermobile.ui.shell.ShellUiState
+import com.matt.aethermobile.ui.theme.AetherTheme
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.term.TerminalScreen
 import okhttp3.OkHttpClient
@@ -63,7 +77,7 @@ import javax.crypto.Cipher
  *
  * Token handling: after every transition, any token field is cleared unless [AppFlow.holdsToken]
  * says the new state may hold one. The pairing code is a local that never reaches a field or the
- * UI, and the typed field is cleared on submit. The token String lives in at most two fields:
+ * UI, and the typed field (compose state in AuthScreens) is cleared on submit. The token String lives in at most two fields:
  * [saveToken] (only between pair success and the end of the save attempt, nulled on every exit
  * path) and [sessionToken] (the relock window, nulled by Effect.DropToken). Neither is shown or
  * logged. All state changes run on the main thread; network callbacks marshal via runOnUiThread.
@@ -97,19 +111,8 @@ class MainActivity : AppCompatActivity() {
     private var prompt: BiometricPrompt? = null
     private var pending: BiometricCallback? = null
 
-    private lateinit var title: TextView
-    private lateinit var message: TextView
-    private lateinit var codeLayout: TextInputLayout
-    private lateinit var codeInput: TextInputEditText
-    private lateinit var pairButton: MaterialButton
-    private lateinit var scanButton: MaterialButton
-    private lateinit var unlockButton: MaterialButton
-    private lateinit var retryButton: MaterialButton
-    private lateinit var lockButton: MaterialButton
-    private lateinit var formScroll: View
-    private lateinit var terminalContainer: View
-    private lateinit var statusLine: TextView
-    private lateinit var tabButtons: List<MaterialButton>
+    // Created once here and handed to ShellScreen, which only re-parents it; never recreated by a factory.
+    private lateinit var webHolder: FrameLayout
     private lateinit var screen: TerminalScreen
 
     // Terminal state. The host is rebuilt per connection (fresh TerminalFeed); touched on the main thread.
@@ -122,36 +125,16 @@ class MainActivity : AppCompatActivity() {
     private var terminalLive = false
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
 
+    /** Everything the Compose tree reads; replaced wholesale by [renderTabs] (main thread only). */
+    private class UiSnapshot(val flow: FlowState, val tabs: List<TerminalHost.Tab>, val selected: String)
+
+    private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // No screenshots, blank recents thumbnail (design spec 1.4). Must precede content.
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        setContentView(R.layout.activity_main)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
-        title = findViewById(R.id.title)
-        message = findViewById(R.id.message)
-        codeLayout = findViewById(R.id.codeLayout)
-        codeInput = findViewById(R.id.codeInput)
-        pairButton = findViewById(R.id.pairButton)
-        scanButton = findViewById(R.id.scanButton)
-        unlockButton = findViewById(R.id.unlockButton)
-        retryButton = findViewById(R.id.retryButton)
-        lockButton = findViewById(R.id.lockButton)
-        formScroll = findViewById(R.id.formScroll)
-        terminalContainer = findViewById(R.id.terminalContainer)
-        statusLine = findViewById(R.id.statusLine)
-        tabButtons = listOf(R.id.tab0, R.id.tab1, R.id.tab2).map { findViewById<MaterialButton>(it) }
-        tabButtons.forEachIndexed { i, b ->
-            b.setOnClickListener { selectSlot(ControlProtocol.SLOTS[i].s) }
-        }
-        findViewById<View>(R.id.zoomOutButton).setOnClickListener { stepZoom(-2) }
-        findViewById<View>(R.id.zoomInButton).setOnClickListener { stepZoom(2) }
-        findViewById<View>(R.id.fitButton).setOnClickListener { setZoom(0) }
         screen = TerminalScreen(
             this,
             debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
@@ -159,16 +142,12 @@ class MainActivity : AppCompatActivity() {
             onRenderGone = { if (!isDestroyed) onRenderGone() },
             onResync = { termHost?.resync() },
         )
-        findViewById<FrameLayout>(R.id.webHolder).addView(
+        webHolder = FrameLayout(this)
+        webHolder.addView(
             screen.webView,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
-
-        pairButton.setOnClickListener { onPairClicked() }
-        scanButton.setOnClickListener { onScanClicked() }
-        unlockButton.setOnClickListener { dispatch(FlowEvent.UnlockRequested) }
-        retryButton.setOnClickListener { dispatch(FlowEvent.Retry(vaultHasToken())) }
-        lockButton.setOnClickListener { dispatch(FlowEvent.LockNow) }
+        setContent { AetherTheme { Root() } }
 
         prompt = createPrompt()
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
@@ -264,10 +243,9 @@ class MainActivity : AppCompatActivity() {
 
     // ---- pairing -------------------------------------------------------------------------
 
-    private fun onPairClicked() {
+    private fun onPair(raw: String) {
         if (flow !is FlowState.NeedsPair) return
-        val code = Pairing.parseManualCode(codeInput.text?.toString().orEmpty())
-        codeInput.setText("") // cleared on every submit, valid or not
+        val code = Pairing.parseManualCode(raw)
         if (code == null) dispatch(FlowEvent.InputRejected(Notice.BadCode)) else submitPair(code)
     }
 
@@ -591,104 +569,48 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        val density = resources.displayMetrics.density
-        tabs.forEachIndexed { i, t ->
-            val b = tabButtons[i]
-            val running = t.state == SlotState.RUNNING
-            b.text = (if (running) "● " else "○ ") + t.label
-            b.alpha = if (running) 1f else 0.5f
-            b.strokeWidth = ((if (t.s == selected) 3 else 1) * density).toInt()
-        }
-        val cur = tabs.firstOrNull { it.s == selected }
-        val s = flow
-        statusLine.setTextColor(title.currentTextColor)
-        statusLine.text = when {
-            cur?.state == SlotState.NOT_STARTED -> getString(R.string.status_not_started)
-            cur?.state == SlotState.EXITED -> getString(R.string.status_exited)
-            cur?.awaitingOutput == true -> getString(R.string.status_waiting_output)
-            s is FlowState.Connected -> daysText(s)
-            else -> ""
-        }
-        if (s is FlowState.Connected && s.warn && cur?.state == SlotState.RUNNING) {
-            statusLine.setTextColor(ContextCompat.getColor(this, R.color.aether_warn))
-        }
+        ui = UiSnapshot(flow, tabs, selected)
     }
 
     // ---- rendering -----------------------------------------------------------------------
 
     private fun render() {
-        if (!::title.isInitialized) return
-        val s = flow
-        val pair = s is FlowState.NeedsPair
-        codeLayout.visibility = vis(pair)
-        pairButton.visibility = vis(pair)
-        scanButton.visibility = vis(pair)
-        unlockButton.visibility = vis(s is FlowState.Locked)
-        retryButton.visibility = vis(s is FlowState.Error)
-        lockButton.visibility = vis(s is FlowState.Connected)
-        formScroll.visibility = vis(s !is FlowState.Connected)
-        terminalContainer.visibility = vis(s is FlowState.Connected)
-        if (s !is FlowState.Connected) endTerminal() else renderTabs()
-        message.setTextColor(title.currentTextColor)
+        if (!::screen.isInitialized) return
+        if (flow !is FlowState.Connected) endTerminal()
+        renderTabs()
+    }
 
-        val titleRes: Int
-        val body: String?
-        when (s) {
-            FlowState.NotConfigured -> { titleRes = R.string.title_not_configured; body = null }
-            is FlowState.NeedsPair -> { titleRes = R.string.title_pair; body = s.notice?.let(::noticeText) }
-            FlowState.Pairing -> { titleRes = R.string.title_pairing; body = null }
-            FlowState.SavePrompt, FlowState.SaveDeferred -> { titleRes = R.string.title_save; body = getString(R.string.body_save) }
-            is FlowState.Locked -> {
-                titleRes = R.string.title_locked
-                body = s.notice?.let(::noticeText) ?: getString(R.string.body_locked)
+    @Composable
+    private fun Root() {
+        val snap = ui
+        val authModel = authScreenFor(snap.flow)
+        val connected = snap.flow as? FlowState.Connected
+        AeScreenBackground {
+            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
+                // Always composed (D6): the holder is attached once and never torn down by a state change.
+                ShellScreen(
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected),
+                    actions = ShellActions(
+                        onSelectSlot = ::selectSlot,
+                        onLockNow = { dispatch(FlowEvent.LockNow) },
+                        onZoomOut = { stepZoom(-2) },
+                        onZoomIn = { stepZoom(2) },
+                        onFit = { setZoom(0) },
+                    ),
+                    terminalHolder = webHolder,
+                )
+                if (authModel != null) {
+                    AuthScreen(
+                        authModel,
+                        AuthActions(
+                            onPair = ::onPair,
+                            onScan = ::onScanClicked,
+                            onUnlock = { dispatch(FlowEvent.UnlockRequested) },
+                            onRetry = { dispatch(FlowEvent.Retry(vaultHasToken())) },
+                        ),
+                    )
+                }
             }
-            FlowState.Connecting -> { titleRes = R.string.title_connecting; body = null }
-            is FlowState.Connected -> { titleRes = R.string.title_connected; body = daysText(s) }
-            is FlowState.Error -> { titleRes = R.string.title_error; body = getString(errorText(s.kind)) }
         }
-        title.setText(titleRes)
-        message.text = body.orEmpty()
-        message.visibility = vis(body != null)
-        if (s is FlowState.Connected && s.warn) message.setTextColor(ContextCompat.getColor(this, R.color.aether_warn))
-    }
-
-    private fun vis(on: Boolean) = if (on) View.VISIBLE else View.GONE
-
-    private fun daysText(s: FlowState.Connected): String {
-        val days = resources.getQuantityString(R.plurals.days_left, s.daysLeft, s.daysLeft)
-        return if (s.warn) getString(R.string.days_left_warn, days) else days
-    }
-
-    private fun noticeText(n: Notice): String = getString(
-        when (n) {
-            Notice.BadCode -> R.string.notice_bad_code
-            Notice.Declined -> R.string.notice_declined
-            Notice.Burned -> R.string.notice_burned
-            Notice.PairBusy -> R.string.notice_pair_busy
-            Notice.Unreachable -> R.string.notice_unreachable
-            Notice.ServerError -> R.string.notice_server_error
-            Notice.ScanFailed -> R.string.notice_scan_failed
-            Notice.WrongQr -> R.string.notice_wrong_qr
-            Notice.SaveCancelled -> R.string.notice_save_cancelled
-            Notice.SaveFailed -> R.string.notice_save_failed
-            Notice.Revoked -> R.string.notice_revoked
-            Notice.KeyInvalidated -> R.string.notice_key_invalidated
-            Notice.TryAgain -> R.string.notice_try_again
-            Notice.Cancelled -> R.string.notice_cancelled
-            Notice.Lockout -> R.string.notice_lockout
-            Notice.BiometricUnavailable -> R.string.notice_biometric_unavailable
-        },
-    )
-
-    private fun errorText(k: ErrorKind): Int = when (k) {
-        ErrorKind.Unreachable -> R.string.error_unreachable
-        ErrorKind.ConnectionRefused -> R.string.error_refused
-        ErrorKind.NotListening -> R.string.error_not_listening
-        ErrorKind.Busy -> R.string.error_busy
-        ErrorKind.ProofMismatch -> R.string.error_proof
-        ErrorKind.Protocol -> R.string.error_protocol
-        ErrorKind.Superseded -> R.string.error_superseded
-        ErrorKind.Disabled -> R.string.error_disabled
-        ErrorKind.Closed -> R.string.error_closed
     }
 }

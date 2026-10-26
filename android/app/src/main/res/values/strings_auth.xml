@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="auth_on_titan">On titan</string>
-    <string name="auth_step_1">Open Aether and go to phone control.</string>
-    <string name="auth_step_2">Create a pairing code.</string>
-    <string name="auth_step_3">Type it below or scan the QR code.</string>
+    <string name="auth_step_1">Settings &gt; Phone control &gt; ENABLE</string>
+    <string name="auth_step_2">Tap PAIR AN APP</string>
+    <string name="auth_step_3">Type the code or scan the QR</string>
 </resources>

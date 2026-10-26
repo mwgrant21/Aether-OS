@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +103,8 @@ private val MenuShape = RoundedCornerShape(dims.rPanel)
 fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: ViewGroup, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(MenuState()) }
     val menuOpen = menu.open && state.connected
+    // ShellScreen stays composed while Locked (D6): a menu left open must not reappear on reconnect.
+    LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
@@ -162,11 +165,8 @@ private fun Header(title: String, status: StatusLine, amber: Boolean, live: Bool
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // 40dp core centred in a 44dp box. StormCore consumes taps inside its own 40dp, so a parent
-        // clickable would never fire there; the discharge-only tap is on StormCore itself.
-        Box(Modifier.size(dims.touchMin), contentAlignment = Alignment.Center) {
-            StormCore(dims.headerCore, if (live) StormMode.Nominal else StormMode.Idle, onDischarge = {})
-        }
+        // 40dp core drawn inside a 44dp tap target (StormCore hitDp); the tap is discharge only.
+        StormCore(dims.headerCore, if (live) StormMode.Nominal else StormMode.Idle, onDischarge = {}, hitDp = dims.touchMin)
         Column(Modifier.weight(1f)) {
             BasicText(title, style = type.title.copy(color = AetherColors.textBright), maxLines = 1)
             val line = statusText(status)

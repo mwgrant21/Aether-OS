@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -12,6 +13,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -55,6 +57,7 @@ fun StormCore(
     mode: StormMode,
     modifier: Modifier = Modifier,
     onDischarge: (() -> Unit)? = null,
+    hitDp: Dp = sizeDp,
 ) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
@@ -77,16 +80,20 @@ fun StormCore(
         }
     }
 
-    Canvas(
-        modifier.size(sizeDp).pointerInput(Unit) {
+    // The Box is the tap target (at least hitDp); the Canvas stays sizeDp, centred. Default hitDp = sizeDp is the old layout.
+    Box(
+        modifier.size(maxOf(hitDp, sizeDp)).pointerInput(Unit) {
             detectTapGestures {
                 st.strike()
                 dischargeNow?.invoke()
             }
         },
+        contentAlignment = Alignment.Center,
     ) {
-        st.tick // read so each frame invalidates only this draw
-        drawStorm(st, modeNow, sizeNow)
+        Canvas(Modifier.size(sizeDp)) {
+            st.tick // read so each frame invalidates only this draw
+            drawStorm(st, modeNow, sizeNow)
+        }
     }
 }
 
