@@ -64,6 +64,7 @@ import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
+import com.matt.aethermobile.ui.shell.Zoom
 import com.matt.aethermobile.ui.theme.AetherTheme
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.term.TerminalScreen
@@ -136,7 +137,7 @@ class MainActivity : AppCompatActivity() {
         set(v) { field = v; router.host = v }
     private val router = FrameRouter()
     private var selected = "claude"
-    private var zoomPx = 0 // 0 = fit width
+    private var zoomPx = Zoom.DEFAULT // 0 = fit width (the Fit button)
     private var snapLogged = false
     private var terminalLive = false
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
@@ -621,8 +622,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stepZoom(delta: Int) {
-        val base = if (zoomPx == 0) 14 else zoomPx
-        setZoom((base + delta).coerceIn(8, 24))
+        setZoom(Zoom.stepped(zoomPx, delta))
     }
 
     private fun renderTabs() {

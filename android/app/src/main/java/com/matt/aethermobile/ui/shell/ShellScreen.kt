@@ -130,6 +130,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 )
             }
             Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
+                if (state.connected) ZoomRow(actions)
                 // Always composed: a conditional host could leave the pre-warmed WebView unattached.
                 Box(if (state.connected) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
                     AndroidView(
@@ -140,7 +141,6 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 }
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (state.connected) KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
-                if (state.connected) ZoomRow(actions)
             }
         }
         if (state.connected) {
@@ -334,7 +334,7 @@ private fun Footer(flow: FlowState.Connected?, onLock: () -> Unit) {
 @Composable
 private fun ZoomRow(actions: ShellActions) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AeSecondaryButton(stringResource(R.string.action_zoom_out), actions.onZoomOut, Modifier.weight(1f))
