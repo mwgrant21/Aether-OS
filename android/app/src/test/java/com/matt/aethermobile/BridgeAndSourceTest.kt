@@ -105,6 +105,7 @@ class BridgeAndSourceTest {
         val h = TerminalWebView.ASSET_HOST
         assertEquals("request blocked: https://$h/favicon.ico", TerminalWebView.blockedLine("https", h, "/favicon.ico"))
         assertEquals("request blocked: https://$h", TerminalWebView.blockedLine("https", h, null))
+        assertEquals("request blocked: https://$h/a/forged", TerminalWebView.blockedLine("https", h, "/a\n/forged\r"))
     }
 
     @Test fun pageUrlIsAllowListed() {
