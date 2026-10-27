@@ -4,7 +4,7 @@ import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
 import { useControlStatus } from '../control/useControlStatus';
-import type { TerminalSlotId } from '../../shared/remote/types';
+import { TERMINAL_SLOTS, type TerminalSlotId } from '../../shared/remote/types';
 import { VIEWS } from '../../viewRegistry';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { computeSidebarReactorRate, computeSidebarReactorStatus, isSessionLive } from '../dashboard/dashboardMath';
@@ -13,7 +13,7 @@ const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
 const IDLE_PULSE_IDS = new Set(['Terminal', 'Codex']);
 // Nav entry -> remote terminal slot. Display only: the phone never changes the PC's active tab.
-const PHONE_SLOT_BY_LABEL: Record<string, TerminalSlotId> = { Terminal: 'claude', 'Terminal 2': 'terminal2', Codex: 'codex' };
+const PHONE_SLOT_BY_LABEL: Record<string, TerminalSlotId> = Object.fromEntries(TERMINAL_SLOTS.map((t) => [t.label, t.s]));
 
 export function Sidebar() {
   const colors = useColors();
@@ -50,7 +50,7 @@ export function Sidebar() {
                 </span>
                 <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
                 {phoneAttached && (
-                  <span data-testid={`phone-badge-${PHONE_SLOT_BY_LABEL[label]}`} aria-label="Phone attached" title="Phone attached" style={phoneBadgeStyle(colors)}>PHONE</span>
+                  <span data-testid={`phone-badge-${slot}`} aria-label="Phone attached" title="Phone attached" style={phoneBadgeStyle(colors)}>PHONE</span>
                 )}
               </Button>
             );

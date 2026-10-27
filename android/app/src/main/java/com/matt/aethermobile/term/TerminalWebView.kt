@@ -47,9 +47,9 @@ object TerminalWebView {
     /** True only for https://appassets.androidplatform.net/terminal/<no traversal>. */
     fun isServable(uri: Uri): Boolean = isServable(uri.scheme, uri.host, uri.port, uri.path)
 
-    /** Log line for a blocked request: scheme://host plus the path only, never query or fragment. */
+    /** Log line for a blocked request: scheme://host plus the path only, never query or fragment. Control chars are dropped so a decoded %0A cannot split a log line. */
     fun blockedLine(scheme: String?, host: String?, path: String?): String =
-        "request blocked: $scheme://$host" + (path ?: "")
+        "request blocked: $scheme://$host" + (path ?: "").filterNot { it.isISOControl() }
 
     /** Pure form of [isServable], unit-tested on the JVM (android.net.Uri is a stub there). */
     fun isServable(scheme: String?, host: String?, port: Int, path: String?): Boolean {
@@ -104,7 +104,7 @@ object TerminalWebView {
                 loader.shouldInterceptRequest(request.url)
             } else null
             if (served == null) {
-                Log.w(TAG, blockedLine(request.url.scheme, request.url.host, request.url.path))
+                Log.w(TAG, blockedLine(request.url.scheme, request.url.host, request.url.encodedPath))
                 return WebResourceResponse(
                     "text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)),
                 )
