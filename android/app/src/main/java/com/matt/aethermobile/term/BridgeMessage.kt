@@ -114,4 +114,8 @@ object BridgeOut {
 
     /** px 0 = fit width, else 8..24 (the host validates). */
     fun zoom(px: Int): String = JSONObject().put("t", "zoom").put("px", px).toString()
+
+    /** Native compose text for the page to turn into `input` messages (it owns bracketed-paste state). */
+    fun compose(s: String, d: String, enter: Boolean): String =
+        JSONObject().put("t", "compose").put("s", s).put("d", d).put("enter", enter).toString()
 }

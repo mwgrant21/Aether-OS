@@ -133,6 +133,33 @@ class TerminalHost(
         safe { inputSender.send(slot, out) }
     }
 
+    enum class ComposeResult { SENT, NOT_ACCEPTED, TOO_LARGE }
+
+    /**
+     * Native compose text for the attached slot, handed to the page (which owns bracketed-paste state)
+     * as one `compose` message. Same gate as [sendKeys]; every refusal is counted as not sent exactly once.
+     * The Ctrl latch is neither read nor cleared.
+     */
+    @Synchronized
+    fun sendCompose(text: String, enter: Boolean): ComposeResult {
+        val slot = attached
+        val n = maxOf(1, text.length + (if (enter) 1 else 0))
+        if (slot == null || !canType(slot)) {
+            safe { inputSender.reject(n) }
+            return ComposeResult.NOT_ACCEPTED
+        }
+        if (text.toByteArray(Charsets.UTF_8).size + COMPOSE_OVERHEAD > InputSender.MAX_INPUT_BYTES) {
+            safe { inputSender.refuse(text.length, InputSender.Refusal.TOO_LARGE) }
+            return ComposeResult.TOO_LARGE
+        }
+        if (text.isEmpty() && !enter) return ComposeResult.SENT
+        if (safe { post(BridgeOut.compose(slot, text, enter)) } == null) {
+            safe { inputSender.reject(n) }
+            return ComposeResult.NOT_ACCEPTED
+        }
+        return ComposeResult.SENT
+    }
+
     @Synchronized
     fun select(slot: String) {
         if (ControlProtocol.SLOTS.none { it.s == slot }) return
@@ -268,6 +295,11 @@ class TerminalHost(
             // Ready and Copy are handled by the Android glue, not here.
             is PageMessage.Resize, is PageMessage.Ready, is PageMessage.Copy -> Unit
         }
+    }
+
+    private companion object {
+        /** Two 6-byte bracket markers, the CR, and slack. */
+        const val COMPOSE_OVERHEAD = 16
     }
 
     private inline fun <T> safe(block: () -> T): T? = try { block() } catch (_: Exception) { null }

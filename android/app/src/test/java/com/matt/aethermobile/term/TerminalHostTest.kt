@@ -532,4 +532,93 @@ class TerminalHostTest {
         assertEquals(d, JSONObject(BridgeOut.out("claude", 1, d)).getString("d"))
     }
 
+    private fun composeHost(events: ArrayList<String>, posted: ArrayList<String>): TerminalHost {
+        val sender = InputSender(
+            { _, _, _ -> true }, { 0L },
+            onNotSent = { events.add("notSent($it)") }, onRefused = { events.add("refused($it)") },
+        )
+        return TerminalHost({ _, _ -> true }, { true }, { posted.add(it) }, TerminalFeed(), sharedSender = sender).also {
+            it.onSessions(listOf(info("claude")))
+            it.select("claude")
+            posted.clear()
+        }
+    }
+
+    @Test fun composePostsOneMessageForARunningAttachedSlot() {
+        ready(); host.select("claude"); posts.clear()
+        assertEquals(TerminalHost.ComposeResult.SENT, host.sendCompose("line1\nline2", true))
+        assertEquals(1, posts.size)
+        assertJson("""{"t":"compose","s":"claude","d":"line1\nline2","enter":true}""", posts[0])
+        assertTrue(sent.isEmpty() && notSent.isEmpty())
+    }
+
+    @Test fun composePostsCrlfUnchanged() {
+        ready(); host.select("claude"); posts.clear()
+        host.sendCompose("a\r\nb", false)
+        assertEquals("a\r\nb", JSONObject(posts[0]).getString("d"))
+    }
+
+    @Test fun composeIsNotAcceptedWhenTypingIsClosed() {
+        for (setup in listOf<() -> Unit>(
+            { ready() },
+            { ready(info("claude", SlotState.NOT_STARTED)); host.select("claude") },
+            { ready(); host.select("claude"); host.onFrame(TerminalFrame.State("claude", SlotState.EXITED)) },
+            { ready(); host.select("claude"); host.onDisconnected() },
+        )) {
+            notSent.clear(); setup(); posts.clear()
+            assertEquals(TerminalHost.ComposeResult.NOT_ACCEPTED, host.sendCompose("abc", true))
+            assertTrue(posts.isEmpty())
+            assertEquals(listOf(4), notSent)
+        }
+    }
+
+    @Test fun composeOverTheCapIsRefusedCountedThenReasonedAndNotPosted() {
+        val events = ArrayList<String>(); val posted = ArrayList<String>()
+        val h = composeHost(events, posted)
+        assertEquals(TerminalHost.ComposeResult.TOO_LARGE, h.sendCompose("x".repeat(InputSender.MAX_INPUT_BYTES - 15), false))
+        assertTrue(posted.isEmpty())
+        assertEquals(listOf("notSent(${InputSender.MAX_INPUT_BYTES - 15})", "refused(TOO_LARGE)"), events)
+    }
+
+    @Test fun composeJustUnderTheCapIsSent() {
+        val events = ArrayList<String>(); val posted = ArrayList<String>()
+        val h = composeHost(events, posted)
+        assertEquals(TerminalHost.ComposeResult.SENT, h.sendCompose("x".repeat(InputSender.MAX_INPUT_BYTES - 16), false))
+        assertEquals(1, posted.size)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test fun composeEmptyWithEnterPostsOnceAndEmptyWithoutEnterPostsNothing() {
+        ready(); host.select("claude"); posts.clear()
+        assertEquals(TerminalHost.ComposeResult.SENT, host.sendCompose("", true))
+        assertEquals(1, posts.size)
+        assertJson("""{"t":"compose","s":"claude","d":"","enter":true}""", posts[0])
+        posts.clear()
+        assertEquals(TerminalHost.ComposeResult.SENT, host.sendCompose("", false))
+        assertTrue(posts.isEmpty())
+    }
+
+    @Test fun composeLeavesTheCtrlLatchAlone() {
+        ready(); host.select("claude")
+        host.setCtrlLatch(true)
+        host.sendCompose("a", false)
+        assertTrue(host.ctrlLatched())
+    }
+
+    @Test fun composePostFailureIsCountedNotSentOnce() {
+        ready(); host.select("claude")
+        throwOnPost = true
+        assertEquals(TerminalHost.ComposeResult.NOT_ACCEPTED, host.sendCompose("abc", true))
+        assertEquals(listOf(4), notSent)
+    }
+
+    @Test fun pageCompositionBytesGoOutAsTwoInputFramesInOrder() {
+        ready(); host.select("claude")
+        host.onPage(PageMessage.Input("claude", "\u001b[200~line1\rline2\u001b[201~"))
+        host.onPage(PageMessage.Input("claude", "\r"))
+        assertEquals(
+            listOf(Triple("claude", 1L, "\u001b[200~line1\rline2\u001b[201~"), Triple("claude", 2L, "\r")),
+            sent,
+        )
+    }
 }
