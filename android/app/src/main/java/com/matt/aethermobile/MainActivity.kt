@@ -62,6 +62,7 @@ import com.matt.aethermobile.ui.auth.AuthScreen
 import com.matt.aethermobile.ui.auth.authScreenFor
 import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
+import com.matt.aethermobile.ui.shell.clearsDraft
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
 import com.matt.aethermobile.ui.shell.Zoom
@@ -651,7 +652,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow)),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },

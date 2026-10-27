@@ -1,5 +1,6 @@
 package com.matt.aethermobile.ui.shell
 
+import com.matt.aethermobile.ErrorKind
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.TerminalHost
@@ -32,5 +33,13 @@ class ComposeBarModelTest {
         assertTrue(shouldClear(ComposeResult.SENT))
         assertFalse(shouldClear(ComposeResult.NOT_ACCEPTED))
         assertFalse(shouldClear(ComposeResult.TOO_LARGE))
+    }
+
+    @Test fun draftKeptThroughDropAndWipedOnlyOnLockedOrNeedsPair() {
+        assertFalse(clearsDraft(flow))
+        assertFalse(clearsDraft(FlowState.Connecting))
+        assertFalse(clearsDraft(FlowState.Error(ErrorKind.Unreachable)))
+        assertTrue(clearsDraft(FlowState.Locked()))
+        assertTrue(clearsDraft(FlowState.NeedsPair()))
     }
 }

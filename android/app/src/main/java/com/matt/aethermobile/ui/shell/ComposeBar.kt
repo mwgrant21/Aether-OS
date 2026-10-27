@@ -13,10 +13,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -28,7 +25,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.runtime.remember
+
 import androidx.compose.ui.unit.dp
 import com.matt.aethermobile.R
 import com.matt.aethermobile.term.TerminalHost
@@ -43,10 +40,10 @@ private val FieldShape = RoundedCornerShape(10.dp)
  * Multi-line compose field plus Send, nearest the keyboard. The IME Enter key inserts a newline and never sends.
  * Send hands the text to the page via [onCompose] (the page decides bracketed paste) with Enter; the field is
  * cleared only when [shouldClear] says the page got it. The field stays editable while Send is disabled.
+ * The draft is owned by the caller (ShellScreen), so it outlives this bar being removed on a drop.
  */
 @Composable
-fun ComposeBar(sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHost.ComposeResult) {
-    var text by rememberSaveable { mutableStateOf("") }
+fun ComposeBar(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHost.ComposeResult) {
     val focus = remember { FocusRequester() }
     val sendDesc = stringResource(R.string.compose_send_desc)
     Row(
@@ -63,8 +60,8 @@ fun ComposeBar(sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHos
             contentAlignment = Alignment.CenterStart,
         ) {
             BasicTextField(
-                value = text,
-                onValueChange = { text = it },
+                value = draft,
+                onValueChange = onDraft,
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 textStyle = type.body.copy(color = AetherColors.textBright),
                 cursorBrush = SolidColor(AetherColors.cyanCore),
@@ -77,7 +74,7 @@ fun ComposeBar(sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHos
                     imeAction = ImeAction.Default,
                 ),
                 decorationBox = { inner ->
-                    if (text.isEmpty()) {
+                    if (draft.isEmpty()) {
                         BasicText(stringResource(R.string.compose_hint), style = type.body.copy(color = AetherColors.textMuted))
                     }
                     inner()
@@ -87,7 +84,7 @@ fun ComposeBar(sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHos
         AeSecondaryButton(
             stringResource(R.string.compose_send),
             {
-                if (shouldClear(onCompose(text, true))) text = ""
+                if (shouldClear(onCompose(draft, true))) onDraft("")
                 focus.requestFocus()
             },
             Modifier.width(80.dp).semantics { contentDescription = sendDesc },

@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +86,8 @@ data class ShellUiState(
     val ctrlOn: Boolean = false,
     /** TerminalHost.typingAccepted(): the host's own gate (active, attached, RUNNING). */
     val hostAccepts: Boolean = false,
+    /** [clearsDraft] of the app flow: Locked / NeedsPair wipe the compose draft. */
+    val wipeDraft: Boolean = false,
 )
 
 class ShellActions(
@@ -110,9 +113,12 @@ private val MenuShape = RoundedCornerShape(dims.rPanel)
 @Composable
 fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: ViewGroup, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(MenuState()) }
+    // Above the connected-only branch so a drop and reconnect keeps it; saved so rotation keeps it too.
+    var draft by rememberSaveable { mutableStateOf("") }
     val menuOpen = menu.open && state.connected
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
+    LaunchedEffect(state.wipeDraft) { if (state.wipeDraft) draft = "" }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
@@ -144,7 +150,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 if (state.connected) {
                     KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
                     // Last, so it sits nearest the keyboard.
-                    ComposeBar(composeEnabled(cur, state.flow, state.hostAccepts), actions.onCompose)
+                    ComposeBar(draft, { draft = it }, composeEnabled(cur, state.flow, state.hostAccepts), actions.onCompose)
                 }
             }
         }

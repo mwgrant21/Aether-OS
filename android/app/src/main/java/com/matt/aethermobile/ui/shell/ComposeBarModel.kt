@@ -12,3 +12,9 @@ fun composeEnabled(cur: TerminalHost.Tab?, flow: FlowState.Connected?, hostAccep
  * survives a drop or an oversize refusal (the host has already counted it in the not-sent line).
  */
 fun shouldClear(r: TerminalHost.ComposeResult): Boolean = r == TerminalHost.ComposeResult.SENT
+
+/**
+ * The draft survives a drop (Connecting, Error, Connected again) because it lives above the connected-only branch,
+ * but a relock or an unpaired app wipes it: Locked and NeedsPair clear it so no message text outlives the unlock.
+ */
+fun clearsDraft(flow: FlowState): Boolean = flow is FlowState.Locked || flow is FlowState.NeedsPair
