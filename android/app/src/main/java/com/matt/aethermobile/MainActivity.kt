@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -100,7 +101,7 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("aether_ui", MODE_PRIVATE)
         SlotMemory(object : SlotStore {
             override fun get(): String? = prefs.getString("last_slot", null)
-            override fun put(slot: String) { prefs.edit().putString("last_slot", slot).apply() }
+            override fun put(slot: String) { prefs.edit { putString("last_slot", slot) } }
         })
     }
     private val controller = FlowController(SystemClock::elapsedRealtime)
