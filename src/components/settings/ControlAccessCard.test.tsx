@@ -110,6 +110,23 @@ describe('ControlAccessCard', () => {
     expect(screen.getByText(/Disabling phone control clears this setting/)).toBeTruthy();
   });
 
+  it('typing checkbox is disabled while setPhoneTyping is pending, a second click is ignored, and it re-enables after', async () => {
+    const h = install({ status: mkStatus({ phoneTyping: true }) });
+    let resolve: (s: ControlStatus) => void = () => {};
+    h.control.setPhoneTyping.mockReturnValue(new Promise<ControlStatus>(r => { resolve = r; }));
+    render(<ControlAccessCard />);
+    await settle();
+    const box = screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement;
+    fireEvent.click(box);
+    await settle();
+    expect((screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('ALLOW PHONE TYPING'));
+    await settle();
+    expect(h.control.setPhoneTyping).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(mkStatus({ phoneTyping: false })); });
+    expect((screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement).disabled).toBe(false);
+  });
+
   it('typing checkbox follows status.phoneTyping and clicking calls setPhoneTyping(false) once and adopts the result', async () => {
     const { control } = install({ status: mkStatus({ phoneTyping: true }), setPhoneTyping: mkStatus({ phoneTyping: false }) });
     render(<ControlAccessCard />);

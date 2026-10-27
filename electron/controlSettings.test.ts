@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,12 @@ import {
   writePhoneTyping,
   writeReenable,
 } from './controlSettings';
+
+// Delegates to the real readFileSync unless a test queues a one-shot failure with mockImplementationOnce.
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 let dir: string;
 beforeEach(() => {
@@ -154,5 +161,34 @@ describe('controlSettings', () => {
       reenableAtLaunch: false,
       phoneTyping: true,
     });
+  });
+
+  it('a transient non-ENOENT read error during the merge read aborts the write: file untouched, readback returned, one code-only log line', () => {
+    const p = controlSettingsPath(dir);
+    const stored = JSON.stringify({ v: 1, reenableAtLaunch: true, phoneTyping: false });
+    writeFileSync(p, stored);
+    const lines: string[] = [];
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error('x'), { code: 'EBUSY' });
+    });
+    expect(writeReenable(dir, false, l => lines.push(l))).toBe(true); // readback still says reenable true
+    expect(readFileSync(p, 'utf8')).toBe(stored);
+    expect(readdirSync(dir)).toEqual([CONTROL_SETTINGS_FILE]);
+    expect(lines).toEqual(['control: settings write failed code=EBUSY']);
+    // the other writer: stored phoneTyping=false must not flip to ON
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error('x'), { code: 'EBUSY' });
+    });
+    expect(writePhoneTyping(dir, true)).toBe(false);
+    expect(readFileSync(p, 'utf8')).toBe(stored);
+  });
+
+  it('a missing file and a non-object file still write (defaults merge)', () => {
+    const p = controlSettingsPath(dir);
+    expect(writePhoneTyping(dir, false)).toBe(false);
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: false });
+    writeFileSync(p, '[]');
+    expect(writeReenable(dir, true)).toBe(true);
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true });
   });
 });
