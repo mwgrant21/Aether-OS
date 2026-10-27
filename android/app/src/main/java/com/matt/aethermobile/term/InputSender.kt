@@ -62,6 +62,12 @@ class InputSender(
         if (chars > 0) fail(SendResult(0, 0, chars))
     }
 
+    /** A whole input refused before any frame by the caller: counted as not sent, then the reason (same order as [send]). */
+    fun refuse(chars: Int, why: Refusal) {
+        fail(SendResult(0, 0, chars))
+        onRefused(why)
+    }
+
     /** Cumulative ack: every pending frame with cseq <= [c] for [s] was processed. */
     fun onAck(s: String, c: Long) {
         if (pending[s]?.removeAll { it.c <= c } == true) onAcked()

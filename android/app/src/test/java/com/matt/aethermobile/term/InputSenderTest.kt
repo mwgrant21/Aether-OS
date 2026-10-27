@@ -178,4 +178,11 @@ class InputSenderTest {
         assertEquals(listOf(2, 1), notSent) // nak'd chunk, then only the unacked c=4
         assertEquals(3, sender.unsentChars())
     }
+
+    @Test fun refuseCountsNotSentThenReportsTheReason() {
+        sender.refuse(5, InputSender.Refusal.TOO_LARGE)
+        assertEquals(listOf("notSent(5)", "refused(TOO_LARGE)"), events)
+        assertEquals(5, sender.unsentChars())
+        assertTrue(frames.isEmpty())
+    }
 }
