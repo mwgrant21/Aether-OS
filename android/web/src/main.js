@@ -6,6 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { installReplySuppression, applySnap, applySize } from './replySuppression.js';
 import { shouldSend, applyStdin } from './inputFilter.js';
+import { composeInputs } from './compose.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -136,6 +137,15 @@ bridge.onmessage = (ev) => {
         for (const slot of slots.values()) applyZoom(slot);
       }
       return;
+    case 'compose': {
+      if (!isSlot(m.s) || typeof m.d !== 'string' || typeof m.enter !== 'boolean' || !stdinOn) return;
+      const slot = slots.get(m.s);
+      if (!slot) return;
+      for (const msg of composeInputs(m.s, m.d, m.enter, slot.term.modes.bracketedPasteMode)) {
+        if (shouldSend(msg.d)) send(msg);
+      }
+      return;
+    }
     default:
   }
 };
