@@ -53,6 +53,8 @@ import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.FrameRouter
 import com.matt.aethermobile.term.InputSender
+import com.matt.aethermobile.term.SlotMemory
+import com.matt.aethermobile.term.SlotStore
 import com.matt.aethermobile.ui.components.AeScreenBackground
 import com.matt.aethermobile.ui.auth.AuthActions
 import com.matt.aethermobile.ui.auth.AuthScreen
@@ -94,6 +96,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val vault by lazy { TokenVault(this) }
+    private val slotMemory by lazy {
+        val prefs = getSharedPreferences("aether_ui", MODE_PRIVATE)
+        SlotMemory(object : SlotStore {
+            override fun get(): String? = prefs.getString("last_slot", null)
+            override fun put(slot: String) { prefs.edit().putString("last_slot", slot).apply() }
+        })
+    }
     private val controller = FlowController(SystemClock::elapsedRealtime)
     private val handler = Handler(Looper.getMainLooper())
     private val relockTimer = Runnable { if (!isDestroyed) applyEffects(controller.onRelockTimer()) }
@@ -559,7 +568,7 @@ class MainActivity : AppCompatActivity() {
         lastSessions = sessions
         terminalLive = true
         th.onSessions(sessions)
-        selected = sessions.firstOrNull { it.state == SlotState.RUNNING }?.s ?: "claude"
+        selected = slotMemory.pick(sessions)
         th.select(selected)
         th.zoom(zoomPx)
         renderTabs()
@@ -584,6 +593,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectSlot(s: String) {
         selected = s
+        slotMemory.remember(s) // the only writer: a user tap, never the automatic fallback
         notice = NotSentNotice.NONE
         termHost?.select(s)
         renderTabs()
