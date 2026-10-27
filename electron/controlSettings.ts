@@ -24,19 +24,41 @@ export function controlSettingsPath(aetherDir: string): string {
  */
 export function readControlSettings(filePath: string): ControlSettings {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return { reenableAtLaunch: false, phoneTyping: true };
-    }
-    const rec = parsed as Record<string, unknown>;
-    return { reenableAtLaunch: rec.reenableAtLaunch === true, phoneTyping: rec.phoneTyping !== false };
+    return parseControlSettings(readFileSync(filePath, 'utf8'));
   } catch {
-    return { reenableAtLaunch: false, phoneTyping: true };
+    return { ...DEFAULT_SETTINGS };
   }
 }
 
+const DEFAULT_SETTINGS: ControlSettings = { reenableAtLaunch: false, phoneTyping: true };
+
+/** Unparseable text or anything but a plain object reads as defaults. Never throws. */
+function parseControlSettings(text: string): ControlSettings {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ...DEFAULT_SETTINGS };
+    const rec = parsed as Record<string, unknown>;
+    return { reenableAtLaunch: rec.reenableAtLaunch === true, phoneTyping: rec.phoneTyping !== false };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+/** Merge read for a write: a missing file is defaults; any other read error rethrows so the write aborts untouched. */
+function readForMerge(filePath: string): ControlSettings {
+  let text: string;
+  try {
+    text = readFileSync(filePath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return { ...DEFAULT_SETTINGS };
+    throw err;
+  }
+  return parseControlSettings(text);
+}
+
 /**
- * Merges the patch over the current file (defaults on corruption) and writes both fields by atomic tmp-then-rename,
+ * Merges the patch over the current file (defaults when it is missing or corrupt; any other read error aborts the
+ * write and leaves the file untouched) and writes both fields by atomic tmp-then-rename,
  * then returns the READBACK from disk, never the requested values: a failed write shows whatever the file still
  * says. Never throws.
  */
@@ -48,7 +70,7 @@ export function writeControlSettings(
   const targetPath = controlSettingsPath(aetherDir);
   const tmpPath = uniqueSiblingPath(targetPath, 'aethertmp');
   try {
-    const next = { ...readControlSettings(targetPath), ...patch };
+    const next = { ...readForMerge(targetPath), ...patch };
     mkdirSync(aetherDir, { recursive: true });
     writeFileSync(
       tmpPath,

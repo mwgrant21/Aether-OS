@@ -41,6 +41,8 @@ export function ControlAccessCard() {
   const [now, setNow] = useState(() => Date.now());
   // True while a createPairing call is in flight: a second call could resolve first and leave the older code showing.
   const [pairingBusy, setPairingBusy] = useState(false);
+  // True while a setPhoneTyping call is in flight: a second click could resolve first and leave the older value showing.
+  const [typingBusy, setTypingBusy] = useState(false);
 
   const control = window.aetherElectron?.control;
   const adopt = (s: ControlStatus) => setLocal({ base: hookStatus, status: s });
@@ -98,11 +100,15 @@ export function ControlAccessCard() {
     }
   };
   const setTyping = async (value: boolean) => {
+    if (typingBusy) return;
     setMessage(null);
+    setTypingBusy(true);
     try {
       adopt(await control.setPhoneTyping(value));
     } catch {
       setMessage('Could not change the typing setting.');
+    } finally {
+      setTypingBusy(false);
     }
   };
   const pair = async () => {
@@ -164,6 +170,7 @@ export function ControlAccessCard() {
           <input
             type="checkbox"
             checked={status.phoneTyping}
+            disabled={typingBusy}
             onChange={e => void setTyping(e.target.checked)}
           />
           ALLOW PHONE TYPING

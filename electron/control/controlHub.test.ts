@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_ENABLE_RETRY_MS, CONTROL_REVOKE_UNSAVED_NOTICE } from './controlHub';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
-import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
+import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
 import type { ControlSocket, ControlStatus, ListenerPort, RemoteUnavailableReason, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
@@ -798,6 +798,11 @@ describe('control hub input wiring', () => {
     expect(s.sent.at(-1)).toBe(JSON.stringify({ t: 'nak', s: 'claude', c: 2, reason: 'typing-off' }));
     expect(h.writes).toEqual(['claude|a']);
     s.feed(inFrame(2, 'b')); // replay of the rejected cseq: duplicate, never a second nak
+    expect(s.sent.filter(m => m.includes('"nak"'))).toHaveLength(1);
+    const ackTimer = h.timers.find(t => t.ms === CONTROL_ACK_COALESCE_MS); // the duplicate still advances the cumulative ack
+    expect(ackTimer).toBeDefined();
+    ackTimer!.fn();
+    expect(s.sent.filter(m => m.includes('"ack"')).at(-1)).toBe(JSON.stringify({ t: 'ack', s: 'claude', c: 2 }));
     expect(s.sent.filter(m => m.includes('"nak"'))).toHaveLength(1);
     await h.hub.setPhoneTyping(true);
     s.feed(inFrame(3, 'c'));
