@@ -11,6 +11,7 @@ import {
   CONTROL_MAX_DEVICES,
   CONTROL_MAX_SOCKETS,
   CONTROL_PAIR_CONFIRM_TIMEOUT_MS,
+  TERMINAL_SLOTS,
 } from '../../src/shared/remote/types';
 import type {
   ControlIdentity,
@@ -23,6 +24,7 @@ import type {
   RemoteSessionInfo,
   RemoteUnavailableReason,
   TerminalReadPort,
+  TerminalSlotId,
   TerminalWritePort,
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
@@ -108,6 +110,13 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   const sessions = new Map<string, ControlSession>();
   let releaseTerminals: (() => void) | null = null; // non-null exactly while this hub holds a terminals.retain()
 
+  const attachedByRef = new Map<string, readonly TerminalSlotId[]>(); // a ref's entry is deleted when its gateway reports []
+  const unionSlots = (): TerminalSlotId[] => {
+    const all = new Set<TerminalSlotId>();
+    for (const slots of attachedByRef.values()) for (const s of slots) all.add(s);
+    return TERMINAL_SLOTS.map(x => x.s).filter(s => all.has(s));
+  };
+
   const router = createInputRouter({ terminals: deps.input, now, log: (m, r) => { log(`${m} ref=${r}`); }, typingEnabled: () => typing });
   const gateway = createControlGateway({
     now,
@@ -115,6 +124,12 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     clearTimeoutFn: deps.clearTimeoutFn,
     terminals: deps.terminals,
     input: router,
+    onAttached: (ref, slots) => {
+      const before = unionSlots().join();
+      if (slots.length === 0) attachedByRef.delete(ref);
+      else attachedByRef.set(ref, slots);
+      if (state === 'on' && unionSlots().join() !== before) emit();
+    },
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
@@ -130,6 +145,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       reenableAtLaunch: reenable,
       phoneTyping: typing,
       notice: unsaved ? CONTROL_REVOKE_UNSAVED_NOTICE : null,
+      phoneSlots: state === 'on' ? unionSlots() : [],
     };
   }
 

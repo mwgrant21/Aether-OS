@@ -650,3 +650,53 @@ describe('control gateway terminal verbs', () => {
     expect(new Set(fp.calls)).toEqual(new Set(['list', 'onState', 'attach']));
   });
 });
+
+describe('control gateway onAttached', () => {
+  function setup(onAttached: (ref: string, slots: readonly TerminalSlotId[]) => void) {
+    const fp = fakePort(INFO);
+    const gw = createControlGateway({ now: () => 1790000000000, terminals: fp.port, onAttached });
+    const s = fakeSocket();
+    const session = gw.attach(s, identity);
+    s.feed(helloFrame);
+    return { s, session };
+  }
+  const seen = (): { calls: Array<[string, readonly TerminalSlotId[]]>; cb: (ref: string, slots: readonly TerminalSlotId[]) => void } => {
+    const calls: Array<[string, readonly TerminalSlotId[]]> = [];
+    return { calls, cb: (ref, slots) => { calls.push([ref, slots]); } };
+  };
+
+  it('reports the live set after attach and detach, in TERMINAL_SLOTS order', () => {
+    const { calls, cb } = seen();
+    const { s } = setup(cb);
+    s.feed(attachFrame('codex'));
+    s.feed(attachFrame('claude'));
+    s.feed(detachFrame('codex'));
+    s.feed(detachFrame('claude'));
+    s.feed(attachFrame('terminal2'));
+    expect(calls.map((c) => c[1])).toEqual([['codex'], ['claude', 'codex'], ['claude'], [], ['terminal2']]);
+    expect(calls[0][0]).toBe(identity.ref);
+  });
+
+  it('reports [] when the socket drops or the session is closed, once', () => {
+    const a = seen();
+    const x = setup(a.cb);
+    x.s.feed(attachFrame('claude'));
+    x.s.drop();
+    expect(a.calls.at(-1)?.[1]).toEqual([]);
+    const b = seen();
+    const y = setup(b.cb);
+    y.s.feed(attachFrame('claude'));
+    y.session.close('revoked');
+    y.s.drop(); // the close event after close() must not report again
+    expect(b.calls.map((c) => c[1])).toEqual([['claude'], []]);
+  });
+
+  it('a throwing callback does not stop the next frame or the teardown', () => {
+    const { s, session } = setup(() => { throw new Error('boom'); });
+    s.feed(attachFrame('claude'));
+    s.feed(attachFrame('codex'));
+    expect(s.closes).toEqual([]);
+    expect(() => session.close('disabled')).not.toThrow();
+    expect(s.closes).toEqual([1000]);
+  });
+});
