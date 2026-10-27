@@ -3,6 +3,8 @@ import { fonts, type ColorPalette } from '../../styles/tokens';
 import { useAetherStore } from '../../state/store';
 import { useColors } from '../shared/useColors';
 import { Button } from '../shared/Button';
+import { useControlStatus } from '../control/useControlStatus';
+import type { TerminalSlotId } from '../../shared/remote/types';
 import { VIEWS } from '../../viewRegistry';
 import { Reactor, reactorNativeSize } from '../reactor/Reactor';
 import { computeSidebarReactorRate, computeSidebarReactorStatus, isSessionLive } from '../dashboard/dashboardMath';
@@ -10,9 +12,12 @@ import { computeSidebarReactorRate, computeSidebarReactorStatus, isSessionLive }
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
 const IDLE_PULSE_IDS = new Set(['Terminal', 'Codex']);
+// Nav entry -> remote terminal slot. Display only: the phone never changes the PC's active tab.
+const PHONE_SLOT_BY_LABEL: Record<string, TerminalSlotId> = { Terminal: 'claude', 'Terminal 2': 'terminal2', Codex: 'codex' };
 
 export function Sidebar() {
   const colors = useColors();
+  const controlStatus = useControlStatus();
   const { state, dispatch } = useAetherStore();
   const live = isSessionLive(state, Date.now());
   const onDashboard = state.activeTab === 'Dashboard';
@@ -31,6 +36,8 @@ export function Sidebar() {
             // from "dead".
             const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
             const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
+            const slot = PHONE_SLOT_BY_LABEL[label];
+            const phoneAttached = slot !== undefined && controlStatus?.phoneSlots?.includes(slot) === true;
             return (
               <Button
                 key={label}
@@ -42,6 +49,9 @@ export function Sidebar() {
                   <span style={navDotStyle(colors, on, showIdlePulse)} data-idle-pulse={showIdlePulse ? 'true' : undefined} />
                 </span>
                 <span style={{ font: `600 14px/1 ${fonts.ui}`, letterSpacing: 1 }}>{label}</span>
+                {phoneAttached && (
+                  <span data-testid={`phone-badge-${PHONE_SLOT_BY_LABEL[label]}`} aria-label="Phone attached" title="Phone attached" style={phoneBadgeStyle(colors)}>PHONE</span>
+                )}
               </Button>
             );
           })}
@@ -164,6 +174,9 @@ function navItemStyle(colors: ColorPalette, on: boolean): CSSProperties {
     color: on ? colors.textPrimary : colors.textMuted,
     boxShadow: on ? 'inset 0 0 14px rgba(95,240,255,.12)' : undefined,
   };
+}
+function phoneBadgeStyle(colors: ColorPalette): CSSProperties {
+  return { marginLeft: 'auto', font: `600 10px/1 ${fonts.mono}`, letterSpacing: 1, color: colors.accentCyanSoft };
 }
 function navDotWrapStyle(on: boolean): CSSProperties {
   return {

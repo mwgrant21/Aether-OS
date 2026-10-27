@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { Sidebar } from './Sidebar';
 import { AetherStoreProvider, useAetherStore } from '../../state/store';
 import { useEffect, type ReactNode } from 'react';
+import type { ControlStatus } from '../../shared/remote/types';
 
 // Sidebar renders <Reactor>, which calls useReducedMotion() -> window.matchMedia.
 // jsdom doesn't implement matchMedia, so stub it the same way useReducedMotion.test.ts does.
@@ -18,6 +19,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  delete (window as { aetherElectron?: unknown }).aetherElectron;
   vi.unstubAllGlobals();
 });
 
@@ -138,5 +140,61 @@ describe('Sidebar active item exposure', () => {
     expect(current).toHaveLength(1);
     expect(current[0].getAttribute('aria-current')).toBe('page');
     expect(current[0].textContent).toContain('Terminal');
+  });
+});
+
+function mkStatus(patch: Partial<ControlStatus> = {}): ControlStatus {
+  return { state: 'on', reason: null, address: '100.1.2.3:47821', connected: 1, devices: [], pairingActive: false, reenableAtLaunch: false, phoneTyping: true, notice: null, ...patch };
+}
+function installControl(initial: ControlStatus) {
+  let push: (s: ControlStatus) => void = () => {};
+  (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+    control: { status: vi.fn().mockResolvedValue(initial), onStatus: (cb: (s: ControlStatus) => void) => { push = cb; return vi.fn(); } },
+  };
+  return (s: ControlStatus) => act(() => push(s));
+}
+const badges = () => Array.from(document.querySelectorAll('[data-testid^="phone-badge-"]')).map((e) => e.getAttribute('data-testid'));
+
+describe('Sidebar phone marker', () => {
+  it('marks only the attached slot', async () => {
+    installControl(mkStatus({ phoneSlots: ['terminal2'] }));
+    renderSidebar();
+    await act(async () => {});
+    expect(badges()).toEqual(['phone-badge-terminal2']);
+    expect(screen.getByText('Terminal 2').closest('button')?.querySelector('[aria-label="Phone attached"]')).not.toBeNull();
+  });
+  it('marks two attached slots', async () => {
+    installControl(mkStatus({ phoneSlots: ['claude', 'codex'] }));
+    renderSidebar();
+    await act(async () => {});
+    expect(badges()).toEqual(['phone-badge-claude', 'phone-badge-codex']);
+  });
+  it('shows nothing for undefined, empty, or browser mode', async () => {
+    renderSidebar();
+    await act(async () => {});
+    expect(badges()).toEqual([]);
+    cleanup();
+    installControl(mkStatus({ phoneSlots: undefined }));
+    renderSidebar();
+    await act(async () => {});
+    expect(badges()).toEqual([]);
+    cleanup();
+    installControl(mkStatus({ phoneSlots: [] }));
+    renderSidebar();
+    await act(async () => {});
+    expect(badges()).toEqual([]);
+  });
+  it('phone attach never moves the PC active tab; a later empty push removes the marker', async () => {
+    const push = installControl(mkStatus({ phoneSlots: [] }));
+    renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Terminal' }]);
+    await act(async () => {});
+    push(mkStatus({ phoneSlots: ['terminal2'] }));
+    const current = screen.getByTestId('sidebar-nav').querySelectorAll('[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0].textContent).toContain('Terminal');
+    expect(current[0].textContent).not.toContain('Terminal 2');
+    expect(badges()).toEqual(['phone-badge-terminal2']);
+    push(mkStatus({ phoneSlots: [] }));
+    expect(badges()).toEqual([]);
   });
 });
