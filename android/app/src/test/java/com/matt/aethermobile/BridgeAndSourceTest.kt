@@ -101,6 +101,12 @@ class BridgeAndSourceTest {
         assertFalse(TerminalWebView.isServable("https", h, -1, null))
     }
 
+    @Test fun blockedRequestLineCarriesThePathOnly() {
+        val h = TerminalWebView.ASSET_HOST
+        assertEquals("request blocked: https://$h/favicon.ico", TerminalWebView.blockedLine("https", h, "/favicon.ico"))
+        assertEquals("request blocked: https://$h", TerminalWebView.blockedLine("https", h, null))
+    }
+
     @Test fun pageUrlIsAllowListed() {
         assertEquals("https://appassets.androidplatform.net/terminal/index.html", TerminalWebView.pageUrl("index.html", false))
         assertNull(TerminalWebView.pageUrl("../x.html", true))
