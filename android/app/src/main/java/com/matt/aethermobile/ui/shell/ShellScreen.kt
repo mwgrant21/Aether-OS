@@ -95,6 +95,7 @@ class ShellActions(
     val onFit: () -> Unit,
     val onKey: (String) -> Unit,
     val onCtrlToggle: () -> Unit,
+    val onCompose: (String, Boolean) -> TerminalHost.ComposeResult,
 )
 
 private val dims = AetherDimens()
@@ -105,7 +106,7 @@ private val BurgerFill = Color(10, 32, 43, 153)
 private val Scrim = Color(2, 10, 16, 153)
 private val MenuShape = RoundedCornerShape(dims.rPanel)
 
-/** Header, burger dropdown, terminal area and zoom row. Only the holder [ViewGroup] is passed in, never the WebView. */
+/** Header, zoom row, burger dropdown, terminal area, key row and compose bar. Only the holder [ViewGroup] is passed in, never the WebView. */
 @Composable
 fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: ViewGroup, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(MenuState()) }
@@ -140,7 +141,11 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     )
                 }
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
-                if (state.connected) KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
+                if (state.connected) {
+                    KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
+                    // Last, so it sits nearest the keyboard.
+                    ComposeBar(composeEnabled(cur, state.flow, state.hostAccepts), actions.onCompose)
+                }
             }
         }
         if (state.connected) {

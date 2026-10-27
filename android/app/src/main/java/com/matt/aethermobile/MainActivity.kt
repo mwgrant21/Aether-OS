@@ -611,6 +611,10 @@ class MainActivity : AppCompatActivity() {
         renderTabs() // a latched Ctrl is consumed by the key
     }
 
+    /** Null host: the bar is only composed while connected, so nothing is counted here. */
+    private fun sendCompose(text: String, enter: Boolean): TerminalHost.ComposeResult =
+        (termHost?.sendCompose(text, enter) ?: TerminalHost.ComposeResult.NOT_ACCEPTED).also { renderTabs() }
+
     private fun toggleCtrl() {
         termHost?.let { it.setCtrlLatch(!it.ctrlLatched()) }
         renderTabs()
@@ -651,11 +655,12 @@ class MainActivity : AppCompatActivity() {
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
-                        onZoomOut = { stepZoom(-2) },
-                        onZoomIn = { stepZoom(2) },
+                        onZoomOut = { stepZoom(-Zoom.STEP) },
+                        onZoomIn = { stepZoom(Zoom.STEP) },
                         onFit = { setZoom(0) },
                         onKey = ::sendKey,
                         onCtrlToggle = ::toggleCtrl,
+                        onCompose = ::sendCompose,
                     ),
                     terminalHolder = webHolder,
                 )

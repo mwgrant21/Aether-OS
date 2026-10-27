@@ -24,6 +24,10 @@
     <string name="key_right_desc">Right arrow</string>
     <string name="key_ctrl_on_desc">Ctrl latched</string>
 
+    <string name="compose_hint">Compose a message</string>
+    <string name="compose_send">Send</string>
+    <string name="compose_send_desc">Send to terminal</string>
+
     <plurals name="not_sent_chars">
         <item quantity="one">%d char not sent</item>
         <item quantity="other">%d chars not sent</item>
