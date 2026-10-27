@@ -73,9 +73,13 @@ class InputSenderTest {
         assertEquals(listOf(InputSender.Refusal.TOO_LARGE), refusals)
     }
 
-    @Test fun maxPasteLeavesRoomForTwoMoreInTheDesktopRateWindow() {
+    // Three max pastes fit the desktop window (worst case 17 frames each = 51 <= 100). A fourth also fits
+    // (68/100 frames, 262144/262144 B); the FIFTH is the first the desktop rate-limits.
+    @Test fun threeMaxPastesFitTheDesktopRateWindow() {
         val limits = JSONObject(File("../../protocol/mobile-protocol.json").readText(Charsets.UTF_8)).getJSONObject("limits")
-        val framesPerPaste = (InputSender.MAX_INPUT_BYTES + InputSender.CHUNK_BYTES - 1) / InputSender.CHUNK_BYTES
+        // worst case: 3-byte chars, 4093-byte minimum chunk (4-byte char at a boundary)
+        val framesPerPaste = (InputSender.MAX_INPUT_BYTES + (InputSender.CHUNK_BYTES - 3) - 1) / (InputSender.CHUNK_BYTES - 3)
+        assertEquals(17, framesPerPaste)
         assertTrue(framesPerPaste * 3 <= limits.getInt("inputMaxFramesPerSec"))
         assertTrue(InputSender.MAX_INPUT_BYTES.toLong() * 3 <= limits.getLong("inputMaxBytesPerSec"))
     }
