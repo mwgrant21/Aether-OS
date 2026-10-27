@@ -930,5 +930,7 @@ describe('control hub phoneSlots', () => {
     c.s.feed(att('claude'));
     await h2.hub.setEnabled(false);
     expect(h2.hub.status().phoneSlots).toEqual([]);
+    await h2.hub.setEnabled(true); // status() hides the map while off; re-enabling would expose a stale entry
+    expect(h2.hub.status().phoneSlots).toEqual([]);
   });
 });
