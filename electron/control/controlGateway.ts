@@ -12,7 +12,7 @@
 // after flushing any pending ack for that slot (so the nak is never followed by an older ack). Without a terminal port every attach is
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
 // fixed strings plus the slot id and the identity ref.
-import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
+import { CONTROL_ACK_COALESCE_MS, TERMINAL_SLOTS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
 import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
 import { encodeAck, encodeBye, encodeNak, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
@@ -32,6 +32,8 @@ export interface ControlGatewayOptions {
   terminals?: TerminalReadPort;
   /** Typed-input router. Absent = fail closed: every `in` frame is a policy violation. */
   input?: InputPort;
+  /** Called with the live attached slots (TERMINAL_SLOTS order) after an attach or detach, and with [] once when the socket ends. */
+  onAttached?: (ref: string, slots: readonly TerminalSlotId[]) => void;
 }
 
 export interface ControlGateway {
@@ -79,9 +81,23 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    const reportAttached = (): void => {
+      const live = TERMINAL_SLOTS.map(x => x.s).filter(s => attachments.has(s));
+      try {
+        opts.onAttached?.(identity.ref, live);
+      } catch {
+        // a failing observer must not break message handling or teardown
+      }
+    };
+
+    let tornDown = false;
     const teardown = (): void => {
       for (const a of attachments.values()) release(a);
       attachments.clear();
+      if (!tornDown) {
+        tornDown = true; // close() then the socket close event both land here; only the first reports, so a superseding session's slots are never cleared late
+        reportAttached();
+      }
       for (const t of ackTimers.values()) clearTimer(t.handle);
       ackTimers.clear();
       const is = inputSession;
@@ -227,6 +243,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           if (!helloSeen) return violation('control: attach before hello');
           if (!terminals) return violation('control: no terminal port');
           startAttachment(msg.s, msg.q ?? null, terminals);
+          reportAttached();
           return;
         case 'detach': {
           if (!helloSeen) return violation('control: detach before hello');
@@ -235,6 +252,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           attachments.delete(msg.s);
           release(a);
           log?.(`control: detach slot=${msg.s}`, identity.ref);
+          reportAttached();
           return;
         }
         case 'in': {

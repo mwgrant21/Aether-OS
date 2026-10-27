@@ -113,6 +113,8 @@ export interface ControlStatus {
   reenableAtLaunch: boolean;
   phoneTyping: boolean;
   notice: string | null;
+  /** Terminal slots the connected phone is attached to, in TERMINAL_SLOTS order. Absent or empty = none. Optional so existing literals stay valid. */
+  phoneSlots?: readonly TerminalSlotId[];
 }
 export type ControlPairingResult =
   | { ok: true; uri: string; code: string; qrSvg: string; expiresAtMs: number }

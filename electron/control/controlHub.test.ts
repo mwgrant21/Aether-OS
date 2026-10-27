@@ -865,3 +865,70 @@ describe('device auth peer binding', () => {
     expect(approve).not.toHaveBeenCalled();
   });
 });
+
+describe('control hub phoneSlots', () => {
+  // the real socket keeps every onClose callback (gateway and hub both register one); the shared fakeSocket keeps only the last
+  function multiSocket() {
+    const s = fakeSocket();
+    const cbs: Array<() => void> = [];
+    s.onClose = (cb: () => void) => { cbs.push(cb); };
+    s.drop = () => { for (const cb of cbs) cb(); };
+    return s;
+  }
+  async function connect(h: ReturnType<typeof setup>) {
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = multiSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    return { s, id };
+  }
+  const att = (s: string): string => JSON.stringify({ t: 'attach', s });
+  const det = (s: string): string => JSON.stringify({ t: 'detach', s });
+
+  it('follows attach and detach in slot order, emitting only on change', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    expect(h.hub.status().phoneSlots).toEqual([]);
+    const n0 = h.emitted.length;
+    s.feed(att('codex'));
+    s.feed(att('claude'));
+    expect(h.hub.status().phoneSlots).toEqual(['claude', 'codex']);
+    expect(h.emitted.length).toBe(n0 + 2);
+    s.feed(att('claude')); // re-attach: same set, no emit
+    expect(h.emitted.length).toBe(n0 + 2);
+    s.feed(det('claude'));
+    expect(h.hub.status().phoneSlots).toEqual(['codex']);
+    expect(h.emitted.at(-1)?.phoneSlots).toEqual(['codex']);
+  });
+
+  it('is empty after the socket closes, a revoke, a disable and a supersede, with no stale entry', async () => {
+    const h = setup();
+    const { s, id } = await connect(h);
+    s.feed(att('claude'));
+    s.drop();
+    expect(h.hub.status().phoneSlots).toEqual([]);
+
+    const a = multiSocket();
+    h.hub.port.open(a, id);
+    a.feed(helloFrame);
+    a.feed(att('codex'));
+    const b = multiSocket();
+    h.hub.port.open(b, id); // supersede: the older session reports [] before the new one attaches
+    expect(h.hub.status().phoneSlots).toEqual([]);
+    b.feed(helloFrame);
+    b.feed(att('terminal2'));
+    a.drop(); // late close of the superseded socket must not clear the new session's slots
+    expect(h.hub.status().phoneSlots).toEqual(['terminal2']);
+
+    await h.hub.revokeAll();
+    expect(h.hub.status().phoneSlots).toEqual([]);
+
+    const h2 = setup();
+    const c = await connect(h2);
+    c.s.feed(att('claude'));
+    await h2.hub.setEnabled(false);
+    expect(h2.hub.status().phoneSlots).toEqual([]);
+  });
+});
