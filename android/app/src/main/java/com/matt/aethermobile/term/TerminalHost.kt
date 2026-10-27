@@ -149,7 +149,7 @@ class TerminalHost(
             return ComposeResult.NOT_ACCEPTED
         }
         if (text.toByteArray(Charsets.UTF_8).size + COMPOSE_OVERHEAD > InputSender.MAX_INPUT_BYTES) {
-            safe { inputSender.refuse(text.length, InputSender.Refusal.TOO_LARGE) }
+            safe { inputSender.refuse(n, InputSender.Refusal.TOO_LARGE) }
             return ComposeResult.TOO_LARGE
         }
         if (text.isEmpty() && !enter) return ComposeResult.SENT

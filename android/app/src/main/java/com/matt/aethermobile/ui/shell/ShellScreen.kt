@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +86,8 @@ data class ShellUiState(
     val ctrlOn: Boolean = false,
     /** TerminalHost.typingAccepted(): the host's own gate (active, attached, RUNNING). */
     val hostAccepts: Boolean = false,
+    /** [clearsDraft] of the app flow: Locked / NeedsPair wipe the compose draft. */
+    val wipeDraft: Boolean = false,
 )
 
 class ShellActions(
@@ -95,6 +98,7 @@ class ShellActions(
     val onFit: () -> Unit,
     val onKey: (String) -> Unit,
     val onCtrlToggle: () -> Unit,
+    val onCompose: (String, Boolean) -> TerminalHost.ComposeResult,
 )
 
 private val dims = AetherDimens()
@@ -105,13 +109,16 @@ private val BurgerFill = Color(10, 32, 43, 153)
 private val Scrim = Color(2, 10, 16, 153)
 private val MenuShape = RoundedCornerShape(dims.rPanel)
 
-/** Header, burger dropdown, terminal area and zoom row. Only the holder [ViewGroup] is passed in, never the WebView. */
+/** Header, zoom row, burger dropdown, terminal area, key row and compose bar. Only the holder [ViewGroup] is passed in, never the WebView. */
 @Composable
 fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: ViewGroup, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(MenuState()) }
+    // Above the connected-only branch so a drop and reconnect keeps it; saved so rotation keeps it too.
+    var draft by rememberSaveable { mutableStateOf("") }
     val menuOpen = menu.open && state.connected
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
+    LaunchedEffect(state.wipeDraft) { if (state.wipeDraft) draft = "" }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
@@ -140,7 +147,11 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     )
                 }
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
-                if (state.connected) KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
+                if (state.connected) {
+                    KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
+                    // Last, so it sits nearest the keyboard.
+                    ComposeBar(draft, { draft = it }, composeEnabled(cur, state.flow, state.hostAccepts), actions.onCompose)
+                }
             }
         }
         if (state.connected) {

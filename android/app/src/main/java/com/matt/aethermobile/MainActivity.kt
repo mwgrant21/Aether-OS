@@ -62,6 +62,7 @@ import com.matt.aethermobile.ui.auth.AuthScreen
 import com.matt.aethermobile.ui.auth.authScreenFor
 import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
+import com.matt.aethermobile.ui.shell.clearsDraft
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
 import com.matt.aethermobile.ui.shell.Zoom
@@ -611,6 +612,10 @@ class MainActivity : AppCompatActivity() {
         renderTabs() // a latched Ctrl is consumed by the key
     }
 
+    /** Null host: the bar is only composed while connected, so nothing is counted here. */
+    private fun sendCompose(text: String, enter: Boolean): TerminalHost.ComposeResult =
+        (termHost?.sendCompose(text, enter) ?: TerminalHost.ComposeResult.NOT_ACCEPTED).also { renderTabs() }
+
     private fun toggleCtrl() {
         termHost?.let { it.setCtrlLatch(!it.ctrlLatched()) }
         renderTabs()
@@ -647,15 +652,16 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow)),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
-                        onZoomOut = { stepZoom(-2) },
-                        onZoomIn = { stepZoom(2) },
+                        onZoomOut = { stepZoom(-Zoom.STEP) },
+                        onZoomIn = { stepZoom(Zoom.STEP) },
                         onFit = { setZoom(0) },
                         onKey = ::sendKey,
                         onCtrlToggle = ::toggleCtrl,
+                        onCompose = ::sendCompose,
                     ),
                     terminalHolder = webHolder,
                 )

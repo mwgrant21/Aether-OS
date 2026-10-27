@@ -580,6 +580,15 @@ class TerminalHostTest {
         assertEquals(listOf("notSent(${InputSender.MAX_INPUT_BYTES - 15})", "refused(TOO_LARGE)"), events)
     }
 
+    @Test fun composeOverTheCapWithEnterCountsTheEnterLikeOtherRefusals() {
+        val events = ArrayList<String>(); val posted = ArrayList<String>()
+        val h = composeHost(events, posted)
+        val len = InputSender.MAX_INPUT_BYTES - 15
+        assertEquals(TerminalHost.ComposeResult.TOO_LARGE, h.sendCompose("x".repeat(len), true))
+        assertTrue(posted.isEmpty())
+        assertEquals(listOf("notSent(${len + 1})", "refused(TOO_LARGE)"), events)
+    }
+
     @Test fun composeJustUnderTheCapIsSent() {
         val events = ArrayList<String>(); val posted = ArrayList<String>()
         val h = composeHost(events, posted)
