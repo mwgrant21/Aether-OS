@@ -1,10 +1,10 @@
 package com.matt.aethermobile.term
 
 import com.matt.aethermobile.net.TerminalFeed
+import com.matt.aethermobile.protocol.ControlProtocol.NakReason
 import com.matt.aethermobile.protocol.ControlProtocol.SessionInfo
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.protocol.ControlProtocol.TerminalFrame
-import com.matt.aethermobile.protocol.ControlProtocol.NakReason
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -376,7 +376,8 @@ class TerminalHostTest {
 
     @Test fun nakReachesTheSenderForAttachedAndDetachedSlotsAndCseqContinuesAfterIt() {
         val frames = ArrayList<Long>(); val ns = ArrayList<Int>(); val why = ArrayList<InputSender.Refusal>()
-        val shared = InputSender({ _, c, _ -> frames.add(c); true }, { 0L }, { ns.add(it) }, { why.add(it) })
+        val events = ArrayList<String>()
+        val shared = InputSender({ _, c, _ -> frames.add(c); true }, { 0L }, { ns.add(it); events.add("notSent($it)") }, { why.add(it); events.add("refused($it)") })
         val h = TerminalHost(attach = { _, _ -> true }, detach = { true }, post = {}, feed = TerminalFeed(), sharedSender = shared)
         h.onSessions(listOf(info("claude"), info("codex"))); h.select("claude")
         h.onPage(PageMessage.Input("claude", "abc")); h.onPage(PageMessage.Input("claude", "de"))
@@ -385,6 +386,7 @@ class TerminalHostTest {
         h.onFrame(TerminalFrame.Nak("claude", 2, NakReason.TYPING_OFF))
         assertEquals(listOf(3, 2), ns)
         assertEquals(listOf(InputSender.Refusal.NOT_RUNNING, InputSender.Refusal.TYPING_OFF), why)
+        assertEquals(listOf("notSent(3)", "refused(NOT_RUNNING)", "notSent(2)", "refused(TYPING_OFF)"), events)
         h.select("claude"); h.onPage(PageMessage.Input("claude", "f"))
         assertEquals(listOf(1L, 2L, 3L), frames) // the nak'd numbers are never reused
     }

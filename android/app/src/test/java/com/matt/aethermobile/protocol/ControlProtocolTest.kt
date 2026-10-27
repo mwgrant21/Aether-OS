@@ -54,6 +54,10 @@ class ControlProtocolTest {
             strings(spec.getJSONObject("messages").getJSONArray("byeReasons")),
             ControlProtocol.ByeReason.values().map { it.wire },
         )
+        assertEquals(
+            strings(spec.getJSONObject("messages").getJSONArray("nakReasons")),
+            ControlProtocol.NakReason.values().map { it.wire },
+        )
     }
 
     @Test fun tokenKeyIsRawSha256OfTheToken() {
