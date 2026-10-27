@@ -7,6 +7,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { installReplySuppression, applySnap, applySize } from './replySuppression.js';
 import { shouldSend, applyStdin } from './inputFilter.js';
 import { composeInputs } from './compose.js';
+import { followCursor } from './cursorFollow.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -20,6 +21,7 @@ const root = document.getElementById('term');
 const slots = new Map();
 let visible = DEFAULT_SLOT;
 let zoomPx = 14; // 0 = fit width
+let wantX = false; // an input was sent: the next write completion may scroll sideways too
 let stdinOn = false; // fail closed: Kotlin turns typing on with {t:'stdin', on:true}
 
 function slotFor(id) {
@@ -46,7 +48,10 @@ function slotFor(id) {
   // Input only while stdin is on, and never mouse/focus reports (inputFilter). Resize is
   // reported only while the page is fitting itself (V0 demo); titan owns the size otherwise.
   term.onData((d) => {
-    if (shouldSend(d)) send({ t: 'input', s: id, d });
+    if (shouldSend(d)) {
+      wantX = true;
+      send({ t: 'input', s: id, d });
+    }
   });
   term.onResize(({ cols, rows }) => {
     if (!slot.sized) send({ t: 'resize', s: id, cols, rows });
@@ -80,7 +85,26 @@ function applyZoom(slot) {
 // is applied in order behind pending output (see applySize / applySnap).
 function setSize(slot, cols, rows) {
   slot.sized = true;
-  applySize(slot.term, cols, rows, () => applyZoom(slot));
+  applySize(slot.term, cols, rows, () => {
+    applyZoom(slot);
+    follow(slot);
+  });
+}
+
+// Scroll the visible slot's container just enough to show the cursor; no-op when it is in view.
+function follow(slot, followX = false) {
+  if (!slot || slot.el.hidden) return;
+  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
+  if (!screen) return;
+  const b = slot.term.buffer.active;
+  const r = followCursor({
+    cursorX: b.cursorX, cursorY: b.cursorY, cols: slot.term.cols, rows: slot.term.rows,
+    screenW: screen.clientWidth, screenH: screen.clientHeight,
+    viewW: slot.el.clientWidth, viewH: slot.el.clientHeight,
+    scrollLeft: slot.el.scrollLeft, scrollTop: slot.el.scrollTop, followX,
+  });
+  if (r.scrollTop !== slot.el.scrollTop) slot.el.scrollTop = r.scrollTop;
+  if (r.scrollLeft !== slot.el.scrollLeft) slot.el.scrollLeft = r.scrollLeft;
 }
 
 function show(id) {
@@ -90,6 +114,7 @@ function show(id) {
   slot.el.hidden = false;
   applyZoom(slot);
   if (!slot.sized) slot.fit.fit();
+  follow(slot);
 }
 
 const isSlot = (v) => typeof v === 'string' && v.length > 0;
@@ -108,14 +133,24 @@ bridge.onmessage = (ev) => {
       if (!isSlot(m.s) || !isDim(m.cols) || !isDim(m.rows) || typeof m.d !== 'string') return;
       const slot = slotFor(m.s);
       slot.sized = true;
-      applySnap(slot.term, m.cols, m.rows, m.d, () => applyZoom(slot));
+      applySnap(slot.term, m.cols, m.rows, m.d, () => {
+        applyZoom(slot);
+        follow(slot);
+      });
       return;
     }
     case 'out': {
       if (!isSlot(m.s) || typeof m.d !== 'string') return;
       const { d, s } = m;
       // Credit back to Kotlin once xterm has consumed the chunk (flow control).
-      slotFor(s).term.write(d, () => send({ t: 'consumed', s, bytes: utf8Len(d) }));
+      const slot = slotFor(s);
+      slot.term.write(d, () => {
+        send({ t: 'consumed', s, bytes: utf8Len(d) });
+        if (s === visible) {
+          follow(slot, wantX);
+          wantX = false;
+        }
+      });
       return;
     }
     case 'size':
@@ -135,6 +170,7 @@ bridge.onmessage = (ev) => {
       if (m.px === 0 || (Number.isFinite(m.px) && m.px >= 8 && m.px <= MAX_FONT)) {
         zoomPx = m.px;
         for (const slot of slots.values()) applyZoom(slot);
+        follow(slots.get(visible));
       }
       return;
     case 'compose': {
@@ -142,7 +178,10 @@ bridge.onmessage = (ev) => {
       const slot = slots.get(m.s);
       if (!slot) return;
       for (const msg of composeInputs(m.s, m.d, m.enter, slot.term.modes.bracketedPasteMode)) {
-        if (shouldSend(msg.d)) send(msg);
+        if (shouldSend(msg.d)) {
+          wantX = true;
+          send(msg);
+        }
       }
       return;
     }
@@ -156,6 +195,7 @@ new ResizeObserver(() => {
     if (!slot.sized && !slot.el.hidden) slot.fit.fit();
     else if (zoomPx === 0) applyZoom(slot);
   }
+  follow(slots.get(visible));
 }).observe(root);
 
 show(DEFAULT_SLOT);
