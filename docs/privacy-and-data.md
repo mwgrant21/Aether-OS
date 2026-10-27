@@ -7,7 +7,7 @@ subordinate to this document.
 
 ## 1. The stance
 
-**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14). The one deliberate inbound exception is the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16), and, separately, the opt-in tailnet-only phone control path (§17), which unlike the viewer may be set to re-enable at launch (V1 is built: pairing, device auth and the `/ctl` handshake; terminals, typing and approvals are planned, not built; see §17).**
+**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14). The one deliberate inbound exception is the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16), and, separately, the opt-in tailnet-only phone control path (§17), which unlike the viewer may be set to re-enable at launch (built: pairing, device auth, the `/ctl` handshake, terminal output and typing into a running slot; approvals, starting a slot and fit-to-phone are planned, not built; see §17).**
 
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
@@ -20,7 +20,7 @@ every local process and by browser pages, so since 2026-10-04 every request and 
 mutually authenticated with a per-launch HMAC secret held only in the user-only port file, which
 is deleted on quit (`electron/permissionAuth.ts`; see §3). The listener exception is the opt-in remote chat view (§16): a read-only listener bound to the
 Tailscale interface address only, off at every launch, enabled through a native confirmation, and gated by a pairing code and a
-session cookie; it never binds a wildcard or LAN address. Phone control (§17) shares that tailnet-only listener and adds a separate bearer-token `/ctl` input path with its own toggle, token store and code directory; both bind only the Tailscale IPv4 address, never a wildcard or LAN address (V1 built for pairing and the handshake only; terminals and approvals planned; see §17). The single-user constraint is not a smaller version of TokenMonitor's
+session cookie; it never binds a wildcard or LAN address. Phone control (§17) shares that tailnet-only listener and adds a separate bearer-token `/ctl` input path with its own toggle, token store and code directory; both bind only the Tailscale IPv4 address, never a wildcard or LAN address (built: pairing, the handshake, terminal output and typing; approvals planned; see §17). The single-user constraint is not a smaller version of TokenMonitor's
 model; it removes the model entirely.
 
 **Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
