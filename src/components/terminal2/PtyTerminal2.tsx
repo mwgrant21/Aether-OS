@@ -65,21 +65,13 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     const terminal2Pty = window.aetherElectron!.terminal2Pty;
     // Subscribe before starting so the session's first output is not lost.
     terminal2Pty.onData((data) => sharedTerm!.write(data));
-    // Once the shell exits, input is dead until Enter restarts the session.
-    let exited = false;
-    terminal2Pty.onExit(() => {
-      exited = true;
-      sharedTerm!.write('\r\n[process exited - press Enter to restart]\r\n');
-    });
-    sharedTerm.onData((input) => {
-      if (!exited) { terminal2Pty.write(input); return; }
-      if (input !== '\r') return;
-      exited = false;
-      sharedTerm!.reset();
-      terminal2Pty.start({ cols: sharedTerm!.cols, rows: sharedTerm!.rows });
-    });
+    terminal2Pty.onExit(() => sharedTerm!.write('\r\n[process exited - press Enter to restart]\r\n'));
+    // Main restarts an exited session on a bare Enter (desktop or phone) and drops other input meanwhile;
+    // it then reports alive. The slot ignores resize while exited, so re-send the current size here.
+    terminal2Pty.onAlive(() => { sharedTerm!.reset(); terminal2Pty.resize(sharedTerm!.cols, sharedTerm!.rows); });
+    sharedTerm.onData((input) => terminal2Pty.write(input));
     sharedTerm.onResize(({ cols, rows }) => terminal2Pty.resize(cols, rows));
-    terminal2Pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // first start; after an exit, Enter restarts via onData above
+    terminal2Pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // the only start; Enter after an exit is restarted by main
   }
   return { hostEl: sharedHostEl, fit: sharedFit! };
 }

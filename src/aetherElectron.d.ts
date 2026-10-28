@@ -86,6 +86,7 @@ declare global {
         resize: (cols: number, rows: number) => void;
         onData: (callback: (data: string) => void) => () => void;
         onExit: (callback: () => void) => () => void;
+        onAlive: (callback: () => void) => () => void;
       };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;

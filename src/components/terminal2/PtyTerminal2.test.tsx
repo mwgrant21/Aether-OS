@@ -17,7 +17,7 @@ it('starts its own session once, after subscribing, and keeps it across tab remo
   const pinnedStart = vi.fn();
   Object.defineProperty(window, 'aetherElectron', { configurable: true, value: {
     pty: { start: pinnedStart, onData: () => () => {}, write() {}, resize() {} },
-    terminal2Pty: { start, onData: (callback: (value: string) => void) => { receive = callback; return () => {}; }, onExit: () => () => {}, write() {}, resize() {} },
+    terminal2Pty: { start, onData: (callback: (value: string) => void) => { receive = callback; return () => {}; }, onExit: () => () => {}, onAlive: () => () => {}, write() {}, resize() {} },
   } });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   const first = render(<AetherStoreProvider><PtyTerminal2 /></AetherStoreProvider>);
@@ -29,34 +29,46 @@ it('starts its own session once, after subscribing, and keeps it across tab remo
   expect(pinnedStart).not.toHaveBeenCalled();
 });
 
-it('restarts an exited session only on Enter and drops other input meanwhile', async () => {
+async function mountExited() {
   vi.resetModules();
-  mocks.write.mockClear();
-  let exit: (() => void) | undefined;
+  mocks.write.mockClear(); mocks.reset.mockClear();
+  const cbs: { exit?: () => void; alive?: () => void } = {};
   const start = vi.fn(() => Promise.resolve());
+  const resize = vi.fn();
   const ptyWrite = vi.fn();
-  const pinnedStart = vi.fn();
   Object.defineProperty(window, 'aetherElectron', { configurable: true, value: {
-    pty: { start: pinnedStart, onData: () => () => {}, write() {}, resize() {} },
-    terminal2Pty: { start, onData: () => () => {}, onExit: (cb: () => void) => { exit = cb; return () => {}; }, write: ptyWrite, resize() {} },
+    terminal2Pty: { start, onData: () => () => {}, onExit: (cb: () => void) => { cbs.exit = cb; return () => {}; }, onAlive: (cb: () => void) => { cbs.alive = cb; return () => {}; }, write: ptyWrite, resize },
   } });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   const { AetherStoreProvider: Provider } = await import('../../state/store');
   const { PtyTerminal2: Fresh } = await import('./PtyTerminal2');
   render(<Provider><Fresh /></Provider>);
+  return { cbs, start, resize, ptyWrite };
+}
+
+it('shows the exit banner and forwards Enter after exit to main without starting or resetting itself', async () => {
+  const { cbs, start, ptyWrite } = await mountExited();
   expect(start).toHaveBeenCalledOnce();
-  mocks.data!('a');
-  expect(ptyWrite).toHaveBeenCalledWith('a');
-  exit!();
+  cbs.exit!();
   expect(mocks.write).toHaveBeenCalledWith('\r\n[process exited - press Enter to restart]\r\n');
-  mocks.data!('x');
-  expect(start).toHaveBeenCalledOnce();
-  expect(ptyWrite).not.toHaveBeenCalledWith('x');
   mocks.data!('\r');
+  expect(ptyWrite).toHaveBeenCalledWith('\r');
+  expect(start).toHaveBeenCalledOnce();
+  expect(mocks.reset).not.toHaveBeenCalled();
+});
+
+it('resets the terminal and re-sends its size when main reports the session alive', async () => {
+  const { cbs, resize } = await mountExited();
+  cbs.alive!();
   expect(mocks.reset).toHaveBeenCalledOnce();
-  expect(start).toHaveBeenCalledTimes(2);
-  expect(start).toHaveBeenLastCalledWith({ cols: 80, rows: 24 });
-  expect(pinnedStart).not.toHaveBeenCalled();
+  expect(resize).toHaveBeenCalledWith(80, 24);
+});
+
+it('forwards non-Enter input after exit as-is (the drop-other-input filter moved to main)', async () => {
+  const { cbs, ptyWrite } = await mountExited();
+  cbs.exit!();
+  mocks.data!('x');
+  expect(ptyWrite).toHaveBeenCalledWith('x');
 });
 
 async function mountFresh() {
@@ -64,7 +76,7 @@ async function mountFresh() {
   mocks.paste.mockClear();
   const ptyWrite = vi.fn();
   Object.defineProperty(window, 'aetherElectron', { configurable: true, value: {
-    terminal2Pty: { start: vi.fn(() => Promise.resolve()), onData: () => () => {}, onExit: () => () => {}, write: ptyWrite, resize() {} },
+    terminal2Pty: { start: vi.fn(() => Promise.resolve()), onData: () => () => {}, onExit: () => () => {}, onAlive: () => () => {}, write: ptyWrite, resize() {} },
   } });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   const { AetherStoreProvider: Provider } = await import('../../state/store');
