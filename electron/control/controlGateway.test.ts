@@ -824,6 +824,27 @@ describe('control gateway thread verbs', () => {
     expect(types(s)).toEqual(['thread.snap']);
   });
 
+  it('a socket that closes while thread.attach is still replaying the snap still gets its thread handle detached', () => {
+    const th = fakeThreads();
+    const pr = fakePrompts([PR]);
+    const s = open({ threads: th.port, prompts: pr.port });
+    const send = s.send;
+    s.send = (t: string) => { send(t); if (JSON.parse(t).t === 'thread.snap') s.drop(); };
+    s.feed(spec.frames.threadAttach);
+    expect(th.detaches).toBe(1);
+    expect(pr.taps).toHaveLength(0);
+  });
+
+  it('a socket that closes while the pending prompts are being replayed detaches BOTH the thread and the prompt handle', () => {
+    const th = fakeThreads();
+    const pr = fakePrompts([PR]);
+    const s = open({ threads: th.port, prompts: pr.port });
+    const send = s.send;
+    s.send = (t: string) => { send(t); if (JSON.parse(t).t === 'prompt') s.drop(); };
+    s.feed(spec.frames.threadAttach);
+    expect([th.detaches, pr.detaches]).toEqual([1, 1]);
+  });
+
   it('thread.attach before hello is a policy violation and logs a fixed string', () => {
     const logs: string[] = [];
     const s = fakeSocket();

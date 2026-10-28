@@ -88,6 +88,14 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    const detachQuietly = (h: { detach(): void }): void => {
+      try {
+        h.detach();
+      } catch {
+        // a failing detach must not escape into the message handler
+      }
+    };
+
     const releaseThread = (): void => {
       const a = threadAtt;
       threadAtt = null;
@@ -224,12 +232,12 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           socket.send(encodeThreadState({ s: 'claude', q: e.q, working: e.working, workingSinceMs: e.workingSinceMs }));
         },
       });
-      entry.handles.push(h);
       if (!entry.live) {
-        // detached or closed while attach() was still replaying synchronously
-        releaseThread();
+        // detached or closed while attach() was still replaying synchronously: releaseThread() already walked a list without this handle
+        detachQuietly(h);
         return;
       }
+      entry.handles.push(h);
       if (prompts) {
         const ph = prompts.attach({
           opened: (p) => {
@@ -241,8 +249,8 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
             socket.send(encodePromptClosed(e));
           },
         });
-        entry.handles.push(ph);
-        if (!entry.live) releaseThread();
+        if (!entry.live) detachQuietly(ph); // same race for the prompt tap; h was already released by releaseThread()
+        else entry.handles.push(ph);
       }
     };
 
