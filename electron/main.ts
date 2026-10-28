@@ -1461,7 +1461,9 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
     },
     // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
     onAlive: () => {},
-    onExit: () => {},
+    // Tell the renderer so it can offer an Enter-to-restart; still not wired
+    // into pinnedPtyExited, the usage scraper or the tracker.
+    onExit: () => sendToWindow('terminal2Pty:exit', undefined),
   }, { cols, rows });
 });
 

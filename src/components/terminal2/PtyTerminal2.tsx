@@ -33,9 +33,21 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     const terminal2Pty = window.aetherElectron!.terminal2Pty;
     // Subscribe before starting so the session's first output is not lost.
     terminal2Pty.onData((data) => sharedTerm!.write(data));
-    sharedTerm.onData((input) => terminal2Pty.write(input));
+    // Once the shell exits, input is dead until Enter restarts the session.
+    let exited = false;
+    terminal2Pty.onExit(() => {
+      exited = true;
+      sharedTerm!.write('\r\n[process exited - press Enter to restart]\r\n');
+    });
+    sharedTerm.onData((input) => {
+      if (!exited) { terminal2Pty.write(input); return; }
+      if (input !== '\r') return;
+      exited = false;
+      sharedTerm!.reset();
+      terminal2Pty.start({ cols: sharedTerm!.cols, rows: sharedTerm!.rows });
+    });
     sharedTerm.onResize(({ cols, rows }) => terminal2Pty.resize(cols, rows));
-    terminal2Pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once per app lifetime
+    terminal2Pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // first start; after an exit, Enter restarts via onData above
   }
   return { hostEl: sharedHostEl, fit: sharedFit! };
 }
