@@ -1,0 +1,12 @@
+{"uuid":"a1","type":"user","sessionId":"s1","timestamp":"2026-10-28T10:00:00.000Z","message":{"role":"user","content":"run the layout checks too"}}
+{"uuid":"a2","type":"assistant","sessionId":"s1","timestamp":"2026-10-28T10:00:01.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"plan"}]}}
+{"uuid":"a3","type":"assistant","sessionId":"s1","timestamp":"2026-10-28T10:00:02.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"I'll edit the key row and run the tests."}]}}
+{"uuid":"a4","type":"assistant","sessionId":"s1","timestamp":"2026-10-28T10:00:03.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"C:\\repo\\android\\KeyRow.kt","old_string":"a\nb","new_string":"a\nb\nc\nd"}}]}}
+{"uuid":"a5","type":"user","sessionId":"s1","timestamp":"2026-10-28T10:00:04.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"uuid":"a6","type":"assistant","sessionId":"s1","timestamp":"2026-10-28T10:00:05.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"./gradlew test\n# second line"}}]}}
+{"uuid":"a7","type":"user","sessionId":"s1","timestamp":"2026-10-28T10:00:06.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"BUILD SUCCESSFUL"}]}}
+{"uuid":"a8","type":"assistant","isSidechain":true,"sessionId":"s1","timestamp":"2026-10-28T10:00:06.500Z","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"sidechain chatter"}]}}
+{"uuid":"a9","type":"user","sessionId":"s1","timestamp":"2026-10-28T10:00:07.000Z","message":{"role":"user","content":"<system-reminder>not a prompt</system-reminder>"}}
+{"uuid":"b1","type":"user","isCompactSummary":true,"sessionId":"s1","timestamp":"2026-10-28T10:00:07.500Z","message":{"role":"user","content":"This session is being continued from a previous conversation"}}
+{"uuid":"b2","type":"assistant","sessionId":"s1","timestamp":"2026-10-28T10:00:08.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/repo/src/index.ts"}}]}}
+{"uuid":"b3","type":"assistant","sessionId":"s1","timestamp":"2026-10-28T10:00:09.000Z","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Unit tests pass."}]}}
