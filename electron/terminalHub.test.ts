@@ -572,6 +572,85 @@ describe('terminalHub writePort', () => {
     expect(hub.writePort().write('terminal2', 'x')).toBe(false);
   });
 
+  // terminal2 slot with a restarter that respawns, already exited
+  function exitedT2() {
+    const hub = createTerminalHub();
+    const slot = hub.slot('terminal2');
+    const old = fakePty(), fresh = fakePty();
+    const spawn = vi.fn(() => fresh);
+    const restarter = vi.fn(() => { slot.start(spawn, handlers(), { cols: 80, rows: 24 }); });
+    slot.setRestarter(restarter);
+    slot.start(() => old, handlers(), { cols: 80, rows: 24 });
+    old.fireExit();
+    return { hub, slot, old, fresh, spawn, restarter };
+  }
+
+  it('a bare Enter on an exited slot respawns it, via the writePort and via slot.write', () => {
+    const a = exitedT2();
+    const q = a.slot.info().q;
+    expect(a.hub.writePort().write('terminal2', '\r')).toBe(true);
+    expect(a.spawn).toHaveBeenCalledTimes(1);
+    expect(a.slot.info().state).toBe('running');
+    expect(a.slot.info().q).toBeGreaterThan(q);
+    expect(a.old.write).not.toHaveBeenCalled();
+    const b = exitedT2();
+    b.slot.write('\r');
+    expect(b.spawn).toHaveBeenCalledTimes(1);
+    expect(b.slot.info().state).toBe('running');
+  });
+
+  it('ignores any input but a bare Enter on an exited slot', () => {
+    const t = exitedT2();
+    for (const d of ['x', '\r\n', 'a\r', '\n', '\u001b']) {
+      expect(t.hub.writePort().write('terminal2', d)).toBe(false);
+      t.slot.write(d);
+    }
+    expect(t.restarter).not.toHaveBeenCalled();
+    expect(t.old.write).not.toHaveBeenCalled();
+    expect(t.slot.info().state).toBe('exited');
+  });
+
+  it('Enter on a live slot is a plain write, and an exited slot without a restarter stays dead', () => {
+    const hub = createTerminalHub();
+    const slot = hub.slot('terminal2');
+    const restarter = vi.fn();
+    slot.setRestarter(restarter);
+    const pty = fakePty();
+    slot.start(() => pty, handlers());
+    expect(hub.writePort().write('terminal2', '\r')).toBe(true);
+    expect(vi.mocked(pty.write).mock.calls).toEqual([['\r']]);
+    expect(restarter).not.toHaveBeenCalled();
+    const claude = hub.slot('claude');
+    const cp = fakePty();
+    const spawn = vi.fn(() => cp);
+    claude.start(spawn, handlers());
+    cp.fireExit();
+    expect(hub.writePort().write('claude', '\r')).toBe(false);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('desktop and phone Enter back to back restart once, in either order', () => {
+    for (const phoneFirst of [false, true]) {
+      const t = exitedT2();
+      const phone = () => t.hub.writePort().write('terminal2', '\r');
+      const desktop = () => t.slot.write('\r');
+      (phoneFirst ? phone : desktop)();
+      (phoneFirst ? desktop : phone)();
+      expect(t.spawn).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(t.fresh.write).mock.calls).toEqual([['\r']]);
+      expect(t.old.write).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a throwing restarter reports false, leaves the slot exited, and a later Enter retries', () => {
+    const t = exitedT2();
+    t.restarter.mockImplementationOnce(() => { throw new Error('spawn failed'); });
+    expect(t.hub.writePort().write('terminal2', '\r')).toBe(false);
+    expect(t.slot.info().state).toBe('exited');
+    expect(t.hub.writePort().write('terminal2', '\r')).toBe(true);
+    expect(t.slot.info().state).toBe('running');
+  });
+
   it('exposes only write', () => {
     expect(Object.keys(createTerminalHub().writePort())).toEqual(['write']);
   });

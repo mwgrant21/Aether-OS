@@ -44,6 +44,7 @@ export class TerminalSlot extends PtyLifecycle {
   private rows = 0;
   private q = 0;
   private readonly listeners = new Set<SlotListener>();
+  private restarter: (() => void) | null = null;
 
   constructor(readonly id: TerminalSlotId) { super(); }
 
@@ -95,6 +96,16 @@ export class TerminalSlot extends PtyLifecycle {
         handlers.onExit();
       },
     });
+  }
+
+  setRestarter(fn: () => void): void { this.restarter = fn; }
+
+  /** True only for a bare Enter on an exited slot that has a restarter registered. */
+  restartsOn(d: string): boolean { return this.state === 'exited' && this.restarter !== null && d === '\r'; }
+
+  write(input: string): void {
+    if (this.restartsOn(input)) { this.restarter!(); return; } // throws propagate: writePort and the IPC handler own the catch
+    super.write(input);
   }
 
   resize(cols: number, rows: number): void {
@@ -360,7 +371,8 @@ export function createTerminalHub(opts: { createMirror?: MirrorFactory } = {}): 
   const writePort: TerminalWritePort = {
     write(s, d) {
       const slot = slots.get(s);
-      if (!slot || slot.info().state !== 'running') return false;
+      if (!slot) return false;
+      if (slot.info().state !== 'running' && !slot.restartsOn(d)) return false;
       try { slot.write(d); return true; } catch { return false; }
     },
   };
