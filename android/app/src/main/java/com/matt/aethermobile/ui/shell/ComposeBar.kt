@@ -45,6 +45,7 @@ private val FieldShape = RoundedCornerShape(10.dp)
 @Composable
 fun ComposeBar(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHost.ComposeResult) {
     val focus = remember { FocusRequester() }
+    val gate = remember { SendGate() }
     val sendDesc = stringResource(R.string.compose_send_desc)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
