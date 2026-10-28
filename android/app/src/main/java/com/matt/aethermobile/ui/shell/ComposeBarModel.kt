@@ -18,3 +18,21 @@ fun shouldClear(r: TerminalHost.ComposeResult): Boolean = r == TerminalHost.Comp
  * but a relock or an unpaired app wipes it: Locked and NeedsPair clear it so no message text outlives the unlock.
  */
 fun clearsDraft(flow: FlowState): Boolean = flow is FlowState.Locked || flow is FlowState.NeedsPair
+
+/**
+ * Drops a Send tap that lands within [windowMs] of the last accepted one, so a double-tap cannot hand off the text and
+ * then a bare Enter (an empty bar + Send presses Enter once). Only a SENT result starts the window; a refusal does not.
+ * Time is passed in so the decision stays pure.
+ */
+class SendGate(private val windowMs: Long = 400L) {
+    private var lastSentAt: Long? = null
+
+    /** Runs [compose] unless inside the window; null means the tap was dropped. */
+    fun attempt(nowMs: Long, compose: () -> TerminalHost.ComposeResult): TerminalHost.ComposeResult? {
+        val last = lastSentAt
+        if (last != null && nowMs - last < windowMs) return null
+        val r = compose()
+        if (r == TerminalHost.ComposeResult.SENT) lastSentAt = nowMs
+        return r
+    }
+}

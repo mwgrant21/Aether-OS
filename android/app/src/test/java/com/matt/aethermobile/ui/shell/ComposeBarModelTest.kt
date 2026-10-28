@@ -42,4 +42,33 @@ class ComposeBarModelTest {
         assertTrue(clearsDraft(FlowState.Locked()))
         assertTrue(clearsDraft(FlowState.NeedsPair()))
     }
+
+    @Test fun secondSendWithin400msIsDropped() {
+        val gate = SendGate()
+        var calls = 0
+        assertEquals(ComposeResult.SENT, gate.attempt(1000) { calls++; ComposeResult.SENT })
+        assertEquals(null, gate.attempt(1100) { calls++; ComposeResult.SENT })
+        assertEquals(1, calls)
+    }
+
+    @Test fun sendAtOrPast400msGoesThrough() {
+        val gate = SendGate()
+        gate.attempt(1000) { ComposeResult.SENT }
+        assertEquals(ComposeResult.SENT, gate.attempt(1400) { ComposeResult.SENT })
+        assertEquals(ComposeResult.SENT, gate.attempt(2000) { ComposeResult.SENT })
+    }
+
+    @Test fun emptyBarSendAfterWindowStillSendsOneEnter() {
+        val gate = SendGate()
+        gate.attempt(0) { ComposeResult.SENT }
+        var enters = 0
+        gate.attempt(500) { enters++; ComposeResult.SENT }
+        assertEquals(1, enters)
+    }
+
+    @Test fun refusedSendDoesNotStartWindow() {
+        val gate = SendGate()
+        assertEquals(ComposeResult.NOT_ACCEPTED, gate.attempt(1000) { ComposeResult.NOT_ACCEPTED })
+        assertEquals(ComposeResult.SENT, gate.attempt(1100) { ComposeResult.SENT })
+    }
 }

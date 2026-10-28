@@ -1,5 +1,6 @@
 package com.matt.aethermobile.ui.shell
 
+import android.os.SystemClock
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +39,7 @@ private val FieldShape = RoundedCornerShape(10.dp)
 /**
  * Multi-line compose field plus Send, nearest the keyboard. The IME Enter key inserts a newline and never sends.
  * Send hands the text to the page via [onCompose] (the page decides bracketed paste) with Enter; the field is
- * cleared only when [shouldClear] says the page got it. The field stays editable while Send is disabled.
+ * cleared only when [shouldClear] says the page got it. [SendGate] drops a double-tap. The field stays editable while Send is disabled.
  * The draft is owned by the caller (ShellScreen), so it outlives this bar being removed on a drop.
  */
 @Composable
@@ -83,7 +84,8 @@ fun ComposeBar(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolean, o
         AeSecondaryButton(
             stringResource(R.string.compose_send),
             {
-                if (shouldClear(onCompose(draft, true))) onDraft("")
+                val r = gate.attempt(SystemClock.elapsedRealtime()) { onCompose(draft, true) }
+                if (r != null && shouldClear(r)) onDraft("")
                 focus.requestFocus()
             },
             Modifier.width(80.dp).semantics { contentDescription = sendDesc },
