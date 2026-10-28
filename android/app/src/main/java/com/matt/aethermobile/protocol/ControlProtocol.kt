@@ -96,6 +96,44 @@ object ControlProtocol {
         data class Nak(override val s: String, val c: Long, val reason: NakReason) : TerminalFrame()
     }
 
+    // thread.* in the JSON.
+    const val THREAD_SLOT = "claude"
+    const val THREAD_SNAPSHOT_MAX_EVENTS = 200
+    const val THREAD_TEXT_CAP = 8000
+    const val THREAD_TARGET_CAP = 160
+    const val THREAD_SNAPSHOT_MAX_BYTES = 204_800
+    const val PROMPT_SUMMARY_CAP = 1200
+    const val THREAD_WORKING_STALE_MS = 120_000L
+
+    /** One transcript event on the Claude thread. [id] is unique per session file. */
+    sealed class ThreadEvent {
+        abstract val id: String
+        abstract val at: Long
+        data class User(override val id: String, override val at: Long, val text: String, val truncated: Boolean) : ThreadEvent()
+        data class Claude(override val id: String, override val at: Long, val text: String, val truncated: Boolean) : ThreadEvent()
+        /** [target], [add] and [del] are null when the wire carries JSON null or omits them. */
+        data class Tool(override val id: String, override val at: Long, val name: String, val target: String?, val add: Long?, val del: Long?) : ThreadEvent()
+    }
+
+    enum class PromptRisk(val wire: String) { LOW("LOW"), MED("MED"), HIGH("HIGH") }
+
+    /** promptCloseReasons in the JSON, in order. */
+    enum class PromptCloseReason(val wire: String) {
+        ANSWERED_DESKTOP("answered-desktop"),
+        TIMEOUT("timeout"),
+    }
+
+    data class PromptInfo(val id: String, val tool: String, val risk: PromptRisk, val summary: String, val ttlMs: Long)
+
+    /** Titan-to-phone thread and prompt frames (one type, one client callback). */
+    sealed class ThreadFrame {
+        data class Snap(val q: Long, val attached: Boolean, val working: Boolean, val workingSinceMs: Long?, val events: List<ThreadEvent>) : ThreadFrame()
+        data class Events(val q: Long, val events: List<ThreadEvent>) : ThreadFrame()
+        data class State(val q: Long, val working: Boolean, val workingSinceMs: Long?) : ThreadFrame()
+        data class Opened(val prompt: PromptInfo) : ThreadFrame()
+        data class Closed(val id: String, val reason: PromptCloseReason) : ThreadFrame()
+    }
+
     /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
     private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 
@@ -257,6 +295,95 @@ object ControlProtocol {
             }
             else -> null
         }
+    }
+
+    fun buildThreadAttach(): String = "{\"t\":\"thread.attach\",\"s\":\"$THREAD_SLOT\"}"
+
+    fun buildThreadDetach(): String = "{\"t\":\"thread.detach\",\"s\":\"$THREAD_SLOT\"}"
+
+    /**
+     * Null unless the frame is a well-formed thread.snap/thread.ev/thread.state/prompt/prompt.closed:
+     * slot `claude`, whole-number numerics, known event kinds, known risk and close reason.
+     * `workingSinceMs`, `target`, `add` and `del` accept JSON null (or absence) as null; any
+     * other non-matching type, including the string "null", is rejected. Unknown extra fields are ignored.
+     */
+    fun parseThreadFrame(text: String): ThreadFrame? {
+        val o = parseObject(text) ?: return null
+        return when (o.opt("t")) {
+            "thread.snap" -> {
+                if (o.opt("s") != THREAD_SLOT) return null
+                val q = whole(o.opt("q"), MAX_SAFE_INTEGER) ?: return null
+                val attached = o.opt("attached") as? Boolean ?: return null
+                val working = o.opt("working") as? Boolean ?: return null
+                val since = nullableWhole(o, "workingSinceMs") ?: return null
+                val events = parseEvents(o.optJSONArray("events")) ?: return null
+                ThreadFrame.Snap(q, attached, working, since.value, events)
+            }
+            "thread.ev" -> {
+                if (o.opt("s") != THREAD_SLOT) return null
+                val q = whole(o.opt("q"), MAX_SAFE_INTEGER) ?: return null
+                val events = parseEvents(o.optJSONArray("events")) ?: return null
+                ThreadFrame.Events(q, events)
+            }
+            "thread.state" -> {
+                if (o.opt("s") != THREAD_SLOT) return null
+                val q = whole(o.opt("q"), MAX_SAFE_INTEGER) ?: return null
+                val working = o.opt("working") as? Boolean ?: return null
+                val since = nullableWhole(o, "workingSinceMs") ?: return null
+                ThreadFrame.State(q, working, since.value)
+            }
+            "prompt" -> {
+                val id = o.opt("id") as? String ?: return null
+                val tool = o.opt("tool") as? String ?: return null
+                val risk = PromptRisk.values().firstOrNull { it.wire == o.opt("risk") } ?: return null
+                val summary = o.opt("summary") as? String ?: return null
+                val ttl = whole(o.opt("ttlMs"), MAX_SAFE_INTEGER) ?: return null
+                if (id.isEmpty()) return null
+                ThreadFrame.Opened(PromptInfo(id, tool, risk, summary, ttl))
+            }
+            "prompt.closed" -> {
+                val id = o.opt("id") as? String ?: return null
+                val reason = PromptCloseReason.values().firstOrNull { it.wire == o.opt("reason") } ?: return null
+                if (id.isEmpty()) return null
+                ThreadFrame.Closed(id, reason)
+            }
+            else -> null
+        }
+    }
+
+    /** Wraps a nullable parse result so "present and null" differs from "malformed". */
+    private class Opt<T>(val value: T?)
+
+    /** Absent or JSON null -> Opt(null); a whole number -> Opt(n); anything else (string "null", 1.5, ...) -> null (malformed). */
+    private fun nullableWhole(o: JSONObject, key: String): Opt<Long>? {
+        if (!o.has(key) || o.isNull(key)) return Opt(null)
+        return whole(o.opt(key), MAX_SAFE_INTEGER)?.let { Opt(it) }
+    }
+
+    private fun parseEvents(a: org.json.JSONArray?): List<ThreadEvent>? {
+        if (a == null) return null
+        val out = ArrayList<ThreadEvent>(a.length())
+        for (i in 0 until a.length()) {
+            val e = a.optJSONObject(i) ?: return null
+            val id = e.opt("id") as? String ?: return null
+            val at = whole(e.opt("at"), MAX_SAFE_INTEGER) ?: return null
+            when (val k = e.opt("k")) {
+                "user", "claude" -> {
+                    val text = e.opt("text") as? String ?: return null
+                    val truncated = e.opt("truncated") as? Boolean ?: return null
+                    out += if (k == "user") ThreadEvent.User(id, at, text, truncated) else ThreadEvent.Claude(id, at, text, truncated)
+                }
+                "tool" -> {
+                    val name = e.opt("name") as? String ?: return null
+                    val target: String? = if (!e.has("target") || e.isNull("target")) null else (e.opt("target") as? String ?: return null)
+                    val add = nullableWhole(e, "add") ?: return null
+                    val del = nullableWhole(e, "del") ?: return null
+                    out += ThreadEvent.Tool(id, at, name, target, add.value, del.value)
+                }
+                else -> return null
+            }
+        }
+        return out
     }
 
     private fun isSlot(s: String) = SLOTS.any { it.s == s }

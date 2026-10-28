@@ -324,4 +324,106 @@ class ControlProtocolTest {
         val w = ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","applied":{"bash":2,"codex":1.5,"claude":4}}""")!!
         assertEquals(mapOf("claude" to 4L), w.applied)
     }
+
+    @Test fun threadConstantsAndCloseReasonsEqualTheSharedJson() {
+        val t = spec.getJSONObject("thread")
+        assertEquals(t.getString("slot"), ControlProtocol.THREAD_SLOT)
+        assertEquals(t.getInt("snapshotMaxEvents"), ControlProtocol.THREAD_SNAPSHOT_MAX_EVENTS)
+        assertEquals(t.getInt("textCap"), ControlProtocol.THREAD_TEXT_CAP)
+        assertEquals(t.getInt("targetCap"), ControlProtocol.THREAD_TARGET_CAP)
+        assertEquals(t.getInt("snapshotMaxBytes"), ControlProtocol.THREAD_SNAPSHOT_MAX_BYTES)
+        assertEquals(t.getInt("promptSummaryCap"), ControlProtocol.PROMPT_SUMMARY_CAP)
+        assertEquals(t.getLong("workingStaleMs"), ControlProtocol.THREAD_WORKING_STALE_MS)
+        assertEquals(
+            strings(spec.getJSONObject("messages").getJSONArray("promptCloseReasons")),
+            ControlProtocol.PromptCloseReason.values().map { it.wire },
+        )
+    }
+
+    @Test fun threadBuildersAreByteIdenticalToTheGoldens() {
+        assertEquals(frames.getString("threadAttach"), ControlProtocol.buildThreadAttach())
+        assertEquals(frames.getString("threadDetach"), ControlProtocol.buildThreadDetach())
+    }
+
+    @Test fun threadSnapGoldenParses() {
+        assertEquals(
+            ControlProtocol.ThreadFrame.Snap(
+                7, true, true, 1790000000000L,
+                listOf(
+                    ControlProtocol.ThreadEvent.User("120:0", 1790000000000L, "run the layout checks too", false),
+                    ControlProtocol.ThreadEvent.Claude("210:0", 1790000000500L, "Unit tests pass.", false),
+                    ControlProtocol.ThreadEvent.Tool("340:1", 1790000001000L, "Edit", "KeyRow.kt", 18L, 4L),
+                ),
+            ),
+            ControlProtocol.parseThreadFrame(frames.getString("threadSnap")),
+        )
+    }
+
+    @Test fun threadEvGoldenParsesJsonNullsAsNullNotStringOrZero() {
+        val f = ControlProtocol.parseThreadFrame(frames.getString("threadEv")) as ControlProtocol.ThreadFrame.Events
+        assertEquals(8L, f.q)
+        assertEquals(
+            listOf(ControlProtocol.ThreadEvent.Tool("400:0", 1790000002000L, "Bash", "./gradlew test", null, null)),
+            f.events,
+        )
+    }
+
+    @Test fun threadStateGoldenParsesNullWorkingSince() {
+        assertEquals(
+            ControlProtocol.ThreadFrame.State(9, false, null),
+            ControlProtocol.parseThreadFrame(frames.getString("threadState")),
+        )
+        val omitted = ControlProtocol.parseThreadFrame("""{"t":"thread.state","s":"claude","q":9,"working":false}""")
+        assertEquals(ControlProtocol.ThreadFrame.State(9, false, null), omitted)
+    }
+
+    @Test fun toolTargetNullAndAbsentBothParseAsNull() {
+        val ev = """{"t":"thread.ev","s":"claude","q":1,"events":[{"k":"tool","id":"1:0","at":1,"name":"Read","target":null},{"k":"tool","id":"2:0","at":2,"name":"Read"}]}"""
+        val f = ControlProtocol.parseThreadFrame(ev) as ControlProtocol.ThreadFrame.Events
+        assertEquals(listOf(null, null), f.events.map { (it as ControlProtocol.ThreadEvent.Tool).target })
+        assertEquals(listOf(null, null), f.events.map { (it as ControlProtocol.ThreadEvent.Tool).add })
+    }
+
+    @Test fun promptGoldensParse() {
+        assertEquals(
+            ControlProtocol.ThreadFrame.Opened(
+                ControlProtocol.PromptInfo("3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b", "Bash", ControlProtocol.PromptRisk.MED, "./gradlew test", 102000L),
+            ),
+            ControlProtocol.parseThreadFrame(frames.getString("prompt")),
+        )
+        assertEquals(
+            ControlProtocol.ThreadFrame.Closed("3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b", ControlProtocol.PromptCloseReason.ANSWERED_DESKTOP),
+            ControlProtocol.parseThreadFrame(frames.getString("promptClosed")),
+        )
+        val timeout = """{"t":"prompt.closed","id":"x","reason":"timeout"}"""
+        assertEquals(ControlProtocol.ThreadFrame.Closed("x", ControlProtocol.PromptCloseReason.TIMEOUT), ControlProtocol.parseThreadFrame(timeout))
+    }
+
+    @Test fun malformedThreadFramesAreNull() {
+        val state = """{"t":"thread.state","s":"claude","q":9,"working":false,"workingSinceMs":%s}"""
+        for (bad in listOf("\"null\"", "1.5", "true", "{}")) assertNull(bad, ControlProtocol.parseThreadFrame(state.format(bad)))
+        val ev = """{"t":"thread.ev","s":"claude","q":1,"events":[%s]}"""
+        val badEvents = listOf(
+            """{"k":"user","id":"1:0","at":1,"text":"x"}""",
+            """{"k":"user","id":"1:0","at":1.5,"text":"x","truncated":false}""",
+            """{"k":"user","id":"1:0","at":1,"text":null,"truncated":false}""",
+            """{"k":"bogus","id":"1:0","at":1}""",
+            """{"k":"tool","id":"1:0","at":1,"name":"Edit","add":"null"}""",
+            """{"k":"tool","id":"1:0","at":1,"name":"Edit","add":1.5}""",
+            """{"k":"tool","id":"1:0","at":1,"name":"Edit","target":7}""",
+            """{"k":"tool","id":"1:0","at":1,"name":null}""",
+        )
+        for (b in badEvents) assertNull(b, ControlProtocol.parseThreadFrame(ev.format(b)))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","s":"claude","q":1}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","s":"claude","q":1.5,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","s":"terminal2","q":1,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","q":1,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.snap","s":"claude","q":7,"attached":"true","working":true,"workingSinceMs":null,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt","id":"a","tool":"Bash","risk":"NONE","summary":"s","ttlMs":1}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt","id":"a","tool":"Bash","risk":"LOW","summary":"s","ttlMs":1.5}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt","id":"","tool":"Bash","risk":"LOW","summary":"s","ttlMs":1}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt.closed","id":"a","reason":"answered-phone"}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"snap","s":"claude","q":1,"cols":1,"rows":1,"d":""}"""))
+        assertNull(ControlProtocol.parseThreadFrame("not json"))
+    }
 }

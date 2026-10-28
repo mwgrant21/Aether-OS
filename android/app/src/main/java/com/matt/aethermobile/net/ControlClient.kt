@@ -86,6 +86,7 @@ class ControlClient(
     private val transport: Transport,
     private val onState: (ControlState) -> Unit = {},
     private val onFrame: (ControlProtocol.TerminalFrame) -> Unit = {},
+    private val onThreadFrame: (ControlProtocol.ThreadFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
@@ -136,6 +137,12 @@ class ControlClient(
         val frame = try { ControlProtocol.buildDetach(s) } catch (_: IllegalArgumentException) { return false }
         return sendWhenConnected(frame)
     }
+
+    /** Starts the Claude thread feed (answered by a full thread.snap). False if not Connected or not queued. */
+    fun threadAttach(): Boolean = sendWhenConnected(ControlProtocol.buildThreadAttach())
+
+    /** Stops the Claude thread feed. False if not Connected or not queued. */
+    fun threadDetach(): Boolean = sendWhenConnected(ControlProtocol.buildThreadDetach())
 
     /** Sends one `in` frame for [s] with cseq [c]. False if not Connected, bad args, or not queued; nothing is buffered. The body is never logged. */
     fun sendInput(s: String, c: Long, d: String): Boolean {
@@ -196,6 +203,7 @@ class ControlClient(
 
         override fun onMessage(text: String) {
             var deliver: ControlProtocol.TerminalFrame? = null
+            var deliverThread: ControlProtocol.ThreadFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -213,12 +221,21 @@ class ControlClient(
                             deliver = frame
                         }
                     }
+                    "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed" -> {
+                        val frame = if (welcomed) ControlProtocol.parseThreadFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverThread = frame
+                        }
+                    }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                 }
             }
             // Outside the lock so a callback may call attach/detach/close freely; the
             // transport delivers onMessage serially per connection, so order holds.
             deliver?.let(onFrame)
+            deliverThread?.let(onThreadFrame)
         }
 
         private fun onBye(text: String) {

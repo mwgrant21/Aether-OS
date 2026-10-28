@@ -64,6 +64,7 @@ class ControlClientTest {
     private val scheduler = FakeScheduler()
 
     private val frames = mutableListOf<ControlProtocol.TerminalFrame>()
+    private val threadFrames = mutableListOf<ControlProtocol.ThreadFrame>()
 
     private fun client(host: String = HOST) = ControlClient(
         host = host,
@@ -71,6 +72,7 @@ class ControlClientTest {
         transport = transport,
         onState = { states += it },
         onFrame = { frames += it },
+        onThreadFrame = { threadFrames += it },
         nonceSource = { NONCE },
         epochSource = { EPOCH },
         scheduler = scheduler.schedule,
@@ -552,5 +554,54 @@ class ControlClientTest {
         val c = connected()
         transport.listener!!.onMessage("""{"t":"bogus","s":"claude"}""")
         assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+    }
+
+    @Test fun threadAndPromptFramesReachOnThreadFrameAfterConnected() {
+        connected()
+        val l = transport.listener!!
+        for (k in listOf("threadSnap", "threadEv", "threadState", "prompt", "promptClosed")) l.onMessage(golden.getString(k))
+        assertEquals(
+            listOf(
+                ControlProtocol.ThreadFrame.Snap::class, ControlProtocol.ThreadFrame.Events::class, ControlProtocol.ThreadFrame.State::class,
+                ControlProtocol.ThreadFrame.Opened::class, ControlProtocol.ThreadFrame.Closed::class,
+            ),
+            threadFrames.map { it::class },
+        )
+        assertTrue(frames.isEmpty())
+        assertTrue(transport.closes.isEmpty())
+    }
+
+    @Test fun malformedThreadFrameFailsAsProtocolAndIsNotDelivered() {
+        val c = connected()
+        transport.listener!!.onMessage("""{"t":"thread.state","s":"claude","q":9,"working":false,"workingSinceMs":"null"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+        assertTrue(threadFrames.isEmpty())
+    }
+
+    @Test fun threadFrameBeforeWelcomeIsAProtocolFailure() {
+        for (k in listOf("threadSnap", "threadEv", "threadState", "prompt", "promptClosed")) {
+            val t = FakeTransport()
+            val got = mutableListOf<ControlProtocol.ThreadFrame>()
+            val c = ControlClient(HOST, "0.2.0-v1", t, onThreadFrame = { got += it }, nonceSource = { NONCE }, epochSource = { EPOCH })
+            c.connect(TOKEN)
+            t.listener!!.onOpen()
+            t.listener!!.onMessage(golden.getString(k))
+            assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+            assertEquals(listOf(1008), t.closes)
+            assertTrue(got.isEmpty())
+        }
+    }
+
+    @Test fun threadAttachAndDetachSendTheGoldensOnlyWhenConnected() {
+        val idle = client()
+        assertFalse(idle.threadAttach())
+        assertFalse(idle.threadDetach())
+        assertTrue(transport.sent.isEmpty())
+        val c = connected()
+        val before = transport.sent.size
+        assertTrue(c.threadAttach())
+        assertTrue(c.threadDetach())
+        assertEquals(listOf(golden.getString("threadAttach"), golden.getString("threadDetach")), transport.sent.drop(before))
     }
 }
