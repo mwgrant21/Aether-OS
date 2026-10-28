@@ -36,11 +36,11 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     };
     // xterm turns Ctrl+V into 0x16 and the app menu is null, so there is no native paste: consume the key here.
     sharedTerm.attachCustomKeyEventHandler((ev) => {
-      const isPaste = ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === 'v';
+      const isPaste = ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.code === 'KeyV';
       if (!isPaste) return true;
       if (ev.type === 'keydown') {
         ev.preventDefault(); // stop any native paste so text is not pasted twice
-        pasteFromClipboard();
+        if (!ev.repeat) pasteFromClipboard(); // a held key must not paste repeatedly
       }
       return false; // xterm must not send 0x16 (also covers keypress/keyup)
     });
@@ -48,7 +48,7 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     const copySelection = () => {
       if (sharedTerm!.hasSelection()) void navigator.clipboard?.writeText?.(sharedTerm!.getSelection())?.catch(() => {});
     };
-    sharedHostEl.addEventListener('mousedown', () => document.addEventListener('mouseup', copySelection, { once: true }));
+    sharedHostEl.addEventListener('mousedown', (ev) => { if (ev.button === 0) document.addEventListener('mouseup', copySelection, { once: true }); }); // left only: right/middle click must not overwrite the clipboard before the paste reads it
     // Right-click pastes unless the running program tracks the mouse (then xterm/the program gets the event).
     sharedHostEl.addEventListener('contextmenu', (ev) => {
       if (sharedTerm!.modes.mouseTrackingMode !== 'none') return;
