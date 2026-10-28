@@ -185,7 +185,7 @@ object AppFlow {
                 if (live(s)) Transition(FlowState.Locked(), listOf(Effect.CloseSocket, Effect.DropToken))
                 else Transition(s)
             FlowEvent.Reconnect ->
-                if (live(s)) Transition(FlowState.Connecting, listOf(Effect.Connect)) else Transition(s)
+                if (live(s)) Transition(FlowState.Connecting, listOf(Effect.CloseSocket, Effect.Connect)) else Transition(s)
             is FlowEvent.Retry ->
                 if (s !is FlowState.Error) Transition(s)
                 else if (e.hasToken) Transition(FlowState.Locked(), listOf(Effect.BeginUnlock))
