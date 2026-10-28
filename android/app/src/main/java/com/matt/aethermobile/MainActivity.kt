@@ -50,6 +50,9 @@ import com.matt.aethermobile.net.ControlState
 import com.matt.aethermobile.net.Failure
 import com.matt.aethermobile.net.OkHttpTransport
 import com.matt.aethermobile.net.TerminalFeed
+import com.matt.aethermobile.thread.ThreadHost
+import com.matt.aethermobile.thread.ThreadUi
+import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.FrameRouter
@@ -136,6 +139,9 @@ class MainActivity : AppCompatActivity() {
     // Terminal state. The host is rebuilt per connection (fresh TerminalFeed); touched on the main thread.
     private var termHost: TerminalHost? = null
         set(v) { field = v; router.host = v }
+    // Thread model for the Claude slot, one per connection (like the sender); touched on the main thread.
+    private var threadHost: ThreadHost? = null
+    private var view = ViewMode.THREAD // memory only; survives reconnects
     private val router = FrameRouter()
     private var selected = "claude"
     private var zoomPx = Zoom.DEFAULT // 0 = fit width (the Fit button)
@@ -152,6 +158,8 @@ class MainActivity : AppCompatActivity() {
         val hostAccepts: Boolean = false,
         val notice: NotSentNotice = NotSentNotice.NONE,
         val restartAvailable: Boolean = false,
+        val view: ViewMode = ViewMode.THREAD,
+        val thread: ThreadUi = ThreadUi.EMPTY,
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -209,6 +217,8 @@ class MainActivity : AppCompatActivity() {
         prompt = null
         termHost?.onDisconnected()
         termHost = null
+        threadHost?.onDisconnected()
+        threadHost = null
         if (::screen.isInitialized) screen.destroy()
         io.shutdownNow()
         super.onDestroy()
@@ -486,9 +496,13 @@ class MainActivity : AppCompatActivity() {
             onAcked = { runOnUiThread { if (gen == connGen && !isDestroyed) { notice = NotSentNotice.NONE; renderTabs() } } },
         )
         val th = newHost()
+        val tth = newThreadHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
             runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
+        }, onThreadFrame = { f ->
+            // Transport thread; the host drops frames it is not attached for.
+            if (gen == connGen) tth.onFrame(f)
         }, onFrame = { f ->
             // Transport thread: route to the CURRENT host (it is replaced on renderer loss), and only for this connection.
             if (gen == connGen) router.route(f)
@@ -499,6 +513,8 @@ class MainActivity : AppCompatActivity() {
         })
         client = c
         termHost = th
+        threadHost?.onDisconnected()
+        threadHost = tth
         snapLogged = false
         try {
             c.connect(token)
@@ -567,6 +583,30 @@ class MainActivity : AppCompatActivity() {
         return th
     }
 
+    private fun newThreadHost(): ThreadHost {
+        var tth: ThreadHost? = null
+        tth = ThreadHost(
+            sendAttach = { client?.threadAttach() ?: false },
+            sendDetach = { client?.threadDetach() ?: false },
+            onChanged = { handler.post { if (!isDestroyed && threadHost === tth) renderTabs() } },
+            onFirstContent = { Log.d(TAG, "first_thread_rendered") },
+        )
+        return tth
+    }
+
+    /** Thread is live exactly when Claude is selected, the view is Thread and the connection is welcomed. */
+    private fun syncThread() {
+        val t = threadHost ?: return
+        if (terminalLive) t.onConnected()
+        t.activate(terminalLive && selected == "claude" && view == ViewMode.THREAD)
+    }
+
+    fun setView(v: ViewMode) {
+        view = v
+        syncThread()
+        renderTabs()
+    }
+
     private fun startTerminal(sessions: List<ControlProtocol.SessionInfo>) {
         val th = termHost ?: return
         lastSessions = sessions
@@ -575,6 +615,7 @@ class MainActivity : AppCompatActivity() {
         selected = slotMemory.pick(sessions)
         th.select(selected)
         th.zoom(zoomPx)
+        syncThread()
         renderTabs()
     }
 
@@ -584,6 +625,7 @@ class MainActivity : AppCompatActivity() {
         terminalLive = false
         termHost?.onDisconnected()
         termHost = null
+        threadHost?.onDisconnected()
         screen.reset()
     }
 
@@ -600,6 +642,7 @@ class MainActivity : AppCompatActivity() {
         slotMemory.remember(s) // the only writer: a user tap, never the automatic fallback
         notice = NotSentNotice.NONE
         termHost?.select(s)
+        syncThread()
         renderTabs()
     }
 
@@ -635,7 +678,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice, restartAvailable = termHost?.restartAvailable() == true)
+        ui = UiSnapshot(
+            flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice,
+            restartAvailable = termHost?.restartAvailable() == true,
+            view = view,
+            thread = threadHost?.snapshot() ?: ThreadUi.EMPTY,
+        )
     }
 
     // ---- rendering -----------------------------------------------------------------------
