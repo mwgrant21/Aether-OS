@@ -2,9 +2,9 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeNak, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
-import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES } from '../../src/shared/remote/types';
-import type { TerminalInfo } from '../../src/shared/remote/types';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
+import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES, CONTROL_PROMPT_CLOSE_REASONS, PROMPT_SUMMARY_CAP, THREAD_SNAPSHOT_MAX_BYTES, THREAD_SNAPSHOT_MAX_EVENTS, THREAD_TARGET_CAP, THREAD_TEXT_CAP, THREAD_WORKING_STALE_MS } from '../../src/shared/remote/types';
+import type { TerminalInfo, ThreadEvent } from '../../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const w = JSON.parse(spec.frames.welcome);
@@ -161,5 +161,45 @@ describe('parsePhoneMessage', () => {
 
   it('accepts an app string of exactly 32 characters', () => {
     expect(parse({ ...ok, app: 'x'.repeat(32) })).not.toBeNull();
+  });
+});
+
+describe('thread and prompt frames', () => {
+  const p = (o: unknown): ReturnType<typeof parsePhoneMessage> => parsePhoneMessage(JSON.stringify(o));
+  const ev = JSON.parse(spec.frames.threadSnap).events as ThreadEvent[];
+  it('thread.attach and thread.detach goldens parse back and round-trip', () => {
+    expect(parsePhoneMessage(spec.frames.threadAttach)).toEqual({ t: 'thread.attach', s: 'claude' });
+    expect(parsePhoneMessage(spec.frames.threadDetach)).toEqual({ t: 'thread.detach', s: 'claude' });
+    expect(JSON.stringify(parsePhoneMessage(spec.frames.threadAttach))).toBe(spec.frames.threadAttach);
+  });
+  it('a non-claude or missing slot is an invalid frame', () => {
+    for (const t of ['thread.attach', 'thread.detach']) {
+      for (const s of ['terminal2', 'codex', 5, null, undefined]) expect(p({ t, s })).toBeNull();
+    }
+    expect(p({ t: 'thread.attach', s: 'claude', x: 1 })).toEqual({ t: 'thread.attach', s: 'claude' });
+  });
+  it('encoders reproduce the goldens byte for byte', () => {
+    const snap = JSON.parse(spec.frames.threadSnap);
+    expect(encodeThreadSnap({ s: 'claude', q: 7, attached: true, working: true, workingSinceMs: 1790000000000, events: ev })).toBe(spec.frames.threadSnap);
+    expect(encodeThreadEv({ s: 'claude', q: 8, events: JSON.parse(spec.frames.threadEv).events })).toBe(spec.frames.threadEv);
+    expect(encodeThreadState({ s: 'claude', q: 9, working: false, workingSinceMs: null })).toBe(spec.frames.threadState);
+    const pr = JSON.parse(spec.frames.prompt);
+    expect(encodePrompt({ id: pr.id, tool: 'Bash', risk: 'MED', summary: './gradlew test', ttlMs: 102000 })).toBe(spec.frames.prompt);
+    expect(encodePromptClosed({ id: pr.id, reason: 'answered-desktop' })).toBe(spec.frames.promptClosed);
+    expect(snap.events).toHaveLength(3);
+  });
+  it('an event is re-shaped to the fixed key order and absent target/add/del become null', () => {
+    const loose = { id: '1:0', k: 'tool', name: 'Read', at: 5, extra: 1 } as unknown as ThreadEvent;
+    expect(JSON.parse(encodeThreadEv({ s: 'claude', q: 1, events: [loose] })).events[0]).toEqual({ k: 'tool', id: '1:0', at: 5, name: 'Read', target: null, add: null, del: null });
+    expect(Object.keys(JSON.parse(encodeThreadEv({ s: 'claude', q: 1, events: [loose] })).events[0])).toEqual(['k', 'id', 'at', 'name', 'target', 'add', 'del']);
+  });
+  it('every thread golden type is declared and the constants equal the JSON thread section', () => {
+    for (const k of ['threadSnap', 'threadEv', 'threadState', 'prompt', 'promptClosed']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t);
+    for (const k of ['threadAttach', 'threadDetach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t);
+    expect(spec.thread).toEqual({
+      slot: 'claude', snapshotMaxEvents: THREAD_SNAPSHOT_MAX_EVENTS, textCap: THREAD_TEXT_CAP, targetCap: THREAD_TARGET_CAP,
+      snapshotMaxBytes: THREAD_SNAPSHOT_MAX_BYTES, promptSummaryCap: PROMPT_SUMMARY_CAP, workingStaleMs: THREAD_WORKING_STALE_MS,
+    });
+    expect(spec.messages.promptCloseReasons).toEqual([...CONTROL_PROMPT_CLOSE_REASONS]);
   });
 });

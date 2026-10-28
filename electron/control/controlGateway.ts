@@ -11,10 +11,10 @@
 // the gateway only schedules the coalesced ack the port's result calls for, and answers a rejected frame with a nak
 // after flushing any pending ack for that slot (so the nak is never followed by an older ack). Without a terminal port every attach is
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
-// fixed strings plus the slot id and the identity ref.
+// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached.
 import { CONTROL_ACK_COALESCE_MS, TERMINAL_SLOTS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap } from '../../src/shared/remote/types';
-import { encodeAck, encodeBye, encodeNak, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort } from '../../src/shared/remote/types';
+import { encodeAck, encodeBye, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
@@ -30,6 +30,10 @@ export interface ControlGatewayOptions {
   helloTimeoutMs?: number;
   /** Read-only terminal access. Absent = fail closed: sessions stay empty and attach is a policy violation. */
   terminals?: TerminalReadPort;
+  /** Read-only Claude thread feed. Absent = fail closed: thread.attach is a policy violation. */
+  threads?: ThreadReadPort;
+  /** Pending permission prompts, pushed only to sockets that thread.attach. Read-only. */
+  prompts?: PromptReadPort;
   /** Typed-input router. Absent = fail closed: every `in` frame is a policy violation. */
   input?: InputPort;
   /** Called with the live attached slots (TERMINAL_SLOTS order) after an attach or detach, and with [] once when the socket ends. */
@@ -55,6 +59,8 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
   const log = opts.log;
   const terminals = opts.terminals;
   const input = opts.input;
+  const threads = opts.threads;
+  const prompts = opts.prompts;
 
   function attach(socket: ControlSocket, identity: ControlIdentity): ControlSession {
     let closed = false;
@@ -63,6 +69,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     let unsubscribeState: (() => void) | null = null;
     const attachments = new Map<TerminalSlotId, Attached>();
     let inputSession: InputSession | null = null;
+    let threadAtt: { live: boolean; handles: { detach(): void }[] } | null = null;
     const ackTimers = new Map<TerminalSlotId, { handle: unknown; c: number }>();
 
     const cancelDeadline = (): void => {
@@ -81,6 +88,20 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    const releaseThread = (): void => {
+      const a = threadAtt;
+      threadAtt = null;
+      if (!a) return;
+      a.live = false;
+      for (const h of a.handles) {
+        try {
+          h.detach();
+        } catch {
+          // a failing detach must not keep the socket (or the other attachments) from being torn down
+        }
+      }
+    };
+
     const reportAttached = (): void => {
       const live = TERMINAL_SLOTS.map(x => x.s).filter(s => attachments.has(s));
       try {
@@ -94,6 +115,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     const teardown = (): void => {
       for (const a of attachments.values()) release(a);
       attachments.clear();
+      releaseThread();
       if (!tornDown) {
         tornDown = true; // close() then the socket close event both land here; only the first reports, so a superseding session's slots are never cleared late
         reportAttached();
@@ -184,6 +206,46 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    const startThread = (port: ThreadReadPort): void => {
+      releaseThread();
+      const entry = { live: true, handles: [] as { detach(): void }[] };
+      threadAtt = entry;
+      const h = port.attach('claude', {
+        snap: (e) => {
+          if (!entry.live || closed) return;
+          socket.send(encodeThreadSnap({ s: 'claude', q: e.q, attached: e.attached, working: e.working, workingSinceMs: e.workingSinceMs, events: e.events }));
+        },
+        events: (e) => {
+          if (!entry.live || closed) return;
+          socket.send(encodeThreadEv({ s: 'claude', q: e.q, events: e.events }));
+        },
+        state: (e) => {
+          if (!entry.live || closed) return;
+          socket.send(encodeThreadState({ s: 'claude', q: e.q, working: e.working, workingSinceMs: e.workingSinceMs }));
+        },
+      });
+      entry.handles.push(h);
+      if (!entry.live) {
+        // detached or closed while attach() was still replaying synchronously
+        releaseThread();
+        return;
+      }
+      if (prompts) {
+        const ph = prompts.attach({
+          opened: (p) => {
+            if (!entry.live || closed) return;
+            socket.send(encodePrompt(p));
+          },
+          closed: (e) => {
+            if (!entry.live || closed) return;
+            socket.send(encodePromptClosed(e));
+          },
+        });
+        entry.handles.push(ph);
+        if (!entry.live) releaseThread();
+      }
+    };
+
     // Trailing coalesce: one pending timer per slot; the ack carries the newest cseq seen before it fires.
     const scheduleAck = (slot: TerminalSlotId, c: number): void => {
       const pending = ackTimers.get(slot);
@@ -255,6 +317,18 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           reportAttached();
           return;
         }
+        case 'thread.attach':
+          if (!helloSeen) return violation('control: thread before hello');
+          if (!threads) return violation('control: no thread port');
+          startThread(threads);
+          log?.('control: thread attach', identity.ref);
+          return;
+        case 'thread.detach':
+          if (!helloSeen) return violation('control: thread before hello');
+          if (!threadAtt) return;
+          releaseThread();
+          log?.('control: thread detach', identity.ref);
+          return;
         case 'in': {
           if (!helloSeen) return violation('control: input before hello');
           if (!input || !inputSession) return violation('control: no input port');

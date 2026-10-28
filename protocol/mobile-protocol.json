@@ -38,7 +38,9 @@
       "hello",
       "attach",
       "detach",
-      "in"
+      "in",
+      "thread.attach",
+      "thread.detach"
     ],
     "titanToPhone": [
       "welcome",
@@ -48,7 +50,12 @@
       "size",
       "state",
       "ack",
-      "nak"
+      "nak",
+      "thread.snap",
+      "thread.ev",
+      "thread.state",
+      "prompt",
+      "prompt.closed"
     ],
     "nakReasons": [
       "not-running",
@@ -62,7 +69,8 @@
       "policy",
       "slow-consumer",
       "rate-limit"
-    ]
+    ],
+    "promptCloseReasons": ["answered-desktop", "timeout"]
   },
   "pairResponses": {
     "ok": 200,
@@ -101,6 +109,15 @@
     "mirrorScrollbackLines": 2000,
     "sizeUnit": "json-escaped length"
   },
+  "thread": {
+    "slot": "claude",
+    "snapshotMaxEvents": 200,
+    "textCap": 8000,
+    "targetCap": 160,
+    "snapshotMaxBytes": 204800,
+    "promptSummaryCap": 1200,
+    "workingStaleMs": 120000
+  },
   "frames": {
     "hello": "{\"t\":\"hello\",\"v\":1,\"app\":\"0.2.0-v1\",\"epoch\":\"0123456789abcdef\",\"nonce\":\"00112233445566778899aabbccddeeff\"}",
     "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[]}",
@@ -117,6 +134,13 @@
     "ack": "{\"t\":\"ack\",\"s\":\"claude\",\"c\":3}",
     "nakNotRunning": "{\"t\":\"nak\",\"s\":\"claude\",\"c\":4,\"reason\":\"not-running\"}",
     "nakTypingOff": "{\"t\":\"nak\",\"s\":\"terminal2\",\"c\":9,\"reason\":\"typing-off\"}",
-    "welcomeApplied": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{\"claude\":3},\"prompts\":[]}"
+    "welcomeApplied": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{\"claude\":3},\"prompts\":[]}",
+    "threadAttach": "{\"t\":\"thread.attach\",\"s\":\"claude\"}",
+    "threadDetach": "{\"t\":\"thread.detach\",\"s\":\"claude\"}",
+    "threadSnap": "{\"t\":\"thread.snap\",\"s\":\"claude\",\"q\":7,\"attached\":true,\"working\":true,\"workingSinceMs\":1790000000000,\"events\":[{\"k\":\"user\",\"id\":\"120:0\",\"at\":1790000000000,\"text\":\"run the layout checks too\",\"truncated\":false},{\"k\":\"claude\",\"id\":\"210:0\",\"at\":1790000000500,\"text\":\"Unit tests pass.\",\"truncated\":false},{\"k\":\"tool\",\"id\":\"340:1\",\"at\":1790000001000,\"name\":\"Edit\",\"target\":\"KeyRow.kt\",\"add\":18,\"del\":4}]}",
+    "threadEv": "{\"t\":\"thread.ev\",\"s\":\"claude\",\"q\":8,\"events\":[{\"k\":\"tool\",\"id\":\"400:0\",\"at\":1790000002000,\"name\":\"Bash\",\"target\":\"./gradlew test\",\"add\":null,\"del\":null}]}",
+    "threadState": "{\"t\":\"thread.state\",\"s\":\"claude\",\"q\":9,\"working\":false,\"workingSinceMs\":null}",
+    "prompt": "{\"t\":\"prompt\",\"id\":\"3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b\",\"tool\":\"Bash\",\"risk\":\"MED\",\"summary\":\"./gradlew test\",\"ttlMs\":102000}",
+    "promptClosed": "{\"t\":\"prompt.closed\",\"id\":\"3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b\",\"reason\":\"answered-desktop\"}"
   }
 }

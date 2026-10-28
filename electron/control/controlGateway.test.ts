@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { createControlGateway } from './controlGateway';
 import { MESSAGE_TYPES } from './protocol';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap } from '../../src/shared/remote/types';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap, ThreadEvent, ThreadReadPort, ThreadTap, PromptInfo, PromptReadPort, PromptTap } from '../../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const vec = spec.proof.vectors;
@@ -698,5 +698,173 @@ describe('control gateway onAttached', () => {
     expect(s.closes).toEqual([]);
     expect(() => session.close('disabled')).not.toThrow();
     expect(s.closes).toEqual([1000]);
+  });
+});
+
+describe('control gateway thread verbs', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const SNAP_EV = JSON.parse(spec.frames.threadSnap).events as ThreadEvent[];
+  const PR = JSON.parse(spec.frames.prompt) as PromptInfo;
+
+  function fakeThreads(opts: { throwOnDetach?: boolean } = {}) {
+    const taps: ThreadTap[] = [];
+    const fp = {
+      taps,
+      attaches: 0,
+      detaches: 0,
+      port: {
+        attach: (_s: 'claude', tap: ThreadTap) => {
+          fp.attaches++;
+          taps.push(tap);
+          tap.snap({ q: 7, attached: true, working: true, workingSinceMs: 1790000000000, events: SNAP_EV });
+          return { detach: () => { fp.detaches++; if (opts.throwOnDetach) throw new Error('boom'); } };
+        },
+      } as ThreadReadPort,
+    };
+    return fp;
+  }
+  function fakePrompts(pending: PromptInfo[] = []) {
+    const taps: PromptTap[] = [];
+    const fp = {
+      taps,
+      detaches: 0,
+      port: {
+        attach: (tap: PromptTap) => {
+          taps.push(tap);
+          for (const p of pending) tap.opened(p);
+          return { detach: () => { fp.detaches++; } };
+        },
+      } as PromptReadPort,
+    };
+    return fp;
+  }
+  const open = (extra: { threads?: ThreadReadPort; prompts?: PromptReadPort }, logs: string[] = []) => {
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1790000000000, log: (m) => { logs.push(m); }, ...extra }).attach(s, identity);
+    s.feed(helloFrame);
+    s.sent.length = 0;
+    return s;
+  };
+  const types = (s: { sent: string[] }): string[] => s.sent.map((x) => JSON.parse(x).t);
+
+  it('thread.attach delivers the snap before it returns, then replays pending prompts', () => {
+    const th = fakeThreads();
+    const s = open({ threads: th.port, prompts: fakePrompts([PR]).port });
+    s.feed(spec.frames.threadAttach);
+    expect(s.sent).toEqual([expect.any(String), spec.frames.prompt]);
+    expect(s.sent[0]).toBe(spec.frames.threadSnap);
+    expect(s.closes).toEqual([]);
+  });
+
+  it('frames after attach reach the socket as thread.ev, thread.state, prompt and prompt.closed', () => {
+    const th = fakeThreads();
+    const pr = fakePrompts();
+    const s = open({ threads: th.port, prompts: pr.port });
+    s.feed(spec.frames.threadAttach);
+    s.sent.length = 0;
+    th.taps[0].events({ q: 8, events: JSON.parse(spec.frames.threadEv).events });
+    th.taps[0].state({ q: 9, working: false, workingSinceMs: null });
+    pr.taps[0].opened(PR);
+    pr.taps[0].closed({ id: PR.id, reason: 'answered-desktop' });
+    expect(s.sent).toEqual([spec.frames.threadEv, spec.frames.threadState, spec.frames.prompt, spec.frames.promptClosed]);
+  });
+
+  it('prompts reach only thread-attached sockets', () => {
+    const th = fakeThreads();
+    const pr = fakePrompts();
+    const attached = open({ threads: th.port, prompts: pr.port });
+    const idle = open({ threads: th.port, prompts: pr.port });
+    attached.feed(spec.frames.threadAttach);
+    attached.sent.length = 0;
+    expect(pr.taps).toHaveLength(1);
+    for (const t of pr.taps) t.opened(PR);
+    expect(types(attached)).toEqual(['prompt']);
+    expect(idle.sent).toEqual([]);
+  });
+
+  it('thread.detach releases both attachments and later frames are dropped; a second detach is a no-op', () => {
+    const th = fakeThreads();
+    const pr = fakePrompts();
+    const s = open({ threads: th.port, prompts: pr.port });
+    s.feed(spec.frames.threadAttach);
+    s.sent.length = 0;
+    s.feed(spec.frames.threadDetach);
+    s.feed(spec.frames.threadDetach);
+    expect([th.detaches, pr.detaches]).toEqual([1, 1]);
+    th.taps[0].events({ q: 8, events: [] });
+    pr.taps[0].opened(PR);
+    expect(s.sent).toEqual([]);
+    expect(s.closes).toEqual([]);
+  });
+
+  it('a repeated thread.attach releases the prior attachment first and sends a fresh snap', () => {
+    const th = fakeThreads();
+    const pr = fakePrompts();
+    const s = open({ threads: th.port, prompts: pr.port });
+    s.feed(spec.frames.threadAttach);
+    s.feed(spec.frames.threadAttach);
+    expect([th.attaches, th.detaches, pr.detaches]).toEqual([2, 1, 1]);
+    s.sent.length = 0;
+    th.taps[0].events({ q: 8, events: [] }); // the first tap is dead
+    expect(s.sent).toEqual([]);
+    th.taps[1].events({ q: 8, events: [] });
+    expect(types(s)).toEqual(['thread.ev']);
+  });
+
+  it('socket teardown releases both, and a throwing detach does not block it', () => {
+    const th = fakeThreads({ throwOnDetach: true });
+    const pr = fakePrompts();
+    const s = open({ threads: th.port, prompts: pr.port });
+    s.feed(spec.frames.threadAttach);
+    s.drop();
+    expect([th.detaches, pr.detaches]).toEqual([1, 1]);
+    pr.taps[0].opened(PR);
+    expect(types(s)).toEqual(['thread.snap']);
+  });
+
+  it('thread.attach before hello is a policy violation and logs a fixed string', () => {
+    const logs: string[] = [];
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1, log: (m) => { logs.push(m); }, threads: fakeThreads().port }).attach(s, identity);
+    s.feed(spec.frames.threadAttach);
+    expect(types(s)).toEqual(['bye']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: thread before hello');
+  });
+
+  it('thread.attach without a thread port is a policy violation', () => {
+    const logs: string[] = [];
+    const s = open({}, logs);
+    s.feed(spec.frames.threadAttach);
+    expect(types(s)).toEqual(['bye']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: no thread port');
+  });
+
+  it('a non-claude slot is an invalid frame and closes 1008 without touching the port', () => {
+    const th = fakeThreads();
+    const s = open({ threads: th.port });
+    s.feed('{"t":"thread.attach","s":"codex"}');
+    expect(s.closes).toEqual([1008]);
+    expect(th.attaches).toBe(0);
+  });
+
+  it('works with a thread port and no prompt port, and logs attach and detach', () => {
+    const logs: string[] = [];
+    const s = open({ threads: fakeThreads().port }, logs);
+    s.feed(spec.frames.threadAttach);
+    s.feed(spec.frames.threadDetach);
+    expect(types(s)).toEqual(['thread.snap']);
+    expect(logs).toContain('control: thread attach');
+    expect(logs).toContain('control: thread detach');
+  });
+
+  it('the welcome frame is unchanged by the thread ports', () => {
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1790000000000, threads: fakeThreads().port, prompts: fakePrompts([PR]).port }).attach(s, identity);
+    s.feed(helloFrame);
+    expect(s.sent).toEqual([spec.frames.welcome]);
   });
 });

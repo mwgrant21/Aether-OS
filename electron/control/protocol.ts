@@ -1,15 +1,15 @@
 // electron/control/protocol.ts
 //
-// Wire frames for phone CONTROL (/ctl). The phone speaks hello, attach, detach and in (typed input); titan answers with welcome,
-// bye, snap, out, size, state, ack and nak. There is no start or prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
+// Wire frames for phone CONTROL (/ctl). The phone speaks hello, attach, detach, in (typed input), thread.attach and thread.detach; titan answers with welcome,
+// bye, snap, out, size, state, ack, nak, thread.snap, thread.ev, thread.state, prompt and prompt.closed. There is no start verb and no answer-a-prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
 // below statically and requires the gateway to handle exactly phoneToTitan, so a new verb is a reviewed edit to both
 // files. protocol/mobile-protocol.json pins these values from the outside (protocol.test.ts).
 import { CONTROL_BYE_REASONS, CONTROL_INPUT_MAX_BYTES, TERMINAL_SLOTS } from '../../src/shared/remote/types';
-import type { NakReason, TerminalInfo, TerminalSlotId, TerminalSlotState } from '../../src/shared/remote/types';
+import type { NakReason, PromptCloseReason, PromptInfo, TerminalInfo, TerminalSlotId, TerminalSlotState, ThreadEvent, ThreadSlotId } from '../../src/shared/remote/types';
 
 export const MESSAGE_TYPES = {
-  phoneToTitan: ['hello', 'attach', 'detach', 'in'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak'],
+  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed'],
 } as const;
 
 export const PROTOCOL_VERSION = 1;
@@ -38,7 +38,15 @@ export interface InMessage {
   c: number;
   d: string;
 }
-export type PhoneMessage = HelloMessage | AttachMessage | DetachMessage | InMessage;
+export interface ThreadAttachMessage {
+  t: 'thread.attach';
+  s: ThreadSlotId;
+}
+export interface ThreadDetachMessage {
+  t: 'thread.detach';
+  s: ThreadSlotId;
+}
+export type PhoneMessage = HelloMessage | AttachMessage | DetachMessage | InMessage | ThreadAttachMessage | ThreadDetachMessage;
 
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 const APP_MAX = 32;
@@ -85,6 +93,10 @@ export function parsePhoneMessage(text: string): PhoneMessage | null {
     } catch {
       return null;
     }
+  }
+  if (kind === 'thread.attach' || kind === 'thread.detach') {
+    if (o.s !== 'claude') return null; // the thread exists for the Claude slot only
+    return { t: kind, s: 'claude' };
   }
   if (kind === 'attach' || kind === 'detach') {
     const s = slotOf(o.s);
@@ -142,4 +154,30 @@ export function encodeSize(o: { s: TerminalSlotId; cols: number; rows: number })
 
 export function encodeState(o: { s: TerminalSlotId; state: TerminalSlotState }): string {
   return JSON.stringify({ t: 'state', s: o.s, state: o.state });
+}
+
+export function encodeThreadSnap(o: { s: ThreadSlotId; q: number; attached: boolean; working: boolean; workingSinceMs: number | null; events: readonly ThreadEvent[] }): string {
+  return JSON.stringify({ t: 'thread.snap', s: o.s, q: o.q, attached: o.attached, working: o.working, workingSinceMs: o.workingSinceMs, events: o.events.map(shapeEvent) });
+}
+
+export function encodeThreadEv(o: { s: ThreadSlotId; q: number; events: readonly ThreadEvent[] }): string {
+  return JSON.stringify({ t: 'thread.ev', s: o.s, q: o.q, events: o.events.map(shapeEvent) });
+}
+
+export function encodeThreadState(o: { s: ThreadSlotId; q: number; working: boolean; workingSinceMs: number | null }): string {
+  return JSON.stringify({ t: 'thread.state', s: o.s, q: o.q, working: o.working, workingSinceMs: o.workingSinceMs });
+}
+
+export function encodePrompt(o: PromptInfo): string {
+  return JSON.stringify({ t: 'prompt', id: o.id, tool: o.tool, risk: o.risk, summary: o.summary, ttlMs: o.ttlMs });
+}
+
+export function encodePromptClosed(o: { id: string; reason: PromptCloseReason }): string {
+  return JSON.stringify({ t: 'prompt.closed', id: o.id, reason: o.reason });
+}
+
+// Fixed key order and no stray keys, whatever object the feed hands over.
+function shapeEvent(e: ThreadEvent): Record<string, unknown> {
+  if (e.k === 'tool') return { k: 'tool', id: e.id, at: e.at, name: e.name, target: e.target ?? null, add: e.add ?? null, del: e.del ?? null };
+  return { k: e.k, id: e.id, at: e.at, text: e.text, truncated: e.truncated };
 }

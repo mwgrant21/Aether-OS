@@ -53,8 +53,8 @@ export const CONTROL_ACK_COALESCE_MS = 30;
 export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
-  phoneToTitan: ['hello', 'attach', 'detach', 'in'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak'],
+  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed'],
 } as const;
 export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
 export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
@@ -157,3 +157,32 @@ export interface TerminalReadPort {
   onState(cb: (e: { s: TerminalSlotId; state: TerminalSlotState }) => void): () => void;  // returns unsubscribe
   retain(): () => void;                                      // refcounted; returns release (idempotent)
 }
+
+// ---- Phone thread (slice 1). Pinned by mobileProtocol.test.ts against protocol/mobile-protocol.json `thread`.
+export const THREAD_SNAPSHOT_MAX_EVENTS = 200;
+export const THREAD_TEXT_CAP = 8000;                        // chars; longer text is cut and `truncated` is set
+export const THREAD_TARGET_CAP = 160;
+export const THREAD_SNAPSHOT_MAX_BYTES = 200 * 1024;        // oldest events are dropped until the snap fits
+export const PROMPT_SUMMARY_CAP = 1200;
+export const THREAD_WORKING_STALE_MS = 120000;
+export type ThreadSlotId = 'claude';
+export type ThreadEvent =
+  | { k: 'user'; id: string; at: number; text: string; truncated: boolean }
+  | { k: 'claude'; id: string; at: number; text: string; truncated: boolean }
+  | { k: 'tool'; id: string; at: number; name: string; target: string | null; add: number | null; del: number | null };
+export interface ThreadTap {                                 // callbacks are delivered in order, never re-entrantly
+  snap(e: { q: number; attached: boolean; working: boolean; workingSinceMs: number | null; events: readonly ThreadEvent[] }): void;
+  events(e: { q: number; events: readonly ThreadEvent[] }): void;
+  state(e: { q: number; working: boolean; workingSinceMs: number | null }): void;
+}
+/** attach() delivers `snap` synchronously, before it returns. */
+export interface ThreadReadPort { attach(s: ThreadSlotId, tap: ThreadTap): { detach(): void } }
+export const CONTROL_PROMPT_CLOSE_REASONS = ['answered-desktop', 'timeout'] as const;
+export type PromptCloseReason = (typeof CONTROL_PROMPT_CLOSE_REASONS)[number];
+export interface PromptInfo { id: string; tool: string; risk: 'LOW' | 'MED' | 'HIGH'; summary: string; ttlMs: number }
+export interface PromptTap {
+  opened(p: PromptInfo): void;
+  closed(e: { id: string; reason: PromptCloseReason }): void;
+}
+/** attach() replays every pending prompt as `opened` synchronously, then forwards live opened/closed. */
+export interface PromptReadPort { attach(tap: PromptTap): { detach(): void } }
