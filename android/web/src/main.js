@@ -8,11 +8,13 @@ import { installReplySuppression, applySnap, applySize } from './replySuppressio
 import { shouldSend, applyStdin } from './inputFilter.js';
 import { composeInputs } from './compose.js';
 import { followCursor } from './cursorFollow.js';
+import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
 const MIN_FONT = 6;
 const MAX_FONT = 24;
+const HIST_DEBOUNCE_MS = 200; // settled region rebuild is coalesced (<= 250 ms)
 const bridge = window.aetherBridge;
 const send = (m) => bridge.postMessage(JSON.stringify(m));
 const utf8Len = (s) => new TextEncoder().encode(s).length;
@@ -30,6 +32,14 @@ function slotFor(id) {
   const el = document.createElement('div');
   el.className = 'slot';
   el.hidden = id !== visible;
+  // .slot scrolls vertically; .hist is the wrapped settled region; .livex pans the PTY grid.
+  const hist = document.createElement('div');
+  hist.className = 'hist';
+  hist.hidden = true;
+  const livex = document.createElement('div');
+  livex.className = 'livex';
+  el.appendChild(hist);
+  el.appendChild(livex);
   root.appendChild(el);
   const term = new Terminal({
     scrollback: 2000,
@@ -43,8 +53,8 @@ function slotFor(id) {
   installReplySuppression(term);
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.open(el);
-  slot = { id, el, term, fit, sized: false };
+  term.open(livex);
+  slot = { id, el, hist, livex, term, fit, sized: false, dirty: false, histKey: null, histTimer: 0 };
   // Input only while stdin is on, and never mouse/focus reports (inputFilter). Resize is
   // reported only while the page is fitting itself (V0 demo); titan owns the size otherwise.
   term.onData((d) => {
@@ -79,6 +89,29 @@ function applyZoom(slot) {
     px = Math.min(MAX_FONT, Math.max(MIN_FONT, px));
   }
   if (slot.term.options.fontSize !== px) slot.term.options.fontSize = px;
+  slot.hist.style.fontSize = `${px}px`;
+}
+
+// Settled region: rebuilt from settledLines when its key moved or anything was written since
+// (see needsRebuild), coalesced by a short timer. Hidden while the alternate buffer is active.
+function scheduleHist(slot) {
+  slot.dirty = true;
+  if (slot.histTimer) return;
+  slot.histTimer = setTimeout(() => {
+    slot.histTimer = 0;
+    rebuildHist(slot);
+  }, HIST_DEBOUNCE_MS);
+}
+
+function rebuildHist(slot) {
+  const res = settledLines(slot.term);
+  if (needsRebuild(slot.histKey, res.key, slot.dirty)) {
+    slot.histKey = res.key;
+    slot.dirty = false;
+    renderHistory(document, slot.hist, res.lines);
+    slot.hist.hidden = res.lines.length === 0;
+    follow(slot);
+  }
 }
 
 // sized is set synchronously so the onResize wired above stays silent; the resize itself
@@ -87,6 +120,7 @@ function setSize(slot, cols, rows) {
   slot.sized = true;
   applySize(slot.term, cols, rows, () => {
     applyZoom(slot);
+    scheduleHist(slot);
     follow(slot);
   });
 }
@@ -100,11 +134,12 @@ function follow(slot, followX = false) {
   const r = followCursor({
     cursorX: b.cursorX, cursorY: b.cursorY, cols: slot.term.cols, rows: slot.term.rows,
     screenW: screen.clientWidth, screenH: screen.clientHeight,
-    viewW: slot.el.clientWidth, viewH: slot.el.clientHeight,
-    scrollLeft: slot.el.scrollLeft, scrollTop: slot.el.scrollTop, followX,
+    viewW: slot.livex.clientWidth, viewH: slot.el.clientHeight,
+    scrollLeft: slot.livex.scrollLeft, scrollTop: slot.el.scrollTop, followX,
+    offsetY: slot.hist.hidden ? 0 : slot.hist.offsetHeight,
   });
   if (r.scrollTop !== slot.el.scrollTop) slot.el.scrollTop = r.scrollTop;
-  if (r.scrollLeft !== slot.el.scrollLeft) slot.el.scrollLeft = r.scrollLeft;
+  if (r.scrollLeft !== slot.livex.scrollLeft) slot.livex.scrollLeft = r.scrollLeft;
 }
 
 function show(id) {
@@ -114,6 +149,7 @@ function show(id) {
   slot.el.hidden = false;
   applyZoom(slot);
   if (!slot.sized) slot.fit.fit();
+  scheduleHist(slot);
   follow(slot);
 }
 
@@ -135,6 +171,7 @@ bridge.onmessage = (ev) => {
       slot.sized = true;
       applySnap(slot.term, m.cols, m.rows, m.d, () => {
         applyZoom(slot);
+        scheduleHist(slot);
         follow(slot);
       });
       return;
@@ -146,6 +183,7 @@ bridge.onmessage = (ev) => {
       const slot = slotFor(s);
       slot.term.write(d, () => {
         send({ t: 'consumed', s, bytes: utf8Len(d) });
+        scheduleHist(slot);
         if (s === visible) {
           follow(slot, wantX);
           wantX = false;
@@ -171,6 +209,7 @@ bridge.onmessage = (ev) => {
         zoomPx = m.px;
         for (const slot of slots.values()) applyZoom(slot);
         follow(slots.get(visible));
+        for (const slot of slots.values()) scheduleHist(slot);
       }
       return;
     case 'compose': {

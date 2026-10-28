@@ -114,3 +114,38 @@ export function settledLines(term, maxLines = 400) {
   });
   return { lines, key };
 }
+
+// Rebuild policy for the settled DOM. The key alone can collide on a full scrollback when the
+// newest scrolled-off line repeats the previous one (blank lines), so any write, snap or size
+// since the last build also forces a rebuild (a cols change reflows rows, which a write-less
+// size alone would otherwise miss).
+export function needsRebuild(last, key, dirty) {
+  return last === null || last !== key || dirty;
+}
+
+// Builds the settled region. DOM-light on purpose: `doc` is injected and only createElement,
+// textContent, className and el.style.* are used (never innerHTML), so hostile terminal output
+// stays literal text under the page CSP.
+export function renderHistory(doc, container, lines) {
+  const out = lines.map((l) => {
+    const row = doc.createElement('div');
+    row.className = l.ruled ? 'hl ruled' : 'hl';
+    for (const r of l.runs) {
+      const s = doc.createElement('span');
+      s.textContent = r.text;
+      let fg = r.fg;
+      let bg = r.bg;
+      if (r.inverse) [fg, bg] = [bg || '#0A0E14', fg || '#D5DEE8'];
+      if (fg) s.style.color = fg;
+      if (bg) s.style.backgroundColor = bg;
+      if (r.bold) s.style.fontWeight = 'bold';
+      if (r.dim) s.style.opacity = '0.6';
+      if (r.italic) s.style.fontStyle = 'italic';
+      if (r.underline) s.style.textDecoration = 'underline';
+      row.appendChild(s);
+    }
+    if (!l.runs.length) row.textContent = '\u00a0';
+    return row;
+  });
+  container.replaceChildren(...out);
+}

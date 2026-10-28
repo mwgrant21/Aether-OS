@@ -52,4 +52,14 @@ describe('xterm cursorY', () => {
     await new Promise((r) => t.write(s, r));
     expect(t.buffer.active.cursorY).toBe(23);
   });
+  it('offsetY shifts the cursor row down and extends the scrollable height', () => {
+    // 200 px of history above the grid: row 29 now ends at 200 + 510 = 710.
+    expect(run({ cursorY: 29, offsetY: 200 }).scrollTop).toBe(710 - 170);
+    expect(run({ cursorY: 0, offsetY: 200, scrollTop: 400 }).scrollTop).toBe(200);
+  });
+  it('offsetY 0, absent, negative or NaN reproduces the default', () => {
+    for (const offsetY of [0, undefined, -5, NaN]) {
+      expect(run({ cursorY: 29, offsetY })).toEqual(run({ cursorY: 29 }));
+    }
+  });
 });

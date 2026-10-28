@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import headless from '@xterm/headless';
-import { settledLines, isRuled, paletteCss } from './wrapHistory.js';
+import { settledLines, isRuled, paletteCss, needsRebuild, renderHistory } from './wrapHistory.js';
 
 const { Terminal } = headless;
 const mk = (o = {}) => new Terminal({ cols: 20, rows: 5, scrollback: 2000, allowProposedApi: true, ...o });
@@ -145,5 +145,70 @@ describe('colour and attribute mapping', () => {
     await write(t, `a\x1b[31mb\x1b[0mc\r\n${nums(8)}`);
     const runs = settledLines(t).lines[0].runs;
     expect(runs.map((r) => r.text)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('scrolling redraw and rebuild policy', () => {
+  it('a spinner that prints CRLF per frame only ever appends to the settled prefix', async () => {
+    const t = mk();
+    await write(t, nums(10) + '\r\n');
+    let prev = settledLines(t).lines;
+    for (let i = 0; i < 40; i++) {
+      await write(t, `\r\x1b[2Kspin ${i}\r\n`);
+      const cur = settledLines(t).lines;
+      expect(cur.slice(0, prev.length)).toEqual(prev);
+      prev = cur;
+    }
+    expect(prev.length).toBeGreaterThan(40);
+  });
+
+  it('the key can collide on a full scrollback of repeated blanks; a write still forces a rebuild', async () => {
+    const t = mk({ scrollback: 10 });
+    await write(t, '\r\n'.repeat(40));
+    const a = settledLines(t).key;
+    await write(t, '\r\n');
+    expect(settledLines(t).key).toBe(a); // collision: baseY and line baseY-1 are unchanged
+    expect(needsRebuild(a, a, false)).toBe(false);
+    expect(needsRebuild(a, a, true)).toBe(true); // dirty (any write/snap/size) overrides
+    expect(needsRebuild(a, 'other', false)).toBe(true);
+    expect(needsRebuild(null, a, false)).toBe(true);
+  });
+
+  it('a cols change that reflows rows keeps the text but changes the row structure', async () => {
+    const t = mk({ cols: 10, rows: 3 });
+    await write(t, 'abcdefghijklmnopqrst\r\nx\r\ny\r\nz\r\nw');
+    const before = text(settledLines(t));
+    t.resize(30, 3);
+    const after = text(settledLines(t));
+    expect(before.join('')).toBe(after.join(''));
+  });
+});
+
+describe('renderHistory', () => {
+  const mkDoc = () => {
+    const el = () => ({
+      className: '', style: {}, children: [], _t: '',
+      set textContent(v) { this._t = v; this.children = []; },
+      get textContent() { return this._t; },
+      appendChild(c) { this.children.push(c); },
+      replaceChildren(...c) { this.children = c; },
+    });
+    return { createElement: el };
+  };
+  it('puts hostile text through textContent only, as literal text', () => {
+    const doc = mkDoc();
+    const box = doc.createElement('div');
+    const evil = '<img src=x onerror=alert(1)><script>x</script>';
+    renderHistory(doc, box, [
+      { runs: [{ text: evil, fg: '#cc0000', bg: null, bold: true, dim: false, italic: false, underline: false, inverse: false }], ruled: false },
+      { runs: [], ruled: true },
+    ]);
+    expect(box.children).toHaveLength(2);
+    const span = box.children[0].children[0];
+    expect(span.textContent).toBe(evil);
+    expect(span.children).toEqual([]);
+    expect(span.style.color).toBe('#cc0000');
+    expect(span.style.fontWeight).toBe('bold');
+    expect(box.children[1].className).toBe('hl ruled');
   });
 });
