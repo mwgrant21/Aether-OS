@@ -96,6 +96,8 @@ import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngin
 import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegration';
 import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createRemoteHub } from './remote/remoteHub';
+import { createPermissionBroker } from './permissionBroker';
+import { createThreadFeed } from './threadFeed';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
@@ -456,6 +458,12 @@ let stopPermissionServer: (() => void) | null = null;
 // renderer's decision. Populated in onPermissionRequest below, drained by
 // the 'permission:respond' handler.
 const pendingPermissionResolvers = new Map<string, (decision: PermissionDecision) => void>();
+
+// Shared by the permission server's timeout and the broker's auto-close, so a phone never shows a prompt past its life.
+const PERMISSION_TIMEOUT_MS = 120000;
+// Observe-only registry of pending prompts for the phone's read-only display. It never resolves anything:
+// pendingPermissionResolvers above stays the only path that answers a prompt.
+const permissionBroker = createPermissionBroker({ now: Date.now, timeoutMs: PERMISSION_TIMEOUT_MS });
 
 // requestId -> resolver for an anomaly-triggered PostToolUse flag-review
 // currently awaiting the renderer's decision. Same pattern as
@@ -1001,7 +1009,7 @@ app.whenReady().then(async () => {
     // (permissionAuth.ts, security audit 2026-10-04).
     secret: createPermissionSecret(),
     port: portAvailable ? desiredPort : 0,
-    timeoutMs: 120000,
+    timeoutMs: PERMISSION_TIMEOUT_MS,
     onPermissionRequest: async (req: { toolName: string; toolInput: unknown }): Promise<PermissionDecision> => {
       const risk = classifyPermissionRisk(req.toolName, req.toolInput);
       if (shouldAutoAllow(risk, permissionAutoAllowThreshold)) {
@@ -1014,6 +1022,9 @@ app.whenReady().then(async () => {
       // "no decision in time" case around this call.
       if (!mainWindow) return { behavior: 'deny', reason: 'no window available to prompt for permission' };
       const requestId = crypto.randomUUID();
+      // Observe-only. requestId is a fresh UUID, and a duplicate open() of a pending id is a no-op by design,
+      // so this can never replace or re-announce a live prompt. A broker fault must not block the desktop prompt.
+      try { permissionBroker.open({ id: requestId, toolName: req.toolName, toolInput: req.toolInput, risk }); } catch { /* observe-only */ }
       const editableField = derivePermissionEditableField(req.toolName, req.toolInput);
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
@@ -1523,11 +1534,16 @@ let resolveRemotePrivateDir: () => void = () => {};
 const remotePrivateDir = new Promise<void>(resolve => { resolveRemotePrivateDir = resolve; });
 let remoteDirReady = false;
 let remoteDirFailed = false; // true only after the ACL setup actually failed (not while it is pending)
+// One resolver for both the viewer feed and the phone thread feed: the pinned Claude session's transcript file.
+const resolvePinnedSession = () => {
+  const id = liveAgentTracker.getPinnedSessionId();
+  return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
+};
+// Polls the transcript only while a phone socket is thread-attached; its ring is dropped on the last detach, so
+// control stop (which closes every socket) and quit leave nothing running or held.
+const threadFeed = createThreadFeed({ resolveSession: resolvePinnedSession, now: Date.now });
 const remoteHub = createRemoteHub({
-  resolveSession: () => {
-    const id = liveAgentTracker.getPinnedSessionId();
-    return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
-  },
+  resolveSession: resolvePinnedSession,
   store: createSessionStore(join(aetherOsDir, 'remote-sessions.json')),
   onStatus: s => sendToWindow('remote:statusChanged', s),
   log: l => diagLog.write(l),
@@ -1540,6 +1556,8 @@ const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
   terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
   input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
+  threads: threadFeed, // read-only transcript thread, Claude slot only
+  prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
@@ -1696,6 +1714,8 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
   if (!resolve) return; // already timed out / resolved / duplicate response
   pendingPermissionResolvers.delete(requestId);
   resolve(decision);
+  // Observe-only, after the decision is resolved and before the renderer is told; a broker fault cannot skip either.
+  try { permissionBroker.close(requestId, 'answered-desktop'); } catch { /* observe-only */ }
   // The renderer only ever learns a request EXISTS from this channel, so it
   // also has to learn from it that the request is done -- otherwise
   // state.pendingPermissionRequest stays non-null forever and every surface

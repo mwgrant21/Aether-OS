@@ -21,11 +21,13 @@ import type {
   ControlSocket,
   ControlStatus,
   ListenerPort,
+  PromptReadPort,
   RemoteSessionInfo,
   RemoteUnavailableReason,
   TerminalReadPort,
   TerminalSlotId,
   TerminalWritePort,
+  ThreadReadPort,
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
@@ -57,6 +59,10 @@ export interface ControlHubDeps {
   terminals: TerminalReadPort;
   /** Narrow write handle (write only); inputRouter is the single phone-to-pty write site. Distinct from the read-only `terminals`. */
   input: TerminalWritePort;
+  /** Read-only Claude transcript thread. Optional: without it thread.attach is a protocol violation. */
+  threads?: ThreadReadPort;
+  /** Read-only pending permission prompts, forwarded only to thread-attached sockets. */
+  prompts?: PromptReadPort;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -124,6 +130,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     clearTimeoutFn: deps.clearTimeoutFn,
     terminals: deps.terminals,
     input: router,
+    threads: deps.threads,
+    prompts: deps.prompts,
     onAttached: (ref, slots) => {
       const before = unionSlots().join();
       if (slots.length === 0) attachedByRef.delete(ref);

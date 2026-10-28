@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { WebSocket } from 'ws';
@@ -14,6 +15,8 @@ import { createControlHub, type ControlHub } from './control/controlHub';
 import type { StoredSession } from './remote/types';
 import { createTerminalHub } from './terminalHub';
 import type { PtyLike } from './ptyLifecycle';
+import { createThreadFeed } from './threadFeed';
+import { createPermissionBroker, type PermissionBroker } from './permissionBroker';
 import type { TerminalReadPort, TerminalSlotId } from '../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../protocol/mobile-protocol.json'), 'utf8'));
@@ -94,6 +97,9 @@ let deviceStore: ReturnType<typeof memStore>;
 let confirmPair: ReturnType<typeof vi.fn>;
 let flag: boolean;
 let terminalHub: ReturnType<typeof createTerminalHub>;
+let broker: PermissionBroker;
+let threadDir: string;
+let threadFile: string;
 // Counts what control does to the real read port: outstanding retains and attachments that were never detached.
 let spy: { retained: number; attached: number; detached: number };
 
@@ -119,6 +125,10 @@ beforeEach(() => {
     },
   };
   confirmPair = vi.fn(async () => true);
+  threadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-thread-e2e-'));
+  threadFile = path.join(threadDir, 's1.jsonl');
+  fs.writeFileSync(threadFile, JSON.stringify({ uuid: 'a1', type: 'user', sessionId: 's1', timestamp: '2026-10-28T10:00:00.000Z', message: { role: 'user', content: 'first prompt' } }) + '\n');
+  broker = createPermissionBroker({ now: Date.now, timeoutMs: 120000 });
   remoteHub = createRemoteHub({
     resolveSession: () => null,
     store: memStore(),
@@ -131,6 +141,8 @@ beforeEach(() => {
     settings: { read: () => flag, persist: on => { flag = on; return flag; } },
     terminals,
     input: terminalHub.writePort(),
+    threads: createThreadFeed({ resolveSession: () => ({ sessionId: 's1', file: threadFile }), now: Date.now, pollMs: 20 }),
+    prompts: broker.readPort(),
     confirmPair: (peer, replaces) => confirmPair(peer, replaces),
     renderQr: () => '<svg/>',
   });
@@ -141,6 +153,7 @@ afterEach(async () => {
   for (const s of sockets.splice(0)) s.terminate();
   await controlHub.stop();
   await remoteHub.stop();
+  fs.rmSync(threadDir, { recursive: true, force: true });
 });
 
 /** Enables control, pairs one device through the real HTTP route and returns its token. */
@@ -526,5 +539,63 @@ describe('phone control end to end: typed input', () => {
     await waitFor(() => ctl.msgs.some(m => m.t === 'bye'));
     expect(ctl.msgs.filter(m => m.t === 'bye')).toEqual([{ t: 'bye', reason: 'rate-limit' }]);
     expect(await ctl.closed).toBe(1000);
+  });
+});
+
+describe('phone control end to end: thread and prompts', () => {
+  const threadAttach = (c: Ctl) => c.ws.send(JSON.stringify({ t: 'thread.attach', s: 'claude' }));
+
+  it('thread.attach gives a snap, an appended transcript line gives thread.ev, and prompts open and close only on attached sockets', async () => {
+    const { address, token } = await pairDevice();
+    const ctl = await connectAndHello(address, token);
+    threadAttach(ctl);
+    // attach answers at once with a snap (empty until the first poll seeds the ring), then re-snaps with the seeded events
+    await waitFor(() => of(ctl, 'thread.snap').length >= 1);
+    await waitFor(() => (of(ctl, 'thread.snap').at(-1)!.events as unknown[]).length === 1);
+    const snap = of(ctl, 'thread.snap').at(-1) as { s: string; q: number; events: Array<Record<string, unknown>> };
+    expect(snap.s).toBe('claude');
+    expect(snap.events).toHaveLength(1);
+    expect(snap.events[0]).toMatchObject({ k: 'user', text: 'first prompt' });
+
+    fs.appendFileSync(threadFile, JSON.stringify({ uuid: 'a2', type: 'assistant', sessionId: 's1', timestamp: '2026-10-28T10:00:01.000Z', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } }) + '\n');
+    await waitFor(() => of(ctl, 'thread.ev').length === 1);
+    expect(of(ctl, 'thread.ev')[0]).toMatchObject({ s: 'claude', q: snap.q + 1, events: [{ k: 'claude', text: 'done' }] });
+
+    broker.open({ id: 'p-1', toolName: 'Bash', toolInput: { command: 'ls -la' }, risk: 'LOW' });
+    await waitFor(() => of(ctl, 'prompt').length === 1);
+    expect(of(ctl, 'prompt')[0]).toMatchObject({ id: 'p-1', tool: 'Bash', risk: 'LOW', summary: 'ls -la' });
+    broker.close('p-1', 'answered-desktop');
+    await waitFor(() => of(ctl, 'prompt.closed').length === 1);
+    expect(of(ctl, 'prompt.closed')[0]).toEqual({ t: 'prompt.closed', id: 'p-1', reason: 'answered-desktop' });
+  });
+
+  it('a socket that never sent thread.attach receives no thread or prompt frames', async () => {
+    const { address, token } = await pairDevice();
+    const ctl = await connectAndHello(address, token);
+    broker.open({ id: 'p-2', toolName: 'Bash', toolInput: { command: 'ls' }, risk: 'LOW' });
+    fs.appendFileSync(threadFile, JSON.stringify({ uuid: 'a3', type: 'user', sessionId: 's1', timestamp: '2026-10-28T10:00:02.000Z', message: { role: 'user', content: 'more' } }) + '\n');
+    broker.close('p-2', 'answered-desktop');
+    await settle(200);
+    expect(ctl.msgs.filter(m => /^(thread.|prompt)/.test(String(m.t)))).toEqual([]);
+  });
+
+  it('main.ts keeps the desktop approve/deny flow: the resolver runs first, broker calls are guarded, close precedes the renderer notice', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, 'main.ts'), 'utf8').replace(/\r\n/g, '\n');
+    const h = src.slice(src.indexOf("ipcMain.handle('permission:respond'"));
+    const handler = h.slice(0, h.indexOf("ipcMain.handle('postToolFlag:respond'"));
+    const iResolve = handler.indexOf('resolve(decision);');
+    const iClose = handler.indexOf("permissionBroker.close(requestId, 'answered-desktop')");
+    const iSend = handler.indexOf("sendToWindow('permission:request', null)");
+    expect(iResolve).toBeGreaterThan(-1);
+    expect(iClose).toBeGreaterThan(iResolve);
+    expect(iSend).toBeGreaterThan(iClose);
+    expect(handler).toMatch(/try \{ permissionBroker\.close[^\n]*\} catch/);
+    const req = src.slice(src.indexOf('onPermissionRequest: async'));
+    const reqBody = req.slice(0, req.indexOf('postToolUseTimeoutMs'));
+    expect(reqBody).toMatch(/try \{ permissionBroker\.open[^\n]*\} catch/);
+    // open() is after the no-window deny and the auto-allow return (prompt path only) and before the renderer is told
+    expect(reqBody.indexOf('permissionBroker.open')).toBeGreaterThan(reqBody.indexOf('no window available'));
+    expect(reqBody.indexOf('permissionBroker.open')).toBeGreaterThan(reqBody.indexOf("behavior: 'allow'"));
+    expect(reqBody.indexOf('permissionBroker.open')).toBeLessThan(reqBody.indexOf("sendToWindow('permission:request'"));
   });
 });

@@ -6,7 +6,7 @@ import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ControlStatus, ListenerPort, RemoteUnavailableReason, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
+import type { ControlSocket, ControlStatus, ListenerPort, PromptReadPort, RemoteUnavailableReason, ThreadReadPort, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -63,7 +63,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals> } = {}) {
+function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -86,6 +86,8 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
     listener, store, settings: over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings, confirmPair,
     onStatus: s => { emitted.push(s); },
     terminals: terms.port,
+    threads: over.threads,
+    prompts: over.prompts,
     input: { write: (s: TerminalSlotId, d: string) => { writes.push(`${s}|${d}`); return true; } },
     renderQr: t => `<svg>${t.length}</svg>`,
     log: l => { logs.push(l); },
@@ -932,5 +934,45 @@ describe('control hub phoneSlots', () => {
     expect(h2.hub.status().phoneSlots).toEqual([]);
     await h2.hub.setEnabled(true); // status() hides the map while off; re-enabling would expose a stale entry
     expect(h2.hub.status().phoneSlots).toEqual([]);
+  });
+});
+
+describe('control hub thread and prompt wiring', () => {
+  it('passes the thread and prompt ports through: thread.attach attaches both, and a socket that never attached gets neither', async () => {
+    const detached = { thread: 0, prompt: 0 };
+    const threads: ThreadReadPort = {
+      attach: (_s, tap) => {
+        tap.snap({ q: 3, attached: true, working: false, workingSinceMs: null, events: [] });
+        return { detach: () => { detached.thread += 1; } };
+      },
+    };
+    let promptTap: Parameters<PromptReadPort['attach']>[0] | null = null;
+    const prompts: PromptReadPort = { attach: tap => { promptTap = tap; return { detach: () => { detached.prompt += 1; } }; } };
+    const h = setup({ threads, prompts });
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    expect(promptTap).toBeNull(); // not attached yet: the hub did not touch the prompt port
+    s.feed(JSON.stringify({ t: 'thread.attach', s: 'claude' }));
+    expect(JSON.parse(s.sent[s.sent.length - 1])).toMatchObject({ t: 'thread.snap', s: 'claude', q: 3 });
+    promptTap!.opened({ id: 'p1', tool: 'Bash', risk: 'LOW', summary: 'ls', ttlMs: 1000 });
+    expect(JSON.parse(s.sent[s.sent.length - 1])).toMatchObject({ t: 'prompt', id: 'p1' });
+    s.feed(JSON.stringify({ t: 'thread.detach', s: 'claude' }));
+    expect(detached).toEqual({ thread: 1, prompt: 1 });
+  });
+
+  it('without a thread port thread.attach is a violation and closes the socket', async () => {
+    const h = setup();
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    s.feed(JSON.stringify({ t: 'thread.attach', s: 'claude' }));
+    expect(s.closes).toEqual([1008]);
   });
 });
