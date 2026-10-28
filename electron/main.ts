@@ -1455,20 +1455,32 @@ const terminal2PtyLifecycle = terminalHub.slot('terminal2');
 
 ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
-  terminal2PtyLifecycle.start(() => spawnPty(cols, rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
-    onData: (data) => {
-      if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
-    },
-    // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
-    onAlive: () => {},
-    // Tell the renderer so it can offer an Enter-to-restart; still not wired
-    // into pinnedPtyExited, the usage scraper or the tracker.
-    onExit: () => sendToWindow('terminal2Pty:exit', undefined),
-  }, { cols, rows });
+  const spawn = (size: { cols: number; rows: number }) =>
+    terminal2PtyLifecycle.start(() => spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
+      onData: (data) => {
+        if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
+      },
+      // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
+      // can reset its xterm after a restart (also fires on the first start).
+      onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
+      // Tell the renderer so it can offer an Enter-to-restart; still not wired
+      // into pinnedPtyExited, the usage scraper or the tracker.
+      onExit: () => sendToWindow('terminal2Pty:exit', undefined),
+    }, size);
+  // Enter on an exited Terminal 2 (desktop IPC write or phone input) respawns it at its last size.
+  terminal2PtyLifecycle.setRestarter(() => {
+    const { cols: lastCols, rows: lastRows } = terminal2PtyLifecycle.info();
+    spawn({ cols: lastCols, rows: lastRows });
+  });
+  spawn({ cols, rows });
 });
 
 ipcMain.on('terminal2Pty:write', (_event, input: string) => {
-  terminal2PtyLifecycle.write(input);
+  try {
+    terminal2PtyLifecycle.write(input);
+  } catch (error) {
+    diagLog.write(`[diag] terminal2 write failed at=${new Date().toISOString()} error=${error instanceof Error ? error.message : String(error)}`);
+  }
 });
 
 ipcMain.on('terminal2Pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {

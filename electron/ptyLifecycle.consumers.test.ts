@@ -121,6 +121,35 @@ describe('production pinned-session id wiring', () => {
     expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' });
     expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
   });
+
+  it('restarts an exited Terminal 2 through the real handler on a bare Enter, at its last size, still unmonitored', () => {
+    const f = fixture(), pty1 = fakePty(), pty2 = fakePty();
+    f.spawnPty.mockReturnValueOnce(pty1).mockReturnValueOnce(pty2);
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    pty1.fireExit();
+    f.terminal2PtyLifecycle.write('\r');
+    expect(f.spawnPty).toHaveBeenCalledTimes(2);
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' });
+    expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
+    pty2.fireData('fresh');
+    expect(f.send.mock.calls).toEqual([['terminal2Pty:data', 'fresh']]);
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'terminal2Pty:alive')).toHaveLength(2);
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'terminal2Pty:exit')).toHaveLength(1);
+  });
+
+  it('ignores other input on an exited Terminal 2, and a second Enter is a plain write, not a respawn', () => {
+    const f = fixture(), pty1 = fakePty(), pty2 = fakePty();
+    f.spawnPty.mockReturnValueOnce(pty1).mockReturnValueOnce(pty2);
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    pty1.fireExit();
+    f.terminal2PtyLifecycle.write('x');
+    expect(f.spawnPty).toHaveBeenCalledTimes(1);
+    f.terminal2PtyLifecycle.write('\r');
+    f.terminal2PtyLifecycle.write('\r');
+    expect(f.spawnPty).toHaveBeenCalledTimes(2);
+    expect(pty2.write).toHaveBeenCalledWith('\r');
+    expect(pty1.write).not.toHaveBeenCalled();
+  });
 });
 
 const capturedPrompt = capture.chunks.map(chunk => chunk.data).join('');
