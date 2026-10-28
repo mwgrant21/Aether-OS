@@ -48,7 +48,13 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     const copySelection = () => {
       if (sharedTerm!.hasSelection()) void navigator.clipboard?.writeText?.(sharedTerm!.getSelection())?.catch(() => {});
     };
-    sharedHostEl.addEventListener('mousedown', (ev) => { if (ev.button === 0) document.addEventListener('mouseup', copySelection, { once: true }); }); // left only: right/middle click must not overwrite the clipboard before the paste reads it
+    // Left button only: a right/middle release (e.g. the right-click paste chord) must not overwrite the clipboard.
+    const onMouseUp = (ev: MouseEvent) => {
+      if (ev.button !== 0) return;
+      document.removeEventListener('mouseup', onMouseUp);
+      copySelection();
+    };
+    sharedHostEl.addEventListener('mousedown', (ev) => { if (ev.button === 0) document.addEventListener('mouseup', onMouseUp); });
     // Right-click pastes unless the running program tracks the mouse (then xterm/the program gets the event).
     sharedHostEl.addEventListener('contextmenu', (ev) => {
       if (sharedTerm!.modes.mouseTrackingMode !== 'none') return;

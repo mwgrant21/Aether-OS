@@ -89,10 +89,16 @@ it('copies the selection to the clipboard on mouse release only when something i
   fireEvent.mouseDown(host, { button: 2 });
   fireEvent.mouseUp(document);
   expect(writeText).toHaveBeenCalledOnce();
+  fireEvent.mouseDown(host);
+  fireEvent.mouseDown(host, { button: 2 });
+  fireEvent.mouseUp(document, { button: 2 });
+  expect(writeText).toHaveBeenCalledOnce();
+  fireEvent.mouseUp(document);
+  expect(writeText).toHaveBeenCalledTimes(2);
   mocks.hasSelection.mockReturnValue(false);
   fireEvent.mouseDown(host);
   fireEvent.mouseUp(document);
-  expect(writeText).toHaveBeenCalledOnce();
+  expect(writeText).toHaveBeenCalledTimes(2);
 });
 
 it('pastes clipboard text on Ctrl+V and Ctrl+Shift+V through xterm paste and swallows the key, leaving Ctrl+C alone', async () => {
@@ -109,9 +115,15 @@ it('pastes clipboard text on Ctrl+V and Ctrl+Shift+V through xterm paste and swa
   expect(mocks.paste).toHaveBeenCalledTimes(2);
   expect(mocks.key!(key({ key: 'v', code: 'KeyV', type: 'keyup' }))).toBe(false);
   expect(mocks.key!(key({ key: 'v', code: 'KeyV', repeat: true }))).toBe(false);
+  expect(mocks.key!(key({ key: 'm', code: 'KeyV' }))).toBe(false);
+  await Promise.resolve(); await Promise.resolve();
+  expect(mocks.paste).toHaveBeenCalledTimes(3);
+  expect(mocks.key!(key({ key: 'v', code: 'KeyM' }))).toBe(true);
+  await Promise.resolve(); await Promise.resolve();
+  expect(mocks.paste).toHaveBeenCalledTimes(3);
   expect(mocks.key!(key({ key: 'c', code: 'KeyC' }))).toBe(true);
   await Promise.resolve(); await Promise.resolve();
-  expect(mocks.paste).toHaveBeenCalledTimes(2);
+  expect(mocks.paste).toHaveBeenCalledTimes(3);
   expect(ptyWrite).not.toHaveBeenCalled();
 });
 
