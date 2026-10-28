@@ -30,6 +30,26 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     sharedTerm.loadAddon(sharedFit);
     sharedTerm.open(sharedHostEl);
 
+    // Clipboard failures (no API, rejected promise) are ignored on purpose.
+    const pasteFromClipboard = () => {
+      void navigator.clipboard?.readText?.().then((text) => { if (text) sharedTerm!.paste(text); }).catch(() => {});
+    };
+    // xterm turns Ctrl+V into 0x16 and the app menu is null, so there is no native paste: consume the key here.
+    sharedTerm.attachCustomKeyEventHandler((ev) => {
+      const isPaste = ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === 'v';
+      if (!isPaste) return true;
+      if (ev.type === 'keydown') {
+        ev.preventDefault(); // stop any native paste so text is not pasted twice
+        pasteFromClipboard();
+      }
+      return false; // xterm must not send 0x16 (also covers keypress/keyup)
+    });
+    // Copy on mouse release (not per drag tick); document so a release outside the host still copies.
+    const copySelection = () => {
+      if (sharedTerm!.hasSelection()) void navigator.clipboard?.writeText?.(sharedTerm!.getSelection())?.catch(() => {});
+    };
+    sharedHostEl.addEventListener('mousedown', () => document.addEventListener('mouseup', copySelection, { once: true }));
+
     const terminal2Pty = window.aetherElectron!.terminal2Pty;
     // Subscribe before starting so the session's first output is not lost.
     terminal2Pty.onData((data) => sharedTerm!.write(data));
