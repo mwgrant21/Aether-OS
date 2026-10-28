@@ -49,6 +49,12 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
       if (sharedTerm!.hasSelection()) void navigator.clipboard?.writeText?.(sharedTerm!.getSelection())?.catch(() => {});
     };
     sharedHostEl.addEventListener('mousedown', () => document.addEventListener('mouseup', copySelection, { once: true }));
+    // Right-click pastes unless the running program tracks the mouse (then xterm/the program gets the event).
+    sharedHostEl.addEventListener('contextmenu', (ev) => {
+      if (sharedTerm!.modes.mouseTrackingMode !== 'none') return;
+      ev.preventDefault();
+      pasteFromClipboard();
+    });
 
     const terminal2Pty = window.aetherElectron!.terminal2Pty;
     // Subscribe before starting so the session's first output is not lost.

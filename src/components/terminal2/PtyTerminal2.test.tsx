@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { AetherStoreProvider } from '../../state/store';
 import { PtyTerminal2 } from './PtyTerminal2';
-const mocks = vi.hoisted(() => ({ write: vi.fn(), reset: vi.fn(), data: undefined as ((input: string) => void) | undefined, paste: vi.fn(), hasSelection: vi.fn(() => false), getSelection: vi.fn(() => ''), key: undefined as ((ev: KeyboardEvent) => boolean) | undefined }));
+const mocks = vi.hoisted(() => ({ write: vi.fn(), reset: vi.fn(), data: undefined as ((input: string) => void) | undefined, paste: vi.fn(), hasSelection: vi.fn(() => false), getSelection: vi.fn(() => ''), key: undefined as ((ev: KeyboardEvent) => boolean) | undefined, modes: { mouseTrackingMode: 'none' } }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options = {}; write = mocks.write; reset = mocks.reset;
-  hasSelection = mocks.hasSelection; getSelection = mocks.getSelection; paste = mocks.paste;
+  modes = mocks.modes; hasSelection = mocks.hasSelection; getSelection = mocks.getSelection; paste = mocks.paste;
   attachCustomKeyEventHandler(cb: (ev: KeyboardEvent) => boolean) { mocks.key = cb; }
   loadAddon() {} open() {} onData(cb: (input: string) => void) { mocks.data = cb; } onResize() {}
 } }));
@@ -109,4 +109,18 @@ it('pastes clipboard text on Ctrl+V and Ctrl+Shift+V through xterm paste and swa
   await Promise.resolve(); await Promise.resolve();
   expect(mocks.paste).toHaveBeenCalledTimes(2);
   expect(ptyWrite).not.toHaveBeenCalled();
+});
+
+it('right-click pastes unless a program is tracking the mouse', async () => {
+  stubClipboard(vi.fn(() => Promise.resolve('abc')), vi.fn());
+  mocks.modes.mouseTrackingMode = 'none';
+  const { host } = await mountFresh();
+  expect(fireEvent.contextMenu(host)).toBe(false);
+  await Promise.resolve(); await Promise.resolve();
+  expect(mocks.paste).toHaveBeenCalledWith('abc');
+  mocks.paste.mockClear();
+  mocks.modes.mouseTrackingMode = 'any';
+  expect(fireEvent.contextMenu(host)).toBe(true);
+  await Promise.resolve(); await Promise.resolve();
+  expect(mocks.paste).not.toHaveBeenCalled();
 });
