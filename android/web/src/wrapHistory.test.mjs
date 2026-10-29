@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import headless from '@xterm/headless';
+import { readFileSync } from 'node:fs';
+import { THEME } from './theme.js';
 import { settledLines, isRuled, paletteCss, needsRebuild, renderHistory } from './wrapHistory.js';
 
 const { Terminal } = headless;
@@ -210,5 +212,33 @@ describe('renderHistory', () => {
     expect(span.style.color).toBe('#cc0000');
     expect(span.style.fontWeight).toBe('bold');
     expect(box.children[1].className).toBe('hl ruled');
+  });
+});
+
+describe('Aether theme', () => {
+  const mkDoc = () => {
+    const el = () => ({
+      className: '', style: {}, children: [], _t: '',
+      set textContent(v) { this._t = v; this.children = []; },
+      get textContent() { return this._t; },
+      appendChild(c) { this.children.push(c); },
+      replaceChildren(...c) { this.children = c; },
+    });
+    return { createElement: el };
+  };
+  it('inverse runs without colours fall back to the theme colours, swapped', () => {
+    const doc = mkDoc();
+    const box = doc.createElement('div');
+    renderHistory(doc, box, [
+      { runs: [{ text: 'X', fg: null, bg: null, bold: false, dim: false, italic: false, underline: false, inverse: true }], ruled: false },
+    ]);
+    const span = box.children[0].children[0];
+    expect(span.style.color).toBe(THEME.background);
+    expect(span.style.backgroundColor).toBe(THEME.foreground);
+  });
+  it('app.css carries the same background and foreground as THEME', () => {
+    const css = readFileSync(new URL('../../app/src/main/assets/terminal/app.css', import.meta.url), 'utf8').toLowerCase();
+    expect(css).toContain(THEME.background.toLowerCase());
+    expect(css).toContain(THEME.foreground.toLowerCase());
   });
 });

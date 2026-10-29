@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.WebView
+import com.matt.aethermobile.ui.theme.AeArgb
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
@@ -45,7 +46,7 @@ class TerminalScreen(
             }
             .build()
         TerminalWebView.harden(webView, loader, debuggable) { rebuild(); onRenderGone() }
-        webView.setBackgroundColor(0xFF0A0E14.toInt())
+        webView.setBackgroundColor(AeArgb.BG_VOID.toInt())
         supported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
         if (supported) {
             WebViewCompat.addWebMessageListener(

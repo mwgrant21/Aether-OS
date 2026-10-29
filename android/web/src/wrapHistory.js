@@ -2,6 +2,7 @@
 // the viewport (index < baseY). Cursor addressing cannot touch them, so wrapping is lossless.
 // No DOM. Uses only the public IBufferLine/IBufferCell API.
 
+import { THEME } from './theme.js';
 const ANSI16 = [
   '#2e3436', '#cc0000', '#4e9a06', '#c4a000', '#3465a4', '#75507b', '#06989a', '#d3d7cf',
   '#555753', '#ef2929', '#8ae234', '#fce94f', '#729fcf', '#ad7fa8', '#34e2e2', '#eeeeec',
@@ -135,7 +136,7 @@ export function renderHistory(doc, container, lines) {
       s.textContent = r.text;
       let fg = r.fg;
       let bg = r.bg;
-      if (r.inverse) [fg, bg] = [bg || '#0A0E14', fg || '#D5DEE8'];
+      if (r.inverse) [fg, bg] = [bg || THEME.background, fg || THEME.foreground];
       if (fg) s.style.color = fg;
       if (bg) s.style.backgroundColor = bg;
       if (r.bold) s.style.fontWeight = 'bold';

@@ -9,6 +9,7 @@ import { shouldSend, applyStdin } from './inputFilter.js';
 import { composeInputs } from './compose.js';
 import { followCursor } from './cursorFollow.js';
 import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
+import { THEME } from './theme.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -48,7 +49,7 @@ function slotFor(id) {
     allowProposedApi: false,
     fontFamily: FONT_FAMILY,
     fontSize: zoomPx || 14,
-    theme: { background: '#0A0E14', foreground: '#D5DEE8', cursor: '#4FD1C5' },
+    theme: { ...THEME },
   });
   installReplySuppression(term);
   const fit = new FitAddon();

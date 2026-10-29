@@ -1,10 +1,10 @@
-html, body { margin: 0; height: 100%; background: #0A0E14; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: #020A10; overflow: hidden; }
 #term { position: absolute; inset: 0; }
 /* One container per slot; only the shown one is visible. It scrolls vertically: .hist (settled,
    wrapped lines) above .livex, which pans the PTY-sized grid sideways instead of reflowing it. */
 .slot { position: absolute; inset: 0; overflow-x: hidden; overflow-y: auto; }
 .livex { overflow-x: auto; overflow-y: hidden; }
-.hist { color: #D5DEE8; font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hist { color: #D8F6FF; font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hist[hidden] { display: none; }
 .hl { min-height: 1.2em; }
 .hl.ruled { white-space: pre; overflow: hidden; }
