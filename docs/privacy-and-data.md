@@ -756,6 +756,8 @@ If a revoke cannot be saved, it still takes effect in memory at once, the status
 - Masking is best effort (above). A secret in an unknown shape, or a path the agent wrote in a body, crosses the wire.
 - Treat it as R3-class: the chat can contain anything said in the session.
 
+**Following `/clear`.** When Claude's `/clear` starts a new session in the same pty, the live-agent tracker moves its pin to the successor transcript so the phone Thread follows the live conversation. To find it, the tracker (`clearSuccessorFinder.ts`) also reads the first 2 MiB at most of other `.jsonl` files in the pinned project directory that are newer than the pin, and only regex-matches them for a `/clear` record and the session id of this app's own launch; no content from those files is retained, logged or sent, and only a file proving it descends from the launch id can take the pin. The scan runs at most every 3 seconds. The follow happens at the first prompt after `/clear` (Claude Code creates the new file lazily).
+
 **Not verified by unit tests.** Phone layout and legibility, the top-bar chip at narrow widths, Windows Firewall behaviour on first enable, how Chrome and Samsung Internet treat an `http://100.x` address, and a packaged-build run.
 
 ---

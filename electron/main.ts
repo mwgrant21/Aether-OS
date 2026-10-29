@@ -980,7 +980,8 @@ app.whenReady().then(async () => {
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
     // Quota is account-wide, so any session's seven-day reading is a valid
     // sample (below); only the dashboard snapshot is limited to the pinned terminal.
-    const pinned = isPinnedStatusline(snapshot.sessionId, pinnedLaunchSessionId);
+    // After /clear the live session id is the tracker's rolled pin, not the launch id.
+    const pinned = isPinnedStatusline(snapshot.sessionId, liveAgentTracker.getPinnedSessionId() ?? pinnedLaunchSessionId);
     if (pinned) cachedStatuslineSnapshot = snapshot;
     // The seven-day window is the quota cost basis (the five-hour one stays a
     // live depletion gauge and is never fitted). A payload without it -- an
