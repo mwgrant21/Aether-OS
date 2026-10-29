@@ -630,4 +630,50 @@ class TerminalHostTest {
             sent,
         )
     }
+
+    private fun exitedT2() { ready(info("claude"), info("terminal2", SlotState.EXITED), info("codex", SlotState.EXITED)); host.select("terminal2") }
+
+    @Test fun restartAvailableOnlyForAttachedExitedTerminal2() {
+        ready(info("claude"), info("terminal2", SlotState.EXITED), info("codex", SlotState.EXITED))
+        assertTrue(!host.restartAvailable())
+        host.select("terminal2")
+        assertTrue(host.restartAvailable())
+        host.onDisconnected()
+        assertTrue(!host.restartAvailable())
+    }
+
+    @Test fun restartNotAvailableForRunningNotStartedClaudeOrCodex() {
+        for ((slot, st) in listOf("terminal2" to SlotState.RUNNING, "terminal2" to SlotState.NOT_STARTED,
+            "claude" to SlotState.EXITED, "codex" to SlotState.EXITED)) {
+            fun st(n: String) = if (n == slot) st else SlotState.RUNNING
+            ready(info("claude", st("claude")), info("terminal2", st("terminal2")), info("codex", st("codex")))
+            host.select(slot)
+            assertTrue("$slot $st", !host.restartAvailable())
+            assertTrue("$slot $st", !host.restartTerminal2())
+        }
+        assertTrue(sent.isEmpty()); assertTrue(notSent.isEmpty())
+    }
+
+    @Test fun restartSendsExactlyOneCr() {
+        exitedT2()
+        assertTrue(host.restartTerminal2())
+        assertEquals(listOf(Triple("terminal2", 1L, "\r")), sent)
+        assertTrue(!host.typingAccepted())
+        assertTrue(stdins().none { it })
+    }
+
+    @Test fun typingStaysBlockedOnExitedTerminal2() {
+        exitedT2()
+        host.sendKeys("x"); host.sendKeys("\r"); host.sendCompose("x", true)
+        host.onPage(PageMessage.Input("terminal2", "x"))
+        assertTrue(sent.isEmpty()); assertTrue(notSent.isNotEmpty()); assertTrue(!host.typingAccepted())
+    }
+
+    @Test fun restartControlFollowsServerStateFrames() {
+        exitedT2()
+        host.onFrame(TerminalFrame.State("terminal2", SlotState.RUNNING))
+        assertTrue(!host.restartAvailable()); assertTrue(host.typingAccepted())
+        host.onFrame(TerminalFrame.State("terminal2", SlotState.EXITED))
+        assertTrue(host.restartAvailable()); assertTrue(!host.typingAccepted())
+    }
 }

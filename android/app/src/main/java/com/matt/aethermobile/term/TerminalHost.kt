@@ -4,6 +4,7 @@ import com.matt.aethermobile.net.TerminalFeed
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.protocol.ControlProtocol.TerminalFrame
+import com.matt.aethermobile.ui.shell.RESTART_SLOT
 
 /**
  * Turns titan frames and user actions into page messages and attach/detach calls.
@@ -94,6 +95,19 @@ class TerminalHost(
     /** True when keys would be accepted right now: the same gate [sendKeys] applies. The UI drives the key row from it. */
     @Synchronized
     fun typingAccepted(): Boolean = canType(attached)
+
+    /** True when the Restart control should show: connected, attached to terminal2, and it has exited. */
+    @Synchronized
+    fun restartAvailable(): Boolean =
+        active && attached == RESTART_SLOT && states[RESTART_SLOT] == SlotState.EXITED
+
+    /** One bare Enter to an exited terminal2 (the desktop respawns it). False when not available or the frame did not go out. */
+    @Synchronized
+    fun restartTerminal2(): Boolean {
+        if (!restartAvailable()) return false // nothing was typed, so no phantom "not sent"
+        val r = safe { inputSender.send(RESTART_SLOT, "\r") } ?: return false
+        return r.frames == 1
+    }
 
     /** Tells the page whether stdin is on; posts only on a change. */
     private fun syncStdin() {
