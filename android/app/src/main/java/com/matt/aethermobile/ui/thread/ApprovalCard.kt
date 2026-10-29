@@ -25,14 +25,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.matt.aethermobile.R
 import com.matt.aethermobile.ui.theme.AetherColors
+import com.matt.aethermobile.ui.theme.AetherDimens
 import com.matt.aethermobile.ui.theme.AetherType
 
 private val type = AetherType()
-private val CardShape = RoundedCornerShape(10.dp)
+private val dims = AetherDimens()
+private val CardShape = RoundedCornerShape(dims.rCard)
+private val ButtonShape = RoundedCornerShape(10.dp)
 private val TagShape = RoundedCornerShape(4.dp)
 private val BoxShape = RoundedCornerShape(8.dp)
+private val ButtonText = type.body.copy(fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 2.sp, textAlign = TextAlign.Center)
 
 private fun roleColor(role: RiskRole): Color = when (role) {
     RiskRole.SUCCESS -> AetherColors.success
@@ -47,10 +52,10 @@ fun ApprovalCard(view: ApprovalView, modifier: Modifier = Modifier) {
     Column(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
             .background(AetherColors.insetTop, CardShape)
             .border(1.dp, AetherColors.warn, CardShape)
-            .padding(10.dp),
+            .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -59,7 +64,7 @@ fun ApprovalCard(view: ApprovalView, modifier: Modifier = Modifier) {
                 Modifier.background(roleColor(riskRole(view.risk)), TagShape).padding(horizontal = 6.dp, vertical = 2.dp),
                 style = type.meta.copy(color = AetherColors.bgDeep, fontWeight = FontWeight.Bold),
             )
-            BasicText(view.toolLabel, style = type.body.copy(color = AetherColors.textBright))
+            BasicText(view.toolLabel, style = type.body.copy(color = AetherColors.textBright, fontWeight = FontWeight.SemiBold))
             Spacer(Modifier.weight(1f))
             if (view.moreCount > 0) {
                 BasicText(stringResource(R.string.approval_more, view.moreCount.toString()), style = type.meta.copy(color = AetherColors.textMuted))
@@ -80,10 +85,11 @@ fun ApprovalCard(view: ApprovalView, modifier: Modifier = Modifier) {
                     .heightIn(min = 44.dp)
                     .alpha(0.45f)
                     .semantics { contentDescription = disabledDesc; disabled() }
-                    .border(1.dp, AetherColors.danger, BoxShape),
+                    .background(AetherColors.dangerSoft.copy(alpha = 0.14f), ButtonShape)
+                    .border(1.dp, AetherColors.dangerSoft.copy(alpha = 0.40f), ButtonShape),
                 contentAlignment = Alignment.Center,
             ) {
-                BasicText(stringResource(R.string.approval_deny), style = type.body.copy(color = AetherColors.danger, textAlign = TextAlign.Center))
+                BasicText(stringResource(R.string.approval_deny), style = ButtonText.copy(color = AetherColors.dangerSoft))
             }
             Box(
                 Modifier
@@ -91,10 +97,11 @@ fun ApprovalCard(view: ApprovalView, modifier: Modifier = Modifier) {
                     .heightIn(min = 44.dp)
                     .alpha(0.45f)
                     .semantics { contentDescription = disabledDesc; disabled() }
-                    .background(AetherColors.success, BoxShape),
+                    .background(AetherColors.success.copy(alpha = 0.18f), ButtonShape)
+                    .border(1.dp, AetherColors.success.copy(alpha = 0.40f), ButtonShape),
                 contentAlignment = Alignment.Center,
             ) {
-                BasicText(stringResource(R.string.approval_allow), style = type.body.copy(color = AetherColors.bgDeep, textAlign = TextAlign.Center))
+                BasicText(stringResource(R.string.approval_allow), style = ButtonText.copy(color = AetherColors.success))
             }
         }
         BasicText(stringResource(R.string.approval_hint), style = type.meta.copy(color = AetherColors.textMuted))
