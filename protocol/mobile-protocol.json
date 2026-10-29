@@ -40,7 +40,9 @@
       "detach",
       "in",
       "thread.attach",
-      "thread.detach"
+      "thread.detach",
+      "ledger.attach",
+      "ledger.detach"
     ],
     "titanToPhone": [
       "welcome",
@@ -55,7 +57,8 @@
       "thread.ev",
       "thread.state",
       "prompt",
-      "prompt.closed"
+      "prompt.closed",
+      "ledger.snap"
     ],
     "nakReasons": [
       "not-running",
@@ -141,6 +144,10 @@
     "threadEv": "{\"t\":\"thread.ev\",\"s\":\"claude\",\"q\":8,\"events\":[{\"k\":\"tool\",\"id\":\"400:0\",\"at\":1790000002000,\"name\":\"Bash\",\"target\":\"./gradlew test\",\"add\":null,\"del\":null}]}",
     "threadState": "{\"t\":\"thread.state\",\"s\":\"claude\",\"q\":9,\"working\":false,\"workingSinceMs\":null}",
     "prompt": "{\"t\":\"prompt\",\"id\":\"3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b\",\"tool\":\"Bash\",\"risk\":\"MED\",\"summary\":\"./gradlew test\",\"ttlMs\":102000}",
-    "promptClosed": "{\"t\":\"prompt.closed\",\"id\":\"3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b\",\"reason\":\"answered-desktop\"}"
+    "promptClosed": "{\"t\":\"prompt.closed\",\"id\":\"3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b\",\"reason\":\"answered-desktop\"}",
+    "ledgerAttach": "{\"t\":\"ledger.attach\"}",
+    "ledgerDetach": "{\"t\":\"ledger.detach\"}",
+    "ledgerSnap": "{\"t\":\"ledger.snap\",\"ledger\":{\"computedAtMs\":1790000000000,\"total\":{\"usd\":912.34,\"input\":140.17,\"output\":411.3,\"cacheCreation\":203.19,\"cacheRead\":157.68},\"tiers\":[\"opus\",\"sonnet\"],\"rollups\":{\"today\":12.5,\"week\":391.1,\"month\":624.99},\"cache\":{\"readTokens\":52560000,\"wouldHaveUsd\":1576.8,\"actualUsd\":157.68,\"savedUsd\":1419.12,\"hitRate\":0.896}}}",
+    "ledgerSnapEmpty": "{\"t\":\"ledger.snap\",\"ledger\":null}"
   }
 }

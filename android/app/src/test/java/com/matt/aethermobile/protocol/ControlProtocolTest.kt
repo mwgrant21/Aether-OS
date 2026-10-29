@@ -150,8 +150,8 @@ class ControlProtocolTest {
             assertEquals(slots.getJSONObject(i).getString("label"), ControlProtocol.SLOTS[i].label)
         }
         val msgs = spec.getJSONObject("messages")
-        assertEquals(listOf("hello", "attach", "detach", "in", "thread.attach", "thread.detach"), strings(msgs.getJSONArray("phoneToTitan")))
-        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed"), strings(msgs.getJSONArray("titanToPhone")))
+        assertEquals(listOf("hello", "attach", "detach", "in", "thread.attach", "thread.detach", "ledger.attach", "ledger.detach"), strings(msgs.getJSONArray("phoneToTitan")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed", "ledger.snap"), strings(msgs.getJSONArray("titanToPhone")))
     }
 
     // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.

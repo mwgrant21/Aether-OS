@@ -2,9 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
 import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES, CONTROL_PROMPT_CLOSE_REASONS, PROMPT_SUMMARY_CAP, THREAD_SNAPSHOT_MAX_BYTES, THREAD_SNAPSHOT_MAX_EVENTS, THREAD_TARGET_CAP, THREAD_TEXT_CAP, THREAD_WORKING_STALE_MS } from '../../src/shared/remote/types';
-import type { TerminalInfo, ThreadEvent } from '../../src/shared/remote/types';
+import { LEDGER_TIERS } from '../../src/shared/remote/types';
+import type { LedgerWire, TerminalInfo, ThreadEvent } from '../../src/shared/remote/types';
+import { PRICING_PER_MILLION_TOKENS } from '../../src/shared/modelPricing';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const w = JSON.parse(spec.frames.welcome);
@@ -201,5 +203,64 @@ describe('thread and prompt frames', () => {
       snapshotMaxBytes: THREAD_SNAPSHOT_MAX_BYTES, promptSummaryCap: PROMPT_SUMMARY_CAP, workingStaleMs: THREAD_WORKING_STALE_MS,
     });
     expect(spec.messages.promptCloseReasons).toEqual([...CONTROL_PROMPT_CLOSE_REASONS]);
+  });
+});
+describe('ledger frames', () => {
+  const p = (o: unknown) => parsePhoneMessage(JSON.stringify(o));
+  const good = (): LedgerWire => JSON.parse(spec.frames.ledgerSnap).ledger;
+  const EMPTY = '{"t":"ledger.snap","ledger":null}';
+  it('ledger.attach and ledger.detach goldens parse back, round-trip, and ignore stray keys', () => {
+    expect(parsePhoneMessage(spec.frames.ledgerAttach)).toEqual({ t: 'ledger.attach' });
+    expect(parsePhoneMessage(spec.frames.ledgerDetach)).toEqual({ t: 'ledger.detach' });
+    expect(JSON.stringify(parsePhoneMessage(spec.frames.ledgerAttach))).toBe(spec.frames.ledgerAttach);
+    expect(JSON.stringify(parsePhoneMessage(spec.frames.ledgerDetach))).toBe(spec.frames.ledgerDetach);
+    expect(p({ t: 'ledger.attach', s: 'claude', x: 1 })).toEqual({ t: 'ledger.attach' });
+  });
+  it('encodeLedgerSnap reproduces both snapshot goldens byte for byte', () => {
+    expect(encodeLedgerSnap(good())).toBe(spec.frames.ledgerSnap);
+    expect(encodeLedgerSnap(null)).toBe(spec.frames.ledgerSnapEmpty);
+    expect(spec.frames.ledgerSnapEmpty).toBe(EMPTY);
+  });
+  it('a null rollup bucket and an empty tier list survive', () => {
+    const l = { ...good(), tiers: [], rollups: { today: null, week: 1, month: null } } as LedgerWire;
+    const out = JSON.parse(encodeLedgerSnap(l)).ledger;
+    expect(out.tiers).toEqual([]);
+    expect(out.rollups).toEqual({ today: null, week: 1, month: null });
+  });
+  it('is fail-closed: any bad number or tier gives exactly the null frame', () => {
+    const bad: Array<(l: LedgerWire) => void> = [
+      (l) => { l.total.usd = NaN; },
+      (l) => { l.total.output = Infinity; },
+      (l) => { l.total.cacheRead = -0.5; },
+      (l) => { l.rollups.week = -1; },
+      (l) => { l.rollups.today = NaN; },
+      (l) => { l.cache.hitRate = 1.5; },
+      (l) => { l.cache.readTokens = 1.5; },
+      (l) => { l.computedAtMs = 1.5; },
+      (l) => { (l.tiers as string[]).push('mythos'); },
+    ];
+    for (const f of bad) {
+      const l = good();
+      f(l);
+      expect(encodeLedgerSnap(l)).toBe(EMPTY);
+    }
+  });
+  it('stray keys on the input never reach the wire', () => {
+    const l = good() as unknown as Record<string, unknown>;
+    l.prompt = 'x';
+    (l.total as Record<string, unknown>).secret = 'y';
+    (l.cache as Record<string, unknown>).extra = 1;
+    expect(encodeLedgerSnap(l as unknown as LedgerWire)).toBe(spec.frames.ledgerSnap);
+  });
+  it('dollar and rate values are rounded to 4 decimals', () => {
+    const l = good();
+    l.total.usd = 889.4400000000001;
+    l.cache.hitRate = 0.8960000000000001;
+    const out = JSON.parse(encodeLedgerSnap(l)).ledger;
+    expect(out.total.usd).toBe(889.44);
+    expect(out.cache.hitRate).toBe(0.896);
+  });
+  it('LEDGER_TIERS equals the pricing table keys', () => {
+    expect([...LEDGER_TIERS]).toEqual(Object.keys(PRICING_PER_MILLION_TOKENS));
   });
 });
