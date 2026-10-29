@@ -91,11 +91,15 @@ class ThreadUiModelTest {
         assertNull(graceRerenderDelayMs(host.snapshot(), clock))
     }
 
-    @Test fun programmaticSettleShortOfBottomKeepsFollowing() {
-        // Long last bubble: our scroll leaves its tail below (atBottom=false) but following must stay on.
-        assertTrue(shouldFollowAfterSettle(userScrolled = false, atBottom = false, wasFollowing = true))
-        assertEquals(false, shouldFollowAfterSettle(userScrolled = false, atBottom = true, wasFollowing = false))
-        assertEquals(false, shouldFollowAfterSettle(userScrolled = true, atBottom = false, wasFollowing = true))
-        assertTrue(shouldFollowAfterSettle(userScrolled = true, atBottom = true, wasFollowing = false))
+    @Test fun scrollsToEndOnlyWhenAtBottomAndAppended() {
+        assertTrue(shouldScrollToEnd(wasAtBottomBeforeUpdate = true, appended = true))
+        assertEquals(false, shouldScrollToEnd(wasAtBottomBeforeUpdate = true, appended = false))
+        assertEquals(false, shouldScrollToEnd(wasAtBottomBeforeUpdate = false, appended = true))
+        assertEquals(false, shouldScrollToEnd(wasAtBottomBeforeUpdate = false, appended = false))
+    }
+
+    @Test fun firstFillOfAnEmptyListScrollsToEnd() {
+        // An empty list cannot scroll forward, so the caller passes wasAtBottomBeforeUpdate = true.
+        assertTrue(shouldScrollToEnd(wasAtBottomBeforeUpdate = !false, appended = true))
     }
 }

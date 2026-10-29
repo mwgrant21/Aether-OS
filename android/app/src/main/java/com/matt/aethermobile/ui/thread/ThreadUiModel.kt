@@ -69,8 +69,8 @@ fun graceRerenderDelayMs(ui: ThreadUi, nowMs: Long): Long? {
 }
 
 /**
- * The follow flag after a scroll settles. Only a user scroll can change it (follow iff it ended at the bottom);
- * our own scroll to a row taller than the viewport can end short of the bottom and must leave it alone.
+ * Whether to scroll to the end of the list after its rows changed. [wasAtBottomBeforeUpdate] is read before the new
+ * rows are laid out (an empty list counts as at the bottom); a user who scrolled up is never moved.
  */
-fun shouldFollowAfterSettle(userScrolled: Boolean, atBottom: Boolean, wasFollowing: Boolean): Boolean =
-    if (userScrolled) atBottom else wasFollowing
+fun shouldScrollToEnd(wasAtBottomBeforeUpdate: Boolean, appended: Boolean): Boolean =
+    wasAtBottomBeforeUpdate && appended

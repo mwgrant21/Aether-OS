@@ -25,7 +25,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -62,33 +61,19 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
     val rows = threadRows(ui, nowMs)
     val empty = emptyStateFor(ui)
 
-    // Follow the newest row only while the user sits at the bottom. Only a settle after a USER scroll can change it:
-    // our own scroll to a row taller than the viewport may end short of the bottom and must not switch following off.
-    var following by remember { mutableStateOf(true) }
-    val programmatic = remember { BooleanArray(1) }
-    val userScrolled = remember { BooleanArray(1) }
-    val scrolling = listState.isScrollInProgress
-    LaunchedEffect(scrolling) {
-        if (scrolling) {
-            if (!programmatic[0]) userScrolled[0] = true
-        } else {
-            following = shouldFollowAfterSettle(userScrolled[0], !listState.canScrollForward, following)
-            userScrolled[0] = false
-        }
-    }
+    // Read BEFORE the new rows are laid out: canScrollForward still describes the previous layout when this
+    // composition first sees a changed last key or row count. The effect below is not restarted by later
+    // recompositions, so it keeps the value from the composition that launched it. An empty list cannot scroll,
+    // so the first fill counts as at the bottom.
+    val wasAtBottom = !listState.canScrollForward
     val lastKey = rows.lastOrNull()?.key
     val lastCount = rows.size
     LaunchedEffect(lastKey, lastCount) {
-        if (following && lastCount > 0) {
-            programmatic[0] = true
-            try {
-                listState.animateScrollToItem(lastCount - 1)
-                // The item's top is now at the viewport top; a tall last row still has its tail below.
-                var guard = 0
-                while (listState.canScrollForward && guard++ < 8) listState.scrollBy(1e9f)
-            } finally {
-                programmatic[0] = false
-            }
+        if (shouldScrollToEnd(wasAtBottom, appended = lastCount > 0)) {
+            listState.animateScrollToItem(lastCount - 1)
+            // The item's top is now at the viewport top; a tall last row still has its tail below.
+            var guard = 0
+            while (listState.canScrollForward && guard++ < 8) listState.scrollBy(1e9f)
         }
     }
 
