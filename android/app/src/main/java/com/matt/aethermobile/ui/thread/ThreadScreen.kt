@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -34,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.matt.aethermobile.R
 import com.matt.aethermobile.thread.ThreadUi
-import com.matt.aethermobile.ui.components.AeSecondaryButton
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
 import kotlinx.coroutines.delay
@@ -53,7 +50,6 @@ private val ToolShape = RoundedCornerShape(10.dp)
 private val ThreadBodyStyle = type.body.copy(fontSize = 16.sp, lineHeight = 22.sp)
 private val ToolTagStyle = type.meta.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
 private val ToolTargetStyle = type.meta.copy(fontSize = 12.sp)
-private val FieldShape = RoundedCornerShape(10.dp)
 
 /**
  * Read-only Claude thread: bubbles, tool lines and a working line, newest at the bottom, over a disabled composer.
@@ -166,28 +162,4 @@ private fun RowView(row: ThreadRow) {
 private fun RowText(text: String, truncated: Boolean, color: Color) {
     BasicText(text, style = ThreadBodyStyle.copy(color = color))
     if (truncated) BasicText(stringResource(R.string.thread_truncated), style = type.meta.copy(color = AetherColors.textMuted))
-}
-
-/** Looks like the compose bar but holds no text field, so it cannot take focus or raise the keyboard. */
-@Composable
-private fun DisabledComposer() {
-    val desc = stringResource(R.string.thread_composer_disabled_desc)
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Box(
-            Modifier
-                .weight(1f)
-                .heightIn(min = 44.dp)
-                .semantics { contentDescription = desc; disabled() }
-                .border(1.dp, AetherColors.border, FieldShape)
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            BasicText(stringResource(R.string.thread_composer_hint), style = type.body.copy(color = AetherColors.textMuted))
-        }
-        AeSecondaryButton(stringResource(R.string.compose_send), {}, Modifier.width(80.dp), enabled = false)
-    }
 }
