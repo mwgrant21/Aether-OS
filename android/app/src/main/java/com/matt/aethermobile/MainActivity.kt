@@ -703,7 +703,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -714,6 +714,7 @@ class MainActivity : AppCompatActivity() {
                         onCtrlToggle = ::toggleCtrl,
                         onCompose = ::sendCompose,
                         onRestart = ::restartTerminal2,
+                        onSetView = ::setView,
                     ),
                     terminalHolder = webHolder,
                 )

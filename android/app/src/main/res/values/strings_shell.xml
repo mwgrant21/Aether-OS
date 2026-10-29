@@ -1,9 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="status_running">Running</string>
     <string name="menu_terminals">Terminals</string>
     <string name="menu_open">Open menu</string>
     <string name="menu_close">Close menu</string>
+    <string name="caps_thread_raw">Thread · Raw</string>
+    <string name="caps_thread_raw_not_started">Thread · Raw · not started</string>
+    <string name="caps_thread_raw_exited">Thread · Raw · exited</string>
+    <string name="caps_raw_only">Raw only</string>
+    <string name="caps_raw_only_not_started">Raw only · not started</string>
+    <string name="caps_raw_only_exited">Raw only · exited</string>
+    <string name="view_thread">Thread</string>
+    <string name="view_raw">Raw</string>
+    <string name="view_thread_desc">Thread view</string>
+    <string name="view_raw_desc">Raw terminal view</string>
 
     <string name="key_row_label">Keys</string>
     <string name="key_esc">Esc</string>

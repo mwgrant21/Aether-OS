@@ -3,6 +3,7 @@ package com.matt.aethermobile.ui.shell
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.components.DotStyle
 import com.matt.aethermobile.ui.components.dotStyleFor
 
@@ -30,18 +31,42 @@ fun amber(cur: TerminalHost.Tab?, flow: FlowState.Connected?): Boolean =
 
 enum class SlotText { Running, NotStarted, Exited }
 
+/** Menu-row capability line: whether the slot offers Thread and Raw or Raw only, plus its slot state. */
+enum class SlotCaps { ThreadRaw, ThreadRawNotStarted, ThreadRawExited, RawOnly, RawOnlyNotStarted, RawOnlyExited }
+
 data class SlotRow(
     val s: String,
     val label: String,
     val dot: DotStyle,
     val text: SlotText,
     val selected: Boolean,
+    val caps: SlotCaps,
 )
+
+/** Only the Claude slot has a Thread view. */
+fun hasThread(s: String): Boolean = s == "claude"
+
+/** The thread body shows only for the Claude slot in Thread view. */
+fun threadBodyActive(selected: String, view: ViewMode): Boolean = hasThread(selected) && view == ViewMode.THREAD
+
+private fun capsFor(s: String, state: SlotState): SlotCaps = if (hasThread(s)) {
+    when (state) {
+        SlotState.RUNNING -> SlotCaps.ThreadRaw
+        SlotState.NOT_STARTED -> SlotCaps.ThreadRawNotStarted
+        SlotState.EXITED -> SlotCaps.ThreadRawExited
+    }
+} else {
+    when (state) {
+        SlotState.RUNNING -> SlotCaps.RawOnly
+        SlotState.NOT_STARTED -> SlotCaps.RawOnlyNotStarted
+        SlotState.EXITED -> SlotCaps.RawOnlyExited
+    }
+}
 
 fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = tabs.map {
     SlotRow(
         s = it.s,
-        label = it.label,
+        label = if (hasThread(it.s)) "Claude" else it.label,
         dot = dotStyleFor(it.state),
         text = when (it.state) {
             SlotState.RUNNING -> SlotText.Running
@@ -49,12 +74,13 @@ fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = ta
             SlotState.EXITED -> SlotText.Exited
         },
         selected = it.s == selected,
+        caps = capsFor(it.s, it.state),
     )
 }
 
-/** Header title: the selected slot's label. */
+/** Header title: the selected slot's label, except Claude shows as CLAUDE on the phone. */
 fun titleFor(tabs: List<TerminalHost.Tab>, selected: String): String =
-    tabs.firstOrNull { it.s == selected }?.label.orEmpty()
+    if (selected == "claude") "CLAUDE" else tabs.firstOrNull { it.s == selected }?.label.orEmpty()
 
 /** The header core runs Nominal when any slot is live, Idle otherwise. */
 fun anyRunning(tabs: List<TerminalHost.Tab>): Boolean = tabs.any { it.state == SlotState.RUNNING }

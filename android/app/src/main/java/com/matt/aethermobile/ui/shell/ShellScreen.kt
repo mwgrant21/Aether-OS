@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,11 +46,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -61,12 +64,15 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.R
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.StormCore
 import com.matt.aethermobile.ui.StormMode
 import com.matt.aethermobile.ui.components.AeSecondaryButton
@@ -91,6 +97,8 @@ data class ShellUiState(
     val wipeDraft: Boolean = false,
     /** TerminalHost.restartAvailable(): attached to an exited terminal2. */
     val restartAvailable: Boolean = false,
+    /** Thread or Raw; the segment only shows for the Claude slot. */
+    val view: ViewMode = ViewMode.THREAD,
 )
 
 class ShellActions(
@@ -103,6 +111,7 @@ class ShellActions(
     val onCtrlToggle: () -> Unit,
     val onCompose: (String, Boolean) -> TerminalHost.ComposeResult,
     val onRestart: () -> Boolean,
+    val onSetView: (ViewMode) -> Unit,
 )
 
 private val dims = AetherDimens()
@@ -138,6 +147,9 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     live = anyRunning(state.tabs),
                     menuOpen = menuOpen,
                     onBurger = { menu = menu.onBurger() },
+                    showSegment = hasThread(state.selected),
+                    view = state.view,
+                    onSetView = actions.onSetView,
                 )
             }
             Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
@@ -187,7 +199,17 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
 }
 
 @Composable
-private fun Header(title: String, status: StatusLine, amber: Boolean, live: Boolean, menuOpen: Boolean, onBurger: () -> Unit) {
+private fun Header(
+    title: String,
+    status: StatusLine,
+    amber: Boolean,
+    live: Boolean,
+    menuOpen: Boolean,
+    onBurger: () -> Unit,
+    showSegment: Boolean,
+    view: ViewMode,
+    onSetView: (ViewMode) -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().height(dims.headerH).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -195,18 +217,82 @@ private fun Header(title: String, status: StatusLine, amber: Boolean, live: Bool
     ) {
         // 40dp core drawn inside a 44dp tap target (StormCore hitDp); the tap is discharge only.
         StormCore(dims.headerCore, if (live) StormMode.Nominal else StormMode.Idle, onDischarge = {}, hitDp = dims.touchMin)
-        Column(Modifier.weight(1f)) {
-            BasicText(title, style = type.title.copy(color = AetherColors.textBright), maxLines = 1)
+        val menuDesc = stringResource(if (menuOpen) R.string.menu_close else R.string.menu_open)
+        // The whole title block opens and closes the same menu as the burger.
+        Column(
+            Modifier
+                .weight(1f)
+                .heightIn(min = dims.touchMin)
+                .clickable(role = Role.Button, onClick = onBurger)
+                .semantics { contentDescription = menuDesc },
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BasicText(title, style = type.title.copy(color = AetherColors.textBright), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Canvas(Modifier.size(width = 10.dp, height = 6.dp)) {
+                    val path = Path().apply {
+                        if (menuOpen) {
+                            moveTo(0f, size.height); lineTo(size.width, size.height); lineTo(size.width / 2f, 0f)
+                        } else {
+                            moveTo(0f, 0f); lineTo(size.width, 0f); lineTo(size.width / 2f, size.height)
+                        }
+                        close()
+                    }
+                    drawPath(path, AetherColors.cyanCore)
+                }
+            }
             val line = statusText(status)
             if (line.isNotEmpty()) {
                 BasicText(
                     line,
                     style = type.meta.copy(color = if (amber) AetherColors.warn else AetherColors.textMuted),
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
+        if (showSegment) ViewSegment(view, onSetView)
         Burger(menuOpen, onBurger)
+    }
+}
+
+@Composable
+private fun ViewSegment(view: ViewMode, onSetView: (ViewMode) -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    Row(Modifier.clip(shape).border(1.dp, AetherColors.borderMid, shape)) {
+        SegmentLabel(R.string.view_thread, R.string.view_thread_desc, view == ViewMode.THREAD) { onSetView(ViewMode.THREAD) }
+        SegmentLabel(R.string.view_raw, R.string.view_raw_desc, view == ViewMode.RAW) { onSetView(ViewMode.RAW) }
+    }
+}
+
+@Composable
+private fun SegmentLabel(label: Int, desc: Int, on: Boolean, onClick: () -> Unit) {
+    val d = stringResource(desc)
+    // Touch target is touchMin tall; the visible pill is the small filled box inside it.
+    Box(
+        Modifier
+            .heightIn(min = dims.touchMin)
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .semantics {
+                contentDescription = d
+                this.selected = on
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            stringResource(label).uppercase(),
+            style = TextStyle(
+                fontFamily = type.label.fontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 10.sp,
+                letterSpacing = 1.4.sp,
+                color = if (on) AetherColors.cyanInk else AetherColors.textMuted,
+            ),
+            maxLines = 1,
+            modifier = Modifier
+                .background(if (on) AetherColors.cyanCore else Color.Transparent)
+                .padding(horizontal = 9.dp, vertical = 5.dp),
+        )
     }
 }
 
@@ -297,11 +383,16 @@ private fun Dropdown(
     ) {
         BasicText(stringResource(R.string.menu_terminals).uppercase(), style = type.label.copy(color = AetherColors.textLabel))
         for (row in slotRows(tabs, selected)) {
-            val stateText = when (row.text) {
-                SlotText.Running -> stringResource(R.string.status_running)
-                SlotText.NotStarted -> stringResource(R.string.status_not_started)
-                SlotText.Exited -> stringResource(R.string.status_exited)
-            }
+            val stateText = stringResource(
+                when (row.caps) {
+                    SlotCaps.ThreadRaw -> R.string.caps_thread_raw
+                    SlotCaps.ThreadRawNotStarted -> R.string.caps_thread_raw_not_started
+                    SlotCaps.ThreadRawExited -> R.string.caps_thread_raw_exited
+                    SlotCaps.RawOnly -> R.string.caps_raw_only
+                    SlotCaps.RawOnlyNotStarted -> R.string.caps_raw_only_not_started
+                    SlotCaps.RawOnlyExited -> R.string.caps_raw_only_exited
+                },
+            )
             Row(
                 Modifier
                     .fillMaxWidth()
