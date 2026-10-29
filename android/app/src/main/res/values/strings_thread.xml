@@ -7,4 +7,11 @@
     <string name="thread_truncated">Truncated</string>
     <string name="thread_composer_hint">Message Claude…</string>
     <string name="thread_composer_disabled_desc">Message composer, not available yet</string>
+    <string name="approval_left">%1$s left</string>
+    <string name="approval_expired">Expired</string>
+    <string name="approval_more">+%1$s more</string>
+    <string name="approval_hint">Answer on the PC. Phone approval comes next.</string>
+    <string name="approval_deny">DENY</string>
+    <string name="approval_allow">ALLOW</string>
+    <string name="approval_decisions_disabled_desc">Allow and Deny, not available yet</string>
 </resources>

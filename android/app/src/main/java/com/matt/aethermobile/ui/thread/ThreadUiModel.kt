@@ -1,7 +1,11 @@
 package com.matt.aethermobile.ui.thread
 
+import com.matt.aethermobile.protocol.ControlProtocol.PROMPT_SUMMARY_CAP
+import com.matt.aethermobile.protocol.ControlProtocol.PromptRisk
 import com.matt.aethermobile.protocol.ControlProtocol.ThreadEvent
+import com.matt.aethermobile.thread.PromptUi
 import com.matt.aethermobile.thread.ThreadUi
+import java.util.Locale
 
 /** One line of the Thread screen. [key] is unique within a list (LazyColumn requires it). */
 sealed interface ThreadRow {
@@ -74,3 +78,57 @@ fun graceRerenderDelayMs(ui: ThreadUi, nowMs: Long): Long? {
  */
 fun shouldScrollToEnd(wasAtBottomBeforeUpdate: Boolean, appended: Boolean): Boolean =
     wasAtBottomBeforeUpdate && appended
+
+/** How long an approval card stays on screen as "Expired" after its deadline, waiting for the desktop's close. */
+const val APPROVAL_EXPIRED_HOLD_MS = 3_000L
+
+/** Colour role of a risk tag; the Composable maps it to a token so this file stays colour-free. */
+enum class RiskRole { SUCCESS, WARN, DANGER }
+
+fun riskRole(r: PromptRisk): RiskRole = when (r) {
+    PromptRisk.LOW -> RiskRole.SUCCESS
+    PromptRisk.MED -> RiskRole.WARN
+    PromptRisk.HIGH -> RiskRole.DANGER
+}
+
+/** `m:ss` from whole seconds rounded up and clamped at zero; minutes are unpadded and unbounded. */
+fun formatCountdown(remainingMs: Long): String {
+    val secs = maxOf(0L, (remainingMs + 999) / 1000)
+    return "${secs / 60}:${(secs % 60).toString().padStart(2, '0')}"
+}
+
+/** Defensive phone-side cap; the desktop already caps at [PROMPT_SUMMARY_CAP]. The 12-line limit is visual only. */
+fun approvalSummary(raw: String): String =
+    if (raw.length <= PROMPT_SUMMARY_CAP) raw else raw.substring(0, PROMPT_SUMMARY_CAP - 1) + "\u2026"
+
+data class ApprovalView(
+    val id: String,
+    val toolLabel: String,
+    val risk: PromptRisk,
+    val summary: String,
+    val countdown: String,
+    val expired: Boolean,
+    val moreCount: Int,
+)
+
+/**
+ * The oldest visible prompt as a card, or null. A prompt stays visible until [APPROVAL_EXPIRED_HOLD_MS] after its
+ * deadline, so a lost close cannot pin the card. Pure: [nowMs] is passed in.
+ */
+fun approvalFor(prompts: List<PromptUi>, nowMs: Long): ApprovalView? {
+    val visible = prompts.filter { nowMs < it.deadlineMs + APPROVAL_EXPIRED_HOLD_MS }
+    val first = visible.firstOrNull() ?: return null
+    val remaining = first.deadlineMs - nowMs
+    return ApprovalView(
+        id = first.info.id,
+        toolLabel = first.info.tool.uppercase(Locale.ROOT),
+        risk = first.info.risk,
+        summary = approvalSummary(first.info.summary),
+        countdown = formatCountdown(remaining),
+        expired = remaining <= 0,
+        moreCount = visible.size - 1,
+    )
+}
+
+/** The 1 Hz clock only needs to run while the working line or a visible approval card depends on it. */
+fun needsClock(ui: ThreadUi, nowMs: Long): Boolean = ui.working || approvalFor(ui.prompts, nowMs) != null

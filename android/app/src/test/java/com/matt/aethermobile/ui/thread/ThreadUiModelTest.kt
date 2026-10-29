@@ -1,7 +1,11 @@
 package com.matt.aethermobile.ui.thread
 
+import com.matt.aethermobile.protocol.ControlProtocol.PromptCloseReason
+import com.matt.aethermobile.protocol.ControlProtocol.PromptInfo
+import com.matt.aethermobile.protocol.ControlProtocol.PromptRisk
 import com.matt.aethermobile.protocol.ControlProtocol.ThreadEvent
 import com.matt.aethermobile.protocol.ControlProtocol.ThreadFrame
+import com.matt.aethermobile.thread.PromptUi
 import com.matt.aethermobile.thread.ThreadHost
 import com.matt.aethermobile.thread.ThreadUi
 import org.junit.Assert.assertEquals
@@ -102,4 +106,84 @@ class ThreadUiModelTest {
         // An empty list cannot scroll forward, so the caller passes wasAtBottomBeforeUpdate = true.
         assertTrue(shouldScrollToEnd(wasAtBottomBeforeUpdate = !false, appended = true))
     }
+
+    private fun pu(id: String, tool: String = "Bash", risk: PromptRisk = PromptRisk.MED, summary: String = "ls", deadline: Long = 100_000L) =
+        PromptUi(PromptInfo(id, tool, risk, summary, 0L), deadline)
+
+    @Test fun countdownRoundsUpAndClamps() {
+        assertEquals("0:00", formatCountdown(0))
+        assertEquals("0:01", formatCountdown(1))
+        assertEquals("0:59", formatCountdown(59_000))
+        assertEquals("1:00", formatCountdown(59_001))
+        assertEquals("1:00", formatCountdown(60_000))
+        assertEquals("1:42", formatCountdown(102_000))
+        assertEquals("2:00", formatCountdown(120_000))
+        assertEquals("0:00", formatCountdown(-5_000))
+    }
+
+    @Test fun riskRoleMapsLowMedHigh() {
+        assertEquals(RiskRole.SUCCESS, riskRole(PromptRisk.LOW))
+        assertEquals(RiskRole.WARN, riskRole(PromptRisk.MED))
+        assertEquals(RiskRole.DANGER, riskRole(PromptRisk.HIGH))
+    }
+
+    @Test fun approvalShowsOldestWithMoreCountAndUppercaseTool() {
+        assertNull(approvalFor(emptyList(), 0L))
+        val v = approvalFor(listOf(pu("a", deadline = 102_000L), pu("b"), pu("c")), 0L)!!
+        assertEquals("a", v.id)
+        assertEquals(2, v.moreCount)
+        assertEquals("BASH", v.toolLabel)
+        assertEquals("1:42", v.countdown)
+        assertEquals(false, v.expired)
+    }
+
+    @Test fun expiredHoldsThreeSecondsThenHidesAndNextTakesOver() {
+        val both = listOf(pu("a", deadline = 10_000L), pu("b", deadline = 60_000L))
+        val atDeadline = approvalFor(both, 10_000L)!!
+        assertEquals("a", atDeadline.id)
+        assertTrue(atDeadline.expired)
+        assertEquals("0:00", atDeadline.countdown)
+        assertEquals("a", approvalFor(both, 12_999L)!!.id)
+        val next = approvalFor(both, 13_000L)!!
+        assertEquals("b", next.id)
+        assertEquals(false, next.expired)
+        assertEquals(0, next.moreCount)
+        assertNull(approvalFor(listOf(pu("a", deadline = 10_000L)), 13_000L))
+    }
+
+    @Test fun approvalSummaryKeepsShortAndCapsLong() {
+        assertEquals("x".repeat(1200), approvalSummary("x".repeat(1200)))
+        val capped = approvalSummary("x".repeat(1201))
+        assertEquals(1200, capped.length)
+        assertTrue(capped.endsWith("\u2026"))
+    }
+
+    @Test fun clockRunsOnlyWhileSomethingVisible() {
+        assertEquals(false, needsClock(ui(), 0L))
+        assertTrue(needsClock(ui(working = true), 0L))
+        assertTrue(needsClock(uiWith(listOf(pu("a", deadline = 10_000L))), 0L))
+        assertEquals(false, needsClock(uiWith(listOf(pu("a", deadline = 10_000L))), 13_000L))
+    }
+
+    @Test fun hostPromptRemainingTtlFlowsToCard() {
+        var clock = 0L
+        val host = ThreadHost(sendAttach = { true }, sendDetach = { true }, now = { clock })
+        host.onConnected(); host.activate(true)
+        host.onFrame(ThreadFrame.Snap(1, true, false, null, emptyList()))
+        clock = 1_000L
+        host.onFrame(ThreadFrame.Opened(PromptInfo("p", "Bash", PromptRisk.MED, "ls", 5_000L)))
+        assertEquals("0:05", approvalFor(host.snapshot().prompts, 1_000L)!!.countdown)
+        clock = 3_500L
+        assertEquals("0:03", approvalFor(host.snapshot().prompts, clock)!!.countdown)
+        host.onFrame(ThreadFrame.Closed("p", PromptCloseReason.ANSWERED_DESKTOP))
+        assertNull(approvalFor(host.snapshot().prompts, clock))
+    }
+
+    @Test fun approvalWithOneMsLeftIsNotExpired() {
+        val v = approvalFor(listOf(pu("a", deadline = 1L)), 0L)!!
+        assertEquals("0:01", v.countdown)
+        assertEquals(false, v.expired)
+    }
+
+    private fun uiWith(p: List<PromptUi>) = ThreadUi(emptyList(), true, false, null, p)
 }

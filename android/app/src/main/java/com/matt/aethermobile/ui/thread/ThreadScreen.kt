@@ -50,16 +50,21 @@ private val FieldShape = RoundedCornerShape(10.dp)
 
 /**
  * Read-only Claude thread: bubbles, tool lines and a working line, newest at the bottom, over a disabled composer.
- * Takes the whole [ThreadUi] so the approval card can sit between the list and the composer later. Prompts are ignored here.
+ * Takes the whole [ThreadUi]: the oldest pending prompt shows as a display-only approval card between the list and
+ * the composer.
  */
 @Composable
 fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Modifier) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(ui.working) {
-        if (ui.working) while (true) { nowMs = System.currentTimeMillis(); delay(1000) }
+    val ticking = needsClock(ui, nowMs)
+    LaunchedEffect(ticking) {
+        if (ticking) while (true) { nowMs = System.currentTimeMillis(); delay(1000) }
     }
     val rows = threadRows(ui, nowMs)
     val empty = emptyStateFor(ui)
+    // nowMs can be one tick stale in the first composition that shows a prompt after an idle period; the ticking
+    // effect refreshes it at once, so a wrong countdown shows for at most one frame.
+    val approval = approvalFor(ui.prompts, nowMs)
 
     // Read BEFORE the new rows are laid out: canScrollForward still describes the previous layout when this
     // composition first sees a changed last key or row count. The effect below is not restarted by later
@@ -68,7 +73,7 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
     val wasAtBottom = !listState.canScrollForward
     val lastKey = rows.lastOrNull()?.key
     val lastCount = rows.size
-    LaunchedEffect(lastKey, lastCount) {
+    LaunchedEffect(lastKey, lastCount, approval?.id) {
         if (shouldScrollToEnd(wasAtBottom, appended = lastCount > 0)) {
             listState.animateScrollToItem(lastCount - 1)
             // The item's top is now at the viewport top; a tall last row still has its tail below.
@@ -96,6 +101,7 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
                 items(rows, key = { it.key }) { row -> RowView(row) }
             }
         }
+        approval?.let { ApprovalCard(it) }
         DisabledComposer()
     }
 }
