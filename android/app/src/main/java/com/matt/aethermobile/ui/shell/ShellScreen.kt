@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -48,13 +49,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
@@ -219,8 +224,14 @@ private fun Header(
     view: ViewMode,
     onSetView: (ViewMode) -> Unit,
 ) {
+    val hairline = AetherColors.border
     Row(
-        Modifier.fillMaxWidth().height(dims.headerH).padding(horizontal = 12.dp),
+        Modifier
+            .fillMaxWidth()
+            .height(dims.headerH)
+            .background(AetherColors.bgDeep.copy(alpha = 0.7f))
+            .drawBehind { drawLine(hairline, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx()) }
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -267,20 +278,36 @@ private fun Header(
 
 @Composable
 private fun ViewSegment(view: ViewMode, onSetView: (ViewMode) -> Unit) {
-    val shape = RoundedCornerShape(14.dp)
-    Row(Modifier.clip(shape).border(1.dp, AetherColors.borderMid, shape)) {
-        SegmentLabel(R.string.view_thread, R.string.view_thread_desc, view == ViewMode.THREAD) { onSetView(ViewMode.THREAD) }
-        SegmentLabel(R.string.view_raw, R.string.view_raw_desc, view == ViewMode.RAW) { onSetView(ViewMode.RAW) }
+    val radius = 14.dp
+    val band = 26.dp
+    val edge = AetherColors.borderMid
+    // One capsule outline over a 26dp band; the halves keep full touchMin tap boxes around it.
+    Row(
+        Modifier.drawWithContent {
+            drawContent()
+            val inset = (size.height - band.toPx()) / 2f
+            drawRoundRect(
+                edge,
+                topLeft = Offset(0.5.dp.toPx(), inset + 0.5.dp.toPx()),
+                size = Size(size.width - 1.dp.toPx(), band.toPx() - 1.dp.toPx()),
+                cornerRadius = CornerRadius(radius.toPx() - 0.5.dp.toPx()),
+                style = Stroke(1.dp.toPx()),
+            )
+        },
+    ) {
+        SegmentLabel(R.string.view_thread, R.string.view_thread_desc, view == ViewMode.THREAD, RoundedCornerShape(topStart = radius, bottomStart = radius)) { onSetView(ViewMode.THREAD) }
+        SegmentLabel(R.string.view_raw, R.string.view_raw_desc, view == ViewMode.RAW, RoundedCornerShape(topEnd = radius, bottomEnd = radius)) { onSetView(ViewMode.RAW) }
     }
 }
 
 @Composable
-private fun SegmentLabel(label: Int, desc: Int, on: Boolean, onClick: () -> Unit) {
+private fun SegmentLabel(label: Int, desc: Int, on: Boolean, shape: Shape, onClick: () -> Unit) {
     val d = stringResource(desc)
-    // Touch target is touchMin tall; the visible pill is the small filled box inside it.
+    // Tap box is at least touchMin in both axes; the visible pill is the 26dp filled band inside it.
     Box(
         Modifier
             .heightIn(min = dims.touchMin)
+            .widthIn(min = dims.touchMin)
             .clickable(role = Role.RadioButton, onClick = onClick)
             .semantics {
                 contentDescription = d
@@ -288,20 +315,26 @@ private fun SegmentLabel(label: Int, desc: Int, on: Boolean, onClick: () -> Unit
             },
         contentAlignment = Alignment.Center,
     ) {
-        BasicText(
-            stringResource(label).uppercase(),
-            style = TextStyle(
-                fontFamily = type.label.fontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 10.sp,
-                letterSpacing = 1.4.sp,
-                color = if (on) AetherColors.cyanInk else AetherColors.textMuted,
-            ),
-            maxLines = 1,
-            modifier = Modifier
+        Box(
+            Modifier
+                .height(26.dp)
+                .clip(shape)
                 .background(if (on) AetherColors.cyanCore else Color.Transparent)
-                .padding(horizontal = 9.dp, vertical = 5.dp),
-        )
+                .padding(horizontal = 9.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicText(
+                stringResource(label).uppercase(),
+                style = TextStyle(
+                    fontFamily = type.label.fontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.4.sp,
+                    color = if (on) AetherColors.cyanInk else AetherColors.textMuted,
+                ),
+                maxLines = 1,
+            )
+        }
     }
 }
 
