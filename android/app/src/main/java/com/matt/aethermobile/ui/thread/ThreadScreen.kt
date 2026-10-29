@@ -1,19 +1,21 @@
 package com.matt.aethermobile.ui.thread
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,8 +36,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.matt.aethermobile.R
 import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.ui.components.AeSecondaryButton
@@ -44,8 +48,11 @@ import com.matt.aethermobile.ui.theme.AetherType
 import kotlinx.coroutines.delay
 
 private val type = AetherType()
-private val BubbleShape = RoundedCornerShape(12.dp)
-private val ToolShape = RoundedCornerShape(6.dp)
+private val UserBubbleShape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 4.dp, bottomStart = 16.dp)
+private val ToolShape = RoundedCornerShape(10.dp)
+private val ThreadBodyStyle = type.body.copy(fontSize = 16.sp, lineHeight = 22.sp)
+private val ToolTagStyle = type.meta.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
+private val ToolTargetStyle = type.meta.copy(fontSize = 12.sp)
 private val FieldShape = RoundedCornerShape(10.dp)
 
 /**
@@ -95,8 +102,8 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(7.dp, Alignment.Bottom),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.Bottom),
+                contentPadding = PaddingValues(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 10.dp),
             ) {
                 items(rows, key = { it.key }) { row -> RowView(row) }
             }
@@ -109,40 +116,56 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
 @Composable
 private fun RowView(row: ThreadRow) {
     when (row) {
-        is ThreadRow.User -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-            Bubble(row.text, row.truncated, AetherColors.textBright, Modifier.fillMaxWidth(0.92f).background(AetherColors.activeFill, BubbleShape))
+        is ThreadRow.User -> BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+            Column(
+                Modifier
+                    .widthIn(max = maxWidth * 0.84f)
+                    .background(AetherColors.activeFill, UserBubbleShape)
+                    .border(1.dp, AetherColors.activeBorder, UserBubbleShape)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+            ) { RowText(row.text, row.truncated, AetherColors.textBright) }
         }
-        is ThreadRow.Claude -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-            Bubble(
-                row.text, row.truncated, AetherColors.text,
-                Modifier.fillMaxWidth(0.92f)
-                    .background(AetherColors.panelSoftTop, BubbleShape)
-                    .border(1.dp, AetherColors.border, BubbleShape),
-            )
-        }
-        is ThreadRow.Tool -> Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).background(AetherColors.insetTop, ToolShape)) {
-            Box(Modifier.width(2.dp).fillMaxHeight().background(AetherColors.cyanDeep))
+        is ThreadRow.Claude -> Column(Modifier.fillMaxWidth()) { RowText(row.text, row.truncated, AetherColors.text) }
+        is ThreadRow.Tool -> Row(
+            Modifier
+                .fillMaxWidth()
+                .semantics(mergeDescendants = true) { contentDescription = row.desc }
+                .background(AetherColors.insetTop, ToolShape)
+                .border(1.dp, AetherColors.border, ToolShape)
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(row.tag, style = ToolTagStyle.copy(color = AetherColors.cyan), maxLines = 1)
             BasicText(
-                row.text,
-                Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                style = type.meta.copy(color = AetherColors.textMuted),
-                maxLines = 2,
+                row.target.orEmpty(),
+                Modifier.weight(1f),
+                style = ToolTargetStyle.copy(color = AetherColors.textDim),
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            row.add?.let { BasicText("+$it", style = type.meta.copy(color = AetherColors.success), maxLines = 1) }
+            row.del?.let { BasicText("−$it", style = type.meta.copy(color = AetherColors.textMuted), maxLines = 1) }
         }
         is ThreadRow.Working -> {
-            val text = if (row.seconds == null) stringResource(R.string.thread_working_no_time) else stringResource(R.string.thread_working, row.seconds)
-            BasicText(text, Modifier.padding(horizontal = 4.dp, vertical = 2.dp), style = type.meta.copy(color = AetherColors.cyanCore))
+            val text = if (row.seconds == null) stringResource(R.string.thread_working_no_time)
+            else stringResource(R.string.thread_working, formatElapsed(row.seconds))
+            Row(Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Canvas(Modifier.size(7.dp)) {
+                    drawCircle(AetherColors.cyanCore.copy(alpha = 0.3f), radius = size.minDimension)
+                    drawCircle(AetherColors.cyanCore, radius = size.minDimension / 2)
+                }
+                Spacer(Modifier.width(8.dp))
+                BasicText(text, style = type.meta.copy(color = AetherColors.textMuted))
+            }
         }
     }
 }
 
 @Composable
-private fun Bubble(text: String, truncated: Boolean, color: Color, modifier: Modifier) {
-    Column(modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-        BasicText(text, style = type.body.copy(color = color))
-        if (truncated) BasicText(stringResource(R.string.thread_truncated), style = type.meta.copy(color = AetherColors.textMuted))
-    }
+private fun RowText(text: String, truncated: Boolean, color: Color) {
+    BasicText(text, style = ThreadBodyStyle.copy(color = color))
+    if (truncated) BasicText(stringResource(R.string.thread_truncated), style = type.meta.copy(color = AetherColors.textMuted))
 }
 
 /** Looks like the compose bar but holds no text field, so it cannot take focus or raise the keyboard. */

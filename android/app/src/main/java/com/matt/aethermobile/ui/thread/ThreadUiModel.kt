@@ -13,7 +13,10 @@ sealed interface ThreadRow {
 
     data class User(override val key: String, val text: String, val truncated: Boolean) : ThreadRow
     data class Claude(override val key: String, val text: String, val truncated: Boolean) : ThreadRow
-    data class Tool(override val key: String, val text: String) : ThreadRow
+    /** [desc] is [toolText], the row's accessibility description; the pieces are what the row draws. */
+    data class Tool(
+        override val key: String, val tag: String, val target: String?, val add: Long?, val del: Long?, val desc: String,
+    ) : ThreadRow
     /** [seconds] is null when titan did not send a start time. */
     data class Working(val seconds: Long?) : ThreadRow { override val key: String get() = "working" }
 }
@@ -32,7 +35,7 @@ fun threadRows(ui: ThreadUi, nowMs: Long): List<ThreadRow> {
             when (e) {
                 is ThreadEvent.User -> ThreadRow.User(uniqueKey(e.id), e.text, e.truncated)
                 is ThreadEvent.Claude -> ThreadRow.Claude(uniqueKey(e.id), e.text, e.truncated)
-                is ThreadEvent.Tool -> ThreadRow.Tool(uniqueKey(e.id), toolText(e))
+                is ThreadEvent.Tool -> ThreadRow.Tool(uniqueKey(e.id), toolTag(e.name), e.target?.takeIf { it.isNotBlank() }, e.add, e.del, toolText(e))
             },
         )
     }
@@ -51,6 +54,16 @@ fun toolText(e: ThreadEvent.Tool): String {
     val counts = listOfNotNull(e.add?.let { "+$it" }, e.del?.let { "−$it" })
     if (counts.isNotEmpty()) sb.append(" · ").append(counts.joinToString(" "))
     return sb.toString()
+}
+
+/** Short upper-case tag for the tool row: the last `__` segment (MCP names are `mcp__server__tool`); blank -> `TOOL`. */
+fun toolTag(name: String): String =
+    name.substringAfterLast("__").trim().uppercase(Locale.ROOT).ifEmpty { "TOOL" }
+
+/** `18s` under a minute, else `2m 14s` (seconds zero-padded); negative clamps to zero. */
+fun formatElapsed(seconds: Long): String {
+    val s = maxOf(0L, seconds)
+    return if (s < 60) "${s}s" else "${s / 60}m ${(s % 60).toString().padStart(2, '0')}s"
 }
 
 enum class ThreadEmpty { NoSession, Waiting }

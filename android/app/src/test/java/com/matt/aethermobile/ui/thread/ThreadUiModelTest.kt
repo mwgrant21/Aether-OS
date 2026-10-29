@@ -29,7 +29,7 @@ class ThreadUiModelTest {
         assertEquals(listOf("1:0", "2:0", "3:0"), rows.map { it.key })
         assertEquals(ThreadRow.User("1:0", "hi", true), rows[0])
         assertEquals(ThreadRow.Claude("2:0", "yo", false), rows[1])
-        assertEquals(ThreadRow.Tool("3:0", "Bash"), rows[2])
+        assertEquals(ThreadRow.Tool("3:0", "BASH", null, null, null, "Bash"), rows[2])
     }
 
     @Test fun toolTextWithAndWithoutTargetAndCounts() {
@@ -40,6 +40,22 @@ class ThreadUiModelTest {
         assertEquals("Bash", toolText(tool("Bash", null, null, null)))
         assertEquals("Bash", toolText(tool("Bash", "  ", null, null)))
         assertEquals("Bash · +1 −0", toolText(tool("Bash", null, 1, 0)))
+    }
+
+    @Test fun toolTagIsUpperCaseLastMcpSegmentOrToolWhenBlank() {
+        assertEquals("READ", toolTag("Read"))
+        assertEquals("DO_THING", toolTag("mcp__srv__do_thing"))
+        assertEquals("TOOL", toolTag(""))
+    }
+
+    @Test fun formatElapsedSwitchesToMinutesAtSixtyAndClampsNegative() {
+        assertEquals("0s", formatElapsed(0))
+        assertEquals("59s", formatElapsed(59))
+        assertEquals("1m 00s", formatElapsed(60))
+        assertEquals("1m 05s", formatElapsed(65))
+        assertEquals("2m 14s", formatElapsed(134))
+        assertEquals("60m 00s", formatElapsed(3600))
+        assertEquals("0s", formatElapsed(-5))
     }
 
     @Test fun workingRowOnlyWhenWorkingAndSecondsFloor() {
