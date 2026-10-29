@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,6 +73,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.R
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.StormCore
 import com.matt.aethermobile.ui.StormMode
@@ -83,6 +85,7 @@ import com.matt.aethermobile.ui.components.aeSheet
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherDimens
 import com.matt.aethermobile.ui.theme.AetherType
+import com.matt.aethermobile.ui.thread.ThreadScreen
 
 data class ShellUiState(
     /** False hides all chrome and collapses the terminal area to 0x0; the holder stays composed. */
@@ -99,6 +102,7 @@ data class ShellUiState(
     val restartAvailable: Boolean = false,
     /** Thread or Raw; the segment only shows for the Claude slot. */
     val view: ViewMode = ViewMode.THREAD,
+    val thread: ThreadUi = ThreadUi.EMPTY,
 )
 
 class ShellActions(
@@ -128,6 +132,10 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     var menu by remember { mutableStateOf(MenuState()) }
     // Above the connected-only branch so a drop and reconnect keeps it; saved so rotation keeps it too.
     var draft by rememberSaveable { mutableStateOf("") }
+    // Hoisted like draft so the list state outlives the Thread/Raw swap.
+    val threadListState = rememberLazyListState()
+    val threadBody = state.connected && threadBodyActive(state.selected, state.view)
+    val rawBody = state.connected && !threadBody
     val menuOpen = menu.open && state.connected
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
@@ -153,17 +161,18 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 )
             }
             Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
-                if (state.connected) ZoomRow(actions)
+                if (rawBody) ZoomRow(actions)
                 // Always composed: a conditional host could leave the pre-warmed WebView unattached.
-                Box(if (state.connected) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
+                Box(if (rawBody) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
                     AndroidView(
                         factory = { terminalHolder.also { (it.parent as? ViewGroup)?.removeView(it) } },
                         modifier = Modifier.fillMaxSize(),
-                        update = { it.visibility = if (state.connected) View.VISIBLE else View.GONE },
+                        update = { it.visibility = if (rawBody) View.VISIBLE else View.GONE },
                     )
                 }
+                if (threadBody) ThreadScreen(state.thread, threadListState, Modifier.weight(1f).fillMaxWidth())
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
-                if (state.connected) {
+                if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)
                     KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
                     // Last, so it sits nearest the keyboard.

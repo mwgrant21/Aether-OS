@@ -70,6 +70,7 @@ import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
 import com.matt.aethermobile.ui.shell.Zoom
 import com.matt.aethermobile.ui.theme.AetherTheme
+import com.matt.aethermobile.ui.thread.graceRerenderDelayMs
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.term.TerminalScreen
 import okhttp3.OkHttpClient
@@ -113,6 +114,7 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val relockTimer = Runnable { if (!isDestroyed) applyEffects(controller.onRelockTimer()) }
     private val deferredTimer = Runnable { if (!isDestroyed) applyEffects(controller.onDeferredTimer()) }
+    private val graceRerender = Runnable { if (!isDestroyed) renderTabs() }
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
     private val http = OkHttpClient()
     private val host = BuildConfig.TITAN_IP
@@ -678,12 +680,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
+        val t = threadHost?.snapshot() ?: ThreadUi.EMPTY
         ui = UiSnapshot(
             flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice,
             restartAvailable = termHost?.restartAvailable() == true,
             view = view,
-            thread = threadHost?.snapshot() ?: ThreadUi.EMPTY,
+            thread = t,
         )
+        handler.removeCallbacks(graceRerender)
+        graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
     }
 
     // ---- rendering -----------------------------------------------------------------------
@@ -703,7 +708,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="thread_empty_no_session">No Claude session on titan</string>
+    <string name="thread_empty_waiting">Waiting for output</string>
+    <string name="thread_working">Working · %1$ds</string>
+    <string name="thread_working_no_time">Working</string>
+    <string name="thread_truncated">Truncated</string>
+    <string name="thread_composer_hint">Message Claude…</string>
+    <string name="thread_composer_disabled_desc">Message composer, not available yet</string>
+</resources>
