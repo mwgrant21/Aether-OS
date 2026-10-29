@@ -1,5 +1,6 @@
 import path from 'path';
 import { findSessionFileById, findSessionFileCreatedAfter } from './activeSessionFinder';
+import { createClearSuccessorFinder, type FindClearSuccessor } from './clearSuccessorFinder';
 import { readNewLines } from './transcriptTailer';
 import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser';
 import { createEmptyHistory, updateHistory, type ToolCallHistory } from './toolCallHistory';
@@ -33,11 +34,21 @@ export interface LiveAgentTick {
 // spawn, and only that file is ever tailed until the pty respawns. When the
 // spawn passed its own --session-id, the file is matched by that id exactly;
 // the newest-after-spawn mtime rule is only the fallback for a spawn without one.
+//
+// The pin has one second way to move: `/clear` keeps the pty but starts a new
+// session id and a new file, so after each tick (throttled) the tracker asks
+// the successor finder whether a file in the same dir descends from THIS
+// spawn's launch id (an in-file link plus a /clear record; see
+// clearSuccessorFinder.ts). Only such a file can take the pin, so an unrelated
+// concurrent session still cannot win. Without a launch id it never scans.
 // Filesystem seams, injectable so tests can hold an await open and land a
 // respawn inside it deterministically. Production uses the real ones.
 export interface LiveAgentTrackerFs {
   findSessionFile?: (dir: string, sinceMs: number, sessionId: string | null) => Promise<string | null>;
   readLines?: (file: string, offset: number) => Promise<{ lines: string[]; newOffset: number }>;
+  findSuccessor?: FindClearSuccessor;
+  /** Minimum gap between /clear successor scans. Default 3000; tests pass 0. */
+  rolloverScanIntervalMs?: number;
 }
 
 export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs = {}) {
@@ -46,6 +57,8 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
     ((dir: string, sinceMs: number, sessionId: string | null) =>
       sessionId ? findSessionFileById(dir, sessionId) : findSessionFileCreatedAfter(dir, sinceMs));
   const readLines = fs.readLines ?? readNewLines;
+  const findSuccessor = fs.findSuccessor ?? createClearSuccessorFinder();
+  const rolloverScanIntervalMs = fs.rolloverScanIntervalMs ?? 3000;
 
   let spawnedAtMs: number | null = null;
   let spawnedSessionId: string | null = null;
@@ -63,6 +76,7 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
   // old file's events into the new session's history and counters, or pin the
   // previous session's file found with the old spawnedAtMs.
   let generation = 0;
+  let lastScanMs = 0;
 
   function emptyTick(): LiveAgentTick {
     const cacheHitRatio =
@@ -84,7 +98,7 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
   // so the offset only moves forward.
   let tickChain: Promise<unknown> = Promise.resolve();
 
-  async function runTick(): Promise<LiveAgentTick> {
+  async function readPinned(): Promise<LiveAgentTick> {
     const gen = generation;
     if (!pinnedFile) {
       if (spawnedAtMs === null) return emptyTick();
@@ -139,6 +153,36 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
     return { open: currentOpen, completed, outcomes, work: currentWork, anomalies, cacheHitRatio };
   }
 
+  async function maybeRollover(gen: number): Promise<void> {
+    if (pinnedFile === null || spawnedSessionId === null) return;
+    if (Date.now() - lastScanMs < rolloverScanIntervalMs) return;
+    lastScanMs = Date.now();
+    let next: string | null;
+    try {
+      next = await findSuccessor(sessionDir, spawnedSessionId, pinnedFile);
+    } catch {
+      return;
+    }
+    // A respawn that landed during the scan makes this result stale: write nothing.
+    if (gen !== generation) return;
+    if (!next || next === pinnedFile) return;
+    pinnedFile = next;
+    currentOffset = 0;
+    currentOpen = [];
+    currentWork = [];
+    history = createEmptyHistory();
+    cumulativeCacheRead = 0;
+    cumulativeInput = 0;
+  }
+
+  async function runTick(): Promise<LiveAgentTick> {
+    const gen = generation;
+    const r = await readPinned();
+    if (gen !== generation) return r;
+    await maybeRollover(gen);
+    return r;
+  }
+
   return {
     getPinnedSessionId(): string | null {
       return pinnedFile ? path.basename(pinnedFile, '.jsonl') : null;
@@ -148,6 +192,7 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
       generation += 1;
       spawnedAtMs = atMs;
       spawnedSessionId = sessionId;
+      lastScanMs = 0;
       pinnedFile = null;
       currentOffset = 0;
       currentOpen = [];
