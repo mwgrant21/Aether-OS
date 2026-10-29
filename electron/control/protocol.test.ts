@@ -250,6 +250,7 @@ describe('ledger frames', () => {
     l.prompt = 'x';
     (l.total as Record<string, unknown>).secret = 'y';
     (l.cache as Record<string, unknown>).extra = 1;
+    (l.rollups as Record<string, unknown>).project = 'z';
     expect(encodeLedgerSnap(l as unknown as LedgerWire)).toBe(spec.frames.ledgerSnap);
   });
   it('dollar and rate values are rounded to 4 decimals', () => {
