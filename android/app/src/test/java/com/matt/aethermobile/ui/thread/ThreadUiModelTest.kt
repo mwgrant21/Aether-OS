@@ -90,4 +90,12 @@ class ThreadUiModelTest {
         host.onFrame(ThreadFrame.Snap(2, true, false, null, emptyList()))
         assertNull(graceRerenderDelayMs(host.snapshot(), clock))
     }
+
+    @Test fun programmaticSettleShortOfBottomKeepsFollowing() {
+        // Long last bubble: our scroll leaves its tail below (atBottom=false) but following must stay on.
+        assertTrue(shouldFollowAfterSettle(userScrolled = false, atBottom = false, wasFollowing = true))
+        assertEquals(false, shouldFollowAfterSettle(userScrolled = false, atBottom = true, wasFollowing = false))
+        assertEquals(false, shouldFollowAfterSettle(userScrolled = true, atBottom = false, wasFollowing = true))
+        assertTrue(shouldFollowAfterSettle(userScrolled = true, atBottom = true, wasFollowing = false))
+    }
 }

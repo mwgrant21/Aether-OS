@@ -2,11 +2,14 @@ package com.matt.aethermobile.ui.thread
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -27,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -58,17 +62,34 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
     val rows = threadRows(ui, nowMs)
     val empty = emptyStateFor(ui)
 
-    // Follow the newest row only while the user sits at the bottom; scrolling away stops it, returning resumes it.
+    // Follow the newest row only while the user sits at the bottom. Only a settle after a USER scroll can change it:
+    // our own scroll to a row taller than the viewport may end short of the bottom and must not switch following off.
     var following by remember { mutableStateOf(true) }
-    // Re-evaluated only when a scroll settles, so new content arriving below does not by itself stop following.
+    val programmatic = remember { BooleanArray(1) }
+    val userScrolled = remember { BooleanArray(1) }
     val scrolling = listState.isScrollInProgress
     LaunchedEffect(scrolling) {
-        if (!scrolling) following = !listState.canScrollForward
+        if (scrolling) {
+            if (!programmatic[0]) userScrolled[0] = true
+        } else {
+            following = shouldFollowAfterSettle(userScrolled[0], !listState.canScrollForward, following)
+            userScrolled[0] = false
+        }
     }
     val lastKey = rows.lastOrNull()?.key
     val lastCount = rows.size
     LaunchedEffect(lastKey, lastCount) {
-        if (following && lastCount > 0) listState.animateScrollToItem(lastCount - 1)
+        if (following && lastCount > 0) {
+            programmatic[0] = true
+            try {
+                listState.animateScrollToItem(lastCount - 1)
+                // The item's top is now at the viewport top; a tall last row still has its tail below.
+                var guard = 0
+                while (listState.canScrollForward && guard++ < 8) listState.scrollBy(1e9f)
+            } finally {
+                programmatic[0] = false
+            }
+        }
     }
 
     Column(modifier) {
@@ -83,9 +104,9 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
             }
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(7.dp, Alignment.Bottom),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 items(rows, key = { it.key }) { row -> RowView(row) }
             }
@@ -126,7 +147,7 @@ private fun RowView(row: ThreadRow) {
 }
 
 @Composable
-private fun Bubble(text: String, truncated: Boolean, color: androidx.compose.ui.graphics.Color, modifier: Modifier) {
+private fun Bubble(text: String, truncated: Boolean, color: Color, modifier: Modifier) {
     Column(modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
         BasicText(text, style = type.body.copy(color = color))
         if (truncated) BasicText(stringResource(R.string.thread_truncated), style = type.meta.copy(color = AetherColors.textMuted))

@@ -67,3 +67,10 @@ fun graceRerenderDelayMs(ui: ThreadUi, nowMs: Long): Long? {
     if (ends == null || ui.noSession) return null
     return maxOf(1L, ends - nowMs)
 }
+
+/**
+ * The follow flag after a scroll settles. Only a user scroll can change it (follow iff it ended at the bottom);
+ * our own scroll to a row taller than the viewport can end short of the bottom and must leave it alone.
+ */
+fun shouldFollowAfterSettle(userScrolled: Boolean, atBottom: Boolean, wasFollowing: Boolean): Boolean =
+    if (userScrolled) atBottom else wasFollowing
