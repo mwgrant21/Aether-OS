@@ -151,6 +151,7 @@ class MainActivity : AppCompatActivity() {
         val ctrlOn: Boolean = false,
         val hostAccepts: Boolean = false,
         val notice: NotSentNotice = NotSentNotice.NONE,
+        val restartAvailable: Boolean = false,
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -616,6 +617,8 @@ class MainActivity : AppCompatActivity() {
     private fun sendCompose(text: String, enter: Boolean): TerminalHost.ComposeResult =
         (termHost?.sendCompose(text, enter) ?: TerminalHost.ComposeResult.NOT_ACCEPTED).also { renderTabs() }
 
+    private fun restartTerminal2(): Boolean = (termHost?.restartTerminal2() ?: false).also { renderTabs() }
+
     private fun toggleCtrl() {
         termHost?.let { it.setCtrlLatch(!it.ctrlLatched()) }
         renderTabs()
@@ -632,7 +635,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTabs() {
         val tabs = termHost?.tabs() ?: ControlProtocol.SLOTS.map { TerminalHost.Tab(it.s, it.label, SlotState.NOT_STARTED) }
-        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice)
+        ui = UiSnapshot(flow, tabs, selected, termHost?.ctrlLatched() == true, termHost?.typingAccepted() == true, notice, restartAvailable = termHost?.restartAvailable() == true)
     }
 
     // ---- rendering -----------------------------------------------------------------------
@@ -652,7 +655,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow)),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -662,6 +665,7 @@ class MainActivity : AppCompatActivity() {
                         onKey = ::sendKey,
                         onCtrlToggle = ::toggleCtrl,
                         onCompose = ::sendCompose,
+                        onRestart = ::restartTerminal2,
                     ),
                     terminalHolder = webHolder,
                 )

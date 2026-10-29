@@ -1,5 +1,6 @@
 package com.matt.aethermobile.ui.shell
 
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
@@ -88,6 +89,8 @@ data class ShellUiState(
     val hostAccepts: Boolean = false,
     /** [clearsDraft] of the app flow: Locked / NeedsPair wipe the compose draft. */
     val wipeDraft: Boolean = false,
+    /** TerminalHost.restartAvailable(): attached to an exited terminal2. */
+    val restartAvailable: Boolean = false,
 )
 
 class ShellActions(
@@ -99,6 +102,7 @@ class ShellActions(
     val onKey: (String) -> Unit,
     val onCtrlToggle: () -> Unit,
     val onCompose: (String, Boolean) -> TerminalHost.ComposeResult,
+    val onRestart: () -> Boolean,
 )
 
 private val dims = AetherDimens()
@@ -148,6 +152,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 }
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (state.connected) {
+                    if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)
                     KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
                     // Last, so it sits nearest the keyboard.
                     ComposeBar(draft, { draft = it }, composeEnabled(cur, state.flow, state.hostAccepts), actions.onCompose)
@@ -339,6 +344,19 @@ private fun Footer(flow: FlowState.Connected?, onLock: () -> Unit) {
             }
         }
         AeSecondaryButton(stringResource(R.string.action_lock_now).uppercase(), onLock)
+    }
+}
+
+@Composable
+private fun RestartRow(onRestart: () -> Boolean) {
+    val gate = remember { SendGate() }
+    val desc = stringResource(R.string.action_restart_desc)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        AeSecondaryButton(
+            stringResource(R.string.action_restart),
+            { attemptRestart(gate, SystemClock.elapsedRealtime(), onRestart) },
+            Modifier.weight(1f).semantics { contentDescription = desc },
+        )
     }
 }
 
