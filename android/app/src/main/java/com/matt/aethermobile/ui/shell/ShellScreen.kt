@@ -24,6 +24,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -163,13 +164,17 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
     LaunchedEffect(state.wipeDraft) { if (state.wipeDraft) draft = "" }
+    val kb = rememberKeyboardUi()
+    LaunchedEffect(menuOpen) { if (menuOpen) kb.hide() }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     // Registered before the menu handler: the last enabled one wins, so Back closes an open menu first.
     BackHandler(enabled = ledgerBody && !menuOpen) { actions.onOpenView(AppView.TERMINAL) }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
 
-    Box(modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+      val plan = chromePlan(maxWidth.value, maxHeight.value)
+      CompositionLocalProvider(LocalImeRequest provides kb.request, LocalHardKeyboard provides kb.hardKeyboard, LocalImeVisible provides kb.imeVisible) {
         Column(Modifier.fillMaxSize()) {
             // The header sits outside the blur and the scrim so the burger stays bright and tappable.
             if (state.connected) {
@@ -184,10 +189,11 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     showSegment = showSegment(state.selected, state.appView),
                     view = state.view,
                     onSetView = actions.onSetView,
+                    keyboard = kb,
                 )
             }
             Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
-                if (rawBody) ZoomRow(actions)
+                if (rawBody && plan.zoomRow) ZoomRow(actions)
                 // Always composed: a conditional host could leave the pre-warmed WebView unattached.
                 Box(if (rawBody) Modifier.weight(1f).fillMaxWidth() else Modifier.size(0.dp)) {
                     AndroidView(
@@ -210,7 +216,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)
-                    KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
+                    if (plan.keyRow) KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
                     // Last, so it sits nearest the keyboard.
                     ComposeBar(draft, { draft = it }, composeEnabled(cur, state.flow, state.hostAccepts), actions.onCompose)
                 }
@@ -248,6 +254,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
         }
         // Overlay in the root Box, not a Column sibling, so it never changes the terminal area's measured size.
         if (state.share.on) SharePill(Modifier.align(Alignment.TopCenter).padding(top = dims.headerH + 4.dp))
+      }
     }
 }
 
@@ -340,6 +347,7 @@ private fun Header(
     showSegment: Boolean,
     view: ViewMode,
     onSetView: (ViewMode) -> Unit,
+    keyboard: KeyboardUi?,
 ) {
     val hairline = AetherColors.border
     Row(
@@ -389,6 +397,7 @@ private fun Header(
             }
         }
         if (showSegment) ViewSegment(view, onSetView)
+        keyboard?.let { KeyboardToggle(it, Modifier) }
         Burger(menuOpen, onBurger)
     }
 }

@@ -11,10 +11,18 @@ import android.webkit.WebView
  * variation plus no-suggestions stops Gboard composing, predicting or auto-correcting into the
  * terminal. Real behavior is only checkable on a device (WebView is not JVM-testable).
  */
+/** Global on purpose: TerminalScreen.rebuild() replaces the WebView instance, so a field on it would be lost. */
+object SoftInputGate {
+    @Volatile var allowed = true
+}
+
 class AetherWebView(context: Context) : WebView(context) {
     init {
         isFocusableInTouchMode = true
     }
+
+    /** False stops a tap from starting an input session (no IME); hardware keys still reach the page as key events. */
+    override fun onCheckIsTextEditor(): Boolean = SoftInputGate.allowed && super.onCheckIsTextEditor()
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         val connection = super.onCreateInputConnection(outAttrs)

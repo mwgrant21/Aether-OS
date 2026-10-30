@@ -45,6 +45,8 @@ private val FieldShape = RoundedCornerShape(10.dp)
 @Composable
 fun ComposeBar(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHost.ComposeResult) {
     val focus = remember { FocusRequester() }
+    ImeShowEffect(focus)
+    val refocus = refocusAfterSend(LocalHardKeyboard.current, LocalImeVisible.current)
     val gate = remember { SendGate() }
     val sendDesc = stringResource(R.string.compose_send_desc)
     Row(
@@ -87,7 +89,7 @@ fun ComposeBar(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolean, o
             {
                 val r = gate.attempt(SystemClock.elapsedRealtime()) { onCompose(draft, true) }
                 if (r != null && shouldClear(r)) onDraft("")
-                focus.requestFocus()
+                if (refocus) focus.requestFocus()
             },
             Modifier.width(80.dp).semantics { contentDescription = sendDesc },
             enabled = sendEnabled,

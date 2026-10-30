@@ -44,7 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.matt.aethermobile.R
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.ui.shell.ImeShowEffect
+import com.matt.aethermobile.ui.shell.LocalHardKeyboard
+import com.matt.aethermobile.ui.shell.LocalImeVisible
 import com.matt.aethermobile.ui.shell.SendGate
+import com.matt.aethermobile.ui.shell.refocusAfterSend
 import com.matt.aethermobile.ui.shell.shouldClear
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherDimens
@@ -62,6 +66,8 @@ private val HintStyle = AetherType().body.copy(fontWeight = FontWeight.Medium, f
 @Composable
 fun ThreadComposer(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolean, onCompose: (String, Boolean) -> TerminalHost.ComposeResult) {
     val focus = remember { FocusRequester() }
+    ImeShowEffect(focus)
+    val refocus = refocusAfterSend(LocalHardKeyboard.current, LocalImeVisible.current)
     val gate = remember { SendGate() }
     val sendDesc = stringResource(R.string.compose_send_desc)
     Row(
@@ -105,7 +111,7 @@ fun ThreadComposer(draft: String, onDraft: (String) -> Unit, sendEnabled: Boolea
                 .clickable(enabled = sendEnabled) {
                     val r = gate.attempt(SystemClock.elapsedRealtime()) { onCompose(draft, true) }
                     if (r != null && shouldClear(r)) onDraft("")
-                    focus.requestFocus()
+                    if (refocus) focus.requestFocus()
                 },
             contentAlignment = Alignment.Center,
         ) {
