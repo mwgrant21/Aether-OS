@@ -87,6 +87,7 @@ class ControlClient(
     private val onState: (ControlState) -> Unit = {},
     private val onFrame: (ControlProtocol.TerminalFrame) -> Unit = {},
     private val onThreadFrame: (ControlProtocol.ThreadFrame) -> Unit = {},
+    private val onLedgerFrame: (ControlProtocol.LedgerFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
@@ -143,6 +144,12 @@ class ControlClient(
 
     /** Stops the Claude thread feed. False if not Connected or not queued. */
     fun threadDetach(): Boolean = sendWhenConnected(ControlProtocol.buildThreadDetach())
+
+    /** Starts the read-only ledger feed (answered by a ledger.snap). False if not Connected or not queued. */
+    fun ledgerAttach(): Boolean = sendWhenConnected(ControlProtocol.buildLedgerAttach())
+
+    /** Stops the ledger feed. False if not Connected or not queued. */
+    fun ledgerDetach(): Boolean = sendWhenConnected(ControlProtocol.buildLedgerDetach())
 
     /** Sends one `in` frame for [s] with cseq [c]. False if not Connected, bad args, or not queued; nothing is buffered. The body is never logged. */
     fun sendInput(s: String, c: Long, d: String): Boolean {
@@ -204,6 +211,7 @@ class ControlClient(
         override fun onMessage(text: String) {
             var deliver: ControlProtocol.TerminalFrame? = null
             var deliverThread: ControlProtocol.ThreadFrame? = null
+            var deliverLedger: ControlProtocol.LedgerFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -229,6 +237,14 @@ class ControlClient(
                             deliverThread = frame
                         }
                     }
+                    "ledger.snap" -> {
+                        val frame = if (welcomed) ControlProtocol.parseLedgerFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverLedger = frame
+                        }
+                    }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                 }
             }
@@ -236,6 +252,7 @@ class ControlClient(
             // transport delivers onMessage serially per connection, so order holds.
             deliver?.let(onFrame)
             deliverThread?.let(onThreadFrame)
+            deliverLedger?.let(onLedgerFrame)
         }
 
         private fun onBye(text: String) {

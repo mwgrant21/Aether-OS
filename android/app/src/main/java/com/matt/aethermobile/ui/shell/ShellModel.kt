@@ -78,9 +78,32 @@ fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = ta
     )
 }
 
+/** Which top-level view the shell shows: the terminal slots or the read-only Ledger. */
+enum class AppView { TERMINAL, LEDGER }
+
+enum class Body { THREAD, RAW, LEDGER }
+
+/** The Ledger view wins over every slot; otherwise the Thread/Raw rule applies. */
+fun bodyFor(selected: String, view: ViewMode, app: AppView): Body = when {
+    app == AppView.LEDGER -> Body.LEDGER
+    threadBodyActive(selected, view) -> Body.THREAD
+    else -> Body.RAW
+}
+
+/** The Thread/Raw segment belongs to the terminal view only. */
+fun showSegment(selected: String, app: AppView): Boolean = hasThread(selected) && app == AppView.TERMINAL
+
+data class ViewRow(val view: AppView, val selected: Boolean)
+
+/** Burger VIEWS rows: implemented views only (just Ledger; the terminal slots live under TERMINALS). */
+fun viewRows(app: AppView): List<ViewRow> = listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER))
+
 /** Header title: the selected slot's label, except Claude shows as CLAUDE on the phone. */
 fun titleFor(tabs: List<TerminalHost.Tab>, selected: String): String =
     if (selected == "claude") "CLAUDE" else tabs.firstOrNull { it.s == selected }?.label.orEmpty()
+
+fun titleFor(tabs: List<TerminalHost.Tab>, selected: String, app: AppView): String =
+    if (app == AppView.LEDGER) "LEDGER" else titleFor(tabs, selected)
 
 /** The header core runs Nominal when any slot is live, Idle otherwise. */
 fun anyRunning(tabs: List<TerminalHost.Tab>): Boolean = tabs.any { it.state == SlotState.RUNNING }
@@ -89,6 +112,7 @@ fun anyRunning(tabs: List<TerminalHost.Tab>): Boolean = tabs.any { it.state == S
 data class MenuState(val open: Boolean = false) {
     fun onBurger() = copy(open = !open)
     fun onSelectSlot() = copy(open = false)
+    fun onSelectView() = copy(open = false)
     fun onLock() = copy(open = false)
     fun onBack() = copy(open = false)
     fun onScrim() = copy(open = false)

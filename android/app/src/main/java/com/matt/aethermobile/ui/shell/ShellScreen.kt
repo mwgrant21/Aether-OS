@@ -81,6 +81,7 @@ import com.matt.aethermobile.R
 import com.matt.aethermobile.auth.ShareMessage
 import com.matt.aethermobile.auth.ShareUi
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.ledger.LedgerUi
 import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.StormCore
@@ -90,6 +91,7 @@ import com.matt.aethermobile.ui.components.DotStyle
 import com.matt.aethermobile.ui.components.StatusDot
 import com.matt.aethermobile.ui.components.aeActive
 import com.matt.aethermobile.ui.components.aeSheet
+import com.matt.aethermobile.ui.ledger.LedgerScreen
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherDimens
 import com.matt.aethermobile.ui.theme.AetherType
@@ -112,6 +114,9 @@ data class ShellUiState(
     val view: ViewMode = ViewMode.THREAD,
     val thread: ThreadUi = ThreadUi.EMPTY,
     val share: ShareUi = ShareUi(),
+    val appView: AppView = AppView.TERMINAL,
+    val ledger: LedgerUi = LedgerUi.Off,
+    val nowMs: Long = 0L,
 )
 
 class ShellActions(
@@ -127,6 +132,7 @@ class ShellActions(
     val onSetView: (ViewMode) -> Unit,
     /** The argument is the desired new state (true = turn on). Default is temporary until MainActivity wires it. */
     val onToggleShare: (Boolean) -> Unit,
+    val onOpenView: (AppView) -> Unit,
 )
 
 private val dims = AetherDimens()
@@ -145,14 +151,18 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     var draft by rememberSaveable { mutableStateOf("") }
     // Hoisted like draft so the list state outlives the Thread/Raw swap.
     val threadListState = rememberLazyListState()
-    val threadBody = state.connected && threadBodyActive(state.selected, state.view)
-    val rawBody = state.connected && !threadBody
+    val body = bodyFor(state.selected, state.view, state.appView)
+    val threadBody = state.connected && body == Body.THREAD
+    val rawBody = state.connected && body == Body.RAW
+    val ledgerBody = state.connected && body == Body.LEDGER
     val menuOpen = menu.open && state.connected
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
     LaunchedEffect(state.wipeDraft) { if (state.wipeDraft) draft = "" }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
+    // Registered before the menu handler: the last enabled one wins, so Back closes an open menu first.
+    BackHandler(enabled = ledgerBody && !menuOpen) { actions.onOpenView(AppView.TERMINAL) }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
 
     Box(modifier.fillMaxSize()) {
@@ -160,13 +170,14 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
             // The header sits outside the blur and the scrim so the burger stays bright and tappable.
             if (state.connected) {
                 Header(
-                    title = titleFor(state.tabs, state.selected),
+                    title = titleFor(state.tabs, state.selected, state.appView),
                     status = statusFor(cur, state.flow),
                     amber = amber(cur, state.flow),
+                    ledgerView = ledgerBody,
                     live = anyRunning(state.tabs),
                     menuOpen = menuOpen,
                     onBurger = { menu = menu.onBurger() },
-                    showSegment = hasThread(state.selected),
+                    showSegment = showSegment(state.selected, state.appView),
                     view = state.view,
                     onSetView = actions.onSetView,
                 )
@@ -188,6 +199,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                         Modifier.weight(1f).fillMaxWidth(),
                     )
                 }
+                if (ledgerBody) LedgerScreen(state.ledger, state.nowMs, Modifier.weight(1f).fillMaxWidth())
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)
@@ -216,7 +228,9 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     tabs = state.tabs,
                     selected = state.selected,
                     flow = state.flow,
+                    appView = state.appView,
                     onSelect = { s -> menu = menu.onSelectSlot(); actions.onSelectSlot(s) },
+                    onSelectView = { v -> menu = menu.onSelectView(); actions.onOpenView(v) },
                     onLock = { menu = menu.onLock(); actions.onLockNow() },
                     share = state.share,
                     onToggleShare = actions.onToggleShare,
@@ -310,6 +324,7 @@ private fun Header(
     title: String,
     status: StatusLine,
     amber: Boolean,
+    ledgerView: Boolean,
     live: Boolean,
     menuOpen: Boolean,
     onBurger: () -> Unit,
@@ -354,7 +369,7 @@ private fun Header(
                     drawPath(path, AetherColors.cyanCore)
                 }
             }
-            val line = statusText(status)
+            val line = if (ledgerView) stringResource(R.string.ledger_subline) else statusText(status)
             if (line.isNotEmpty()) {
                 BasicText(
                     line,
@@ -483,7 +498,9 @@ private fun Dropdown(
     tabs: List<TerminalHost.Tab>,
     selected: String,
     flow: FlowState.Connected?,
+    appView: AppView,
     onSelect: (String) -> Unit,
+    onSelectView: (AppView) -> Unit,
     onLock: () -> Unit,
     share: ShareUi,
     onToggleShare: (Boolean) -> Unit,
@@ -547,6 +564,29 @@ private fun Dropdown(
                 StatusDot(row.dot)
                 BasicText(row.label, style = type.body.copy(color = AetherColors.textBright), modifier = Modifier.weight(1f), maxLines = 1)
                 BasicText(stateText, style = TextStyle(fontFamily = type.meta.fontFamily, fontSize = 10.sp, color = AetherColors.textMuted), maxLines = 1)
+            }
+        }
+        BasicText(stringResource(R.string.menu_views).uppercase(), style = type.label.copy(color = AetherColors.textLabel), modifier = Modifier.padding(top = 6.dp))
+        for (row in viewRows(appView)) {
+            val label = stringResource(R.string.view_ledger)
+            val desc = stringResource(R.string.view_ledger_desc)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(dims.touchMin)
+                    .then(if (row.selected) Modifier.aeActive() else Modifier)
+                    .clickable(onClick = { onSelectView(row.view) })
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        contentDescription = desc
+                        this.selected = row.selected
+                    }
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.size(7.dp).background(if (row.selected) Color(0xFF7EF0FF) else AetherColors.textLabel))
+                BasicText(label, style = type.body.copy(color = AetherColors.textBright), modifier = Modifier.weight(1f), maxLines = 1)
             }
         }
         ShareRow(share, onToggleShare)

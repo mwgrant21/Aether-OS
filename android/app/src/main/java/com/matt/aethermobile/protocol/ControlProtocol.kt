@@ -134,6 +134,17 @@ object ControlProtocol {
         data class Closed(val id: String, val reason: PromptCloseReason) : ThreadFrame()
     }
 
+    enum class LedgerTier(val wire: String) { OPUS("opus"), SONNET("sonnet"), HAIKU("haiku"), FABLE("fable") }
+    data class LedgerTotal(val usd: Double, val input: Double, val output: Double, val cacheCreation: Double, val cacheRead: Double)
+    data class LedgerRollups(val today: Double?, val week: Double?, val month: Double?)
+    data class LedgerCache(val readTokens: Long, val wouldHaveUsd: Double, val actualUsd: Double, val savedUsd: Double, val hitRate: Double)
+    data class LedgerSnapshot(val computedAtMs: Long, val total: LedgerTotal, val tiers: List<LedgerTier>, val rollups: LedgerRollups, val cache: LedgerCache)
+
+    sealed class LedgerFrame {
+        /** ledger == null: titan has no snapshot yet. */
+        data class Snap(val ledger: LedgerSnapshot?) : LedgerFrame()
+    }
+
     /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
     private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 
@@ -349,6 +360,65 @@ object ControlProtocol {
             }
             else -> null
         }
+    }
+
+    fun buildLedgerAttach(): String = "{\"t\":\"ledger.attach\"}"
+
+    fun buildLedgerDetach(): String = "{\"t\":\"ledger.detach\"}"
+
+    /**
+     * Null unless the frame is a well-formed ledger.snap: `ledger` present and JSON null or an
+     * object whose fields all have the exact types of the wire contract. Money accepts any finite
+     * JSON number (5, 5.0, 889.44) that is >= 0, never a string; rollup buckets accept JSON null;
+     * an unknown tier fails the whole frame. Unknown extra fields are ignored. Values are never logged.
+     */
+    fun parseLedgerFrame(text: String): LedgerFrame? {
+        val o = parseObject(text) ?: return null
+        if (o.opt("t") != "ledger.snap") return null
+        if (!o.has("ledger")) return null
+        if (o.isNull("ledger")) return LedgerFrame.Snap(null)
+        val l = o.optJSONObject("ledger") ?: return null
+        val computedAtMs = whole(l.opt("computedAtMs"), MAX_SAFE_INTEGER) ?: return null
+        val t = l.optJSONObject("total") ?: return null
+        val total = LedgerTotal(
+            money(t.opt("usd")) ?: return null,
+            money(t.opt("input")) ?: return null,
+            money(t.opt("output")) ?: return null,
+            money(t.opt("cacheCreation")) ?: return null,
+            money(t.opt("cacheRead")) ?: return null,
+        )
+        val arr = l.optJSONArray("tiers") ?: return null
+        val tiers = ArrayList<LedgerTier>(arr.length())
+        for (i in 0 until arr.length()) {
+            tiers += LedgerTier.values().firstOrNull { it.wire == arr.opt(i) } ?: return null
+        }
+        val r = l.optJSONObject("rollups") ?: return null
+        val rollups = LedgerRollups(
+            (nullableMoney(r, "today") ?: return null).value,
+            (nullableMoney(r, "week") ?: return null).value,
+            (nullableMoney(r, "month") ?: return null).value,
+        )
+        val c = l.optJSONObject("cache") ?: return null
+        val readTokens = whole(c.opt("readTokens"), MAX_SAFE_INTEGER) ?: return null
+        val hitRate = (c.opt("hitRate") as? Number)?.toDouble()?.takeIf { it.isFinite() && it in 0.0..1.0 } ?: return null
+        val cache = LedgerCache(
+            readTokens,
+            money(c.opt("wouldHaveUsd")) ?: return null,
+            money(c.opt("actualUsd")) ?: return null,
+            money(c.opt("savedUsd")) ?: return null,
+            hitRate,
+        )
+        return LedgerFrame.Snap(LedgerSnapshot(computedAtMs, total, tiers, rollups, cache))
+    }
+
+    /** A finite JSON number >= 0 (Int, Long or Double alike), else null. A string is never accepted. */
+    private fun money(v: Any?): Double? = (v as? Number)?.toDouble()?.takeIf { it.isFinite() && it >= 0.0 }
+
+    /** JSON null -> Opt(null); a money number -> Opt(n); absent, a string or anything else -> null (malformed). */
+    private fun nullableMoney(o: JSONObject, key: String): Opt<Double>? {
+        if (!o.has(key)) return null
+        if (o.isNull(key)) return Opt(null)
+        return money(o.opt(key))?.let { Opt(it) }
     }
 
     /** Wraps a nullable parse result so "present and null" differs from "malformed". */

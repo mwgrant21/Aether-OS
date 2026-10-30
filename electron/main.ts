@@ -98,6 +98,7 @@ import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createRemoteHub } from './remote/remoteHub';
 import { createPermissionBroker } from './permissionBroker';
 import { createThreadFeed } from './threadFeed';
+import { createLedgerFeed } from './ledgerFeed';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
@@ -516,6 +517,9 @@ let pinnedLaunchSessionId: string | null = null;
 // and with a 60s interval the Ledger would show "no snapshot yet" for a full
 // minute after launch. The renderer pulls this on mount.
 let cachedLedgerSnapshot: LedgerSnapshot | null = null;
+// Phone Ledger feed (privacy section 17). Declared here, above the scan that publishes and above createControlHub, so no
+// path can reach it in its temporal dead zone. It shares the cache above through current() and keeps no copy of it.
+const ledgerFeed = createLedgerFeed({ current: () => cachedLedgerSnapshot });
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 
@@ -629,6 +633,7 @@ async function scanAndPushUsage(): Promise<void> {
     Date.now(),
   );
   sendToWindow('ledger:snapshot', cachedLedgerSnapshot);
+  ledgerFeed.notify();
 
   // Quota efficiency rides the SAME optimizeEvents scan as the Ledger -- no
   // third pass over the transcripts -- and joins it to the percentage series
@@ -1558,6 +1563,7 @@ const controlHub = createControlHub({
   terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
   input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   threads: threadFeed, // read-only transcript thread, Claude slot only
+  ledger: ledgerFeed.port, // read-only derived cost numbers, no text
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
