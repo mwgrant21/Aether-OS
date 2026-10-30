@@ -22,6 +22,7 @@ import type {
   ControlStatus,
   ListenerPort,
   PromptReadPort,
+  LedgerReadPort,
   RemoteSessionInfo,
   RemoteUnavailableReason,
   TerminalReadPort,
@@ -63,6 +64,8 @@ export interface ControlHubDeps {
   threads?: ThreadReadPort;
   /** Read-only pending permission prompts, forwarded only to thread-attached sockets. */
   prompts?: PromptReadPort;
+  /** Read-only Ledger snapshot feed, forwarded to the gateway; only ledger-attached sockets receive ledger.snap. */
+  ledger?: LedgerReadPort;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -132,6 +135,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     input: router,
     threads: deps.threads,
     prompts: deps.prompts,
+    ledger: deps.ledger,
     onAttached: (ref, slots) => {
       const before = unionSlots().join();
       if (slots.length === 0) attachedByRef.delete(ref);
