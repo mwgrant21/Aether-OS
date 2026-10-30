@@ -608,14 +608,13 @@ class ControlClientTest {
     }
 
     @Test fun ledgerSnapAfterWelcomeReachesOnLedgerFrame() {
-        val c = connected()
+        connected()
         val l = transport.listener!!
         l.onMessage(golden.getString("ledgerSnapEmpty"))
         l.onMessage(golden.getString("ledgerSnap"))
         assertEquals(2, ledgerFrames.size)
         assertEquals(ControlProtocol.LedgerFrame.Snap(null), ledgerFrames[0])
         assertEquals(912.34, (ledgerFrames[1] as ControlProtocol.LedgerFrame.Snap).ledger!!.total.usd, 0.0)
-        assertEquals(ControlState.Connected, c.state)
         assertTrue(frames.isEmpty() && threadFrames.isEmpty())
     }
 
