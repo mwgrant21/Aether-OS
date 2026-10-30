@@ -427,6 +427,31 @@ class ControlProtocolTest {
         assertNull(ControlProtocol.parseThreadFrame("not json"))
     }
 
+    @Test fun viewBuildersMatchTheGoldensByteForByte() {
+        assertEquals(frames.getString("viewAttach"), ControlProtocol.buildViewAttach("projects"))
+        assertEquals(frames.getString("viewAttachParams"), ControlProtocol.buildViewAttach("comms.thread", JSONObject().put("channel", "session")))
+        assertEquals(frames.getString("viewDetach"), ControlProtocol.buildViewDetach("projects"))
+        assertFalse(ControlProtocol.buildViewAttach("projects").contains("\"p\""))
+    }
+
+    @Test fun viewSnapEnvelopeParsesNullAndObjectAndRejectsMalformed() {
+        assertEquals(ControlProtocol.ViewFrame("projects", null), ControlProtocol.parseViewFrame(frames.getString("viewSnapNull")))
+        val f = ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects","d":{"x":1}}""")!!
+        assertEquals(1, f.d!!.getInt("x"))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects"}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects","d":"x"}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":7,"d":null}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"","d":null}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"ledger.snap","v":"projects","d":null}"""))
+    }
+
+    @Test fun welcomeViewsParsesGoldenAndAbsentKeyMeansPreChannelNull() {
+        assertEquals(emptySet<String>(), ControlProtocol.parseWelcome(frames.getString("welcome"))!!.views)
+        assertEquals(setOf("projects", "memory"), ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","views":["projects",7,"memory"]}""")!!.views)
+        assertNull(ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab"}""")!!.views)
+        assertNull(ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","views":"projects"}""")!!.views)
+    }
+
     @Test fun ledgerBuildersMatchTheGoldensByteForByte() {
         assertEquals(frames.getString("ledgerAttach"), ControlProtocol.buildLedgerAttach())
         assertEquals(frames.getString("ledgerDetach"), ControlProtocol.buildLedgerDetach())

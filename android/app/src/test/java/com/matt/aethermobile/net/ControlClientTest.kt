@@ -638,6 +638,55 @@ class ControlClientTest {
         assertTrue(got.isEmpty())
     }
 
+    private val viewFrames = mutableListOf<ControlProtocol.ViewFrame>()
+
+    private fun connectedWithViews(views: String?, serverTimeMs: Long = 1000L, phoneNow: Long = 400L): ControlClient {
+        val c = ControlClient(HOST, "0.2.0-v1", transport, onState = { states += it }, onViewFrame = { viewFrames += it },
+            nonceSource = { NONCE }, epochSource = { EPOCH }, scheduler = scheduler.schedule, phoneNow = { phoneNow })
+        c.connect(TOKEN)
+        transport.listener!!.onOpen()
+        val w = JSONObject(welcome(ControlProtocol.serverProof(TOKEN, NONCE))).put("serverTimeMs", serverTimeMs)
+        if (views != null) w.put("views", org.json.JSONArray(views))
+        transport.listener!!.onMessage(w.toString())
+        assertTrue(c.state is ControlState.Connected)
+        return c
+    }
+
+    @Test fun preChannelTitanWelcomeWithoutViewsSupportsNothingAndViewAttachSendsNothing() {
+        val c = connectedWithViews(null)
+        val before = transport.sent.size
+        assertFalse(c.supportsView("projects"))
+        assertFalse(c.viewAttach("projects"))
+        assertFalse(c.viewDetach("projects"))
+        assertEquals(before, transport.sent.size)
+    }
+
+    @Test fun viewAttachAndDetachSendTheGoldensOnlyForListedViews() {
+        val c = connectedWithViews("""["projects"]""")
+        val before = transport.sent.size
+        assertFalse(c.viewAttach("memory"))
+        assertTrue(c.viewAttach("projects"))
+        assertTrue(c.viewDetach("projects"))
+        assertEquals(listOf(golden.getString("viewAttach"), golden.getString("viewDetach")), transport.sent.drop(before))
+    }
+
+    @Test fun viewSnapReachesOnViewFrameAndBadEnvelopeIsAProtocolFailure() {
+        val c = connectedWithViews("""["projects"]""")
+        transport.listener!!.onMessage(golden.getString("viewSnapNull"))
+        transport.listener!!.onMessage("""{"t":"view.snap","v":"projects","d":{"junk":true}}""")
+        assertEquals(ControlProtocol.ViewFrame("projects", null), viewFrames[0])
+        assertEquals(2, viewFrames.size)
+        assertTrue(c.state is ControlState.Connected)
+        transport.listener!!.onMessage("""{"t":"view.snap","v":"projects"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(2, viewFrames.size)
+    }
+
+    @Test fun titanClockOffsetIsServerTimeMinusPhoneNowAtWelcome() {
+        val c = connectedWithViews("[]", serverTimeMs = 1_000L, phoneNow = 400L)
+        assertEquals(600L, c.titanClockOffsetMs)
+    }
+
     @Test fun ledgerAttachAndDetachSendTheGoldensOnlyWhenConnected() {
         val idle = client()
         assertFalse(idle.ledgerAttach())

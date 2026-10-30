@@ -166,7 +166,15 @@ object ControlProtocol {
         val sessions: List<SessionInfo> = emptyList(),
         /** `welcome.applied`: last applied input cseq per slot for this device and epoch. */
         val applied: Map<String, Long> = emptyMap(),
+        /**
+         * `welcome.views`: generic view ids this titan serves. Null means the key was absent (or not an
+         * array), i.e. a pre-channel titan: it serves none and must never be sent `view.attach`.
+         */
+        val views: Set<String>? = null,
     )
+
+    /** A well-formed `view.snap` envelope. [d] is null for JSON null (no data yet, or titan failed validation). */
+    data class ViewFrame(val v: String, val d: JSONObject?)
 
     private val secureRandom: SecureRandom by lazy { SecureRandom() }
 
@@ -224,7 +232,7 @@ object ControlProtocol {
         if (o.optString("t") != "welcome") return null
         val proof = o.opt("proof") as? String ?: return null
         if (proof.isEmpty()) return null
-        return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L), parseSessions(o.optJSONArray("sessions")), parseApplied(o.optJSONObject("applied")))
+        return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L), parseSessions(o.optJSONArray("sessions")), parseApplied(o.optJSONObject("applied")), parseViews(o.opt("views")))
     }
 
     /** Null unless the frame is a `bye` with a known reason. */
@@ -367,6 +375,34 @@ object ControlProtocol {
     fun buildLedgerDetach(): String = "{\"t\":\"ledger.detach\"}"
 
     /**
+     * `{"t":"view.attach","v":...}` with `,"p":{...}` only when [params] is given (key absent, never null).
+     * Built by hand so the bytes do not depend on JSONObject key order.
+     */
+    fun buildViewAttach(v: String, params: JSONObject? = null): String {
+        require(v.isNotEmpty()) { "empty view id" }
+        val pPart = if (params == null) "" else ",\"p\":$params"
+        return "{\"t\":\"view.attach\",\"v\":${JSONObject.quote(v)}$pPart}"
+    }
+
+    fun buildViewDetach(v: String): String {
+        require(v.isNotEmpty()) { "empty view id" }
+        return "{\"t\":\"view.detach\",\"v\":${JSONObject.quote(v)}}"
+    }
+
+    /**
+     * Null unless the frame is a `view.snap` envelope: `v` a non-empty string and `d` present as an
+     * object or JSON null. The payload inside `d` is not inspected here; each pane decodes its own.
+     */
+    fun parseViewFrame(text: String): ViewFrame? {
+        val o = parseObject(text) ?: return null
+        if (o.opt("t") != "view.snap") return null
+        val v = o.opt("v") as? String ?: return null
+        if (v.isEmpty() || !o.has("d")) return null
+        if (o.isNull("d")) return ViewFrame(v, null)
+        return ViewFrame(v, o.optJSONObject("d") ?: return null)
+    }
+
+    /**
      * Null unless the frame is a well-formed ledger.snap: `ledger` present and JSON null or an
      * object whose fields all have the exact types of the wire contract. Money accepts any finite
      * JSON number (5, 5.0, 889.44) that is >= 0, never a string; rollup buckets accept JSON null;
@@ -476,6 +512,14 @@ object ControlProtocol {
             if (!isSlot(k)) continue
             out[k] = whole(o.opt(k), MAX_SAFE_INTEGER) ?: continue
         }
+        return out
+    }
+
+    /** Null (pre-channel titan) unless [raw] is an array; non-string entries are skipped. */
+    private fun parseViews(raw: Any?): Set<String>? {
+        val a = raw as? org.json.JSONArray ?: return null
+        val out = LinkedHashSet<String>()
+        for (i in 0 until a.length()) (a.opt(i) as? String)?.let { out += it }
         return out
     }
 
