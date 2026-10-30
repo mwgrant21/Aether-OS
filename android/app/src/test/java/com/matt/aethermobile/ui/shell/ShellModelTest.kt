@@ -139,4 +139,40 @@ class ShellModelTest {
         assertEquals(listOf(false, true, false), rows.map { it.selected })
         assertEquals(listOf(SlotText.Running, SlotText.Exited, SlotText.NotStarted), rows.map { it.text })
     }
+
+    @Test fun ledgerBodyWinsOverThreadAndRaw() {
+        for (slot in listOf("claude", "terminal2", "codex")) for (v in ViewMode.values()) {
+            assertEquals("$slot $v", Body.LEDGER, bodyFor(slot, v, AppView.LEDGER))
+        }
+    }
+
+    @Test fun terminalViewKeepsTheOldThreadRawRule() {
+        assertEquals(Body.THREAD, bodyFor("claude", ViewMode.THREAD, AppView.TERMINAL))
+        assertEquals(Body.RAW, bodyFor("claude", ViewMode.RAW, AppView.TERMINAL))
+        assertEquals(Body.RAW, bodyFor("terminal2", ViewMode.THREAD, AppView.TERMINAL))
+        assertEquals(Body.RAW, bodyFor("codex", ViewMode.THREAD, AppView.TERMINAL))
+    }
+
+    @Test fun ledgerTitleAndUnchangedSlotTitle() {
+        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
+        assertEquals("LEDGER", titleFor(tabs, "claude", AppView.LEDGER))
+        assertEquals("CLAUDE", titleFor(tabs, "claude"))
+        assertEquals("CLAUDE", titleFor(tabs, "claude", AppView.TERMINAL))
+        assertEquals("Codex", titleFor(tabs, "codex"))
+    }
+
+    @Test fun segmentHiddenInLedger() {
+        assertFalse(showSegment("claude", AppView.LEDGER))
+        assertTrue(showSegment("claude", AppView.TERMINAL))
+        assertFalse(showSegment("codex", AppView.TERMINAL))
+    }
+
+    @Test fun viewRowsMarkOnlyTheOpenView() {
+        assertEquals(listOf(ViewRow(AppView.LEDGER, true)), viewRows(AppView.LEDGER))
+        assertEquals(listOf(ViewRow(AppView.LEDGER, false)), viewRows(AppView.TERMINAL))
+    }
+
+    @Test fun selectingAViewClosesTheMenu() {
+        assertFalse(MenuState(open = true).onSelectView().open)
+    }
 }

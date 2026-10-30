@@ -50,6 +50,8 @@ import com.matt.aethermobile.net.ControlState
 import com.matt.aethermobile.net.Failure
 import com.matt.aethermobile.net.OkHttpTransport
 import com.matt.aethermobile.net.TerminalFeed
+import com.matt.aethermobile.ledger.LedgerHost
+import com.matt.aethermobile.ledger.LedgerUi
 import com.matt.aethermobile.thread.ThreadHost
 import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.thread.ViewMode
@@ -63,6 +65,7 @@ import com.matt.aethermobile.ui.components.AeScreenBackground
 import com.matt.aethermobile.ui.auth.AuthActions
 import com.matt.aethermobile.ui.auth.AuthScreen
 import com.matt.aethermobile.ui.auth.authScreenFor
+import com.matt.aethermobile.ui.shell.AppView
 import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
 import com.matt.aethermobile.ui.shell.clearsDraft
@@ -144,6 +147,9 @@ class MainActivity : AppCompatActivity() {
     // Thread model for the Claude slot, one per connection (like the sender); touched on the main thread.
     private var threadHost: ThreadHost? = null
     private var view = ViewMode.THREAD // memory only; survives reconnects
+    // Ledger feed holder, one per connection; appView is memory only and resets on lock.
+    private var ledgerHost: LedgerHost? = null
+    private var appView = AppView.TERMINAL
     private val router = FrameRouter()
     private var selected = "claude"
     private var zoomPx = Zoom.DEFAULT // 0 = fit width (the Fit button)
@@ -162,6 +168,8 @@ class MainActivity : AppCompatActivity() {
         val restartAvailable: Boolean = false,
         val view: ViewMode = ViewMode.THREAD,
         val thread: ThreadUi = ThreadUi.EMPTY,
+        val appView: AppView = AppView.TERMINAL,
+        val ledger: LedgerUi = LedgerUi.Off,
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -221,6 +229,8 @@ class MainActivity : AppCompatActivity() {
         termHost = null
         threadHost?.onDisconnected()
         threadHost = null
+        ledgerHost?.onDisconnected()
+        ledgerHost = null
         if (::screen.isInitialized) screen.destroy()
         io.shutdownNow()
         super.onDestroy()
@@ -499,12 +509,15 @@ class MainActivity : AppCompatActivity() {
         )
         val th = newHost()
         val tth = newThreadHost()
+        val lth = newLedgerHost()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
             runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
         }, onThreadFrame = { f ->
             // Transport thread; the host drops frames it is not attached for.
             if (gen == connGen) tth.onFrame(f)
+        }, onLedgerFrame = { f ->
+            if (gen == connGen) lth.onFrame(f)
         }, onFrame = { f ->
             // Transport thread: route to the CURRENT host (it is replaced on renderer loss), and only for this connection.
             if (gen == connGen) router.route(f)
@@ -517,6 +530,8 @@ class MainActivity : AppCompatActivity() {
         termHost = th
         threadHost?.onDisconnected()
         threadHost = tth
+        ledgerHost?.onDisconnected()
+        ledgerHost = lth
         snapLogged = false
         try {
             c.connect(token)
@@ -596,6 +611,29 @@ class MainActivity : AppCompatActivity() {
         return tth
     }
 
+    private fun newLedgerHost(): LedgerHost {
+        var lth: LedgerHost? = null
+        lth = LedgerHost(
+            sendAttach = { client?.ledgerAttach() ?: false },
+            sendDetach = { client?.ledgerDetach() ?: false },
+            onChanged = { handler.post { if (!isDestroyed && ledgerHost === lth) renderTabs() } },
+        )
+        return lth
+    }
+
+    /** The ledger feed is live exactly when the Ledger view is open on a welcomed connection. */
+    private fun syncLedger() {
+        val h = ledgerHost ?: return
+        if (terminalLive) h.onConnected()
+        h.activate(terminalLive && appView == AppView.LEDGER)
+    }
+
+    fun openView(v: AppView) {
+        appView = v
+        syncLedger()
+        renderTabs()
+    }
+
     /** Thread is live exactly when Claude is selected, the view is Thread and the connection is welcomed. */
     private fun syncThread() {
         val t = threadHost ?: return
@@ -618,6 +656,7 @@ class MainActivity : AppCompatActivity() {
         th.select(selected)
         th.zoom(zoomPx)
         syncThread()
+        syncLedger()
         renderTabs()
     }
 
@@ -628,6 +667,10 @@ class MainActivity : AppCompatActivity() {
         termHost?.onDisconnected()
         termHost = null
         threadHost?.onDisconnected()
+        // Lock/relock/error: leave the Ledger (detach while the socket may still be up) and drop its figures.
+        appView = AppView.TERMINAL
+        ledgerHost?.activate(false)
+        ledgerHost?.onDisconnected()
         screen.reset()
     }
 
@@ -644,6 +687,8 @@ class MainActivity : AppCompatActivity() {
         slotMemory.remember(s) // the only writer: a user tap, never the automatic fallback
         notice = NotSentNotice.NONE
         termHost?.select(s)
+        appView = AppView.TERMINAL
+        syncLedger()
         syncThread()
         renderTabs()
     }
@@ -686,6 +731,8 @@ class MainActivity : AppCompatActivity() {
             restartAvailable = termHost?.restartAvailable() == true,
             view = view,
             thread = t,
+            appView = appView,
+            ledger = ledgerHost?.snapshot() ?: LedgerUi.Off,
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
@@ -708,7 +755,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, appView = snap.appView, ledger = snap.ledger, nowMs = System.currentTimeMillis()),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -720,6 +767,7 @@ class MainActivity : AppCompatActivity() {
                         onCompose = ::sendCompose,
                         onRestart = ::restartTerminal2,
                         onSetView = ::setView,
+                        onOpenView = ::openView,
                     ),
                     terminalHolder = webHolder,
                 )

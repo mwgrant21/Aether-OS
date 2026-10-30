@@ -47,4 +47,8 @@
     <string name="not_sent_bad_text">Input with a broken character was refused.</string>
     <string name="not_sent_not_running">Terminal not connected on the PC.</string>
     <string name="not_sent_typing_off">Typing is switched off on the PC.</string>
+    <string name="menu_views">Views</string>
+    <string name="view_ledger">Ledger</string>
+    <string name="view_ledger_desc">Ledger, observed API-rate spend</string>
+    <string name="ledger_subline">Observed in transcripts</string>
 </resources>
