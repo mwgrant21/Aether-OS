@@ -11,6 +11,7 @@ import { followCursor } from './cursorFollow.js';
 import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
 import { THEME } from './theme.js';
 import { chainDrag, toNotches, wheelBytes, shouldIntercept } from './altScroll.js';
+import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -306,6 +307,119 @@ root.addEventListener('touchmove', (ev) => {
 
 root.addEventListener('touchend', altEnd);
 root.addEventListener('touchcancel', altEnd);
+
+// Mouse (Phone Link etc.): Pointer Events drag + wheel. Touch pointers are left to the touch
+// handlers above. Wheel bytes go straight through send(), never term.onData.
+let mouse = null; // { id, slot, x, y, sx, sy, decided }
+let wheelCarry = 0;
+let wheelPending = 0;
+
+function cellSize(slot) {
+  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
+  const { rows, cols } = slot.term;
+  return {
+    cellH: screen && rows > 0 ? screen.clientHeight / rows : 0,
+    cellW: screen && cols > 0 ? screen.clientWidth / cols : 0,
+  };
+}
+
+function mouseEnd() {
+  if (!mouse) return; // never touch the touch gesture's alt state
+  mouse = null;
+  altEnd();
+}
+
+root.addEventListener('pointerdown', (ev) => {
+  if (!isPrimaryMouse(ev)) return;
+  const slot = slots.get(visible);
+  if (!slot || slot.el.hidden) return;
+  mouseEnd();
+  altEnd();
+  ev.preventDefault();
+  try { root.setPointerCapture(ev.pointerId); } catch (e) { /* pointer already gone */ }
+  mouse = { id: ev.pointerId, slot, x: ev.clientX, y: ev.clientY, sx: ev.clientX, sy: ev.clientY, decided: false };
+});
+
+root.addEventListener('pointermove', (ev) => {
+  if (!mouse || ev.pointerId !== mouse.id) return;
+  if ((ev.buttons & 1) !== 1) {
+    mouseEnd();
+    return;
+  }
+  const slot = mouse.slot;
+  if (!mouse.decided) {
+    const tx = ev.clientX - mouse.sx;
+    const ty = ev.clientY - mouse.sy;
+    if (Math.max(Math.abs(tx), Math.abs(ty)) < MOUSE_SLOP_PX) return;
+    mouse.decided = true;
+    const type = slot.term.buffer.active.type;
+    if (stdinOn && shouldIntercept({ bufferType: type, dx: tx, dy: ty })) {
+      alt = { slot, x: 0, y: 0, decided: true, on: true, carry: 0, pending: 0, timer: 0 };
+    }
+  }
+  ev.preventDefault();
+  altTouchAt = Date.now();
+  const dx = ev.clientX - mouse.x;
+  const dy = ev.clientY - mouse.y;
+  mouse.x = ev.clientX;
+  mouse.y = ev.clientY;
+  const el = slot.el;
+  const lx = slot.livex;
+  if (alt && alt.on) {
+    const r = chainDrag({ dy, scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight });
+    if (r.scrollTop !== el.scrollTop) el.scrollTop = r.scrollTop;
+    const nn = toNotches({ leftover: r.leftover, carry: alt.carry, cellH: cellSize(slot).cellH });
+    alt.carry = nn.carry;
+    alt.pending = Math.max(-8, Math.min(8, alt.pending + nn.notches));
+    if (alt.pending !== 0 && !alt.timer) alt.timer = setTimeout(altFlush, ALT_FLUSH_MS);
+    return;
+  }
+  const r = dragPan({
+    dx, dy,
+    scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight,
+    scrollLeft: lx.scrollLeft, maxScrollLeft: lx.scrollWidth - lx.clientWidth,
+  });
+  if (r.scrollTop !== el.scrollTop) el.scrollTop = r.scrollTop;
+  if (r.scrollLeft !== lx.scrollLeft) lx.scrollLeft = r.scrollLeft;
+});
+
+root.addEventListener('pointerup', mouseEnd);
+root.addEventListener('pointercancel', mouseEnd);
+root.addEventListener('lostpointercapture', mouseEnd);
+
+root.addEventListener('wheel', (ev) => {
+  const slot = slots.get(visible);
+  if (!slot || slot.el.hidden) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  altTouchAt = Date.now();
+  const { cellH, cellW } = cellSize(slot);
+  const { dx, dy } = wheelPx({
+    deltaX: ev.deltaX, deltaY: ev.deltaY, deltaMode: ev.deltaMode, shiftKey: ev.shiftKey,
+    cellW, cellH, viewH: slot.el.clientHeight,
+  });
+  if (stdinOn && slot.term.buffer.active.type === 'alternate') {
+    const nn = toNotches({ leftover: -dy, carry: wheelCarry, cellH });
+    wheelCarry = nn.carry;
+    wheelPending = Math.max(-8, Math.min(8, wheelPending + nn.notches));
+    if (wheelPending !== 0) {
+      const d = wheelBytes({
+        notches: wheelPending,
+        trackingMode: slot.term.modes.mouseTrackingMode,
+        col: Math.floor(slot.term.cols / 2) + 1,
+        row: Math.floor(slot.term.rows / 2) + 1,
+      });
+      if (d !== null) {
+        wheelPending = 0;
+        send({ t: 'input', s: slot.id, d });
+      }
+    }
+    if (dx !== 0) slot.livex.scrollLeft += dx;
+    return;
+  }
+  slot.el.scrollTop += dy;
+  slot.livex.scrollLeft += dx;
+}, { capture: true, passive: false });
 
 // V0 fit behaviour, only for slots that never received a size or snap.
 new ResizeObserver(() => {
