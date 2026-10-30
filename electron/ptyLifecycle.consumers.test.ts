@@ -53,12 +53,13 @@ function fixture() {
   const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
     UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
-    planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() } };
+    planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() },
+    clearTypedDetector: { feed: vi.fn(), reset: vi.fn() } };
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context) as (...args: unknown[]) => void;
   return { ...context, prompt: () => prompt, launch: (id: string | undefined) => { launchId = id; prompt = 'unknown'; },
-    resize: compile(callbackFor('pty:resize', 'on')), event: { sender: { isDestroyed: () => false, send } }, send,
+    resize: compile(callbackFor('pty:resize', 'on')), write: compile(callbackFor('pty:write', 'on')), event: { sender: { isDestroyed: () => false, send } }, send,
     ordinary: compile(callbackFor('pty:start')), connected: compile(connectedCallback()), codex: compile(callbackFor('codexPty:start')),
     terminal2: compile(callbackFor('terminal2Pty:start')) };
 }
@@ -112,6 +113,17 @@ describe('production pinned-session id wiring', () => {
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'pinned-id');
     f.connected({ sessionId: 'connected-id' }, vi.fn());
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'connected-id');
+  });
+
+  it('resets the typed-/clear detector on both Claude respawn sites and feeds it pty:write input', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(f.clearTypedDetector.reset).toHaveBeenCalledTimes(1);
+    f.connected({ sessionId: 'connected-id' }, vi.fn());
+    expect(f.clearTypedDetector.reset).toHaveBeenCalledTimes(2);
+    f.write(f.event, '/clear\r');
+    expect(f.clearTypedDetector.feed.mock.calls).toEqual([['/clear\r']]);
   });
 
   it('launches Terminal 2 tagged unmonitored, without a session id or touching the pinned tracker', () => {
