@@ -10,6 +10,7 @@ import { composeInputs } from './compose.js';
 import { followCursor } from './cursorFollow.js';
 import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
 import { THEME } from './theme.js';
+import { chainDrag, toNotches, wheelBytes, shouldIntercept } from './altScroll.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
@@ -26,6 +27,8 @@ let visible = DEFAULT_SLOT;
 let zoomPx = 14; // 0 = fit width
 let wantX = false; // an input was sent: the next write completion may scroll sideways too
 let stdinOn = false; // fail closed: Kotlin turns typing on with {t:'stdin', on:true}
+let altTouchAt = -Infinity; // last intercepted alt-screen drag; follow() stays quiet briefly after
+const ALT_FOLLOW_QUIET_MS = 600;
 
 function slotFor(id) {
   let slot = slots.get(id);
@@ -128,7 +131,7 @@ function setSize(slot, cols, rows) {
 
 // Scroll the visible slot's container just enough to show the cursor; no-op when it is in view.
 function follow(slot, followX = false) {
-  if (!slot || slot.el.hidden) return;
+  if (!slot || slot.el.hidden || Date.now() - altTouchAt < ALT_FOLLOW_QUIET_MS) return;
   const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
   if (!screen) return;
   const b = slot.term.buffer.active;
@@ -228,6 +231,81 @@ bridge.onmessage = (ev) => {
     default:
   }
 };
+
+// Alt-screen touch scroll: a vertical drag pans the slot natively, then the leftover is sent as
+// wheel input so the remote app scrolls its own history. Sent directly, not via shouldSend
+// (inputFilter drops mouse reports on purpose).
+root.dataset.altScroll = 'aether-alt-scroll-v1';
+const ALT_DECIDE_PX = 8;
+const ALT_FLUSH_MS = 50;
+let alt = null; // { slot, x, y, decided, on, carry, pending, timer }
+
+function altFlush() {
+  if (!alt) return;
+  alt.timer = 0;
+  const slot = alt.slot;
+  if (alt.pending === 0 || !stdinOn || slot.el.hidden) return;
+  const n = Math.max(-8, Math.min(8, alt.pending));
+  const d = wheelBytes({
+    notches: n,
+    trackingMode: slot.term.modes.mouseTrackingMode,
+    col: Math.floor(slot.term.cols / 2) + 1,
+    row: Math.floor(slot.term.rows / 2) + 1,
+  });
+  if (d === null) return; // below the PgUp/PgDn threshold: keep accumulating
+  alt.pending = 0;
+  send({ t: 'input', s: slot.id, d });
+}
+
+function altEnd() {
+  if (alt && alt.timer) clearTimeout(alt.timer);
+  alt = null;
+}
+
+root.addEventListener('touchstart', (ev) => {
+  altEnd();
+  if (ev.touches.length !== 1) return;
+  const slot = slots.get(visible);
+  if (!slot || slot.el.hidden) return;
+  const t = ev.touches[0];
+  alt = { slot, x: t.clientX, y: t.clientY, decided: false, on: false, carry: 0, pending: 0, timer: 0 };
+});
+
+root.addEventListener('touchmove', (ev) => {
+  if (!alt) return;
+  if (ev.touches.length !== 1) {
+    altEnd();
+    return;
+  }
+  const t = ev.touches[0];
+  const slot = alt.slot;
+  if (!alt.decided) {
+    const dx = t.clientX - alt.x;
+    const dy = t.clientY - alt.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < ALT_DECIDE_PX) return;
+    alt.decided = true;
+    alt.on = stdinOn && slot.term.buffer.active.type === 'alternate' && shouldIntercept({ bufferType: slot.term.buffer.active.type, dx, dy });
+    if (!alt.on) return;
+  }
+  if (!alt.on) return;
+  ev.preventDefault();
+  altTouchAt = Date.now();
+  const dy = t.clientY - alt.y;
+  alt.y = t.clientY;
+  const el = slot.el;
+  const r = chainDrag({ dy, scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight });
+  if (r.scrollTop !== el.scrollTop) el.scrollTop = r.scrollTop;
+  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
+  const rows = slot.term.rows;
+  const cellH = screen && rows > 0 ? screen.clientHeight / rows : 0;
+  const nn = toNotches({ leftover: r.leftover, carry: alt.carry, cellH });
+  alt.carry = nn.carry;
+  alt.pending = Math.max(-8, Math.min(8, alt.pending + nn.notches));
+  if (alt.pending !== 0 && !alt.timer) alt.timer = setTimeout(altFlush, ALT_FLUSH_MS);
+}, { passive: false });
+
+root.addEventListener('touchend', altEnd);
+root.addEventListener('touchcancel', altEnd);
 
 // V0 fit behaviour, only for slots that never received a size or snap.
 new ResizeObserver(() => {
