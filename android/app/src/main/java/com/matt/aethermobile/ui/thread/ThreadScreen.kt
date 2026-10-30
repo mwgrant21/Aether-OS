@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -169,6 +170,11 @@ private fun RowView(row: ThreadRow) {
 
 @Composable
 private fun RowText(text: String, truncated: Boolean, color: Color) {
-    BasicText(text, style = ThreadBodyStyle.copy(color = color))
-    if (truncated) BasicText(stringResource(R.string.thread_truncated), style = type.meta.copy(color = AetherColors.textMuted))
+    // SelectionContainer stacks its children at the origin, so keep them in one Column.
+    SelectionContainer {
+        Column {
+            BasicText(text, style = ThreadBodyStyle.copy(color = color))
+            if (truncated) BasicText(stringResource(R.string.thread_truncated), style = type.meta.copy(color = AetherColors.textMuted))
+        }
+    }
 }
