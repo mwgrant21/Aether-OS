@@ -175,7 +175,13 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                         update = { it.visibility = if (rawBody) View.VISIBLE else View.GONE },
                     )
                 }
-                if (threadBody) ThreadScreen(state.thread, threadListState, Modifier.weight(1f).fillMaxWidth())
+                if (threadBody) {
+                    ThreadScreen(
+                        state.thread, threadListState, draft, { draft = it },
+                        threadSendEnabled(composeEnabled(cur, state.flow, state.hostAccepts), draft), actions.onCompose,
+                        Modifier.weight(1f).fillMaxWidth(),
+                    )
+                }
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)

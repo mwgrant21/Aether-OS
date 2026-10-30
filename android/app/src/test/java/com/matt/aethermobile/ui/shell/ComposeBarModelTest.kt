@@ -29,6 +29,13 @@ class ComposeBarModelTest {
         }
     }
 
+    @Test fun threadSendNeedsComposeOkAndNonBlankDraft() {
+        assertTrue(threadSendEnabled(true, "hi"))
+        assertFalse(threadSendEnabled(true, ""))
+        assertFalse(threadSendEnabled(true, "  \n\t"))
+        assertFalse(threadSendEnabled(false, "hi"))
+    }
+
     @Test fun clearsOnlyOnSent() {
         assertTrue(shouldClear(ComposeResult.SENT))
         assertFalse(shouldClear(ComposeResult.NOT_ACCEPTED))

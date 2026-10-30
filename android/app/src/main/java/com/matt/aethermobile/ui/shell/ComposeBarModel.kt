@@ -8,6 +8,12 @@ fun composeEnabled(cur: TerminalHost.Tab?, flow: FlowState.Connected?, hostAccep
     keysEnabled(cur, flow, hostAccepts)
 
 /**
+ * Thread Send also needs a non-blank draft: an empty draft with Enter is a bare Enter, which in Thread view could
+ * confirm a pending approval prompt. Raw keeps the bare Enter on purpose.
+ */
+fun threadSendEnabled(composeOk: Boolean, draft: String): Boolean = composeOk && draft.isNotBlank()
+
+/**
  * Only a hand-off to the page clears the field. NOT_ACCEPTED and TOO_LARGE keep the text, so a long message
  * survives a drop or an oversize refusal (the host has already counted it in the not-sent line).
  */

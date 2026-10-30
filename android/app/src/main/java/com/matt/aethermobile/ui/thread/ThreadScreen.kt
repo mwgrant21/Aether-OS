@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.matt.aethermobile.R
+import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
@@ -52,12 +53,20 @@ private val ToolTagStyle = type.meta.copy(fontWeight = FontWeight.Bold, fontSize
 private val ToolTargetStyle = type.meta.copy(fontSize = 12.sp)
 
 /**
- * Read-only Claude thread: bubbles, tool lines and a working line, newest at the bottom, over a disabled composer.
+ * Claude thread: bubbles, tool lines and a working line, newest at the bottom, over the composer.
  * Takes the whole [ThreadUi]: the oldest pending prompt shows as a display-only approval card between the list and
  * the composer.
  */
 @Composable
-fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Modifier) {
+fun ThreadScreen(
+    ui: ThreadUi,
+    listState: LazyListState,
+    draft: String,
+    onDraft: (String) -> Unit,
+    sendEnabled: Boolean,
+    onCompose: (String, Boolean) -> TerminalHost.ComposeResult,
+    modifier: Modifier = Modifier,
+) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val ticking = needsClock(ui, nowMs)
     LaunchedEffect(ticking) {
@@ -105,7 +114,7 @@ fun ThreadScreen(ui: ThreadUi, listState: LazyListState, modifier: Modifier = Mo
             }
         }
         approval?.let { ApprovalCard(it) }
-        DisabledComposer()
+        ThreadComposer(draft, onDraft, sendEnabled, onCompose)
     }
 }
 
