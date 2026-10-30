@@ -11,10 +11,10 @@
 // the gateway only schedules the coalesced ack the port's result calls for, and answers a rejected frame with a nak
 // after flushing any pending ack for that slot (so the nak is never followed by an older ack). Without a terminal port every attach is
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
-// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached. ledger.attach/ledger.detach route to the injected read-only LedgerReadPort: one ledger attachment per socket, ledger.snap goes only to a socket that has ledger-attached, and the snapshot is never logged.
-import { CONTROL_ACK_COALESCE_MS, TERMINAL_SLOTS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort, LedgerReadPort } from '../../src/shared/remote/types';
-import { encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage } from './protocol';
+// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached. ledger.attach/ledger.detach route to the injected read-only LedgerReadPort: one ledger attachment per socket, ledger.snap goes only to a socket that has ledger-attached, and the snapshot is never logged. view.attach/view.detach route to injected read-only ViewReadPorts keyed by view id: one attachment per (socket, view), a repeated view.attach replaces it (this is how a params view changes p), view.snap goes only to a socket attached to that view, welcome.views lists the ids with a port, and view payloads and p are never logged.
+import { CONTROL_ACK_COALESCE_MS, TERMINAL_SLOTS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS, VIEW_IDS } from '../../src/shared/remote/types';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort, LedgerReadPort, ViewId, ViewReadPort } from '../../src/shared/remote/types';
+import { encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeViewSnap, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
@@ -36,6 +36,8 @@ export interface ControlGatewayOptions {
   prompts?: PromptReadPort;
   /** Read-only Ledger snapshot feed. Absent = fail closed: ledger.attach is a policy violation. */
   ledger?: LedgerReadPort;
+  /** Read-only generic view feeds by id. A view with no port is a policy violation to attach; the ids present are advertised as welcome.views. Absent = no views. */
+  views?: Partial<Record<ViewId, ViewReadPort>>;
   /** Typed-input router. Absent = fail closed: every `in` frame is a policy violation. */
   input?: InputPort;
   /** Called with the live attached slots (TERMINAL_SLOTS order) after an attach or detach, and with [] once when the socket ends. */
@@ -64,6 +66,8 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
   const threads = opts.threads;
   const prompts = opts.prompts;
   const ledger = opts.ledger;
+  const viewPorts = new Map<string, ViewReadPort>(Object.entries(opts.views ?? {}).filter((e): e is [string, ViewReadPort] => e[1] !== undefined));
+  const viewIds = VIEW_IDS.filter((id) => viewPorts.has(id));
 
   function attach(socket: ControlSocket, identity: ControlIdentity): ControlSession {
     let closed = false;
@@ -74,6 +78,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     let inputSession: InputSession | null = null;
     let threadAtt: { live: boolean; handles: { detach(): void }[] } | null = null;
     let ledgerAtt: { live: boolean; handle: { detach(): void } | null } | null = null;
+    const viewAtts = new Map<ViewId, { live: boolean; handle: { detach(): void } | null }>();
     const ackTimers = new Map<TerminalSlotId, { handle: unknown; c: number }>();
 
     const cancelDeadline = (): void => {
@@ -124,6 +129,16 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       if (h) detachQuietly(h);
     };
 
+    const releaseView = (id: ViewId): void => {
+      const a = viewAtts.get(id);
+      viewAtts.delete(id);
+      if (!a) return;
+      a.live = false;
+      const h = a.handle;
+      a.handle = null;
+      if (h) detachQuietly(h);
+    };
+
     const reportAttached = (): void => {
       const live = TERMINAL_SLOTS.map(x => x.s).filter(s => attachments.has(s));
       try {
@@ -139,6 +154,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       attachments.clear();
       releaseThread();
       releaseLedger();
+      for (const id of [...viewAtts.keys()]) releaseView(id);
       if (!tornDown) {
         tornDown = true; // close() then the socket close event both land here; only the first reports, so a superseding session's slots are never cleared late
         reportAttached();
@@ -287,6 +303,38 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       entry.handle = h;
     };
 
+    const startView = (id: ViewId, port: ViewReadPort, p: Record<string, unknown> | undefined): void => {
+      releaseView(id);
+      const entry: { live: boolean; handle: { detach(): void } | null } = { live: true, handle: null };
+      viewAtts.set(id, entry);
+      let h: { detach(): void };
+      try {
+        h = port.attach({
+          snap: (d) => {
+            if (!entry.live || closed) return;
+            let frame: string;
+            try {
+              frame = encodeViewSnap(id, d);
+            } catch {
+              frame = encodeViewSnap(id, null); // an unserialisable payload degrades to "no data", never throws into the feed
+            }
+            socket.send(frame);
+          },
+        }, p);
+      } catch {
+        // a port that throws on attach leaves this view unattached; it must not escape into message handling
+        if (viewAtts.get(id) === entry) viewAtts.delete(id);
+        entry.live = false;
+        return;
+      }
+      if (!entry.live) {
+        // detached or closed while attach() was still replaying synchronously: releaseView() ran before this handle existed
+        detachQuietly(h);
+        return;
+      }
+      entry.handle = h;
+    };
+
     // Trailing coalesce: one pending timer per slot; the ack carries the newest cseq seen before it fires.
     const scheduleAck = (slot: TerminalSlotId, c: number): void => {
       const pending = ackTimers.get(slot);
@@ -331,6 +379,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
               expiresAtMs: identity.expiresAtMs,
               sessions: terminals ? terminals.list() : [],
               applied: inputSession ? inputSession.applied() : {},
+              views: viewIds,
             }),
           );
           log?.('control: hello accepted', identity.ref);
@@ -381,6 +430,20 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           if (!ledgerAtt) return;
           releaseLedger();
           log?.('control: ledger detach', identity.ref);
+          return;
+        case 'view.attach': {
+          if (!helloSeen) return violation('control: view before hello');
+          const port = viewPorts.get(msg.v);
+          if (!port) return violation('control: no view port');
+          startView(msg.v, port, msg.p);
+          log?.(`control: view attach v=${msg.v}`, identity.ref);
+          return;
+        }
+        case 'view.detach':
+          if (!helloSeen) return violation('control: view before hello');
+          if (!viewAtts.has(msg.v)) return;
+          releaseView(msg.v);
+          log?.(`control: view detach v=${msg.v}`, identity.ref);
           return;
         case 'in': {
           if (!helloSeen) return violation('control: input before hello');

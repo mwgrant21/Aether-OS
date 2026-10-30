@@ -88,16 +88,30 @@ class ControlClient(
     private val onFrame: (ControlProtocol.TerminalFrame) -> Unit = {},
     private val onThreadFrame: (ControlProtocol.ThreadFrame) -> Unit = {},
     private val onLedgerFrame: (ControlProtocol.LedgerFrame) -> Unit = {},
+    private val onViewFrame: (ControlProtocol.ViewFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
     private val scheduler: (delayMs: Long, task: () -> Unit) -> (() -> Unit) = ::scheduleOnTimer,
+    private val phoneNow: () -> Long = { System.currentTimeMillis() },
 ) {
     @Volatile
     var state: ControlState = ControlState.Idle
         private set
 
     private var session: Session? = null
+
+    /** `welcome.views` of the current connection; null before welcome and for a pre-channel titan. */
+    @Volatile
+    private var views: Set<String>? = null
+
+    /** `welcome.serverTimeMs - phone now` at welcome receipt (titan clock minus phone clock); 0 before welcome. */
+    @Volatile
+    var titanClockOffsetMs: Long = 0L
+        private set
+
+    /** True only when the welcome listed [v]. A missing `views` key (pre-channel titan) supports nothing. */
+    fun supportsView(v: String): Boolean = views?.contains(v) == true
 
     fun connect(token: String) {
         synchronized(this) {
@@ -106,6 +120,8 @@ class ControlClient(
                 publish(ControlState.Failed(Failure.HostRefused))
                 return
             }
+            views = null
+            titanClockOffsetMs = 0L
             val s = Session(token, nonceSource(), epochSource())
             session = s
             publish(ControlState.Connecting)
@@ -150,6 +166,23 @@ class ControlClient(
 
     /** Stops the ledger feed. False if not Connected or not queued. */
     fun ledgerDetach(): Boolean = sendWhenConnected(ControlProtocol.buildLedgerDetach())
+
+    /**
+     * Starts the generic view [v] (answered by view.snap frames). False, sending nothing, if not Connected,
+     * the welcome did not list [v] (so a pre-channel titan is never sent the verb), or not queued.
+     */
+    fun viewAttach(v: String, p: JSONObject? = null): Boolean {
+        if (!supportsView(v)) return false
+        val frame = try { ControlProtocol.buildViewAttach(v, p) } catch (_: IllegalArgumentException) { return false }
+        return sendWhenConnected(frame)
+    }
+
+    /** Stops the generic view [v]. False if not Connected, [v] unsupported, or not queued. */
+    fun viewDetach(v: String): Boolean {
+        if (!supportsView(v)) return false
+        val frame = try { ControlProtocol.buildViewDetach(v) } catch (_: IllegalArgumentException) { return false }
+        return sendWhenConnected(frame)
+    }
 
     /** Sends one `in` frame for [s] with cseq [c]. False if not Connected, bad args, or not queued; nothing is buffered. The body is never logged. */
     fun sendInput(s: String, c: Long, d: String): Boolean {
@@ -212,6 +245,7 @@ class ControlClient(
             var deliver: ControlProtocol.TerminalFrame? = null
             var deliverThread: ControlProtocol.ThreadFrame? = null
             var deliverLedger: ControlProtocol.LedgerFrame? = null
+            var deliverView: ControlProtocol.ViewFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -245,6 +279,15 @@ class ControlClient(
                             deliverLedger = frame
                         }
                     }
+                    "view.snap" -> {
+                        // Only the envelope is checked here; a bad payload inside d degrades that pane, not the socket.
+                        val frame = if (welcomed) ControlProtocol.parseViewFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverView = frame
+                        }
+                    }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                 }
             }
@@ -253,6 +296,7 @@ class ControlClient(
             deliver?.let(onFrame)
             deliverThread?.let(onThreadFrame)
             deliverLedger?.let(onLedgerFrame)
+            deliverView?.let(onViewFrame)
         }
 
         private fun onBye(text: String) {
@@ -283,6 +327,8 @@ class ControlClient(
                 return
             }
             welcomed = true
+            views = welcome.views
+            titanClockOffsetMs = welcome.serverTimeMs - phoneNow()
             cancelWatchdog?.invoke()
             cancelWatchdog = null
             publish(ControlState.Connected(welcome.expiresAtMs, welcome.serverTimeMs, welcome.sessions))

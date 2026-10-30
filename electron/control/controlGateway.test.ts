@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { createControlGateway } from './controlGateway';
 import { MESSAGE_TYPES, encodeLedgerSnap } from './protocol';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap, ThreadEvent, ThreadReadPort, ThreadTap, PromptInfo, PromptReadPort, PromptTap, LedgerReadPort, LedgerTap, LedgerWire } from '../../src/shared/remote/types';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap, ThreadEvent, ThreadReadPort, ThreadTap, PromptInfo, PromptReadPort, PromptTap, LedgerReadPort, LedgerTap, LedgerWire, ViewReadPort, ViewTap } from '../../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const vec = spec.proof.vectors;
@@ -1005,5 +1005,154 @@ describe('control gateway ledger verbs', () => {
     fl.taps[0].snap(WIRE2);
     expect(types(led)).toEqual(['ledger.snap', 'ledger.snap']);
     expect(types(thr)).toEqual(['thread.ev']);
+  });
+});
+
+describe('control gateway view verbs', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function fakeViews(opts: { throwOnAttach?: boolean } = {}) {
+    const taps: ViewTap[] = [];
+    const params: Array<Record<string, unknown> | undefined> = [];
+    const fv = {
+      taps,
+      params,
+      live: 0,
+      port: {
+        attach: (tap: ViewTap, p?: Record<string, unknown>) => {
+          if (opts.throwOnAttach) throw new Error('boom');
+          taps.push(tap);
+          params.push(p);
+          fv.live++;
+          tap.snap({ n: taps.length });
+          let done = false;
+          return { detach: () => { if (!done) { done = true; fv.live--; } } };
+        },
+      } as ViewReadPort,
+    };
+    return fv;
+  }
+  const open = (views: Parameters<typeof createControlGateway>[0]['views'], logs: string[] = []) => {
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1790000000000, log: (m) => { logs.push(m); }, views }).attach(s, identity);
+    s.feed(helloFrame);
+    s.sent.length = 0;
+    return s;
+  };
+  const types = (s: { sent: string[] }): string[] => s.sent.map((x) => JSON.parse(x).t);
+  const attach = (v: string, p?: unknown) => JSON.stringify({ t: 'view.attach', v, ...(p === undefined ? {} : { p }) });
+  const detach = (v: string) => JSON.stringify({ t: 'view.detach', v });
+
+  it('welcome.views lists the ids that have a port, in VIEW_IDS order; no views option gives []', () => {
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1790000000000, views: { memory: fakeViews().port, projects: fakeViews().port } }).attach(s, identity);
+    s.feed(helloFrame);
+    expect(JSON.parse(s.sent[0]).views).toEqual(['projects', 'memory']);
+    const bare = fakeSocket();
+    createControlGateway({ now: () => 1790000000000 }).attach(bare, identity);
+    bare.feed(helloFrame);
+    expect(bare.sent).toEqual([spec.frames.welcome]);
+  });
+
+  it('view.attach sends the current payload as view.snap, and a later publish sends another', () => {
+    const fv = fakeViews();
+    const logs: string[] = [];
+    const s = open({ projects: fv.port }, logs);
+    s.feed(attach('projects'));
+    expect(s.sent).toEqual(['{"t":"view.snap","v":"projects","d":{"n":1}}']);
+    fv.taps[0].snap(null);
+    expect(s.sent[1]).toBe(spec.frames.viewSnapNull);
+    expect(logs).toContain('control: view attach v=projects');
+  });
+
+  it('view.attach forwards p to the port', () => {
+    const fv = fakeViews();
+    const s = open({ 'comms.thread': fv.port });
+    s.feed(spec.frames.viewAttachParams);
+    expect(fv.params).toEqual([{ channel: 'session' }]);
+    expect(types(s)).toEqual(['view.snap']);
+  });
+
+  it('a repeated view.attach replaces the first attachment and passes the new p', () => {
+    const fv = fakeViews();
+    const s = open({ 'comms.thread': fv.port });
+    s.feed(attach('comms.thread', { channel: 'a' }));
+    s.feed(attach('comms.thread', { channel: 'b' }));
+    expect(fv.live).toBe(1);
+    expect(fv.params).toEqual([{ channel: 'a' }, { channel: 'b' }]);
+    fv.taps[0].snap({ stale: true }); // the replaced tap is dead
+    expect(types(s)).toEqual(['view.snap', 'view.snap']);
+  });
+
+  it('view.detach stops that view only and releases its tap; a second detach is a no-op', () => {
+    const f1 = fakeViews();
+    const f2 = fakeViews();
+    const logs: string[] = [];
+    const s = open({ projects: f1.port, memory: f2.port }, logs);
+    s.feed(attach('projects'));
+    s.feed(attach('memory'));
+    s.feed(detach('projects'));
+    s.feed(detach('projects'));
+    f1.taps[0].snap({ x: 1 });
+    f2.taps[0].snap({ x: 2 });
+    expect(f1.live).toBe(0);
+    expect(f2.live).toBe(1);
+    expect(s.sent.map((x) => JSON.parse(x).v)).toEqual(['projects', 'memory', 'memory']);
+    expect(logs.filter((l) => l === 'control: view detach v=projects')).toHaveLength(1);
+    expect(s.closes).toEqual([]);
+  });
+
+  it('view.attach before hello is a policy violation', () => {
+    const logs: string[] = [];
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1, log: (m) => { logs.push(m); }, views: { projects: fakeViews().port } }).attach(s, identity);
+    s.feed(attach('projects'));
+    expect(types(s)).toEqual(['bye']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: view before hello');
+  });
+
+  it('a valid view id with no port is a policy violation', () => {
+    const logs: string[] = [];
+    const s = open({ projects: fakeViews().port }, logs);
+    s.feed(attach('memory'));
+    expect(types(s)).toEqual(['bye']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: no view port');
+  });
+
+  it('socket close releases every view tap and later publishes write nothing', () => {
+    const f1 = fakeViews();
+    const f2 = fakeViews();
+    const s = open({ projects: f1.port, memory: f2.port });
+    s.feed(attach('projects'));
+    s.feed(attach('memory'));
+    s.drop();
+    expect(f1.live + f2.live).toBe(0);
+    f1.taps[0].snap({ x: 1 });
+    expect(s.sent).toHaveLength(2);
+  });
+
+  it('a socket that closes while attach() is replaying leaves no live handle', () => {
+    const fv = fakeViews();
+    const s = open({ projects: fv.port });
+    const send = s.send;
+    s.send = (t: string) => { send(t); if (JSON.parse(t).t === 'view.snap') s.drop(); };
+    s.feed(attach('projects'));
+    expect(fv.live).toBe(0);
+  });
+
+  it('a port that throws on attach and a payload that cannot be serialised do not escape', () => {
+    const bad = open({ projects: fakeViews({ throwOnAttach: true }).port });
+    expect(() => bad.feed(attach('projects'))).not.toThrow();
+    expect(bad.closes).toEqual([]);
+    const fv = fakeViews();
+    const s = open({ memory: fv.port });
+    s.feed(attach('memory'));
+    const cyc: Record<string, unknown> = {};
+    cyc.self = cyc;
+    expect(() => fv.taps[0].snap(cyc)).not.toThrow();
+    expect(s.sent[s.sent.length - 1]).toBe('{"t":"view.snap","v":"memory","d":null}');
   });
 });
