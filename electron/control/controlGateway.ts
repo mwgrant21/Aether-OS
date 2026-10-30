@@ -11,10 +11,10 @@
 // the gateway only schedules the coalesced ack the port's result calls for, and answers a rejected frame with a nak
 // after flushing any pending ack for that slot (so the nak is never followed by an older ack). Without a terminal port every attach is
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
-// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached.
+// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached. ledger.attach/ledger.detach route to the injected read-only LedgerReadPort: one ledger attachment per socket, ledger.snap goes only to a socket that has ledger-attached, and the snapshot is never logged.
 import { CONTROL_ACK_COALESCE_MS, TERMINAL_SLOTS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort } from '../../src/shared/remote/types';
-import { encodeAck, encodeBye, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage } from './protocol';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort, LedgerReadPort } from '../../src/shared/remote/types';
+import { encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
@@ -34,6 +34,8 @@ export interface ControlGatewayOptions {
   threads?: ThreadReadPort;
   /** Pending permission prompts, pushed only to sockets that thread.attach. Read-only. */
   prompts?: PromptReadPort;
+  /** Read-only Ledger snapshot feed. Absent = fail closed: ledger.attach is a policy violation. */
+  ledger?: LedgerReadPort;
   /** Typed-input router. Absent = fail closed: every `in` frame is a policy violation. */
   input?: InputPort;
   /** Called with the live attached slots (TERMINAL_SLOTS order) after an attach or detach, and with [] once when the socket ends. */
@@ -61,6 +63,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
   const input = opts.input;
   const threads = opts.threads;
   const prompts = opts.prompts;
+  const ledger = opts.ledger;
 
   function attach(socket: ControlSocket, identity: ControlIdentity): ControlSession {
     let closed = false;
@@ -70,6 +73,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
     const attachments = new Map<TerminalSlotId, Attached>();
     let inputSession: InputSession | null = null;
     let threadAtt: { live: boolean; handles: { detach(): void }[] } | null = null;
+    let ledgerAtt: { live: boolean; handle: { detach(): void } | null } | null = null;
     const ackTimers = new Map<TerminalSlotId, { handle: unknown; c: number }>();
 
     const cancelDeadline = (): void => {
@@ -110,6 +114,16 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    const releaseLedger = (): void => {
+      const a = ledgerAtt;
+      ledgerAtt = null;
+      if (!a) return;
+      a.live = false;
+      const h = a.handle;
+      a.handle = null;
+      if (h) detachQuietly(h);
+    };
+
     const reportAttached = (): void => {
       const live = TERMINAL_SLOTS.map(x => x.s).filter(s => attachments.has(s));
       try {
@@ -124,6 +138,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       for (const a of attachments.values()) release(a);
       attachments.clear();
       releaseThread();
+      releaseLedger();
       if (!tornDown) {
         tornDown = true; // close() then the socket close event both land here; only the first reports, so a superseding session's slots are never cleared late
         reportAttached();
@@ -254,6 +269,24 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     };
 
+    const startLedger = (port: LedgerReadPort): void => {
+      releaseLedger();
+      const entry: { live: boolean; handle: { detach(): void } | null } = { live: true, handle: null };
+      ledgerAtt = entry;
+      const h = port.attach({
+        snap: (l) => {
+          if (!entry.live || closed) return;
+          socket.send(encodeLedgerSnap(l));
+        },
+      });
+      if (!entry.live) {
+        // detached or closed while attach() was still replaying synchronously: releaseLedger() ran before this handle existed
+        detachQuietly(h);
+        return;
+      }
+      entry.handle = h;
+    };
+
     // Trailing coalesce: one pending timer per slot; the ack carries the newest cseq seen before it fires.
     const scheduleAck = (slot: TerminalSlotId, c: number): void => {
       const pending = ackTimers.get(slot);
@@ -336,6 +369,18 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
           if (!threadAtt) return;
           releaseThread();
           log?.('control: thread detach', identity.ref);
+          return;
+        case 'ledger.attach':
+          if (!helloSeen) return violation('control: ledger before hello');
+          if (!ledger) return violation('control: no ledger port');
+          startLedger(ledger);
+          log?.('control: ledger attach', identity.ref);
+          return;
+        case 'ledger.detach':
+          if (!helloSeen) return violation('control: ledger before hello');
+          if (!ledgerAtt) return;
+          releaseLedger();
+          log?.('control: ledger detach', identity.ref);
           return;
         case 'in': {
           if (!helloSeen) return violation('control: input before hello');
