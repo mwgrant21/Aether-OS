@@ -1,15 +1,15 @@
 // electron/control/protocol.ts
 //
-// Wire frames for phone CONTROL (/ctl). The phone speaks hello, attach, detach, in (typed input), thread.attach, thread.detach, ledger.attach and ledger.detach; titan answers with welcome,
-// bye, snap, out, size, state, ack, nak, thread.snap, thread.ev, thread.state, prompt, prompt.closed and ledger.snap. There is no start verb and no answer-a-prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
+// Wire frames for phone CONTROL (/ctl). The phone speaks hello, attach, detach, in (typed input), thread.attach, thread.detach, ledger.attach, ledger.detach, view.attach and view.detach; titan answers with welcome,
+// bye, snap, out, size, state, ack, nak, thread.snap, thread.ev, thread.state, prompt, prompt.closed, ledger.snap and view.snap. There is no start verb and no answer-a-prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
 // below statically and requires the gateway to handle exactly phoneToTitan, so a new verb is a reviewed edit to both
 // files. protocol/mobile-protocol.json pins these values from the outside (protocol.test.ts).
-import { CONTROL_BYE_REASONS, CONTROL_INPUT_MAX_BYTES, LEDGER_TIERS, TERMINAL_SLOTS } from '../../src/shared/remote/types';
-import type { LedgerWire, NakReason, PromptCloseReason, PromptInfo, TerminalInfo, TerminalSlotId, TerminalSlotState, ThreadEvent, ThreadSlotId } from '../../src/shared/remote/types';
+import { CONTROL_BYE_REASONS, CONTROL_INPUT_MAX_BYTES, LEDGER_TIERS, TERMINAL_SLOTS, VIEW_IDS, VIEW_PARAMS_MAX_BYTES, VIEW_PARAM_IDS } from '../../src/shared/remote/types';
+import type { LedgerWire, NakReason, PromptCloseReason, PromptInfo, TerminalInfo, TerminalSlotId, TerminalSlotState, ThreadEvent, ThreadSlotId, ViewId } from '../../src/shared/remote/types';
 
 export const MESSAGE_TYPES = {
-  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap'],
+  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'],
 } as const;
 
 export const PROTOCOL_VERSION = 1;
@@ -52,7 +52,16 @@ export interface LedgerAttachMessage {
 export interface LedgerDetachMessage {
   t: 'ledger.detach';
 }
-export type PhoneMessage = HelloMessage | AttachMessage | DetachMessage | InMessage | ThreadAttachMessage | ThreadDetachMessage | LedgerAttachMessage | LedgerDetachMessage;
+export interface ViewAttachMessage {
+  t: 'view.attach';
+  v: ViewId;
+  p?: Record<string, unknown>;
+}
+export interface ViewDetachMessage {
+  t: 'view.detach';
+  v: ViewId;
+}
+export type PhoneMessage = HelloMessage | AttachMessage | DetachMessage | InMessage | ThreadAttachMessage | ThreadDetachMessage | LedgerAttachMessage | LedgerDetachMessage | ViewAttachMessage | ViewDetachMessage;
 
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 const APP_MAX = 32;
@@ -62,6 +71,10 @@ const NONCE_RE = /^[0-9a-f]{32}$/;
 function slotOf(v: unknown): TerminalSlotId | null {
   const hit = TERMINAL_SLOTS.find((x) => x.s === v);
   return hit ? hit.s : null;
+}
+
+function viewOf(v: unknown): ViewId | null {
+  return typeof v === 'string' ? (VIEW_IDS.find((x) => x === v) ?? null) : null;
 }
 
 /**
@@ -105,6 +118,17 @@ export function parsePhoneMessage(text: string): PhoneMessage | null {
     return { t: kind, s: 'claude' };
   }
   if (kind === 'ledger.attach' || kind === 'ledger.detach') return { t: kind };
+  if (kind === 'view.attach' || kind === 'view.detach') {
+    const v = viewOf(o.v);
+    if (v === null) return null;
+    if (kind === 'view.detach') return { t: 'view.detach', v };
+    if (o.p === undefined) return { t: 'view.attach', v };
+    if (!VIEW_PARAM_IDS.includes(v)) return null; // only views that declare params may send them
+    const p = o.p;
+    if (typeof p !== 'object' || p === null || Array.isArray(p)) return null;
+    if (Buffer.byteLength(JSON.stringify(p), 'utf8') > VIEW_PARAMS_MAX_BYTES) return null;
+    return { t: 'view.attach', v, p: p as Record<string, unknown> };
+  }
   if (kind === 'attach' || kind === 'detach') {
     const s = slotOf(o.s);
     if (s === null) return null;
@@ -122,7 +146,7 @@ export function parsePhoneMessage(text: string): PhoneMessage | null {
   return { t: 'hello', v: PROTOCOL_VERSION, app, epoch, nonce };
 }
 
-export function encodeWelcome(o: { proof: string; serverTimeMs: number; expiresAtMs: number; sessions?: readonly TerminalInfo[]; applied?: Record<string, number> }): string {
+export function encodeWelcome(o: { proof: string; serverTimeMs: number; expiresAtMs: number; sessions?: readonly TerminalInfo[]; applied?: Record<string, number>; views?: readonly ViewId[] }): string {
   return JSON.stringify({
     t: 'welcome',
     v: PROTOCOL_VERSION,
@@ -132,7 +156,13 @@ export function encodeWelcome(o: { proof: string; serverTimeMs: number; expiresA
     sessions: (o.sessions ?? []).map((x) => ({ s: x.s, label: x.label, state: x.state, cols: x.cols, rows: x.rows, q: x.q })),
     applied: o.applied ?? {},
     prompts: [],
+    views: [...(o.views ?? [])],
   });
+}
+
+/** d is the already-validated view payload, or null (no data yet, or the view's encoder failed closed). */
+export function encodeViewSnap(v: ViewId, d: unknown): string {
+  return JSON.stringify({ t: 'view.snap', v, d: d ?? null });
 }
 
 export function encodeAck(o: { s: TerminalSlotId; c: number }): string {

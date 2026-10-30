@@ -42,7 +42,9 @@
       "thread.attach",
       "thread.detach",
       "ledger.attach",
-      "ledger.detach"
+      "ledger.detach",
+      "view.attach",
+      "view.detach"
     ],
     "titanToPhone": [
       "welcome",
@@ -58,7 +60,8 @@
       "thread.state",
       "prompt",
       "prompt.closed",
-      "ledger.snap"
+      "ledger.snap",
+      "view.snap"
     ],
     "nakReasons": [
       "not-running",
@@ -123,9 +126,9 @@
   },
   "frames": {
     "hello": "{\"t\":\"hello\",\"v\":1,\"app\":\"0.2.0-v1\",\"epoch\":\"0123456789abcdef\",\"nonce\":\"00112233445566778899aabbccddeeff\"}",
-    "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[]}",
+    "welcome": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{},\"prompts\":[],\"views\":[]}",
     "bye": "{\"t\":\"bye\",\"reason\":\"revoked\"}",
-    "welcomeSessions": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[{\"s\":\"claude\",\"label\":\"Terminal\",\"state\":\"running\",\"cols\":100,\"rows\":30,\"q\":12},{\"s\":\"terminal2\",\"label\":\"Terminal 2\",\"state\":\"not-started\",\"cols\":0,\"rows\":0,\"q\":0},{\"s\":\"codex\",\"label\":\"Codex\",\"state\":\"exited\",\"cols\":80,\"rows\":24,\"q\":5}],\"applied\":{},\"prompts\":[]}",
+    "welcomeSessions": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[{\"s\":\"claude\",\"label\":\"Terminal\",\"state\":\"running\",\"cols\":100,\"rows\":30,\"q\":12},{\"s\":\"terminal2\",\"label\":\"Terminal 2\",\"state\":\"not-started\",\"cols\":0,\"rows\":0,\"q\":0},{\"s\":\"codex\",\"label\":\"Codex\",\"state\":\"exited\",\"cols\":80,\"rows\":24,\"q\":5}],\"applied\":{},\"prompts\":[],\"views\":[]}",
     "attach": "{\"t\":\"attach\",\"s\":\"claude\"}",
     "attachResume": "{\"t\":\"attach\",\"s\":\"claude\",\"q\":123}",
     "detach": "{\"t\":\"detach\",\"s\":\"claude\"}",
@@ -137,7 +140,7 @@
     "ack": "{\"t\":\"ack\",\"s\":\"claude\",\"c\":3}",
     "nakNotRunning": "{\"t\":\"nak\",\"s\":\"claude\",\"c\":4,\"reason\":\"not-running\"}",
     "nakTypingOff": "{\"t\":\"nak\",\"s\":\"terminal2\",\"c\":9,\"reason\":\"typing-off\"}",
-    "welcomeApplied": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{\"claude\":3},\"prompts\":[]}",
+    "welcomeApplied": "{\"t\":\"welcome\",\"v\":1,\"proof\":\"98a495d56a08dd960d46b68eccc9d06f4a98bdc337daa30480b763214dd28f20\",\"serverTimeMs\":1790000000000,\"expiresAtMs\":1792592000000,\"sessions\":[],\"applied\":{\"claude\":3},\"prompts\":[],\"views\":[]}",
     "threadAttach": "{\"t\":\"thread.attach\",\"s\":\"claude\"}",
     "threadDetach": "{\"t\":\"thread.detach\",\"s\":\"claude\"}",
     "threadSnap": "{\"t\":\"thread.snap\",\"s\":\"claude\",\"q\":7,\"attached\":true,\"working\":true,\"workingSinceMs\":1790000000000,\"events\":[{\"k\":\"user\",\"id\":\"120:0\",\"at\":1790000000000,\"text\":\"run the layout checks too\",\"truncated\":false},{\"k\":\"claude\",\"id\":\"210:0\",\"at\":1790000000500,\"text\":\"Unit tests pass.\",\"truncated\":false},{\"k\":\"tool\",\"id\":\"340:1\",\"at\":1790000001000,\"name\":\"Edit\",\"target\":\"KeyRow.kt\",\"add\":18,\"del\":4}]}",
@@ -148,6 +151,10 @@
     "ledgerAttach": "{\"t\":\"ledger.attach\"}",
     "ledgerDetach": "{\"t\":\"ledger.detach\"}",
     "ledgerSnap": "{\"t\":\"ledger.snap\",\"ledger\":{\"computedAtMs\":1790000000000,\"total\":{\"usd\":912.34,\"input\":140.17,\"output\":411.3,\"cacheCreation\":203.19,\"cacheRead\":157.68},\"tiers\":[\"opus\",\"sonnet\"],\"rollups\":{\"today\":12.5,\"week\":391.1,\"month\":624.99},\"cache\":{\"readTokens\":52560000,\"wouldHaveUsd\":1576.8,\"actualUsd\":157.68,\"savedUsd\":1419.12,\"hitRate\":0.896}}}",
-    "ledgerSnapEmpty": "{\"t\":\"ledger.snap\",\"ledger\":null}"
+    "ledgerSnapEmpty": "{\"t\":\"ledger.snap\",\"ledger\":null}",
+    "viewAttach": "{\"t\":\"view.attach\",\"v\":\"projects\"}",
+    "viewAttachParams": "{\"t\":\"view.attach\",\"v\":\"comms.thread\",\"p\":{\"channel\":\"session\"}}",
+    "viewDetach": "{\"t\":\"view.detach\",\"v\":\"projects\"}",
+    "viewSnapNull": "{\"t\":\"view.snap\",\"v\":\"projects\",\"d\":null}"
   }
 }

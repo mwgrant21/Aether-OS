@@ -2,9 +2,9 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeViewSnap, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
 import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES, CONTROL_PROMPT_CLOSE_REASONS, PROMPT_SUMMARY_CAP, THREAD_SNAPSHOT_MAX_BYTES, THREAD_SNAPSHOT_MAX_EVENTS, THREAD_TARGET_CAP, THREAD_TEXT_CAP, THREAD_WORKING_STALE_MS } from '../../src/shared/remote/types';
-import { LEDGER_TIERS } from '../../src/shared/remote/types';
+import { LEDGER_TIERS, VIEW_IDS } from '../../src/shared/remote/types';
 import type { LedgerWire, TerminalInfo, ThreadEvent } from '../../src/shared/remote/types';
 import { PRICING_PER_MILLION_TOKENS } from '../../src/shared/modelPricing';
 
@@ -263,5 +263,46 @@ describe('ledger frames', () => {
   });
   it('LEDGER_TIERS equals the pricing table keys', () => {
     expect([...LEDGER_TIERS]).toEqual(Object.keys(PRICING_PER_MILLION_TOKENS));
+  });
+});
+
+describe('view frames', () => {
+  const p = (x: unknown) => parsePhoneMessage(JSON.stringify(x));
+  it('view.attach and view.detach goldens parse back and round-trip', () => {
+    expect(parsePhoneMessage(spec.frames.viewAttach)).toEqual({ t: 'view.attach', v: 'projects' });
+    expect(parsePhoneMessage(spec.frames.viewAttachParams)).toEqual({ t: 'view.attach', v: 'comms.thread', p: { channel: 'session' } });
+    expect(parsePhoneMessage(spec.frames.viewDetach)).toEqual({ t: 'view.detach', v: 'projects' });
+    for (const k of ['viewAttach', 'viewAttachParams', 'viewDetach']) expect(JSON.stringify(parsePhoneMessage(spec.frames[k]))).toBe(spec.frames[k]);
+  });
+  it('every VIEW_IDS entry parses; an unknown, missing or non-string id is rejected', () => {
+    for (const v of VIEW_IDS) expect(p({ t: 'view.attach', v })).toEqual({ t: 'view.attach', v });
+    for (const v of ['ledger', 'Projects', '', 7, null, undefined]) {
+      expect(p({ t: 'view.attach', v })).toBeNull();
+      expect(p({ t: 'view.detach', v })).toBeNull();
+    }
+  });
+  it('p is accepted only on views that take params, as a plain object of at most 512 bytes', () => {
+    expect(p({ t: 'view.attach', v: 'projects', p: {} })).toBeNull();
+    expect(p({ t: 'view.attach', v: 'comms.exchange', p: { exchangeId: 'x' } })).toEqual({ t: 'view.attach', v: 'comms.exchange', p: { exchangeId: 'x' } });
+    for (const bad of [[], 'x', 5, null]) expect(p({ t: 'view.attach', v: 'comms.thread', p: bad })).toBeNull();
+    expect(p({ t: 'view.attach', v: 'comms.thread', p: { a: 'x'.repeat(500) } })).not.toBeNull(); // 510 bytes serialised
+    expect(p({ t: 'view.attach', v: 'comms.thread', p: { a: 'x'.repeat(520) } })).toBeNull();
+  });
+  it('view.detach ignores p and stray keys', () => {
+    expect(p({ t: 'view.detach', v: 'comms', p: { a: 1 }, x: 1 })).toEqual({ t: 'view.detach', v: 'comms' });
+  });
+  it('encodeViewSnap uses key order t,v,d and reproduces the null golden', () => {
+    expect(encodeViewSnap('projects', null)).toBe(spec.frames.viewSnapNull);
+    expect(encodeViewSnap('memory', { a: 1 })).toBe('{"t":"view.snap","v":"memory","d":{"a":1}}');
+    expect(encodeViewSnap('memory', undefined)).toBe('{"t":"view.snap","v":"memory","d":null}');
+  });
+  it('welcome carries views after prompts; absent argument gives []', () => {
+    const base = { proof: 'p', serverTimeMs: 1, expiresAtMs: 2 };
+    expect(Object.keys(JSON.parse(encodeWelcome(base)))).toEqual(['t', 'v', 'proof', 'serverTimeMs', 'expiresAtMs', 'sessions', 'applied', 'prompts', 'views']);
+    expect(JSON.parse(encodeWelcome({ ...base, views: ['projects', 'memory'] })).views).toEqual(['projects', 'memory']);
+    expect(JSON.parse(encodeWelcome(base)).views).toEqual([]);
+  });
+  it('VIEW_IDS is the closed list', () => {
+    expect([...VIEW_IDS]).toEqual(['projects', 'memory', 'dash', 'analytics', 'agents', 'comms', 'comms.thread', 'comms.exchange']);
   });
 });
