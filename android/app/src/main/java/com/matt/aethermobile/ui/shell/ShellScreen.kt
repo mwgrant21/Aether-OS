@@ -126,7 +126,7 @@ class ShellActions(
     val onRestart: () -> Boolean,
     val onSetView: (ViewMode) -> Unit,
     /** The argument is the desired new state (true = turn on). Default is temporary until MainActivity wires it. */
-    val onToggleShare: (Boolean) -> Unit = {},
+    val onToggleShare: (Boolean) -> Unit,
 )
 
 private val dims = AetherDimens()
