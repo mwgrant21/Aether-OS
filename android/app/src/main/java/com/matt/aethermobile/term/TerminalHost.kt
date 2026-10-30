@@ -96,6 +96,10 @@ class TerminalHost(
     @Synchronized
     fun typingAccepted(): Boolean = canType(attached)
 
+    /** True when this host is active and currently attached to [slot]; the UI uses it to retry a failed attach. */
+    @Synchronized
+    fun isAttached(slot: String): Boolean = active && attached == slot
+
     /** True when the Restart control should show: connected, attached to terminal2, and it has exited. */
     @Synchronized
     fun restartAvailable(): Boolean =

@@ -7,6 +7,7 @@ import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.protocol.ControlProtocol.TerminalFrame
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -457,6 +458,37 @@ class TerminalHostTest {
         assertEquals(listOf("attach claude -", "attach claude -"), calls)
         host.select("claude") // now attached: shortcut, no third attach
         assertEquals(2, calls.size)
+    }
+
+    @Test fun isAttachedTracksOnlyTheSelectedSlot() {
+        ready()
+        assertFalse(host.isAttached("claude"))
+        host.select("claude")
+        assertTrue(host.isAttached("claude"))
+        assertFalse(host.isAttached("codex"))
+    }
+
+    @Test fun isAttachedStaysFalseAfterFailedAttachUntilRetrySucceeds() {
+        ready()
+        attachResult = false
+        host.select("claude")
+        assertFalse(host.isAttached("claude"))
+        assertFalse(host.typingAccepted())
+        attachResult = true
+        host.select("claude")
+        assertEquals(listOf("attach claude -", "attach claude -"), calls)
+        assertTrue(host.isAttached("claude"))
+        assertTrue(host.typingAccepted())
+    }
+
+    @Test fun isAttachedClearsOnDisconnectAndOnNewSessions() {
+        ready(); host.select("claude")
+        host.onDisconnected()
+        assertFalse(host.isAttached("claude"))
+        ready(); host.select("claude")
+        assertTrue(host.isAttached("claude"))
+        host.onSessions(listOf(info("claude")))
+        assertFalse(host.isAttached("claude"))
     }
 
     @Test fun throwingAttachOnSelectAlsoRetries() {

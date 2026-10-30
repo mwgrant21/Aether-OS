@@ -605,6 +605,7 @@ class MainActivity : AppCompatActivity() {
 
     fun setView(v: ViewMode) {
         view = v
+        if (v == ViewMode.THREAD && terminalLive) termHost?.let { if (!it.isAttached(selected)) it.select(selected) }
         syncThread()
         renderTabs()
     }
