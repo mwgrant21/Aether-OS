@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.matt.aethermobile.ui.shell.mouseDragScroll
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -87,9 +88,10 @@ private fun ReadyBody(s: ControlProtocol.LedgerSnapshot, hostNowMs: Long, modifi
         while (true) { delay(TICK_MS); ticks++ }
     }
     val now = hostNowMs + ticks * TICK_MS
+    val scroll = rememberScrollState()
 
     Column(
-        modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier.mouseDragScroll(scroll).verticalScroll(scroll).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         AeNoticeBox(stringResource(R.string.ledger_basis_note), amber = true)

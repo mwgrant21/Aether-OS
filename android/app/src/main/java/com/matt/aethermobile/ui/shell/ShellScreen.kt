@@ -525,6 +525,7 @@ private fun Dropdown(
     viewCtl: ViewCtlUi,
     actions: ShellActions,
 ) {
+    val scroll = rememberScrollState()
     val sweep by rememberInfiniteTransition(label = "menu-sweep").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -551,7 +552,8 @@ private fun Dropdown(
                 )
             }
             // Bounded by the space below the header (see the caller's bottom padding), so short windows scroll.
-            .verticalScroll(rememberScrollState())
+            .mouseDragScroll(scroll)
+            .verticalScroll(scroll)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

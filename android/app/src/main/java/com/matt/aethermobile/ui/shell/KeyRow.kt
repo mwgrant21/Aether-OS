@@ -26,9 +26,10 @@ import com.matt.aethermobile.ui.components.aeActive
 /** Native key row: sends through the same gated host path as page input. Only composed while connected. */
 @Composable
 fun KeyRow(enabled: Boolean, ctrlOn: Boolean, actions: ShellActions) {
+    val scroll = rememberScrollState()
     Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().mouseDragScroll(scroll, horizontal = true).horizontalScroll(scroll).padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             for (k in KEY_ORDER) {

@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.matt.aethermobile.ui.shell.mouseDragScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -107,7 +108,7 @@ fun ThreadScreen(
             }
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().mouseDragScroll(listState),
                 verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.Bottom),
                 contentPadding = PaddingValues(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 10.dp),
             ) {
