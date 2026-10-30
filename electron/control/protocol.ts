@@ -223,37 +223,46 @@ const r4 = (x: number): number => Math.round(x * 1e4) / 1e4;
 const cost = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 const count = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0;
 
+export interface LedgerFields {
+  total: { usd: number; input: number; output: number; cacheCreation: number; cacheRead: number };
+  tiers: string[];
+  rollups: { today: number | null; week: number | null; month: number | null };
+  cache: { readTokens: number; wouldHaveUsd: number; actualUsd: number; savedUsd: number; hitRate: number };
+}
+
 /**
- * Fail-closed: the payload is rebuilt field by field in the golden's key order (no spread, no pass-through). If any
- * number or tier fails its check the whole frame degrades to {"t":"ledger.snap","ledger":null}; never a partial payload.
+ * Fail-closed shaper shared by ledger.snap and the per-project views: rebuilds total, tiers, rollups and cache field by
+ * field in the golden's key order (no spread, no pass-through). null when any number or tier fails its check.
  */
-export function encodeLedgerSnap(l: LedgerWire | null): string {
-  const empty = JSON.stringify({ t: 'ledger.snap', ledger: null });
-  if (l === null || typeof l !== 'object') return empty;
+export function shapeLedgerFields(l: LedgerWire | null): LedgerFields | null {
+  if (l === null || typeof l !== 'object') return null;
   const { total, tiers, rollups, cache } = l;
-  if (!total || !rollups || !cache || !Array.isArray(tiers)) return empty;
+  if (!total || !rollups || !cache || !Array.isArray(tiers)) return null;
   const roll = (x: unknown): number | null | undefined => (x === null ? null : cost(x) ? r4(x) : undefined);
   const today = roll(rollups.today);
   const week = roll(rollups.week);
   const month = roll(rollups.month);
   if (
-    !count(l.computedAtMs) ||
     !cost(total.usd) || !cost(total.input) || !cost(total.output) || !cost(total.cacheCreation) || !cost(total.cacheRead) ||
     today === undefined || week === undefined || month === undefined ||
     !count(cache.readTokens) || !cost(cache.wouldHaveUsd) || !cost(cache.actualUsd) || !cost(cache.savedUsd) ||
     !cost(cache.hitRate) || cache.hitRate > 1 ||
     !tiers.every((t) => (LEDGER_TIERS as readonly unknown[]).includes(t))
   ) {
-    return empty;
+    return null;
   }
-  return JSON.stringify({
-    t: 'ledger.snap',
-    ledger: {
-      computedAtMs: l.computedAtMs,
-      total: { usd: r4(total.usd), input: r4(total.input), output: r4(total.output), cacheCreation: r4(total.cacheCreation), cacheRead: r4(total.cacheRead) },
-      tiers: [...tiers],
-      rollups: { today, week, month },
-      cache: { readTokens: cache.readTokens, wouldHaveUsd: r4(cache.wouldHaveUsd), actualUsd: r4(cache.actualUsd), savedUsd: r4(cache.savedUsd), hitRate: r4(cache.hitRate) },
-    },
-  });
+  return {
+    total: { usd: r4(total.usd), input: r4(total.input), output: r4(total.output), cacheCreation: r4(total.cacheCreation), cacheRead: r4(total.cacheRead) },
+    tiers: [...tiers],
+    rollups: { today, week, month },
+    cache: { readTokens: cache.readTokens, wouldHaveUsd: r4(cache.wouldHaveUsd), actualUsd: r4(cache.actualUsd), savedUsd: r4(cache.savedUsd), hitRate: r4(cache.hitRate) },
+  };
+}
+
+/** Fail-closed: if the shaper rejects the snapshot the whole frame degrades to {"t":"ledger.snap","ledger":null}; never a partial payload. */
+export function encodeLedgerSnap(l: LedgerWire | null): string {
+  const empty = JSON.stringify({ t: 'ledger.snap', ledger: null });
+  const f = shapeLedgerFields(l);
+  if (l === null || f === null || !count(l.computedAtMs)) return empty;
+  return JSON.stringify({ t: 'ledger.snap', ledger: { computedAtMs: l.computedAtMs, ...f } });
 }
