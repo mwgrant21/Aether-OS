@@ -100,6 +100,7 @@ import { createPermissionBroker } from './permissionBroker';
 import { createThreadFeed } from './threadFeed';
 import { createLedgerFeed } from './ledgerFeed';
 import { createProjectsFeed } from './projectsFeed';
+import { createMemoryFeed } from './memoryFeed';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
@@ -526,6 +527,8 @@ let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 // Phone Projects view feed (privacy section 17). Declared above the scan and createControlHub for the same temporal-dead-zone
 // reason as ledgerFeed. It reads both caches through current() and keeps no copy of either.
 const projectsFeed = createProjectsFeed({ current: () => ({ projects: cachedProjectsSnapshot, ledger: cachedLedgerSnapshot }) });
+// Phone Memory view feed: same declaration-order rule; reads memory.db read-only on each delivery, keeps nothing.
+const memoryFeed = createMemoryFeed({ read: () => ({ live: readMemories(memoryDbPath), tombstones: readMemoryTombstones(memoryDbPath) }) });
 
 // See quotaSampleBuffer.ts for the buffer's own reasoning (cap, in-memory-only,
 // and the equality-only dedup rule -- a monotonic high-water mark bug lived
@@ -679,6 +682,7 @@ function scanAndPushMemory(): void {
   sendToWindow('memory:snapshot', rows);
   const tombstones = readMemoryTombstones(memoryDbPath);
   sendToWindow('memory:tombstones', tombstones);
+  memoryFeed.notify();
 }
 
 function optimizeGlobalTargetPath(): string {
@@ -1569,7 +1573,7 @@ const controlHub = createControlHub({
   input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   threads: threadFeed, // read-only transcript thread, Claude slot only
   ledger: ledgerFeed.port, // read-only derived cost numbers, no text
-  views: { projects: projectsFeed.port }, // read-only derived per-project cost numbers and basenames, no paths or text
+  views: { projects: projectsFeed.port, memory: memoryFeed.port }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
