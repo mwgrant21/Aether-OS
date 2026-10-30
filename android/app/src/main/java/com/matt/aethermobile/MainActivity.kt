@@ -76,6 +76,10 @@ import com.matt.aethermobile.ui.shell.clearsDraft
 import com.matt.aethermobile.ui.shell.ShellScreen
 import com.matt.aethermobile.ui.shell.ShellUiState
 import com.matt.aethermobile.ui.shell.Zoom
+import com.matt.aethermobile.ui.shell.OrientationMode
+import com.matt.aethermobile.ui.shell.ViewCtlUi
+import com.matt.aethermobile.ui.shell.ViewPrefs
+import com.matt.aethermobile.ui.shell.ViewPrefsStore
 import com.matt.aethermobile.ui.theme.AetherTheme
 import com.matt.aethermobile.ui.thread.graceRerenderDelayMs
 import com.matt.aethermobile.term.TerminalHost
@@ -115,6 +119,15 @@ class MainActivity : AppCompatActivity() {
         SlotMemory(object : SlotStore {
             override fun get(): String? = prefs.getString("last_slot", null)
             override fun put(slot: String) { prefs.edit { putString("last_slot", slot) } }
+        })
+    }
+    private val viewPrefs by lazy {
+        val prefs = getSharedPreferences("aether_ui", MODE_PRIVATE)
+        ViewPrefs(object : ViewPrefsStore {
+            override fun getZoom(): Int? = if (prefs.contains("zoom_px")) prefs.getInt("zoom_px", Zoom.DEFAULT) else null
+            override fun putZoom(px: Int) { prefs.edit { putInt("zoom_px", px) } }
+            override fun getOrientation(): String? = prefs.getString("orientation", null)
+            override fun putOrientation(key: String) { prefs.edit { putString("orientation", key) } }
         })
     }
     private val controller = FlowController(SystemClock::elapsedRealtime)
@@ -159,6 +172,7 @@ class MainActivity : AppCompatActivity() {
     private val router = FrameRouter()
     private var selected = "claude"
     private var zoomPx = Zoom.DEFAULT // 0 = fit width (the Fit button)
+    private var orientation = OrientationMode.AUTO
     private var snapLogged = false
     private var terminalLive = false
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
@@ -177,6 +191,7 @@ class MainActivity : AppCompatActivity() {
         val share: ShareUi = ScreenShare.state.ui(),
         val appView: AppView = AppView.TERMINAL,
         val ledger: LedgerUi = LedgerUi.Off,
+        val viewCtl: ViewCtlUi = ViewCtlUi(),
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -187,6 +202,9 @@ class MainActivity : AppCompatActivity() {
         // No screenshots, blank recents thumbnail (design spec 1.4) unless share mode is on. Must precede content.
         applySecureFlag()
         super.onCreate(savedInstanceState)
+        zoomPx = viewPrefs.loadZoom()
+        orientation = viewPrefs.loadOrientation()
+        requestedOrientation = orientation.requested
         WindowCompat.setDecorFitsSystemWindows(window, false)
         screen = TerminalScreen(
             this,
@@ -793,6 +811,15 @@ class MainActivity : AppCompatActivity() {
     private fun setZoom(px: Int) {
         zoomPx = px
         termHost?.zoom(px)
+        viewPrefs.saveZoom(px)
+        renderTabs()
+    }
+
+    private fun setOrientation(mode: OrientationMode) {
+        orientation = mode
+        requestedOrientation = mode.requested
+        viewPrefs.saveOrientation(mode)
+        renderTabs()
     }
 
     private fun stepZoom(delta: Int) {
@@ -810,6 +837,7 @@ class MainActivity : AppCompatActivity() {
             share = ScreenShare.state.ui(),
             appView = appView,
             ledger = ledgerHost?.snapshot() ?: LedgerUi.Off,
+            viewCtl = ViewCtlUi(zoomPx, orientation),
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
@@ -832,7 +860,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, nowMs = System.currentTimeMillis()),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, viewCtl = snap.viewCtl, nowMs = System.currentTimeMillis()),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -846,6 +874,7 @@ class MainActivity : AppCompatActivity() {
                         onSetView = ::setView,
                         onToggleShare = ::toggleShare,
                         onOpenView = ::openView,
+                        onSetOrientation = ::setOrientation,
                     ),
                     terminalHolder = webHolder,
                 )

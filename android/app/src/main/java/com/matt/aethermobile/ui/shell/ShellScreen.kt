@@ -40,6 +40,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +74,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -117,6 +119,7 @@ data class ShellUiState(
     val appView: AppView = AppView.TERMINAL,
     val ledger: LedgerUi = LedgerUi.Off,
     val nowMs: Long = 0L,
+    val viewCtl: ViewCtlUi = ViewCtlUi(),
 )
 
 class ShellActions(
@@ -133,6 +136,7 @@ class ShellActions(
     /** The argument is the desired new state (true = turn on). Default is temporary until MainActivity wires it. */
     val onToggleShare: (Boolean) -> Unit,
     val onOpenView: (AppView) -> Unit,
+    val onSetOrientation: (OrientationMode) -> Unit = {},
 )
 
 private val dims = AetherDimens()
@@ -193,11 +197,14 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     )
                 }
                 if (threadBody) {
+                    val d = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale * threadScale(state.viewCtl.zoomPx))) {
                     ThreadScreen(
                         state.thread, threadListState, draft, { draft = it },
                         threadSendEnabled(composeEnabled(cur, state.flow, state.hostAccepts), draft), actions.onCompose,
                         Modifier.weight(1f).fillMaxWidth(),
                     )
+                    }
                 }
                 if (ledgerBody) LedgerScreen(state.ledger, state.nowMs, Modifier.weight(1f).fillMaxWidth())
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
@@ -234,6 +241,8 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     onLock = { menu = menu.onLock(); actions.onLockNow() },
                     share = state.share,
                     onToggleShare = actions.onToggleShare,
+                    viewCtl = state.viewCtl,
+                    actions = actions,
                 )
             }
         }
@@ -504,6 +513,8 @@ private fun Dropdown(
     onLock: () -> Unit,
     share: ShareUi,
     onToggleShare: (Boolean) -> Unit,
+    viewCtl: ViewCtlUi,
+    actions: ShellActions,
 ) {
     val sweep by rememberInfiniteTransition(label = "menu-sweep").animateFloat(
         initialValue = 0f,
@@ -590,6 +601,7 @@ private fun Dropdown(
             }
         }
         ShareRow(share, onToggleShare)
+        ViewControlsRows(viewCtl, actions)
         Footer(flow, onLock)
     }
 }
