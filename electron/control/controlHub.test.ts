@@ -6,7 +6,7 @@ import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ControlStatus, ListenerPort, PromptReadPort, RemoteUnavailableReason, ThreadReadPort, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
+import type { ControlSocket, ControlStatus, ListenerPort, PromptReadPort, RemoteUnavailableReason, ThreadReadPort, TerminalReadPort, TerminalSlotId, ViewId, ViewReadPort } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -63,7 +63,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort } = {}) {
+function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort; views?: Partial<Record<ViewId, ViewReadPort>> } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -88,6 +88,7 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
     terminals: terms.port,
     threads: over.threads,
     prompts: over.prompts,
+    views: over.views,
     input: { write: (s: TerminalSlotId, d: string) => { writes.push(`${s}|${d}`); return true; } },
     renderQr: t => `<svg>${t.length}</svg>`,
     log: l => { logs.push(l); },
@@ -973,6 +974,35 @@ describe('control hub thread and prompt wiring', () => {
     h.hub.port.open(s, id);
     s.feed(helloFrame);
     s.feed(JSON.stringify({ t: 'thread.attach', s: 'claude' }));
+    expect(s.closes).toEqual([1008]);
+  });
+});
+
+describe('control hub view wiring', () => {
+  const openSocket = async (h: ReturnType<typeof setup>) => {
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    return s;
+  };
+
+  it('forwards the view ports: welcome.views advertises them and view.attach reaches the port', async () => {
+    let attached = 0;
+    const views = { projects: { attach: (tap: { snap(d: unknown): void }) => { attached += 1; tap.snap(null); return { detach: () => {} }; } } };
+    const s = await openSocket(setup({ views }));
+    expect(JSON.parse(s.sent[0]).views).toEqual(['projects']);
+    s.feed(JSON.stringify({ t: 'view.attach', v: 'projects' }));
+    expect(attached).toBe(1);
+    expect(JSON.parse(s.sent[s.sent.length - 1])).toEqual({ t: 'view.snap', v: 'projects', d: null });
+  });
+
+  it('without views the welcome advertises an empty list and view.attach closes the socket', async () => {
+    const s = await openSocket(setup());
+    expect(JSON.parse(s.sent[0]).views).toEqual([]);
+    s.feed(JSON.stringify({ t: 'view.attach', v: 'projects' }));
     expect(s.closes).toEqual([1008]);
   });
 });

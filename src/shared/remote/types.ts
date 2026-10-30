@@ -184,6 +184,10 @@ export type ViewId = (typeof VIEW_IDS)[number];
 export const VIEW_PARAM_IDS: readonly ViewId[] = ['comms.thread', 'comms.exchange'];
 /** Serialised size cap for p (UTF-8 bytes of JSON.stringify). */
 export const VIEW_PARAMS_MAX_BYTES = 512;
+/** Receives a view's payload. d is already validated by the view's encoder, or null (no data yet, or failed closed). */
+export interface ViewTap { snap(d: unknown): void }
+/** attach() delivers the current state synchronously, before it returns (same contract as LedgerReadPort). p is the validated-shape-only params object of a params view. */
+export interface ViewReadPort { attach(tap: ViewTap, p?: Record<string, unknown>): { detach(): void } }
 export const LEDGER_TIERS = ['opus', 'sonnet', 'haiku', 'fable'] as const; // must equal Object.keys(PRICING_PER_MILLION_TOKENS); protocol.test.ts pins it
 export type LedgerTier = (typeof LEDGER_TIERS)[number];
 export interface LedgerWire {

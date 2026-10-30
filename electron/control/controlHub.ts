@@ -23,6 +23,8 @@ import type {
   ListenerPort,
   PromptReadPort,
   LedgerReadPort,
+  ViewId,
+  ViewReadPort,
   RemoteSessionInfo,
   RemoteUnavailableReason,
   TerminalReadPort,
@@ -66,6 +68,8 @@ export interface ControlHubDeps {
   prompts?: PromptReadPort;
   /** Read-only Ledger snapshot feed, forwarded to the gateway; only ledger-attached sockets receive ledger.snap. */
   ledger?: LedgerReadPort;
+  /** Read-only generic view feeds by id, forwarded to the gateway; the ids present become welcome.views. */
+  views?: Partial<Record<ViewId, ViewReadPort>>;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -136,6 +140,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     threads: deps.threads,
     prompts: deps.prompts,
     ledger: deps.ledger,
+    views: deps.views,
     onAttached: (ref, slots) => {
       const before = unionSlots().join();
       if (slots.length === 0) attachedByRef.delete(ref);
