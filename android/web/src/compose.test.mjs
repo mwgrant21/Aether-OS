@@ -18,6 +18,10 @@ describe('pasteBytes', () => {
     ['ESC stripped, no early end', `x${ESC}[201~y`, true, `${ESC}[200~x[201~y${ESC}[201~`],
     ['trailing newline', 'a\n', false, 'a\r'],
     ['emoji', '\u{1F600} ok', false, '\u{1F600} ok'],
+    ['slash command typed even when bracketed', '/clear', true, '/clear'],
+    ['multi-line slash stays bracketed', '/a\nb', true, `${ESC}[200~/a\rb${ESC}[201~`],
+    ['non-slash single line stays bracketed', 'clear', true, `${ESC}[200~clear${ESC}[201~`],
+    ['slash with control char stays bracketed', '/a\tb', true, `${ESC}[200~/a\tb${ESC}[201~`],
     ['empty plain', '', false, ''],
     ['empty bracketed', '', true, ''],
   ])('%s', (_n, text, br, want) => expect(pasteBytes(text, br)).toBe(want));
@@ -31,6 +35,12 @@ describe('composeInputs', () => {
     ]);
     expect(composeInputs('claude', 'a\nb', true, false)).toEqual([
       { t: 'input', s: 'claude', d: 'a\rb' },
+      { t: 'input', s: 'claude', d: '\r' },
+    ]);
+  });
+  it('slash command with enter is typed text then CR', () => {
+    expect(composeInputs('claude', '/clear', true, true)).toEqual([
+      { t: 'input', s: 'claude', d: '/clear' },
       { t: 'input', s: 'claude', d: '\r' },
     ]);
   });
