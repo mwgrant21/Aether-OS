@@ -164,6 +164,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
     LaunchedEffect(state.wipeDraft) { if (state.wipeDraft) draft = "" }
+    InputDiagLayoutProbe()
     val kb = rememberKeyboardUi()
     LaunchedEffect(menuOpen) { if (menuOpen) kb.hide() }
     val cur = state.tabs.firstOrNull { it.s == state.selected }
@@ -318,7 +319,7 @@ private fun ShareRow(share: ShareUi, onToggleShare: (Boolean) -> Unit) {
 
 /** Track plus thumb from foundation primitives; the toggleable parent carries the semantics. */
 @Composable
-private fun ShareSwitch(on: Boolean) {
+internal fun ShareSwitch(on: Boolean) {
     Box(
         Modifier
             .size(width = 40.dp, height = 22.dp)
@@ -613,6 +614,7 @@ private fun Dropdown(
         }
         ShareRow(share, onToggleShare)
         ViewControlsRows(viewCtl, actions)
+        InputDiagRow(Modifier.fillMaxWidth())
         Footer(flow, onLock)
     }
 }

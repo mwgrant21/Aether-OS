@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.content.pm.ApplicationInfo
 import android.view.ViewGroup
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
+import com.matt.aethermobile.ui.shell.InputDiag
 import com.matt.aethermobile.ui.shell.NotSentLine
+import com.matt.aethermobile.ui.shell.toDiag
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
@@ -279,6 +282,17 @@ class MainActivity : AppCompatActivity() {
             sharePending = false
             false
         }
+    }
+
+    // Input diagnostic: records only whitelisted MotionEvent metadata (no keys, no text); never alters delivery.
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        try { if (InputDiag.recorder.enabled) InputDiag.recorder.record(ev.toDiag()) } catch (_: Exception) { }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        try { if (InputDiag.recorder.enabled) InputDiag.recorder.record(ev.toDiag()) } catch (_: Exception) { }
+        return super.dispatchGenericMotionEvent(ev)
     }
 
     override fun onStart() {
