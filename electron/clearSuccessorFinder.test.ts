@@ -103,4 +103,80 @@ describe('createClearSuccessorFinder', () => {
     expect(await find(dir, OTHER, pinned)).toBeNull();
     expect(await find(dir, LAUNCH, pinned)).toBe(succ);
   });
+
+  describe('clear hint (provisional successor)', () => {
+    const H = 1_900_000_000_000;
+    const clearRecordAt = (ms: number) =>
+      JSON.stringify({ type: 'system', timestamp: new Date(ms).toISOString(), commandRun: { command: 'clear' } }) + '\n';
+
+    it('a. accepts the single in-window candidate that has no session_id yet', async () => {
+      const dir = tmpDir();
+      const pinned = await create(dir, LAUNCH, startupRecord);
+      const succ = await create(dir, 'succ', clearRecordAt(H + 200));
+      expect(await createClearSuccessorFinder()(dir, LAUNCH, pinned, H)).toBe(succ);
+    });
+
+    it('b. without a hint the same fixture returns null', async () => {
+      const dir = tmpDir();
+      const pinned = await create(dir, LAUNCH, startupRecord);
+      await create(dir, 'succ', clearRecordAt(H + 200));
+      expect(await createClearSuccessorFinder()(dir, LAUNCH, pinned)).toBeNull();
+    });
+
+    it('c. a /clear record far from the hint is not accepted', async () => {
+      const dir = tmpDir();
+      const pinned = await create(dir, LAUNCH, startupRecord);
+      await create(dir, 'far', clearRecordAt(H - 60_000));
+      expect(await createClearSuccessorFinder()(dir, LAUNCH, pinned, H)).toBeNull();
+    });
+
+    it('d. two in-window candidates return null; a launch-id link then confirms one normally', async () => {
+      const dir = tmpDir();
+      const pinned = await create(dir, LAUNCH, startupRecord);
+      await create(dir, 'one', clearRecordAt(H + 100));
+      const two = await create(dir, 'two', clearRecordAt(H + 300));
+      const find = createClearSuccessorFinder();
+      expect(await find(dir, LAUNCH, pinned, H)).toBeNull();
+      appendFileSync(two, linkRecord(LAUNCH));
+      expect(await find(dir, LAUNCH, pinned, H)).toBe(two);
+    });
+
+    it('e. an in-window candidate born before the pinned file is not accepted', async () => {
+      const dir = tmpDir();
+      await create(dir, 'early', clearRecordAt(H + 200));
+      const pinned = await create(dir, LAUNCH, startupRecord);
+      expect(await createClearSuccessorFinder()(dir, LAUNCH, pinned, H)).toBeNull();
+    });
+
+    it('f. a contradicting foreign id reverts to the previous pin and C is never offered again', async () => {
+      const dir = tmpDir();
+      const P = await create(dir, LAUNCH, startupRecord);
+      const C = await create(dir, 'succ', clearRecordAt(H + 200));
+      const find = createClearSuccessorFinder();
+      expect(await find(dir, LAUNCH, P, H)).toBe(C);
+      // Same size as at acceptance: the pinned-file re-check must still not misfire.
+      expect(await find(dir, LAUNCH, C, H)).toBeNull();
+      appendFileSync(C, linkRecord(OTHER));
+      expect(await find(dir, LAUNCH, C, H)).toBe(P);
+      expect(await find(dir, LAUNCH, P, H)).toBeNull();
+    });
+
+    it('g. a launch-id link promotes the provisional file and it keeps being returned', async () => {
+      const dir = tmpDir();
+      const P = await create(dir, LAUNCH, startupRecord);
+      const C = await create(dir, 'succ', clearRecordAt(H + 200));
+      const find = createClearSuccessorFinder();
+      expect(await find(dir, LAUNCH, P, H)).toBe(C);
+      appendFileSync(C, linkRecord(LAUNCH));
+      expect(await find(dir, LAUNCH, C, H)).toBe(C);
+      expect(await find(dir, LAUNCH, C, H)).toBe(C);
+    });
+
+    it('h. a /clear record without a timestamp is ineligible even with a hint', async () => {
+      const dir = tmpDir();
+      const pinned = await create(dir, LAUNCH, startupRecord);
+      await create(dir, 'succ', clearRecord);
+      expect(await createClearSuccessorFinder()(dir, LAUNCH, pinned, H)).toBeNull();
+    });
+  });
 });
