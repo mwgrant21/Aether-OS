@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { createControlGateway } from './controlGateway';
-import { MESSAGE_TYPES } from './protocol';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap, ThreadEvent, ThreadReadPort, ThreadTap, PromptInfo, PromptReadPort, PromptTap } from '../../src/shared/remote/types';
+import { MESSAGE_TYPES, encodeLedgerSnap } from './protocol';
+import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap, ThreadEvent, ThreadReadPort, ThreadTap, PromptInfo, PromptReadPort, PromptTap, LedgerReadPort, LedgerTap, LedgerWire } from '../../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const vec = spec.proof.vectors;
@@ -887,5 +887,123 @@ describe('control gateway thread verbs', () => {
     createControlGateway({ now: () => 1790000000000, threads: fakeThreads().port, prompts: fakePrompts([PR]).port }).attach(s, identity);
     s.feed(helloFrame);
     expect(s.sent).toEqual([spec.frames.welcome]);
+  });
+});
+
+describe('control gateway ledger verbs', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const WIRE = JSON.parse(spec.frames.ledgerSnap).ledger as LedgerWire;
+  const WIRE2: LedgerWire = { ...WIRE, computedAtMs: WIRE.computedAtMs + 60000 };
+
+  function fakeLedger() {
+    const taps: LedgerTap[] = [];
+    const fl = {
+      taps,
+      live: 0,
+      port: {
+        attach: (tap: LedgerTap) => {
+          taps.push(tap);
+          fl.live++;
+          tap.snap(WIRE);
+          let done = false;
+          return { detach: () => { if (!done) { done = true; fl.live--; } } };
+        },
+      } as LedgerReadPort,
+    };
+    return fl;
+  }
+  const open = (extra: { ledger?: LedgerReadPort; threads?: ThreadReadPort }, logs: string[] = []) => {
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1790000000000, log: (m) => { logs.push(m); }, ...extra }).attach(s, identity);
+    s.feed(helloFrame);
+    s.sent.length = 0;
+    return s;
+  };
+  const types = (s: { sent: string[] }): string[] => s.sent.map((x) => JSON.parse(x).t);
+
+  it('ledger.attach sends the current snapshot, and a later publish sends another', () => {
+    const fl = fakeLedger();
+    const s = open({ ledger: fl.port });
+    s.feed(spec.frames.ledgerAttach);
+    expect(s.sent).toEqual([encodeLedgerSnap(WIRE)]);
+    expect(s.sent[0]).toBe(spec.frames.ledgerSnap);
+    fl.taps[0].snap(WIRE2);
+    expect(s.sent).toEqual([encodeLedgerSnap(WIRE), encodeLedgerSnap(WIRE2)]);
+  });
+
+  it('ledger.detach stops the frames and releases the tap; a second detach is a no-op', () => {
+    const fl = fakeLedger();
+    const s = open({ ledger: fl.port });
+    s.feed(spec.frames.ledgerAttach);
+    s.feed(spec.frames.ledgerDetach);
+    s.feed(spec.frames.ledgerDetach);
+    fl.taps[0].snap(WIRE2);
+    expect(fl.live).toBe(0);
+    expect(s.sent).toHaveLength(1);
+    expect(s.closes).toEqual([]);
+  });
+
+  it('a repeated ledger.attach replaces the first attachment', () => {
+    const fl = fakeLedger();
+    const s = open({ ledger: fl.port });
+    s.feed(spec.frames.ledgerAttach);
+    s.feed(spec.frames.ledgerAttach);
+    expect(fl.live).toBe(1);
+    fl.taps[0].snap(WIRE2);
+    expect(types(s)).toEqual(['ledger.snap', 'ledger.snap']);
+  });
+
+  it('ledger.attach before hello is a policy violation and logs a fixed string', () => {
+    const logs: string[] = [];
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1, log: (m) => { logs.push(m); }, ledger: fakeLedger().port }).attach(s, identity);
+    s.feed(spec.frames.ledgerAttach);
+    expect(types(s)).toEqual(['bye']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: ledger before hello');
+  });
+
+  it('ledger.attach without a ledger port is a policy violation', () => {
+    const logs: string[] = [];
+    const s = open({}, logs);
+    s.feed(spec.frames.ledgerAttach);
+    expect(types(s)).toEqual(['bye']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: no ledger port');
+  });
+
+  it('socket close detaches the tap and later publishes write nothing', () => {
+    const fl = fakeLedger();
+    const s = open({ ledger: fl.port });
+    s.feed(spec.frames.ledgerAttach);
+    s.drop();
+    expect(fl.live).toBe(0);
+    fl.taps[0].snap(WIRE2);
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('a socket that closes while attach() is replaying the snapshot leaves no live handle', () => {
+    const fl = fakeLedger();
+    const s = open({ ledger: fl.port });
+    const send = s.send;
+    s.send = (t: string) => { send(t); if (JSON.parse(t).t === 'ledger.snap') s.drop(); };
+    s.feed(spec.frames.ledgerAttach);
+    expect(fl.live).toBe(0);
+  });
+
+  it('a ledger-only socket gets no thread frames, and a thread-only socket never gets ledger.snap', () => {
+    const fl = fakeLedger();
+    const tapsT: ThreadTap[] = [];
+    const threads = { attach: (_s: 'claude', tap: ThreadTap) => { tapsT.push(tap); return { detach: () => {} }; } } as ThreadReadPort;
+    const led = open({ ledger: fl.port, threads });
+    const thr = open({ ledger: fl.port, threads });
+    led.feed(spec.frames.ledgerAttach);
+    thr.feed(spec.frames.threadAttach);
+    tapsT[0].events({ q: 1, events: [] });
+    fl.taps[0].snap(WIRE2);
+    expect(types(led)).toEqual(['ledger.snap', 'ledger.snap']);
+    expect(types(thr)).toEqual(['thread.ev']);
   });
 });

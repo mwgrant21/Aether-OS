@@ -53,8 +53,8 @@ export const CONTROL_ACK_COALESCE_MS = 30;
 export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
-  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed'],
+  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap'],
 } as const;
 export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
 export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
@@ -177,6 +177,18 @@ export interface ThreadTap {                                 // callbacks are de
 }
 /** attach() delivers `snap` synchronously, before it returns. */
 export interface ThreadReadPort { attach(s: ThreadSlotId, tap: ThreadTap): { detach(): void } }
+export const LEDGER_TIERS = ['opus', 'sonnet', 'haiku', 'fable'] as const; // must equal Object.keys(PRICING_PER_MILLION_TOKENS); protocol.test.ts pins it
+export type LedgerTier = (typeof LEDGER_TIERS)[number];
+export interface LedgerWire {
+  computedAtMs: number;
+  total: { usd: number; input: number; output: number; cacheCreation: number; cacheRead: number };
+  tiers: readonly LedgerTier[];
+  rollups: { today: number | null; week: number | null; month: number | null };
+  cache: { readTokens: number; wouldHaveUsd: number; actualUsd: number; savedUsd: number; hitRate: number };
+}
+export interface LedgerTap { snap(l: LedgerWire | null): void } // delivered in order, never re-entrantly
+/** attach() delivers the current state to tap.snap synchronously before it returns, then every publish. */
+export interface LedgerReadPort { attach(tap: LedgerTap): { detach(): void } }
 export const CONTROL_PROMPT_CLOSE_REASONS = ['answered-desktop', 'timeout'] as const;
 export type PromptCloseReason = (typeof CONTROL_PROMPT_CLOSE_REASONS)[number];
 export interface PromptInfo { id: string; tool: string; risk: 'LOW' | 'MED' | 'HIGH'; summary: string; ttlMs: number }
