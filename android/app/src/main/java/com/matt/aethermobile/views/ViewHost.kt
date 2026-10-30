@@ -81,7 +81,7 @@ class ViewHost<T>(
         ui = if (d == null) {
             ViewUi.NoSnapshot
         } else {
-            val decoded = try { decode(d) } catch (e: RuntimeException) { null }
+            val decoded = try { decode(d) } catch (e: Exception) { null }
             if (decoded == null) ViewUi.Unreadable else ViewUi.Ready(decoded, now())
         }
         safe { onChanged() }

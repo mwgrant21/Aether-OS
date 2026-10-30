@@ -13,9 +13,10 @@ class ViewHostTest {
     private var throwOnChanged = false
     private var supported = true
     private var decodeThrows = false
+    private var decodeThrowsChecked = false
     private val host = ViewHost<Int>(
         viewId = "projects",
-        decode = { if (decodeThrows) throw IllegalStateException("boom") else if (it.has("n")) it.getInt("n") else null },
+        decode = { if (decodeThrows) throw org.json.JSONException("boom") else if (decodeThrowsChecked) throw java.io.IOException("boom") else if (it.has("n")) it.getInt("n") else null },
         supported = { supported },
         sendAttach = { calls.add("attach"); attachResult },
         sendDetach = { calls.add("detach"); true },
@@ -120,6 +121,11 @@ class ViewHostTest {
         host.onFrame(frame(1))
         assertEquals(ViewUi.Unreadable, host.snapshot())
         decodeThrows = false
+        // org.json on a device throws a checked JSONException; the JVM test jar's is unchecked, so also pin a truly checked one.
+        decodeThrowsChecked = true
+        host.onFrame(frame(3))
+        assertEquals(ViewUi.Unreadable, host.snapshot())
+        decodeThrowsChecked = false
         host.onFrame(frame(2))
         assertEquals(ViewUi.Ready(2, 5_000L), host.snapshot())
         assertEquals(emptyList<String>(), calls)
