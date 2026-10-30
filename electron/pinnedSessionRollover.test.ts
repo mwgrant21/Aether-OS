@@ -21,14 +21,14 @@ afterEach(() => {
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
 });
 
-async function setup() {
+async function setup(rolloverScanIntervalMs = 0) {
   const home = mkdtempSync(join(tmpdir(), 'aether-rollover-'));
   homes.push(home);
   const dir = join(home, '.claude', 'projects', cwdToProjectDirName(home));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${LAUNCH}.jsonl`), u('old text'));
   await sleep(20);
-  const tracker = createLiveAgentTracker(home, { rolloverScanIntervalMs: 0 });
+  const tracker = createLiveAgentTracker(home, { rolloverScanIntervalMs });
   tracker.notifyPtySpawned(1000, LAUNCH);
   await tracker.tick();
   let cb: (() => void) | null = null;
@@ -83,5 +83,30 @@ describe('phone Thread across /clear', () => {
     expect(tracker.getPinnedSessionId()).toBe(LAUNCH);
     expect(snaps).toHaveLength(2);
     expect(texts(snaps[1].events)).toEqual(['user:old text']);
+  });
+
+  it('a typed-/clear hint follows the successor immediately, before its session_id exists (throttle bypass)', async () => {
+    const { dir, tracker, snaps, pump } = await setup(60_000);
+    const before = snaps[snaps.length - 1].q;
+    const stamped = JSON.stringify({ type: 'system', timestamp: new Date(T0 + 500).toISOString(), commandRun: { command: 'clear' } }) + '\n';
+    writeFileSync(join(dir, 'succ-id.jsonl'), stamped + u('new text', T0 + 1000));
+    await tracker.tick();
+    expect(tracker.getPinnedSessionId()).toBe(LAUNCH); // throttled: the bypass is what matters
+    tracker.noteClearTyped(T0 + 500);
+    await tracker.tick();
+    expect(tracker.getPinnedSessionId()).toBe('succ-id');
+    await pump(() => snaps.length >= 3);
+    expect(snaps[2].q).toBe(before + 1);
+    expect(texts(snaps[2].events)).toEqual(['user:new text']);
+  });
+
+  it('a hint does not move the pin to a concurrent file whose /clear record is far from the hint', async () => {
+    const { dir, tracker } = await setup(60_000);
+    const far = JSON.stringify({ type: 'system', timestamp: new Date(T0 - 600_000).toISOString(), commandRun: { command: 'clear' } }) + '\n';
+    writeFileSync(join(dir, 'other.jsonl'), far + u('other text', T0 + 1000));
+    writeFileSync(join(dir, 'plain.jsonl'), u('plain text', T0 + 1000));
+    tracker.noteClearTyped(T0 + 500);
+    await tracker.tick();
+    expect(tracker.getPinnedSessionId()).toBe(LAUNCH);
   });
 });
