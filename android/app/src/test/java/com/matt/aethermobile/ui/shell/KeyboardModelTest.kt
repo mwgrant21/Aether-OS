@@ -30,6 +30,12 @@ class KeyboardModelTest {
         assertFalse(softImeAllowed(true, ImeMode.USER_HIDDEN))
     }
 
+    @Test fun staleTickDoesNotShowIme() {
+        assertFalse(imeShowRequested(1, 1))
+        assertFalse(imeShowRequested(0, 0))
+        assertTrue(imeShowRequested(2, 1))
+    }
+
     @Test fun nextImeModeFlipsOnVisibility() {
         assertEquals(ImeMode.USER_HIDDEN, nextImeMode(true))
         assertEquals(ImeMode.USER_SHOWN, nextImeMode(false))

@@ -111,14 +111,18 @@ fun KeyboardToggle(ui: KeyboardUi, modifier: Modifier = Modifier) {
     }
 }
 
+/** True only for a toggle press that happened after this composer appeared; a stale tick from before it must not open the IME. */
+fun imeShowRequested(tick: Int, seenAtCompose: Int): Boolean = tick != seenAtCompose
+
 /** Takes focus and shows the IME when the header toggle asks for it. */
 @Composable
 fun ImeShowEffect(focus: FocusRequester) {
     val req = LocalImeRequest.current
     val kb = LocalSoftwareKeyboardController.current
+    val seen = remember { req.showTick }
     LaunchedEffect(req.showTick) {
-        if (req.showTick > 0) {
-            focus.requestFocus()
+        if (imeShowRequested(req.showTick, seen)) {
+            runCatching { focus.requestFocus() }
             kb?.show()
         }
     }
