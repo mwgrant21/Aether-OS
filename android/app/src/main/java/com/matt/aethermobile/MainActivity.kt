@@ -215,7 +215,9 @@ class MainActivity : AppCompatActivity() {
             onPage = { termHost?.onPage(it) },
             onRenderGone = { if (!isDestroyed) onRenderGone() },
             onResync = { termHost?.resync() },
+            onDiag = { InputDiag.recorder.record(it) },
         )
+        InputDiag.onChanged = { screen.setDiag(it) }
         webHolder = FrameLayout(this)
         webHolder.addView(
             screen.webView,

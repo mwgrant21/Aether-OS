@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.WebView
+import com.matt.aethermobile.diag.DiagEvent
 import com.matt.aethermobile.ui.theme.AeArgb
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
@@ -24,6 +25,7 @@ class TerminalScreen(
     private val onPage: (PageMessage) -> Unit,
     private val onRenderGone: () -> Unit,
     private val onResync: () -> Unit = {},
+    private val onDiag: (DiagEvent.Page) -> Unit = {},
 ) {
     private val appContext = context
     var webView: WebView = AetherWebView(context)
@@ -32,6 +34,7 @@ class TerminalScreen(
     private val limiter = RateLimiter(500, SystemClock::elapsedRealtime)
     private val outbox = PageOutbox(MAX_QUEUED) { onResync() }
     private var supported = false
+    private var diagOn = false
 
     init {
         setUp(webView)
@@ -54,9 +57,11 @@ class TerminalScreen(
             ) { _, message: WebMessageCompat, sourceOrigin, isMainFrame, replyProxy ->
                 if (!isMainFrame || sourceOrigin.toString() != TerminalWebView.ORIGIN) return@addWebMessageListener
                 if (!limiter.allow()) return@addWebMessageListener
+                BridgeValidator.parseDiag(message.data)?.let { onDiag(it); return@addWebMessageListener }
                 val m = BridgeValidator.parse(message.data) ?: return@addWebMessageListener
                 if (m === PageMessage.Ready) {
                     outbox.ready { replyProxy.postMessage(it) }
+                    if (diagOn) post(BridgeOut.diag(true)) // a reloaded page forgets the flag
                 }
                 onPage(m)
             }
@@ -76,6 +81,9 @@ class TerminalScreen(
         val gen = outbox.generation
         main.post { outbox.submit(gen, msg) }
     }
+
+    /** Input diagnostic switch; re-sent on every page Ready while on. */
+    fun setDiag(on: Boolean) { diagOn = on; post(BridgeOut.diag(on)) }
 
     /** Drop the page and everything it rendered (lock, disconnect) and reload it clean. */
     fun reset() {

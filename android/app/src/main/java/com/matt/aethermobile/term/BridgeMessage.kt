@@ -1,5 +1,9 @@
 package com.matt.aethermobile.term
 
+import com.matt.aethermobile.diag.DiagEvent
+import com.matt.aethermobile.diag.PageAction
+import com.matt.aethermobile.diag.PageKind
+import com.matt.aethermobile.diag.PagePointer
 import org.json.JSONObject
 
 /** The fixed set of page -> Kotlin messages (design spec 4.4). Anything else is dropped. */
@@ -59,6 +63,38 @@ object BridgeValidator {
         }
     }
 
+    const val MAX_DIAG_CHARS = 512
+
+    /**
+     * Input-diagnostic page event, parsed apart from [parse] so [PageMessage] stays closed. Every field is an
+     * enum or a range-checked whole number; unknown keys are ignored and never copied, so no text can pass.
+     */
+    fun parseDiag(raw: String?): DiagEvent.Page? {
+        if (raw == null || raw.length > MAX_DIAG_CHARS) return null
+        val o = try { JSONObject(raw) } catch (_: Exception) { return null }
+        if (o.opt("t") != "diag") return null
+        val kind = when (o.opt("k")) { "p" -> PageKind.POINTER; "t" -> PageKind.TOUCH; "w" -> PageKind.WHEEL; else -> return null }
+        val action = when (o.opt("a")) {
+            "down" -> PageAction.DOWN; "move" -> PageAction.MOVE; "up" -> PageAction.UP
+            "cancel" -> PageAction.CANCEL; "wheel" -> PageAction.WHEEL; else -> return null
+        }
+        val pointer = when (o.opt("pt")) {
+            "mouse" -> PagePointer.MOUSE; "touch" -> PagePointer.TOUCH; "pen" -> PagePointer.PEN; "" -> PagePointer.NONE
+            else -> return null
+        }
+        return DiagEvent.Page(
+            kind, action, pointer,
+            button = int(o, "b", -1, 31) ?: return null,
+            buttons = int(o, "bs", 0, 63) ?: return null,
+            dx = int(o, "dx", -100000, 100000) ?: return null,
+            dy = int(o, "dy", -100000, 100000) ?: return null,
+            mode = int(o, "dm", 0, 2) ?: return null,
+            x = int(o, "x", -10000, 20000) ?: return null,
+            y = int(o, "y", -10000, 20000) ?: return null,
+            touches = int(o, "n", 0, 20) ?: return null,
+        )
+    }
+
     private fun session(o: JSONObject): String? {
         val s = o.opt("s") as? String ?: return null
         return if (s in SESSIONS) s else null
@@ -111,6 +147,9 @@ object BridgeOut {
 
     /** Page keyboard on/off: on only while a running slot is attached over a live connection. */
     fun stdin(on: Boolean): String = JSONObject().put("t", "stdin").put("on", on).toString()
+
+    /** Input diagnostic on/off for the page; the page defaults to off. */
+    fun diag(on: Boolean): String = JSONObject().put("t", "diag").put("on", on).toString()
 
     /** px 0 = fit width, else 8..24 (the host validates). */
     fun zoom(px: Int): String = JSONObject().put("t", "zoom").put("px", px).toString()

@@ -11,6 +11,7 @@ import { followCursor } from './cursorFollow.js';
 import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
 import { THEME } from './theme.js';
 import { chainDrag, toNotches, wheelBytes, shouldIntercept } from './altScroll.js';
+import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
@@ -208,6 +209,9 @@ bridge.onmessage = (ev) => {
         m.on,
         stdinOn,
       );
+      return;
+    case 'diag':
+      diagOn = m.on === true;
       return;
     case 'zoom':
       if (m.px === 0 || (Number.isFinite(m.px) && m.px >= 8 && m.px <= MAX_FONT)) {
@@ -420,6 +424,23 @@ root.addEventListener('wheel', (ev) => {
   slot.el.scrollTop += dy;
   slot.livex.scrollLeft += dx;
 }, { capture: true, passive: false });
+
+// Input diagnostic (T4b): metadata of the page's own pointer/touch/wheel events, only while Kotlin
+// has switched it on. Capture + passive, never preventDefault/stopPropagation: observation only.
+let diagOn = false;
+function diagListen(type, kind, action) {
+  let last = 0; // per listener, so touchmove is not starved by the pointermove before it
+  root.addEventListener(type, (ev) => {
+    if (!diagOn) return;
+    const now = Date.now();
+    if (!throttle(last, now, action)) return;
+    if (action === 'move') last = now;
+    send(diagMessage(kind, action, ev));
+  }, { capture: true, passive: true });
+}
+for (const [type, action] of [['pointerdown', 'down'], ['pointermove', 'move'], ['pointerup', 'up'], ['pointercancel', 'cancel']]) diagListen(type, 'p', action);
+for (const [type, action] of [['touchstart', 'down'], ['touchmove', 'move'], ['touchend', 'up'], ['touchcancel', 'cancel']]) diagListen(type, 't', action);
+diagListen('wheel', 'w', 'wheel');
 
 // V0 fit behaviour, only for slots that never received a size or snap.
 new ResizeObserver(() => {

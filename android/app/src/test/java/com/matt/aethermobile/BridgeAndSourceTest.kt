@@ -1,5 +1,8 @@
 package com.matt.aethermobile
 
+import com.matt.aethermobile.diag.PageAction
+import com.matt.aethermobile.diag.PageKind
+import com.matt.aethermobile.diag.PagePointer
 import com.matt.aethermobile.term.BridgeValidator
 import com.matt.aethermobile.term.FakeTerminalSource
 import com.matt.aethermobile.term.InputSender
@@ -117,5 +120,60 @@ class BridgeAndSourceTest {
             "https://appassets.androidplatform.net/terminal/navtest.html",
             TerminalWebView.pageUrl("navtest.html", true),
         )
+    }
+
+    private fun diagJson(k: String = "p", a: String = "down", pt: String = "mouse", extra: String = "") =
+        """{"t":"diag","k":"$k","a":"$a","pt":"$pt","b":0,"bs":1,"dx":-3,"dy":4,"dm":1,"x":10,"y":20,"n":2$extra}"""
+
+    @Test fun diagParsesEachKindAndAction() {
+        val p = BridgeValidator.parseDiag(diagJson())!!
+        assertEquals(PageKind.POINTER, p.kind)
+        assertEquals(PageAction.DOWN, p.action)
+        assertEquals(PagePointer.MOUSE, p.pointer)
+        assertEquals(listOf(0, 1, -3, 4, 1, 10, 20, 2), listOf(p.button, p.buttons, p.dx, p.dy, p.mode, p.x, p.y, p.touches))
+        assertEquals(PageKind.TOUCH, BridgeValidator.parseDiag(diagJson(k = "t", pt = ""))!!.kind)
+        assertEquals(PagePointer.NONE, BridgeValidator.parseDiag(diagJson(k = "t", pt = ""))!!.pointer)
+        assertEquals(PageKind.WHEEL, BridgeValidator.parseDiag(diagJson(k = "w", a = "wheel"))!!.kind)
+        for ((a, e) in listOf("move" to PageAction.MOVE, "up" to PageAction.UP, "cancel" to PageAction.CANCEL)) {
+            assertEquals(e, BridgeValidator.parseDiag(diagJson(a = a))!!.action)
+        }
+        assertEquals(PagePointer.PEN, BridgeValidator.parseDiag(diagJson(pt = "pen"))!!.pointer)
+        assertEquals(PagePointer.TOUCH, BridgeValidator.parseDiag(diagJson(pt = "touch"))!!.pointer)
+    }
+
+    @Test fun diagRejectsUnknownEnumsWrongTypeAndMalformed() {
+        assertNull(BridgeValidator.parseDiag(diagJson(k = "x")))
+        assertNull(BridgeValidator.parseDiag(diagJson(a = "hover")))
+        assertNull(BridgeValidator.parseDiag(diagJson(pt = "laser")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"diag\"", "\"input\"")))
+        assertNull(BridgeValidator.parseDiag("not json"))
+        assertNull(BridgeValidator.parseDiag(null))
+    }
+
+    @Test fun diagRejectsDoublesOutOfRangeAndOverLength() {
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"x\":10", "\"x\":10.5")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"x\":10", "\"x\":\"10\"")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"b\":0", "\"b\":32")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"bs\":1", "\"bs\":64")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"dm\":1", "\"dm\":3")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"n\":2", "\"n\":21")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"dy\":4", "\"dy\":100001")))
+        assertNull(BridgeValidator.parseDiag(diagJson().replace("\"y\":20", "\"y\":20001")))
+        assertNull(BridgeValidator.parseDiag(diagJson(extra = ""","pad":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"""")))
+    }
+
+    @Test fun diagExtraTextKeyIsIgnoredAndNeverRecorded() {
+        val p = BridgeValidator.parseDiag(diagJson(extra = ""","text":"SECRETWORD","key":"SECRETWORD""""))!!
+        assertEquals(BridgeValidator.parseDiag(diagJson()), p)
+        val rec = com.matt.aethermobile.diag.DiagRecorder({ 0L })
+        rec.enabled = true
+        rec.record(p)
+        assertFalse(rec.dump(listOf("h")).contains("SECRETWORD"))
+    }
+
+    @Test fun diagIsInvisibleToParseAndOutboundIsStrictBoolean() {
+        assertNull(BridgeValidator.parse(diagJson()))
+        assertEquals("{\"t\":\"diag\",\"on\":true}", com.matt.aethermobile.term.BridgeOut.diag(true))
+        assertEquals("{\"t\":\"diag\",\"on\":false}", com.matt.aethermobile.term.BridgeOut.diag(false))
     }
 }
