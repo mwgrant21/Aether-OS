@@ -121,7 +121,9 @@ private fun Label(text: String, color: androidx.compose.ui.graphics.Color = Aeth
 @Composable
 private fun spoken(v: Double): String {
     val cents = (v * 100).roundToLong().coerceAtLeast(0L)
-    return stringResource(R.string.ledger_spoken_usd, (cents / 100).toInt(), (cents % 100).toInt())
+    val d = (cents / 100).toInt()
+    val c = (cents % 100).toInt()
+    return pluralStringResource(R.plurals.ledger_spoken_dollars, d, d) + " " + pluralStringResource(R.plurals.ledger_spoken_cents, c, c)
 }
 
 @Composable

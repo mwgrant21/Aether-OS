@@ -31,7 +31,14 @@
     <string name="ledger_rollup_desc">Rollup, API rate, not paid. %1$s</string>
     <string name="ledger_rollup_item_desc">%1$s, %2$s</string>
 
-    <string name="ledger_spoken_usd">%1$d dollars %2$d cents</string>
+    <plurals name="ledger_spoken_dollars">
+        <item quantity="one">%1$d dollar</item>
+        <item quantity="other">%1$d dollars</item>
+    </plurals>
+    <plurals name="ledger_spoken_cents">
+        <item quantity="one">%1$d cent</item>
+        <item quantity="other">%1$d cents</item>
+    </plurals>
 
     <string name="ledger_updated">Updated %1$s</string>
     <string name="ledger_age_just_now">just now</string>
