@@ -200,6 +200,13 @@ export interface LedgerWire {
 export interface LedgerTap { snap(l: LedgerWire | null): void } // delivered in order, never re-entrantly
 /** attach() delivers the current state to tap.snap synchronously before it returns, then every publish. */
 export interface LedgerReadPort { attach(tap: LedgerTap): { detach(): void } }
+/** Input of the `projects` view encoder: per-project Ledger numbers, no paths, no optimize data. `all` is the global Ledger. */
+export interface ProjectsWire {
+  computedAtMs: number;
+  all: LedgerWire | null;
+  unscoped: LedgerWire | null;
+  roots: readonly { key: string; name: string; ledger: LedgerWire; children: readonly { key: string; worktree: string | null; ledger: LedgerWire }[] }[];
+}
 export const CONTROL_PROMPT_CLOSE_REASONS = ['answered-desktop', 'timeout'] as const;
 export type PromptCloseReason = (typeof CONTROL_PROMPT_CLOSE_REASONS)[number];
 export interface PromptInfo { id: string; tool: string; risk: 'LOW' | 'MED' | 'HIGH'; summary: string; ttlMs: number }
