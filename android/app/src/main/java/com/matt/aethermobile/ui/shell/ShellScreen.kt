@@ -20,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,6 +78,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.R
+import com.matt.aethermobile.auth.ShareMessage
+import com.matt.aethermobile.auth.ShareUi
 import com.matt.aethermobile.term.TerminalHost
 import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.thread.ViewMode
@@ -108,6 +111,7 @@ data class ShellUiState(
     /** Thread or Raw; the segment only shows for the Claude slot. */
     val view: ViewMode = ViewMode.THREAD,
     val thread: ThreadUi = ThreadUi.EMPTY,
+    val share: ShareUi = ShareUi(),
 )
 
 class ShellActions(
@@ -121,6 +125,8 @@ class ShellActions(
     val onCompose: (String, Boolean) -> TerminalHost.ComposeResult,
     val onRestart: () -> Boolean,
     val onSetView: (ViewMode) -> Unit,
+    /** The argument is the desired new state (true = turn on). Default is temporary until MainActivity wires it. */
+    val onToggleShare: (Boolean) -> Unit,
 )
 
 private val dims = AetherDimens()
@@ -212,9 +218,90 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     flow = state.flow,
                     onSelect = { s -> menu = menu.onSelectSlot(); actions.onSelectSlot(s) },
                     onLock = { menu = menu.onLock(); actions.onLockNow() },
+                    share = state.share,
+                    onToggleShare = actions.onToggleShare,
                 )
             }
         }
+        // Overlay in the root Box, not a Column sibling, so it never changes the terminal area's measured size.
+        if (state.share.on) SharePill(Modifier.align(Alignment.TopCenter).padding(top = dims.headerH + 4.dp))
+    }
+}
+
+@Composable
+private fun SharePill(modifier: Modifier = Modifier) {
+    BasicText(
+        stringResource(R.string.share_pill),
+        style = TextStyle(
+            fontFamily = type.label.fontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 10.sp,
+            letterSpacing = 1.4.sp,
+            color = AetherColors.warn,
+        ),
+        maxLines = 1,
+        modifier = modifier
+            .background(AetherColors.bgDeep.copy(alpha = 0.85f), RoundedCornerShape(10.dp))
+            .border(1.dp, AetherColors.warn, RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun ShareRow(share: ShareUi, onToggleShare: (Boolean) -> Unit) {
+    val desc = stringResource(if (share.on) R.string.share_on_desc else R.string.share_off_desc)
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = dims.touchMin)
+                .toggleable(value = share.on, role = Role.Switch, onValueChange = onToggleShare)
+                .semantics { contentDescription = desc }
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                BasicText(stringResource(R.string.share_row_label), style = type.body.copy(color = AetherColors.textBright))
+                BasicText(stringResource(R.string.share_row_hint), style = type.meta.copy(color = AetherColors.textMuted))
+            }
+            ShareSwitch(share.on)
+        }
+        val msg = share.message
+        if (msg != null) {
+            BasicText(
+                stringResource(
+                    when (msg) {
+                        ShareMessage.NoHardware -> R.string.share_msg_no_hardware
+                        ShareMessage.NoneEnrolled -> R.string.share_msg_none_enrolled
+                        ShareMessage.SensorUnavailable -> R.string.share_msg_sensor_unavailable
+                        ShareMessage.Lockout -> R.string.share_msg_lockout
+                        ShareMessage.Failed -> R.string.share_msg_failed
+                    },
+                ),
+                style = type.meta.copy(color = AetherColors.warn),
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+        }
+    }
+}
+
+/** Track plus thumb from foundation primitives; the toggleable parent carries the semantics. */
+@Composable
+private fun ShareSwitch(on: Boolean) {
+    Box(
+        Modifier
+            .size(width = 40.dp, height = 22.dp)
+            .background(if (on) AetherColors.cyanCore else AetherColors.bgDeep, RoundedCornerShape(11.dp))
+            .border(1.dp, if (on) AetherColors.cyanCore else AetherColors.borderMid, RoundedCornerShape(11.dp))
+            .padding(2.dp),
+        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                .size(16.dp)
+                .background(if (on) AetherColors.cyanInk else AetherColors.textMuted, RoundedCornerShape(8.dp)),
+        )
     }
 }
 
@@ -398,6 +485,8 @@ private fun Dropdown(
     flow: FlowState.Connected?,
     onSelect: (String) -> Unit,
     onLock: () -> Unit,
+    share: ShareUi,
+    onToggleShare: (Boolean) -> Unit,
 ) {
     val sweep by rememberInfiniteTransition(label = "menu-sweep").animateFloat(
         initialValue = 0f,
@@ -460,6 +549,7 @@ private fun Dropdown(
                 BasicText(stateText, style = TextStyle(fontFamily = type.meta.fontFamily, fontSize = 10.sp, color = AetherColors.textMuted), maxLines = 1)
             }
         }
+        ShareRow(share, onToggleShare)
         Footer(flow, onLock)
     }
 }

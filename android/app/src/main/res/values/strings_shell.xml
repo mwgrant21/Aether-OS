@@ -39,6 +39,19 @@
     <string name="action_restart">Restart Terminal 2</string>
     <string name="action_restart_desc">Restart Terminal 2 (sends Enter)</string>
 
+    <string name="share_row_label">Screen share mode</string>
+    <string name="share_row_hint">Allows screenshots and Phone Link while on</string>
+    <string name="share_on_desc">Screen share mode on</string>
+    <string name="share_off_desc">Screen share mode off</string>
+    <string name="share_pill">SCREEN SHARING</string>
+    <string name="share_prompt_title">Turn on screen sharing</string>
+    <string name="share_prompt_subtitle">Fingerprint required</string>
+    <string name="share_msg_no_hardware">This phone has no fingerprint or face sensor that can unlock Aether.</string>
+    <string name="share_msg_none_enrolled">Add a fingerprint or face in Android settings first, then try again.</string>
+    <string name="share_msg_sensor_unavailable">The fingerprint sensor is unavailable right now. Try again.</string>
+    <string name="share_msg_lockout">Too many failed attempts. Try again later.</string>
+    <string name="share_msg_failed">Could not start the fingerprint prompt. Try again.</string>
+
     <plurals name="not_sent_chars">
         <item quantity="one">%d char not sent</item>
         <item quantity="other">%d chars not sent</item>

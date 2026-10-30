@@ -38,11 +38,15 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.matt.aethermobile.auth.BiometricCallback
+import com.matt.aethermobile.auth.BiometricGate
 import com.matt.aethermobile.auth.BiometricFailure
 import com.matt.aethermobile.auth.PairResult
 import com.matt.aethermobile.auth.Pairing
 import com.matt.aethermobile.auth.PairingClient
 import com.matt.aethermobile.auth.QrResult
+import com.matt.aethermobile.auth.ScreenShare
+import com.matt.aethermobile.auth.ShareStart
+import com.matt.aethermobile.auth.ShareUi
 import com.matt.aethermobile.auth.TokenVault
 import com.matt.aethermobile.auth.UnlockStart
 import com.matt.aethermobile.net.ControlClient
@@ -133,6 +137,8 @@ class MainActivity : AppCompatActivity() {
     // ONE prompt instance for the activity's life, reused across relock re-prompts.
     private var prompt: BiometricPrompt? = null
     private var pending: BiometricCallback? = null
+    // A screen-share enable prompt (no CryptoObject) is up on the shared [prompt]; routed in its callbacks.
+    private var sharePending = false
 
     // Created once here and handed to ShellScreen, which only re-parents it; never recreated by a factory.
     private lateinit var webHolder: FrameLayout
@@ -162,13 +168,16 @@ class MainActivity : AppCompatActivity() {
         val restartAvailable: Boolean = false,
         val view: ViewMode = ViewMode.THREAD,
         val thread: ThreadUi = ThreadUi.EMPTY,
+        val share: ShareUi = ScreenShare.state.ui(),
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // No screenshots, blank recents thumbnail (design spec 1.4). Must precede content.
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        // A fresh launch always starts secure; recreation with the process alive keeps share mode.
+        ScreenShare.state.onActivityCreate(freshLaunch = savedInstanceState == null)
+        // No screenshots, blank recents thumbnail (design spec 1.4) unless share mode is on. Must precede content.
+        applySecureFlag()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         screen = TerminalScreen(
@@ -197,6 +206,55 @@ class MainActivity : AppCompatActivity() {
         render()
     }
 
+    /** The only place FLAG_SECURE is touched: held unless screen share mode is on. */
+    private fun applySecureFlag() {
+        if (ScreenShare.state.secureWanted) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    private fun toggleShare(want: Boolean) {
+        if (!want) {
+            ScreenShare.state.disable()
+            applySecureFlag()
+            renderTabs()
+            return
+        }
+        if (ScreenShare.state.on || pending != null || sharePending) return
+        when (ScreenShare.state.requestEnable(BiometricGate.canAuthenticate(this))) {
+            ShareStart.ShowPrompt -> {
+                if (!authenticateShare()) ScreenShare.state.onPromptNotShown()
+                renderTabs()
+            }
+            ShareStart.AlreadyOn -> Unit
+            is ShareStart.Refused -> renderTabs()
+        }
+    }
+
+    /** True when the prompt is up. Same single [prompt] as unlock, no CryptoObject, routed by [sharePending]. */
+    private fun authenticateShare(): Boolean {
+        val p = prompt ?: return false
+        if (isFinishing || isDestroyed || pending != null || sharePending) return false
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return false
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(getString(R.string.share_prompt_title))
+            .setSubtitle(getString(R.string.share_prompt_subtitle))
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText(getString(R.string.prompt_cancel))
+            .setConfirmationRequired(false)
+            .build()
+        sharePending = true
+        return try {
+            p.authenticate(info)
+            true
+        } catch (_: IllegalStateException) {
+            sharePending = false
+            false
+        } catch (_: IllegalArgumentException) {
+            sharePending = false
+            false
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         applyEffects(controller.onStart(configured = host.isNotEmpty()) { vaultHasToken() })
@@ -215,6 +273,7 @@ class MainActivity : AppCompatActivity() {
         sessionToken = null
         saveToken = null
         pending = null
+        sharePending = false
         try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
         prompt = null
         termHost?.onDisconnected()
@@ -265,8 +324,9 @@ class MainActivity : AppCompatActivity() {
             Effect.ClearVault -> try { vault.clear() } catch (_: Exception) { }
             Effect.CancelPrompt -> {
                 // A prompt that cannot survive the stop must not leave a stuck callback.
-                if (pending != null) {
+                if (pending != null || sharePending) {
                     pending = null
+                    sharePending = false
                     try { prompt?.cancelAuthentication() } catch (_: RuntimeException) { }
                 }
             }
@@ -381,7 +441,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginUnlock() {
-        if (pending != null) return // a prompt is already up; do not stack another
+        if (pending != null || sharePending) return // a prompt is already up; do not stack another
         when (val start = try { vault.beginUnlock() } catch (_: Exception) { UnlockStart.Unavailable }) {
             UnlockStart.Empty -> dispatch(FlowEvent.UnlockStartResult(UnlockKind.Empty))
             UnlockStart.Invalidated -> dispatch(FlowEvent.UnlockStartResult(UnlockKind.Invalidated))
@@ -426,6 +486,15 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (sharePending) {
+                        sharePending = false
+                        if (flow is FlowState.Connected) {
+                            ScreenShare.state.onAuthenticated()
+                            applySecureFlag()
+                        }
+                        renderTabs()
+                        return
+                    }
                     val cb = pending
                     pending = null
                     val cipher = result.cryptoObject?.cipher
@@ -434,6 +503,12 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (sharePending) {
+                        sharePending = false
+                        ScreenShare.state.onAuthFailed(BiometricFailure.fromCode(errorCode))
+                        renderTabs()
+                        return
+                    }
                     val cb = pending
                     pending = null
                     cb?.onFailure(BiometricFailure.fromCode(errorCode))
@@ -449,7 +524,7 @@ class MainActivity : AppCompatActivity() {
     /** True when the prompt is up; false (nothing shown, [callback] unused) on any refusal. */
     private fun authenticate(cipher: Cipher, titleRes: Int, subtitleRes: Int, callback: BiometricCallback): Boolean {
         val p = prompt ?: return false
-        if (isFinishing || isDestroyed || pending != null) return false
+        if (isFinishing || isDestroyed || pending != null || sharePending) return false
         // BiometricPrompt drops authenticate() silently (no callback) once the state is saved.
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return false
         val available = BiometricManager.from(this)
@@ -687,6 +762,7 @@ class MainActivity : AppCompatActivity() {
             restartAvailable = termHost?.restartAvailable() == true,
             view = view,
             thread = t,
+            share = ScreenShare.state.ui(),
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
@@ -709,7 +785,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -721,6 +797,7 @@ class MainActivity : AppCompatActivity() {
                         onCompose = ::sendCompose,
                         onRestart = ::restartTerminal2,
                         onSetView = ::setView,
+                        onToggleShare = ::toggleShare,
                     ),
                     terminalHolder = webHolder,
                 )
