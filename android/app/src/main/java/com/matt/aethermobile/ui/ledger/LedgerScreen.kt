@@ -66,7 +66,7 @@ private val BarShape = RoundedCornerShape(2.dp)
 @Composable
 fun LedgerScreen(ui: LedgerUi, nowMs: Long, modifier: Modifier = Modifier) {
     when (ui) {
-        LedgerUi.Off -> Unit
+        LedgerUi.Off -> Message(stringResource(R.string.ledger_loading), modifier)
         LedgerUi.Loading -> Message(stringResource(R.string.ledger_loading), modifier)
         LedgerUi.NoSnapshot -> Message(stringResource(R.string.ledger_no_snapshot), modifier)
         is LedgerUi.Ready -> ReadyBody(ui.snapshot, nowMs, modifier)
@@ -151,7 +151,7 @@ private fun PartRow(p: Part) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Label(stringResource(name))
-            BasicText(usd(p.usd), style = type.data.copy(color = AetherColors.text), maxLines = 1)
+            BasicText(usdPrecise(p.usd), style = type.data.copy(color = AetherColors.text), maxLines = 1)
         }
         Bar(hitFraction(p.fraction))
     }
@@ -228,7 +228,7 @@ private fun Tile(b: Bucket, none: String, modifier: Modifier) {
         if (v == null) {
             BasicText(none, style = type.meta.copy(color = AetherColors.textMuted, fontStyle = FontStyle.Italic))
         } else {
-            BasicText(usd(v), style = type.data.copy(color = AetherColors.text), maxLines = 1, overflow = TextOverflow.Clip)
+            BasicText(usdPrecise(v), style = type.data.copy(color = AetherColors.text), maxLines = 1, overflow = TextOverflow.Clip)
         }
     }
 }

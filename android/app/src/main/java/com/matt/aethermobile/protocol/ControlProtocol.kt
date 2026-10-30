@@ -134,7 +134,6 @@ object ControlProtocol {
         data class Closed(val id: String, val reason: PromptCloseReason) : ThreadFrame()
     }
 
-    /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
     enum class LedgerTier(val wire: String) { OPUS("opus"), SONNET("sonnet"), HAIKU("haiku"), FABLE("fable") }
     data class LedgerTotal(val usd: Double, val input: Double, val output: Double, val cacheCreation: Double, val cacheRead: Double)
     data class LedgerRollups(val today: Double?, val week: Double?, val month: Double?)
@@ -146,6 +145,7 @@ object ControlProtocol {
         data class Snap(val ledger: LedgerSnapshot?) : LedgerFrame()
     }
 
+    /** Largest integer a TypeScript number holds exactly; q is bounded by it. */
     private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 
     /** Wire names of titan's `bye` reasons, in the JSON's order. */

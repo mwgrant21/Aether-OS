@@ -37,7 +37,8 @@ class LedgerUiModelTest {
     @Test fun tokensCompactBoundaries() {
         assertEquals("999", tokensCompact(999))
         assertEquals("1.0K", tokensCompact(1_000))
-        assertEquals("1000.0K", tokensCompact(999_999))
+        assertEquals("999.5K", tokensCompact(999_499))
+        assertEquals("1.0M", tokensCompact(999_999))
         assertEquals("1.0M", tokensCompact(1_000_000))
         assertEquals("52.6M", tokensCompact(52_560_000))
         assertEquals("2.0B", tokensCompact(2_000_000_000))

@@ -3,7 +3,7 @@ package com.matt.aethermobile.ledger
 import com.matt.aethermobile.protocol.ControlProtocol
 import java.util.Locale
 
-// Pure formatting and state helpers for the Ledger body. Locale.US everywhere: no `912,34` on a German phone. 
+// Pure formatting and state helpers for the Ledger body. Locale.US everywhere: no `912,34` on a German phone.
 enum class PartKind { INPUT, OUTPUT, CACHE_WRITE, CACHE_READ }
 data class Part(val kind: PartKind, val usd: Double, val fraction: Double)
 
@@ -25,8 +25,8 @@ fun usdPrecise(v: Double): String = if (v > 0 && v < 0.005) "<$0.01" else usd(v)
 
 fun tokensCompact(n: Long): String = when {
     n < 1_000L -> n.toString()
-    n < 1_000_000L -> String.format(Locale.US, "%.1fK", n / 1_000.0)
-    n < 1_000_000_000L -> String.format(Locale.US, "%.1fM", n / 1_000_000.0)
+    n < 999_950L -> String.format(Locale.US, "%.1fK", n / 1_000.0)
+    n < 999_950_000L -> String.format(Locale.US, "%.1fM", n / 1_000_000.0)
     else -> String.format(Locale.US, "%.1fB", n / 1_000_000_000.0)
 }
 
