@@ -65,6 +65,7 @@ class ControlClientTest {
 
     private val frames = mutableListOf<ControlProtocol.TerminalFrame>()
     private val threadFrames = mutableListOf<ControlProtocol.ThreadFrame>()
+    private val ledgerFrames = mutableListOf<ControlProtocol.LedgerFrame>()
 
     private fun client(host: String = HOST) = ControlClient(
         host = host,
@@ -73,6 +74,7 @@ class ControlClientTest {
         onState = { states += it },
         onFrame = { frames += it },
         onThreadFrame = { threadFrames += it },
+        onLedgerFrame = { ledgerFrames += it },
         nonceSource = { NONCE },
         epochSource = { EPOCH },
         scheduler = scheduler.schedule,
@@ -603,5 +605,49 @@ class ControlClientTest {
         assertTrue(c.threadAttach())
         assertTrue(c.threadDetach())
         assertEquals(listOf(golden.getString("threadAttach"), golden.getString("threadDetach")), transport.sent.drop(before))
+    }
+
+    @Test fun ledgerSnapAfterWelcomeReachesOnLedgerFrame() {
+        val c = connected()
+        val l = transport.listener!!
+        l.onMessage(golden.getString("ledgerSnapEmpty"))
+        l.onMessage(golden.getString("ledgerSnap"))
+        assertEquals(2, ledgerFrames.size)
+        assertEquals(ControlProtocol.LedgerFrame.Snap(null), ledgerFrames[0])
+        assertEquals(912.34, (ledgerFrames[1] as ControlProtocol.LedgerFrame.Snap).ledger!!.total.usd, 0.0)
+        assertEquals(ControlState.Connected, c.state)
+        assertTrue(frames.isEmpty() && threadFrames.isEmpty())
+    }
+
+    @Test fun malformedLedgerSnapFailsAsProtocolAndIsNotDelivered() {
+        val c = connected()
+        transport.listener!!.onMessage("""{"t":"ledger.snap","ledger":{"computedAtMs":1}}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), transport.closes)
+        assertTrue(ledgerFrames.isEmpty())
+    }
+
+    @Test fun ledgerSnapBeforeWelcomeIsAProtocolFailure() {
+        val t = FakeTransport()
+        val got = mutableListOf<ControlProtocol.LedgerFrame>()
+        val c = ControlClient(HOST, "0.2.0-v1", t, onLedgerFrame = { got += it }, nonceSource = { NONCE }, epochSource = { EPOCH })
+        c.connect(TOKEN)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage(golden.getString("ledgerSnap"))
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), t.closes)
+        assertTrue(got.isEmpty())
+    }
+
+    @Test fun ledgerAttachAndDetachSendTheGoldensOnlyWhenConnected() {
+        val idle = client()
+        assertFalse(idle.ledgerAttach())
+        assertFalse(idle.ledgerDetach())
+        assertTrue(transport.sent.isEmpty())
+        val c = connected()
+        val before = transport.sent.size
+        assertTrue(c.ledgerAttach())
+        assertTrue(c.ledgerDetach())
+        assertEquals(listOf(golden.getString("ledgerAttach"), golden.getString("ledgerDetach")), transport.sent.drop(before))
     }
 }

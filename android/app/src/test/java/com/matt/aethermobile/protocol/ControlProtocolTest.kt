@@ -426,4 +426,63 @@ class ControlProtocolTest {
         assertNull(ControlProtocol.parseThreadFrame("""{"t":"snap","s":"claude","q":1,"cols":1,"rows":1,"d":""}"""))
         assertNull(ControlProtocol.parseThreadFrame("not json"))
     }
+
+    @Test fun ledgerBuildersMatchTheGoldensByteForByte() {
+        assertEquals(frames.getString("ledgerAttach"), ControlProtocol.buildLedgerAttach())
+        assertEquals(frames.getString("ledgerDetach"), ControlProtocol.buildLedgerDetach())
+    }
+
+    @Test fun ledgerSnapGoldenParsesEveryField() {
+        assertEquals(
+            ControlProtocol.LedgerFrame.Snap(
+                ControlProtocol.LedgerSnapshot(
+                    1790000000000L,
+                    ControlProtocol.LedgerTotal(912.34, 140.17, 411.3, 203.19, 157.68),
+                    listOf(ControlProtocol.LedgerTier.OPUS, ControlProtocol.LedgerTier.SONNET),
+                    ControlProtocol.LedgerRollups(12.5, 391.1, 624.99),
+                    ControlProtocol.LedgerCache(52560000L, 1576.8, 157.68, 1419.12, 0.896),
+                ),
+            ),
+            ControlProtocol.parseLedgerFrame(frames.getString("ledgerSnap")),
+        )
+        assertEquals(ControlProtocol.LedgerFrame.Snap(null), ControlProtocol.parseLedgerFrame(frames.getString("ledgerSnapEmpty")))
+    }
+
+    private fun ledger(usd: String = "912.34", today: String = "12.5", hit: String = "0.896", read: String = "52560000", tiers: String = "[\"opus\"]", extra: String = ""): String =
+        "{\"t\":\"ledger.snap\",\"ledger\":{\"computedAtMs\":1790000000000,\"total\":{\"usd\":$usd,\"input\":1,\"output\":2,\"cacheCreation\":3,\"cacheRead\":4}," +
+            "\"tiers\":$tiers,\"rollups\":{\"today\":$today,\"week\":1,\"month\":2}," +
+            "\"cache\":{\"readTokens\":$read,\"wouldHaveUsd\":10,\"actualUsd\":1,\"savedUsd\":9,\"hitRate\":$hit}$extra}}"
+
+    @Test fun ledgerMoneyParsesAsIntegerFloatAndFractionButNotAString() {
+        for (v in listOf("5", "5.0", "889.44")) {
+            val f = ControlProtocol.parseLedgerFrame(ledger(usd = v)) as ControlProtocol.LedgerFrame.Snap
+            assertEquals(v, v.toDouble(), f.ledger!!.total.usd, 0.0)
+        }
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(usd = "\"5\"")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(usd = "-1")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(usd = "null")))
+    }
+
+    @Test fun ledgerRollupBucketMayBeNullButNotTheStringNull() {
+        val f = ControlProtocol.parseLedgerFrame(ledger(today = "null")) as ControlProtocol.LedgerFrame.Snap
+        assertNull(f.ledger!!.rollups.today)
+        assertEquals(1.0, f.ledger!!.rollups.week!!, 0.0)
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(today = "\"null\"")))
+    }
+
+    @Test fun ledgerRejectsOutOfRangeAndMistypedFields() {
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(hit = "1.5")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(hit = "-0.1")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(read = "1.5")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(tiers = "[\"opus\",\"mythos\"]")))
+        assertNull(ControlProtocol.parseLedgerFrame("{\"t\":\"ledger.snap\",\"ledger\":{\"computedAtMs\":1,\"tiers\":[],\"rollups\":{\"today\":null,\"week\":null,\"month\":null},\"cache\":{\"readTokens\":0,\"wouldHaveUsd\":0,\"actualUsd\":0,\"savedUsd\":0,\"hitRate\":0}}}"))
+        assertNull(ControlProtocol.parseLedgerFrame("{\"t\":\"ledger.snap\"}"))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger().replace("ledger.snap", "thread.snap")))
+        assertNull(ControlProtocol.parseLedgerFrame("not json"))
+    }
+
+    @Test fun ledgerIgnoresUnknownExtraFieldsAndAcceptsEmptyTiers() {
+        val f = ControlProtocol.parseLedgerFrame(ledger(tiers = "[]", extra = ",\"prompt\":\"x\"")) as ControlProtocol.LedgerFrame.Snap
+        assertEquals(emptyList<ControlProtocol.LedgerTier>(), f.ledger!!.tiers)
+    }
 }
