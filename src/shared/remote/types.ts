@@ -207,6 +207,18 @@ export interface ProjectsWire {
   unscoped: LedgerWire | null;
   roots: readonly { key: string; name: string; ledger: LedgerWire; children: readonly { key: string; worktree: string | null; ledger: LedgerWire }[] }[];
 }
+/** Input of the `memory` view encoder: memory rows as main reads them. The encoder rebuilds each row field by field, so extra fields (reference counts) never reach the wire. */
+export interface MemoryWire {
+  computedAtMs: number;
+  live: readonly {
+    id: number; scope: 'shared' | 'private'; ownerAgent: string | null; kind: 'decision' | 'preference' | 'overrule' | 'habit' | 'revision';
+    status: 'open' | 'moving' | 'settled' | null; salience: number; subject: string | null; content: string; createdAtMs: number; updatedAtMs: number;
+  }[];
+  tombstones: readonly {
+    id: number; scope: 'shared' | 'private'; ownerAgent: string | null; content: string; deletedAtMs: number;
+    cause: 'superseded' | 'operator' | 'invalidated'; supersededBy: number | null;
+  }[];
+}
 export const CONTROL_PROMPT_CLOSE_REASONS = ['answered-desktop', 'timeout'] as const;
 export type PromptCloseReason = (typeof CONTROL_PROMPT_CLOSE_REASONS)[number];
 export interface PromptInfo { id: string; tool: string; risk: 'LOW' | 'MED' | 'HIGH'; summary: string; ttlMs: number }

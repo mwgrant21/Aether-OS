@@ -5,7 +5,7 @@
 // and returns null if any number or shape fails validation: the frame then carries d:null, never a partial payload.
 // The phone reads the goldens in protocol/mobile-protocol.json.
 import { maskSecrets } from '../../src/shared/board/text';
-import type { ProjectsWire } from '../../src/shared/remote/types';
+import type { MemoryWire, ProjectsWire } from '../../src/shared/remote/types';
 import { shapeLedgerFields } from './protocol';
 
 export const PROJECTS_MAX_ROOTS = 50;
@@ -64,4 +64,55 @@ export function encodeProjectsView(w: ProjectsWire | null): Record<string, unkno
     roots.push({ key, name, ...f, children });
   }
   return { computedAtMs: w.computedAtMs, all, unscoped, roots };
+}
+
+export const MEMORY_MAX_LIVE = 150;
+export const MEMORY_MAX_TOMBSTONES = 60;
+export const MEMORY_CONTENT_CAP = 600;
+export const MEMORY_SUBJECT_CAP = 80;
+export const MEMORY_OWNER_CAP = 60;
+const MEMORY_KINDS = ['decision', 'preference', 'overrule', 'habit', 'revision'];
+const MEMORY_STATUSES = ['open', 'moving', 'settled'];
+const MEMORY_SCOPES = ['shared', 'private'];
+const MEMORY_CAUSES = ['superseded', 'operator', 'invalidated'];
+
+const oneOf = (list: readonly string[], x: unknown): x is string => typeof x === 'string' && list.includes(x);
+const nullableText = (x: unknown, n: number): string | null | undefined => (x === null ? null : (text(x, n) ?? undefined));
+
+/**
+ * `memory`: {computedAtMs, counts:{live,tombstones}, live:[...], tombstones:[...], extraction:null}. counts are the totals
+ * before capping. Live rows: highest salience first, then most recently updated, capped at 150; tombstones newest first,
+ * capped at 60. content and subject are masked (maskSecrets is a floor, not a guarantee) then capped. Reference counts
+ * and extraction cost are never sent; `extraction` is reserved and always null. Free text is the owner's own memory.
+ */
+export function encodeMemoryView(w: MemoryWire | null): Record<string, unknown> | null {
+  if (w === null || typeof w !== 'object' || !count(w.computedAtMs) || !Array.isArray(w.live) || !Array.isArray(w.tombstones)) return null;
+  for (const r of w.live) {
+    if (typeof r !== 'object' || r === null || !count(r.id) || !oneOf(MEMORY_SCOPES, r.scope) || !oneOf(MEMORY_KINDS, r.kind)) return null;
+    if (!(r.status === null || oneOf(MEMORY_STATUSES, r.status))) return null;
+    if (typeof r.salience !== 'number' || !Number.isFinite(r.salience) || r.salience < 0) return null;
+    if (!count(r.createdAtMs) || !count(r.updatedAtMs)) return null;
+  }
+  for (const t of w.tombstones) {
+    if (typeof t !== 'object' || t === null || !count(t.id) || !oneOf(MEMORY_SCOPES, t.scope) || !oneOf(MEMORY_CAUSES, t.cause)) return null;
+    if (!count(t.deletedAtMs) || !(t.supersededBy === null || count(t.supersededBy))) return null;
+  }
+  const liveTop = [...w.live].sort((a, b) => b.salience - a.salience || b.updatedAtMs - a.updatedAtMs || b.id - a.id).slice(0, MEMORY_MAX_LIVE);
+  const tombTop = [...w.tombstones].sort((a, b) => b.deletedAtMs - a.deletedAtMs || b.id - a.id).slice(0, MEMORY_MAX_TOMBSTONES);
+  const live: Record<string, unknown>[] = [];
+  for (const r of liveTop) {
+    const owner = nullableText(r.ownerAgent, MEMORY_OWNER_CAP);
+    const subject = nullableText(r.subject, MEMORY_SUBJECT_CAP);
+    const content = text(r.content, MEMORY_CONTENT_CAP);
+    if (owner === undefined || subject === undefined || content === null) return null;
+    live.push({ id: r.id, scope: r.scope, owner, kind: r.kind, status: r.status, salience: Math.round(r.salience * 10000) / 10000, subject, content, createdAtMs: r.createdAtMs, updatedAtMs: r.updatedAtMs });
+  }
+  const tombstones: Record<string, unknown>[] = [];
+  for (const t of tombTop) {
+    const owner = nullableText(t.ownerAgent, MEMORY_OWNER_CAP);
+    const content = text(t.content, MEMORY_CONTENT_CAP);
+    if (owner === undefined || content === null) return null;
+    tombstones.push({ id: t.id, scope: t.scope, owner, content, deletedAtMs: t.deletedAtMs, cause: t.cause, supersededBy: t.supersededBy });
+  }
+  return { computedAtMs: w.computedAtMs, counts: { live: w.live.length, tombstones: w.tombstones.length }, live, tombstones, extraction: null };
 }
