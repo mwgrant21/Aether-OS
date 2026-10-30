@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ledger_loading">Loading ledger</string>
+    <string name="ledger_no_snapshot">No ledger snapshot yet. This fills in on the next transcript scan.</string>
+    <string name="ledger_basis_note">Every dollar figure here is API rate: what this work would have cost at published pay-as-you-go rates. A subscription account never pays it.</string>
+    <string name="ledger_scope_line">Observed in this machine\'s Claude Code transcripts. Spend that never passed through a transcript is not shown.</string>
+
+    <string name="ledger_total_title">Observed total, all transcripts</string>
+    <string name="ledger_api_rate_tag">API RATE · NOT PAID</string>
+    <string name="ledger_no_priced_activity">no priced activity observed</string>
+    <string name="ledger_part_input">Input</string>
+    <string name="ledger_part_output">Output</string>
+    <string name="ledger_part_cache_write">Cache write</string>
+    <string name="ledger_part_cache_read">Cache read</string>
+    <string name="ledger_total_desc">Observed total, %1$s, API rate, not paid</string>
+
+    <string name="ledger_cache_title">Cache impact</string>
+    <string name="ledger_cache_none">No cache reads observed.</string>
+    <string name="ledger_cache_saved">%1$s saved</string>
+    <string name="ledger_cache_detail">%1$s cached tokens would have cost %2$s at the full input rate; they cost %3$s.</string>
+    <string name="ledger_hit_rate">Hit rate</string>
+    <string name="ledger_cache_desc_none">Cache impact, no cache reads observed, hit rate %1$s</string>
+    <string name="ledger_cache_desc">Cache impact, %1$s saved, hit rate %2$s</string>
+
+    <string name="ledger_rollup_title">Rollup, API rate (not paid)</string>
+    <string name="ledger_rollup_today">Today</string>
+    <string name="ledger_rollup_week">Last 7 days</string>
+    <string name="ledger_rollup_month">This month</string>
+    <string name="ledger_rollup_none">no activity observed</string>
+    <string name="ledger_rollup_note">Today is the day on titan.</string>
+    <string name="ledger_rollup_desc">Rollup, API rate, not paid. %1$s</string>
+    <string name="ledger_rollup_item_desc">%1$s, %2$s</string>
+
+    <string name="ledger_spoken_usd">%1$d dollars %2$d cents</string>
+
+    <string name="ledger_updated">Updated %1$s</string>
+    <string name="ledger_age_just_now">just now</string>
+    <plurals name="ledger_age_minutes">
+        <item quantity="one">%1$d minute ago</item>
+        <item quantity="other">%1$d minutes ago</item>
+    </plurals>
+    <plurals name="ledger_age_hours">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <plurals name="ledger_age_days">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+    <string name="ledger_stale">Stale: titan has not refreshed this in over 5 minutes</string>
+</resources>
