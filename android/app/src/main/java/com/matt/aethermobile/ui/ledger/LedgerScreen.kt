@@ -207,10 +207,8 @@ private fun RollupCard(r: ControlProtocol.LedgerRollups) {
     val none = stringResource(R.string.ledger_rollup_none)
     // A null bucket reads "no activity observed"; it is never formatted as a dollar amount.
     val items = buckets.map { b -> bucketName(b.kind) to (b.usd?.let { spoken(it) } ?: none) }
-    val desc = stringResource(
-        R.string.ledger_rollup_desc,
-        items.joinToString(". ") { (n, v) -> stringResource(R.string.ledger_rollup_item_desc, n, v) },
-    )
+    val itemDescs = items.map { (n, v) -> stringResource(R.string.ledger_rollup_item_desc, n, v) }
+    val desc = stringResource(R.string.ledger_rollup_desc, itemDescs.joinToString(". "))
     Card(desc) {
         Label(stringResource(R.string.ledger_rollup_title), AetherColors.warn)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
