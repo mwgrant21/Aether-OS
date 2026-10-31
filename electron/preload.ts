@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       return () => ipcRenderer.removeListener('control:statusChanged', listener);
     },
   },
+  phoneView: {
+    // Fire-and-forget: main drops it unless phone control is on, holds only the latest per view in memory.
+    publish: (v: string, payload: Record<string, unknown>): void => ipcRenderer.send('phoneView:publish', { v, payload }),
+  },
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
   },
