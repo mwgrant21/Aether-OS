@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { encodeAnalyticsView, encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
+import { encodeAgentsView, encodeAnalyticsView, encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
 import { encodeViewSnap } from './protocol';
 import type { LedgerWire, MemoryWire, ProjectsWire } from '../../src/shared/remote/types';
 
@@ -245,5 +245,55 @@ describe('encodeAnalyticsView', () => {
       (x: any) => { x.commands[0].count = 1.5; }, (x: any) => { x.burn[0].toolUses = -2; }, (x: any) => { x.longest = null; }, (x: any) => { x.longest[0].description = 7; },
     ]) { const x = anGolden(); mutate(x); expect(encodeAnalyticsView(x)).toBeNull(); }
     expect(encodeAnalyticsView(null)).toBeNull();
+  });
+});
+
+const agGolden = (): Record<string, any> => JSON.parse(spec.frames.viewSnapAgents).d;
+
+describe('encodeAgentsView', () => {
+  it('reproduces the viewSnapAgents golden byte for byte', () => {
+    expect(encodeViewSnap('agents', encodeAgentsView(agGolden()))).toBe(spec.frames.viewSnapAgents);
+  });
+  it('masks BEFORE capping and caps description 120, headline 120, narration 160, detail 120, prompt 1200', () => {
+    const akia = 'AKIAIOSFODNN7EXAMPLE';
+    const d = agGolden();
+    Object.assign(d.running[0], { description: 'x'.repeat(300), headline: 'y'.repeat(300), narration: 'z'.repeat(300), prompt: 'p'.repeat(2000) });
+    d.running[0].anomaly.detail = 'q'.repeat(300);
+    d.running[1].prompt = `${'p'.repeat(1180)} ${akia}`;
+    d.running[1].description = `${'d'.repeat(114)} ${akia}`;
+    d.running[1].headline = `${'h'.repeat(114)} ${akia}`;
+    d.running[1].narration = `${'n'.repeat(154)} ${akia}`;
+    const out = encodeAgentsView(d) as any;
+    expect([out.running[0].description.length, out.running[0].headline.length, out.running[0].narration.length, out.running[0].anomaly.detail.length, out.running[0].prompt.length]).toEqual([120, 120, 160, 120, 1200]);
+    expect(JSON.stringify(out.running[1])).not.toMatch(/AKIA/);
+    expect(out.running[1].prompt).toContain('[redacted]');
+  });
+  it('fails closed: unsafe id, needsInput that disagrees with anomaly, unknown anomaly kind, bad numbers, bad shapes', () => {
+    for (const mutate of [
+      (x: any) => { x.running[0].id = 'a b'; }, (x: any) => { x.running[0].id = 'x'.repeat(65); }, (x: any) => { x.running[0].needsInput = false; }, (x: any) => { x.running[1].needsInput = true; },
+      (x: any) => { x.running[0].anomaly.kind = 'weird'; }, (x: any) => { x.done[0].tokens = NaN; }, (x: any) => { x.done[0].durationMs = -1; }, (x: any) => { x.running[0].startedAtMs = Infinity; },
+      (x: any) => { x.running = null; }, (x: any) => { x.running[0].prompt = 5; }, (x: any) => { x.computedAtMs = 'now'; },
+    ]) { const x = agGolden(); mutate(x); expect(encodeAgentsView(x)).toBeNull(); }
+    expect(encodeAgentsView(null)).toBeNull();
+  });
+  it('drops stray keys (toolUseId, permission requests, fleet and timeline input) and always emits fleet and timeline as null', () => {
+    const d = agGolden();
+    d.running[0].toolUseId = 'LEAK'; d.running[0].permission = 'LEAK'; d.done[0].prompt = 'LEAK'; d.anomaly = 'LEAK'; d.running[0].anomaly.toolUseId = 'LEAK';
+    d.fleet = [{ name: 'LEAK' }]; d.timeline = [{ label: 'LEAK' }];
+    const out = encodeViewSnap('agents', encodeAgentsView(d));
+    expect(out).toBe(spec.frames.viewSnapAgents);
+    expect(out).not.toContain('LEAK');
+  });
+  it('reduces a path in an anomaly detail to its file name, after masking', () => {
+    const d = agGolden();
+    d.running[0].anomaly.detail = 'C:\\Users\\Matt\\secret-project\\src\\worker.ts read 6 times';
+    expect((encodeAgentsView(d) as any).running[0].anomaly.detail).toBe('worker.ts read 6 times');
+  });
+  it('cuts lists at 30 running and 20 done', () => {
+    const d = agGolden();
+    d.running = Array.from({ length: 40 }, () => d.running[1]);
+    d.done = Array.from({ length: 30 }, () => d.done[0]);
+    const out = encodeAgentsView(d) as any;
+    expect([out.running.length, out.done.length]).toEqual([30, 20]);
   });
 });

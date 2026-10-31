@@ -100,7 +100,7 @@ import { createPermissionBroker } from './permissionBroker';
 import { createThreadFeed } from './threadFeed';
 import { createLedgerFeed } from './ledgerFeed';
 import { createCacheViewFeed, createPhoneViewCache } from './phoneViewCache';
-import { encodeAnalyticsView, encodeDashView } from './control/viewWire';
+import { encodeAgentsView, encodeAnalyticsView, encodeDashView } from './control/viewWire';
 import { VIEW_IDS } from '../src/shared/remote/types';
 import { createProjectsFeed } from './projectsFeed';
 import { createMemoryFeed } from './memoryFeed';
@@ -1591,7 +1591,7 @@ const controlHub = createControlHub({
   input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   threads: threadFeed, // read-only transcript thread, Claude slot only
   ledger: ledgerFeed.port, // read-only derived cost numbers, no text
-  views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView), analytics: createCacheViewFeed(phoneViewCache, 'analytics', encodeAnalyticsView) }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only; analytics: counts plus masked, capped dispatch descriptions and first words of typed commands
+  views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView), analytics: createCacheViewFeed(phoneViewCache, 'analytics', encodeAnalyticsView), agents: createCacheViewFeed(phoneViewCache, 'agents', encodeAgentsView) }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only; analytics: counts plus masked, capped dispatch descriptions and first words of typed commands; agents: masked, capped dispatch descriptions, headlines, narration and prompt text
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {

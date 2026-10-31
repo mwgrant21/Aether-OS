@@ -223,3 +223,69 @@ export function encodeAnalyticsView(p: Record<string, unknown> | null): Record<s
   }
   return { computedAtMs: p.computedAtMs, logs: { success: l.success, info: l.info, denied: l.denied, other: l.other }, longest, burn, commands };
 }
+
+export const AGENTS_DESC_CAP = 120;
+export const AGENTS_HEADLINE_CAP = 120;
+export const AGENTS_NARRATION_CAP = 160;
+export const AGENTS_DETAIL_CAP = 120;
+export const AGENTS_PROMPT_CAP = 1200;
+export const AGENTS_TYPE_CAP = 40;
+export const AGENTS_MODEL_CAP = 40;
+export const AGENTS_MAX_RUNNING = 30;
+export const AGENTS_MAX_DONE = 20;
+const AGENTS_ANOMALY_KINDS = ['reReadLoop', 'writeDeleteRewrite', 'zeroEditBurn', 'stalledPermission'];
+const AGENTS_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Mask the raw text, then reduce any path-shaped token to its last segment, then cap (an anomaly detail can open with a file path). */
+function detailText(x: unknown, n: number): string | null {
+  if (typeof x !== 'string') return null;
+  return text(maskSecrets(x).replace(/[^\s'"]*[\\/][^\s'"]*/g, (t) => t.split(/[\\/]/).filter(Boolean).pop() ?? ''), n);
+}
+
+/**
+ * `agents`: {computedAtMs, running:[{id,type,description,startedAtMs,model,headline,narration,needsInput,anomaly,prompt}]
+ * (at most 30), done:[{id,type,description,startedAtMs,tokens,toolUses,durationMs,headline}] (at most 20), fleet:null,
+ * timeline:null}. fleet and timeline are reserved and always null here. Built in the renderer, so rebuilt field by field:
+ * every text field is masked then capped (description 120, headline 120, narration 160, anomaly detail 120, prompt 1200,
+ * type 40, model 40); an anomaly detail also has any path reduced to its last segment. An id must be an opaque safe
+ * string (letters, digits, _ and -, up to 64) and needsInput must equal "anomaly present". Narration and model are null
+ * when unknown, usage numbers are null when not measured (never 0). Stray keys are dropped; a bad id, enum, number,
+ * shape or needsInput mismatch makes the whole payload null; lists beyond their caps are cut.
+ */
+export function encodeAgentsView(p: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!isRecord(p) || !count(p.computedAtMs) || !Array.isArray(p.running) || !Array.isArray(p.done)) return null;
+  const running: Record<string, unknown>[] = [];
+  for (const r of p.running.slice(0, AGENTS_MAX_RUNNING)) {
+    if (!isRecord(r) || typeof r.id !== 'string' || !AGENTS_ID_RE.test(r.id) || typeof r.needsInput !== 'boolean' || !count(r.startedAtMs)) return null;
+    const type = text(r.type, AGENTS_TYPE_CAP);
+    const description = text(r.description, AGENTS_DESC_CAP);
+    const headline = text(r.headline, AGENTS_HEADLINE_CAP);
+    const prompt = text(r.prompt, AGENTS_PROMPT_CAP);
+    const model = nullableText(r.model, AGENTS_MODEL_CAP);
+    const narration = nullableText(r.narration, AGENTS_NARRATION_CAP);
+    if (type === null || description === null || headline === null || prompt === null || model === undefined || narration === undefined) return null;
+    let anomaly: Record<string, unknown> | null = null;
+    if (r.anomaly !== null) {
+      const a = r.anomaly;
+      if (!isRecord(a) || !oneOf(AGENTS_ANOMALY_KINDS, a.kind)) return null;
+      const detail = detailText(a.detail, AGENTS_DETAIL_CAP);
+      if (detail === null) return null;
+      anomaly = { kind: a.kind, detail };
+    }
+    if (r.needsInput !== (anomaly !== null)) return null;
+    running.push({ id: r.id, type, description, startedAtMs: r.startedAtMs, model, headline, narration, needsInput: r.needsInput, anomaly, prompt });
+  }
+  const done: Record<string, unknown>[] = [];
+  for (const r of p.done.slice(0, AGENTS_MAX_DONE)) {
+    if (!isRecord(r) || typeof r.id !== 'string' || !AGENTS_ID_RE.test(r.id) || !count(r.startedAtMs)) return null;
+    const type = text(r.type, AGENTS_TYPE_CAP);
+    const description = text(r.description, AGENTS_DESC_CAP);
+    const headline = text(r.headline, AGENTS_HEADLINE_CAP);
+    const tokens = nullableNum(r.tokens, 0);
+    const toolUses = nullableNum(r.toolUses, 0);
+    const durationMs = nullableNum(r.durationMs, 0);
+    if (type === null || description === null || headline === null || tokens === undefined || toolUses === undefined || durationMs === undefined) return null;
+    done.push({ id: r.id, type, description, startedAtMs: r.startedAtMs, tokens, toolUses, durationMs, headline });
+  }
+  return { computedAtMs: p.computedAtMs, running, done, fleet: null, timeline: null };
+}
