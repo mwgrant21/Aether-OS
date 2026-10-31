@@ -82,12 +82,13 @@ describe('golden frames', () => {
   })
   it('welcome', () => {
     const f = JSON.parse(spec.frames.welcome)
-    expect(Object.keys(f)).toEqual(['t', 'v', 'proof', 'serverTimeMs', 'expiresAtMs', 'sessions', 'applied', 'prompts'])
+    expect(Object.keys(f)).toEqual(['t', 'v', 'proof', 'serverTimeMs', 'expiresAtMs', 'sessions', 'applied', 'prompts', 'views'])
     expect(spec.messages.titanToPhone).toContain(f.t)
     expect(f.proof).toBe(spec.proof.vectors.proof)
     expect(f.sessions).toEqual([])
     expect(f.applied).toEqual({})
     expect(f.prompts).toEqual([])
+    expect(f.views).toEqual([])
   })
   it('bye', () => {
     const f = JSON.parse(spec.frames.bye)
@@ -108,12 +109,12 @@ describe('pairing code alphabet', () => {
 
 describe('terminal frame goldens', () => {
   it('every golden t is in the right messages list', () => {
-    for (const k of ['attach', 'attachResume', 'detach', 'in', 'ledgerAttach', 'ledgerDetach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
-    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nakNotRunning', 'nakTypingOff', 'ledgerSnap', 'ledgerSnapEmpty']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['attach', 'attachResume', 'detach', 'in', 'ledgerAttach', 'ledgerDetach', 'viewAttach', 'viewAttachParams', 'viewDetach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nakNotRunning', 'nakTypingOff', 'ledgerSnap', 'ledgerSnapEmpty', 'viewSnapNull', 'viewSnapProjects', 'viewSnapMemory']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
   })
   it('messages lists are exactly the declared verbs, in order', () => {
-    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach'])
-    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap'])
+    expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'])
+    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'])
   })
   it('nakReasons match CONTROL_NAK_REASONS', () => {
     expect(spec.messages.nakReasons).toEqual([...T.CONTROL_NAK_REASONS])

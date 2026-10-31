@@ -53,8 +53,8 @@ export const CONTROL_ACK_COALESCE_MS = 30;
 export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
-  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap'],
+  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'],
 } as const;
 export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
 export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
@@ -177,6 +177,17 @@ export interface ThreadTap {                                 // callbacks are de
 }
 /** attach() delivers `snap` synchronously, before it returns. */
 export interface ThreadReadPort { attach(s: ThreadSlotId, tap: ThreadTap): { detach(): void } }
+/** Closed list of generic view ids (view.attach / view.detach / view.snap). Mirrored by protocol.test.ts. */
+export const VIEW_IDS = ['projects', 'memory', 'dash', 'analytics', 'agents', 'comms', 'comms.thread', 'comms.exchange'] as const;
+export type ViewId = (typeof VIEW_IDS)[number];
+/** Views whose view.attach may carry a params object p. Per-view p schemas are enforced by each view's own validator. */
+export const VIEW_PARAM_IDS: readonly ViewId[] = ['comms.thread', 'comms.exchange'];
+/** Serialised size cap for p (UTF-8 bytes of JSON.stringify). */
+export const VIEW_PARAMS_MAX_BYTES = 512;
+/** Receives a view's payload. d is already validated by the view's encoder, or null (no data yet, or failed closed). */
+export interface ViewTap { snap(d: unknown): void }
+/** attach() delivers the current state synchronously, before it returns (same contract as LedgerReadPort). p is the validated-shape-only params object of a params view. */
+export interface ViewReadPort { attach(tap: ViewTap, p?: Record<string, unknown>): { detach(): void } }
 export const LEDGER_TIERS = ['opus', 'sonnet', 'haiku', 'fable'] as const; // must equal Object.keys(PRICING_PER_MILLION_TOKENS); protocol.test.ts pins it
 export type LedgerTier = (typeof LEDGER_TIERS)[number];
 export interface LedgerWire {
@@ -189,6 +200,25 @@ export interface LedgerWire {
 export interface LedgerTap { snap(l: LedgerWire | null): void } // delivered in order, never re-entrantly
 /** attach() delivers the current state to tap.snap synchronously before it returns, then every publish. */
 export interface LedgerReadPort { attach(tap: LedgerTap): { detach(): void } }
+/** Input of the `projects` view encoder: per-project Ledger numbers, no paths, no optimize data. `all` is the global Ledger. */
+export interface ProjectsWire {
+  computedAtMs: number;
+  all: LedgerWire | null;
+  unscoped: LedgerWire | null;
+  roots: readonly { key: string; name: string; ledger: LedgerWire; children: readonly { key: string; worktree: string | null; ledger: LedgerWire }[] }[];
+}
+/** Input of the `memory` view encoder: memory rows as main reads them. The encoder rebuilds each row field by field, so extra fields (reference counts) never reach the wire. */
+export interface MemoryWire {
+  computedAtMs: number;
+  live: readonly {
+    id: number; scope: 'shared' | 'private'; ownerAgent: string | null; kind: 'decision' | 'preference' | 'overrule' | 'habit' | 'revision';
+    status: 'open' | 'moving' | 'settled' | null; salience: number; subject: string | null; content: string; createdAtMs: number; updatedAtMs: number;
+  }[];
+  tombstones: readonly {
+    id: number; scope: 'shared' | 'private'; ownerAgent: string | null; content: string; deletedAtMs: number;
+    cause: 'superseded' | 'operator' | 'invalidated'; supersededBy: number | null;
+  }[];
+}
 export const CONTROL_PROMPT_CLOSE_REASONS = ['answered-desktop', 'timeout'] as const;
 export type PromptCloseReason = (typeof CONTROL_PROMPT_CLOSE_REASONS)[number];
 export interface PromptInfo { id: string; tool: string; risk: 'LOW' | 'MED' | 'HIGH'; summary: string; ttlMs: number }
