@@ -110,7 +110,7 @@ describe('pairing code alphabet', () => {
 describe('terminal frame goldens', () => {
   it('every golden t is in the right messages list', () => {
     for (const k of ['attach', 'attachResume', 'detach', 'in', 'ledgerAttach', 'ledgerDetach', 'viewAttach', 'viewAttachParams', 'viewDetach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t)
-    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nakNotRunning', 'nakTypingOff', 'ledgerSnap', 'ledgerSnapEmpty', 'viewSnapNull', 'viewSnapProjects', 'viewSnapMemory', 'viewSnapDash', 'viewSnapAnalytics', 'viewSnapAgents']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
+    for (const k of ['welcome', 'welcomeSessions', 'welcomeApplied', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nakNotRunning', 'nakTypingOff', 'ledgerSnap', 'ledgerSnapEmpty', 'viewSnapNull', 'viewSnapProjects', 'viewSnapMemory', 'viewSnapDash', 'viewSnapAnalytics', 'viewSnapAgents', 'viewSnapAgentsDiag']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t)
   })
   it('messages lists are exactly the declared verbs, in order', () => {
     expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'])

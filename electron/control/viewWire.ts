@@ -251,17 +251,116 @@ function detailText(x: unknown, n: number): string | null {
   return text(masked.replace(/[^\s'"]*[\\/][^\s'"]*/g, (t) => t.split(/[\\/]/).filter(Boolean).pop() ?? ''), n);
 }
 
+/** Already-encoded fleet and timeline rows (encodeFleetRows / encodeTimelineRows output); null = collector absent or unreadable. */
+export interface AgentsDiagWire {
+  fleet: Record<string, unknown>[] | null;
+  timeline: Record<string, unknown>[] | null;
+}
+
+export const AGENTS_MAX_FLEET = 50;
+export const AGENTS_MAX_TIMELINE = 60;
+export const AGENTS_FLEET_TITLE_CAP = 60;
+export const AGENTS_FLEET_NAME_CAP = 60;
+export const AGENTS_FLEET_KIND_CAP = 40;
+export const AGENTS_LABEL_CAP = 80;
+const FLEET_STATUSES = ['busy', 'idle'];
+const FLEET_KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** Text after the last path separator (either kind), exactly as DispatchTimeline's split(/[\\/]/).pop(): a trailing separator leaves ''. A spaced directory name never survives. */
+const afterLastSep = (x: string): string => x.slice(Math.max(x.lastIndexOf('/'), x.lastIndexOf('\\')) + 1);
+/** Last path segment, ignoring trailing separators (a project path may be written with one). */
+const lastSegment = (x: string): string => afterLastSep(x.replace(/[\\/\s]+$/, ''));
+
+/**
+ * Fleet rows for the `agents` view: [{key,title,name,startedAtMs,status,kind,pid}] oldest first (as FleetCard sorts), at
+ * most 50 (the oldest). Input rows carry `key` (an opaque hash made by the caller) and `projectName`, which becomes
+ * `title` (masked, reduced to its last path segment, cap 60). `name` (the session name) is masked, path tokens reduced,
+ * cap 60; kind cap 40. Rebuilt field by field, so stray keys (sessionId, cwd, any path) are dropped. A row with a bad key,
+ * start time, status or pid is dropped, not the payload; a duplicate key keeps the first. Not an array -> null; a
+ * non-empty input with no valid row -> null (never an empty list that would read as "no other sessions").
+ */
+export function encodeFleetRows(rows: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(rows)) return null;
+  const out: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (!isRecord(r) || typeof r.key !== 'string' || !FLEET_KEY_RE.test(r.key) || seen.has(r.key) || !count(r.startedAtMs) || !oneOf(FLEET_STATUSES, r.status)) continue;
+    if (r.pid !== null && !count(r.pid)) continue;
+    if (typeof r.projectName !== 'string') continue;
+    const title = text(lastSegment(maskSecrets(r.projectName)), AGENTS_FLEET_TITLE_CAP);
+    const name = detailText(r.name, AGENTS_FLEET_NAME_CAP);
+    const kind = text(r.kind, AGENTS_FLEET_KIND_CAP);
+    if (title === null || name === null || kind === null) continue;
+    seen.add(r.key);
+    out.push({ key: r.key, title, name, startedAtMs: r.startedAtMs, status: r.status, kind, pid: r.pid });
+  }
+  if (rows.length > 0 && out.length === 0) return null;
+  out.sort((a, b) => (a.startedAtMs as number) - (b.startedAtMs as number));
+  return out.slice(0, AGENTS_MAX_FLEET);
+}
+
+const timeMs = (x: unknown): number | null => (num(x) && Number.isSafeInteger(Math.round(x)) ? Math.round(x) : null);
+
+/**
+ * Timeline rows for the `agents` view: [{k,atMs,label,tokens,toolUses,durationMs}] newest first (as DispatchTimeline
+ * sorts), at most 60 (the newest). Input is the collector's diagnostics snapshot {toolCalls,dispatches,anomalies}.
+ * k is tool|dispatch|anomaly (the desktop's toolCall maps to tool). label is one string, masked FIRST, then reduced, then
+ * capped at 80: a tool call is "<toolName> <file BASENAME>" (a spaced directory never survives), an anomaly is
+ * "<kind>: <detail>" with the detail reduced like an anomaly detail, a dispatch is "Agent" (the desktop row shows no
+ * description). tokens/toolUses/durationMs are set on dispatches only (null elsewhere, and null when not measured).
+ * Rebuilt field by field: filePathRel, toolUseId, sessionId, agentId and every other key never reach the wire. A row with
+ * a bad time or number is dropped. Not a snapshot -> null; all three lists empty -> []; rows present but none valid -> null.
+ */
+export function encodeTimelineRows(snap: unknown): Record<string, unknown>[] | null {
+  if (!isRecord(snap) || !Array.isArray(snap.toolCalls) || !Array.isArray(snap.dispatches) || !Array.isArray(snap.anomalies)) return null;
+  const items: Record<string, unknown>[] = [];
+  const total = snap.toolCalls.length + snap.dispatches.length + snap.anomalies.length;
+  for (const t of snap.toolCalls) {
+    if (!isRecord(t) || typeof t.toolName !== 'string') continue;
+    const at = timeMs(t.closedAtMs);
+    if (at === null) continue;
+    const base = typeof t.filePathRel === 'string' ? afterLastSep(maskSecrets(t.filePathRel)).trim() : '';
+    const label = detailText(base ? `${t.toolName} ${base}` : t.toolName, AGENTS_LABEL_CAP);
+    if (label === null) continue;
+    items.push({ k: 'tool', atMs: at, label, tokens: null, toolUses: null, durationMs: null });
+  }
+  for (const d of snap.dispatches) {
+    if (!isRecord(d)) continue;
+    const at = timeMs(d.endedAtMs);
+    const tokens = nullableNum(d.tokens, 0);
+    const toolUses = nullableNum(d.toolUses, 0);
+    const durationMs = nullableNum(d.durationMs, 0);
+    if (at === null || tokens === undefined || toolUses === undefined || durationMs === undefined) continue;
+    items.push({ k: 'dispatch', atMs: at, label: 'Agent', tokens, toolUses, durationMs });
+  }
+  for (const a of snap.anomalies) {
+    if (!isRecord(a)) continue;
+    const at = timeMs(a.detectedAtMs);
+    const kind = detailText(a.kind, AGENTS_TYPE_CAP);
+    const detail = detailText(a.detail, AGENTS_LABEL_CAP);
+    if (at === null || kind === null || detail === null) continue;
+    const label = text(`${kind}: ${detail}`, AGENTS_LABEL_CAP);
+    if (label === null) continue;
+    items.push({ k: 'anomaly', atMs: at, label, tokens: null, toolUses: null, durationMs: null });
+  }
+  if (total > 0 && items.length === 0) return null;
+  items.sort((a, b) => (b.atMs as number) - (a.atMs as number));
+  return items.slice(0, AGENTS_MAX_TIMELINE);
+}
+
 /**
  * `agents`: {computedAtMs, running:[{id,type,description,startedAtMs,model,headline,narration,needsInput,anomaly,prompt}]
- * (at most 30), done:[{id,type,description,startedAtMs,tokens,toolUses,durationMs,headline}] (at most 20), fleet:null,
- * timeline:null}. fleet and timeline are reserved and always null here. Built in the renderer, so rebuilt field by field:
+ * (at most 30), done:[{id,type,description,startedAtMs,tokens,toolUses,durationMs,headline}] (at most 20), fleet, timeline}.
+ * fleet and timeline are NEVER read from `p` (the renderer cannot supply them): they come from the second argument, the
+ * output of encodeFleetRows / encodeTimelineRows built from the collector in main (null = collector absent or unreadable,
+ * [] = present but empty), and default to null. The roster is built in the renderer, so rebuilt field by field:
  * every text field is masked then capped (description 120, headline 120, narration 160, anomaly detail 120, prompt 1200,
  * type 40, model 40); an anomaly detail also has any path reduced to its last segment. An id must be an opaque safe
  * string (letters, digits, _ and -, up to 64) and needsInput must equal "anomaly present". Narration and model are null
  * when unknown, usage numbers are null when not measured (never 0). Stray keys are dropped; a bad id, enum, number,
  * shape or needsInput mismatch makes the whole payload null; lists beyond their caps are cut.
  */
-export function encodeAgentsView(p: Record<string, unknown> | null): Record<string, unknown> | null {
+export function encodeAgentsView(p: Record<string, unknown> | null, diag: AgentsDiagWire = { fleet: null, timeline: null }): Record<string, unknown> | null {
   if (!isRecord(p) || !count(p.computedAtMs) || !Array.isArray(p.running) || !Array.isArray(p.done)) return null;
   const running: Record<string, unknown>[] = [];
   for (const r of p.running.slice(0, AGENTS_MAX_RUNNING)) {
@@ -296,5 +395,5 @@ export function encodeAgentsView(p: Record<string, unknown> | null): Record<stri
     if (type === null || description === null || headline === null || tokens === undefined || toolUses === undefined || durationMs === undefined) return null;
     done.push({ id: r.id, type, description, startedAtMs: r.startedAtMs, tokens, toolUses, durationMs, headline });
   }
-  return { computedAtMs: p.computedAtMs, running, done, fleet: null, timeline: null };
+  return { computedAtMs: p.computedAtMs, running, done, fleet: diag.fleet, timeline: diag.timeline };
 }

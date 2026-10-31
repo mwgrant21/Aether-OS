@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { encodeAgentsView, encodeAnalyticsView, encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
+import { AGENTS_MAX_FLEET, AGENTS_MAX_TIMELINE, encodeAgentsView, encodeFleetRows, encodeTimelineRows, encodeAnalyticsView, encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
 import { encodeViewSnap } from './protocol';
 import type { LedgerWire, MemoryWire, ProjectsWire } from '../../src/shared/remote/types';
 
@@ -305,11 +305,109 @@ describe('encodeAgentsView', () => {
       expect((encodeAgentsView(d) as any).running[0].anomaly.detail).toBe(want);
     }
   });
+  it('puts the fleet and timeline from the second argument on the wire (viewSnapAgentsDiag golden) and still ignores any in the roster', () => {
+    const g = JSON.parse(spec.frames.viewSnapAgentsDiag).d;
+    const roster = agGolden();
+    roster.fleet = [{ key: 'LEAKLEAK1', title: 'LEAK' }]; roster.timeline = [{ k: 'tool', label: 'LEAK' }];
+    expect(encodeViewSnap('agents', encodeAgentsView(roster, { fleet: g.fleet, timeline: g.timeline }))).toBe(spec.frames.viewSnapAgentsDiag);
+    expect(encodeViewSnap('agents', encodeAgentsView(roster))).toBe(spec.frames.viewSnapAgents);
+  });
   it('cuts lists at 30 running and 20 done', () => {
     const d = agGolden();
     d.running = Array.from({ length: 40 }, () => d.running[1]);
     d.done = Array.from({ length: 30 }, () => d.done[0]);
     const out = encodeAgentsView(d) as any;
     expect([out.running.length, out.done.length]).toEqual([30, 20]);
+  });
+});
+
+const fleetRow = (o: Record<string, unknown> = {}): Record<string, unknown> => ({ key: 'a1b2c3d4e5f60718', projectName: 'aether-os', name: 'sync-worker', startedAtMs: 1789990000000, status: 'busy', kind: 'interactive', pid: 4242, ...o });
+
+describe('encodeFleetRows', () => {
+  it('titles a row with the project basename, keeps the golden field names and order, and sorts oldest first', () => {
+    const out = encodeFleetRows([
+      fleetRow({ key: 'bbbbbbbb11111111', projectName: 'C:\\Users\\John Smith\\Work Stuff\\tarot-app', startedAtMs: 1789995000000, status: 'idle', pid: null }),
+      fleetRow(),
+    ])!;
+    expect(out.map(r => r.title)).toEqual(['aether-os', 'tarot-app']);
+    expect(Object.keys(out[0])).toEqual(['key', 'title', 'name', 'startedAtMs', 'status', 'kind', 'pid']);
+    expect(out[1].pid).toBeNull();
+    expect(JSON.stringify(out)).not.toMatch(/John|Smith|Work Stuff|Users/);
+  });
+  it('drops stray keys (sessionId, cwd, a path) and masks a secret before the cap', () => {
+    const akia = 'AKIA' + 'B'.repeat(16);
+    const out = encodeFleetRows([fleetRow({ sessionId: 'RAW-SESSION-ID', cwd: 'C:\\LEAK\\dir', transcriptPath: '/LEAK/x.jsonl', name: `${'n'.repeat(50)} ${akia}` })])!;
+    const json = JSON.stringify(out);
+    expect(json).not.toMatch(/LEAK|RAW-SESSION|AKIA|cwd|sessionId/);
+    expect((out[0].name as string).length).toBeLessThanOrEqual(60);
+  });
+  it('drops the bad row, not the list; null when nothing valid is left; [] only for an empty input; null for a non-array', () => {
+    const out = encodeFleetRows([fleetRow({ status: 'weird' }), fleetRow({ key: 'short' }), fleetRow({ startedAtMs: -1 }), fleetRow({ pid: 1.5 }), fleetRow({ key: 'cccccccc22222222' })])!;
+    expect(out.map(r => r.key)).toEqual(['cccccccc22222222']);
+    expect(encodeFleetRows([fleetRow({ status: 'weird' })])).toBeNull();
+    expect(encodeFleetRows([])).toEqual([]);
+    expect(encodeFleetRows(null)).toBeNull();
+    expect(encodeFleetRows([fleetRow(), fleetRow()])!).toHaveLength(1);
+  });
+  it('caps at 50, keeping the oldest', () => {
+    const rows = Array.from({ length: 70 }, (_, i) => fleetRow({ key: `k${String(i).padStart(10, '0')}`, startedAtMs: 1000 + (69 - i) }));
+    const out = encodeFleetRows(rows)!;
+    expect(out).toHaveLength(AGENTS_MAX_FLEET);
+    expect([out[0].startedAtMs, out[49].startedAtMs]).toEqual([1000, 1049]);
+  });
+});
+
+const tc = (o: Record<string, unknown> = {}) => ({ toolUseId: 'LEAK-TU', toolName: 'Edit', filePathRel: 'src/worker.ts', startedAtMs: 1, closedAtMs: 1789999700000, ...o });
+const dp = (o: Record<string, unknown> = {}) => ({ toolUseId: 'LEAK-DP', tokens: 482000, toolUses: 37, durationMs: 612000, startedAtMs: 1, endedAtMs: 1789999800000, agentId: 'LEAK-AG', taskKind: 'x', sessionId: 'LEAK-SESS', retries: 0, exitState: 'ok', severity: 1, medianMsAtEval: 5, ...o });
+const an = (o: Record<string, unknown> = {}) => ({ kind: 'reReadLoop', toolUseId: 'LEAK-AN', detail: 'src/worker.ts read 6 times', detectedAtMs: 1789999950000, ...o });
+const snap = (o: Record<string, unknown> = {}) => ({ toolCalls: [tc()], dispatches: [dp()], anomalies: [an()], ...o });
+
+describe('encodeTimelineRows', () => {
+  it('maps toolCall to tool, composes one label per kind, sorts newest first and keeps only the six wire fields', () => {
+    const out = encodeTimelineRows(snap())!;
+    expect(out.map(r => r.k)).toEqual(['anomaly', 'dispatch', 'tool']);
+    expect(out.map(r => r.label)).toEqual(['reReadLoop: worker.ts read 6 times', 'Agent', 'Edit worker.ts']);
+    expect(Object.keys(out[1])).toEqual(['k', 'atMs', 'label', 'tokens', 'toolUses', 'durationMs']);
+    expect(out[1]).toMatchObject({ tokens: 482000, toolUses: 37, durationMs: 612000 });
+    expect(out[2]).toMatchObject({ tokens: null, toolUses: null, durationMs: null });
+  });
+  it('lets no path-bearing field reach the wire: filePathRel, ids, session, agent and source_file_rel are dropped', () => {
+    const json = JSON.stringify(encodeTimelineRows(snap({ toolCalls: [tc({ source_file_rel: 'C--Users-Matt-LEAK-proj/x.jsonl', filePathRel: 'C:\\LEAK\\dir\\file.ts' })] })));
+    expect(json).not.toMatch(/LEAK|source_file|filePathRel|sessionId|agentId|toolUseId|taskKind|exitState|C:/);
+    expect(json).toContain('Edit file.ts');
+  });
+  it('leaves only the basename of a spaced Windows or POSIX tool file path, and of a spaced path in an anomaly detail', () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ toolCalls: [tc({ filePathRel: 'Users\\John Smith\\Secret Project\\app\\a b.ts' })], dispatches: [], anomalies: [] }, 'Edit a b.ts'],
+      [{ toolCalls: [tc({ filePathRel: '/home/alice smith/p/f.ts' })], dispatches: [], anomalies: [] }, 'Edit f.ts'],
+      [{ toolCalls: [tc({ filePathRel: 'dir with space/' })], dispatches: [], anomalies: [] }, 'Edit'],
+      [{ toolCalls: [], dispatches: [], anomalies: [an({ detail: 'C:\\Users\\John Smith\\Documents\\proj\\a.ts read 6 times' })] }, 'reReadLoop: a.ts read 6 times'],
+    ];
+    for (const [s, want] of cases) {
+      const out = encodeTimelineRows(s)!;
+      expect(out[0].label).toBe(want);
+      expect(JSON.stringify(out)).not.toMatch(/John|Smith|Secret|alice|Documents|dir with/);
+    }
+  });
+  it('masks before the cap: a secret that straddles the 80th character is redacted, not half-cut', () => {
+    const akia = 'AKIA' + 'B'.repeat(16);
+    const out = encodeTimelineRows({ toolCalls: [tc({ toolName: `${'t'.repeat(70)} ${akia}`, filePathRel: null })], dispatches: [], anomalies: [] })!;
+    expect((out[0].label as string).length).toBeLessThanOrEqual(80);
+    expect(out[0].label).not.toMatch(/AKIA|BBBB/);
+  });
+  it('caps at 60 newest and null-vs-[]: null for no snapshot, [] only when all three lists are empty, null when rows exist but none is valid', () => {
+    const calls = Array.from({ length: 90 }, (_, i) => tc({ closedAtMs: 1000 + i }));
+    const out = encodeTimelineRows(snap({ toolCalls: calls, dispatches: [], anomalies: [] }))!;
+    expect(out).toHaveLength(AGENTS_MAX_TIMELINE);
+    expect([out[0].atMs, out[59].atMs]).toEqual([1089, 1030]);
+    expect(encodeTimelineRows(null)).toBeNull();
+    expect(encodeTimelineRows({ toolCalls: [], dispatches: [], anomalies: [] })).toEqual([]);
+    expect(encodeTimelineRows({ toolCalls: [tc({ closedAtMs: 'x' })], dispatches: [], anomalies: [] })).toBeNull();
+    expect(encodeTimelineRows({ toolCalls: [] })).toBeNull();
+  });
+  it('drops a dispatch with a bad number and keeps unmeasured usage as null, never 0', () => {
+    const out = encodeTimelineRows(snap({ toolCalls: [], anomalies: [], dispatches: [dp({ tokens: -5 }), dp({ tokens: null, toolUses: null, durationMs: null, endedAtMs: 2000 })] }))!;
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ k: 'dispatch', tokens: null, toolUses: null, durationMs: null });
   });
 });

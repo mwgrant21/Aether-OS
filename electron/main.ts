@@ -100,7 +100,8 @@ import { createPermissionBroker } from './permissionBroker';
 import { createThreadFeed } from './threadFeed';
 import { createLedgerFeed } from './ledgerFeed';
 import { createCacheViewFeed, createPhoneViewCache } from './phoneViewCache';
-import { encodeAgentsView, encodeAnalyticsView, encodeDashView } from './control/viewWire';
+import { encodeAnalyticsView, encodeDashView } from './control/viewWire';
+import { createAgentsDiagFeed } from './agentsDiagFeed';
 import { VIEW_IDS } from '../src/shared/remote/types';
 import { createProjectsFeed } from './projectsFeed';
 import { createMemoryFeed } from './memoryFeed';
@@ -529,6 +530,9 @@ const ledgerFeed = createLedgerFeed({ current: () => cachedLedgerSnapshot });
 // Renderer-derived phone view payloads (privacy section 17): latest per view, memory only. The gate reads the control
 // hub lazily (declared further down), so ingest is inert until phone control is on; cleared when control leaves 'on' and at quit.
 const phoneViewCache = createPhoneViewCache(() => controlHub.status().state === 'on');
+// Phone Agents view feed: merges the renderer-fed roster (the cache above) with the collector-fed fleet and timeline that
+// the scans below hand it already encoded (masked, capped, no paths). Declared here for the same temporal-dead-zone reason.
+const agentsDiagFeed = createAgentsDiagFeed(phoneViewCache);
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 // Phone Projects view feed (privacy section 17). Declared above the scan and createControlHub for the same temporal-dead-zone
@@ -674,12 +678,14 @@ async function scanAndPushUsage(): Promise<void> {
 function scanAndPushFleet(): void {
   if (!mainWindow) return;
   const rows = readFleetSessions(collectorDbPath);
+  agentsDiagFeed.setFleet(rows);
   sendToWindow('fleet:snapshot', rows);
 }
 
 function scanAndPushDiagnostics(): void {
   if (!mainWindow) return;
   const snapshot = readDiagnostics(collectorDbPath, Date.now() - 24 * 60 * 60 * 1000);
+  agentsDiagFeed.setDiagnostics(snapshot);
   sendToWindow('diagnostics:snapshot', snapshot);
 }
 
@@ -1591,7 +1597,7 @@ const controlHub = createControlHub({
   input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   threads: threadFeed, // read-only transcript thread, Claude slot only
   ledger: ledgerFeed.port, // read-only derived cost numbers, no text
-  views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView), analytics: createCacheViewFeed(phoneViewCache, 'analytics', encodeAnalyticsView), agents: createCacheViewFeed(phoneViewCache, 'agents', encodeAgentsView) }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only; analytics: counts plus masked, capped dispatch descriptions and first words of typed commands; agents: masked, capped dispatch descriptions, headlines, narration and prompt text
+  views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView), analytics: createCacheViewFeed(phoneViewCache, 'analytics', encodeAnalyticsView), agents: agentsDiagFeed.port }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only; analytics: counts plus masked, capped dispatch descriptions and first words of typed commands; agents: masked, capped dispatch descriptions, headlines, narration and prompt text, plus fleet process and project names and timeline tool names with file basenames from the collector (no paths, no session ids)
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
