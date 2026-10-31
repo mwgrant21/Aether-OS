@@ -45,7 +45,8 @@ export interface LiveAgentTick {
 // noteClearTyped(atMs): the next scan skips the throttle once and passes that
 // time to the finder as a hint (see clearSuccessorFinder.ts), so the pin can
 // follow before the new file carries the launch id. The hint persists until a
-// repin or the next spawn; only the throttle bypass is one-shot.
+// repin or the next spawn; only the throttle bypass is one-shot. The same time
+// is kept as a clear floor (getClearFloorMs) until the next spawn, repin or not.
 // Filesystem seams, injectable so tests can hold an await open and land a
 // respawn inside it deterministically. Production uses the real ones.
 export interface LiveAgentTrackerFs {
@@ -83,6 +84,9 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
   let generation = 0;
   let lastScanMs = 0;
   let clearHintMs: number | null = null;
+  // Time of the last typed /clear; thread surfaces hide older events. Survives
+  // repin, cleared only by notifyPtySpawned.
+  let clearFloorMs: number | null = null;
   let forceScan = false;
 
   function emptyTick(): LiveAgentTick {
@@ -203,6 +207,7 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
       spawnedSessionId = sessionId;
       lastScanMs = 0;
       clearHintMs = null;
+      clearFloorMs = null;
       forceScan = false;
       pinnedFile = null;
       currentOffset = 0;
@@ -216,7 +221,13 @@ export function createLiveAgentTracker(homeDir: string, fs: LiveAgentTrackerFs =
     /** The user submitted a typed /clear at atMs: scan once now, with this as the hint. */
     noteClearTyped(atMs: number): void {
       clearHintMs = atMs;
+      clearFloorMs = atMs;
       forceScan = true;
+    },
+
+    /** Typed-/clear moment; events older than this are hidden until the next pty spawn. */
+    getClearFloorMs(): number | null {
+      return clearFloorMs;
     },
 
     tick(): Promise<LiveAgentTick> {

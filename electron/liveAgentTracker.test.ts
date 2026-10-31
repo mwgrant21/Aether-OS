@@ -423,4 +423,31 @@ describe('liveAgentTracker: typed-/clear hint', () => {
     await tracker.tick();
     expect(fourth(fs, 2)).toBeUndefined();
   });
+
+  it('clear floor: null before any hint, set by noteClearTyped, later /clear overwrites', () => {
+    const tracker = make(vi.fn(async () => null));
+    expect(tracker.getClearFloorMs()).toBeNull();
+    tracker.noteClearTyped(5000);
+    expect(tracker.getClearFloorMs()).toBe(5000);
+    tracker.noteClearTyped(9000);
+    expect(tracker.getClearFloorMs()).toBe(9000);
+  });
+
+  it('notifyPtySpawned resets the clear floor', () => {
+    const tracker = make(vi.fn(async () => null));
+    tracker.noteClearTyped(5000);
+    tracker.notifyPtySpawned(2000, 'id2');
+    expect(tracker.getClearFloorMs()).toBeNull();
+  });
+
+  it('the clear floor survives a repin', async () => {
+    let succ: string | null = null;
+    const tracker = make(vi.fn(async () => succ), 0);
+    await tracker.tick();
+    succ = '/s/new.jsonl';
+    tracker.noteClearTyped(5000);
+    await tracker.tick();
+    expect(tracker.getPinnedSessionId()).toBe('new');
+    expect(tracker.getClearFloorMs()).toBe(5000);
+  });
 });
