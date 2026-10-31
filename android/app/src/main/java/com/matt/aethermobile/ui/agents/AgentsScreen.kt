@@ -110,6 +110,8 @@ private fun ReadyBody(snap: AgentsSnapshot, hostNowMs: Long, modifier: Modifier)
     var openId by remember { mutableStateOf<String?>(null) }
     var doneExpanded by remember { mutableStateOf(DONE_EXPANDED_DEFAULT) }
     val shown = findRunning(ui, openId)
+    // A dispatch that vanished must not stay "open": the same id reappearing later would reopen the sheet silently.
+    LaunchedEffect(openId, shown == null) { if (openId != null && shown == null) openId = null }
     BackHandler(enabled = shown != null) { openId = null }
 
     Box(modifier.fillMaxSize()) {

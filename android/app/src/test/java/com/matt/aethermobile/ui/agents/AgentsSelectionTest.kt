@@ -5,6 +5,12 @@ import com.matt.aethermobile.agents.DONE_EXPANDED_DEFAULT
 import com.matt.aethermobile.agents.EMPTY_ROSTER
 import com.matt.aethermobile.agents.FLEET_EMPTY
 import com.matt.aethermobile.agents.FLEET_UNAVAILABLE
+import com.matt.aethermobile.agents.FleetRow
+import com.matt.aethermobile.agents.FleetStatus
+import com.matt.aethermobile.agents.TimelineItem
+import com.matt.aethermobile.agents.TimelineKind
+import com.matt.aethermobile.agents.fleetUi
+import com.matt.aethermobile.agents.timelineUi
 import com.matt.aethermobile.agents.PROMPT_EMPTY
 import com.matt.aethermobile.agents.RunningAgent
 import com.matt.aethermobile.agents.TIMELINE_EMPTY
@@ -69,5 +75,30 @@ class AgentsSelectionTest {
         assertEquals(TIMELINE_UNAVAILABLE, res("agents_timeline_unavailable"))
         assertEquals(TIMELINE_EMPTY, res("agents_timeline_empty"))
         assertEquals(PROMPT_EMPTY, res("agents_prompt_empty"))
+    }
+
+    @Test fun zeroNeedsInputHasNoBadge() {
+        assertNull(ui(run("a")).badge)
+    }
+
+    @Test fun populatedFleetAndTimelineShowACountNotABlank() {
+        val f = fleetNotice(fleetUi(listOf(FleetRow("a", 1L, FleetStatus.BUSY, "cli", null), FleetRow("b", 2L, FleetStatus.IDLE, "cli", 7L))))
+        assertEquals(TabNotice(NoticeKey.FLEET_ROWS_UNSUPPORTED, 2), f)
+        val t = timelineNotice(timelineUi(listOf(TimelineItem(TimelineKind.TOOL, 1L, "Read x", null, null, null))))
+        assertEquals(TabNotice(NoticeKey.TIMELINE_ITEMS_UNSUPPORTED, 1), t)
+    }
+
+    @Test fun unavailableAndEmptyKeepTheirOwnNotices() {
+        assertEquals(NoticeKey.FLEET_UNAVAILABLE, fleetNotice(fleetUi(null)).key)
+        assertEquals(NoticeKey.FLEET_EMPTY, fleetNotice(fleetUi(emptyList())).key)
+        assertEquals(NoticeKey.TIMELINE_UNAVAILABLE, timelineNotice(timelineUi(null)).key)
+        assertEquals(NoticeKey.TIMELINE_EMPTY, timelineNotice(timelineUi(emptyList())).key)
+    }
+
+    @Test fun fallbackStringsExistInResources() {
+        val xml = File("src/main/res/values/strings_agents.xml").readText(Charsets.UTF_8)
+        for (n in listOf("agents_fleet_rows_unsupported", "agents_timeline_items_unsupported", "agents_fleet_count", "agents_timeline_count")) {
+            assertEquals(n, true, xml.contains("name=\"$n\""))
+        }
     }
 }
