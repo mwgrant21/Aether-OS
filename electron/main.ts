@@ -22,7 +22,7 @@ import { chooseUsageSource } from './collectorFreshness';
 import { findNewestTranscriptMtimeMs } from './activeSessionFinder';
 import { readMemories, readMemoryTombstones } from './memoryStore';
 import { computeWeeklyTokens, computeDailyTokens, computeLiveTokens, computeUsedThisMonth, computeBurnRatePerMin, computeWeekOverWeekPct, computeContextWindow } from '../src/components/dashboard/realUsageMath';
-import { createLiveAgentTracker, type LiveAgentTick } from './liveAgentTracker';
+import { createLiveAgentTracker, createClearTypedDetector, type LiveAgentTick } from './liveAgentTracker';
 import { isSafeSegment, listTranscriptSources, readTranscript, resolveSourcePath } from './transcriptReader';
 import { cwdToProjectDirName } from '../src/state/projectDirName';
 import { createEmptyAccumulator, accumulate, type RecapAccumulator } from './recapAccumulator';
@@ -688,6 +688,8 @@ function optimizeProjectTargetPath(events: TranscriptEvent[]): string | null {
 }
 
 const liveAgentTracker = createLiveAgentTracker(os.homedir());
+// One shared model of the claude input box, fed by the desktop pty:write handler and the phone input port.
+const clearTypedDetector = createClearTypedDetector((atMs) => liveAgentTracker.noteClearTyped(atMs));
 // Real severity (docs/superpowers/specs/2026-09-30-real-severity-design.md).
 // Persisted per-agent baseline; corrupt/unreadable -> empty + one [diag].
 const narrationDurationBaseline = loadDurationBaseline({
@@ -1372,6 +1374,7 @@ const communicationSessions = new CommunicationSessionControl({
     pinnedPtyExited = false;
     pinnedLaunchSessionId = bundle.sessionId ?? null;
     liveAgentTracker.notifyPtySpawned(Date.now(), pinnedLaunchSessionId);
+    clearTypedDetector.reset();
   },
 });
 const communicationGrants = new CommunicationGrantControl(communicationBridge, async () => {
@@ -1417,10 +1420,12 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   pinnedPtyExited = false;
   pinnedLaunchSessionId = sessionId;
   liveAgentTracker.notifyPtySpawned(Date.now(), sessionId);
+  clearTypedDetector.reset();
 });
 
 ipcMain.on('pty:write', (_event, input: string) => {
   ptyLifecycle.write(input);
+  clearTypedDetector.feed(input); // after the write: a throw above skips the feed
 });
 
 ipcMain.on('pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
@@ -1558,10 +1563,19 @@ const remoteHub = createRemoteHub({
 // every store or flag access waits for the private-dir ACL. It shares the remote hub's listener through
 // listenerPort(); the port is attached synchronously, before registerRemoteIpc and before any await, because an
 // attach after a viewer-only start fails closed by design.
+const claudeWritePort = terminalHub.writePort();
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
   terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
-  input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
+  // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it. Writes to the claude slot that the port
+  // accepted are also fed to the typed-/clear detector (returns the underlying boolean unchanged).
+  input: {
+    write: (s, d) => {
+      const ok = claudeWritePort.write(s, d);
+      if (ok && s === 'claude') clearTypedDetector.feed(d);
+      return ok;
+    },
+  },
   threads: threadFeed, // read-only transcript thread, Claude slot only
   ledger: ledgerFeed.port, // read-only derived cost numbers, no text
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer

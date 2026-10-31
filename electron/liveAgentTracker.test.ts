@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { createLiveAgentTracker } from './liveAgentTracker';
+import { createLiveAgentTracker, createClearTypedDetector } from './liveAgentTracker';
 import { createLiveSeverityNarrator } from './severity/liveSeverity';
 import { narrationLine } from './narrationGenerator';
 import { cwdToProjectDirName } from '../src/state/projectDirName';
@@ -304,5 +304,123 @@ describe('liveAgentTracker: /clear rollover', () => {
     await tracker.tick();
     await tracker.tick();
     expect(findSuccessor).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createClearTypedDetector', () => {
+  const run = (chunks: string[]): number[] => {
+    const fired: number[] = [];
+    const d = createClearTypedDetector((at) => fired.push(at), () => 42);
+    for (const c of chunks) d.feed(c);
+    return fired;
+  };
+  it.each<[string, string[], number]>([
+    ['two frames', ['/clear', '\r'], 1],
+    ['one chunk', ['/clear\r'], 1],
+    ['per key', ['/', 'c', 'l', 'e', 'a', 'r', '\r'], 1],
+    ['backspace edit', ['/clearx', '\x7f', '\r'], 1],
+    ['trailing space', ['/clear \r'], 1],
+    ['ctrl-u then retype', ['junk\x15/clear\r'], 1],
+    ['suffix', ['/clear-foo\r'], 0],
+    ['suffix 2', ['/clearcache\r'], 0],
+    ['prefix', ['x/clear\r'], 0],
+    ['args', ['/clear x\r'], 0],
+    ['short', ['/cle\r'], 0],
+    ['escape poison', ['/clear\x1b[A\r'], 0],
+    ['bracketed paste', ['\x1b[200~/clear\x1b[201~\r'], 0],
+    ['no enter after ctrl-c', ['/clear\x03/clear'], 0],
+    ['40-char line', ['/clear' + ' '.repeat(34) + '\r'], 0],
+  ])('%s', (_n, chunks, count) => {
+    const fired = run(chunks);
+    expect(fired).toHaveLength(count);
+    for (const f of fired) expect(f).toBe(42);
+  });
+  it('reset drops a half-typed line', () => {
+    const fired: number[] = [];
+    const d = createClearTypedDetector((at) => fired.push(at));
+    d.feed('/cle');
+    d.reset();
+    d.feed('ar\r');
+    expect(fired).toEqual([]);
+  });
+});
+
+describe('liveAgentTracker: typed-/clear hint', () => {
+  function make(findSuccessor: ReturnType<typeof vi.fn>, interval = 60_000, sid: string | null = 'id1') {
+    const tracker = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: interval,
+      findSessionFile: async () => '/s/old.jsonl',
+      findSuccessor,
+      readLines: async () => ({ lines: [], newOffset: 0 }),
+    });
+    tracker.notifyPtySpawned(1000, sid);
+    return tracker;
+  }
+  const fourth = (fn: ReturnType<typeof vi.fn>, i: number) => fn.mock.calls[i][3];
+
+  it('noteClearTyped bypasses the throttle once; the hint persists to the next scan', async () => {
+    const fs = vi.fn(async () => null);
+    const tracker = make(fs);
+    await tracker.tick(); // first scan
+    expect(fs).toHaveBeenCalledTimes(1);
+    tracker.noteClearTyped(5000);
+    await tracker.tick();
+    expect(fs).toHaveBeenCalledTimes(2);
+    expect(fourth(fs, 1)).toBe(5000);
+    await tracker.tick(); // throttled again
+    expect(fs).toHaveBeenCalledTimes(2);
+  });
+
+  it('a hint noted before the first pin is not lost by a tick that returns early', async () => {
+    const fs = vi.fn(async () => null);
+    let found: string | null = null;
+    const tracker = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: 60_000,
+      findSessionFile: async () => found,
+      findSuccessor: fs,
+      readLines: async () => ({ lines: [], newOffset: 0 }),
+    });
+    tracker.notifyPtySpawned(1000, 'id1');
+    await tracker.tick(); // unpinned: maybeRollover returns early
+    tracker.noteClearTyped(7000);
+    await tracker.tick(); // still unpinned
+    expect(fs).not.toHaveBeenCalled();
+    found = '/s/old.jsonl';
+    await tracker.tick();
+    expect(fs).toHaveBeenCalledTimes(1);
+    expect(fourth(fs, 0)).toBe(7000);
+  });
+
+  it('no launch id -> never called even with a hint', async () => {
+    const fs = vi.fn(async () => null);
+    const tracker = make(fs, 0, null);
+    tracker.noteClearTyped(5000);
+    await tracker.tick();
+    await tracker.tick();
+    expect(fs).not.toHaveBeenCalled();
+  });
+
+  it('notifyPtySpawned clears the hint', async () => {
+    const fs = vi.fn(async () => null);
+    const tracker = make(fs, 0);
+    tracker.noteClearTyped(5000);
+    tracker.notifyPtySpawned(2000, 'id2');
+    await tracker.tick();
+    expect(fs).toHaveBeenCalledTimes(1);
+    expect(fourth(fs, 0)).toBeUndefined();
+  });
+
+  it('a repin clears the hint', async () => {
+    let succ: string | null = null;
+    const fs = vi.fn(async () => succ);
+    const tracker = make(fs, 0);
+    await tracker.tick();
+    succ = '/s/new.jsonl';
+    tracker.noteClearTyped(5000);
+    await tracker.tick();
+    expect(fourth(fs, 1)).toBe(5000);
+    expect(tracker.getPinnedSessionId()).toBe('new');
+    await tracker.tick();
+    expect(fourth(fs, 2)).toBeUndefined();
   });
 });
