@@ -72,7 +72,7 @@ private fun FleetRowItem(r: FleetRowUi, now: State<Long>, expanded: Boolean, onT
 
 @Composable
 private fun StatusChip(text: String, busy: Boolean) {
-    val c = if (busy) AetherColors.cyanBright else AetherColors.textMuted
+    val c = if (busy) AetherColors.success else AetherColors.textMuted
     val shape = RoundedCornerShape(6.dp)
     BasicText(
         text,
