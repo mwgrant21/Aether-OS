@@ -203,7 +203,7 @@ export interface TranscriptReadResult {
  */
 export async function readTranscript(
   filePath: string,
-  opts: { limit: number; before?: string }
+  opts: { limit: number; before?: string; floorMs?: number }
 ): Promise<TranscriptReadResult> {
   const beforeOffset = opts.before !== undefined ? Number(opts.before) : undefined;
   const lines = await readTailLines(filePath, opts.limit, Number.isFinite(beforeOffset) ? beforeOffset : undefined);
@@ -253,7 +253,16 @@ export async function readTranscript(
   // skip past) is what the next "load older" call must pass back in as
   // `before`. Reaching offset 0 means the file start was read, so there is
   // nothing left to page to.
-  const nextBefore = lines.length > 0 && lines[0].startOffset > 0 ? String(lines[0].startOffset) : null;
+  let nextBefore = lines.length > 0 && lines[0].startOffset > 0 ? String(lines[0].startOffset) : null;
+
+  // Typed-/clear floor: hide messages older than it (atMs 0 = no timestamp, hidden too). Applied last so
+  // tool correlation still sees the whole window. If anything was hidden, nothing visible lies further back.
+  if (typeof opts.floorMs === 'number' && Number.isFinite(opts.floorMs)) {
+    const floor = opts.floorMs;
+    const visible = messages.filter((m) => m.atMs >= floor);
+    if (visible.length !== messages.length) nextBefore = null;
+    return { messages: visible, nextBefore };
+  }
 
   return { messages, nextBefore };
 }

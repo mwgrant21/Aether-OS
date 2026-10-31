@@ -1548,7 +1548,9 @@ let remoteDirFailed = false; // true only after the ACL setup actually failed (n
 // One resolver for both the viewer feed and the phone thread feed: the pinned Claude session's transcript file.
 const resolvePinnedSession = () => {
   const id = liveAgentTracker.getPinnedSessionId();
-  return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
+  return id && isSafeSegment(id)
+    ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`), floorMs: liveAgentTracker.getClearFloorMs() }
+    : null;
 };
 // Polls the transcript only while a phone socket is thread-attached; its ring is dropped on the last detach, so
 // control stop (which closes every socket) and quit leave nothing running or held.
@@ -1691,7 +1693,9 @@ ipcMain.handle(
   'transcript:read',
   (_event, { source, limit, before }: { source: string; limit: number; before?: string }) => {
     const filePath = resolveSourcePath(transcriptSessionDir, source);
-    return readTranscript(filePath, { limit, before });
+    // Only the pinned session is subject to the typed-/clear floor, never a dispatch source.
+    const floorMs = source === liveAgentTracker.getPinnedSessionId() ? liveAgentTracker.getClearFloorMs() ?? undefined : undefined;
+    return readTranscript(filePath, { limit, before, floorMs });
   }
 );
 
