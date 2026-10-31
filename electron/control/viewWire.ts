@@ -236,19 +236,19 @@ export const AGENTS_MAX_DONE = 20;
 const AGENTS_ANOMALY_KINDS = ['reReadLoop', 'writeDeleteRewrite', 'zeroEditBurn', 'stalledPermission'];
 const AGENTS_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Mask the raw text, then reduce any path-shaped token to its last segment, then cap (an anomaly detail can open with a file path). */
+/** Mask the raw text, then reduce a path to what follows its last separator, then cap (an anomaly detail, a session name or a tool name can be or contain a path). */
 function detailText(x: unknown, n: number): string | null {
   if (typeof x !== 'string') return null;
-  const masked = maskSecrets(x);
+  const masked = maskSecrets(x).trim();
   // The detectors emit "<path or label> <fixed suffix>". Paths may contain spaces, so cut at the suffix and keep only
-  // what follows the head's last separator; other shapes fall back to a per-token pass.
+  // what follows the head's last separator; any other shape that holds a separator keeps only the text after the last one.
   const m = /^([\s\S]*?) (read \d+ times|written \d+ times in 5min|open for \d+s)$/.exec(masked);
   if (m) {
     const head = m[1].replace(/^[\s'"]+|[\s'"]+$/g, '');
     const base = head.slice(Math.max(head.lastIndexOf('/'), head.lastIndexOf('\\')) + 1).replace(/^[\s'"]+|[\s'"]+$/g, '');
     return text(`${base} ${m[2]}`.trim(), n);
   }
-  return text(masked.replace(/[^\s'"]*[\\/][^\s'"]*/g, (t) => t.split(/[\\/]/).filter(Boolean).pop() ?? ''), n);
+  return text(afterLastSep(masked).trim(), n);
 }
 
 /** Already-encoded fleet and timeline rows (encodeFleetRows / encodeTimelineRows output); null = collector absent or unreadable. */
@@ -289,8 +289,10 @@ export function encodeFleetRows(rows: unknown): Record<string, unknown>[] | null
     if (typeof r.projectName !== 'string') continue;
     const title = text(lastSegment(maskSecrets(r.projectName)), AGENTS_FLEET_TITLE_CAP);
     const name = detailText(r.name, AGENTS_FLEET_NAME_CAP);
-    const kind = text(r.kind, AGENTS_FLEET_KIND_CAP);
-    if (title === null || name === null || kind === null) continue;
+    // kind is reduced past any separator, then must be a plain token; anything else becomes 'unknown' (the row is kept).
+    const kindRaw = typeof r.kind === 'string' ? text(afterLastSep(maskSecrets(r.kind)).trim(), AGENTS_FLEET_KIND_CAP) : null;
+    if (title === null || name === null || kindRaw === null) continue;
+    const kind = /^[A-Za-z0-9_.-]{1,40}$/.test(kindRaw) ? kindRaw : 'unknown';
     seen.add(r.key);
     out.push({ key: r.key, title, name, startedAtMs: r.startedAtMs, status: r.status, kind, pid: r.pid });
   }
@@ -320,7 +322,8 @@ export function encodeTimelineRows(snap: unknown): Record<string, unknown>[] | n
     const at = timeMs(t.closedAtMs);
     if (at === null) continue;
     const base = typeof t.filePathRel === 'string' ? afterLastSep(maskSecrets(t.filePathRel)).trim() : '';
-    const label = detailText(base ? `${t.toolName} ${base}` : t.toolName, AGENTS_LABEL_CAP);
+    const tool = afterLastSep(maskSecrets(t.toolName)).trim() || 'tool';
+    const label = detailText(base ? `${tool} ${base}` : tool, AGENTS_LABEL_CAP);
     if (label === null) continue;
     items.push({ k: 'tool', atMs: at, label, tokens: null, toolUses: null, durationMs: null });
   }

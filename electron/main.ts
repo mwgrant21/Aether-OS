@@ -1146,6 +1146,7 @@ app.on('before-quit', event => {
   if (!baselineQuitGate(event)) return;
   isQuitting = true;
   phoneViewCache.clear();
+  agentsDiagFeed.clear();
   stopDashboardsWatch?.();
   stopDashboardsWatch = null;
   stopAllQueries();
@@ -1610,7 +1611,7 @@ const controlHub = createControlHub({
   renderQr: renderQrSvg,
   log: l => diagLog.write(l),
   onStatus: s => {
-    if (s.state !== 'on') phoneViewCache.clear();
+    if (s.state !== 'on') { phoneViewCache.clear(); agentsDiagFeed.clear(); }
     sendToWindow('control:statusChanged', s);
   },
 });

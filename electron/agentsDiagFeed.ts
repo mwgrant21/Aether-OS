@@ -2,7 +2,7 @@
 // phone view cache, and the collector-fed fleet and timeline, set here from the same reads the desktop cards use
 // (readFleetSessions / readDiagnostics, called by main's scans). This feed merges them: it wraps the cache so a change in
 // either source re-sends through createCacheViewFeed (same attach-now, one send per gap behaviour), and encodes with the
-// single encodeAgentsView. It keeps only the ENCODED fleet and timeline (at most 50 and 60 rows, masked, capped, no paths,
+// single encodeAgentsView. It keeps only the ENCODED fleet and timeline (cleared with the cache when phone control leaves 'on' and at quit) (at most 50 and 60 rows, masked, capped, no paths,
 // no session ids); the raw collector rows are dropped as soon as they are encoded. A fleet session id never leaves this
 // file: it becomes an opaque key, a salted hash that differs on every app run. Lives outside electron/control/ (hashing
 // needs node:crypto, which the control boundary does not allow there). Nothing is logged or written.
@@ -28,6 +28,8 @@ export interface AgentsDiagFeed {
   setFleet(rows: readonly FleetRowIn[] | null): void;
   /** snapshot from readDiagnostics (structurally a DiagnosticsSnapshot), or null when the collector is absent or stale. */
   setDiagnostics(snap: unknown): void;
+  /** Forgets the encoded fleet and timeline (phone control left 'on', or quit) and tells attached taps. */
+  clear(): void;
 }
 
 export function createAgentsDiagFeed(cache: PhoneViewCache, opts: { salt?: string; now?: () => number; minGapMs?: number } = {}): AgentsDiagFeed {
@@ -68,6 +70,9 @@ export function createAgentsDiagFeed(cache: PhoneViewCache, opts: { salt?: strin
       let timeline: AgentsDiagWire['timeline'] = null;
       try { timeline = snap ? encodeTimelineRows(snap) : null; } catch { timeline = null; }
       update({ fleet: diag.fleet, timeline });
+    },
+    clear() {
+      update({ fleet: null, timeline: null });
     },
   };
 }

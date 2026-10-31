@@ -411,3 +411,37 @@ describe('encodeTimelineRows', () => {
     expect(out[0]).toMatchObject({ k: 'dispatch', tokens: null, toolUses: null, durationMs: null });
   });
 });
+
+describe('path reduction in fleet name/kind and timeline tool names', () => {
+  it('a fleet name that is or holds a spaced path keeps only the text after the last separator', () => {
+    const cases: [string, string][] = [
+      ['C:\\Users\\John Smith\\work\\thing', 'thing'],
+      ['/home/john smith/work/thing', 'thing'],
+      ['review C:\\Users\\John Smith\\secretproj\\a.ts now', 'a.ts now'],
+      ['\\\\srv\\share dir\\fold er\\f.txt', 'f.txt'],
+      ['plain name', 'plain name'],
+    ];
+    for (const [name, want] of cases) {
+      const out = encodeFleetRows([fleetRow({ name })])!;
+      expect(out[0].name).toBe(want);
+      expect(JSON.stringify(out)).not.toMatch(/John|Smith|john|share|srv|secretproj/);
+    }
+  });
+  it('an anomaly detail with trailing whitespace, or whose fixed suffix was clipped away, leaks no directory word', () => {
+    const a = (detail: string) => (encodeTimelineRows({ toolCalls: [], dispatches: [], anomalies: [an({ detail })] })![0].label as string);
+    expect(a('/home/john smith/proj/f.ts read 6 times   ')).toBe('reReadLoop: f.ts read 6 times');
+    const clipped = a(`git diff /home/john smith/proj/${'z'.repeat(1010)} open for 70s`.slice(0, 1000));
+    expect(clipped).not.toMatch(/john|smith/);
+    expect(a(`git diff /home/john smith/proj/${'z'.repeat(1010)} open for 70s`)).not.toMatch(/john|smith/);
+    expect(a('see C:\\Users\\John Smith\\x\\y.ts please')).toBe('reReadLoop: y.ts please');
+  });
+  it('a fleet kind that is a path is reduced and an unsafe kind becomes unknown without dropping the row', () => {
+    const out = encodeFleetRows([fleetRow({ kind: 'C:\\Users\\John Smith\\bin\\claude.exe' }), fleetRow({ key: 'dddddddd33333333', kind: 'we ird!' })])!;
+    expect(out.map(r => r.kind)).toEqual(['claude.exe', 'unknown']);
+    expect(JSON.stringify(out)).not.toMatch(/John|Smith/);
+  });
+  it('a tool name that is a spaced path is reduced to its last segment', () => {
+    const out = encodeTimelineRows({ toolCalls: [tc({ toolName: 'C:\\Users\\John Smith\\bin\\Read', filePathRel: 'x.ts' })], dispatches: [], anomalies: [] })!;
+    expect(out[0].label).toBe('Read x.ts');
+  });
+});

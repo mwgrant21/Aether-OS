@@ -81,6 +81,14 @@ describe('agents diag feed', () => {
     expect(() => feed.setDiagnostics({ get toolCalls(): unknown { throw new Error('boom'); } })).not.toThrow();
     expect([got[got.length - 1].fleet, got[got.length - 1].timeline]).toEqual([null, null]);
   });
+  it('clear() forgets the encoded fleet and timeline and tells attached taps', () => {
+    const { cache, feed, got } = setup();
+    cache.ingest('agents', roster());
+    feed.setFleet([row()]);
+    feed.setDiagnostics(snapshot());
+    feed.clear();
+    expect([got[got.length - 1].fleet, got[got.length - 1].timeline]).toEqual([null, null]);
+  });
   it('clearing the roster cache sends null; the feed holds no roster of its own', () => {
     const { cache, feed, got } = setup();
     cache.ingest('agents', roster());
