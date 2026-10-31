@@ -8,6 +8,7 @@ import { useAetherStore } from './store';
 import type { AetherState } from './types';
 import type { ViewId } from '../shared/remote/types';
 import { phoneDashPayload } from '../components/dashboard/phoneDashPayload';
+import { phoneAnalyticsPayload } from '../components/analytics/phoneAnalyticsPayload';
 import { hasDesktopApp } from '../components/dashboard/readinessMath';
 
 export type PhoneViewBuilder = (state: AetherState) => Record<string, unknown> | null;
@@ -15,6 +16,7 @@ export type PhoneViewRegistry = Partial<Record<ViewId, PhoneViewBuilder>>;
 
 export const PHONE_VIEW_PUBLISHERS: PhoneViewRegistry = {
   dash: (state) => phoneDashPayload(state, hasDesktopApp(), Date.now()),
+  analytics: (state) => phoneAnalyticsPayload(state, Date.now()),
 };
 export const PUBLISH_MIN_GAP_MS = 1000;
 

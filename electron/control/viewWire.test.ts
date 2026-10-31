@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
+import { encodeAnalyticsView, encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
 import { encodeViewSnap } from './protocol';
 import type { LedgerWire, MemoryWire, ProjectsWire } from '../../src/shared/remote/types';
 
@@ -202,5 +202,48 @@ describe('encodeDashView', () => {
   it('rejects a non-object input', () => {
     expect(encodeDashView(null)).toBeNull();
     expect(encodeDashView([] as unknown as Record<string, unknown>)).toBeNull();
+  });
+});
+
+const anGolden = (): Record<string, any> => JSON.parse(spec.frames.viewSnapAnalytics).d;
+
+describe('encodeAnalyticsView', () => {
+  it('reproduces the viewSnapAnalytics golden byte for byte', () => {
+    expect(encodeViewSnap('analytics', encodeAnalyticsView(anGolden()))).toBe(spec.frames.viewSnapAnalytics);
+  });
+  it('masks secrets and caps descriptions at 80, types at 40 and command names at 24', () => {
+    const d = anGolden();
+    d.longest[0].description = 'x'.repeat(200);
+    d.burn[0].description = 'deploy with sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD now';
+    d.burn[0].type = 't'.repeat(100);
+    d.commands[0].name = 'c'.repeat(60);
+    d.commands[1].name = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const out = encodeAnalyticsView(d) as any;
+    expect(out.longest[0].description).toHaveLength(80);
+    expect(out.burn[0].type).toHaveLength(40);
+    expect(out.commands[0].name).toHaveLength(24);
+    expect(JSON.stringify(out)).not.toMatch(/sk-ant-api03|ghp_abc/);
+  });
+  it('fails closed on a command name that is more than one word, and drops stray keys (prompt, raw logs, full command)', () => {
+    expect(encodeAnalyticsView({ ...anGolden(), commands: [{ name: 'rm -rf /', count: 1 }] })).toBeNull();
+    expect(encodeAnalyticsView({ ...anGolden(), commands: [{ name: '', count: 1 }] })).toBeNull();
+    const d = anGolden();
+    d.logs.text = 'LEAK'; d.rawLogs = [{ m: 'LEAK' }]; d.longest[0].prompt = 'LEAK'; d.burn[0].prompt = 'LEAK'; d.commands[0].full = 'LEAK';
+    const out = encodeViewSnap('analytics', encodeAnalyticsView(d));
+    expect(out).toBe(spec.frames.viewSnapAnalytics);
+    expect(out).not.toContain('LEAK');
+  });
+  it('cuts lists at 8, 5 and 5, keeps toolUses null as null, and returns null for a bad number or shape', () => {
+    const d = anGolden();
+    d.longest = Array.from({ length: 12 }, () => d.longest[0]);
+    d.burn = Array.from({ length: 9 }, () => d.burn[1]);
+    d.commands = Array.from({ length: 7 }, () => d.commands[0]);
+    const out = encodeAnalyticsView(d) as any;
+    expect([out.longest.length, out.burn.length, out.commands.length, out.burn[0].toolUses]).toEqual([8, 5, 5, null]);
+    for (const mutate of [
+      (x: any) => { x.logs.info = -1; }, (x: any) => { x.burn[0].tokens = NaN; }, (x: any) => { x.longest[0].startedAtMs = Infinity; },
+      (x: any) => { x.commands[0].count = 1.5; }, (x: any) => { x.burn[0].toolUses = -2; }, (x: any) => { x.longest = null; }, (x: any) => { x.longest[0].description = 7; },
+    ]) { const x = anGolden(); mutate(x); expect(encodeAnalyticsView(x)).toBeNull(); }
+    expect(encodeAnalyticsView(null)).toBeNull();
   });
 });

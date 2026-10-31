@@ -177,3 +177,49 @@ export function encodeDashView(p: Record<string, unknown> | null): Record<string
     strip: { agents: s.agents, alerts: s.alerts, memory: s.memory },
   };
 }
+
+export const ANALYTICS_DESC_CAP = 80;
+export const ANALYTICS_TYPE_CAP = 40;
+export const ANALYTICS_COMMAND_CAP = 24;
+export const ANALYTICS_MAX_LONGEST = 8;
+export const ANALYTICS_MAX_BURN = 5;
+export const ANALYTICS_MAX_COMMANDS = 5;
+
+/**
+ * `analytics`: {computedAtMs, logs:{success,info,denied,other}, longest:[{type,description,startedAtMs}] (at most 8),
+ * burn:[{type,description,tokens,toolUses,durationMs}] (at most 5), commands:[{name,count}] (at most 5)}. Built in the
+ * renderer, so rebuilt here field by field: descriptions are masked then capped at 80, types at 40, a command name
+ * (the first word of one typed command, never a command line) at 24. A command name with whitespace in it, a
+ * non-string, or any bad number makes the whole payload null; lists beyond their caps are cut. Stray keys (a prompt,
+ * a raw log, a full command) are dropped.
+ */
+export function encodeAnalyticsView(p: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!isRecord(p) || !count(p.computedAtMs) || !isRecord(p.logs) || !Array.isArray(p.longest) || !Array.isArray(p.burn) || !Array.isArray(p.commands)) return null;
+  const l = p.logs;
+  if (!count(l.success) || !count(l.info) || !count(l.denied) || !count(l.other)) return null;
+  const longest: Record<string, unknown>[] = [];
+  for (const r of p.longest.slice(0, ANALYTICS_MAX_LONGEST)) {
+    if (!isRecord(r)) return null;
+    const type = text(r.type, ANALYTICS_TYPE_CAP);
+    const description = text(r.description, ANALYTICS_DESC_CAP);
+    if (type === null || description === null || !count(r.startedAtMs)) return null;
+    longest.push({ type, description, startedAtMs: r.startedAtMs });
+  }
+  const burn: Record<string, unknown>[] = [];
+  for (const r of p.burn.slice(0, ANALYTICS_MAX_BURN)) {
+    if (!isRecord(r)) return null;
+    const type = text(r.type, ANALYTICS_TYPE_CAP);
+    const description = text(r.description, ANALYTICS_DESC_CAP);
+    const toolUses = nullableNum(r.toolUses, 0);
+    if (type === null || description === null || !num(r.tokens) || !num(r.durationMs) || toolUses === undefined) return null;
+    burn.push({ type, description, tokens: round(r.tokens, 0), toolUses, durationMs: round(r.durationMs, 0) });
+  }
+  const commands: Record<string, unknown>[] = [];
+  for (const r of p.commands.slice(0, ANALYTICS_MAX_COMMANDS)) {
+    if (!isRecord(r) || typeof r.name !== 'string' || r.name.length === 0 || /\s/.test(r.name) || !count(r.count)) return null;
+    const name = text(r.name, ANALYTICS_COMMAND_CAP);
+    if (name === null) return null;
+    commands.push({ name, count: r.count });
+  }
+  return { computedAtMs: p.computedAtMs, logs: { success: l.success, info: l.info, denied: l.denied, other: l.other }, longest, burn, commands };
+}
