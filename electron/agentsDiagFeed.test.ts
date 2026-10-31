@@ -81,6 +81,26 @@ describe('agents diag feed', () => {
     expect(() => feed.setDiagnostics({ get toolCalls(): unknown { throw new Error('boom'); } })).not.toThrow();
     expect([got[got.length - 1].fleet, got[got.length - 1].timeline]).toEqual([null, null]);
   });
+  it('retention is inert while the gate is off, and starts once it flips on', () => {
+    let on = false;
+    const cache = createPhoneViewCache(() => true);
+    const feed = createAgentsDiagFeed(cache, { salt: 's1', minGapMs: 0, gate: () => on });
+    const got: any[] = [];
+    feed.port.attach({ snap: d => { got.push(d); } });
+    cache.ingest('agents', roster());
+    feed.setFleet([row()]);
+    feed.setDiagnostics(snapshot());
+    expect([got[got.length - 1].fleet, got[got.length - 1].timeline]).toEqual([null, null]);
+    on = true;
+    feed.setFleet([row()]);
+    feed.setDiagnostics(snapshot());
+    expect(got[got.length - 1].fleet).toHaveLength(1);
+    expect(got[got.length - 1].timeline).toHaveLength(1);
+    feed.clear();
+    on = false;
+    feed.setFleet([row()]);
+    expect([got[got.length - 1].fleet, got[got.length - 1].timeline]).toEqual([null, null]);
+  });
   it('clear() forgets the encoded fleet and timeline and tells attached taps', () => {
     const { cache, feed, got } = setup();
     cache.ingest('agents', roster());

@@ -248,7 +248,8 @@ function detailText(x: unknown, n: number): string | null {
     const base = head.slice(Math.max(head.lastIndexOf('/'), head.lastIndexOf('\\')) + 1).replace(/^[\s'"]+|[\s'"]+$/g, '');
     return text(`${base} ${m[2]}`.trim(), n);
   }
-  return text(afterLastSep(masked).trim(), n);
+  // A path that ends in a separator leaves '' after it: fall back to its last non-empty segment.
+  return text(afterLastSep(masked).trim() || lastSegment(masked), n);
 }
 
 /** Already-encoded fleet and timeline rows (encodeFleetRows / encodeTimelineRows output); null = collector absent or unreadable. */

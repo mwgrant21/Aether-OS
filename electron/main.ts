@@ -532,7 +532,8 @@ const ledgerFeed = createLedgerFeed({ current: () => cachedLedgerSnapshot });
 const phoneViewCache = createPhoneViewCache(() => controlHub.status().state === 'on');
 // Phone Agents view feed: merges the renderer-fed roster (the cache above) with the collector-fed fleet and timeline that
 // the scans below hand it already encoded (masked, capped, no paths). Declared here for the same temporal-dead-zone reason.
-const agentsDiagFeed = createAgentsDiagFeed(phoneViewCache);
+// The gate reads the control hub lazily (declared further down), so the scans' set* calls are inert while phone control is off.
+const agentsDiagFeed = createAgentsDiagFeed(phoneViewCache, { gate: () => controlHub.status().state === 'on' });
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 // Phone Projects view feed (privacy section 17). Declared above the scan and createControlHub for the same temporal-dead-zone
@@ -1612,6 +1613,7 @@ const controlHub = createControlHub({
   log: l => diagLog.write(l),
   onStatus: s => {
     if (s.state !== 'on') { phoneViewCache.clear(); agentsDiagFeed.clear(); }
+    else { scanAndPushFleet(); scanAndPushDiagnostics(); } // fill fleet and timeline now rather than at the next 15 s scan
     sendToWindow('control:statusChanged', s);
   },
 });

@@ -2,8 +2,9 @@
 // phone view cache, and the collector-fed fleet and timeline, set here from the same reads the desktop cards use
 // (readFleetSessions / readDiagnostics, called by main's scans). This feed merges them: it wraps the cache so a change in
 // either source re-sends through createCacheViewFeed (same attach-now, one send per gap behaviour), and encodes with the
-// single encodeAgentsView. It keeps only the ENCODED fleet and timeline (cleared with the cache when phone control leaves 'on' and at quit) (at most 50 and 60 rows, masked, capped, no paths,
-// no session ids); the raw collector rows are dropped as soon as they are encoded. A fleet session id never leaves this
+// single encodeAgentsView. It keeps only the ENCODED fleet and timeline (at most 50 and 60 rows, masked, capped, no paths,
+// no session ids); the raw collector rows are dropped as soon as they are encoded. Like the cache, retention is inert
+// while the gate says phone control is off (set* are no-ops), and clear() empties it when control leaves 'on' and at quit. A fleet session id never leaves this
 // file: it becomes an opaque key, a salted hash that differs on every app run. Lives outside electron/control/ (hashing
 // needs node:crypto, which the control boundary does not allow there). Nothing is logged or written.
 import { createHash, randomBytes } from 'node:crypto';
@@ -32,7 +33,8 @@ export interface AgentsDiagFeed {
   clear(): void;
 }
 
-export function createAgentsDiagFeed(cache: PhoneViewCache, opts: { salt?: string; now?: () => number; minGapMs?: number } = {}): AgentsDiagFeed {
+export function createAgentsDiagFeed(cache: PhoneViewCache, opts: { salt?: string; now?: () => number; minGapMs?: number; gate?: () => boolean } = {}): AgentsDiagFeed {
+  const gate = opts.gate ?? (() => true);
   const salt = opts.salt ?? randomBytes(16).toString('hex');
   let diag: AgentsDiagWire = { fleet: null, timeline: null };
   const listeners = new Set<(v: 'agents') => void>();
@@ -58,6 +60,7 @@ export function createAgentsDiagFeed(cache: PhoneViewCache, opts: { salt?: strin
   return {
     port: createCacheViewFeed(merged, 'agents', p => encodeAgentsView(p, diag), { now: opts.now, minGapMs: opts.minGapMs }),
     setFleet(rows) {
+      if (!gate()) return;
       let fleet: AgentsDiagWire['fleet'] = null;
       try {
         if (rows) {
@@ -67,6 +70,7 @@ export function createAgentsDiagFeed(cache: PhoneViewCache, opts: { salt?: strin
       update({ fleet, timeline: diag.timeline });
     },
     setDiagnostics(snap) {
+      if (!gate()) return;
       let timeline: AgentsDiagWire['timeline'] = null;
       try { timeline = snap ? encodeTimelineRows(snap) : null; } catch { timeline = null; }
       update({ fleet: diag.fleet, timeline });

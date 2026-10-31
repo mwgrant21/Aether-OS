@@ -420,6 +420,7 @@ describe('path reduction in fleet name/kind and timeline tool names', () => {
       ['review C:\\Users\\John Smith\\secretproj\\a.ts now', 'a.ts now'],
       ['\\\\srv\\share dir\\fold er\\f.txt', 'f.txt'],
       ['plain name', 'plain name'],
+      ['C:\\Users\\John Smith\\work\\', 'work'],
     ];
     for (const [name, want] of cases) {
       const out = encodeFleetRows([fleetRow({ name })])!;
