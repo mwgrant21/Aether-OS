@@ -16,7 +16,6 @@
 
     <string name="memory_group_shared">SHARED (%1$d)</string>
     <string name="memory_group_agent">%1$s (%2$d)</string>
-    <string name="memory_group_empty">Nothing here.</string>
     <string name="memory_empty_live">No live memories.</string>
     <string name="memory_empty_tombstones">No tombstones.</string>
     <string name="memory_tombstones_title">TOMBSTONES (%1$d)</string>
@@ -40,18 +39,15 @@
 
     <string name="memory_row_desc">%1$s, %2$s, salience %3$s. Open detail</string>
     <string name="memory_tomb_row_desc">Tombstone, %1$s, %2$s. Open detail</string>
-    <string name="memory_salience_value">%1$s</string>
 
     <string name="memory_sheet_label">Memory detail</string>
     <string name="memory_sheet_dismiss">Close detail</string>
     <string name="memory_sheet_content">CONTENT</string>
     <string name="memory_sheet_salience">SALIENCE</string>
     <string name="memory_sheet_cause">CAUSE</string>
-    <string name="memory_sheet_when_created">%1$s</string>
     <string name="memory_sheet_when_updated">%1$s · updated %2$s</string>
     <string name="memory_sheet_when_deleted">deleted %1$s</string>
     <string name="memory_sheet_superseded_by">superseded by #%1$s</string>
-    <string name="memory_sheet_subject">%1$s</string>
 
     <plurals name="memory_age_minutes">
         <item quantity="one">%1$d minute ago</item>
