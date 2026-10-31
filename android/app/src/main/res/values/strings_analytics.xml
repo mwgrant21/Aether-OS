@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_analytics">Analytics</string>
+    <string name="view_analytics_desc">Analytics, log frequency, longest-running agents, token burn and top commands, read only</string>
+
+    <string name="analytics_loading">Loading analytics</string>
+    <string name="analytics_no_snapshot">No analytics snapshot yet. This fills in when titan next computes analytics.</string>
+    <string name="analytics_unreadable">Analytics data from titan could not be read. Update Aether on titan and on this phone.</string>
+    <string name="analytics_unsupported">This titan does not serve Analytics. Update Aether on titan.</string>
+
+    <string name="analytics_logs_title">Alert / log frequency</string>
+    <string name="analytics_log_success">Success</string>
+    <string name="analytics_log_info">Info</string>
+    <string name="analytics_log_denied">Denied</string>
+    <string name="analytics_log_other">Other</string>
+    <string name="analytics_logs_desc">%1$s: %2$s</string>
+
+    <string name="analytics_longest_title">Longest-running agents</string>
+    <string name="analytics_burn_title">Real token burn</string>
+    <string name="analytics_commands_title">Top commands</string>
+
+    <!-- Desktop empty-state sentences, verbatim (AnalyticsUiModel EMPTY_*). -->
+    <string name="analytics_empty_longest">No agents are running.</string>
+    <string name="analytics_empty_burn">No completed dispatches with real usage data yet.</string>
+    <string name="analytics_empty_commands">No commands run yet.</string>
+
+    <string name="analytics_burn_tokens">%1$s tok</string>
+    <plurals name="analytics_burn_calls">
+        <item quantity="one">%1$s call</item>
+        <item quantity="other">%1$s calls</item>
+    </plurals>
+    <string name="analytics_burn_meta">%1$s · %2$s</string>
+    <string name="analytics_stat_tokens">Tokens</string>
+    <string name="analytics_stat_calls">Calls</string>
+    <string name="analytics_stat_tok_per_call">Tok/call</string>
+    <string name="analytics_stat_duration">Duration</string>
+    <string name="analytics_burn_expand_desc">%1$s, %2$s, double tap to show details</string>
+
+    <string name="analytics_updated">Updated %1$s</string>
+    <string name="analytics_age_just_now">just now</string>
+    <plurals name="analytics_age_minutes">
+        <item quantity="one">%1$d minute ago</item>
+        <item quantity="other">%1$d minutes ago</item>
+    </plurals>
+    <plurals name="analytics_age_hours">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <plurals name="analytics_age_days">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+</resources>
