@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'path';
+import os from 'os';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { readTranscript, listTranscriptSources, resolveSourcePath } from './transcriptReader';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'transcript-sample.jsonl');
@@ -107,6 +109,41 @@ describe('readTranscript', () => {
       before = page.nextBefore;
     }
     expect(collected).toEqual(['u1', 'u2', 'u3', 'u4']);
+  });
+});
+
+describe('readTranscript floorMs', () => {
+  const floorAt = (iso: string): number => Date.parse(iso);
+
+  it('hides messages older than the floor and reports nothing further back', async () => {
+    const { messages, nextBefore } = await readTranscript(FIXTURE, { limit: 50, floorMs: floorAt('2026-08-05T12:00:02.000Z') });
+    expect(messages.map((m) => m.id)).toEqual(['u4']);
+    expect(nextBefore).toBeNull();
+
+    // Without a floor this narrow read has an older page; hiding u3 must close it.
+    expect((await readTranscript(FIXTURE, { limit: 3 })).nextBefore).not.toBeNull();
+    const narrow = await readTranscript(FIXTURE, { limit: 3, floorMs: floorAt('2026-08-05T12:00:03.000Z') });
+    expect(narrow.messages.map((m) => m.id)).toEqual(['u4']);
+    expect(narrow.nextBefore).toBeNull();
+  });
+
+  it('a floor older than everything changes nothing', async () => {
+    const floored = await readTranscript(FIXTURE, { limit: 3, floorMs: floorAt('2020-01-01T00:00:00.000Z') });
+    expect(floored).toEqual(await readTranscript(FIXTURE, { limit: 3 }));
+  });
+
+  it('drops a message with no timestamp when a floor is set', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'tr-floor-'));
+    try {
+      const f = path.join(dir, 's.jsonl');
+      const line = (uuid: string, ts?: string): string =>
+        JSON.stringify({ uuid, type: 'user', ...(ts ? { timestamp: ts } : {}), message: { role: 'user', content: uuid } }) + '\n';
+      writeFileSync(f, line('nots') + line('dated', '2026-08-05T12:00:05.000Z'));
+      const { messages } = await readTranscript(f, { limit: 50, floorMs: floorAt('2026-08-05T12:00:00.000Z') });
+      expect(messages.map((m) => m.id)).toEqual(['dated']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
