@@ -5,11 +5,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.matt.aethermobile.R
 import com.matt.aethermobile.net.ControlClient
+import com.matt.aethermobile.agents.AgentsWire
 import com.matt.aethermobile.analytics.AnalyticsWire
 import com.matt.aethermobile.dashboard.DashWire
 import com.matt.aethermobile.memory.MemoryWire
 import com.matt.aethermobile.projects.ProjectsWire
 import com.matt.aethermobile.protocol.ControlProtocol
+import com.matt.aethermobile.ui.agents.AgentsScreen
 import com.matt.aethermobile.ui.analytics.AnalyticsScreen
 import com.matt.aethermobile.ui.dashboard.DashboardScreen
 import com.matt.aethermobile.ui.memory.MemoryScreen
@@ -52,6 +54,10 @@ object PaneRegistry {
             PaneSpec(AppView.ANALYTICS, "analytics", AnalyticsWire::decode),
             R.string.view_analytics, R.string.view_analytics_desc,
         ) { ui, now, mod -> AnalyticsScreen(ui, now, mod) },
+        PaneEntry(
+            PaneSpec(AppView.AGENTS, "agents", AgentsWire::decode),
+            R.string.view_agents, R.string.view_agents_desc,
+        ) { ui, now, mod -> AgentsScreen(ui, now, mod) },
     )
 
     fun entry(app: AppView): PaneEntry<*>? = entries.firstOrNull { it.spec.appView == app }
