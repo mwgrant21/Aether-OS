@@ -116,3 +116,64 @@ export function encodeMemoryView(w: MemoryWire | null): Record<string, unknown> 
   }
   return { computedAtMs: w.computedAtMs, counts: { live: w.live.length, tombstones: w.tombstones.length }, live, tombstones, extraction: null };
 }
+
+const DASH_ALARMS = ['ok', 'warn', 'crit'];
+const DASH_ETA_KINDS = ['none', 'now', 'secs'];
+const DASH_ETA_SOURCES = ['scan', 'live', 'stale'];
+const DASH_READINESS_KEYS = ['desktop', 'terminal', 'statusline', 'collector'];
+
+const num = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
+const round = (x: number, places: number): number => Math.round(x * 10 ** places) / 10 ** places;
+/** null stays null; anything else must be a finite non-negative number (NaN, Infinity and negatives are rejected: undefined = invalid). */
+const nullableNum = (x: unknown, places: number): number | null | undefined => (x === null ? null : num(x) ? round(x, places) : undefined);
+const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+
+/**
+ * `dash`: {computedAtMs, live, alarm, ratePerMin, kpis:{monthTokens, todayUsd, budgetLeftPct, capM, eta}, readiness,
+ * recap, strip}. Built in the renderer, so nothing in it is trusted: every field is rebuilt here from enums, booleans
+ * and non-negative numbers; stray keys (and so any free text or cfg field) are dropped; null stays null (not measured,
+ * never 0); a NaN, negative or out-of-range number, an unknown enum or an inconsistent eta makes the whole payload null.
+ * No text field exists in this payload.
+ */
+export function encodeDashView(p: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!isRecord(p) || !count(p.computedAtMs) || typeof p.live !== 'boolean' || !oneOf(DASH_ALARMS, p.alarm)) return null;
+  const ratePerMin = nullableNum(p.ratePerMin, 2);
+  const k = p.kpis;
+  if (ratePerMin === undefined || !isRecord(k) || !isRecord(k.eta)) return null;
+  const monthTokens = nullableNum(k.monthTokens, 0);
+  const todayUsd = nullableNum(k.todayUsd, 4);
+  const budgetLeftPct = nullableNum(k.budgetLeftPct, 2);
+  const e = k.eta;
+  const secs = nullableNum(e.secs, 0);
+  const resetsInMs = nullableNum(e.resetsInMs, 0);
+  if (monthTokens === undefined || todayUsd === undefined || budgetLeftPct === undefined || (budgetLeftPct !== null && budgetLeftPct > 100)) return null;
+  if (!num(k.capM) || k.capM <= 0 || !oneOf(DASH_ETA_KINDS, e.kind) || !oneOf(DASH_ETA_SOURCES, e.source)) return null;
+  if (secs === undefined || resetsInMs === undefined || (e.kind === 'secs') !== (secs !== null)) return null;
+  if (!Array.isArray(p.readiness) || p.readiness.length > DASH_READINESS_KEYS.length) return null;
+  const seen = new Set<string>();
+  const readiness: Record<string, unknown>[] = [];
+  for (const r of p.readiness) {
+    if (!isRecord(r) || !oneOf(DASH_READINESS_KEYS, r.key) || seen.has(r.key) || typeof r.met !== 'boolean' || typeof r.glows !== 'boolean') return null;
+    if (!(r.atMs === null || count(r.atMs))) return null;
+    seen.add(r.key);
+    readiness.push({ key: r.key, met: r.met, glows: r.glows, atMs: r.atMs });
+  }
+  let recap: Record<string, unknown> | null = null;
+  if (p.recap !== null) {
+    const r = p.recap;
+    if (!isRecord(r) || !count(r.dispatches) || !count(r.anomaliesDetected) || !count(r.anomaliesCleared) || !count(r.tokensBurned)) return null;
+    recap = { dispatches: r.dispatches, anomaliesDetected: r.anomaliesDetected, anomaliesCleared: r.anomaliesCleared, tokensBurned: r.tokensBurned };
+  }
+  const s = p.strip;
+  if (!isRecord(s) || !count(s.agents) || !count(s.alerts) || !count(s.memory)) return null;
+  return {
+    computedAtMs: p.computedAtMs,
+    live: p.live,
+    alarm: p.alarm,
+    ratePerMin,
+    kpis: { monthTokens, todayUsd, budgetLeftPct, capM: round(k.capM, 4), eta: { kind: e.kind, secs, source: e.source, resetsInMs } },
+    readiness,
+    recap,
+    strip: { agents: s.agents, alerts: s.alerts, memory: s.memory },
+  };
+}

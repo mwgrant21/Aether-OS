@@ -99,7 +99,8 @@ import { createRemoteHub } from './remote/remoteHub';
 import { createPermissionBroker } from './permissionBroker';
 import { createThreadFeed } from './threadFeed';
 import { createLedgerFeed } from './ledgerFeed';
-import { createPhoneViewCache } from './phoneViewCache';
+import { createCacheViewFeed, createPhoneViewCache } from './phoneViewCache';
+import { encodeDashView } from './control/viewWire';
 import { VIEW_IDS } from '../src/shared/remote/types';
 import { createProjectsFeed } from './projectsFeed';
 import { createMemoryFeed } from './memoryFeed';
@@ -1590,7 +1591,7 @@ const controlHub = createControlHub({
   input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   threads: threadFeed, // read-only transcript thread, Claude slot only
   ledger: ledgerFeed.port, // read-only derived cost numbers, no text
-  views: { projects: projectsFeed.port, memory: memoryFeed.port }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text
+  views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView) }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {

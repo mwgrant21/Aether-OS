@@ -1,5 +1,5 @@
 // Renderer side of the phone view bridge (privacy section 17). Each phone view that is derived in the renderer
-// registers a pure builder in PHONE_VIEW_PUBLISHERS (empty until the consuming task adds one). The publisher builds
+// registers a pure builder in PHONE_VIEW_PUBLISHERS (each consuming task adds its own). The publisher builds
 // each view's payload from the store state, sends it to main only when it changed (structural compare) and at most
 // once per second per view. Main ignores it unless phone control is on, holds only the latest value in memory, and
 // re-validates it.
@@ -7,11 +7,15 @@ import { useEffect, useRef } from 'react';
 import { useAetherStore } from './store';
 import type { AetherState } from './types';
 import type { ViewId } from '../shared/remote/types';
+import { phoneDashPayload } from '../components/dashboard/phoneDashPayload';
+import { hasDesktopApp } from '../components/dashboard/readinessMath';
 
 export type PhoneViewBuilder = (state: AetherState) => Record<string, unknown> | null;
 export type PhoneViewRegistry = Partial<Record<ViewId, PhoneViewBuilder>>;
 
-export const PHONE_VIEW_PUBLISHERS: PhoneViewRegistry = {};
+export const PHONE_VIEW_PUBLISHERS: PhoneViewRegistry = {
+  dash: (state) => phoneDashPayload(state, hasDesktopApp(), Date.now()),
+};
 export const PUBLISH_MIN_GAP_MS = 1000;
 
 export interface PhoneViewPublisher {

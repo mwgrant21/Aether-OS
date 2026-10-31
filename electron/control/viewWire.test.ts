@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
+import { encodeDashView, encodeMemoryView, MEMORY_CONTENT_CAP, MEMORY_MAX_LIVE, MEMORY_MAX_TOMBSTONES, MEMORY_SUBJECT_CAP, encodeProjectsView, PROJECTS_MAX_CHILDREN, PROJECTS_MAX_ROOTS, PROJECTS_TEXT_CAP } from './viewWire';
 import { encodeViewSnap } from './protocol';
 import type { LedgerWire, MemoryWire, ProjectsWire } from '../../src/shared/remote/types';
 
@@ -156,5 +156,51 @@ describe('encodeMemoryView', () => {
     expect(out).toBe(JSON.stringify(encodeMemoryView(memGolden())));
     expect(out).not.toMatch(/987|secret|referenceCount|12\.5/);
     expect((encodeMemoryView(w) as any).extraction).toBeNull();
+  });
+});
+
+const dashGolden = (): Record<string, unknown> => JSON.parse(spec.frames.viewSnapDash).d;
+const dashWith = (path: string[], value: unknown): Record<string, unknown> => {
+  const d = dashGolden();
+  let o: any = d;
+  for (const k of path.slice(0, -1)) o = o[k];
+  o[path[path.length - 1]] = value;
+  return d;
+};
+
+describe('encodeDashView', () => {
+  it('reproduces the viewSnapDash golden byte for byte', () => {
+    expect(encodeViewSnap('dash', encodeDashView(dashGolden()))).toBe(spec.frames.viewSnapDash);
+  });
+  it('keeps null as null (not measured is never 0)', () => {
+    const d = dashGolden() as any;
+    d.ratePerMin = null; d.kpis.monthTokens = null; d.kpis.todayUsd = null; d.kpis.budgetLeftPct = null; d.recap = null;
+    d.kpis.eta = { kind: 'none', secs: null, source: 'scan', resetsInMs: null };
+    const out = encodeDashView(d) as any;
+    expect([out.ratePerMin, out.kpis.monthTokens, out.kpis.todayUsd, out.kpis.budgetLeftPct, out.recap]).toEqual([null, null, null, null, null]);
+  });
+  it('returns null for the whole payload on a NaN, negative or out-of-range number', () => {
+    for (const [path, v] of [
+      [['ratePerMin'], NaN], [['ratePerMin'], -1], [['kpis', 'todayUsd'], -0.01], [['kpis', 'monthTokens'], Infinity],
+      [['kpis', 'budgetLeftPct'], 100.5], [['kpis', 'capM'], 0], [['kpis', 'eta', 'resetsInMs'], -5], [['strip', 'alerts'], -1], [['recap', 'tokensBurned'], NaN],
+    ] as [string[], unknown][]) expect(encodeDashView(dashWith(path, v)), path.join('.')).toBeNull();
+  });
+  it('returns null for an unknown enum or an eta whose kind and secs disagree', () => {
+    expect(encodeDashView(dashWith(['alarm'], 'panic'))).toBeNull();
+    expect(encodeDashView(dashWith(['kpis', 'eta', 'source'], 'guess'))).toBeNull();
+    expect(encodeDashView(dashWith(['kpis', 'eta', 'secs'], null))).toBeNull(); // kind 'secs' needs secs
+    expect(encodeDashView(dashWith(['kpis', 'eta', 'kind'], 'now'))).toBeNull(); // 'now' must not carry secs
+    expect(encodeDashView(dashWith(['readiness'], [{ key: 'desktop', met: true, glows: false, atMs: null }, { key: 'desktop', met: true, glows: false, atMs: null }]))).toBeNull();
+  });
+  it('drops stray keys at every level, including free text and a cfg object', () => {
+    const d = dashGolden() as any;
+    d.cfg = { theme: 'x' }; d.digest = [{ text: 'LEAK' }]; d.kpis.note = 'LEAK'; d.kpis.eta.text = 'LEAK'; d.readiness[0].text = 'LEAK'; d.recap.detail = 'LEAK'; d.strip.notifs = ['LEAK'];
+    const out = encodeViewSnap('dash', encodeDashView(d));
+    expect(out).toBe(spec.frames.viewSnapDash);
+    expect(out).not.toContain('LEAK');
+  });
+  it('rejects a non-object input', () => {
+    expect(encodeDashView(null)).toBeNull();
+    expect(encodeDashView([] as unknown as Record<string, unknown>)).toBeNull();
   });
 });
