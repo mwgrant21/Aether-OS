@@ -99,6 +99,8 @@ import { createRemoteHub } from './remote/remoteHub';
 import { createPermissionBroker } from './permissionBroker';
 import { createThreadFeed } from './threadFeed';
 import { createLedgerFeed } from './ledgerFeed';
+import { createPhoneViewCache } from './phoneViewCache';
+import { VIEW_IDS } from '../src/shared/remote/types';
 import { createProjectsFeed } from './projectsFeed';
 import { createMemoryFeed } from './memoryFeed';
 import { createSessionStore } from './remote/sessionStore';
@@ -522,6 +524,10 @@ let cachedLedgerSnapshot: LedgerSnapshot | null = null;
 // Phone Ledger feed (privacy section 17). Declared here, above the scan that publishes and above createControlHub, so no
 // path can reach it in its temporal dead zone. It shares the cache above through current() and keeps no copy of it.
 const ledgerFeed = createLedgerFeed({ current: () => cachedLedgerSnapshot });
+
+// Renderer-derived phone view payloads (privacy section 17): latest per view, memory only. The gate reads the control
+// hub lazily (declared further down), so ingest is inert until phone control is on; cleared when control leaves 'on' and at quit.
+const phoneViewCache = createPhoneViewCache(() => controlHub.status().state === 'on');
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 // Phone Projects view feed (privacy section 17). Declared above the scan and createControlHub for the same temporal-dead-zone
@@ -1134,6 +1140,7 @@ app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
   if (!baselineQuitGate(event)) return;
   isQuitting = true;
+  phoneViewCache.clear();
   stopDashboardsWatch?.();
   stopDashboardsWatch = null;
   stopAllQueries();
@@ -1162,6 +1169,16 @@ app.on('before-quit', event => {
       console.error('crossEngine cancel-on-quit failed:', err);
     });
   }
+});
+
+// Renderer-derived phone view payloads. Same trusted-window test as the other channels; anything else is dropped silently.
+ipcMain.on('phoneView:publish', (event, msg: unknown) => {
+  if (!(!!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+    && event.senderFrame === mainWindow.webContents.mainFrame)) return;
+  if (typeof msg !== 'object' || msg === null) return;
+  const { v, payload } = msg as { v?: unknown; payload?: unknown };
+  if (typeof v !== 'string' || !(VIEW_IDS as readonly string[]).includes(v)) return;
+  phoneViewCache.ingest(v, payload); // refuses a non-plain-object, an oversize payload, and everything while control is off
 });
 
 ipcMain.on('agents:setAutoHeadlines', (_event, enabled: boolean) => {
@@ -1599,7 +1616,10 @@ const controlHub = createControlHub({
   confirmPair: (peer, replacesExisting) => confirmControlPair(peer, replacesExisting),
   renderQr: renderQrSvg,
   log: l => diagLog.write(l),
-  onStatus: s => sendToWindow('control:statusChanged', s),
+  onStatus: s => {
+    if (s.state !== 'on') phoneViewCache.clear();
+    sendToWindow('control:statusChanged', s);
+  },
 });
 remoteHub.attachControl(controlHub.port);
 // Commands that can write the session store wait for the private-dir ACL first, and init (which loads

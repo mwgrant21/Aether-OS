@@ -57,6 +57,9 @@ declare global {
         revokeOne: (ref: string) => Promise<ControlStatus>;
         onStatus: (cb: (s: ControlStatus) => void) => () => void;
       };
+      phoneView: {
+        publish: (v: string, payload: Record<string, unknown>) => void;
+      };
       app: {
         getVersion: () => Promise<string>;
       };
