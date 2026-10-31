@@ -19,7 +19,8 @@ const MAX_PENDING_BYTES = 4 * 1024 * 1024;
 const NL = 0x0a;
 
 export interface ThreadFeedDeps {
-  resolveSession: () => { sessionId: string; file: string } | null;
+  // floorMs: events with a timestamp older than it are hidden (typed /clear); null/absent = no floor.
+  resolveSession: () => { sessionId: string; file: string; floorMs?: number | null } | null;
   now: () => number;
   pollMs?: number;
   seedBytes?: number;
@@ -71,6 +72,9 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
   let discarding = false;
   let unreadable = false;
   let identity: string | null = null;
+  // Clear floor from the resolver. An event with no timestamp (at === 0) is hidden once a floor is set.
+  let floor: number | null = null;
+  const visible = (e: ThreadEvent): boolean => floor === null || e.at >= floor;
 
   // Working derivation (spec D4, refined with stop_reason marks): busy = the last turn mark says a
   // turn is in progress; working = busy AND the transcript grew within THREAD_WORKING_STALE_MS.
@@ -120,6 +124,7 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
     attached = false;
     unreadable = false;
     identity = null;
+    floor = null;
     lastWorking = false;
     lastSince = null;
   }
@@ -207,7 +212,7 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
     unreadable = true;
   }
 
-  async function attachSession(s: { sessionId: string; file: string } | null, myEpoch: number): Promise<void> {
+  async function attachSession(s: { sessionId: string; file: string; floorMs?: number | null } | null, myEpoch: number): Promise<void> {
     let seed: Buffer = Buffer.alloc(0);
     let seedStart = 0;
     let newIdentity: string | null = null;
@@ -232,9 +237,10 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
     currentId = s?.sessionId ?? null;
     identity = newIdentity;
     attached = s !== null;
+    floor = s?.floorMs ?? null;
     discarding = seedStart > 0;
     lastGrowthMs = mtime;
-    pushRing(consume(seed, seedStart));
+    pushRing(consume(seed, seedStart).filter(visible));
     emitSnap();
   }
 
@@ -274,7 +280,7 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
       discarding = true;
     }
     lastGrowthMs = deps.now();
-    const evs = consume(chunk, start);
+    const evs = consume(chunk, start).filter(visible);
     if (evs.length > 0) {
       pushRing(evs);
       q++;
@@ -291,7 +297,16 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
       const s = deps.resolveSession();
       const id = s?.sessionId ?? null;
       if (id !== currentId) await attachSession(s, myEpoch);
-      else if (s) await follow(s, myEpoch);
+      else if (s) {
+        if ((s.floorMs ?? null) !== floor) {
+          // A typed /clear moved the floor: drop what it hides and tell the taps with one snap (attached stays true).
+          floor = s.floorMs ?? null;
+          ring = ring.filter(visible);
+          busy = false;
+          streakAt = null;
+          emitSnap();
+        } else await follow(s, myEpoch);
+      }
       if (myEpoch === epoch) emitStateIfChanged();
     } catch {
       noteUnreadable();

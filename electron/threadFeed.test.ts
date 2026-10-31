@@ -389,3 +389,90 @@ describe('throwing taps', () => {
     await pump(() => cleared.length === 1);
   });
 });
+
+describe('clear floor', () => {
+  let floor: number | null;
+  let cur: { sessionId: string; file: string } | null;
+  beforeEach(() => {
+    floor = null;
+    cur = null;
+  });
+  const makeF = () => make({ resolveSession: () => (cur ? { ...cur, floorMs: floor } : sid ? { sessionId: sid, file, floorMs: floor } : null) });
+  const lastSnap = (fr: Frame[]) => snaps(fr)[snaps(fr).length - 1];
+
+  it('a floor change sends one empty attached snap with q+1', async () => {
+    write(u('old', T0) + a('older', 'end_turn', T0 + 500));
+    const { feed } = makeF();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.frames.length >= 2);
+    const before = r.frames[r.frames.length - 1].q;
+    floor = T0 + 1000;
+    await pump(() => r.frames.length >= 3);
+    await settle();
+    expect(r.frames).toHaveLength(3);
+    expect(r.frames[2]).toMatchObject({ f: 'snap', q: before + 1, attached: true, events: [] });
+  });
+
+  it('after the floor, newer events flow and older ones do not', async () => {
+    write(u('old', T0));
+    const { feed } = makeF();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.frames.length >= 2);
+    floor = T0 + 1000;
+    await pump(() => r.frames.length >= 3);
+    appendFileSync(file, a('stale', 'end_turn', T0 + 500));
+    await settle();
+    expect(r.frames.filter((x) => x.f === 'events')).toHaveLength(0);
+    appendFileSync(file, a('fresh', 'end_turn', T0 + 2000));
+    await pump(() => r.frames.some((x) => x.f === 'events'));
+    const ev = r.frames.find((x) => x.f === 'events') as Extract<Frame, { f: 'events' }>;
+    expect(texts(ev.events)).toEqual(['claude:fresh']);
+  });
+
+  it('a cold attach with a floor already set seeds only events at or after it', async () => {
+    write(u('old', T0) + a('new', 'end_turn', T0 + 2000));
+    floor = T0 + 1000;
+    const { feed } = makeF();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.frames.length >= 2);
+    expect(texts(lastSnap(r.frames).events)).toEqual(['claude:new']);
+  });
+
+  it('a floor change together with a session change filters the new file by the new floor', async () => {
+    write(u('old', T0));
+    const { feed } = makeF();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.frames.length >= 2);
+    const file2 = join(dir, 'b.jsonl');
+    writeFileSync(file2, u('pre', T0 + 100) + u('post', T0 + 3000));
+    utimesSync(file2, clock / 1000, clock / 1000);
+    cur = { sessionId: 's2', file: file2 };
+    floor = T0 + 1000;
+    await pump(() => snaps(r.frames).length >= 3);
+    expect(texts(lastSnap(r.frames).events)).toEqual(['user:post']);
+    expect(snaps(r.frames)).toHaveLength(3);
+  });
+
+  it('an event without a timestamp is hidden once a floor is set', async () => {
+    write(JSON.stringify({ type: 'user', message: { role: 'user', content: 'nots' } }) + '\n' + u('dated', T0 + 2000));
+    floor = T0 + 1000;
+    const { feed } = makeF();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.frames.length >= 2);
+    expect(texts(lastSnap(r.frames).events)).toEqual(['user:dated']);
+  });
+
+  it('a null floor leaves events untouched', async () => {
+    write(u('one', T0) + a('two', 'end_turn', T0 + 500));
+    const { feed } = makeF();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.frames.length >= 2);
+    expect(texts(lastSnap(r.frames).events)).toEqual(['user:one', 'claude:two']);
+  });
+});
