@@ -239,7 +239,16 @@ const AGENTS_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** Mask the raw text, then reduce any path-shaped token to its last segment, then cap (an anomaly detail can open with a file path). */
 function detailText(x: unknown, n: number): string | null {
   if (typeof x !== 'string') return null;
-  return text(maskSecrets(x).replace(/[^\s'"]*[\\/][^\s'"]*/g, (t) => t.split(/[\\/]/).filter(Boolean).pop() ?? ''), n);
+  const masked = maskSecrets(x);
+  // The detectors emit "<path or label> <fixed suffix>". Paths may contain spaces, so cut at the suffix and keep only
+  // what follows the head's last separator; other shapes fall back to a per-token pass.
+  const m = /^([\s\S]*?) (read \d+ times|written \d+ times in 5min|open for \d+s)$/.exec(masked);
+  if (m) {
+    const head = m[1].replace(/^[\s'"]+|[\s'"]+$/g, '');
+    const base = head.slice(Math.max(head.lastIndexOf('/'), head.lastIndexOf('\\')) + 1).replace(/^[\s'"]+|[\s'"]+$/g, '');
+    return text(`${base} ${m[2]}`.trim(), n);
+  }
+  return text(masked.replace(/[^\s'"]*[\\/][^\s'"]*/g, (t) => t.split(/[\\/]/).filter(Boolean).pop() ?? ''), n);
 }
 
 /**

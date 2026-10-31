@@ -289,6 +289,22 @@ describe('encodeAgentsView', () => {
     d.running[0].anomaly.detail = 'C:\\Users\\Matt\\secret-project\\src\\worker.ts read 6 times';
     expect((encodeAgentsView(d) as any).running[0].anomaly.detail).toBe('worker.ts read 6 times');
   });
+  it('leaves no directory fragment of a spaced, quoted or POSIX path in an anomaly detail', () => {
+    const cases: [string, string][] = [
+      ['C:\\Users\\John Smith\\Documents\\proj\\a.ts read 6 times', 'a.ts read 6 times'],
+      ['/home/alice smith/p/f.ts written 3 times in 5min', 'f.ts written 3 times in 5min'],
+      ['"D:\\Work\\Acme Corp Secret Project\\f.ts" read 4 times', 'f.ts read 4 times'],
+      ['C:\\Users\\Jane Q Public\\app\\f.ts read 2 times', 'f.ts read 2 times'],
+      ['C:\\Users\\Matt\\proj\\worker.ts read 6 times', 'worker.ts read 6 times'],
+      ['12000 tokens used with zero file edits', '12000 tokens used with zero file edits'],
+      ['Bash open for 95s', 'Bash open for 95s'],
+    ];
+    for (const [detail, want] of cases) {
+      const d = agGolden();
+      d.running[0].anomaly.detail = detail;
+      expect((encodeAgentsView(d) as any).running[0].anomaly.detail).toBe(want);
+    }
+  });
   it('cuts lists at 30 running and 20 done', () => {
     const d = agGolden();
     d.running = Array.from({ length: 40 }, () => d.running[1]);
