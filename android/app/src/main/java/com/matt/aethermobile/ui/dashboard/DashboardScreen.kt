@@ -19,9 +19,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,11 +27,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -72,7 +70,7 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 private val type = AetherType()
-private const val TICK_MS = 30_000L
+private const val TICK_MS = 5_000L
 private val CoreSize = 236.dp
 
 /**
@@ -110,13 +108,10 @@ private fun ReadyBody(s: DashSnapshot, hostNowMs: Long, modifier: Modifier) {
     val scroll = rememberScrollState()
 
     // The core is composed only while its slot overlaps the viewport; off-screen it leaves the composition and its
-    // frame loop (withFrameNanos) stops with it.
-    var viewportPx by remember { mutableIntStateOf(0) }
-    var coreTopPx by remember { mutableFloatStateOf(0f) }
-    var coreBottomPx by remember { mutableFloatStateOf(0f) }
-    val coreVisible by remember {
-        derivedStateOf { coreBottomPx - scroll.value > 0f && coreTopPx - scroll.value < viewportPx }
-    }
+    // frame loop (withFrameNanos) stops with it. Both rects are in root coordinates (one space), re-reported on scroll.
+    var viewport by remember { mutableStateOf(Rect.Zero) }
+    var core by remember { mutableStateOf(Rect.Zero) }
+    val coreVisible = coreOnScreen(core.top, core.bottom, viewport.top, viewport.bottom)
 
     val status = dashStatus(s)
     val glows = statusGlows(s)
@@ -125,7 +120,7 @@ private fun ReadyBody(s: DashSnapshot, hostNowMs: Long, modifier: Modifier) {
     Column(
         modifier
             .fillMaxSize()
-            .onSizeChanged { viewportPx = it.height }
+            .onGloballyPositioned { viewport = it.boundsInRoot() }
             .mouseDragScroll(scroll)
             .verticalScroll(scroll)
             .padding(horizontal = 12.dp, vertical = 14.dp),
@@ -138,11 +133,7 @@ private fun ReadyBody(s: DashSnapshot, hostNowMs: Long, modifier: Modifier) {
                 Modifier
                     .align(Alignment.CenterHorizontally)
                     .size(CoreSize)
-                    .onGloballyPositioned {
-                        val p = it.positionInParent()
-                        coreTopPx = p.y
-                        coreBottomPx = p.y + it.size.height
-                    },
+                    .onGloballyPositioned { core = it.boundsInRoot() },
             ) {
                 if (coreVisible) StormCore(CoreSize, stormMode(status))
             }
