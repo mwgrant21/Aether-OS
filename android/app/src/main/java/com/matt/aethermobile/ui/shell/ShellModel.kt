@@ -3,6 +3,7 @@ package com.matt.aethermobile.ui.shell
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.TerminalHost
+import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.components.DotStyle
 import com.matt.aethermobile.ui.components.dotStyleFor
 
@@ -30,18 +31,42 @@ fun amber(cur: TerminalHost.Tab?, flow: FlowState.Connected?): Boolean =
 
 enum class SlotText { Running, NotStarted, Exited }
 
+/** Menu-row capability line: whether the slot offers Thread and Raw or Raw only, plus its slot state. */
+enum class SlotCaps { ThreadRaw, ThreadRawNotStarted, ThreadRawExited, RawOnly, RawOnlyNotStarted, RawOnlyExited }
+
 data class SlotRow(
     val s: String,
     val label: String,
     val dot: DotStyle,
     val text: SlotText,
     val selected: Boolean,
+    val caps: SlotCaps,
 )
+
+/** Only the Claude slot has a Thread view. */
+fun hasThread(s: String): Boolean = s == "claude"
+
+/** The thread body shows only for the Claude slot in Thread view. */
+fun threadBodyActive(selected: String, view: ViewMode): Boolean = hasThread(selected) && view == ViewMode.THREAD
+
+private fun capsFor(s: String, state: SlotState): SlotCaps = if (hasThread(s)) {
+    when (state) {
+        SlotState.RUNNING -> SlotCaps.ThreadRaw
+        SlotState.NOT_STARTED -> SlotCaps.ThreadRawNotStarted
+        SlotState.EXITED -> SlotCaps.ThreadRawExited
+    }
+} else {
+    when (state) {
+        SlotState.RUNNING -> SlotCaps.RawOnly
+        SlotState.NOT_STARTED -> SlotCaps.RawOnlyNotStarted
+        SlotState.EXITED -> SlotCaps.RawOnlyExited
+    }
+}
 
 fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = tabs.map {
     SlotRow(
         s = it.s,
-        label = it.label,
+        label = if (hasThread(it.s)) "Claude" else it.label,
         dot = dotStyleFor(it.state),
         text = when (it.state) {
             SlotState.RUNNING -> SlotText.Running
@@ -49,12 +74,36 @@ fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = ta
             SlotState.EXITED -> SlotText.Exited
         },
         selected = it.s == selected,
+        caps = capsFor(it.s, it.state),
     )
 }
 
-/** Header title: the selected slot's label. */
+/** Which top-level view the shell shows: the terminal slots or the read-only Ledger. */
+enum class AppView { TERMINAL, LEDGER }
+
+enum class Body { THREAD, RAW, LEDGER }
+
+/** The Ledger view wins over every slot; otherwise the Thread/Raw rule applies. */
+fun bodyFor(selected: String, view: ViewMode, app: AppView): Body = when {
+    app == AppView.LEDGER -> Body.LEDGER
+    threadBodyActive(selected, view) -> Body.THREAD
+    else -> Body.RAW
+}
+
+/** The Thread/Raw segment belongs to the terminal view only. */
+fun showSegment(selected: String, app: AppView): Boolean = hasThread(selected) && app == AppView.TERMINAL
+
+data class ViewRow(val view: AppView, val selected: Boolean)
+
+/** Burger VIEWS rows: implemented views only (just Ledger; the terminal slots live under TERMINALS). */
+fun viewRows(app: AppView): List<ViewRow> = listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER))
+
+/** Header title: the selected slot's label, except Claude shows as CLAUDE on the phone. */
 fun titleFor(tabs: List<TerminalHost.Tab>, selected: String): String =
-    tabs.firstOrNull { it.s == selected }?.label.orEmpty()
+    if (selected == "claude") "CLAUDE" else tabs.firstOrNull { it.s == selected }?.label.orEmpty()
+
+fun titleFor(tabs: List<TerminalHost.Tab>, selected: String, app: AppView): String =
+    if (app == AppView.LEDGER) "LEDGER" else titleFor(tabs, selected)
 
 /** The header core runs Nominal when any slot is live, Idle otherwise. */
 fun anyRunning(tabs: List<TerminalHost.Tab>): Boolean = tabs.any { it.state == SlotState.RUNNING }
@@ -63,6 +112,7 @@ fun anyRunning(tabs: List<TerminalHost.Tab>): Boolean = tabs.any { it.state == S
 data class MenuState(val open: Boolean = false) {
     fun onBurger() = copy(open = !open)
     fun onSelectSlot() = copy(open = false)
+    fun onSelectView() = copy(open = false)
     fun onLock() = copy(open = false)
     fun onBack() = copy(open = false)
     fun onScrim() = copy(open = false)

@@ -5,8 +5,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_ENABLE_RETRY_MS, CONTROL_REVOKE_UNSAVED_NOTICE } from './controlHub';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
-import { CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ListenerPort, RemoteUnavailableReason, TerminalReadPort } from '../../src/shared/remote/types';
+import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
+import type { ControlSocket, ControlStatus, ListenerPort, PromptReadPort, RemoteUnavailableReason, ThreadReadPort, TerminalReadPort, TerminalSlotId } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -63,7 +63,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals> } = {}) {
+function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -76,19 +76,26 @@ function setup(over: { acquire?: ListenerPort['acquire']; flag?: boolean; confir
     onControlClients: vi.fn(),
   };
   const settings = { flag: over.flag ?? false, read: vi.fn(() => settings.flag), persist: vi.fn((on: boolean) => { settings.flag = on; return settings.flag; }) };
+  const typing = { stored: over.typing?.stored ?? true, readTyping: vi.fn(() => typing.stored), persistTyping: vi.fn((on: boolean) => { const rb = over.typing?.persist ? over.typing.persist(on) : on; typing.stored = rb; return rb; }) };
+  const emitted: ControlStatus[] = [];
   const store = fakeStore();
   const confirmPair = vi.fn(over.confirm ?? (async () => true));
   const logs: string[] = [];
+  const writes: string[] = [];
   const hub = createControlHub({
-    listener, store, settings, confirmPair,
+    listener, store, settings: over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings, confirmPair,
+    onStatus: s => { emitted.push(s); },
     terminals: terms.port,
+    threads: over.threads,
+    prompts: over.prompts,
+    input: { write: (s: TerminalSlotId, d: string) => { writes.push(`${s}|${d}`); return true; } },
     renderQr: t => `<svg>${t.length}</svg>`,
     log: l => { logs.push(l); },
     setTimeoutFn: (fn, ms) => { const id = nextId++; timers.push({ id, fn, ms }); return id; },
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
   });
-  return { hub, listener, settings, store, confirmPair, timers, logs, terms: terms.t };
+  return { hub, listener, settings, store, confirmPair, timers, logs, writes, terms: terms.t, typing, emitted };
 }
 
 async function pairOne(hub: ReturnType<typeof setup>['hub']) {
@@ -738,6 +745,114 @@ describe('control hub terminals retain balance', () => {
   });
 });
 
+describe('control hub input wiring', () => {
+  const inFrame = (c: number, d: string): string => JSON.stringify({ t: 'in', s: 'claude', c, d });
+  async function connect(h: ReturnType<typeof setup>) {
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    s.feed(JSON.stringify({ t: 'attach', s: 'claude' }));
+    return { s, id };
+  }
+
+  it('passes the input port through: an in frame from an attached socket reaches the fake write port once', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    s.feed(inFrame(1, 'ls\r'));
+    expect(h.writes).toEqual(['claude|ls\r']);
+  });
+
+  it('writes the data to no log line, and router lines carry ref=', async () => {
+    const h = setup();
+    const { s, id } = await connect(h);
+    s.feed(inFrame(1, 'HUNTER2-SENTINEL'));
+    expect(h.logs.join(' ')).not.toContain('HUNTER2');
+    expect(h.logs).toContain(`control: first input slot=claude bytes=16 ref=${id.ref}`);
+  });
+
+  it('after disable no write is possible: the socket is closed and a later in frame writes nothing', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    await h.hub.setEnabled(false);
+    s.feed(inFrame(1, 'x'));
+    expect(h.writes).toEqual([]);
+  });
+
+  it('revokeAll closes the gateway session itself (bye revoked) so an in frame in the ws close window writes nothing', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    s.feed(inFrame(1, 'a'));
+    await h.hub.revokeAll();
+    expect(s.sent.at(-1)).toBe(JSON.stringify({ t: 'bye', reason: 'revoked' }));
+    s.feed(inFrame(2, 'b'));
+    expect(h.writes).toEqual(['claude|a']);
+  });
+
+  it('a typing-off hub answers an in frame with nak typing-off and writes nothing; switching back on writes the next frame; the socket stays open', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    s.feed(inFrame(1, 'a'));
+    await h.hub.setPhoneTyping(false);
+    s.feed(inFrame(2, 'b'));
+    expect(s.sent.at(-1)).toBe(JSON.stringify({ t: 'nak', s: 'claude', c: 2, reason: 'typing-off' }));
+    expect(h.writes).toEqual(['claude|a']);
+    s.feed(inFrame(2, 'b')); // replay of the rejected cseq: duplicate, never a second nak
+    expect(s.sent.filter(m => m.includes('"nak"'))).toHaveLength(1);
+    const ackTimer = h.timers.find(t => t.ms === CONTROL_ACK_COALESCE_MS); // the duplicate still advances the cumulative ack
+    expect(ackTimer).toBeDefined();
+    ackTimer!.fn();
+    expect(s.sent.filter(m => m.includes('"ack"')).at(-1)).toBe(JSON.stringify({ t: 'ack', s: 'claude', c: 2 }));
+    expect(s.sent.filter(m => m.includes('"nak"'))).toHaveLength(1);
+    await h.hub.setPhoneTyping(true);
+    s.feed(inFrame(3, 'c'));
+    expect(h.writes).toEqual(['claude|a', 'claude|c']);
+    expect(s.closes).toEqual([]);
+  });
+
+  it('a user disable and re-enable of control leaves the typing switch as set', async () => {
+    const h = setup();
+    await h.hub.setPhoneTyping(false);
+    await h.hub.setEnabled(true);
+    await h.hub.setEnabled(false);
+    expect(h.hub.status().phoneTyping).toBe(false);
+    await h.hub.setEnabled(true);
+    expect(h.hub.status().phoneTyping).toBe(false);
+  });
+});
+
+describe('control hub phone typing switch', () => {
+  it('defaults ON; setPhoneTyping(false) returns false, emits, and works while control is off', async () => {
+    const h = setup();
+    expect(h.hub.status().phoneTyping).toBe(true);
+    const s = await h.hub.setPhoneTyping(false);
+    expect(s).toMatchObject({ state: 'off', phoneTyping: false });
+    expect(h.hub.status().phoneTyping).toBe(false);
+    expect(h.emitted.at(-1)?.phoneTyping).toBe(false);
+  });
+
+  it('the persisted readback wins when persistTyping reports the old value (failed write)', async () => {
+    const h = setup({ typing: { stored: true, persist: () => true } });
+    const s = await h.hub.setPhoneTyping(false);
+    expect(s.phoneTyping).toBe(true);
+  });
+
+  it('persists the requested value through persistTyping and reports its readback', async () => {
+    const h = setup({ typing: { stored: true } });
+    await h.hub.setPhoneTyping(false);
+    expect(h.typing.persistTyping).toHaveBeenCalledWith(false);
+    expect(h.typing.stored).toBe(false);
+  });
+
+  it('init reads a stored false', () => {
+    const h = setup({ typing: { stored: false } });
+    h.hub.init();
+    expect(h.hub.status().phoneTyping).toBe(false);
+  });
+});
+
 describe('device auth peer binding', () => {
   it('ships with peer binding enforced', () => {
     expect(PEER_BINDING_ENFORCED).toBe(true);
@@ -750,5 +865,114 @@ describe('device auth peer binding', () => {
     expect(await auth.redeemDevice(code, undefined, approve)).toEqual({ ok: false, status: 401 });
     expect(await auth.redeemDevice(code, '::1', approve)).toEqual({ ok: false, status: 401 });
     expect(approve).not.toHaveBeenCalled();
+  });
+});
+
+describe('control hub phoneSlots', () => {
+  // the real socket keeps every onClose callback (gateway and hub both register one); the shared fakeSocket keeps only the last
+  function multiSocket() {
+    const s = fakeSocket();
+    const cbs: Array<() => void> = [];
+    s.onClose = (cb: () => void) => { cbs.push(cb); };
+    s.drop = () => { for (const cb of cbs) cb(); };
+    return s;
+  }
+  async function connect(h: ReturnType<typeof setup>) {
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = multiSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    return { s, id };
+  }
+  const att = (s: string): string => JSON.stringify({ t: 'attach', s });
+  const det = (s: string): string => JSON.stringify({ t: 'detach', s });
+
+  it('follows attach and detach in slot order, emitting only on change', async () => {
+    const h = setup();
+    const { s } = await connect(h);
+    expect(h.hub.status().phoneSlots).toEqual([]);
+    const n0 = h.emitted.length;
+    s.feed(att('codex'));
+    s.feed(att('claude'));
+    expect(h.hub.status().phoneSlots).toEqual(['claude', 'codex']);
+    expect(h.emitted.length).toBe(n0 + 2);
+    s.feed(att('claude')); // re-attach: same set, no emit
+    expect(h.emitted.length).toBe(n0 + 2);
+    s.feed(det('claude'));
+    expect(h.hub.status().phoneSlots).toEqual(['codex']);
+    expect(h.emitted.at(-1)?.phoneSlots).toEqual(['codex']);
+  });
+
+  it('is empty after the socket closes, a revoke, a disable and a supersede, with no stale entry', async () => {
+    const h = setup();
+    const { s, id } = await connect(h);
+    s.feed(att('claude'));
+    s.drop();
+    expect(h.hub.status().phoneSlots).toEqual([]);
+
+    const a = multiSocket();
+    h.hub.port.open(a, id);
+    a.feed(helloFrame);
+    a.feed(att('codex'));
+    const b = multiSocket();
+    h.hub.port.open(b, id); // supersede: the older session reports [] before the new one attaches
+    expect(h.hub.status().phoneSlots).toEqual([]);
+    b.feed(helloFrame);
+    b.feed(att('terminal2'));
+    a.drop(); // late close of the superseded socket must not clear the new session's slots
+    expect(h.hub.status().phoneSlots).toEqual(['terminal2']);
+
+    await h.hub.revokeAll();
+    expect(h.hub.status().phoneSlots).toEqual([]);
+
+    const h2 = setup();
+    const c = await connect(h2);
+    c.s.feed(att('claude'));
+    await h2.hub.setEnabled(false);
+    expect(h2.hub.status().phoneSlots).toEqual([]);
+    await h2.hub.setEnabled(true); // status() hides the map while off; re-enabling would expose a stale entry
+    expect(h2.hub.status().phoneSlots).toEqual([]);
+  });
+});
+
+describe('control hub thread and prompt wiring', () => {
+  it('passes the thread and prompt ports through: thread.attach attaches both, and a socket that never attached gets neither', async () => {
+    const detached = { thread: 0, prompt: 0 };
+    const threads: ThreadReadPort = {
+      attach: (_s, tap) => {
+        tap.snap({ q: 3, attached: true, working: false, workingSinceMs: null, events: [] });
+        return { detach: () => { detached.thread += 1; } };
+      },
+    };
+    let promptTap: Parameters<PromptReadPort['attach']>[0] | null = null;
+    const prompts: PromptReadPort = { attach: tap => { promptTap = tap; return { detach: () => { detached.prompt += 1; } }; } };
+    const h = setup({ threads, prompts });
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    expect(promptTap).toBeNull(); // not attached yet: the hub did not touch the prompt port
+    s.feed(JSON.stringify({ t: 'thread.attach', s: 'claude' }));
+    expect(JSON.parse(s.sent[s.sent.length - 1])).toMatchObject({ t: 'thread.snap', s: 'claude', q: 3 });
+    promptTap!.opened({ id: 'p1', tool: 'Bash', risk: 'LOW', summary: 'ls', ttlMs: 1000 });
+    expect(JSON.parse(s.sent[s.sent.length - 1])).toMatchObject({ t: 'prompt', id: 'p1' });
+    s.feed(JSON.stringify({ t: 'thread.detach', s: 'claude' }));
+    expect(detached).toEqual({ thread: 1, prompt: 1 });
+  });
+
+  it('without a thread port thread.attach is a violation and closes the socket', async () => {
+    const h = setup();
+    await h.hub.setEnabled(true);
+    const r = await pairOne(h.hub);
+    const id = h.hub.port.authenticate(`Bearer ${(r as { token: string }).token}`, PEER)!;
+    const s = fakeSocket();
+    h.hub.port.open(s, id);
+    s.feed(helloFrame);
+    s.feed(JSON.stringify({ t: 'thread.attach', s: 'claude' }));
+    expect(s.closes).toEqual([1008]);
   });
 });

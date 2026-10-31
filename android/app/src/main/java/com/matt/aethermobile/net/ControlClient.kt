@@ -65,8 +65,10 @@ sealed class ControlState {
 /**
  * V1 /ctl client: dials only the baked tailnet host, sends exactly one `hello`,
  * and reports Connected only after the welcome proof verifies against the nonce
- * this client sent. After that it forwards terminal frames to [onFrame] and
- * sends attach/detach. No reconnect (V4), no input.
+ * this client sent. After that it forwards terminal frames
+ * (snap/out/size/state/ack/nak) to [onFrame] and sends attach/detach/input.
+ * No reconnect (V4), no queueing, no resend: input
+ * is sent only while Connected and an unacked frame is never replayed.
  *
  * Threading: [onState] is invoked on transport threads (OkHttp), serially per
  * connection; the UI must marshal to the main thread. [onFrame] runs on the
@@ -84,6 +86,8 @@ class ControlClient(
     private val transport: Transport,
     private val onState: (ControlState) -> Unit = {},
     private val onFrame: (ControlProtocol.TerminalFrame) -> Unit = {},
+    private val onThreadFrame: (ControlProtocol.ThreadFrame) -> Unit = {},
+    private val onLedgerFrame: (ControlProtocol.LedgerFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
@@ -132,6 +136,24 @@ class ControlClient(
     /** Stops streaming [s]. False if not Connected, unknown slot, or not queued. */
     fun detach(s: String): Boolean {
         val frame = try { ControlProtocol.buildDetach(s) } catch (_: IllegalArgumentException) { return false }
+        return sendWhenConnected(frame)
+    }
+
+    /** Starts the Claude thread feed (answered by a full thread.snap). False if not Connected or not queued. */
+    fun threadAttach(): Boolean = sendWhenConnected(ControlProtocol.buildThreadAttach())
+
+    /** Stops the Claude thread feed. False if not Connected or not queued. */
+    fun threadDetach(): Boolean = sendWhenConnected(ControlProtocol.buildThreadDetach())
+
+    /** Starts the read-only ledger feed (answered by a ledger.snap). False if not Connected or not queued. */
+    fun ledgerAttach(): Boolean = sendWhenConnected(ControlProtocol.buildLedgerAttach())
+
+    /** Stops the ledger feed. False if not Connected or not queued. */
+    fun ledgerDetach(): Boolean = sendWhenConnected(ControlProtocol.buildLedgerDetach())
+
+    /** Sends one `in` frame for [s] with cseq [c]. False if not Connected, bad args, or not queued; nothing is buffered. The body is never logged. */
+    fun sendInput(s: String, c: Long, d: String): Boolean {
+        val frame = try { ControlProtocol.buildIn(s, c, d) } catch (_: IllegalArgumentException) { return false }
         return sendWhenConnected(frame)
     }
 
@@ -188,6 +210,8 @@ class ControlClient(
 
         override fun onMessage(text: String) {
             var deliver: ControlProtocol.TerminalFrame? = null
+            var deliverThread: ControlProtocol.ThreadFrame? = null
+            var deliverLedger: ControlProtocol.LedgerFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -197,12 +221,28 @@ class ControlClient(
                 when (frameType(text)) {
                     "bye" -> onBye(text)
                     "welcome" -> onWelcome(text)
-                    "snap", "out", "size", "state" -> {
+                    "snap", "out", "size", "state", "ack", "nak" -> {
                         val frame = if (welcomed) ControlProtocol.parseTerminalFrame(text) else null
                         if (frame == null) {
                             finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                         } else {
                             deliver = frame
+                        }
+                    }
+                    "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed" -> {
+                        val frame = if (welcomed) ControlProtocol.parseThreadFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverThread = frame
+                        }
+                    }
+                    "ledger.snap" -> {
+                        val frame = if (welcomed) ControlProtocol.parseLedgerFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverLedger = frame
                         }
                     }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
@@ -211,6 +251,8 @@ class ControlClient(
             // Outside the lock so a callback may call attach/detach/close freely; the
             // transport delivers onMessage serially per connection, so order holds.
             deliver?.let(onFrame)
+            deliverThread?.let(onThreadFrame)
+            deliverLedger?.let(onLedgerFrame)
         }
 
         private fun onBye(text: String) {

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="diag_row_label">Input diagnostic</string>
+    <string name="diag_row_hint">Records input events (no text) for troubleshooting</string>
+    <string name="diag_save">Save log</string>
+    <string name="diag_on_desc">Input diagnostic on</string>
+    <string name="diag_off_desc">Input diagnostic off</string>
+</resources>

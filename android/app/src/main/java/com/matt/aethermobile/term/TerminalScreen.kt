@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.WebView
+import com.matt.aethermobile.diag.DiagEvent
+import com.matt.aethermobile.ui.theme.AeArgb
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
@@ -23,14 +25,16 @@ class TerminalScreen(
     private val onPage: (PageMessage) -> Unit,
     private val onRenderGone: () -> Unit,
     private val onResync: () -> Unit = {},
+    private val onDiag: (DiagEvent.Page) -> Unit = {},
 ) {
     private val appContext = context
-    var webView: WebView = WebView(context)
+    var webView: WebView = AetherWebView(context)
         private set
     private val main = Handler(Looper.getMainLooper())
     private val limiter = RateLimiter(500, SystemClock::elapsedRealtime)
     private val outbox = PageOutbox(MAX_QUEUED) { onResync() }
     private var supported = false
+    private var diagOn = false
 
     init {
         setUp(webView)
@@ -45,7 +49,7 @@ class TerminalScreen(
             }
             .build()
         TerminalWebView.harden(webView, loader, debuggable) { rebuild(); onRenderGone() }
-        webView.setBackgroundColor(0xFF0A0E14.toInt())
+        webView.setBackgroundColor(AeArgb.BG_VOID.toInt())
         supported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
         if (supported) {
             WebViewCompat.addWebMessageListener(
@@ -53,9 +57,11 @@ class TerminalScreen(
             ) { _, message: WebMessageCompat, sourceOrigin, isMainFrame, replyProxy ->
                 if (!isMainFrame || sourceOrigin.toString() != TerminalWebView.ORIGIN) return@addWebMessageListener
                 if (!limiter.allow()) return@addWebMessageListener
+                BridgeValidator.parseDiag(message.data)?.let { onDiag(it); return@addWebMessageListener }
                 val m = BridgeValidator.parse(message.data) ?: return@addWebMessageListener
                 if (m === PageMessage.Ready) {
                     outbox.ready { replyProxy.postMessage(it) }
+                    if (diagOn) post(BridgeOut.diag(true)) // a reloaded page forgets the flag
                 }
                 onPage(m)
             }
@@ -76,6 +82,9 @@ class TerminalScreen(
         main.post { outbox.submit(gen, msg) }
     }
 
+    /** Input diagnostic switch; re-sent on every page Ready while on. */
+    fun setDiag(on: Boolean) { diagOn = on; post(BridgeOut.diag(on)) }
+
     /** Drop the page and everything it rendered (lock, disconnect) and reload it clean. */
     fun reset() {
         outbox.reset()
@@ -94,7 +103,7 @@ class TerminalScreen(
         val index = parent?.indexOfChild(old) ?: -1
         parent?.removeView(old)
         old.destroy()
-        val fresh = WebView(appContext)
+        val fresh = AetherWebView(appContext)
         webView = fresh
         setUp(fresh)
         if (parent != null) parent.addView(fresh, if (index >= 0) index else parent.childCount, lp)

@@ -2,9 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeBye, encodeOut, encodeSize, encodeSnap, encodeState, encodeWelcome, parsePhoneMessage } from './protocol';
-import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES } from '../../src/shared/remote/types';
-import type { TerminalInfo } from '../../src/shared/remote/types';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
+import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES, CONTROL_PROMPT_CLOSE_REASONS, PROMPT_SUMMARY_CAP, THREAD_SNAPSHOT_MAX_BYTES, THREAD_SNAPSHOT_MAX_EVENTS, THREAD_TARGET_CAP, THREAD_TEXT_CAP, THREAD_WORKING_STALE_MS } from '../../src/shared/remote/types';
+import { LEDGER_TIERS } from '../../src/shared/remote/types';
+import type { LedgerWire, TerminalInfo, ThreadEvent } from '../../src/shared/remote/types';
+import { PRICING_PER_MILLION_TOKENS } from '../../src/shared/modelPricing';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
 const w = JSON.parse(spec.frames.welcome);
@@ -55,12 +57,52 @@ describe('terminal frames match the goldens byte for byte', () => {
     expect(encodeState({ s: 'claude', state: 'running' })).toBe(spec.frames.state);
   });
   it('every titan-to-phone golden type is declared', () => {
-    for (const k of ['welcome', 'bye', 'snap', 'out', 'size', 'state']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t);
+    for (const k of ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t);
   });
   it('attach, attachResume and detach goldens parse back', () => {
     expect(parsePhoneMessage(spec.frames.attach)).toEqual({ t: 'attach', s: 'claude' });
     expect(parsePhoneMessage(spec.frames.attachResume)).toEqual({ t: 'attach', s: 'claude', q: 123 });
     expect(parsePhoneMessage(spec.frames.detach)).toEqual({ t: 'detach', s: 'claude' });
+  });
+});
+
+describe('input verbs', () => {
+  const p = (o: unknown): ReturnType<typeof parsePhoneMessage> => parsePhoneMessage(JSON.stringify(o));
+  it('golden in parses back and round-trips', () => {
+    const m = parsePhoneMessage(spec.frames.in);
+    expect(m).toEqual({ t: 'in', s: 'claude', c: 1, d: 'echo hi\r' });
+    expect(JSON.stringify(m)).toBe(spec.frames.in);
+  });
+  it('golden ack and welcomeApplied are reproduced byte for byte', () => {
+    expect(encodeAck({ s: 'claude', c: 3 })).toBe(spec.frames.ack);
+    expect(encodeWelcome({ proof: w.proof, serverTimeMs: w.serverTimeMs, expiresAtMs: w.expiresAtMs, applied: { claude: 3 } })).toBe(spec.frames.welcomeApplied);
+  });
+  it('golden nak frames are reproduced byte for byte', () => {
+    expect(encodeNak({ s: 'claude', c: 4, reason: 'not-running' })).toBe(spec.frames.nakNotRunning);
+    expect(encodeNak({ s: 'terminal2', c: 9, reason: 'typing-off' })).toBe(spec.frames.nakTypingOff);
+  });
+  it('rejects a cseq that is not a safe integer >= 1', () => {
+    for (const c of [0, 1.5, -1, '1', null, NaN, 2 ** 53]) expect(p({ t: 'in', s: 'claude', c, d: 'a' })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', d: 'a' })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: Number.MAX_SAFE_INTEGER, d: 'a' })).not.toBeNull();
+  });
+  it('rejects an empty, non-string, oversize or lone-surrogate d', () => {
+    expect(p({ t: 'in', s: 'claude', c: 1, d: '' })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: 5 })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: 'a'.repeat(8193) })).toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: 'a'.repeat(8192) })).not.toBeNull();
+    expect(p({ t: 'in', s: 'claude', c: 1, d: '€'.repeat(2731) })).toBeNull(); // 8193 bytes in 2731 UTF-16 units
+    expect(parsePhoneMessage('{"t":"in","s":"claude","c":1,"d":"x\\ud800"}')).toBeNull();
+  });
+  it('rejects an unknown slot and ignores extra keys', () => {
+    expect(p({ t: 'in', s: 'nope', c: 1, d: 'a' })).toBeNull();
+    expect(p({ t: 'in', s: 'codex', c: 2, d: 'a', x: 1 })).toEqual({ t: 'in', s: 'codex', c: 2, d: 'a' });
+  });
+  it('validateInput accepts control bytes, escapes and emoji, and throws RangeError on a lone surrogate', () => {
+    for (const d of ['\x03', '\x1b[A', '\x7f', '\0', '😀']) expect(validateInput(d)).toBe(d);
+    expect(() => validateInput('\ud800')).toThrow(RangeError);
+    expect(() => validateInput('')).toThrow(RangeError);
+    expect(() => validateInput(undefined)).toThrow(RangeError);
   });
 });
 
@@ -121,5 +163,105 @@ describe('parsePhoneMessage', () => {
 
   it('accepts an app string of exactly 32 characters', () => {
     expect(parse({ ...ok, app: 'x'.repeat(32) })).not.toBeNull();
+  });
+});
+
+describe('thread and prompt frames', () => {
+  const p = (o: unknown): ReturnType<typeof parsePhoneMessage> => parsePhoneMessage(JSON.stringify(o));
+  const ev = JSON.parse(spec.frames.threadSnap).events as ThreadEvent[];
+  it('thread.attach and thread.detach goldens parse back and round-trip', () => {
+    expect(parsePhoneMessage(spec.frames.threadAttach)).toEqual({ t: 'thread.attach', s: 'claude' });
+    expect(parsePhoneMessage(spec.frames.threadDetach)).toEqual({ t: 'thread.detach', s: 'claude' });
+    expect(JSON.stringify(parsePhoneMessage(spec.frames.threadAttach))).toBe(spec.frames.threadAttach);
+  });
+  it('a non-claude or missing slot is an invalid frame', () => {
+    for (const t of ['thread.attach', 'thread.detach']) {
+      for (const s of ['terminal2', 'codex', 5, null, undefined]) expect(p({ t, s })).toBeNull();
+    }
+    expect(p({ t: 'thread.attach', s: 'claude', x: 1 })).toEqual({ t: 'thread.attach', s: 'claude' });
+  });
+  it('encoders reproduce the goldens byte for byte', () => {
+    const snap = JSON.parse(spec.frames.threadSnap);
+    expect(encodeThreadSnap({ s: 'claude', q: 7, attached: true, working: true, workingSinceMs: 1790000000000, events: ev })).toBe(spec.frames.threadSnap);
+    expect(encodeThreadEv({ s: 'claude', q: 8, events: JSON.parse(spec.frames.threadEv).events })).toBe(spec.frames.threadEv);
+    expect(encodeThreadState({ s: 'claude', q: 9, working: false, workingSinceMs: null })).toBe(spec.frames.threadState);
+    const pr = JSON.parse(spec.frames.prompt);
+    expect(encodePrompt({ id: pr.id, tool: 'Bash', risk: 'MED', summary: './gradlew test', ttlMs: 102000 })).toBe(spec.frames.prompt);
+    expect(encodePromptClosed({ id: pr.id, reason: 'answered-desktop' })).toBe(spec.frames.promptClosed);
+    expect(snap.events).toHaveLength(3);
+  });
+  it('an event is re-shaped to the fixed key order and absent target/add/del become null', () => {
+    const loose = { id: '1:0', k: 'tool', name: 'Read', at: 5, extra: 1 } as unknown as ThreadEvent;
+    expect(JSON.parse(encodeThreadEv({ s: 'claude', q: 1, events: [loose] })).events[0]).toEqual({ k: 'tool', id: '1:0', at: 5, name: 'Read', target: null, add: null, del: null });
+    expect(Object.keys(JSON.parse(encodeThreadEv({ s: 'claude', q: 1, events: [loose] })).events[0])).toEqual(['k', 'id', 'at', 'name', 'target', 'add', 'del']);
+  });
+  it('every thread golden type is declared and the constants equal the JSON thread section', () => {
+    for (const k of ['threadSnap', 'threadEv', 'threadState', 'prompt', 'promptClosed']) expect(spec.messages.titanToPhone).toContain(JSON.parse(spec.frames[k]).t);
+    for (const k of ['threadAttach', 'threadDetach']) expect(spec.messages.phoneToTitan).toContain(JSON.parse(spec.frames[k]).t);
+    expect(spec.thread).toEqual({
+      slot: 'claude', snapshotMaxEvents: THREAD_SNAPSHOT_MAX_EVENTS, textCap: THREAD_TEXT_CAP, targetCap: THREAD_TARGET_CAP,
+      snapshotMaxBytes: THREAD_SNAPSHOT_MAX_BYTES, promptSummaryCap: PROMPT_SUMMARY_CAP, workingStaleMs: THREAD_WORKING_STALE_MS,
+    });
+    expect(spec.messages.promptCloseReasons).toEqual([...CONTROL_PROMPT_CLOSE_REASONS]);
+  });
+});
+describe('ledger frames', () => {
+  const p = (o: unknown) => parsePhoneMessage(JSON.stringify(o));
+  const good = (): LedgerWire => JSON.parse(spec.frames.ledgerSnap).ledger;
+  const EMPTY = '{"t":"ledger.snap","ledger":null}';
+  it('ledger.attach and ledger.detach goldens parse back, round-trip, and ignore stray keys', () => {
+    expect(parsePhoneMessage(spec.frames.ledgerAttach)).toEqual({ t: 'ledger.attach' });
+    expect(parsePhoneMessage(spec.frames.ledgerDetach)).toEqual({ t: 'ledger.detach' });
+    expect(JSON.stringify(parsePhoneMessage(spec.frames.ledgerAttach))).toBe(spec.frames.ledgerAttach);
+    expect(JSON.stringify(parsePhoneMessage(spec.frames.ledgerDetach))).toBe(spec.frames.ledgerDetach);
+    expect(p({ t: 'ledger.attach', s: 'claude', x: 1 })).toEqual({ t: 'ledger.attach' });
+  });
+  it('encodeLedgerSnap reproduces both snapshot goldens byte for byte', () => {
+    expect(encodeLedgerSnap(good())).toBe(spec.frames.ledgerSnap);
+    expect(encodeLedgerSnap(null)).toBe(spec.frames.ledgerSnapEmpty);
+    expect(spec.frames.ledgerSnapEmpty).toBe(EMPTY);
+  });
+  it('a null rollup bucket and an empty tier list survive', () => {
+    const l = { ...good(), tiers: [], rollups: { today: null, week: 1, month: null } } as LedgerWire;
+    const out = JSON.parse(encodeLedgerSnap(l)).ledger;
+    expect(out.tiers).toEqual([]);
+    expect(out.rollups).toEqual({ today: null, week: 1, month: null });
+  });
+  it('is fail-closed: any bad number or tier gives exactly the null frame', () => {
+    const bad: Array<(l: LedgerWire) => void> = [
+      (l) => { l.total.usd = NaN; },
+      (l) => { l.total.output = Infinity; },
+      (l) => { l.total.cacheRead = -0.5; },
+      (l) => { l.rollups.week = -1; },
+      (l) => { l.rollups.today = NaN; },
+      (l) => { l.cache.hitRate = 1.5; },
+      (l) => { l.cache.readTokens = 1.5; },
+      (l) => { l.computedAtMs = 1.5; },
+      (l) => { (l.tiers as string[]).push('mythos'); },
+    ];
+    for (const f of bad) {
+      const l = good();
+      f(l);
+      expect(encodeLedgerSnap(l)).toBe(EMPTY);
+    }
+  });
+  it('stray keys on the input never reach the wire', () => {
+    const l = good() as unknown as Record<string, unknown>;
+    l.prompt = 'x';
+    (l.total as Record<string, unknown>).secret = 'y';
+    (l.cache as Record<string, unknown>).extra = 1;
+    (l.rollups as Record<string, unknown>).project = 'z';
+    expect(encodeLedgerSnap(l as unknown as LedgerWire)).toBe(spec.frames.ledgerSnap);
+  });
+  it('dollar and rate values are rounded to 4 decimals', () => {
+    const l = good();
+    l.total.usd = 889.4400000000001;
+    l.cache.hitRate = 0.8960000000000001;
+    const out = JSON.parse(encodeLedgerSnap(l)).ledger;
+    expect(out.total.usd).toBe(889.44);
+    expect(out.cache.hitRate).toBe(0.896);
+  });
+  it('LEDGER_TIERS equals the pricing table keys', () => {
+    expect([...LEDGER_TIERS]).toEqual(Object.keys(PRICING_PER_MILLION_TOKENS));
   });
 });

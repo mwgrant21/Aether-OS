@@ -5,11 +5,20 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { installReplySuppression, applySnap, applySize } from './replySuppression.js';
+import { shouldSend, applyStdin } from './inputFilter.js';
+import { composeInputs } from './compose.js';
+import { followCursor } from './cursorFollow.js';
+import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
+import { THEME } from './theme.js';
+import { chainDrag, toNotches, wheelBytes, shouldIntercept } from './altScroll.js';
+import { diagMessage, throttle } from './pageDiag.js';
+import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
 const FONT_FAMILY = 'ui-monospace, "Cascadia Mono", Menlo, monospace';
 const MIN_FONT = 6;
 const MAX_FONT = 24;
+const HIST_DEBOUNCE_MS = 200; // settled region rebuild is coalesced (<= 250 ms)
 const bridge = window.aetherBridge;
 const send = (m) => bridge.postMessage(JSON.stringify(m));
 const utf8Len = (s) => new TextEncoder().encode(s).length;
@@ -18,6 +27,10 @@ const root = document.getElementById('term');
 const slots = new Map();
 let visible = DEFAULT_SLOT;
 let zoomPx = 14; // 0 = fit width
+let wantX = false; // an input was sent: the next write completion may scroll sideways too
+let stdinOn = false; // fail closed: Kotlin turns typing on with {t:'stdin', on:true}
+let altTouchAt = -Infinity; // last intercepted alt-screen drag; follow() stays quiet briefly after
+const ALT_FOLLOW_QUIET_MS = 600;
 
 function slotFor(id) {
   let slot = slots.get(id);
@@ -25,24 +38,37 @@ function slotFor(id) {
   const el = document.createElement('div');
   el.className = 'slot';
   el.hidden = id !== visible;
+  // .slot scrolls vertically; .hist is the wrapped settled region; .livex pans the PTY grid.
+  const hist = document.createElement('div');
+  hist.className = 'hist';
+  hist.hidden = true;
+  const livex = document.createElement('div');
+  livex.className = 'livex';
+  el.appendChild(hist);
+  el.appendChild(livex);
   root.appendChild(el);
   const term = new Terminal({
     scrollback: 2000,
     cursorBlink: false,
-    disableStdin: true, // D7: the phone does not type in V2; V3 flips this via a bridge message
+    disableStdin: !stdinOn, // fail closed; the `stdin` bridge message flips it
     allowProposedApi: false,
     fontFamily: FONT_FAMILY,
     fontSize: zoomPx || 14,
-    theme: { background: '#0A0E14', foreground: '#D5DEE8', cursor: '#4FD1C5' },
+    theme: { ...THEME },
   });
   installReplySuppression(term);
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.open(el);
-  slot = { id, el, term, fit, sized: false };
-  // Dormant in V2: stdin is disabled and the size always comes from titan. Wired for V3/V4b;
-  // resize is reported only while the page is fitting itself (V0 demo).
-  term.onData((d) => send({ t: 'input', s: id, d }));
+  term.open(livex);
+  slot = { id, el, hist, livex, term, fit, sized: false, dirty: false, histKey: null, histTimer: 0 };
+  // Input only while stdin is on, and never mouse/focus reports (inputFilter). Resize is
+  // reported only while the page is fitting itself (V0 demo); titan owns the size otherwise.
+  term.onData((d) => {
+    if (shouldSend(d)) {
+      wantX = true;
+      send({ t: 'input', s: id, d });
+    }
+  });
   term.onResize(({ cols, rows }) => {
     if (!slot.sized) send({ t: 'resize', s: id, cols, rows });
   });
@@ -69,13 +95,57 @@ function applyZoom(slot) {
     px = Math.min(MAX_FONT, Math.max(MIN_FONT, px));
   }
   if (slot.term.options.fontSize !== px) slot.term.options.fontSize = px;
+  slot.hist.style.fontSize = `${px}px`;
+}
+
+// Settled region: rebuilt from settledLines when its key moved or anything was written since
+// (see needsRebuild), coalesced by a short timer. Hidden while the alternate buffer is active.
+function scheduleHist(slot) {
+  slot.dirty = true;
+  if (slot.histTimer) return;
+  slot.histTimer = setTimeout(() => {
+    slot.histTimer = 0;
+    rebuildHist(slot);
+  }, HIST_DEBOUNCE_MS);
+}
+
+function rebuildHist(slot) {
+  const res = settledLines(slot.term);
+  if (needsRebuild(slot.histKey, res.key, slot.dirty)) {
+    slot.histKey = res.key;
+    slot.dirty = false;
+    renderHistory(document, slot.hist, res.lines);
+    slot.hist.hidden = res.lines.length === 0;
+    follow(slot);
+  }
 }
 
 // sized is set synchronously so the onResize wired above stays silent; the resize itself
 // is applied in order behind pending output (see applySize / applySnap).
 function setSize(slot, cols, rows) {
   slot.sized = true;
-  applySize(slot.term, cols, rows, () => applyZoom(slot));
+  applySize(slot.term, cols, rows, () => {
+    applyZoom(slot);
+    scheduleHist(slot);
+    follow(slot);
+  });
+}
+
+// Scroll the visible slot's container just enough to show the cursor; no-op when it is in view.
+function follow(slot, followX = false) {
+  if (!slot || slot.el.hidden || Date.now() - altTouchAt < ALT_FOLLOW_QUIET_MS) return;
+  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
+  if (!screen) return;
+  const b = slot.term.buffer.active;
+  const r = followCursor({
+    cursorX: b.cursorX, cursorY: b.cursorY, cols: slot.term.cols, rows: slot.term.rows,
+    screenW: screen.clientWidth, screenH: screen.clientHeight,
+    viewW: slot.livex.clientWidth, viewH: slot.el.clientHeight,
+    scrollLeft: slot.livex.scrollLeft, scrollTop: slot.el.scrollTop, followX,
+    offsetY: slot.hist.hidden ? 0 : slot.hist.offsetHeight,
+  });
+  if (r.scrollTop !== slot.el.scrollTop) slot.el.scrollTop = r.scrollTop;
+  if (r.scrollLeft !== slot.livex.scrollLeft) slot.livex.scrollLeft = r.scrollLeft;
 }
 
 function show(id) {
@@ -85,6 +155,8 @@ function show(id) {
   slot.el.hidden = false;
   applyZoom(slot);
   if (!slot.sized) slot.fit.fit();
+  scheduleHist(slot);
+  follow(slot);
 }
 
 const isSlot = (v) => typeof v === 'string' && v.length > 0;
@@ -103,14 +175,26 @@ bridge.onmessage = (ev) => {
       if (!isSlot(m.s) || !isDim(m.cols) || !isDim(m.rows) || typeof m.d !== 'string') return;
       const slot = slotFor(m.s);
       slot.sized = true;
-      applySnap(slot.term, m.cols, m.rows, m.d, () => applyZoom(slot));
+      applySnap(slot.term, m.cols, m.rows, m.d, () => {
+        applyZoom(slot);
+        scheduleHist(slot);
+        follow(slot);
+      });
       return;
     }
     case 'out': {
       if (!isSlot(m.s) || typeof m.d !== 'string') return;
       const { d, s } = m;
       // Credit back to Kotlin once xterm has consumed the chunk (flow control).
-      slotFor(s).term.write(d, () => send({ t: 'consumed', s, bytes: utf8Len(d) }));
+      const slot = slotFor(s);
+      slot.term.write(d, () => {
+        send({ t: 'consumed', s, bytes: utf8Len(d) });
+        scheduleHist(slot);
+        if (s === visible) {
+          follow(slot, wantX);
+          wantX = false;
+        }
+      });
       return;
     }
     case 'size':
@@ -119,15 +203,244 @@ bridge.onmessage = (ev) => {
     case 'show':
       if (isSlot(m.s)) show(m.s);
       return;
+    case 'stdin':
+      stdinOn = applyStdin(
+        [...slots.values()].map((s) => s.term),
+        m.on,
+        stdinOn,
+      );
+      return;
+    case 'diag':
+      diagOn = m.on === true;
+      return;
     case 'zoom':
       if (m.px === 0 || (Number.isFinite(m.px) && m.px >= 8 && m.px <= MAX_FONT)) {
         zoomPx = m.px;
         for (const slot of slots.values()) applyZoom(slot);
+        follow(slots.get(visible));
+        for (const slot of slots.values()) scheduleHist(slot);
       }
       return;
+    case 'compose': {
+      if (!isSlot(m.s) || typeof m.d !== 'string' || typeof m.enter !== 'boolean' || !stdinOn) return;
+      const slot = slots.get(m.s);
+      if (!slot) return;
+      for (const msg of composeInputs(m.s, m.d, m.enter, slot.term.modes.bracketedPasteMode)) {
+        if (shouldSend(msg.d)) {
+          wantX = true;
+          send(msg);
+        }
+      }
+      return;
+    }
     default:
   }
 };
+
+// Alt-screen touch scroll: a vertical drag pans the slot natively, then the leftover is sent as
+// wheel input so the remote app scrolls its own history. Sent directly, not via shouldSend
+// (inputFilter drops mouse reports on purpose).
+root.dataset.altScroll = 'aether-alt-scroll-v1';
+const ALT_DECIDE_PX = 8;
+const ALT_FLUSH_MS = 50;
+let alt = null; // { slot, x, y, decided, on, carry, pending, timer }
+
+function altFlush() {
+  if (!alt) return;
+  alt.timer = 0;
+  const slot = alt.slot;
+  if (alt.pending === 0 || !stdinOn || slot.el.hidden) return;
+  const n = Math.max(-8, Math.min(8, alt.pending));
+  const d = wheelBytes({
+    notches: n,
+    trackingMode: slot.term.modes.mouseTrackingMode,
+    col: Math.floor(slot.term.cols / 2) + 1,
+    row: Math.floor(slot.term.rows / 2) + 1,
+  });
+  if (d === null) return; // below the PgUp/PgDn threshold: keep accumulating
+  alt.pending = 0;
+  send({ t: 'input', s: slot.id, d });
+}
+
+function altEnd() {
+  if (alt && alt.timer) clearTimeout(alt.timer);
+  alt = null;
+}
+
+root.addEventListener('touchstart', (ev) => {
+  altEnd();
+  if (ev.touches.length !== 1) return;
+  const slot = slots.get(visible);
+  if (!slot || slot.el.hidden) return;
+  const t = ev.touches[0];
+  alt = { slot, x: t.clientX, y: t.clientY, decided: false, on: false, carry: 0, pending: 0, timer: 0 };
+});
+
+root.addEventListener('touchmove', (ev) => {
+  if (!alt) return;
+  if (ev.touches.length !== 1) {
+    altEnd();
+    return;
+  }
+  const t = ev.touches[0];
+  const slot = alt.slot;
+  if (!alt.decided) {
+    const dx = t.clientX - alt.x;
+    const dy = t.clientY - alt.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < ALT_DECIDE_PX) return;
+    alt.decided = true;
+    alt.on = stdinOn && slot.term.buffer.active.type === 'alternate' && shouldIntercept({ bufferType: slot.term.buffer.active.type, dx, dy });
+    if (!alt.on) return;
+  }
+  if (!alt.on) return;
+  ev.preventDefault();
+  altTouchAt = Date.now();
+  const dy = t.clientY - alt.y;
+  alt.y = t.clientY;
+  const el = slot.el;
+  const r = chainDrag({ dy, scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight });
+  if (r.scrollTop !== el.scrollTop) el.scrollTop = r.scrollTop;
+  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
+  const rows = slot.term.rows;
+  const cellH = screen && rows > 0 ? screen.clientHeight / rows : 0;
+  const nn = toNotches({ leftover: r.leftover, carry: alt.carry, cellH });
+  alt.carry = nn.carry;
+  alt.pending = Math.max(-8, Math.min(8, alt.pending + nn.notches));
+  if (alt.pending !== 0 && !alt.timer) alt.timer = setTimeout(altFlush, ALT_FLUSH_MS);
+}, { passive: false });
+
+root.addEventListener('touchend', altEnd);
+root.addEventListener('touchcancel', altEnd);
+
+// Mouse (Phone Link etc.): Pointer Events drag + wheel. Touch pointers are left to the touch
+// handlers above. Wheel bytes go straight through send(), never term.onData.
+let mouse = null; // { id, slot, x, y, sx, sy, decided }
+let wheelCarry = 0;
+let wheelPending = 0;
+
+function cellSize(slot) {
+  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
+  const { rows, cols } = slot.term;
+  return {
+    cellH: screen && rows > 0 ? screen.clientHeight / rows : 0,
+    cellW: screen && cols > 0 ? screen.clientWidth / cols : 0,
+  };
+}
+
+function mouseEnd() {
+  if (!mouse) return; // never touch the touch gesture's alt state
+  mouse = null;
+  altEnd();
+}
+
+root.addEventListener('pointerdown', (ev) => {
+  if (!isPrimaryMouse(ev)) return;
+  const slot = slots.get(visible);
+  if (!slot || slot.el.hidden) return;
+  mouseEnd();
+  altEnd();
+  ev.preventDefault();
+  try { root.setPointerCapture(ev.pointerId); } catch (e) { /* pointer already gone */ }
+  mouse = { id: ev.pointerId, slot, x: ev.clientX, y: ev.clientY, sx: ev.clientX, sy: ev.clientY, decided: false };
+});
+
+root.addEventListener('pointermove', (ev) => {
+  if (!mouse || ev.pointerId !== mouse.id) return;
+  if ((ev.buttons & 1) !== 1) {
+    mouseEnd();
+    return;
+  }
+  const slot = mouse.slot;
+  if (!mouse.decided) {
+    const tx = ev.clientX - mouse.sx;
+    const ty = ev.clientY - mouse.sy;
+    if (Math.max(Math.abs(tx), Math.abs(ty)) < MOUSE_SLOP_PX) return;
+    mouse.decided = true;
+    const type = slot.term.buffer.active.type;
+    if (stdinOn && shouldIntercept({ bufferType: type, dx: tx, dy: ty })) {
+      alt = { slot, x: 0, y: 0, decided: true, on: true, carry: 0, pending: 0, timer: 0 };
+    }
+  }
+  ev.preventDefault();
+  altTouchAt = Date.now();
+  const dx = ev.clientX - mouse.x;
+  const dy = ev.clientY - mouse.y;
+  mouse.x = ev.clientX;
+  mouse.y = ev.clientY;
+  const el = slot.el;
+  const lx = slot.livex;
+  if (alt && alt.on) {
+    const r = chainDrag({ dy, scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight });
+    if (r.scrollTop !== el.scrollTop) el.scrollTop = r.scrollTop;
+    const nn = toNotches({ leftover: r.leftover, carry: alt.carry, cellH: cellSize(slot).cellH });
+    alt.carry = nn.carry;
+    alt.pending = Math.max(-8, Math.min(8, alt.pending + nn.notches));
+    if (alt.pending !== 0 && !alt.timer) alt.timer = setTimeout(altFlush, ALT_FLUSH_MS);
+    return;
+  }
+  const r = dragPan({
+    dx, dy,
+    scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight,
+    scrollLeft: lx.scrollLeft, maxScrollLeft: lx.scrollWidth - lx.clientWidth,
+  });
+  if (r.scrollTop !== el.scrollTop) el.scrollTop = r.scrollTop;
+  if (r.scrollLeft !== lx.scrollLeft) lx.scrollLeft = r.scrollLeft;
+});
+
+root.addEventListener('pointerup', mouseEnd);
+root.addEventListener('pointercancel', mouseEnd);
+root.addEventListener('lostpointercapture', mouseEnd);
+
+root.addEventListener('wheel', (ev) => {
+  const slot = slots.get(visible);
+  if (!slot || slot.el.hidden) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  altTouchAt = Date.now();
+  const { cellH, cellW } = cellSize(slot);
+  const { dx, dy } = wheelPx({
+    deltaX: ev.deltaX, deltaY: ev.deltaY, deltaMode: ev.deltaMode, shiftKey: ev.shiftKey,
+    cellW, cellH, viewH: slot.el.clientHeight,
+  });
+  if (stdinOn && slot.term.buffer.active.type === 'alternate') {
+    const nn = toNotches({ leftover: -dy, carry: wheelCarry, cellH });
+    wheelCarry = nn.carry;
+    wheelPending = Math.max(-8, Math.min(8, wheelPending + nn.notches));
+    if (wheelPending !== 0) {
+      const d = wheelBytes({
+        notches: wheelPending,
+        trackingMode: slot.term.modes.mouseTrackingMode,
+        col: Math.floor(slot.term.cols / 2) + 1,
+        row: Math.floor(slot.term.rows / 2) + 1,
+      });
+      if (d !== null) {
+        wheelPending = 0;
+        send({ t: 'input', s: slot.id, d });
+      }
+    }
+    if (dx !== 0) slot.livex.scrollLeft += dx;
+    return;
+  }
+  slot.el.scrollTop += dy;
+  slot.livex.scrollLeft += dx;
+}, { capture: true, passive: false });
+
+// Input diagnostic (T4b): metadata of the page's own pointer/touch/wheel events, only while Kotlin
+// has switched it on. Capture + passive, never preventDefault/stopPropagation: observation only.
+let diagOn = false;
+function diagListen(type, kind, action) {
+  let last = 0; // per listener, so touchmove is not starved by the pointermove before it
+  root.addEventListener(type, (ev) => {
+    if (!diagOn) return;
+    const now = Date.now();
+    if (!throttle(last, now, action)) return;
+    if (action === 'move') last = now;
+    send(diagMessage(kind, action, ev));
+  }, { capture: true, passive: true });
+}
+for (const [type, action] of [['pointerdown', 'down'], ['pointermove', 'move'], ['pointerup', 'up'], ['pointercancel', 'cancel']]) diagListen(type, 'p', action);
+for (const [type, action] of [['touchstart', 'down'], ['touchmove', 'move'], ['touchend', 'up'], ['touchcancel', 'cancel']]) diagListen(type, 't', action);
+diagListen('wheel', 'w', 'wheel');
 
 // V0 fit behaviour, only for slots that never received a size or snap.
 new ResizeObserver(() => {
@@ -135,6 +448,7 @@ new ResizeObserver(() => {
     if (!slot.sized && !slot.el.hidden) slot.fit.fit();
     else if (zoomPx === 0) applyZoom(slot);
   }
+  follow(slots.get(visible));
 }).observe(root);
 
 show(DEFAULT_SLOT);

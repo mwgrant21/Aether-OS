@@ -51,6 +51,7 @@ declare global {
         status: () => Promise<ControlStatus>;
         setEnabled: (on: boolean) => Promise<ControlStatus>;
         setReenableAtLaunch: (on: boolean) => Promise<ControlStatus>;
+        setPhoneTyping: (on: boolean) => Promise<ControlStatus>;
         createPairing: () => Promise<ControlPairingResult>;
         revokeAll: () => Promise<ControlStatus>;
         revokeOne: (ref: string) => Promise<ControlStatus>;
@@ -84,6 +85,8 @@ declare global {
         write: (input: string) => void;
         resize: (cols: number, rows: number) => void;
         onData: (callback: (data: string) => void) => () => void;
+        onExit: (callback: () => void) => () => void;
+        onAlive: (callback: () => void) => () => void;
       };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;

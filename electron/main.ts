@@ -96,13 +96,16 @@ import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngin
 import { CommunicationBridgeIntegration } from './communicationBridge/mainIntegration';
 import { registerCommunicationIpc } from './communicationBridge/ipc';
 import { createRemoteHub } from './remote/remoteHub';
+import { createPermissionBroker } from './permissionBroker';
+import { createThreadFeed } from './threadFeed';
+import { createLedgerFeed } from './ledgerFeed';
 import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
 import { renderQrSvg } from './remote/pairingQr';
 import { createControlHub } from './control/controlHub';
 import { registerControlIpc } from './control/controlIpc';
-import { controlSettingsPath, readReenable, writeReenable } from './controlSettings';
+import { controlSettingsPath, readPhoneTyping, readReenable, writePhoneTyping, writeReenable } from './controlSettings';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -457,6 +460,12 @@ let stopPermissionServer: (() => void) | null = null;
 // the 'permission:respond' handler.
 const pendingPermissionResolvers = new Map<string, (decision: PermissionDecision) => void>();
 
+// Shared by the permission server's timeout and the broker's auto-close, so a phone never shows a prompt past its life.
+const PERMISSION_TIMEOUT_MS = 120000;
+// Observe-only registry of pending prompts for the phone's read-only display. It never resolves anything:
+// pendingPermissionResolvers above stays the only path that answers a prompt.
+const permissionBroker = createPermissionBroker({ now: Date.now, timeoutMs: PERMISSION_TIMEOUT_MS });
+
 // requestId -> resolver for an anomaly-triggered PostToolUse flag-review
 // currently awaiting the renderer's decision. Same pattern as
 // pendingPermissionResolvers above, kept as its own map (rather than reusing
@@ -508,6 +517,9 @@ let pinnedLaunchSessionId: string | null = null;
 // and with a 60s interval the Ledger would show "no snapshot yet" for a full
 // minute after launch. The renderer pulls this on mount.
 let cachedLedgerSnapshot: LedgerSnapshot | null = null;
+// Phone Ledger feed (privacy section 17). Declared here, above the scan that publishes and above createControlHub, so no
+// path can reach it in its temporal dead zone. It shares the cache above through current() and keeps no copy of it.
+const ledgerFeed = createLedgerFeed({ current: () => cachedLedgerSnapshot });
 
 let cachedProjectsSnapshot: ProjectsSnapshot | null = null;
 
@@ -621,6 +633,7 @@ async function scanAndPushUsage(): Promise<void> {
     Date.now(),
   );
   sendToWindow('ledger:snapshot', cachedLedgerSnapshot);
+  ledgerFeed.notify();
 
   // Quota efficiency rides the SAME optimizeEvents scan as the Ledger -- no
   // third pass over the transcripts -- and joins it to the percentage series
@@ -972,7 +985,8 @@ app.whenReady().then(async () => {
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
     // Quota is account-wide, so any session's seven-day reading is a valid
     // sample (below); only the dashboard snapshot is limited to the pinned terminal.
-    const pinned = isPinnedStatusline(snapshot.sessionId, pinnedLaunchSessionId);
+    // After /clear the live session id is the tracker's rolled pin, not the launch id.
+    const pinned = isPinnedStatusline(snapshot.sessionId, liveAgentTracker.getPinnedSessionId() ?? pinnedLaunchSessionId);
     if (pinned) cachedStatuslineSnapshot = snapshot;
     // The seven-day window is the quota cost basis (the five-hour one stays a
     // live depletion gauge and is never fitted). A payload without it -- an
@@ -1001,7 +1015,7 @@ app.whenReady().then(async () => {
     // (permissionAuth.ts, security audit 2026-10-04).
     secret: createPermissionSecret(),
     port: portAvailable ? desiredPort : 0,
-    timeoutMs: 120000,
+    timeoutMs: PERMISSION_TIMEOUT_MS,
     onPermissionRequest: async (req: { toolName: string; toolInput: unknown }): Promise<PermissionDecision> => {
       const risk = classifyPermissionRisk(req.toolName, req.toolInput);
       if (shouldAutoAllow(risk, permissionAutoAllowThreshold)) {
@@ -1014,6 +1028,9 @@ app.whenReady().then(async () => {
       // "no decision in time" case around this call.
       if (!mainWindow) return { behavior: 'deny', reason: 'no window available to prompt for permission' };
       const requestId = crypto.randomUUID();
+      // Observe-only. requestId is a fresh UUID, and a duplicate open() of a pending id is a no-op by design,
+      // so this can never replace or re-announce a live prompt. A broker fault must not block the desktop prompt.
+      try { permissionBroker.open({ id: requestId, toolName: req.toolName, toolInput: req.toolInput, risk }); } catch { /* observe-only */ }
       const editableField = derivePermissionEditableField(req.toolName, req.toolInput);
       const decision = new Promise<PermissionDecision>((resolve) => {
         pendingPermissionResolvers.set(requestId, resolve);
@@ -1455,18 +1472,32 @@ const terminal2PtyLifecycle = terminalHub.slot('terminal2');
 
 ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
-  terminal2PtyLifecycle.start(() => spawnPty(cols, rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
-    onData: (data) => {
-      if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
-    },
-    // No liveness/idle tracking for this tab (no sidebar dot), so nothing to announce.
-    onAlive: () => {},
-    onExit: () => {},
-  }, { cols, rows });
+  const spawn = (size: { cols: number; rows: number }) =>
+    terminal2PtyLifecycle.start(() => spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
+      onData: (data) => {
+        if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
+      },
+      // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
+      // can reset its xterm after a restart (also fires on the first start).
+      onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
+      // Tell the renderer so it can offer an Enter-to-restart; still not wired
+      // into pinnedPtyExited, the usage scraper or the tracker.
+      onExit: () => sendToWindow('terminal2Pty:exit', undefined),
+    }, size);
+  // Enter on an exited Terminal 2 (desktop IPC write or phone input) respawns it at its last size.
+  terminal2PtyLifecycle.setRestarter(() => {
+    const { cols: lastCols, rows: lastRows } = terminal2PtyLifecycle.info();
+    spawn({ cols: lastCols, rows: lastRows });
+  });
+  spawn({ cols, rows });
 });
 
 ipcMain.on('terminal2Pty:write', (_event, input: string) => {
-  terminal2PtyLifecycle.write(input);
+  try {
+    terminal2PtyLifecycle.write(input);
+  } catch (error) {
+    diagLog.write(`[diag] terminal2 write failed at=${new Date().toISOString()} error=${error instanceof Error ? error.message : String(error)}`);
+  }
 });
 
 ipcMain.on('terminal2Pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
@@ -1509,11 +1540,16 @@ let resolveRemotePrivateDir: () => void = () => {};
 const remotePrivateDir = new Promise<void>(resolve => { resolveRemotePrivateDir = resolve; });
 let remoteDirReady = false;
 let remoteDirFailed = false; // true only after the ACL setup actually failed (not while it is pending)
+// One resolver for both the viewer feed and the phone thread feed: the pinned Claude session's transcript file.
+const resolvePinnedSession = () => {
+  const id = liveAgentTracker.getPinnedSessionId();
+  return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
+};
+// Polls the transcript only while a phone socket is thread-attached; its ring is dropped on the last detach, so
+// control stop (which closes every socket) and quit leave nothing running or held.
+const threadFeed = createThreadFeed({ resolveSession: resolvePinnedSession, now: Date.now });
 const remoteHub = createRemoteHub({
-  resolveSession: () => {
-    const id = liveAgentTracker.getPinnedSessionId();
-    return id && isSafeSegment(id) ? { sessionId: id, file: join(transcriptSessionDir, `${id}.jsonl`) } : null;
-  },
+  resolveSession: resolvePinnedSession,
   store: createSessionStore(join(aetherOsDir, 'remote-sessions.json')),
   onStatus: s => sendToWindow('remote:statusChanged', s),
   log: l => diagLog.write(l),
@@ -1524,11 +1560,17 @@ const remoteHub = createRemoteHub({
 // attach after a viewer-only start fails closed by design.
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
-  terminals: terminalHub.readPort(), // the read-only port, never terminalHub or a slot
+  terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
+  input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
+  threads: threadFeed, // read-only transcript thread, Claude slot only
+  ledger: ledgerFeed.port, // read-only derived cost numbers, no text
+  prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
     persist: on => writeReenable(aetherOsDir, on, l => diagLog.write(l)),
+    readTyping: () => readPhoneTyping(controlSettingsPath(aetherOsDir)),
+    persistTyping: on => writePhoneTyping(aetherOsDir, on, l => diagLog.write(l)),
   },
   confirmPair: (peer, replacesExisting) => confirmControlPair(peer, replacesExisting),
   renderQr: renderQrSvg,
@@ -1576,6 +1618,7 @@ const controlHubForIpc = {
   status: () => controlStatusOrUnavailable(),
   setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setEnabled(on); },
   setReenableAtLaunch: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setReenableAtLaunch(on); },
+  setPhoneTyping: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setPhoneTyping(on); },
   createPairing: async (): Promise<ControlPairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : controlHub.createPairing(); },
   revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeAll(); },
   revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeOne(ref); },
@@ -1678,6 +1721,8 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
   if (!resolve) return; // already timed out / resolved / duplicate response
   pendingPermissionResolvers.delete(requestId);
   resolve(decision);
+  // Observe-only, after the decision is resolved and before the renderer is told; a broker fault cannot skip either.
+  try { permissionBroker.close(requestId, 'answered-desktop'); } catch { /* observe-only */ }
   // The renderer only ever learns a request EXISTS from this channel, so it
   // also has to learn from it that the request is done -- otherwise
   // state.pendingPermissionRequest stays non-null forever and every surface

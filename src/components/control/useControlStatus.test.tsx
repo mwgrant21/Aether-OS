@@ -5,7 +5,7 @@ import { useControlStatus } from './useControlStatus';
 import type { ControlStatus } from '../../shared/remote/types';
 
 function mkStatus(patch: Partial<ControlStatus> = {}): ControlStatus {
-  return { state: 'on', reason: null, address: '100.1.2.3:47821', connected: 0, devices: [], pairingActive: false, reenableAtLaunch: false, notice: null, ...patch };
+  return { state: 'on', reason: null, address: '100.1.2.3:47821', connected: 0, devices: [], pairingActive: false, reenableAtLaunch: false, phoneTyping: true, notice: null, ...patch };
 }
 function Probe({ out }: { out: { v: ControlStatus | null } }) { out.v = useControlStatus(); return null; }
 function bridge(control: unknown) { (window as unknown as { aetherElectron: unknown }).aetherElectron = { control }; }

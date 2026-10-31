@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     status: (): Promise<ControlStatus> => ipcRenderer.invoke('control:status'),
     setEnabled: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setEnabled', on),
     setReenableAtLaunch: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setReenableAtLaunch', on),
+    setPhoneTyping: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setPhoneTyping', on),
     createPairing: (): Promise<ControlPairingResult> => ipcRenderer.invoke('control:createPairing'),
     revokeAll: (): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeAll'),
     revokeOne: (ref: string): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeOne', ref),
@@ -120,6 +121,16 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
       ipcRenderer.on('terminal2Pty:data', listener);
       return () => ipcRenderer.removeListener('terminal2Pty:data', listener);
+    },
+    onExit: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('terminal2Pty:exit', listener);
+      return () => ipcRenderer.removeListener('terminal2Pty:exit', listener);
+    },
+    onAlive: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('terminal2Pty:alive', listener);
+      return () => ipcRenderer.removeListener('terminal2Pty:alive', listener);
     },
   },
   usage: {

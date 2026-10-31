@@ -1,7 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="status_running">Running</string>
     <string name="menu_terminals">Terminals</string>
     <string name="menu_open">Open menu</string>
     <string name="menu_close">Close menu</string>
+    <string name="caps_thread_raw">Thread · Raw</string>
+    <string name="caps_thread_raw_not_started">Thread · Raw · not started</string>
+    <string name="caps_thread_raw_exited">Thread · Raw · exited</string>
+    <string name="caps_raw_only">Raw only</string>
+    <string name="caps_raw_only_not_started">Raw only · not started</string>
+    <string name="caps_raw_only_exited">Raw only · exited</string>
+    <string name="view_thread">Thread</string>
+    <string name="view_raw">Raw</string>
+    <string name="view_thread_desc">Thread view</string>
+    <string name="view_raw_desc">Raw terminal view</string>
+
+    <string name="key_row_label">Keys</string>
+    <string name="key_esc">Esc</string>
+    <string name="key_tab">Tab</string>
+    <string name="key_ctrl">Ctrl</string>
+    <string name="key_up">↑</string>
+    <string name="key_down">↓</string>
+    <string name="key_left">←</string>
+    <string name="key_right">→</string>
+    <string name="key_pipe">|</string>
+    <string name="key_slash">/</string>
+    <string name="key_dash">-</string>
+    <string name="key_y">y</string>
+    <string name="key_n">n</string>
+    <string name="key_up_desc">Up arrow</string>
+    <string name="key_down_desc">Down arrow</string>
+    <string name="key_left_desc">Left arrow</string>
+    <string name="key_right_desc">Right arrow</string>
+    <string name="key_ctrl_on_desc">Ctrl latched</string>
+
+    <string name="compose_hint">Compose a message</string>
+    <string name="compose_send">Send</string>
+    <string name="compose_send_desc">Send to terminal</string>
+    <string name="action_restart">Restart Terminal 2</string>
+    <string name="action_restart_desc">Restart Terminal 2 (sends Enter)</string>
+
+    <string name="share_row_label">Screen share mode</string>
+    <string name="share_row_hint">Allows screenshots and Phone Link while on</string>
+    <string name="share_on_desc">Screen share mode on</string>
+    <string name="share_off_desc">Screen share mode off</string>
+    <string name="share_pill">SCREEN SHARING</string>
+    <string name="share_prompt_title">Turn on screen sharing</string>
+    <string name="share_prompt_subtitle">Fingerprint required</string>
+    <string name="share_msg_no_hardware">This phone has no fingerprint or face sensor that can unlock Aether.</string>
+    <string name="share_msg_none_enrolled">Add a fingerprint or face in Android settings first, then try again.</string>
+    <string name="share_msg_sensor_unavailable">The fingerprint sensor is unavailable right now. Try again.</string>
+    <string name="share_msg_lockout">Too many failed attempts. Try again later.</string>
+    <string name="share_msg_failed">Could not start the fingerprint prompt. Try again.</string>
+
+    <plurals name="not_sent_chars">
+        <item quantity="one">%d char not sent</item>
+        <item quantity="other">%d chars not sent</item>
+    </plurals>
+    <string name="not_sent_too_large">Input over 64 KB was refused. Paste it in smaller parts.</string>
+    <string name="not_sent_bad_text">Input with a broken character was refused.</string>
+    <string name="not_sent_not_running">Terminal not connected on the PC.</string>
+    <string name="not_sent_typing_off">Typing is switched off on the PC.</string>
+    <string name="menu_views">Views</string>
+    <string name="view_ledger">Ledger</string>
+    <string name="view_ledger_desc">Ledger, observed API-rate spend</string>
+    <string name="ledger_subline">Observed in transcripts</string>
 </resources>

@@ -194,3 +194,115 @@ describe('pinning by session id', () => {
     expect(tracker.getPinnedSessionId()).toBe('pinned-id');
   });
 });
+
+describe('liveAgentTracker: /clear rollover', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+  const oldLines = [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-09-30T10:00:00.000Z', message: { usage: { input_tokens: 100, cache_read_input_tokens: 900 }, content: [{ type: 'tool_use', id: 'tu_old', name: 'Agent', input: { subagent_type: 'code-reviewer' } }] } }),
+  ];
+  const newLines = [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-09-30T11:00:00.000Z', message: { content: [{ type: 'tool_use', id: 'tu_new', name: 'Agent', input: { subagent_type: 'code-reviewer' } }] } }),
+  ];
+
+  it('rollover commits: pin flips to the successor, tail restarts at offset 0, open/work/history/counters reset', async () => {
+    const reads: [string, number][] = [];
+    let succ: string | null = null;
+    const tracker = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: 0,
+      findSessionFile: async () => '/s/old.jsonl',
+      findSuccessor: async () => succ,
+      readLines: async (file, offset) => {
+        reads.push([file, offset]);
+        return file === '/s/old.jsonl' ? { lines: oldLines, newOffset: 400 } : { lines: newLines, newOffset: 50 };
+      },
+    });
+    tracker.notifyPtySpawned(1000, 'launch');
+    const first = await tracker.tick();
+    expect(first.open.map((d) => d.toolUseId)).toEqual(['tu_old']);
+    succ = '/s/new.jsonl';
+    await tracker.tick(); // reads old (nothing new is fine), then rolls over
+    expect(tracker.getPinnedSessionId()).toBe('new');
+    const after = await tracker.tick();
+    expect(reads.slice(0, 1)).toEqual([['/s/old.jsonl', 0]]);
+    expect(reads[reads.length - 1]).toEqual(['/s/new.jsonl', 0]);
+    expect(after.open.map((d) => d.toolUseId)).toEqual(['tu_new']);
+    expect(after.cacheHitRatio).toBe(0);
+  });
+
+  it('rollover mid-tick: a respawn landing during findSuccessor leaves the new spawn unpinned and untouched (stale-tick guard)', async () => {
+    const scan = deferred<string | null>();
+    let scans = 0;
+    const tracker = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: 0,
+      findSessionFile: async () => '/s/fresh.jsonl',
+      findSuccessor: () => (++scans === 1 ? scan.promise : Promise.resolve(null)),
+      readLines: async () => ({ lines: oldLines, newOffset: 400 }),
+    });
+    tracker.notifyPtySpawned(1000, 'id1');
+    const stale = tracker.tick();
+    await vi.waitFor(() => expect(scans).toBe(1));
+    tracker.notifyPtySpawned(2000, 'id2');
+    scan.resolve('/s/successor.jsonl');
+    await stale;
+    expect(tracker.getPinnedSessionId()).toBeNull();
+    await tracker.tick();
+    expect(tracker.getPinnedSessionId()).toBe('fresh');
+  });
+
+  it('an unrelated session does not steal the pin', async () => {
+    const seam = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: 0,
+      findSessionFile: async () => '/s/pinned-id.jsonl',
+      findSuccessor: async () => null,
+      readLines: async () => ({ lines: [], newOffset: 0 }),
+    });
+    seam.notifyPtySpawned(1000, 'pinned-id');
+    await seam.tick();
+    await seam.tick();
+    expect(seam.getPinnedSessionId()).toBe('pinned-id');
+
+    const home = homeWithSession([]);
+    const sessionDir = path.join(home, '.claude', 'projects', cwdToProjectDirName(home));
+    writeFileSync(path.join(sessionDir, 'pinned-id.jsonl'), '', 'utf8');
+    writeFileSync(path.join(sessionDir, 'startup-other.jsonl'), JSON.stringify({ type: 'user' }) + '\n', 'utf8');
+    const real = createLiveAgentTracker(home, { rolloverScanIntervalMs: 0 });
+    real.notifyPtySpawned(1000, 'pinned-id');
+    await real.tick();
+    await real.tick();
+    expect(real.getPinnedSessionId()).toBe('pinned-id');
+  });
+
+  it('no launch id -> findSuccessor is never called', async () => {
+    const findSuccessor = vi.fn(async () => null);
+    const tracker = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: 0,
+      findSessionFile: async () => '/s/old.jsonl',
+      findSuccessor,
+      readLines: async () => ({ lines: oldLines, newOffset: 400 }),
+    });
+    tracker.notifyPtySpawned(1000);
+    await tracker.tick();
+    await tracker.tick();
+    expect(findSuccessor).not.toHaveBeenCalled();
+  });
+
+  it('scans are throttled to the configured interval', async () => {
+    const findSuccessor = vi.fn(async () => null);
+    const tracker = createLiveAgentTracker('/home/x', {
+      rolloverScanIntervalMs: 60_000,
+      findSessionFile: async () => '/s/old.jsonl',
+      findSuccessor,
+      readLines: async () => ({ lines: [], newOffset: 0 }),
+    });
+    tracker.notifyPtySpawned(1000, 'id1');
+    await tracker.tick();
+    await tracker.tick();
+    expect(findSuccessor).toHaveBeenCalledTimes(1);
+  });
+});
