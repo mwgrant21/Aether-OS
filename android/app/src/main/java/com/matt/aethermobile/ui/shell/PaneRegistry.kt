@@ -3,8 +3,11 @@ package com.matt.aethermobile.ui.shell
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.matt.aethermobile.R
 import com.matt.aethermobile.net.ControlClient
+import com.matt.aethermobile.projects.ProjectsWire
 import com.matt.aethermobile.protocol.ControlProtocol
+import com.matt.aethermobile.ui.projects.ProjectsScreen
 import com.matt.aethermobile.views.ViewHost
 import com.matt.aethermobile.views.ViewUi
 import org.json.JSONObject
@@ -25,8 +28,13 @@ class PaneEntry<T : Any>(
 }
 
 object PaneRegistry {
-    /** Empty until the first pane (P3+) registers itself here. */
-    val entries: List<PaneEntry<*>> = emptyList()
+    /** One entry per registered pane; the burger row, title, body and lock-drop all derive from this list. */
+    val entries: List<PaneEntry<*>> = listOf(
+        PaneEntry(
+            PaneSpec(AppView.PROJECTS, "projects", ProjectsWire::decode),
+            R.string.view_projects, R.string.view_projects_desc,
+        ) { ui, now, mod -> ProjectsScreen(ui, now, mod) },
+    )
 
     fun entry(app: AppView): PaneEntry<*>? = entries.firstOrNull { it.spec.appView == app }
 }

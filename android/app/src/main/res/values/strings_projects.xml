@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_projects">Projects</string>
+    <string name="view_projects_desc">Projects, observed API-rate spend per repository</string>
+
+    <string name="projects_loading">Loading projects</string>
+    <string name="projects_no_snapshot">No projects snapshot yet. This fills in on the next transcript scan.</string>
+    <string name="projects_unreadable">Projects data from titan could not be read. Update Aether on titan and on this phone.</string>
+    <string name="projects_unsupported">This titan does not serve Projects. Update Aether on titan.</string>
+
+    <string name="projects_all_title">All transcripts</string>
+    <string name="projects_all_open">Detail →</string>
+    <string name="projects_all_desc">All transcripts, %1$s, API rate, not paid. Open detail</string>
+    <string name="projects_all_meta">%1$d projects + unscoped</string>
+    <string name="projects_all_meta_none">%1$d projects</string>
+    <string name="projects_list_title">Projects</string>
+    <string name="projects_api_rate_tag">API RATE · NOT PAID</string>
+    <string name="projects_row_desc">%1$s, %2$s, API rate, not paid. Open detail</string>
+    <string name="projects_row_worktrees">%1$d worktrees</string>
+    <string name="projects_row_expand">Show checkouts of %1$s</string>
+    <string name="projects_row_collapse">Hide checkouts of %1$s</string>
+    <string name="projects_unscoped_note">unscoped: work outside any git repository. Usually the home directory; not an error.</string>
+
+    <string name="projects_back_to_list">Back to projects</string>
+    <string name="projects_detail_all">All transcripts</string>
+    <string name="projects_total_all">Observed total, all transcripts</string>
+    <string name="projects_total_project">Observed total, this project</string>
+    <string name="projects_total_worktree">Observed total, this worktree</string>
+    <string name="projects_not_paid_line">API rate: not what a subscription account pays</string>
+    <string name="projects_no_priced_activity">no priced activity observed</string>
+    <string name="projects_part_input">Input</string>
+    <string name="projects_part_output">Output</string>
+    <string name="projects_part_cache_write">Cache write</string>
+    <string name="projects_part_cache_read">Cache read</string>
+    <string name="projects_total_desc">%1$s, %2$s, API rate, not paid</string>
+
+    <string name="projects_rollup_title">Rollup, API rate (not paid)</string>
+    <string name="projects_rollup_today">Today</string>
+    <string name="projects_rollup_week">Last 7 days</string>
+    <string name="projects_rollup_month">This month</string>
+    <string name="projects_rollup_none">no activity observed</string>
+    <string name="projects_rollup_note">Week is a rolling 7 days; month is the calendar month, in titan\'s time zone. A counterfactual, not a bill.</string>
+
+    <string name="projects_cache_title">Cache impact</string>
+    <string name="projects_cache_none">No cache reads observed.</string>
+    <string name="projects_cache_saved">%1$s saved</string>
+    <string name="projects_cache_detail">%1$s cached tokens would have cost %2$s at the full input rate; they cost %3$s.</string>
+    <string name="projects_hit_rate">Hit rate</string>
+
+    <string name="projects_updated">Updated %1$s</string>
+    <string name="projects_age_just_now">just now</string>
+    <plurals name="projects_age_minutes">
+        <item quantity="one">%1$d minute ago</item>
+        <item quantity="other">%1$d minutes ago</item>
+    </plurals>
+    <plurals name="projects_age_hours">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <plurals name="projects_age_days">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+    <string name="projects_stale">Stale: titan has not refreshed this in over 5 minutes</string>
+</resources>
