@@ -5,9 +5,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.matt.aethermobile.R
 import com.matt.aethermobile.net.ControlClient
+import com.matt.aethermobile.dashboard.DashWire
 import com.matt.aethermobile.memory.MemoryWire
 import com.matt.aethermobile.projects.ProjectsWire
 import com.matt.aethermobile.protocol.ControlProtocol
+import com.matt.aethermobile.ui.dashboard.DashboardScreen
 import com.matt.aethermobile.ui.memory.MemoryScreen
 import com.matt.aethermobile.ui.projects.ProjectsScreen
 import com.matt.aethermobile.views.ViewHost
@@ -40,6 +42,10 @@ object PaneRegistry {
             PaneSpec(AppView.MEMORY, "memory", MemoryWire::decode),
             R.string.view_memory, R.string.view_memory_desc,
         ) { ui, now, mod -> MemoryScreen(ui, now, mod) },
+        PaneEntry(
+            PaneSpec(AppView.DASHBOARD, "dash", DashWire::decode),
+            R.string.view_dashboard, R.string.view_dashboard_desc,
+        ) { ui, now, mod -> DashboardScreen(ui, now, mod) },
     )
 
     fun entry(app: AppView): PaneEntry<*>? = entries.firstOrNull { it.spec.appView == app }

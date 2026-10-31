@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_dashboard">Dashboard</string>
+    <string name="view_dashboard_desc">Dashboard, reactor status and readiness, read only</string>
+
+    <string name="dash_loading">Loading dashboard</string>
+    <string name="dash_no_snapshot">No dashboard snapshot yet. This fills in when titan next computes the dashboard.</string>
+    <string name="dash_unreadable">Dashboard data from titan could not be read. Update Aether on titan and on this phone.</string>
+    <string name="dash_unsupported">This titan does not serve the Dashboard. Update Aether on titan.</string>
+
+    <string name="dash_recap_lead">Since you last looked: %1$s.</string>
+    <plurals name="dash_recap_dispatches">
+        <item quantity="one">%1$s dispatch completed</item>
+        <item quantity="other">%1$s dispatches completed</item>
+    </plurals>
+    <plurals name="dash_recap_detected">
+        <item quantity="one">%1$s anomaly detected</item>
+        <item quantity="other">%1$s anomalies detected</item>
+    </plurals>
+    <plurals name="dash_recap_cleared">
+        <item quantity="one">%1$s anomaly cleared</item>
+        <item quantity="other">%1$s anomalies cleared</item>
+    </plurals>
+    <string name="dash_recap_tokens">%1$s tokens burned</string>
+    <string name="dash_recap_join">%1$s, %2$s</string>
+    <string name="dash_recap_dismiss">Dismiss</string>
+
+    <string name="dash_reactor_title">Reactor status</string>
+    <string name="dash_status_nominal">Nominal</string>
+    <string name="dash_status_standby">Standby</string>
+    <string name="dash_status_elevated">Elevated</string>
+    <string name="dash_status_burn_alarm">Burn alarm</string>
+    <string name="dash_rate_live">%1$s tok/min</string>
+    <string name="dash_rate_none_live">— tok/min</string>
+    <string name="dash_rate_standby">— tok/min · standby</string>
+    <string name="dash_age">Updated %1$s</string>
+    <string name="dash_age_just_now">just now</string>
+    <string name="dash_age_seconds">%1$ds ago</string>
+    <string name="dash_age_minutes">%1$dm ago</string>
+    <string name="dash_age_hours">%1$dh ago</string>
+    <string name="dash_age_days">%1$dd ago</string>
+
+    <string name="dash_kpi_month_tokens">Month tokens</string>
+    <string name="dash_kpi_depletion_eta">Depletion ETA</string>
+    <string name="dash_kpi_today">Today</string>
+    <string name="dash_kpi_budget_left">Budget left</string>
+    <string name="dash_kpi_cap_month">this month</string>
+    <string name="dash_kpi_cap_draw">at current draw</string>
+    <string name="dash_kpi_cap_server">server rate limit</string>
+    <string name="dash_kpi_cap_api">API rate, not paid</string>
+    <string name="dash_kpi_cap_cap">of %1$sM cap</string>
+    <string name="dash_eta_now">now</string>
+    <string name="dash_eta_resets">%1$s · resets %2$s</string>
+    <string name="dash_chip_live">Live</string>
+    <string name="dash_chip_stale">Stale</string>
+    <string name="dash_chip_est">Est</string>
+
+    <string name="dash_readiness_title">Readiness</string>
+    <string name="dash_ready_met">met</string>
+    <string name="dash_ready_unmet">not met</string>
+    <string name="dash_ready_desktop_running">Desktop app: running.</string>
+    <string name="dash_ready_desktop_not_running">Desktop app: not running.</string>
+    <string name="dash_ready_terminal_none">Terminal: no session yet.</string>
+    <string name="dash_ready_terminal_open">Terminal: open.</string>
+    <string name="dash_ready_terminal_open_since">Terminal: open since %1$s.</string>
+    <string name="dash_ready_statusline_none">Statusline: no reading yet.</string>
+    <string name="dash_ready_statusline_live">Statusline: live, %1$s.</string>
+    <string name="dash_ready_statusline_last">Statusline: last reading %1$s.</string>
+    <string name="dash_ready_collector_not_running">Collector: not running.</string>
+    <string name="dash_ready_collector_no_events">Collector: running, no events in the last 24h.</string>
+    <string name="dash_ready_collector_last_event">Collector: running, last event %1$s.</string>
+
+    <string name="dash_strip_agents">Agents %1$s</string>
+    <string name="dash_strip_alerts">Alerts %1$s</string>
+    <plurals name="dash_strip_memory">
+        <item quantity="one">Memory %1$s engram</item>
+        <item quantity="other">Memory %1$s engrams</item>
+    </plurals>
+</resources>
