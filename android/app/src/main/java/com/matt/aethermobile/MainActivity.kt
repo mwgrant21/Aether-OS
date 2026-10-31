@@ -73,6 +73,9 @@ import com.matt.aethermobile.ui.auth.AuthActions
 import com.matt.aethermobile.ui.auth.AuthScreen
 import com.matt.aethermobile.ui.auth.authScreenFor
 import com.matt.aethermobile.ui.shell.AppView
+import com.matt.aethermobile.ui.shell.PaneHosts
+import com.matt.aethermobile.ui.shell.PaneRegistry
+import com.matt.aethermobile.views.ViewUi
 import com.matt.aethermobile.ui.shell.NotSentNotice
 import com.matt.aethermobile.ui.shell.ShellActions
 import com.matt.aethermobile.ui.shell.clearsDraft
@@ -171,6 +174,8 @@ class MainActivity : AppCompatActivity() {
     private var view = ViewMode.THREAD // memory only; survives reconnects
     // Ledger feed holder, one per connection; appView is memory only and resets on lock.
     private var ledgerHost: LedgerHost? = null
+    // Generic pane feeds, one ViewHost per registered pane per connection (same lifecycle as ledgerHost).
+    private var paneHosts: PaneHosts? = null
     private var appView = AppView.TERMINAL
     private val router = FrameRouter()
     private var selected = "claude"
@@ -194,6 +199,8 @@ class MainActivity : AppCompatActivity() {
         val share: ShareUi = ScreenShare.state.ui(),
         val appView: AppView = AppView.TERMINAL,
         val ledger: LedgerUi = LedgerUi.Off,
+        val panes: Map<AppView, ViewUi<*>> = emptyMap(),
+        val supportedPanes: Set<AppView> = emptySet(),
         val viewCtl: ViewCtlUi = ViewCtlUi(),
     )
 
@@ -324,6 +331,8 @@ class MainActivity : AppCompatActivity() {
         threadHost = null
         ledgerHost?.onDisconnected()
         ledgerHost = null
+        paneHosts?.drop()
+        paneHosts = null
         if (::screen.isInitialized) screen.destroy()
         io.shutdownNow()
         super.onDestroy()
@@ -619,6 +628,7 @@ class MainActivity : AppCompatActivity() {
         val th = newHost()
         val tth = newThreadHost()
         val lth = newLedgerHost()
+        val pnh = newPaneHosts()
         val c = ControlClient(host, BuildConfig.VERSION_NAME, OkHttpTransport(), onState = { s ->
             // Transport threads: marshal to main, and drop anything from a superseded connection.
             runOnUiThread { if (gen == connGen && !isDestroyed) onClientState(s) }
@@ -627,6 +637,8 @@ class MainActivity : AppCompatActivity() {
             if (gen == connGen) tth.onFrame(f)
         }, onLedgerFrame = { f ->
             if (gen == connGen) lth.onFrame(f)
+        }, onViewFrame = { f ->
+            if (gen == connGen) pnh.onFrame(f)
         }, onFrame = { f ->
             // Transport thread: route to the CURRENT host (it is replaced on renderer loss), and only for this connection.
             if (gen == connGen) router.route(f)
@@ -641,6 +653,8 @@ class MainActivity : AppCompatActivity() {
         threadHost = tth
         ledgerHost?.onDisconnected()
         ledgerHost = lth
+        paneHosts?.drop()
+        paneHosts = pnh
         snapLogged = false
         try {
             c.connect(token)
@@ -737,9 +751,21 @@ class MainActivity : AppCompatActivity() {
         h.activate(terminalLive && appView == AppView.LEDGER)
     }
 
+    private fun newPaneHosts(): PaneHosts {
+        var pnh: PaneHosts? = null
+        pnh = PaneHosts(PaneRegistry.entries.map { it.spec }, { client }, onChanged = { handler.post { if (!isDestroyed && paneHosts === pnh) renderTabs() } })
+        return pnh
+    }
+
+    /** A pane feed is live exactly when its view is open on a welcomed connection. */
+    private fun syncPanes() {
+        paneHosts?.sync(terminalLive, appView)
+    }
+
     fun openView(v: AppView) {
         appView = v
         syncLedger()
+        syncPanes()
         renderTabs()
     }
 
@@ -767,6 +793,7 @@ class MainActivity : AppCompatActivity() {
         th.zoom(zoomPx)
         syncThread()
         syncLedger()
+        syncPanes()
         renderTabs()
     }
 
@@ -781,6 +808,7 @@ class MainActivity : AppCompatActivity() {
         appView = AppView.TERMINAL
         ledgerHost?.activate(false)
         ledgerHost?.onDisconnected()
+        paneHosts?.drop()
         screen.reset()
     }
 
@@ -799,6 +827,7 @@ class MainActivity : AppCompatActivity() {
         termHost?.select(s)
         appView = AppView.TERMINAL
         syncLedger()
+        syncPanes()
         syncThread()
         renderTabs()
     }
@@ -853,6 +882,8 @@ class MainActivity : AppCompatActivity() {
             share = ScreenShare.state.ui(),
             appView = appView,
             ledger = ledgerHost?.snapshot() ?: LedgerUi.Off,
+            panes = paneHosts?.snapshots() ?: emptyMap(),
+            supportedPanes = PaneRegistry.entries.filter { client?.supportsView(it.spec.viewId) == true }.map { it.spec.appView }.toSet(),
             viewCtl = ViewCtlUi(zoomPx, orientation),
         )
         handler.removeCallbacks(graceRerender)
@@ -876,7 +907,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, viewCtl = snap.viewCtl, nowMs = System.currentTimeMillis()),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, nowMs = System.currentTimeMillis()),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },

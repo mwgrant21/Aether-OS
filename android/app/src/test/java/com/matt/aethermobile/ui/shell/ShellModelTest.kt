@@ -172,6 +172,44 @@ class ShellModelTest {
         assertEquals(listOf(ViewRow(AppView.LEDGER, false)), viewRows(AppView.TERMINAL))
     }
 
+    private val fakePanes = listOf(AppView.PROJECTS, AppView.MEMORY)
+
+    @Test fun viewRowsWithEmptyRegistryAreTodaysLedgerOnlyRows() {
+        for (app in AppView.values()) assertEquals(app.name, listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER, true)), viewRows(app, emptyList()))
+    }
+
+    @Test fun viewRowsListRegisteredPanesAfterLedgerAndMarkTheOpenOne() {
+        assertEquals(
+            listOf(ViewRow(AppView.LEDGER, false), ViewRow(AppView.PROJECTS, true), ViewRow(AppView.MEMORY, false)),
+            viewRows(AppView.PROJECTS, fakePanes),
+        )
+    }
+
+    @Test fun paneTheTitanDoesNotListIsADisabledRow() {
+        val rows = viewRows(AppView.TERMINAL, fakePanes) { it == AppView.PROJECTS }
+        assertEquals(listOf(true, true, false), rows.map { it.enabled })
+    }
+
+    @Test fun everyPaneHasItsOwnUpperCaseTitle() {
+        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING))
+        val titles = AppView.values().filter { it.isPane }.map { titleFor(tabs, "claude", it) }
+        assertEquals(listOf("PROJECTS", "MEMORY", "DASHBOARD", "ANALYTICS", "AGENTS", "COMMS"), titles)
+    }
+
+    @Test fun paneBodyWinsOverThreadAndRawButNotTheLedger() {
+        for (slot in listOf("claude", "terminal2")) for (v in ViewMode.values()) {
+            assertEquals(Body.PANE, bodyFor(slot, v, AppView.PROJECTS))
+            assertEquals(Body.LEDGER, bodyFor(slot, v, AppView.LEDGER))
+        }
+        assertFalse(showSegment("claude", AppView.PROJECTS))
+    }
+
+    @Test fun backFromAnyNonTerminalViewReturnsToTheTerminal() {
+        for (app in AppView.values()) {
+            assertEquals(app.name, if (app == AppView.TERMINAL) null else AppView.TERMINAL, backTarget(app))
+        }
+    }
+
     @Test fun selectingAViewClosesTheMenu() {
         assertFalse(MenuState(open = true).onSelectView().open)
     }

@@ -150,8 +150,8 @@ class ControlProtocolTest {
             assertEquals(slots.getJSONObject(i).getString("label"), ControlProtocol.SLOTS[i].label)
         }
         val msgs = spec.getJSONObject("messages")
-        assertEquals(listOf("hello", "attach", "detach", "in", "thread.attach", "thread.detach", "ledger.attach", "ledger.detach"), strings(msgs.getJSONArray("phoneToTitan")))
-        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed", "ledger.snap"), strings(msgs.getJSONArray("titanToPhone")))
+        assertEquals(listOf("hello", "attach", "detach", "in", "thread.attach", "thread.detach", "ledger.attach", "ledger.detach", "view.attach", "view.detach"), strings(msgs.getJSONArray("phoneToTitan")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed", "ledger.snap", "view.snap"), strings(msgs.getJSONArray("titanToPhone")))
     }
 
     // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.
@@ -425,6 +425,31 @@ class ControlProtocolTest {
         assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt.closed","id":"a","reason":"answered-phone"}"""))
         assertNull(ControlProtocol.parseThreadFrame("""{"t":"snap","s":"claude","q":1,"cols":1,"rows":1,"d":""}"""))
         assertNull(ControlProtocol.parseThreadFrame("not json"))
+    }
+
+    @Test fun viewBuildersMatchTheGoldensByteForByte() {
+        assertEquals(frames.getString("viewAttach"), ControlProtocol.buildViewAttach("projects"))
+        assertEquals(frames.getString("viewAttachParams"), ControlProtocol.buildViewAttach("comms.thread", JSONObject().put("channel", "session")))
+        assertEquals(frames.getString("viewDetach"), ControlProtocol.buildViewDetach("projects"))
+        assertFalse(ControlProtocol.buildViewAttach("projects").contains("\"p\""))
+    }
+
+    @Test fun viewSnapEnvelopeParsesNullAndObjectAndRejectsMalformed() {
+        assertEquals(ControlProtocol.ViewFrame("projects", null), ControlProtocol.parseViewFrame(frames.getString("viewSnapNull")))
+        val f = ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects","d":{"x":1}}""")!!
+        assertEquals(1, f.d!!.getInt("x"))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects"}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects","d":"x"}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":7,"d":null}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"","d":null}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"ledger.snap","v":"projects","d":null}"""))
+    }
+
+    @Test fun welcomeViewsParsesGoldenAndAbsentKeyMeansPreChannelNull() {
+        assertEquals(emptySet<String>(), ControlProtocol.parseWelcome(frames.getString("welcome"))!!.views)
+        assertEquals(setOf("projects", "memory"), ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","views":["projects",7,"memory"]}""")!!.views)
+        assertNull(ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab"}""")!!.views)
+        assertNull(ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","views":"projects"}""")!!.views)
     }
 
     @Test fun ledgerBuildersMatchTheGoldensByteForByte() {

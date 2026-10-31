@@ -78,32 +78,52 @@ fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = ta
     )
 }
 
-/** Which top-level view the shell shows: the terminal slots or the read-only Ledger. */
-enum class AppView { TERMINAL, LEDGER }
+/** Which top-level view the shell shows: the terminal slots, the read-only Ledger, or a generic-channel pane. */
+enum class AppView { TERMINAL, LEDGER, PROJECTS, MEMORY, DASHBOARD, ANALYTICS, AGENTS, COMMS }
 
-enum class Body { THREAD, RAW, LEDGER }
+/** True for the views served by the generic view channel (everything except the terminal and the Ledger). */
+val AppView.isPane: Boolean get() = this != AppView.TERMINAL && this != AppView.LEDGER
 
-/** The Ledger view wins over every slot; otherwise the Thread/Raw rule applies. */
+enum class Body { THREAD, RAW, LEDGER, PANE }
+
+/** A Ledger or pane view wins over every slot; otherwise the Thread/Raw rule applies. */
 fun bodyFor(selected: String, view: ViewMode, app: AppView): Body = when {
     app == AppView.LEDGER -> Body.LEDGER
+    app.isPane -> Body.PANE
     threadBodyActive(selected, view) -> Body.THREAD
     else -> Body.RAW
 }
 
+/** Where Back goes from [app]: every non-terminal view returns to the terminal; null means Back is not ours. */
+fun backTarget(app: AppView): AppView? = if (app == AppView.TERMINAL) null else AppView.TERMINAL
+
 /** The Thread/Raw segment belongs to the terminal view only. */
 fun showSegment(selected: String, app: AppView): Boolean = hasThread(selected) && app == AppView.TERMINAL
 
-data class ViewRow(val view: AppView, val selected: Boolean)
+/** [enabled] is false for a pane the connected titan does not list; the row then shows "Update Aether on titan". */
+data class ViewRow(val view: AppView, val selected: Boolean, val enabled: Boolean = true)
 
-/** Burger VIEWS rows: implemented views only (just Ledger; the terminal slots live under TERMINALS). */
-fun viewRows(app: AppView): List<ViewRow> = listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER))
+/**
+ * Burger VIEWS rows: Ledger, then one row per registered pane in registry order (the terminal slots live under
+ * TERMINALS). With no [panes] this is exactly the Ledger row. [supported] says whether the titan lists a pane.
+ */
+fun viewRows(app: AppView, panes: List<AppView> = emptyList(), supported: (AppView) -> Boolean = { true }): List<ViewRow> =
+    listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER)) + panes.map { ViewRow(it, app == it, supported(it)) }
 
 /** Header title: the selected slot's label, except Claude shows as CLAUDE on the phone. */
 fun titleFor(tabs: List<TerminalHost.Tab>, selected: String): String =
     if (selected == "claude") "CLAUDE" else tabs.firstOrNull { it.s == selected }?.label.orEmpty()
 
-fun titleFor(tabs: List<TerminalHost.Tab>, selected: String, app: AppView): String =
-    if (app == AppView.LEDGER) "LEDGER" else titleFor(tabs, selected)
+fun titleFor(tabs: List<TerminalHost.Tab>, selected: String, app: AppView): String = when (app) {
+    AppView.TERMINAL -> titleFor(tabs, selected)
+    AppView.LEDGER -> "LEDGER"
+    AppView.PROJECTS -> "PROJECTS"
+    AppView.MEMORY -> "MEMORY"
+    AppView.DASHBOARD -> "DASHBOARD"
+    AppView.ANALYTICS -> "ANALYTICS"
+    AppView.AGENTS -> "AGENTS"
+    AppView.COMMS -> "COMMS"
+}
 
 /** The header core runs Nominal when any slot is live, Idle otherwise. */
 fun anyRunning(tabs: List<TerminalHost.Tab>): Boolean = tabs.any { it.state == SlotState.RUNNING }

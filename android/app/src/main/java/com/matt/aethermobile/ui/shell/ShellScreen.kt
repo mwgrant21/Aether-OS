@@ -69,6 +69,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -99,6 +100,7 @@ import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherDimens
 import com.matt.aethermobile.ui.theme.AetherType
 import com.matt.aethermobile.ui.thread.ThreadScreen
+import com.matt.aethermobile.views.ViewUi
 
 data class ShellUiState(
     /** False hides all chrome and collapses the terminal area to 0x0; the holder stays composed. */
@@ -119,6 +121,10 @@ data class ShellUiState(
     val share: ShareUi = ShareUi(),
     val appView: AppView = AppView.TERMINAL,
     val ledger: LedgerUi = LedgerUi.Off,
+    /** Generic pane state by view; a view with no entry reads as [ViewUi.Off]. */
+    val panes: Map<AppView, ViewUi<*>> = emptyMap(),
+    /** Registered panes the connected titan lists in `welcome.views`; the others get a disabled burger row. */
+    val supportedPanes: Set<AppView> = emptySet(),
     val nowMs: Long = 0L,
     val viewCtl: ViewCtlUi = ViewCtlUi(),
 )
@@ -160,6 +166,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     val threadBody = state.connected && body == Body.THREAD
     val rawBody = state.connected && body == Body.RAW
     val ledgerBody = state.connected && body == Body.LEDGER
+    val paneBody = state.connected && body == Body.PANE
     val menuOpen = menu.open && state.connected
     // ShellScreen stays composed while Locked: a menu left open must not reappear after a relock.
     LaunchedEffect(state.connected) { if (!state.connected) menu = MenuState() }
@@ -170,7 +177,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     val cur = state.tabs.firstOrNull { it.s == state.selected }
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     // Registered before the menu handler: the last enabled one wins, so Back closes an open menu first.
-    BackHandler(enabled = ledgerBody && !menuOpen) { actions.onOpenView(AppView.TERMINAL) }
+    BackHandler(enabled = state.connected && backTarget(state.appView) != null && !menuOpen) { actions.onOpenView(AppView.TERMINAL) }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -184,6 +191,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     status = statusFor(cur, state.flow),
                     amber = amber(cur, state.flow),
                     ledgerView = ledgerBody,
+                    paneView = paneBody,
                     live = anyRunning(state.tabs),
                     menuOpen = menuOpen,
                     onBurger = { menu = menu.onBurger() },
@@ -214,6 +222,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     }
                 }
                 if (ledgerBody) LedgerScreen(state.ledger, state.nowMs, Modifier.weight(1f).fillMaxWidth())
+                if (paneBody) PaneRegistry.entry(state.appView)?.render(state.panes[state.appView] ?: ViewUi.Off, state.nowMs, Modifier.weight(1f).fillMaxWidth())
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)
@@ -243,6 +252,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     selected = state.selected,
                     flow = state.flow,
                     appView = state.appView,
+                    supportedPanes = state.supportedPanes,
                     onSelect = { s -> menu = menu.onSelectSlot(); actions.onSelectSlot(s) },
                     onSelectView = { v -> menu = menu.onSelectView(); actions.onOpenView(v) },
                     onLock = { menu = menu.onLock(); actions.onLockNow() },
@@ -342,6 +352,7 @@ private fun Header(
     status: StatusLine,
     amber: Boolean,
     ledgerView: Boolean,
+    paneView: Boolean,
     live: Boolean,
     menuOpen: Boolean,
     onBurger: () -> Unit,
@@ -387,7 +398,8 @@ private fun Header(
                     drawPath(path, AetherColors.cyanCore)
                 }
             }
-            val line = if (ledgerView) stringResource(R.string.ledger_subline) else statusText(status)
+            // A pane has no terminal status to report, so its subline stays empty.
+            val line = if (ledgerView) stringResource(R.string.ledger_subline) else if (paneView) "" else statusText(status)
             if (line.isNotEmpty()) {
                 BasicText(
                     line,
@@ -518,6 +530,7 @@ private fun Dropdown(
     selected: String,
     flow: FlowState.Connected?,
     appView: AppView,
+    supportedPanes: Set<AppView>,
     onSelect: (String) -> Unit,
     onSelectView: (AppView) -> Unit,
     onLock: () -> Unit,
@@ -590,18 +603,21 @@ private fun Dropdown(
             }
         }
         BasicText(stringResource(R.string.menu_views).uppercase(), style = type.label.copy(color = AetherColors.textLabel), modifier = Modifier.padding(top = 6.dp))
-        for (row in viewRows(appView)) {
-            val label = stringResource(R.string.view_ledger)
-            val desc = stringResource(R.string.view_ledger_desc)
+        for (row in viewRows(appView, PaneRegistry.entries.map { it.spec.appView }) { it in supportedPanes }) {
+            val entry = PaneRegistry.entry(row.view)
+            val label = stringResource(entry?.label ?: R.string.view_ledger)
+            val desc = stringResource(entry?.description ?: R.string.view_ledger_desc)
+            val updateHint = stringResource(R.string.view_update_titan)
             Row(
                 Modifier
                     .fillMaxWidth()
                     .height(dims.touchMin)
                     .then(if (row.selected) Modifier.aeActive() else Modifier)
-                    .clickable(onClick = { onSelectView(row.view) })
+                    .then(if (row.enabled) Modifier.clickable(onClick = { onSelectView(row.view) }) else Modifier)
                     .semantics(mergeDescendants = true) {
                         role = Role.Button
-                        contentDescription = desc
+                        contentDescription = if (row.enabled) desc else "$label. $updateHint"
+                        if (!row.enabled) disabled()
                         this.selected = row.selected
                     }
                     .padding(horizontal = 12.dp),
@@ -609,7 +625,8 @@ private fun Dropdown(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Box(Modifier.size(7.dp).background(if (row.selected) Color(0xFF7EF0FF) else AetherColors.textLabel))
-                BasicText(label, style = type.body.copy(color = AetherColors.textBright), modifier = Modifier.weight(1f), maxLines = 1)
+                BasicText(label, style = type.body.copy(color = if (row.enabled) AetherColors.textBright else AetherColors.textMuted), modifier = Modifier.weight(1f), maxLines = 1)
+                if (!row.enabled) BasicText(updateHint, style = TextStyle(fontFamily = type.meta.fontFamily, fontSize = 10.sp, color = AetherColors.textMuted), maxLines = 1)
             }
         }
         ShareRow(share, onToggleShare)
