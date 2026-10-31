@@ -57,7 +57,7 @@ data class AgentGroupUi(val group: AgentGroup, val running: List<RunningRowUi>, 
     val count: Int get() = running.size + done.size
 }
 
-data class FleetRowUi(val name: String, val startedAtMs: Long, val busy: Boolean, val detail: String)
+data class FleetRowUi(val key: String, val title: String, val name: String, val startedAtMs: Long, val busy: Boolean, val kind: String, val pid: Long?)
 
 /** Unavailable (wire null) and Empty (wire present, no rows) are different states with different sentences. */
 sealed interface FleetUi {
@@ -115,7 +115,7 @@ fun fleetUi(fleet: List<FleetRow>?): FleetUi {
     if (fleet.isEmpty()) return FleetUi.Empty()
     return FleetUi.Rows(
         fleet.sortedBy { it.startedAtMs }.map {
-            FleetRowUi(it.name, it.startedAtMs, it.status == FleetStatus.BUSY, "kind: ${it.kind}" + (it.pid?.let { p -> " · pid: $p" } ?: ""))
+            FleetRowUi(it.key, it.title, it.name, it.startedAtMs, it.status == FleetStatus.BUSY, it.kind, it.pid)
         },
     )
 }
@@ -126,6 +126,21 @@ fun timelineUi(timeline: List<TimelineItem>?): TimelineUi {
     if (timeline.isEmpty()) return TimelineUi.Empty()
     return TimelineUi.Items(timeline.sortedByDescending { it.atMs })
 }
+
+/** Usage of a dispatch timeline row; [NOT_MEASURED] for a null wire value, a real 0 stays "0". Null for non-dispatch rows. */
+data class DispatchUsage(val tokens: String, val toolUses: String, val duration: String)
+
+fun dispatchUsage(i: TimelineItem): DispatchUsage? =
+    if (i.kind != TimelineKind.DISPATCH) null
+    else DispatchUsage(
+        i.tokens?.let { shortCount(it.toDouble()) } ?: NOT_MEASURED,
+        i.toolUses?.toString() ?: NOT_MEASURED,
+        i.durationMs?.let { formatElapsed(it) } ?: NOT_MEASURED,
+    )
+
+/** Age of a timeline row on titan's clock, the same label the footer uses. */
+fun timelineAge(atMs: Long, phoneNowMs: Long, titanClockOffsetMs: Long): AgeLabel =
+    ageLabel(atMs, phoneNowMs + titanClockOffsetMs)
 
 /** Elapsed of a running dispatch or fleet session on titan's clock: titan time = phone now + titanClockOffsetMs. */
 fun agentElapsed(startedAtMs: Long, phoneNowMs: Long, titanClockOffsetMs: Long): String =

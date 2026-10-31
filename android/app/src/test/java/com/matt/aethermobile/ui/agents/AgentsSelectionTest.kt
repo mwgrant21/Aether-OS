@@ -7,6 +7,8 @@ import com.matt.aethermobile.agents.FLEET_EMPTY
 import com.matt.aethermobile.agents.FLEET_UNAVAILABLE
 import com.matt.aethermobile.agents.FleetRow
 import com.matt.aethermobile.agents.FleetStatus
+import com.matt.aethermobile.agents.FleetUi
+import com.matt.aethermobile.agents.TimelineUi
 import com.matt.aethermobile.agents.TimelineItem
 import com.matt.aethermobile.agents.TimelineKind
 import com.matt.aethermobile.agents.fleetUi
@@ -81,24 +83,39 @@ class AgentsSelectionTest {
         assertNull(ui(run("a")).badge)
     }
 
-    @Test fun populatedFleetAndTimelineShowACountNotABlank() {
-        val f = fleetNotice(fleetUi(listOf(FleetRow("a", 1L, FleetStatus.BUSY, "cli", null), FleetRow("b", 2L, FleetStatus.IDLE, "cli", 7L))))
-        assertEquals(TabNotice(NoticeKey.FLEET_ROWS_UNSUPPORTED, 2), f)
-        val t = timelineNotice(timelineUi(listOf(TimelineItem(TimelineKind.TOOL, 1L, "Read x", null, null, null))))
-        assertEquals(TabNotice(NoticeKey.TIMELINE_ITEMS_UNSUPPORTED, 1), t)
+    private fun fr(key: String, start: Long) = FleetRow(key, "title $key", "n", start, FleetStatus.BUSY, "cli", null)
+
+    @Test fun fleetExpansionFollowsKeyAcrossReorderAndClearsWhenKeyVanishes() {
+        val before = (fleetUi(listOf(fr("keyAAAAA", 1L), fr("keyBBBBB", 2L))) as FleetUi.Rows).rows
+        assertEquals("keyBBBBB", resolveExpandedFleet(before, "keyBBBBB")?.key)
+        // A refresh puts a new, older session first: B moves from index 1 to 2 but stays the expanded one.
+        val after = (fleetUi(listOf(fr("keyAAAAA", 5L), fr("keyBBBBB", 2L), fr("keyCCCCC", 0L))) as FleetUi.Rows).rows
+        assertEquals(listOf("keyCCCCC", "keyBBBBB", "keyAAAAA"), after.map { it.key })
+        assertEquals("keyBBBBB", resolveExpandedFleet(after, "keyBBBBB")?.key)
+        assertNull(resolveExpandedFleet(after, "gone"))
+        assertNull(resolveExpandedFleet(after, null))
+        assertNull(nextOpenId("keyBBBBB", "keyBBBBB"))
     }
 
-    @Test fun unavailableAndEmptyKeepTheirOwnNotices() {
-        assertEquals(NoticeKey.FLEET_UNAVAILABLE, fleetNotice(fleetUi(null)).key)
-        assertEquals(NoticeKey.FLEET_EMPTY, fleetNotice(fleetUi(emptyList())).key)
-        assertEquals(NoticeKey.TIMELINE_UNAVAILABLE, timelineNotice(timelineUi(null)).key)
-        assertEquals(NoticeKey.TIMELINE_EMPTY, timelineNotice(timelineUi(emptyList())).key)
+    @Test fun nullIsUnavailableAndEmptyListIsEmpty() {
+        assertEquals(FleetUi.Unavailable(), fleetUi(null))
+        assertEquals(FleetUi.Empty(), fleetUi(emptyList()))
+        assertEquals(TimelineUi.Unavailable(), timelineUi(null))
+        assertEquals(TimelineUi.Empty(), timelineUi(emptyList()))
     }
 
-    @Test fun fallbackStringsExistInResources() {
+    @Test fun fleetRowCarriesTitleKindAndPid() {
+        val r = (fleetUi(listOf(FleetRow("keyAAAAA", "proj", "sess", 1L, FleetStatus.IDLE, "bg", 7L))) as FleetUi.Rows).rows[0]
+        assertEquals("proj", r.title); assertEquals("sess", r.name); assertEquals("bg", r.kind); assertEquals(7L, r.pid)
+        assertFalse(r.busy)
+    }
+
+    @Test fun fleetAndTimelineStringsExistWithNoOldFallback() {
         val xml = File("src/main/res/values/strings_agents.xml").readText(Charsets.UTF_8)
-        for (n in listOf("agents_fleet_rows_unsupported", "agents_timeline_items_unsupported", "agents_fleet_count", "agents_timeline_count")) {
+        for (n in listOf("agents_fleet_status_busy", "agents_fleet_status_idle", "agents_fleet_detail", "agents_fleet_detail_pid", "agents_timeline_usage")) {
             assertEquals(n, true, xml.contains("name=\"$n\""))
         }
+        assertFalse(xml.contains("agents_fleet_rows_unsupported") || xml.contains("agents_timeline_items_unsupported"))
+        assertEquals(true, xml.contains("kind: %1\$s · pid: %2\$d"))
     }
 }

@@ -36,16 +36,21 @@
     <string name="agents_fleet_empty">No other sessions detected.</string>
     <string name="agents_timeline_unavailable">Dispatch diagnostics are unavailable because the collector isn\'t running.</string>
     <string name="agents_timeline_empty">No recent activity from tool calls, dispatches or anomalies.</string>
-    <string name="agents_fleet_rows_unsupported">Fleet details are not shown in this version of the app. Update Aether Mobile.</string>
-    <string name="agents_timeline_items_unsupported">Timeline details are not shown in this version of the app. Update Aether Mobile.</string>
-    <plurals name="agents_fleet_count">
-        <item quantity="one">%1$d session detected</item>
-        <item quantity="other">%1$d sessions detected</item>
-    </plurals>
-    <plurals name="agents_timeline_count">
-        <item quantity="one">%1$d recent event</item>
-        <item quantity="other">%1$d recent events</item>
-    </plurals>
+
+    <string name="agents_fleet_status_busy">busy</string>
+    <string name="agents_fleet_status_idle">idle</string>
+    <string name="agents_fleet_separator">·</string>
+    <string name="agents_fleet_row_desc">%1$s, %2$s, %3$s. Toggles details.</string>
+    <string name="agents_fleet_detail">kind: %1$s</string>
+    <string name="agents_fleet_detail_pid">kind: %1$s · pid: %2$d</string>
+
+    <string name="agents_timeline_kind_tool">Tool call</string>
+    <string name="agents_timeline_kind_dispatch">Dispatch</string>
+    <string name="agents_timeline_kind_anomaly">Anomaly</string>
+    <string name="agents_timeline_usage">%1$s tok · %2$s tools · %3$s</string>
+    <string name="agents_timeline_row_desc">%1$s, %2$s</string>
+    <string name="agents_timeline_row_usage_desc">%1$s, %2$s, %3$s</string>
+
     <string name="agents_prompt_empty">no prompt text available</string>
 
     <string name="agents_row_running_desc">%1$s, %2$s, running</string>

@@ -40,6 +40,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.matt.aethermobile.R
 import com.matt.aethermobile.agents.AgentsSnapshot
 import com.matt.aethermobile.agents.DONE_EXPANDED_DEFAULT
+import com.matt.aethermobile.agents.FleetUi
 import com.matt.aethermobile.agents.agentsAge
 import com.matt.aethermobile.agents.agentsUi
 import com.matt.aethermobile.ledger.AgeLabel
@@ -109,6 +110,10 @@ private fun ReadyBody(snap: AgentsSnapshot, hostNowMs: Long, modifier: Modifier)
     var tab by remember { mutableStateOf(AgentsTab.ROSTER) }
     var openId by remember { mutableStateOf<String?>(null) }
     var doneExpanded by remember { mutableStateOf(DONE_EXPANDED_DEFAULT) }
+    var fleetKey by remember { mutableStateOf<String?>(null) }
+    val fleetRows = (ui.fleet as? FleetUi.Rows)?.rows.orEmpty()
+    // A session that vanished must not stay expanded: the same key reappearing later would reopen it silently.
+    LaunchedEffect(fleetKey, fleetRows) { if (fleetKey != null && resolveExpandedFleet(fleetRows, fleetKey) == null) fleetKey = null }
     val shown = findRunning(ui, openId)
     // A dispatch that vanished must not stay "open": the same id reappearing later would reopen the sheet silently.
     LaunchedEffect(openId, shown == null) { if (openId != null && shown == null) openId = null }
@@ -125,8 +130,8 @@ private fun ReadyBody(snap: AgentsSnapshot, hostNowMs: Long, modifier: Modifier)
             ) {
                 when (tab) {
                     AgentsTab.ROSTER -> RosterTab(ui, now, doneExpanded, { doneExpanded = !doneExpanded }) { openId = nextOpenId(openId, it) }
-                    AgentsTab.FLEET -> FleetTab(ui.fleet)
-                    AgentsTab.TIMELINE -> TimelineTab(ui.timeline)
+                    AgentsTab.FLEET -> FleetTab(ui.fleet, now, fleetKey) { fleetKey = nextOpenId(fleetKey, it) }
+                    AgentsTab.TIMELINE -> TimelineTab(ui.timeline, now)
                 }
                 Footer(ui.computedAtMs, now)
             }
@@ -180,11 +185,14 @@ private fun Tabs(selected: AgentsTab, needsInput: Int, badge: String?, onPick: (
 
 @Composable
 private fun Footer(computedAtMs: Long, now: State<Long>) {
-    val age = when (val a = agentsAge(computedAtMs, now.value, TITAN_CLOCK_OFFSET_MS)) {
-        AgeLabel.JustNow -> stringResource(R.string.agents_age_just_now)
-        is AgeLabel.Minutes -> pluralStringResource(R.plurals.agents_age_minutes, a.n.toInt(), a.n.toInt())
-        is AgeLabel.Hours -> pluralStringResource(R.plurals.agents_age_hours, a.n.toInt(), a.n.toInt())
-        is AgeLabel.Days -> pluralStringResource(R.plurals.agents_age_days, a.n.toInt(), a.n.toInt())
-    }
+    val age = ageText(agentsAge(computedAtMs, now.value, TITAN_CLOCK_OFFSET_MS))
     BasicText(stringResource(R.string.agents_updated, age), style = type.meta.copy(color = AetherColors.textMuted))
+}
+
+@Composable
+internal fun ageText(a: AgeLabel): String = when (a) {
+    AgeLabel.JustNow -> stringResource(R.string.agents_age_just_now)
+    is AgeLabel.Minutes -> pluralStringResource(R.plurals.agents_age_minutes, a.n.toInt(), a.n.toInt())
+    is AgeLabel.Hours -> pluralStringResource(R.plurals.agents_age_hours, a.n.toInt(), a.n.toInt())
+    is AgeLabel.Days -> pluralStringResource(R.plurals.agents_age_days, a.n.toInt(), a.n.toInt())
 }

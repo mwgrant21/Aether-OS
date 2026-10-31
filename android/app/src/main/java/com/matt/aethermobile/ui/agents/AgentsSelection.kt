@@ -1,8 +1,7 @@
 package com.matt.aethermobile.ui.agents
 
 import com.matt.aethermobile.agents.AgentsUi
-import com.matt.aethermobile.agents.FleetUi
-import com.matt.aethermobile.agents.TimelineUi
+import com.matt.aethermobile.agents.FleetRowUi
 import com.matt.aethermobile.agents.RunningRowUi
 
 enum class AgentsTab { ROSTER, FLEET, TIMELINE }
@@ -19,20 +18,6 @@ fun findRunning(ui: AgentsUi, id: String?): RunningRowUi? {
 /** Tapping a row sets the open id to that row's id, or closes the sheet when the same row is tapped again. */
 fun nextOpenId(current: String?, tapped: String): String? = if (current == tapped) null else tapped
 
-/** What a Fleet or Timeline tab shows. [count] is the list size when the model has rows, never their contents. */
-enum class NoticeKey { FLEET_UNAVAILABLE, FLEET_EMPTY, FLEET_ROWS_UNSUPPORTED, TIMELINE_UNAVAILABLE, TIMELINE_EMPTY, TIMELINE_ITEMS_UNSUPPORTED }
-
-data class TabNotice(val key: NoticeKey, val count: Int? = null)
-
-/** Until P13 renders rows, a populated list is reported as a count plus an update hint, never as a blank tab. */
-fun fleetNotice(f: FleetUi): TabNotice = when (f) {
-    is FleetUi.Unavailable -> TabNotice(NoticeKey.FLEET_UNAVAILABLE)
-    is FleetUi.Empty -> TabNotice(NoticeKey.FLEET_EMPTY)
-    is FleetUi.Rows -> TabNotice(NoticeKey.FLEET_ROWS_UNSUPPORTED, f.rows.size)
-}
-
-fun timelineNotice(t: TimelineUi): TabNotice = when (t) {
-    is TimelineUi.Unavailable -> TabNotice(NoticeKey.TIMELINE_UNAVAILABLE)
-    is TimelineUi.Empty -> TabNotice(NoticeKey.TIMELINE_EMPTY)
-    is TimelineUi.Items -> TabNotice(NoticeKey.TIMELINE_ITEMS_UNSUPPORTED, t.items.size)
-}
+/** The expanded fleet row's key, or null when that key is no longer in [rows]: expansion follows the stable key, not an index. */
+fun resolveExpandedFleet(rows: List<FleetRowUi>, key: String?): FleetRowUi? =
+    if (key == null) null else rows.firstOrNull { it.key == key }

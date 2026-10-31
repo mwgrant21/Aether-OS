@@ -17,14 +17,18 @@ class AgentsWireTest {
     private val golden: String = JSONObject(File("../../protocol/mobile-protocol.json").readText(Charsets.UTF_8))
         .getJSONObject("frames").getString("viewSnapAgents")
 
+    private val goldenDiag: String = JSONObject(File("../../protocol/mobile-protocol.json").readText(Charsets.UTF_8))
+        .getJSONObject("frames").getString("viewSnapAgentsDiag")
+
+    private fun diagD() = JSONObject(goldenDiag).getJSONObject("d")
     private fun goldenD() = JSONObject(golden).getJSONObject("d")
     private fun snap() = AgentsWire.decode(goldenD())!!
     private fun ui() = agentsUi(snap())
     private fun run0(d: JSONObject) = d.getJSONArray("running").getJSONObject(0)
     private fun done0(d: JSONObject) = d.getJSONArray("done").getJSONObject(0)
 
-    private val fleetJson = """[{"name":"b","startedAtMs":2000,"status":"idle","kind":"cli","pid":42},
-        {"name":"a","startedAtMs":1000,"status":"busy","kind":"desktop"}]"""
+    private val fleetJson = """[{"key":"bbbbbbbb","title":"tb","name":"b","startedAtMs":2000,"status":"idle","kind":"cli","pid":42},
+        {"key":"aaaaaaaa","title":"ta","name":"a","startedAtMs":1000,"status":"busy","kind":"desktop","pid":null}]"""
     private val timelineJson = """[{"k":"tool","atMs":10,"label":"Read x.ts","tokens":null,"toolUses":null,"durationMs":null},
         {"k":"anomaly","atMs":30,"label":"reReadLoop"},{"k":"dispatch","atMs":20,"label":"Agent","tokens":5,"toolUses":2,"durationMs":900}]"""
 
@@ -101,7 +105,7 @@ class AgentsWireTest {
 
     @Test fun malformedFleetOrTimelineIsNullNotAFailedDecode() {
         val d = goldenD().apply {
-            put("fleet", JSONArray("""[{"name":"a","startedAtMs":1,"status":"sleeping","kind":"cli"}]"""))
+            put("fleet", JSONArray("""[{"key":"aaaaaaaa","title":"t","name":"a","startedAtMs":1,"status":"sleeping","kind":"cli","pid":null}]"""))
             put("timeline", "nope")
         }
         val s = AgentsWire.decode(d)!!
@@ -126,7 +130,9 @@ class AgentsWireTest {
         val rows = (u.fleet as FleetUi.Rows).rows
         assertEquals(listOf("a", "b"), rows.map { it.name })
         assertEquals(listOf(true, false), rows.map { it.busy })
-        assertEquals(listOf("kind: desktop", "kind: cli \u00b7 pid: 42"), rows.map { it.detail })
+        assertEquals(listOf("aaaaaaaa", "bbbbbbbb"), rows.map { it.key })
+        assertEquals(listOf("ta", "tb"), rows.map { it.title })
+        assertEquals(listOf(null, 42L), rows.map { it.pid })
         assertEquals(listOf(30L, 20L, 10L), (u.timeline as TimelineUi.Items).items.map { it.atMs })
     }
 
@@ -189,5 +195,49 @@ class AgentsWireTest {
         val zero = snap().done[0].copy(tokens = 0L, toolUses = 0L, durationMs = 0L)
         val z = agentsUi(snap().copy(done = listOf(zero))).groups[2].done[0]
         assertEquals("0", z.tokens); assertEquals("0", z.toolUses); assertEquals("00:00", z.elapsed)
+    }
+
+    @Test fun diagGoldenDecodesFleetAndTimeline() {
+        val s = AgentsWire.decode(diagD())!!
+        val f = s.fleet!!
+        assertEquals(listOf("a1b2c3d4e5f60718", "0f9e8d7c6b5a4938"), f.map { it.key })
+        assertEquals(listOf("aether-os", "tarot-app"), f.map { it.title })
+        assertEquals(listOf("sync-worker", "overnight-review"), f.map { it.name })
+        assertEquals(listOf(FleetStatus.BUSY, FleetStatus.IDLE), f.map { it.status })
+        assertEquals(listOf(4242L, null), f.map { it.pid })
+        val t = s.timeline!!
+        assertEquals(listOf(TimelineKind.ANOMALY, TimelineKind.DISPATCH, TimelineKind.TOOL, TimelineKind.TOOL), t.map { it.kind })
+        assertEquals("reReadLoop: worker.ts read 6 times", t[0].label)
+        assertEquals(DispatchUsage("482.0K", "37", "10:12"), dispatchUsage(t[1]))
+        assertNull(dispatchUsage(t[2]))
+        // The roster half of the diag golden still decodes the same as the plain golden.
+        assertEquals(snap().running, s.running)
+    }
+
+    @Test fun oldGoldenStillHasNullFleetAndTimelineUnavailable() {
+        val u = ui()
+        assertEquals(FleetUi.Unavailable(), u.fleet)
+        assertEquals(TimelineUi.Unavailable(), u.timeline)
+    }
+
+    @Test fun dispatchWithUnmeasuredUsageShowsDashNeverZero() {
+        val u = dispatchUsage(TimelineItem(TimelineKind.DISPATCH, 1L, "Agent", null, null, null))!!
+        assertEquals(DispatchUsage(NOT_MEASURED, NOT_MEASURED, NOT_MEASURED), u)
+        assertEquals(DispatchUsage("0", "0", "00:00"), dispatchUsage(TimelineItem(TimelineKind.DISPATCH, 1L, "Agent", 0L, 0L, 0L)))
+    }
+
+    @Test fun badOrDuplicateFleetKeyMakesFleetNull() {
+        fun fleetWith(rows: String) = AgentsWire.decode(diagD().apply { put("fleet", JSONArray(rows)) })!!.fleet
+        val row = """{"key":"%s","title":"t","name":"n","startedAtMs":1,"status":"busy","kind":"k","pid":null}"""
+        assertNull(fleetWith("[" + row.format("short") + "]"))
+        assertNull(fleetWith("[" + row.format("has space1") + "]"))
+        assertNull(fleetWith("[" + row.format("dupdupdup") + "," + row.format("dupdupdup") + "]"))
+        assertNull(fleetWith("""[{"key":"abcdefgh","name":"n","startedAtMs":1,"status":"busy","kind":"k","pid":null}]"""))
+        assertEquals(1, fleetWith("[" + row.format("abcdefgh") + "]")!!.size)
+    }
+
+    @Test fun timelineStaysNewestFirstAsSent() {
+        val t = agentsUi(AgentsWire.decode(diagD())!!).timeline as TimelineUi.Items
+        assertEquals(listOf(1789999950000L, 1789999800000L, 1789999700000L, 1789999600000L), t.items.map { it.atMs })
     }
 }

@@ -40,8 +40,11 @@ data class DoneAgent(
 
 enum class FleetStatus(val wire: String) { BUSY("busy"), IDLE("idle") }
 
-/** [pid] is null when the session has none. */
-data class FleetRow(val name: String, val startedAtMs: Long, val status: FleetStatus, val kind: String, val pid: Long?)
+/**
+ * [key] is an opaque id, unique and stable within one titan run (expansion state follows it, never a list index);
+ * [title] is the project folder name (the row title) and [name] the session name. [pid] is null when the session has none.
+ */
+data class FleetRow(val key: String, val title: String, val name: String, val startedAtMs: Long, val status: FleetStatus, val kind: String, val pid: Long?)
 
 enum class TimelineKind(val wire: String) { TOOL("tool"), DISPATCH("dispatch"), ANOMALY("anomaly") }
 data class TimelineItem(val kind: TimelineKind, val atMs: Long, val label: String, val tokens: Long?, val toolUses: Long?, val durationMs: Long?)
@@ -61,13 +64,15 @@ data class AgentsSnapshot(
  * a list over its wire cap, an unknown anomaly kind or needsInput that disagrees with anomaly anywhere returns null,
  * which ViewHost shows as Unreadable. Unknown extra keys are ignored. Values are never logged.
  *
- * `fleet` and `timeline` are LENIENT: titan v1 always sends null (D9 will fill them and had not defined them when this
- * was written, so the row shapes follow the plan, not an encoder). Absent, null and a malformed value (wrong type, bad
- * row, unknown enum, over cap) all decode to null, which the UI shows as "unavailable", and never fail the roster.
+ * `fleet` and `timeline` are LENIENT: a titan without the collector sends null, otherwise rows as built by
+ * `encodeFleetRows` / `encodeTimelineRows` (golden `viewSnapAgentsDiag`). Absent, null and a malformed value (wrong
+ * type, bad row, unknown enum, bad or duplicate fleet key, over cap) all decode to null, which the UI shows as
+ * "unavailable", and never fail the roster.
  */
 object AgentsWire {
     const val MAX_RUNNING = 30
     const val MAX_DONE = 20
+    const val MAX_FLEET = 50
     const val MAX_TIMELINE = 60
     const val MAX_TYPE = 40
     const val MAX_MODEL = 40
@@ -79,6 +84,7 @@ object AgentsWire {
     const val MAX_NAME = 60
     const val MAX_LABEL = 80
     private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+    private val KEY_RE = Regex("^[A-Za-z0-9_-]{8,64}$")
     private val ID_RE = Regex("^[A-Za-z0-9_-]{1,64}$")
 
     fun decode(d: JSONObject): AgentsSnapshot? {
@@ -140,10 +146,16 @@ object AgentsWire {
 
     private fun fleet(v: Any?): List<FleetRow>? {
         val a = v as? JSONArray ?: return null
+        if (a.length() > MAX_FLEET) return null
+        val seen = HashSet<String>()
         val out = ArrayList<FleetRow>(a.length())
         for (i in 0 until a.length()) {
             val r = a.optJSONObject(i) ?: return null
+            val key = (r.opt("key") as? String)?.takeIf { KEY_RE.matches(it) } ?: return null
+            if (!seen.add(key)) return null
             out += FleetRow(
+                key,
+                text(r.opt("title"), MAX_NAME) ?: return null,
                 text(r.opt("name"), MAX_NAME) ?: return null,
                 whole(r.opt("startedAtMs")) ?: return null,
                 FleetStatus.values().firstOrNull { it.wire == r.opt("status") } ?: return null,
