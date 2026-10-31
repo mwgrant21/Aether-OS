@@ -24,6 +24,7 @@ import { useMemorySync } from './state/useMemorySync';
 import { usePermissionRequestSync } from './state/usePermissionRequestSync';
 import { usePermissionAutoAllowSync } from './state/usePermissionAutoAllowSync';
 import { usePostToolFlagSync } from './state/usePostToolFlagSync';
+import { usePhoneViewPublisher } from './state/usePhoneViewPublisher';
 import { PermissionCardStack } from './components/agents/PermissionCardStack';
 import { RecapBanner } from './components/dashboard/RecapBanner';
 import { CrossCheckComposerProvider } from './components/terminal/CrossCheckComposer';
@@ -60,6 +61,7 @@ export default function App() {
         <PermissionRequestSync />
         <PermissionAutoAllowSync />
         <PostToolFlagSync />
+        <PhoneViewPublisher />
         <RecapBannerMount />
         <ActiveView />
         <PermissionCardStack />
@@ -112,6 +114,11 @@ function FleetSync() {
 
 function DiagnosticsSync() {
   useDiagnosticsSync();
+  return null;
+}
+
+function PhoneViewPublisher() {
+  usePhoneViewPublisher();
   return null;
 }
 
