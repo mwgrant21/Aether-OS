@@ -29,14 +29,21 @@ class PaneSpec<T : Any>(val appView: AppView, val viewId: String, val decode: (J
  * Shell state a pane needs but does not own. [backEnabled] is false while the burger menu is open, so a pane's own
  * BackHandler (sheet, detail) never outranks the menu's: Compose runs the last-registered enabled callback.
  */
-data class PaneEnv(val backEnabled: Boolean = true) {
+data class PaneEnv(
+    val backEnabled: Boolean = true,
+    /** `welcome.serverTimeMs - phone now` (titan clock minus phone clock): added to the phone clock before comparing with titan timestamps. */
+    val titanClockOffsetMs: Long = 0L,
+    /** Navigate to the Terminal view; navigation only, nothing is sent to titan. */
+    val openTerminal: () -> Unit = {},
+) {
     /** A pane's Back condition [wants], silenced while the shell owns Back. */
     fun gateBack(wants: Boolean): Boolean = wants && backEnabled
 }
 
 val LocalPaneEnv = staticCompositionLocalOf { PaneEnv() }
 
-fun paneEnvFor(menuOpen: Boolean): PaneEnv = PaneEnv(backEnabled = !menuOpen)
+fun paneEnvFor(menuOpen: Boolean, titanClockOffsetMs: Long = 0L, openTerminal: () -> Unit = {}): PaneEnv =
+    PaneEnv(backEnabled = !menuOpen, titanClockOffsetMs = titanClockOffsetMs, openTerminal = openTerminal)
 
 /** One registered pane: its [spec], burger strings and screen. Adding a pane means adding one entry to [PaneRegistry.entries]. */
 class PaneEntry<T : Any>(

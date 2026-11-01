@@ -126,6 +126,8 @@ data class ShellUiState(
     /** Registered panes the connected titan lists in `welcome.views`; the others get a disabled burger row. */
     val supportedPanes: Set<AppView> = emptySet(),
     val nowMs: Long = 0L,
+    /** [com.matt.aethermobile.net.ControlClient.titanClockOffsetMs]: titan clock minus phone clock. */
+    val titanClockOffsetMs: Long = 0L,
     val viewCtl: ViewCtlUi = ViewCtlUi(),
 )
 
@@ -222,7 +224,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     }
                 }
                 if (ledgerBody) LedgerScreen(state.ledger, state.nowMs, Modifier.weight(1f).fillMaxWidth())
-                if (paneBody) PaneRegistry.entry(state.appView)?.render(state.panes[state.appView] ?: ViewUi.Off, state.nowMs, Modifier.weight(1f).fillMaxWidth(), paneEnvFor(menuOpen))
+                if (paneBody) PaneRegistry.entry(state.appView)?.render(state.panes[state.appView] ?: ViewUi.Off, state.nowMs, Modifier.weight(1f).fillMaxWidth(), paneEnvFor(menuOpen, state.titanClockOffsetMs) { actions.onOpenView(AppView.TERMINAL) })
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)

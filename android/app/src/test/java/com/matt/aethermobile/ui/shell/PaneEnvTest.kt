@@ -21,6 +21,22 @@ class PaneEnvTest {
     }
 
     @Test
+    fun paneEnvForCarriesOffsetAndOpenTerminal() {
+        var opened = 0
+        val env = paneEnvFor(menuOpen = false, titanClockOffsetMs = -4_200L) { opened++ }
+        assertEquals(-4_200L, env.titanClockOffsetMs)
+        env.openTerminal()
+        assertEquals(1, opened)
+    }
+
+    @Test
+    fun defaultsAreZeroOffsetAndNoOpTerminal() {
+        val env = paneEnvFor(menuOpen = false)
+        assertEquals(0L, env.titanClockOffsetMs)
+        env.openTerminal()
+    }
+
+    @Test
     fun defaultEnvLeavesPaneBackOn() {
         assertEquals(true, PaneEnv().gateBack(true))
     }
