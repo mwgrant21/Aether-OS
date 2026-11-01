@@ -7,7 +7,7 @@ import type { SessionStorePort, StoredSession } from '../remote/types';
 import type { SessionEvent } from './voiceSession';
 import { createVoiceGateway } from './voiceGateway';
 import { createVoiceHub, type VoiceHub } from './voiceHub';
-import { startVoiceServer } from './voiceServer';
+import { startVoiceServer, type VoiceServerHandle } from './voiceServer';
 
 const TAILNET_IP = '100.64.0.5';
 const tailnetIfaces = () => ({
@@ -58,6 +58,7 @@ interface Rig {
   sessions: ReturnType<typeof fakeSession>[];
   timers: Set<unknown>;
   startServer: ReturnType<typeof vi.fn>;
+  handles: VoiceServerHandle[];
 }
 
 const hubs: VoiceHub[] = [];
@@ -76,9 +77,10 @@ function rig(store: SessionStorePort, over: Partial<Parameters<typeof createVoic
   const hosts: string[] = [];
   const sessions: Rig['sessions'] = [];
   const timers = new Set<unknown>();
+  const handles: VoiceServerHandle[] = [];
   const startServer = vi.fn((o: Parameters<typeof startVoiceServer>[0]) => {
     hosts.push(o.host);
-    return startVoiceServer({ ...o, host: '127.0.0.1', port: 0 });
+    return startVoiceServer({ ...o, host: '127.0.0.1', port: 0 }).then((h) => { handles.push(h); return h; });
   });
   const setTimeoutFn = (fn: () => void, ms: number) => {
     const h = setTimeout(() => { timers.delete(h); fn(); }, ms);
@@ -103,8 +105,10 @@ function rig(store: SessionStorePort, over: Partial<Parameters<typeof createVoic
     ...over,
   });
   hubs.push(hub);
-  return { hub, logs, statuses, hosts, sessions, timers, startServer };
+  return { hub, logs, statuses, hosts, sessions, timers, startServer, handles };
 }
+
+const hubClients = (r: Rig): number => r.handles[r.handles.length - 1].clients();
 
 async function waitFor(cond: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
@@ -223,6 +227,39 @@ describe('voiceHub', () => {
     await waitFor(() => c2.frames.length > 0);
     expect(s.starts).toBe(1);
     expect(r.hub.status().connected).toBe(true);
+  });
+
+  it('the hub passes maxClients: 2 to the server', async () => {
+    const r = rig(fakeStore());
+    await r.hub.setEnabled(true);
+    expect(r.startServer.mock.calls[0][0].maxClients).toBe(2);
+  });
+
+  it('a second authenticated socket replaces the first (error{replaced}, close 4000); the child spawns once', async () => {
+    const r = rig(fakeStore());
+    const { address, cookie } = await pairAndRedeem(r);
+    const a = await connect(address, cookie);
+    await waitFor(() => r.sessions[0].starts === 1);
+    const b = await connect(address, cookie);
+    expect(await a.closed).toBe(4000);
+    expect(a.frames.some((f) => f.includes('"replaced"'))).toBe(true);
+    await waitFor(() => b.frames.some((f) => f.includes('"status"')));
+    expect(b.frames.some((f) => f.includes('"replaced"'))).toBe(false);
+    await waitFor(() => r.hub.status().connected && hubClients(r) === 1);
+    expect(r.sessions[0].starts).toBe(1);
+  });
+
+  it('a third socket while the replaced one is still closing is refused 503 (never more than 2 held)', async () => {
+    const r = rig(fakeStore());
+    const { address, cookie } = await pairAndRedeem(r);
+    const a = await connect(address, cookie);
+    await waitFor(() => r.sessions[0].starts === 1);
+    (a.ws as any)._socket.pause(); // A never answers the close frame, so the server keeps counting it
+    const b = await connect(address, cookie);
+    await waitFor(() => b.frames.length > 0);
+    await expect(connect(address, cookie)).rejects.toThrow('refused');
+    expect(hubClients(r)).toBe(2);
+    expect(b.ws.readyState).toBe(WebSocket.OPEN); // B stays the one live connection
   });
 
   it('a client that connects before ready still sees the starting event', async () => {

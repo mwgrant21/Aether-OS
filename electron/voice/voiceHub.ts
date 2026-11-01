@@ -208,6 +208,10 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
         port,
         auth: auth!,
         gateway: port2,
+        // Two slots, not one: a reconnecting phone must be admitted while the server still holds its
+        // half-dead old socket, so the connection layer can replace it (error{replaced}, close 4000).
+        // The connection layer keeps at most one live connection; a third concurrent socket gets 503.
+        maxClients: 2,
         onClients: (n) => { clientCount = n; emit(); },
         log,
       });
