@@ -112,14 +112,14 @@ export function startCollector(options: {
   }, options.fleetPollIntervalMs);
 
   memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
-      logDrift(db, Date.now(), d)
+    logDrift(db, Date.now(), d)
   ).catch((err) =>
     console.error('[aether-collector] memory extraction failed:', err)
   );
   const memoryExtractTimer = setInterval(() => {
     memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
       logDrift(db, Date.now(), d)
-  ).catch((err) =>
+    ).catch((err) =>
       console.error('[aether-collector] memory extraction failed:', err)
     );
   }, options.memoryExtractIntervalMs);
