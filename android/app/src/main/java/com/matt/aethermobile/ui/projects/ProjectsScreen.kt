@@ -63,6 +63,7 @@ import com.matt.aethermobile.projects.projectsUi
 import com.matt.aethermobile.ui.components.aeInset
 import com.matt.aethermobile.ui.components.aePanel
 import com.matt.aethermobile.ui.components.aeSoftRow
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.shell.mouseDragScroll
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
@@ -121,7 +122,7 @@ private fun ReadyBody(s: ProjectsSnapshot, hostNowMs: Long, modifier: Modifier) 
     var openKey by remember { mutableStateOf<String?>(null) }
     var expanded by remember { mutableStateOf(setOf<String>()) }
     val scroll = rememberScrollState()
-    BackHandler(enabled = openKey != null) { openKey = null }
+    BackHandler(enabled = LocalPaneEnv.current.gateBack(openKey != null)) { openKey = null }
 
     val model = projectsUi(s)
     val allName = stringResource(R.string.projects_detail_all)

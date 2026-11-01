@@ -222,7 +222,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     }
                 }
                 if (ledgerBody) LedgerScreen(state.ledger, state.nowMs, Modifier.weight(1f).fillMaxWidth())
-                if (paneBody) PaneRegistry.entry(state.appView)?.render(state.panes[state.appView] ?: ViewUi.Off, state.nowMs, Modifier.weight(1f).fillMaxWidth())
+                if (paneBody) PaneRegistry.entry(state.appView)?.render(state.panes[state.appView] ?: ViewUi.Off, state.nowMs, Modifier.weight(1f).fillMaxWidth(), paneEnvFor(menuOpen))
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)

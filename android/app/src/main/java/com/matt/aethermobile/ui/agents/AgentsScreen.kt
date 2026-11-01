@@ -44,6 +44,7 @@ import com.matt.aethermobile.agents.FleetUi
 import com.matt.aethermobile.agents.agentsAge
 import com.matt.aethermobile.agents.agentsUi
 import com.matt.aethermobile.ledger.AgeLabel
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.shell.mouseDragScroll
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
@@ -117,7 +118,7 @@ private fun ReadyBody(snap: AgentsSnapshot, hostNowMs: Long, modifier: Modifier)
     val shown = findRunning(ui, openId)
     // A dispatch that vanished must not stay "open": the same id reappearing later would reopen the sheet silently.
     LaunchedEffect(openId, shown == null) { if (openId != null && shown == null) openId = null }
-    BackHandler(enabled = shown != null) { openId = null }
+    BackHandler(enabled = LocalPaneEnv.current.gateBack(shown != null)) { openId = null }
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {

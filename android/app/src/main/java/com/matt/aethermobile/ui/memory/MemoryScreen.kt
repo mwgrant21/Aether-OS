@@ -59,6 +59,7 @@ import com.matt.aethermobile.ui.components.aeActive
 import com.matt.aethermobile.ui.components.aeInset
 import com.matt.aethermobile.ui.components.aeSheet
 import com.matt.aethermobile.ui.components.aeSoftRow
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.shell.mouseDragScroll
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
@@ -127,7 +128,7 @@ private fun ReadyBody(s: MemorySnapshot, hostNowMs: Long, modifier: Modifier) {
         memoryUi(s, MemoryFilter.Tombstones).tombstones.firstOrNull { it.id == o.id }
     }
     val sheetOpen = shownLive != null || shownTomb != null
-    BackHandler(enabled = sheetOpen) { open = null }
+    BackHandler(enabled = LocalPaneEnv.current.gateBack(sheetOpen)) { open = null }
 
     Box(modifier) {
         Column(
