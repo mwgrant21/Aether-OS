@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ClientMessage, ServerEvent, VoiceGatewayCore, VoiceSocket } from './protocol';
+import { createEventLog } from './eventLog';
 import { createVoiceConnections } from './voiceConnection';
 
 const SID = 'sess-1';
@@ -66,6 +67,8 @@ function fakeGateway() {
   return { g, core, log, handled, listenerCount: () => listeners.size };
 }
 
+const FIRST = { t: 'permission.reply', id: 'p0', approve: false };
+
 function setup(opts: { slow?: number } = {}) {
   const gw = fakeGateway();
   const lines: string[] = [];
@@ -78,6 +81,7 @@ describe('attach', () => {
     const s = setup();
     const a = fakeSocket();
     s.conns.attach(a.socket, { ref: 'c1' });
+    a.say(FIRST);
     expect(a.sent).toEqual([{ t: 'status', kind: 'session', state: 'ready', sessionId: SID, turnId: null, seq: 0 }]);
     s.g.emit(ev(1));
     expect(a.sent[1]).toMatchObject({ t: 'response.delta', seq: 1 });
@@ -93,6 +97,7 @@ describe('attach', () => {
     expect(a.sent[1]).toMatchObject({ t: 'error', code: 'replaced', retryable: false });
     expect(a.closes).toEqual([4000]);
     expect(s.listenerCount()).toBe(1);
+    b.say(FIRST);
     s.g.emit(ev(1));
     expect(a.sent).toHaveLength(2);
     expect(b.sent[1]).toMatchObject({ seq: 1 });
@@ -137,7 +142,7 @@ describe('resume', () => {
     s.g.emit({ t: 'turn.started', sessionId: SID, turnId: TID, seq: 1 });
     s.g.replayResult = { ok: false, reason: 'gap' };
     a.say({ t: 'resume', lastSeq: 0 });
-    expect(a.sent.at(-1)).toMatchObject({ t: 'error', code: 'resume_gap', retryable: true });
+    expect(a.sent.find((e) => e.t === 'error')).toMatchObject({ code: 'resume_gap', retryable: true });
     expect(s.handled).toEqual([{ t: 'turn.cancel', turnId: TID, spokenText: '' }]);
     s.g.emit(ev(2));
     expect(a.sent.at(-1)).toMatchObject({ seq: 2 });
@@ -199,6 +204,7 @@ describe('messages and close', () => {
     const s = setup({ slow: 100 });
     const a = fakeSocket();
     s.conns.attach(a.socket, { ref: 'c1' });
+    a.say(FIRST);
     a.setBuffered(101);
     s.g.emit(ev(1));
     expect(a.closes).toEqual([1013]);
@@ -243,5 +249,108 @@ describe('messages and close', () => {
     a.drop();
     expect(s.lines.join('\n')).not.toContain('PRIVATE');
     expect(s.lines.every((l) => l.startsWith('voice: '))).toBe(true);
+  });
+});
+
+describe('exactly-once with a real event log', () => {
+  function real() {
+    const elog = createEventLog();
+    const listeners = new Set<(e: ServerEvent) => void>();
+    const handled: ClientMessage[] = [];
+    const core: VoiceGatewayCore = {
+      sessionId: () => elog.sessionId,
+      state: () => 'ready',
+      handle: (m) => {
+        handled.push(m);
+        if (m.t === 'turn.start' && !busy) {
+          busy = true;
+          emit(elog.append(m.turnId, { t: 'turn.started' }));
+        }
+      },
+      subscribe: (l) => {
+        listeners.add(l);
+        return () => void listeners.delete(l);
+      },
+      replayAfter: (n) => elog.after(n),
+      stop: async () => {},
+    };
+    let busy = false;
+    function emit(e: ServerEvent) {
+      for (const l of [...listeners]) l(e);
+    }
+    const out = {
+      elog,
+      handled,
+      push: () => emit(elog.append(TID, { t: 'response.delta', text: 'x' })),
+    };
+    const conns = createVoiceConnections({ gateway: core });
+    return { ...out, conns };
+  }
+  const seqsOf = (a: { sent: any[] }) => a.sent.filter((e) => e.seq > 0).map((e) => e.seq as number);
+  const expectClean = (seqs: number[], from: number, to: number) => {
+    expect(seqs).toEqual(Array.from({ length: to - from + 1 }, (_, i) => from + i));
+  };
+
+  // 8 events logged before attach, 9 and 10 emitted between attach and the first frame, 11 after resume.
+  it.each([0, 5, 8, 9, 10])('first frame resume lastSeq=%i: gapless, increasing, no duplicates', (lastSeq) => {
+    const r = real();
+    for (let i = 0; i < 8; i++) r.push();
+    const a = fakeSocket();
+    r.conns.attach(a.socket, { ref: 'c1' });
+    r.push();
+    r.push();
+    a.say({ t: 'resume', lastSeq });
+    r.push();
+    expectClean(seqsOf(a), lastSeq + 1, 11);
+  });
+
+  it('a client that never resumes gets every event after attach once, in order', () => {
+    const r = real();
+    for (let i = 0; i < 8; i++) r.push();
+    const a = fakeSocket();
+    r.conns.attach(a.socket, { ref: 'c1' });
+    r.push();
+    r.push();
+    a.say({ t: 'permission.reply', id: 'p1', approve: true });
+    r.push();
+    expectClean(seqsOf(a), 9, 11);
+  });
+
+  it('a stale second resume does not re-send events already delivered', () => {
+    const r = real();
+    const a = fakeSocket();
+    r.conns.attach(a.socket, { ref: 'c1' });
+    for (let i = 0; i < 4; i++) r.push();
+    a.say({ t: 'resume', lastSeq: 0 });
+    a.say({ t: 'resume', lastSeq: 0 });
+    r.push();
+    a.say({ t: 'resume', lastSeq: 2 });
+    expectClean(seqsOf(a), 1, 5);
+  });
+
+  it('a busy second turn.start does not displace the in-flight turn for gap cancel', () => {
+    const elog = createEventLog({ maxBytes: 200 });
+    const handled: ClientMessage[] = [];
+    let l: ((e: ServerEvent) => void) | null = null;
+    const core: VoiceGatewayCore = {
+      sessionId: () => elog.sessionId,
+      state: () => 'ready',
+      handle: (m) => {
+        handled.push(m);
+        if (m.t === 'turn.start' && m.turnId === 'turn-AAAA') l?.(elog.append(m.turnId, { t: 'turn.started' }));
+      },
+      subscribe: (cb) => ((l = cb), () => void (l = null)),
+      replayAfter: (n) => elog.after(n),
+      stop: async () => {},
+    };
+    const conns = createVoiceConnections({ gateway: core });
+    const a = fakeSocket();
+    conns.attach(a.socket, { ref: 'c1' });
+    a.say({ t: 'turn.start', turnId: 'turn-AAAA', text: 'one', mode: 'voice' });
+    a.say({ t: 'turn.start', turnId: 'turn-BBBB', text: 'two', mode: 'voice' }); // gateway answers busy: no event
+    for (let i = 0; i < 20; i++) l?.(elog.append('turn-AAAA', { t: 'response.delta', text: 'y'.repeat(30) }));
+    a.say({ t: 'resume', lastSeq: 0 });
+    expect(a.sent.some((e) => e.code === 'resume_gap')).toBe(true);
+    expect(handled.at(-1)).toEqual({ t: 'turn.cancel', turnId: 'turn-AAAA', spokenText: '' });
   });
 });

@@ -30,6 +30,10 @@ interface Conn {
   ref: string;
   unsub: (() => void) | null;
   closed: boolean;
+  held: boolean;
+  buf: ServerEvent[];
+  bufBytes: number;
+  maxSent: number;
 }
 
 export function createVoiceConnections(deps: VoiceConnectionDeps): VoiceConnections {
@@ -37,7 +41,7 @@ export function createVoiceConnections(deps: VoiceConnectionDeps): VoiceConnecti
   const log = deps.log ?? (() => {});
   const slowBytes = deps.slowConsumerBytes ?? DEFAULT_SLOW_BYTES;
   let current: Conn | null = null;
-  // Best-effort in-flight turn: set by turn.start we forward or turn.started we deliver,
+  // Best-effort in-flight turn: set by turn.started events seen from the gateway,
   // cleared by a matching turn.completed. Used only to drop a turn lost to a resume gap;
   // a stale value is harmless because the gateway ignores a cancel for a finished turn.
   let inflight: string | null = null;
@@ -81,29 +85,57 @@ export function createVoiceConnections(deps: VoiceConnectionDeps): VoiceConnecti
     return push(c, JSON.stringify({ ...body, sessionId: gateway.sessionId(), turnId: null, seq: 0 }));
   }
 
-  function live(c: Conn): void {
+  /** Send a sequenced event once: anything at or below the high-water mark was already delivered. */
+  function deliver(c: Conn, e: ServerEvent): void {
+    if (e.seq <= c.maxSent) return;
+    if (push(c, encodeEvent(e))) c.maxSent = e.seq;
+  }
+
+  /** Stop holding: flush what was buffered while held (in order), then deliver live. */
+  function release(c: Conn): void {
+    c.held = false;
+    const buf = c.buf;
+    c.buf = [];
+    c.bufBytes = 0;
+    for (const e of buf) deliver(c, e);
+  }
+
+  // Live events are held from attach until the first inbound frame is handled, so the
+  // client's first resume (replay of everything logged) cannot double-deliver or reorder them.
+  function startLive(c: Conn): void {
     c.unsub = gateway.subscribe((e) => {
       noteEvent(e);
-      push(c, encodeEvent(e));
+      if (c.closed) return;
+      if (!c.held) {
+        deliver(c, e);
+        return;
+      }
+      c.buf.push(e);
+      c.bufBytes += encodeEvent(e).length;
+      if (c.bufBytes > slowBytes) {
+        log(`voice: slow consumer ref=${c.ref}`);
+        closeWith(c, CLOSE_SLOW);
+      }
     });
   }
 
   function resume(c: Conn, lastSeq: number, sessionId: string | undefined): void {
     if (sessionId !== undefined && sessionId !== gateway.sessionId()) {
       direct(c, { t: 'error', code: 'session_changed', retryable: false });
+      release(c);
       return;
     }
-    // Detach live delivery, replay, then reattach in one synchronous step so each event
-    // reaches the socket exactly once: either in the replay or live, never both, never neither.
-    if (c.unsub) {
-      c.unsub();
-      c.unsub = null;
-    }
+    // Hold live delivery, replay, release in one synchronous step. The replay is
+    // authoritative for everything logged so far, so the held buffer is dropped when it ok;
+    // maxSent keeps a stale second resume from re-sending what this socket already has.
+    c.held = true;
     const r = gateway.replayAfter(lastSeq);
     if (r.ok) {
+      c.buf = [];
+      c.bufBytes = 0;
       for (const e of r.events) {
         noteEvent(e);
-        if (!push(c, encodeEvent(e))) return;
+        deliver(c, e);
       }
     } else if (r.reason === 'gap') {
       direct(c, { t: 'error', code: 'resume_gap', retryable: true });
@@ -115,7 +147,7 @@ export function createVoiceConnections(deps: VoiceConnectionDeps): VoiceConnecti
     } else {
       direct(c, { t: 'error', code: 'bad_message', retryable: false });
     }
-    if (!c.closed) live(c);
+    if (!c.closed) release(c);
   }
 
   function onMessage(c: Conn, text: string): void {
@@ -131,8 +163,8 @@ export function createVoiceConnections(deps: VoiceConnectionDeps): VoiceConnecti
       resume(c, msg.lastSeq, msg.sessionId);
       return;
     }
-    if (msg.t === 'turn.start') inflight = msg.turnId;
     gateway.handle(msg);
+    if (c.held && !c.closed) release(c);
   }
 
   function attach(socket: VoiceSocket, identity: { ref: string }) {
@@ -142,11 +174,11 @@ export function createVoiceConnections(deps: VoiceConnectionDeps): VoiceConnecti
       log(`voice: connection replaced ref=${old.ref}`);
       closeWith(old, CLOSE_REPLACED);
     }
-    const c: Conn = { socket, ref: identity.ref, unsub: null, closed: false };
+    const c: Conn = { socket, ref: identity.ref, unsub: null, closed: false, held: true, buf: [], bufBytes: 0, maxSent: 0 };
     current = c;
     log(`voice: connection attached ref=${c.ref}`);
     direct(c, { t: 'status', kind: 'session', state: gateway.state() });
-    if (!c.closed) live(c);
+    if (!c.closed) startLive(c);
     socket.onMessage((text) => onMessage(c, text));
     socket.onClose(() => teardown(c));
     return {
