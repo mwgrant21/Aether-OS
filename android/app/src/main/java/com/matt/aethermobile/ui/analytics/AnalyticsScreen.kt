@@ -210,11 +210,13 @@ private fun Bar(fraction: Double, color: Color) {
 
 @Composable
 private fun BurnCard(ui: AnalyticsUi) {
-    var open by remember { mutableStateOf<Int?>(null) }
+    // Keyed by type + description, not list index, so a re-rank on a new snapshot keeps the same row expanded.
+    var open by remember { mutableStateOf<String?>(null) }
     Card(stringResource(R.string.analytics_burn_title)) {
         if (ui.emptyBurn != null) Empty(stringResource(R.string.analytics_empty_burn))
-        ui.burn.forEachIndexed { i, r ->
-            BurnRow(r, expanded = open == i, onToggle = { open = if (open == i) null else i })
+        ui.burn.forEach { r ->
+            val key = r.type + r.description
+            BurnRow(r, expanded = open == key, onToggle = { open = if (open == key) null else key })
         }
     }
 }

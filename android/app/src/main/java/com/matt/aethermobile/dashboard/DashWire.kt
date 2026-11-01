@@ -35,7 +35,7 @@ data class DashSnapshot(
 
 /**
  * Decoder for the `d` object of a `dash` view.snap (see `viewSnapDash` in protocol/mobile-protocol.json and
- * `encodeDashView` in electron/control/viewWire.ts). Strict: a wrong type, a missing field, an unknown enum value, a
+ * `encodeDashView` in electron/control/viewWire.ts). Strict: a wrong type, a missing required field (absent nullable fields read as null), an unknown enum value, a
  * duplicate readiness key or an eta whose kind disagrees with its secs anywhere returns null, which ViewHost shows as
  * Unreadable. Unknown extra keys are ignored. There is no free text in this payload.
  */

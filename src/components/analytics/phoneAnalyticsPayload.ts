@@ -27,7 +27,12 @@ export function phoneAnalyticsPayload(state: AetherState, nowMs: number): Record
   const longest = computeRealAgentBreakdown(state.realAgents.filter(goodStart), nowMs)
     .slice(0, ANALYTICS_LONGEST_CAP)
     .map((r) => ({ type: r.subagentType, description: r.description, startedAtMs: Math.round(nowMs - r.elapsedMs) }));
-  const burn = computeCompletedDispatchBurn(state.recentCompletedDispatches, state.dispatchUsage, Number.MAX_SAFE_INTEGER)
+  // Pre-filter: computeCompletedDispatchBurn sorts by tokens, and a NaN token count makes that comparator inconsistent.
+  const sortable = state.recentCompletedDispatches.filter((d) => {
+    const u = state.dispatchUsage[d.toolUseId];
+    return u && goodNum(u.tokens) && goodNum(u.durationMs);
+  });
+  const burn = computeCompletedDispatchBurn(sortable, state.dispatchUsage, Number.MAX_SAFE_INTEGER)
     .filter((r) => goodNum(r.tokens) && r.tokens >= 0 && goodNum(r.durationMs) && r.durationMs >= 0)
     .slice(0, ANALYTICS_BURN_CAP)
     .map((r) => ({

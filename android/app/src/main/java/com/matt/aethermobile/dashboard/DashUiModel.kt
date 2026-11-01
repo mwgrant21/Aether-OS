@@ -37,6 +37,7 @@ enum class EtaChip(val label: String) { LIVE("LIVE"), STALE("STALE"), EST("EST")
  * ETA tile. [value] is "—", "now", or the duration with a "~" prefix when it is an estimate (scan source) or stale.
  * [resetsText] is the server rate-limit reset countdown ("1h 30m", "now", "—"), present only for a statusline
  * source (live or stale) and measured at publish time. [chip] is null when there is no value to attribute.
+ * Deviation from desktop: desktop prefixes a STALE "now" with "~" ("~now"); the phone shows plain "now" for every source.
  */
 data class DashEtaUi(val value: String, val chip: EtaChip?, val resetsText: String?)
 

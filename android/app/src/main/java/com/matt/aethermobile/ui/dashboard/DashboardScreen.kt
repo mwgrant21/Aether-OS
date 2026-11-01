@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -112,7 +113,8 @@ private fun ReadyBody(s: DashSnapshot, hostNowMs: Long, modifier: Modifier) {
     // frame loop (withFrameNanos) stops with it. Both rects are in root coordinates (one space), re-reported on scroll.
     var viewport by remember { mutableStateOf(Rect.Zero) }
     var core by remember { mutableStateOf(Rect.Zero) }
-    val coreVisible = coreOnScreen(core.top, core.bottom, viewport.top, viewport.bottom)
+    // derivedStateOf: scroll frames re-report the rects, but this composable recomposes only when the Boolean flips.
+    val coreVisible by remember { derivedStateOf { coreOnScreen(core.top, core.bottom, viewport.top, viewport.bottom) } }
 
     val status = dashStatus(s)
     val glows = statusGlows(s)
