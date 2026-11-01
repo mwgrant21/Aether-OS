@@ -110,6 +110,7 @@ import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
 import { renderQrSvg } from './remote/pairingQr';
 import { createControlHub } from './control/controlHub';
+import { createMinInterval } from './minInterval';
 import { registerControlIpc } from './control/controlIpc';
 import { controlSettingsPath, readPhoneTyping, readReenable, writePhoneTyping, writeReenable } from './controlSettings';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
@@ -1593,6 +1594,7 @@ const remoteHub = createRemoteHub({
 // every store or flag access waits for the private-dir ACL. It shares the remote hub's listener through
 // listenerPort(); the port is attached synchronously, before registerRemoteIpc and before any await, because an
 // attach after a viewer-only start fails closed by design.
+const statusScans = createMinInterval(() => { scanAndPushFleet(); scanAndPushDiagnostics(); }, 2000);
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
   terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
@@ -1612,8 +1614,8 @@ const controlHub = createControlHub({
   renderQr: renderQrSvg,
   log: l => diagLog.write(l),
   onStatus: s => {
-    if (s.state !== 'on') { phoneViewCache.clear(); agentsDiagFeed.clear(); }
-    else { scanAndPushFleet(); scanAndPushDiagnostics(); } // fill fleet and timeline now rather than at the next 15 s scan
+    if (s.state !== 'on') { phoneViewCache.clear(); agentsDiagFeed.clear(); statusScans.reset(); } // reset: an off-to-on flip always scans
+    else statusScans.run(); // fill fleet and timeline now rather than at the next 15 s scan, at most every 2 s
     sendToWindow('control:statusChanged', s);
   },
 });
