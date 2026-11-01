@@ -873,3 +873,126 @@ describe('scanTranscriptsOnce -- a failed file checkpoints nothing', () => {
     db.close();
   });
 });
+
+// Counts the BEGINs a pass opens. The pass's closing rescorePendingDispatches
+// transaction always accounts for exactly one.
+function spyOnBegins(db: ReturnType<typeof freshDb>): { db: ReturnType<typeof freshDb>; begins: () => number } {
+  let begins = 0;
+  const proxy = new Proxy(db, {
+    get(target, prop) {
+      const value = (target as any)[prop];
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        if (prop === 'exec' && args[0] === 'BEGIN') begins += 1;
+        return value.apply(target, args);
+      };
+    },
+  });
+  return { db: proxy, begins: () => begins };
+}
+
+describe('scanTranscriptsOnce -- idle files are not rewritten (T5)', () => {
+  const T0 = Date.UTC(2026, 6, 8, 9, 0, 0);
+  const lastScanned = (db: ReturnType<typeof freshDb>, rel: string) =>
+    db.prepare('SELECT last_scanned_ms, last_offset FROM transcript_files WHERE file_path = ?').get(rel) as
+      | { last_scanned_ms: number; last_offset: number }
+      | undefined;
+
+  function setup(topLines: string[]) {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const filePath = join(projDir, 'session.jsonl');
+    writeFileSync(filePath, topLines.map((l) => l + '\n').join(''), 'utf8');
+    return { projectsRoot, projDir, filePath, rel: join('my-project', 'session.jsonl') };
+  }
+
+  it('an idle top-level file is not rewritten: last_scanned_ms and last_offset are unchanged', () => {
+    const { projectsRoot, rel } = setup([assistantLine(100)]);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, 1000, history);
+    const before = lastScanned(db, rel);
+    const second = scanTranscriptsOnce(db, projectsRoot, 2000, history);
+    expect(before?.last_scanned_ms).toBe(1000);
+    expect(lastScanned(db, rel)).toEqual(before);
+    expect(second.filesScanned).toBe(0);
+    db.close();
+  });
+
+  it('an idle subagent file is not rewritten', () => {
+    const { projectsRoot, projDir } = setup([assistantLine(100)]);
+    const subDir = join(projDir, 'session', 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'agent-x.jsonl'), `${assistantLine(5)}\n`, 'utf8');
+    const subRel = join('my-project', 'session', 'subagents', 'agent-x.jsonl');
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, 1000, history);
+    const before = lastScanned(db, subRel);
+    expect(before?.last_scanned_ms).toBe(1000);
+    const spy = spyOnBegins(db);
+    scanTranscriptsOnce(spy.db, projectsRoot, 2000, history);
+    expect(lastScanned(db, subRel)).toEqual(before);
+    expect(spy.begins()).toBe(1); // only the closing rescore transaction
+    db.close();
+  });
+
+  it('the sweep still fires on an idle file with an open Agent entry, and new bytes after idle are still ingested', () => {
+    const { projectsRoot, filePath, rel } = setup([agentToolUseLine('tu_idle', '2026-07-08T09:00:00Z')]);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, T0 + 5_000, history);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    const before = lastScanned(db, rel);
+
+    scanTranscriptsOnce(db, projectsRoot, T0 + 40_000, history);
+    const row: any = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_idle');
+    expect(row.exit_state).toBe('fatal');
+    expect(lastScanned(db, rel)).toEqual(before);
+
+    appendFileSync(filePath, `${assistantLine(300)}\n`, 'utf8');
+    const third = scanTranscriptsOnce(db, projectsRoot, T0 + 55_000, history);
+    expect(third.eventsIngested).toBe(1);
+    expect(lastScanned(db, rel)?.last_scanned_ms).toBe(T0 + 55_000);
+    db.close();
+  });
+
+  it('an idle file whose open Agent entry already has a dispatches row writes nothing', () => {
+    const { projectsRoot, rel } = setup([
+      agentToolUseLine('tu_done', '2026-07-08T09:00:00Z'),
+      taskNotificationLine('tu_done', '2026-07-08T09:00:12Z'),
+    ]);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, T0 + 30_000, history);
+    const rowBefore = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_done') as any;
+    expect(rowBefore.exit_state).toBe('ok');
+    const before = lastScanned(db, rel);
+
+    const spy = spyOnBegins(db);
+    scanTranscriptsOnce(spy.db, projectsRoot, T0 + 90_000, history);
+    expect(lastScanned(db, rel)).toEqual(before);
+    expect(db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_done')).toEqual(rowBefore);
+    expect(spy.begins()).toBe(1);
+    db.close();
+  });
+
+  it('no transaction is opened for an idle file with an open Agent entry, and the sweep fatal row is one atomic write', () => {
+    const { projectsRoot, rel } = setup([agentToolUseLine('tu_ghost', '2026-07-08T09:00:00Z')]);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, T0 + 5_000, history);
+    const before = lastScanned(db, rel);
+
+    const spy = spyOnBegins(db);
+    scanTranscriptsOnce(spy.db, projectsRoot, T0 + 40_000, history);
+    expect(spy.begins()).toBe(1); // the closing rescore transaction only
+    const row: any = db.prepare('SELECT exit_state, ended_at_ms, duration_ms FROM dispatches WHERE tool_use_id = ?').get('tu_ghost');
+    expect(row.exit_state).toBe('fatal');
+    expect(row.ended_at_ms).not.toBeNull();
+    expect(row.duration_ms).toBe(40_000);
+    expect(lastScanned(db, rel)).toEqual(before);
+    db.close();
+  });
+});
