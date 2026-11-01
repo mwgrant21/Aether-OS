@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { computeSeverity } from './severity/computeSeverity.js';
-import { isStalled, STALL_MS, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
+import { isStalled, STALL_MS, FUTURE_MTIME_TOLERANCE_MS, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
 
 // Grace period before a dispatch's session liveness is even checked: an entry
 // that opened moments ago may simply predate the first fleet poll ever seeing
@@ -26,8 +26,11 @@ const SESSION_STALE_MS = 30000;
  * Two independent fatal conditions, either one triggers:
  *   (a) the dispatch's session has no fleet_sessions row at all, OR that row's
  *       last_seen_ms is older than SESSION_STALE_MS -- but only checked once
- *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old. The
- *       pinned (own) session, ownSessionId, is exempt from this condition:
+ *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old. With no
+ *       row, the parent transcript's mtime (transcriptMtimeFor) stands in for
+ *       last_seen_ms; no mtime available (or one more than
+ *       FUTURE_MTIME_TOLERANCE_MS in the future) means ended. The pinned
+ *       (own) session, ownSessionId, is exempt from this condition:
  *       filterOwnSession (fleetPoll.ts) removes it from fleet_sessions, so its
  *       absence there says nothing about liveness.
  *   (b) no progress for longer than STALL_MS (./severity/isStalled.js, 30 min),
@@ -43,7 +46,8 @@ export function sweepStaleDispatches(
   history: ToolCallHistory,
   nowMs: number,
   lastProgressFor?: (toolUseId: string) => number | null,
-  ownSessionId?: string | null
+  ownSessionId?: string | null,
+  transcriptMtimeFor?: (sessionId: string) => number | null
 ): { staleFound: number } {
   const sessionLookup = db.prepare('SELECT last_seen_ms FROM fleet_sessions WHERE session_id = ?');
   // Agent entries stay open on the async-launch acknowledgement; the real
@@ -70,6 +74,14 @@ export function sweepStaleDispatches(
        median_ms_at_eval = excluded.median_ms_at_eval`
   );
 
+  // One transcript stat per session per pass, however many dispatches are open.
+  const mtimeCache = new Map<string, number | null>();
+  const transcriptMtime = (sessionId: string): number | null => {
+    if (!transcriptMtimeFor) return null;
+    if (!mtimeCache.has(sessionId)) mtimeCache.set(sessionId, transcriptMtimeFor(sessionId));
+    return mtimeCache.get(sessionId) ?? null;
+  };
+
   let staleFound = 0;
 
   for (const [toolUseId, open] of Object.entries(history.openByToolUseId)) {
@@ -84,7 +96,16 @@ export function sweepStaleDispatches(
     const isOwnSession = ownSessionId != null && open.sessionId === ownSessionId;
     if (!isOwnSession && ageMs >= SESSION_CHECK_MIN_AGE_MS) {
       const row = sessionLookup.get(open.sessionId) as { last_seen_ms: number } | undefined;
-      sessionEnded = !row || nowMs - row.last_seen_ms > SESSION_STALE_MS;
+      if (row) {
+        sessionEnded = nowMs - row.last_seen_ms > SESSION_STALE_MS;
+      } else {
+        // No fleet row: the session may be alive but unpinned (the pin filter
+        // removed it from fleet_sessions). Fall back to the parent transcript's
+        // mtime; with no mtime available, treat it as ended.
+        const mtime = open.sessionId == null ? null : transcriptMtime(open.sessionId);
+        const usable = mtime != null && mtime <= nowMs + FUTURE_MTIME_TOLERANCE_MS;
+        sessionEnded = !usable || nowMs - mtime > SESSION_STALE_MS;
+      }
     }
 
     // Spec 5 measures inactivity from the last subagent progress: the mtime of
