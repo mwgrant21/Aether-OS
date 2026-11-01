@@ -13,7 +13,7 @@ export function summarizePermission(tool: string, input: unknown): string {
   let hint = '';
   if (typeof input === 'object' && input !== null) {
     const o = input as Record<string, unknown>;
-    if (typeof o.command === 'string') hint = o.command.slice(0, HINT_CAP);
+    if (typeof o.command === 'string') hint = maskSecrets(o.command).slice(0, HINT_CAP); // mask first: a cap must not cut a secret
     else if (typeof o.file_path === 'string') hint = basename(o.file_path);
     else if (typeof o.path === 'string') hint = basename(o.path);
   }

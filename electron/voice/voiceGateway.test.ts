@@ -279,6 +279,65 @@ describe('busy, idempotency and session states', () => {
   });
 });
 
+describe('rework edge cases', () => {
+  it('cancel of a queued turn drops it: completed interrupted, and ready never starts it', () => {
+    const { s, gw, events } = setup({ state: 'starting' });
+    gw.handle(start('turn-0001'));
+    gw.handle({ t: 'turn.cancel', turnId: 'turn-0001', spokenText: '' });
+    expect(events[events.length - 1]).toMatchObject({ t: 'turn.completed', status: 'interrupted', turnId: 'turn-0001' });
+    s.setState('ready');
+    expect(s.sent).toHaveLength(0);
+    expect(events.map((e) => e.t)).not.toContain('turn.started');
+    expect(events.map((e) => e.t)).not.toContain('response.delta');
+    gw.handle(start('turn-0002'));
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('a retry of a queued id dropped on restarting is accepted', () => {
+    const { s, gw } = setup({ state: 'starting' });
+    gw.handle(start('turn-0001'));
+    s.setState('restarting');
+    s.setState('ready');
+    gw.handle(start('turn-0001'));
+    expect(s.sent).toEqual([{ id: 'turn-0001', text: 'hi' }]);
+  });
+
+  it('a retry after send failure, crash or turn failure is accepted; a completed id is still a duplicate', () => {
+    const { s, gw } = setup();
+    s.sendOk = false;
+    gw.handle(start('turn-0001'));
+    s.sendOk = true;
+    gw.handle(start('turn-0001'));
+    expect(s.sent.map((x) => x.id)).toEqual(['turn-0001']);
+    s.emit({ k: 'lost', turnId: 'turn-0001' });
+    gw.handle(start('turn-0001'));
+    expect(s.sent).toHaveLength(2);
+    s.emit({ k: 'result', turnId: 'turn-0001', ok: true, interrupted: false });
+    gw.handle(start('turn-0001'));
+    expect(s.sent).toHaveLength(2);
+  });
+
+  it('a key straddling char 500 of spokenText leaks no fragment into events or replay', () => {
+    const { s, gw, events } = setup();
+    gw.handle(start('turn-0001'));
+    gw.handle({ t: 'turn.cancel', turnId: 'turn-0001', spokenText: 'a'.repeat(495) + ' ' + KEY });
+    s.emit({ k: 'result', turnId: 'turn-0001', ok: true, interrupted: true });
+    gw.handle(start('turn-0002'));
+    const all = JSON.stringify(events) + JSON.stringify(gw.replayAfter(0)) + JSON.stringify(s.sent);
+    expect(all).not.toContain(KEY.slice(0, 12));
+    expect(all).not.toMatch(/sk-ant-[A-Za-z0-9]/);
+  });
+
+  it('a key straddling the 80-char cap of a Bash command leaks no fragment', () => {
+    const { s, gw, events } = setup();
+    s.emit({ k: 'permission', id: 'p1', tool: 'Bash', input: { command: 'x'.repeat(70) + ' ' + KEY } });
+    s.emit({ k: 'permission', id: 'p2', tool: 'Bash', input: { command: 'x'.repeat(60) + ' password=hunter2hunter2' } });
+    const all = JSON.stringify(events) + JSON.stringify(gw.replayAfter(0));
+    expect(all).not.toMatch(/sk-ant-[A-Za-z0-9]/);
+    expect(all).not.toMatch(/hunter/);
+  });
+});
+
 describe('orphan turn', () => {
   it('is interrupted after the timeout with zero subscribers', () => {
     const { s, gw, events, unsub } = setup();

@@ -27,11 +27,11 @@ const SEEN_TURNS = 64;
 const SPOKEN_ECHO_CAP = 500;
 const TOOL_NAME_CAP = 40;
 
-/** Strip control characters and double quotes, cap, mask: safe to echo and to embed in quotes. */
+/** Strip control characters and double quotes, mask, cap: safe to echo and to embed in quotes. */
 function sanitizeSpoken(s: string): string {
   // eslint-disable-next-line no-control-regex
-  const clean = s.replace(/[\u0000-\u001f\u007f"]/g, '').slice(0, SPOKEN_ECHO_CAP);
-  return maskSecrets(clean);
+  const clean = s.replace(/[\u0000-\u001f\u007f"]/g, '');
+  return maskSecrets(clean).slice(0, SPOKEN_ECHO_CAP); // mask first: a cap must not cut a secret
 }
 
 interface Turn {
@@ -96,6 +96,7 @@ export function createVoiceGateway(deps: GatewayDeps): VoiceGatewayCore & { star
     if (!t) return;
     turn = null;
     clearOrphan();
+    if (status === 'error' || status === 'lost') forget(t.id);
     emit(
       t.id,
       status === 'interrupted'
@@ -114,6 +115,11 @@ export function createVoiceGateway(deps: GatewayDeps): VoiceGatewayCore & { star
   function remember(id: string): void {
     seen.push(id);
     if (seen.length > SEEN_TURNS) seen.shift();
+  }
+  /** A turn the client was told it may retry must not be swallowed as a duplicate. */
+  function forget(id: string): void {
+    const i = seen.indexOf(id);
+    if (i >= 0) seen.splice(i, 1);
   }
 
   function startTurn(id: string, text: string): void {
@@ -173,6 +179,7 @@ export function createVoiceGateway(deps: GatewayDeps): VoiceGatewayCore & { star
         } else if ((e.state === 'restarting' || e.state === 'down') && pending) {
           const p = pending;
           pending = null;
+          forget(p.id);
           emitError(p.id, e.state === 'down' ? 'session_down' : 'session_restarting', e.state !== 'down');
         }
         return;
@@ -246,6 +253,12 @@ export function createVoiceGateway(deps: GatewayDeps): VoiceGatewayCore & { star
           return;
         case 'turn.cancel':
           if (turn && turn.id === msg.turnId) cancelTurn(msg.spokenText);
+          else if (pending && pending.id === msg.turnId) {
+            // Queued, never started: drop it and tell the client it was interrupted.
+            const id = pending.id;
+            pending = null;
+            emit(id, { t: 'turn.completed', status: 'interrupted', spokenText: sanitizeSpoken(msg.spokenText) });
+          }
           return;
         case 'permission.reply':
           if (book.answer(msg.id)) session.answerPermission(msg.id, msg.approve);
