@@ -269,13 +269,14 @@ describe('memoryExtractionTick', () => {
       runSummary: 'Second item.',
       queuedAtMs: 0,
     });
-    const execFn = vi.fn(async () => {
+    const execFn = vi.fn(async (_prompt: string) => {
       writeFileSync(settings, '{"memoryExtractionEnabled":false}', 'utf8');
       return { stdout: '[]' };
     });
     await memoryExtractionTick(store, queue, settings, execFn);
     expect(execFn).toHaveBeenCalledTimes(1);
-    expect(queue.size()).toBe(0);
+    expect(execFn.mock.calls[0][0]).toContain('User overruled a suggestion.');
+    expect(execFn.mock.calls[0][0]).not.toContain('Second item.');
     store.close();
   });
 
@@ -322,6 +323,31 @@ describe('memoryExtractionTick', () => {
     const rows = db.prepare('SELECT detail FROM drift_log').all() as { detail: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].detail.startsWith('memory extraction ')).toBe(true);
+    db.close();
+    store.close();
+  });
+
+  it('failure: a throw outside the exec records err.name in drift_log, never err.message', async () => {
+    const store = createMemoryStore(join(dir, 'memory.db'));
+    const db = openDatabase(join(dir, 'collector.db'));
+    migrate(db);
+    const settings = join(dir, 'collector-settings.json');
+    writeFileSync(settings, '{"memoryExtractionEnabled":true}', 'utf8');
+    const queue = queueWithOneItem();
+    vi.spyOn(store, 'applyOps').mockImplementation(() => {
+      throw new RangeError('CANARY-PROMPT-TEXT');
+    });
+    const execFn = vi.fn(async () => ({
+      stdout: '[{"op":"ADD","kind":"habit","content":"Matt overrules suggestions."}]',
+    }));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await memoryExtractionTick(store, queue, settings, execFn, (d) => logDrift(db, 1, d));
+    errSpy.mockRestore();
+    const rows = db.prepare('SELECT detail FROM drift_log').all() as { detail: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toContain('memory extraction failed');
+    expect(rows[0].detail).toContain('RangeError');
+    expect(rows[0].detail).not.toContain('CANARY');
     db.close();
     store.close();
   });
