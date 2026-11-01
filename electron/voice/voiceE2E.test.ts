@@ -269,12 +269,12 @@ describe('voice gateway end to end (scripted client, fake claude)', { timeout: 2
     const { c } = await setup(r);
     await ready(c);
     c.send({ t: 'turn.start', turnId: 'turn-0006', text: '[[hang]] go', mode: 'voice' });
-    await c.waitFor((e) => e.t === 'response.delta' && e.turnId === 'turn-0006');
+    await c.waitFor((e) => e.t === 'turn.started' && e.turnId === 'turn-0006');
     c.send({ t: 'turn.cancel', turnId: 'turn-0006', spokenText: 'x' });
-    await new Promise((res) => setTimeout(res, 300));
-    const n = c.events.filter((e) => e.t === 'response.delta').length;
-    await c.waitFor(isDone('turn-0006'), 8000); // result arrives when the fake finishes; interrupt was ignored
-    expect(c.events.filter((e) => e.t === 'response.delta').length).toBe(n);
+    // The fake keeps streaming ~2 s and its speech filter releases a unit once 300 chars are held
+    // (~1.7 s in), so a gateway that kept forwarding after the cancel would emit a delta here.
+    await c.waitFor(isDone('turn-0006'), 8000);
+    expect(c.events.filter((e) => e.t === 'response.delta' && e.turnId === 'turn-0006')).toEqual([]);
     expect(c.events.find(isDone('turn-0006'))!.status).toBe('interrupted');
   });
 
