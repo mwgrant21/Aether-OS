@@ -51,10 +51,14 @@ declare global {
         status: () => Promise<ControlStatus>;
         setEnabled: (on: boolean) => Promise<ControlStatus>;
         setReenableAtLaunch: (on: boolean) => Promise<ControlStatus>;
+        setPhoneTyping: (on: boolean) => Promise<ControlStatus>;
         createPairing: () => Promise<ControlPairingResult>;
         revokeAll: () => Promise<ControlStatus>;
         revokeOne: (ref: string) => Promise<ControlStatus>;
         onStatus: (cb: (s: ControlStatus) => void) => () => void;
+      };
+      phoneView: {
+        publish: (v: string, payload: Record<string, unknown>) => void;
       };
       app: {
         getVersion: () => Promise<string>;
@@ -84,6 +88,8 @@ declare global {
         write: (input: string) => void;
         resize: (cols: number, rows: number) => void;
         onData: (callback: (data: string) => void) => () => void;
+        onExit: (callback: () => void) => () => void;
+        onAlive: (callback: () => void) => () => void;
       };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;

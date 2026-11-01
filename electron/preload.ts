@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     status: (): Promise<ControlStatus> => ipcRenderer.invoke('control:status'),
     setEnabled: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setEnabled', on),
     setReenableAtLaunch: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setReenableAtLaunch', on),
+    setPhoneTyping: (on: boolean): Promise<ControlStatus> => ipcRenderer.invoke('control:setPhoneTyping', on),
     createPairing: (): Promise<ControlPairingResult> => ipcRenderer.invoke('control:createPairing'),
     revokeAll: (): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeAll'),
     revokeOne: (ref: string): Promise<ControlStatus> => ipcRenderer.invoke('control:revokeOne', ref),
@@ -64,6 +65,10 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('control:statusChanged', listener);
       return () => ipcRenderer.removeListener('control:statusChanged', listener);
     },
+  },
+  phoneView: {
+    // Fire-and-forget: main drops it unless phone control is on, holds only the latest per view in memory.
+    publish: (v: string, payload: Record<string, unknown>): void => ipcRenderer.send('phoneView:publish', { v, payload }),
   },
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
@@ -120,6 +125,16 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
       ipcRenderer.on('terminal2Pty:data', listener);
       return () => ipcRenderer.removeListener('terminal2Pty:data', listener);
+    },
+    onExit: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('terminal2Pty:exit', listener);
+      return () => ipcRenderer.removeListener('terminal2Pty:exit', listener);
+    },
+    onAlive: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('terminal2Pty:alive', listener);
+      return () => ipcRenderer.removeListener('terminal2Pty:alive', listener);
     },
   },
   usage: {

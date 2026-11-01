@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_agents">Agents</string>
+    <string name="view_agents_desc">Agents, running and finished dispatches with their prompts, read only</string>
+
+    <string name="agents_loading">Loading agents</string>
+    <string name="agents_no_snapshot">No agents snapshot yet. This fills in when titan next publishes the roster.</string>
+    <string name="agents_unreadable">Agents data from titan could not be read. Update Aether on titan and on this phone.</string>
+    <string name="agents_unsupported">This titan does not serve Agents. Update Aether on titan.</string>
+
+    <string name="agents_tab_roster">Roster</string>
+    <string name="agents_tab_fleet">Fleet</string>
+    <string name="agents_tab_timeline">Timeline</string>
+    <string name="agents_tab_selected">%1$s, selected</string>
+    <plurals name="agents_tab_roster_badge_desc">
+        <item quantity="one">Roster, %1$d agent needs input</item>
+        <item quantity="other">Roster, %1$d agents need input</item>
+    </plurals>
+
+    <string name="agents_group_needs_input">Needs input</string>
+    <string name="agents_group_working">Working</string>
+    <string name="agents_group_done">Done</string>
+    <string name="agents_group_header">%1$s (%2$d)</string>
+    <plurals name="agents_group_desc">
+        <item quantity="one">%1$s, %2$d agent</item>
+        <item quantity="other">%1$s, %2$d agents</item>
+    </plurals>
+    <string name="agents_done_expanded">Expanded, tap to collapse</string>
+    <string name="agents_done_collapsed">Collapsed, tap to expand</string>
+    <string name="agents_done_show">Show</string>
+    <string name="agents_done_hide">Hide</string>
+
+    <!-- Desktop sentences, verbatim (AgentsUiModel consts). -->
+    <string name="agents_empty_roster">No agents are running.</string>
+    <string name="agents_fleet_unavailable">Fleet data is unavailable because the collector isn\'t running.</string>
+    <string name="agents_fleet_empty">No other sessions detected.</string>
+    <string name="agents_timeline_unavailable">Dispatch diagnostics are unavailable because the collector isn\'t running.</string>
+    <string name="agents_timeline_empty">No recent activity from tool calls, dispatches or anomalies.</string>
+
+    <string name="agents_fleet_status_busy">busy</string>
+    <string name="agents_fleet_status_idle">idle</string>
+    <string name="agents_fleet_separator">·</string>
+    <string name="agents_fleet_row_desc">%1$s, %2$s, %3$s. Toggles details.</string>
+    <string name="agents_fleet_detail">kind: %1$s</string>
+    <string name="agents_fleet_detail_pid">kind: %1$s · pid: %2$d</string>
+
+    <string name="agents_timeline_kind_tool">Tool call</string>
+    <string name="agents_timeline_kind_dispatch">Dispatch</string>
+    <string name="agents_timeline_kind_anomaly">Anomaly</string>
+    <string name="agents_timeline_usage">%1$s tok · %2$s tools · %3$s</string>
+    <string name="agents_timeline_row_desc">%1$s, %2$s</string>
+    <string name="agents_timeline_row_usage_desc">%1$s, %2$s, %3$s</string>
+
+    <string name="agents_prompt_empty">no prompt text available</string>
+
+    <string name="agents_row_running_desc">%1$s, %2$s, running</string>
+    <string name="agents_row_needs_input_desc">%1$s, %2$s, needs input. Opens details.</string>
+    <string name="agents_done_meta">%1$s tok · %2$s tools · %3$s</string>
+
+    <string name="agents_sheet_label">Agent details</string>
+    <string name="agents_sheet_dismiss">Close agent details</string>
+    <string name="agents_sheet_prompt">Prompt</string>
+    <string name="agents_sheet_elapsed">Running %1$s</string>
+
+    <string name="agents_updated">Updated %1$s</string>
+    <string name="agents_age_just_now">just now</string>
+    <plurals name="agents_age_minutes">
+        <item quantity="one">%1$d minute ago</item>
+        <item quantity="other">%1$d minutes ago</item>
+    </plurals>
+    <plurals name="agents_age_hours">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <plurals name="agents_age_days">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+</resources>

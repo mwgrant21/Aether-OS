@@ -30,12 +30,48 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     sharedTerm.loadAddon(sharedFit);
     sharedTerm.open(sharedHostEl);
 
+    // Clipboard failures (no API, rejected promise) are ignored on purpose.
+    const pasteFromClipboard = () => {
+      void navigator.clipboard?.readText?.().then((text) => { if (text) sharedTerm!.paste(text); }).catch(() => {});
+    };
+    // xterm turns Ctrl+V into 0x16 and the app menu is null, so there is no native paste: consume the key here.
+    sharedTerm.attachCustomKeyEventHandler((ev) => {
+      const isPaste = ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.code === 'KeyV';
+      if (!isPaste) return true;
+      if (ev.type === 'keydown') {
+        ev.preventDefault(); // stop any native paste so text is not pasted twice
+        if (!ev.repeat) pasteFromClipboard(); // a held key must not paste repeatedly
+      }
+      return false; // xterm must not send 0x16 (also covers keypress/keyup)
+    });
+    // Copy on mouse release (not per drag tick); document so a release outside the host still copies.
+    const copySelection = () => {
+      if (sharedTerm!.hasSelection()) void navigator.clipboard?.writeText?.(sharedTerm!.getSelection())?.catch(() => {});
+    };
+    // Left button only: a right/middle release (e.g. the right-click paste chord) must not overwrite the clipboard.
+    const onMouseUp = (ev: MouseEvent) => {
+      if (ev.button !== 0) return;
+      document.removeEventListener('mouseup', onMouseUp);
+      copySelection();
+    };
+    sharedHostEl.addEventListener('mousedown', (ev) => { if (ev.button === 0) document.addEventListener('mouseup', onMouseUp); });
+    // Right-click pastes unless the running program tracks the mouse (then xterm/the program gets the event).
+    sharedHostEl.addEventListener('contextmenu', (ev) => {
+      if (sharedTerm!.modes.mouseTrackingMode !== 'none') return;
+      ev.preventDefault();
+      pasteFromClipboard();
+    });
+
     const terminal2Pty = window.aetherElectron!.terminal2Pty;
     // Subscribe before starting so the session's first output is not lost.
     terminal2Pty.onData((data) => sharedTerm!.write(data));
+    terminal2Pty.onExit(() => sharedTerm!.write('\r\n[process exited - press Enter to restart]\r\n'));
+    // Main restarts an exited session on a bare Enter (desktop or phone) and drops other input meanwhile;
+    // it then reports alive. The slot ignores resize while exited, so re-send the current size here.
+    terminal2Pty.onAlive(() => { sharedTerm!.reset(); terminal2Pty.resize(sharedTerm!.cols, sharedTerm!.rows); });
     sharedTerm.onData((input) => terminal2Pty.write(input));
     sharedTerm.onResize(({ cols, rows }) => terminal2Pty.resize(cols, rows));
-    terminal2Pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once per app lifetime
+    terminal2Pty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // the only start; Enter after an exit is restarted by main
   }
   return { hostEl: sharedHostEl, fit: sharedFit! };
 }

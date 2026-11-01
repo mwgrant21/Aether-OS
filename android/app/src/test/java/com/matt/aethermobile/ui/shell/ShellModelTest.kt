@@ -3,6 +3,7 @@ package com.matt.aethermobile.ui.shell
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
 import com.matt.aethermobile.term.TerminalHost.Tab
+import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.components.DotStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -90,5 +91,126 @@ class ShellModelTest {
         assertFalse(open.onBack().open)
         assertFalse(open.onScrim().open)
         assertFalse(closed.onBack().open)
+    }
+
+    @Test fun claudeTitleIsOverriddenOthersKeepServerLabel() {
+        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("terminal2", "Terminal 2", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
+        assertEquals("CLAUDE", titleFor(tabs, "claude"))
+        assertEquals("Terminal 2", titleFor(tabs, "terminal2"))
+        assertEquals("Codex", titleFor(tabs, "codex"))
+        assertEquals("", titleFor(tabs, "zz"))
+    }
+
+    @Test fun onlyClaudeHasThread() {
+        assertTrue(hasThread("claude"))
+        for (s in listOf("terminal2", "codex", "", "zz")) assertFalse(s, hasThread(s))
+    }
+
+    @Test fun threadBodyNeedsClaudeAndThreadView() {
+        assertTrue(threadBodyActive("claude", ViewMode.THREAD))
+        assertFalse(threadBodyActive("claude", ViewMode.RAW))
+        assertFalse(threadBodyActive("terminal2", ViewMode.THREAD))
+        assertFalse(threadBodyActive("codex", ViewMode.RAW))
+    }
+
+    @Test fun capsForAllThreeSlotsAndAllThreeStates() {
+        val expected = mapOf(
+            "claude" to listOf(SlotCaps.ThreadRaw, SlotCaps.ThreadRawNotStarted, SlotCaps.ThreadRawExited),
+            "terminal2" to listOf(SlotCaps.RawOnly, SlotCaps.RawOnlyNotStarted, SlotCaps.RawOnlyExited),
+            "codex" to listOf(SlotCaps.RawOnly, SlotCaps.RawOnlyNotStarted, SlotCaps.RawOnlyExited),
+        )
+        val states = listOf(SlotState.RUNNING, SlotState.NOT_STARTED, SlotState.EXITED)
+        for ((s, caps) in expected) {
+            states.forEachIndexed { i, st ->
+                assertEquals("$s $st", caps[i], slotRows(listOf(Tab(s, "L", st)), s).single().caps)
+            }
+        }
+    }
+
+    @Test fun menuRowLabelForClaudeIsTitleCase() {
+        val rows = slotRows(listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING)), "claude")
+        assertEquals(listOf("Claude", "Codex"), rows.map { it.label })
+    }
+
+    @Test fun slotRowsKeepOrderingAndSelectionWithCaps() {
+        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("terminal2", "Terminal 2", SlotState.EXITED), Tab("codex", "Codex", SlotState.NOT_STARTED))
+        val rows = slotRows(tabs, "terminal2")
+        assertEquals(listOf("claude", "terminal2", "codex"), rows.map { it.s })
+        assertEquals(listOf(false, true, false), rows.map { it.selected })
+        assertEquals(listOf(SlotText.Running, SlotText.Exited, SlotText.NotStarted), rows.map { it.text })
+    }
+
+    @Test fun ledgerBodyWinsOverThreadAndRaw() {
+        for (slot in listOf("claude", "terminal2", "codex")) for (v in ViewMode.values()) {
+            assertEquals("$slot $v", Body.LEDGER, bodyFor(slot, v, AppView.LEDGER))
+        }
+    }
+
+    @Test fun terminalViewKeepsTheOldThreadRawRule() {
+        assertEquals(Body.THREAD, bodyFor("claude", ViewMode.THREAD, AppView.TERMINAL))
+        assertEquals(Body.RAW, bodyFor("claude", ViewMode.RAW, AppView.TERMINAL))
+        assertEquals(Body.RAW, bodyFor("terminal2", ViewMode.THREAD, AppView.TERMINAL))
+        assertEquals(Body.RAW, bodyFor("codex", ViewMode.THREAD, AppView.TERMINAL))
+    }
+
+    @Test fun ledgerTitleAndUnchangedSlotTitle() {
+        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
+        assertEquals("LEDGER", titleFor(tabs, "claude", AppView.LEDGER))
+        assertEquals("CLAUDE", titleFor(tabs, "claude"))
+        assertEquals("CLAUDE", titleFor(tabs, "claude", AppView.TERMINAL))
+        assertEquals("Codex", titleFor(tabs, "codex"))
+    }
+
+    @Test fun segmentHiddenInLedger() {
+        assertFalse(showSegment("claude", AppView.LEDGER))
+        assertTrue(showSegment("claude", AppView.TERMINAL))
+        assertFalse(showSegment("codex", AppView.TERMINAL))
+    }
+
+    @Test fun viewRowsMarkOnlyTheOpenView() {
+        assertEquals(listOf(ViewRow(AppView.LEDGER, true)), viewRows(AppView.LEDGER))
+        assertEquals(listOf(ViewRow(AppView.LEDGER, false)), viewRows(AppView.TERMINAL))
+    }
+
+    private val fakePanes = listOf(AppView.PROJECTS, AppView.MEMORY)
+
+    @Test fun viewRowsWithEmptyRegistryAreTodaysLedgerOnlyRows() {
+        for (app in AppView.values()) assertEquals(app.name, listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER, true)), viewRows(app, emptyList()))
+    }
+
+    @Test fun viewRowsListRegisteredPanesAfterLedgerAndMarkTheOpenOne() {
+        assertEquals(
+            listOf(ViewRow(AppView.LEDGER, false), ViewRow(AppView.PROJECTS, true), ViewRow(AppView.MEMORY, false)),
+            viewRows(AppView.PROJECTS, fakePanes),
+        )
+    }
+
+    @Test fun paneTheTitanDoesNotListIsADisabledRow() {
+        val rows = viewRows(AppView.TERMINAL, fakePanes) { it == AppView.PROJECTS }
+        assertEquals(listOf(true, true, false), rows.map { it.enabled })
+    }
+
+    @Test fun everyPaneHasItsOwnUpperCaseTitle() {
+        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING))
+        val titles = AppView.values().filter { it.isPane }.map { titleFor(tabs, "claude", it) }
+        assertEquals(listOf("PROJECTS", "MEMORY", "DASHBOARD", "ANALYTICS", "AGENTS", "COMMS"), titles)
+    }
+
+    @Test fun paneBodyWinsOverThreadAndRawButNotTheLedger() {
+        for (slot in listOf("claude", "terminal2")) for (v in ViewMode.values()) {
+            assertEquals(Body.PANE, bodyFor(slot, v, AppView.PROJECTS))
+            assertEquals(Body.LEDGER, bodyFor(slot, v, AppView.LEDGER))
+        }
+        assertFalse(showSegment("claude", AppView.PROJECTS))
+    }
+
+    @Test fun backFromAnyNonTerminalViewReturnsToTheTerminal() {
+        for (app in AppView.values()) {
+            assertEquals(app.name, if (app == AppView.TERMINAL) null else AppView.TERMINAL, backTarget(app))
+        }
+    }
+
+    @Test fun selectingAViewClosesTheMenu() {
+        assertFalse(MenuState(open = true).onSelectView().open)
     }
 }

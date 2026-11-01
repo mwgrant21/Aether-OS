@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="viewctl_header">View</string>
+    <string name="viewctl_text_size">Text size</string>
+    <string name="viewctl_text_size_desc">Text size, %1$s</string>
+    <string name="viewctl_fit">Fit</string>
+    <string name="viewctl_orientation">Orientation</string>
+    <string name="viewctl_orient_auto">Auto</string>
+    <string name="viewctl_orient_portrait">Portrait</string>
+    <string name="viewctl_orient_landscape">Landscape</string>
+    <string name="viewctl_orient_auto_desc">Orientation auto, follows the phone</string>
+    <string name="viewctl_orient_portrait_desc">Lock to portrait</string>
+    <string name="viewctl_orient_landscape_desc">Lock to landscape</string>
+</resources>

@@ -41,8 +41,8 @@ interface Violation { rule: Rule; msg: string }
 interface Facts { sinks: number; handled: string[] | null; declared: string[] | null }
 interface Analysis { violations: Violation[]; facts: Facts }
 
-// The five production files the design names; a sixth is a reviewed edit to this list.
-const OWN_FILES = ['protocol', 'controlGateway', 'inputRouter', 'controlHub', 'controlIpc'] as const;
+// The production files the design names plus viewWire (generic view encoders, D3); another is a reviewed edit to this list.
+const OWN_FILES = ['protocol', 'controlGateway', 'inputRouter', 'controlHub', 'controlIpc', 'viewWire'] as const;
 const ALLOWED_NAMES: ReadonlySet<string> = new Set([
   ...OWN_FILES.flatMap((f) => [`${f}.ts`, `${f}.test.ts`]),
   'controlBoundary.test.ts',

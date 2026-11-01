@@ -54,6 +54,10 @@ class ControlProtocolTest {
             strings(spec.getJSONObject("messages").getJSONArray("byeReasons")),
             ControlProtocol.ByeReason.values().map { it.wire },
         )
+        assertEquals(
+            strings(spec.getJSONObject("messages").getJSONArray("nakReasons")),
+            ControlProtocol.NakReason.values().map { it.wire },
+        )
     }
 
     @Test fun tokenKeyIsRawSha256OfTheToken() {
@@ -146,8 +150,8 @@ class ControlProtocolTest {
             assertEquals(slots.getJSONObject(i).getString("label"), ControlProtocol.SLOTS[i].label)
         }
         val msgs = spec.getJSONObject("messages")
-        assertEquals(listOf("hello", "attach", "detach"), strings(msgs.getJSONArray("phoneToTitan")))
-        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state"), strings(msgs.getJSONArray("titanToPhone")))
+        assertEquals(listOf("hello", "attach", "detach", "in", "thread.attach", "thread.detach", "ledger.attach", "ledger.detach", "view.attach", "view.detach"), strings(msgs.getJSONArray("phoneToTitan")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed", "ledger.snap", "view.snap"), strings(msgs.getJSONArray("titanToPhone")))
     }
 
     // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.
@@ -262,5 +266,248 @@ class ControlProtocolTest {
         assertTrue(Regex("^[0-9a-f]{32}$").matches(n))
         assertFalse(n == ControlProtocol.newNonce(rnd))
         assertTrue(Regex("^[0-9a-f]{32}$").matches(ControlProtocol.newNonce()))
+    }
+
+    @Test fun buildInIsByteIdenticalToTheGolden() {
+        assertEquals(frames.getString("in"), ControlProtocol.buildIn("claude", 1, "echo hi\r"))
+    }
+
+    @Test fun buildInEscapesQuotesBackslashEscAndKeepsNonBmp() {
+        val d = "a\"b\\\u001b[A😀"
+        val built = ControlProtocol.buildIn("codex", 7, d)
+        val o = JSONObject(built)
+        assertEquals(d, o.getString("d"))
+        assertEquals(7, o.getInt("c"))
+        assertTrue(built, built.contains("\\u001b"))
+        assertTrue(built.startsWith("""{"t":"in","s":"codex","c":7,"d":"a\"b\\"""))
+    }
+
+    @Test fun buildInRejectsUnknownSlotBadCseqAndEmptyInput() {
+        assertFailsIllegal { ControlProtocol.buildIn("bash", 1, "x") }
+        assertFailsIllegal { ControlProtocol.buildIn("claude", 0, "x") }
+        assertFailsIllegal { ControlProtocol.buildIn("claude", 9_007_199_254_740_992L, "x") }
+        assertFailsIllegal { ControlProtocol.buildIn("claude", 1, "") }
+    }
+
+    @Test fun ackGoldenParsesAndBadAcksAreNull() {
+        assertEquals(ControlProtocol.TerminalFrame.Ack("claude", 3), ControlProtocol.parseTerminalFrame(frames.getString("ack")))
+        for (bad in listOf(
+            """{"t":"ack","s":"claude","c":0}""",
+            """{"t":"ack","s":"claude","c":1.5}""",
+            """{"t":"ack","s":"claude","c":"3"}""",
+            """{"t":"ack","s":"claude"}""",
+            """{"t":"ack","s":"bash","c":1}""",
+        )) assertNull(bad, ControlProtocol.parseTerminalFrame(bad))
+    }
+
+    @Test fun nakGoldensParseAndBadNaksAreNull() {
+        assertEquals(
+            ControlProtocol.TerminalFrame.Nak("claude", 4, ControlProtocol.NakReason.NOT_RUNNING),
+            ControlProtocol.parseTerminalFrame(frames.getString("nakNotRunning")),
+        )
+        assertEquals(
+            ControlProtocol.TerminalFrame.Nak("terminal2", 9, ControlProtocol.NakReason.TYPING_OFF),
+            ControlProtocol.parseTerminalFrame(frames.getString("nakTypingOff")),
+        )
+        for (bad in listOf(
+            """{"t":"nak","s":"claude","c":4,"reason":"bogus"}""",
+            """{"t":"nak","s":"claude","c":4}""",
+            """{"t":"nak","s":"claude","c":0,"reason":"not-running"}""",
+            """{"t":"nak","s":"claude","c":1.5,"reason":"not-running"}""",
+            """{"t":"nak","s":"bash","c":1,"reason":"not-running"}""",
+        )) assertNull(bad, ControlProtocol.parseTerminalFrame(bad))
+    }
+
+    @Test fun welcomeAppliedGoldenParsesAndOmittedMeansEmpty() {
+        assertEquals(mapOf("claude" to 3L), ControlProtocol.parseWelcome(frames.getString("welcomeApplied"))!!.applied)
+        assertEquals(emptyMap<String, Long>(), ControlProtocol.parseWelcome(frames.getString("welcome"))!!.applied)
+        val w = ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","applied":{"bash":2,"codex":1.5,"claude":4}}""")!!
+        assertEquals(mapOf("claude" to 4L), w.applied)
+    }
+
+    @Test fun threadConstantsAndCloseReasonsEqualTheSharedJson() {
+        val t = spec.getJSONObject("thread")
+        assertEquals(t.getString("slot"), ControlProtocol.THREAD_SLOT)
+        assertEquals(t.getInt("snapshotMaxEvents"), ControlProtocol.THREAD_SNAPSHOT_MAX_EVENTS)
+        assertEquals(t.getInt("textCap"), ControlProtocol.THREAD_TEXT_CAP)
+        assertEquals(t.getInt("targetCap"), ControlProtocol.THREAD_TARGET_CAP)
+        assertEquals(t.getInt("snapshotMaxBytes"), ControlProtocol.THREAD_SNAPSHOT_MAX_BYTES)
+        assertEquals(t.getInt("promptSummaryCap"), ControlProtocol.PROMPT_SUMMARY_CAP)
+        assertEquals(t.getLong("workingStaleMs"), ControlProtocol.THREAD_WORKING_STALE_MS)
+        assertEquals(
+            strings(spec.getJSONObject("messages").getJSONArray("promptCloseReasons")),
+            ControlProtocol.PromptCloseReason.values().map { it.wire },
+        )
+    }
+
+    @Test fun threadBuildersAreByteIdenticalToTheGoldens() {
+        assertEquals(frames.getString("threadAttach"), ControlProtocol.buildThreadAttach())
+        assertEquals(frames.getString("threadDetach"), ControlProtocol.buildThreadDetach())
+    }
+
+    @Test fun threadSnapGoldenParses() {
+        assertEquals(
+            ControlProtocol.ThreadFrame.Snap(
+                7, true, true, 1790000000000L,
+                listOf(
+                    ControlProtocol.ThreadEvent.User("120:0", 1790000000000L, "run the layout checks too", false),
+                    ControlProtocol.ThreadEvent.Claude("210:0", 1790000000500L, "Unit tests pass.", false),
+                    ControlProtocol.ThreadEvent.Tool("340:1", 1790000001000L, "Edit", "KeyRow.kt", 18L, 4L),
+                ),
+            ),
+            ControlProtocol.parseThreadFrame(frames.getString("threadSnap")),
+        )
+    }
+
+    @Test fun threadEvGoldenParsesJsonNullsAsNullNotStringOrZero() {
+        val f = ControlProtocol.parseThreadFrame(frames.getString("threadEv")) as ControlProtocol.ThreadFrame.Events
+        assertEquals(8L, f.q)
+        assertEquals(
+            listOf(ControlProtocol.ThreadEvent.Tool("400:0", 1790000002000L, "Bash", "./gradlew test", null, null)),
+            f.events,
+        )
+    }
+
+    @Test fun threadStateGoldenParsesNullWorkingSince() {
+        assertEquals(
+            ControlProtocol.ThreadFrame.State(9, false, null),
+            ControlProtocol.parseThreadFrame(frames.getString("threadState")),
+        )
+        val omitted = ControlProtocol.parseThreadFrame("""{"t":"thread.state","s":"claude","q":9,"working":false}""")
+        assertEquals(ControlProtocol.ThreadFrame.State(9, false, null), omitted)
+    }
+
+    @Test fun toolTargetNullAndAbsentBothParseAsNull() {
+        val ev = """{"t":"thread.ev","s":"claude","q":1,"events":[{"k":"tool","id":"1:0","at":1,"name":"Read","target":null},{"k":"tool","id":"2:0","at":2,"name":"Read"}]}"""
+        val f = ControlProtocol.parseThreadFrame(ev) as ControlProtocol.ThreadFrame.Events
+        assertEquals(listOf(null, null), f.events.map { (it as ControlProtocol.ThreadEvent.Tool).target })
+        assertEquals(listOf(null, null), f.events.map { (it as ControlProtocol.ThreadEvent.Tool).add })
+    }
+
+    @Test fun promptGoldensParse() {
+        assertEquals(
+            ControlProtocol.ThreadFrame.Opened(
+                ControlProtocol.PromptInfo("3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b", "Bash", ControlProtocol.PromptRisk.MED, "./gradlew test", 102000L),
+            ),
+            ControlProtocol.parseThreadFrame(frames.getString("prompt")),
+        )
+        assertEquals(
+            ControlProtocol.ThreadFrame.Closed("3f2b8c1e-5d4a-4e6f-9a7b-0c1d2e3f4a5b", ControlProtocol.PromptCloseReason.ANSWERED_DESKTOP),
+            ControlProtocol.parseThreadFrame(frames.getString("promptClosed")),
+        )
+        val timeout = """{"t":"prompt.closed","id":"x","reason":"timeout"}"""
+        assertEquals(ControlProtocol.ThreadFrame.Closed("x", ControlProtocol.PromptCloseReason.TIMEOUT), ControlProtocol.parseThreadFrame(timeout))
+    }
+
+    @Test fun malformedThreadFramesAreNull() {
+        val state = """{"t":"thread.state","s":"claude","q":9,"working":false,"workingSinceMs":%s}"""
+        for (bad in listOf("\"null\"", "1.5", "true", "{}")) assertNull(bad, ControlProtocol.parseThreadFrame(state.format(bad)))
+        val ev = """{"t":"thread.ev","s":"claude","q":1,"events":[%s]}"""
+        val badEvents = listOf(
+            """{"k":"user","id":"1:0","at":1,"text":"x"}""",
+            """{"k":"user","id":"1:0","at":1.5,"text":"x","truncated":false}""",
+            """{"k":"user","id":"1:0","at":1,"text":null,"truncated":false}""",
+            """{"k":"bogus","id":"1:0","at":1}""",
+            """{"k":"tool","id":"1:0","at":1,"name":"Edit","add":"null"}""",
+            """{"k":"tool","id":"1:0","at":1,"name":"Edit","add":1.5}""",
+            """{"k":"tool","id":"1:0","at":1,"name":"Edit","target":7}""",
+            """{"k":"tool","id":"1:0","at":1,"name":null}""",
+        )
+        for (b in badEvents) assertNull(b, ControlProtocol.parseThreadFrame(ev.format(b)))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","s":"claude","q":1}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","s":"claude","q":1.5,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","s":"terminal2","q":1,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.ev","q":1,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"thread.snap","s":"claude","q":7,"attached":"true","working":true,"workingSinceMs":null,"events":[]}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt","id":"a","tool":"Bash","risk":"NONE","summary":"s","ttlMs":1}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt","id":"a","tool":"Bash","risk":"LOW","summary":"s","ttlMs":1.5}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt","id":"","tool":"Bash","risk":"LOW","summary":"s","ttlMs":1}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"prompt.closed","id":"a","reason":"answered-phone"}"""))
+        assertNull(ControlProtocol.parseThreadFrame("""{"t":"snap","s":"claude","q":1,"cols":1,"rows":1,"d":""}"""))
+        assertNull(ControlProtocol.parseThreadFrame("not json"))
+    }
+
+    @Test fun viewBuildersMatchTheGoldensByteForByte() {
+        assertEquals(frames.getString("viewAttach"), ControlProtocol.buildViewAttach("projects"))
+        assertEquals(frames.getString("viewAttachParams"), ControlProtocol.buildViewAttach("comms.thread", JSONObject().put("channel", "session")))
+        assertEquals(frames.getString("viewDetach"), ControlProtocol.buildViewDetach("projects"))
+        assertFalse(ControlProtocol.buildViewAttach("projects").contains("\"p\""))
+    }
+
+    @Test fun viewSnapEnvelopeParsesNullAndObjectAndRejectsMalformed() {
+        assertEquals(ControlProtocol.ViewFrame("projects", null), ControlProtocol.parseViewFrame(frames.getString("viewSnapNull")))
+        val f = ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects","d":{"x":1}}""")!!
+        assertEquals(1, f.d!!.getInt("x"))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects"}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"projects","d":"x"}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":7,"d":null}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"view.snap","v":"","d":null}"""))
+        assertNull(ControlProtocol.parseViewFrame("""{"t":"ledger.snap","v":"projects","d":null}"""))
+    }
+
+    @Test fun welcomeViewsParsesGoldenAndAbsentKeyMeansPreChannelNull() {
+        assertEquals(emptySet<String>(), ControlProtocol.parseWelcome(frames.getString("welcome"))!!.views)
+        assertEquals(setOf("projects", "memory"), ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","views":["projects",7,"memory"]}""")!!.views)
+        assertNull(ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab"}""")!!.views)
+        assertNull(ControlProtocol.parseWelcome("""{"t":"welcome","proof":"ab","views":"projects"}""")!!.views)
+    }
+
+    @Test fun ledgerBuildersMatchTheGoldensByteForByte() {
+        assertEquals(frames.getString("ledgerAttach"), ControlProtocol.buildLedgerAttach())
+        assertEquals(frames.getString("ledgerDetach"), ControlProtocol.buildLedgerDetach())
+    }
+
+    @Test fun ledgerSnapGoldenParsesEveryField() {
+        assertEquals(
+            ControlProtocol.LedgerFrame.Snap(
+                ControlProtocol.LedgerSnapshot(
+                    1790000000000L,
+                    ControlProtocol.LedgerTotal(912.34, 140.17, 411.3, 203.19, 157.68),
+                    listOf(ControlProtocol.LedgerTier.OPUS, ControlProtocol.LedgerTier.SONNET),
+                    ControlProtocol.LedgerRollups(12.5, 391.1, 624.99),
+                    ControlProtocol.LedgerCache(52560000L, 1576.8, 157.68, 1419.12, 0.896),
+                ),
+            ),
+            ControlProtocol.parseLedgerFrame(frames.getString("ledgerSnap")),
+        )
+        assertEquals(ControlProtocol.LedgerFrame.Snap(null), ControlProtocol.parseLedgerFrame(frames.getString("ledgerSnapEmpty")))
+    }
+
+    private fun ledger(usd: String = "912.34", today: String = "12.5", hit: String = "0.896", read: String = "52560000", tiers: String = "[\"opus\"]", extra: String = ""): String =
+        "{\"t\":\"ledger.snap\",\"ledger\":{\"computedAtMs\":1790000000000,\"total\":{\"usd\":$usd,\"input\":1,\"output\":2,\"cacheCreation\":3,\"cacheRead\":4}," +
+            "\"tiers\":$tiers,\"rollups\":{\"today\":$today,\"week\":1,\"month\":2}," +
+            "\"cache\":{\"readTokens\":$read,\"wouldHaveUsd\":10,\"actualUsd\":1,\"savedUsd\":9,\"hitRate\":$hit}$extra}}"
+
+    @Test fun ledgerMoneyParsesAsIntegerFloatAndFractionButNotAString() {
+        for (v in listOf("5", "5.0", "889.44")) {
+            val f = ControlProtocol.parseLedgerFrame(ledger(usd = v)) as ControlProtocol.LedgerFrame.Snap
+            assertEquals(v, v.toDouble(), f.ledger!!.total.usd, 0.0)
+        }
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(usd = "\"5\"")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(usd = "-1")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(usd = "null")))
+    }
+
+    @Test fun ledgerRollupBucketMayBeNullButNotTheStringNull() {
+        val f = ControlProtocol.parseLedgerFrame(ledger(today = "null")) as ControlProtocol.LedgerFrame.Snap
+        assertNull(f.ledger!!.rollups.today)
+        assertEquals(1.0, f.ledger!!.rollups.week!!, 0.0)
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(today = "\"null\"")))
+    }
+
+    @Test fun ledgerRejectsOutOfRangeAndMistypedFields() {
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(hit = "1.5")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(hit = "-0.1")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(read = "1.5")))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger(tiers = "[\"opus\",\"mythos\"]")))
+        assertNull(ControlProtocol.parseLedgerFrame("{\"t\":\"ledger.snap\",\"ledger\":{\"computedAtMs\":1,\"tiers\":[],\"rollups\":{\"today\":null,\"week\":null,\"month\":null},\"cache\":{\"readTokens\":0,\"wouldHaveUsd\":0,\"actualUsd\":0,\"savedUsd\":0,\"hitRate\":0}}}"))
+        assertNull(ControlProtocol.parseLedgerFrame("{\"t\":\"ledger.snap\"}"))
+        assertNull(ControlProtocol.parseLedgerFrame(ledger().replace("ledger.snap", "thread.snap")))
+        assertNull(ControlProtocol.parseLedgerFrame("not json"))
+    }
+
+    @Test fun ledgerIgnoresUnknownExtraFieldsAndAcceptsEmptyTiers() {
+        val f = ControlProtocol.parseLedgerFrame(ledger(tiers = "[]", extra = ",\"prompt\":\"x\"")) as ControlProtocol.LedgerFrame.Snap
+        assertEquals(emptyList<ControlProtocol.LedgerTier>(), f.ledger!!.tiers)
     }
 }

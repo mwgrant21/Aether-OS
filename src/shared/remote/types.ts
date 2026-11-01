@@ -46,12 +46,18 @@ export const CONTROL_MAX_SOCKETS = 2;
 export const CONTROL_MAX_DEVICES = 1; // Matt, 2026-10-22: one paired app; replacing it is T2/T6 policy; not in the JSON
 export const CONTROL_CTL_MAX_PAYLOAD = 64 * 1024;
 export const CONTROL_RECHECK_MS = 10000;
+export const CONTROL_INPUT_MAX_BYTES = 8192;
+export const CONTROL_INPUT_MAX_BYTES_PER_SEC = 256 * 1024;
+export const CONTROL_INPUT_MAX_FRAMES_PER_SEC = 100;
+export const CONTROL_ACK_COALESCE_MS = 30;
 export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
-  phoneToTitan: ['hello', 'attach', 'detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state'],
+  phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'],
 } as const;
+export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
+export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
 export const CONTROL_BYE_REASONS = [
   'revoked',
   'disabled',
@@ -105,7 +111,10 @@ export interface ControlStatus {
   devices: RemoteSessionInfo[];
   pairingActive: boolean;
   reenableAtLaunch: boolean;
+  phoneTyping: boolean;
   notice: string | null;
+  /** Terminal slots the connected phone is attached to, in TERMINAL_SLOTS order. Absent or empty = none. Optional so existing literals stay valid. */
+  phoneSlots?: readonly TerminalSlotId[];
 }
 export type ControlPairingResult =
   | { ok: true; uri: string; code: string; qrSvg: string; expiresAtMs: number }
@@ -129,9 +138,93 @@ export interface TerminalTap {                               // callbacks are de
   size(e: { cols: number; rows: number }): void;
 }
 export interface TerminalAttachment { detach(): void }
+/** Narrow write handle for the input router (the only phone-to-pty write site). true = written to a running pty. */
+export interface TerminalWritePort { write(s: TerminalSlotId, d: string): boolean }
+export type InputResult =
+  | { kind: 'applied' | 'duplicate'; ack: number }   // ack = the cumulative cseq to report
+  | { kind: 'rejected'; c: number; reason: NakReason }   // cseq consumed, nothing written; the gateway answers with a nak
+  | { kind: 'violation'; why: string }
+  | { kind: 'rate-limit' };
+export interface InputSession {
+  input(s: TerminalSlotId, c: number, d: string): InputResult;
+  applied(): Record<string, number>;                  // { slot: last applied cseq } for this device + epoch
+  close(): void;
+}
+export interface InputPort { open(ref: string, epoch: string): InputSession }
 export interface TerminalReadPort {
   list(): TerminalInfo[];
   attach(s: TerminalSlotId, lastQ: number | null, tap: TerminalTap): TerminalAttachment;   // snapshot (async inside) or exact resume
   onState(cb: (e: { s: TerminalSlotId; state: TerminalSlotState }) => void): () => void;  // returns unsubscribe
   retain(): () => void;                                      // refcounted; returns release (idempotent)
 }
+
+// ---- Phone thread (slice 1). Pinned by mobileProtocol.test.ts against protocol/mobile-protocol.json `thread`.
+export const THREAD_SNAPSHOT_MAX_EVENTS = 200;
+export const THREAD_TEXT_CAP = 8000;                        // chars; longer text is cut and `truncated` is set
+export const THREAD_TARGET_CAP = 160;
+export const THREAD_SNAPSHOT_MAX_BYTES = 200 * 1024;        // oldest events are dropped until the snap fits
+export const PROMPT_SUMMARY_CAP = 1200;
+export const THREAD_WORKING_STALE_MS = 120000;
+export type ThreadSlotId = 'claude';
+export type ThreadEvent =
+  | { k: 'user'; id: string; at: number; text: string; truncated: boolean }
+  | { k: 'claude'; id: string; at: number; text: string; truncated: boolean }
+  | { k: 'tool'; id: string; at: number; name: string; target: string | null; add: number | null; del: number | null };
+export interface ThreadTap {                                 // callbacks are delivered in order, never re-entrantly
+  snap(e: { q: number; attached: boolean; working: boolean; workingSinceMs: number | null; events: readonly ThreadEvent[] }): void;
+  events(e: { q: number; events: readonly ThreadEvent[] }): void;
+  state(e: { q: number; working: boolean; workingSinceMs: number | null }): void;
+}
+/** attach() delivers `snap` synchronously, before it returns. */
+export interface ThreadReadPort { attach(s: ThreadSlotId, tap: ThreadTap): { detach(): void } }
+/** Closed list of generic view ids (view.attach / view.detach / view.snap). Mirrored by protocol.test.ts. */
+export const VIEW_IDS = ['projects', 'memory', 'dash', 'analytics', 'agents', 'comms', 'comms.thread', 'comms.exchange'] as const;
+export type ViewId = (typeof VIEW_IDS)[number];
+/** Views whose view.attach may carry a params object p. Per-view p schemas are enforced by each view's own validator. */
+export const VIEW_PARAM_IDS: readonly ViewId[] = ['comms.thread', 'comms.exchange'];
+/** Serialised size cap for p (UTF-8 bytes of JSON.stringify). */
+export const VIEW_PARAMS_MAX_BYTES = 512;
+/** Receives a view's payload. d is already validated by the view's encoder, or null (no data yet, or failed closed). */
+export interface ViewTap { snap(d: unknown): void }
+/** attach() delivers the current state synchronously, before it returns (same contract as LedgerReadPort). p is the validated-shape-only params object of a params view. */
+export interface ViewReadPort { attach(tap: ViewTap, p?: Record<string, unknown>): { detach(): void } }
+export const LEDGER_TIERS = ['opus', 'sonnet', 'haiku', 'fable'] as const; // must equal Object.keys(PRICING_PER_MILLION_TOKENS); protocol.test.ts pins it
+export type LedgerTier = (typeof LEDGER_TIERS)[number];
+export interface LedgerWire {
+  computedAtMs: number;
+  total: { usd: number; input: number; output: number; cacheCreation: number; cacheRead: number };
+  tiers: readonly LedgerTier[];
+  rollups: { today: number | null; week: number | null; month: number | null };
+  cache: { readTokens: number; wouldHaveUsd: number; actualUsd: number; savedUsd: number; hitRate: number };
+}
+export interface LedgerTap { snap(l: LedgerWire | null): void } // delivered in order, never re-entrantly
+/** attach() delivers the current state to tap.snap synchronously before it returns, then every publish. */
+export interface LedgerReadPort { attach(tap: LedgerTap): { detach(): void } }
+/** Input of the `projects` view encoder: per-project Ledger numbers, no paths, no optimize data. `all` is the global Ledger. */
+export interface ProjectsWire {
+  computedAtMs: number;
+  all: LedgerWire | null;
+  unscoped: LedgerWire | null;
+  roots: readonly { key: string; name: string; ledger: LedgerWire; children: readonly { key: string; worktree: string | null; ledger: LedgerWire }[] }[];
+}
+/** Input of the `memory` view encoder: memory rows as main reads them. The encoder rebuilds each row field by field, so extra fields (reference counts) never reach the wire. */
+export interface MemoryWire {
+  computedAtMs: number;
+  live: readonly {
+    id: number; scope: 'shared' | 'private'; ownerAgent: string | null; kind: 'decision' | 'preference' | 'overrule' | 'habit' | 'revision';
+    status: 'open' | 'moving' | 'settled' | null; salience: number; subject: string | null; content: string; createdAtMs: number; updatedAtMs: number;
+  }[];
+  tombstones: readonly {
+    id: number; scope: 'shared' | 'private'; ownerAgent: string | null; content: string; deletedAtMs: number;
+    cause: 'superseded' | 'operator' | 'invalidated'; supersededBy: number | null;
+  }[];
+}
+export const CONTROL_PROMPT_CLOSE_REASONS = ['answered-desktop', 'timeout'] as const;
+export type PromptCloseReason = (typeof CONTROL_PROMPT_CLOSE_REASONS)[number];
+export interface PromptInfo { id: string; tool: string; risk: 'LOW' | 'MED' | 'HIGH'; summary: string; ttlMs: number }
+export interface PromptTap {
+  opened(p: PromptInfo): void;
+  closed(e: { id: string; reason: PromptCloseReason }): void;
+}
+/** attach() replays every pending prompt as `opened` synchronously, then forwards live opened/closed. */
+export interface PromptReadPort { attach(tap: PromptTap): { detach(): void } }

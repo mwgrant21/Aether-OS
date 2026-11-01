@@ -41,10 +41,10 @@ export function sweepStaleDispatches(
   lastProgressFor?: (toolUseId: string) => number | null
 ): { staleFound: number } {
   const sessionLookup = db.prepare('SELECT last_seen_ms FROM fleet_sessions WHERE session_id = ?');
-  // updateHistory only closes an open entry via a normal tool_result; an
-  // Agent dispatch's real completion arrives as a 'user'-kind task-notification
-  // instead (see ingestDispatchEvent), so a completed Agent entry lingers in
-  // history.openByToolUseId forever. Without this guard, a dispatch that
+  // Agent entries stay open on the async-launch acknowledgement and are
+  // never removed by ingestDispatchEvent (the real completion arrives as a
+  // 'user'-kind task-notification), so a completed Agent entry lingers in
+  // history.openByToolUseId. Without this guard, a dispatch that
   // completed genuinely ('ok') would be re-swept and overwritten as 'fatal'
   // the moment it aged past the grace period / session went stale. Skipping
   // ANY existing row (ok OR already-fatal) also makes a fatal row final once

@@ -11,6 +11,7 @@ import {
   CONTROL_MAX_DEVICES,
   CONTROL_MAX_SOCKETS,
   CONTROL_PAIR_CONFIRM_TIMEOUT_MS,
+  TERMINAL_SLOTS,
 } from '../../src/shared/remote/types';
 import type {
   ControlIdentity,
@@ -20,14 +21,22 @@ import type {
   ControlSocket,
   ControlStatus,
   ListenerPort,
+  PromptReadPort,
+  LedgerReadPort,
+  ViewId,
+  ViewReadPort,
   RemoteSessionInfo,
   RemoteUnavailableReason,
   TerminalReadPort,
+  TerminalSlotId,
+  TerminalWritePort,
+  ThreadReadPort,
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
 import { createControlGateway } from './controlGateway';
 import type { ControlSession } from './controlGateway';
+import { createInputRouter } from './inputRouter';
 
 export const CONTROL_REVOKE_UNSAVED_NOTICE = 'Revoke not saved to disk yet';
 /** Flip to false only if the on-device check finds titan cannot see the phone's own 100.x as the source address. */
@@ -39,6 +48,10 @@ export interface ControlSettingsPort {
   read(): boolean;
   /** Persists the flag and returns the READBACK (what is actually stored), never the requested value. */
   persist(on: boolean): boolean;
+  /** Phone-typing switch (default ON). Optional so existing ports keep working. */
+  readTyping?(): boolean;
+  /** Persists the switch and returns the READBACK. */
+  persistTyping?(on: boolean): boolean;
 }
 
 export interface ControlHubDeps {
@@ -47,6 +60,16 @@ export interface ControlHubDeps {
   settings: ControlSettingsPort;
   /** Read-only terminal port (never the hub itself). retain() is held exactly while control is on. */
   terminals: TerminalReadPort;
+  /** Narrow write handle (write only); inputRouter is the single phone-to-pty write site. Distinct from the read-only `terminals`. */
+  input: TerminalWritePort;
+  /** Read-only Claude transcript thread. Optional: without it thread.attach is a protocol violation. */
+  threads?: ThreadReadPort;
+  /** Read-only pending permission prompts, forwarded only to thread-attached sockets. */
+  prompts?: PromptReadPort;
+  /** Read-only Ledger snapshot feed, forwarded to the gateway; only ledger-attached sockets receive ledger.snap. */
+  ledger?: LedgerReadPort;
+  /** Read-only generic view feeds by id, forwarded to the gateway; the ids present become welcome.views. */
+  views?: Partial<Record<ViewId, ViewReadPort>>;
   /** Native confirm for a pairing redeem. replacesExisting is true when a phone is already paired (it will be replaced). */
   confirmPair(peer: string | null, replacesExisting: boolean): Promise<boolean>;
   renderQr(text: string): string;
@@ -64,6 +87,7 @@ export interface ControlHub {
   status(): ControlStatus;
   setEnabled(on: boolean): Promise<ControlStatus>;
   setReenableAtLaunch(on: boolean): Promise<ControlStatus>;
+  setPhoneTyping(on: boolean): Promise<ControlStatus>;
   createPairing(): Promise<ControlPairingResult>;
   revokeAll(): Promise<ControlStatus>;
   revokeOne(ref: string): Promise<ControlStatus>;
@@ -86,6 +110,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   let reason: RemoteUnavailableReason | null = null;
   let address: string | null = null;
   let reenable = false;
+  let typing = true;
   let unsaved = false;
   let saveTimer: unknown = null;
   let saveRetries = 0;
@@ -98,11 +123,30 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   const sessions = new Map<string, ControlSession>();
   let releaseTerminals: (() => void) | null = null; // non-null exactly while this hub holds a terminals.retain()
 
+  const attachedByRef = new Map<string, readonly TerminalSlotId[]>(); // a ref's entry is deleted when its gateway reports []
+  const unionSlots = (): TerminalSlotId[] => {
+    const all = new Set<TerminalSlotId>();
+    for (const slots of attachedByRef.values()) for (const s of slots) all.add(s);
+    return TERMINAL_SLOTS.map(x => x.s).filter(s => all.has(s));
+  };
+
+  const router = createInputRouter({ terminals: deps.input, now, log: (m, r) => { log(`${m} ref=${r}`); }, typingEnabled: () => typing });
   const gateway = createControlGateway({
     now,
     setTimeoutFn: deps.setTimeoutFn,
     clearTimeoutFn: deps.clearTimeoutFn,
     terminals: deps.terminals,
+    input: router,
+    threads: deps.threads,
+    prompts: deps.prompts,
+    ledger: deps.ledger,
+    views: deps.views,
+    onAttached: (ref, slots) => {
+      const before = unionSlots().join();
+      if (slots.length === 0) attachedByRef.delete(ref);
+      else attachedByRef.set(ref, slots);
+      if (state === 'on' && unionSlots().join() !== before) emit();
+    },
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
@@ -116,7 +160,9 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       devices: auth ? auth.list() : [],
       pairingActive: counts.pairingActive,
       reenableAtLaunch: reenable,
+      phoneTyping: typing,
       notice: unsaved ? CONTROL_REVOKE_UNSAVED_NOTICE : null,
+      phoneSlots: state === 'on' ? unionSlots() : [],
     };
   }
 
@@ -135,6 +181,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       peerBinding: PEER_BINDING_ENFORCED,
     });
     reenable = deps.settings.read() === true;
+    typing = deps.settings.readTyping ? deps.settings.readTyping() !== false : true;
   }
 
   function clearSaveTimer(): void {
@@ -172,6 +219,18 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     sessions.clear();
     for (const s of open) {
       try { s.close(reasonText); } catch { /* one socket that fails to close must not keep the others, or the teardown, from finishing */ }
+    }
+  }
+
+  // A revoke (or a pairing that replaces the device) must stop typed input at once, not when the ws close event
+  // arrives: between ws.close() and that event the gateway would still route `in` frames to the router. So the hub
+  // closes the gateway session of every ref that is no longer a paired device, before the listener recheck.
+  function dropRevokedSessions(): void {
+    const live = new Set((auth?.list() ?? []).map(d => d.ref));
+    for (const [ref, s] of [...sessions]) {
+      if (live.has(ref)) continue;
+      sessions.delete(ref);
+      try { s.close('revoked'); } catch { /* the listener recheck still closes the socket */ }
     }
   }
 
@@ -273,6 +332,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     init();
     fn();
     log(line);
+    dropRevokedSessions();
     deps.listener.recheckControl();
     await settle(true);
     emit();
@@ -320,12 +380,14 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       // a disable or quit landed between the approval and the mint: nothing may stay paired (cap 1, so this is the one device)
       auth!.revokeAll();
       log('control: revoke after-approval-race');
+      dropRevokedSessions();
       deps.listener.recheckControl();
       await settle(false);
       emit();
       return { status: 403 };
     }
     log('control: paired');
+    dropRevokedSessions();
     deps.listener.recheckControl(); // a superseded device's live sockets stop authenticating
     await settle(true);
     emit();
@@ -364,14 +426,23 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     status,
     port,
     async setEnabled(on) {
-      await queue(on ? enable : disable);
-      emit();
+      try {
+        await queue(on ? enable : disable);
+      } finally {
+        emit(); // a disable that throws after state = 'off' must still reach onStatus, which clears the phone view caches
+      }
       return status();
     },
     async setReenableAtLaunch(on) {
       init();
       if (state !== 'on') return status();
       reenable = deps.settings.persist(on) === true; // report the readback, never the requested value
+      emit();
+      return status();
+    },
+    async setPhoneTyping(on) {
+      init();
+      typing = deps.settings.persistTyping ? deps.settings.persistTyping(on) !== false : on; // report the readback, never the requested value
       emit();
       return status();
     },

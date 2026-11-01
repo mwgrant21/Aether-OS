@@ -41,6 +41,8 @@ export function ControlAccessCard() {
   const [now, setNow] = useState(() => Date.now());
   // True while a createPairing call is in flight: a second call could resolve first and leave the older code showing.
   const [pairingBusy, setPairingBusy] = useState(false);
+  // True while a setPhoneTyping call is in flight: a second click could resolve first and leave the older value showing.
+  const [typingBusy, setTypingBusy] = useState(false);
 
   const control = window.aetherElectron?.control;
   const adopt = (s: ControlStatus) => setLocal({ base: hookStatus, status: s });
@@ -97,6 +99,18 @@ export function ControlAccessCard() {
       setMessage('Could not change the launch setting.');
     }
   };
+  const setTyping = async (value: boolean) => {
+    if (typingBusy) return;
+    setMessage(null);
+    setTypingBusy(true);
+    try {
+      adopt(await control.setPhoneTyping(value));
+    } catch {
+      setMessage('Could not change the typing setting.');
+    } finally {
+      setTypingBusy(false);
+    }
+  };
   const pair = async () => {
     setMessage(null);
     setPairingBusy(true);
@@ -149,6 +163,22 @@ export function ControlAccessCard() {
       {on && (
         <p style={{ ...hintStyle(colors), marginTop: 4 }}>
           When checked, phone control turns itself back on the next time Aether starts. Disabling phone control clears this setting.
+        </p>
+      )}
+      {on && (
+        <label style={{ ...hintStyle(colors), display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={status.phoneTyping}
+            disabled={typingBusy}
+            onChange={e => void setTyping(e.target.checked)}
+          />
+          ALLOW PHONE TYPING
+        </label>
+      )}
+      {on && (
+        <p style={{ ...hintStyle(colors), marginTop: 4 }}>
+          When off, a connected phone can still watch terminals but anything it types is refused and nothing reaches the terminal.
         </p>
       )}
 

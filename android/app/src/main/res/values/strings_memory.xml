@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="view_memory">Memory</string>
+    <string name="view_memory_desc">Memory, what the agents remember, read only</string>
+
+    <string name="memory_loading">Loading memory</string>
+    <string name="memory_no_snapshot">No memory snapshot yet. This fills in when titan next reads the memory store.</string>
+    <string name="memory_unreadable">Memory data from titan could not be read. Update Aether on titan and on this phone.</string>
+    <string name="memory_unsupported">This titan does not serve Memory. Update Aether on titan.</string>
+
+    <string name="memory_chip_all">All</string>
+    <string name="memory_chip_shared">Shared</string>
+    <string name="memory_chip_live">Live memories</string>
+    <string name="memory_chip_tombstones">Tombstones</string>
+    <string name="memory_chip_selected">%1$s, selected</string>
+
+    <string name="memory_group_shared">SHARED (%1$d)</string>
+    <string name="memory_group_agent">%1$s (%2$d)</string>
+    <string name="memory_empty_live">No live memories.</string>
+    <string name="memory_empty_tombstones">No tombstones.</string>
+    <string name="memory_tombstones_title">TOMBSTONES (%1$d)</string>
+
+    <string name="memory_kind_decision">DECISION</string>
+    <string name="memory_kind_preference">PREFERENCE</string>
+    <string name="memory_kind_overrule">OVERRULE</string>
+    <string name="memory_kind_habit">HABIT</string>
+    <string name="memory_kind_revision">REVISION</string>
+    <string name="memory_status_open">OPEN</string>
+    <string name="memory_status_moving">MOVING</string>
+    <string name="memory_status_settled">SETTLED</string>
+    <string name="memory_scope_shared">SHARED</string>
+    <string name="memory_scope_private">PRIVATE</string>
+    <string name="memory_cause_superseded">Superseded by a newer memory</string>
+    <string name="memory_cause_operator">Deleted by the operator</string>
+    <string name="memory_cause_invalidated">Invalidated</string>
+    <string name="memory_cause_badge_superseded">SUPERSEDED</string>
+    <string name="memory_cause_badge_operator">OPERATOR</string>
+    <string name="memory_cause_badge_invalidated">INVALIDATED</string>
+
+    <string name="memory_row_desc">%1$s, %2$s, salience %3$s. Open detail</string>
+    <string name="memory_tomb_row_desc">Tombstone, %1$s, %2$s. Open detail</string>
+
+    <string name="memory_sheet_label">Memory detail</string>
+    <string name="memory_sheet_dismiss">Close detail</string>
+    <string name="memory_sheet_content">CONTENT</string>
+    <string name="memory_sheet_salience">SALIENCE</string>
+    <string name="memory_sheet_cause">CAUSE</string>
+    <string name="memory_sheet_when_updated">%1$s · updated %2$s</string>
+    <string name="memory_sheet_when_deleted">deleted %1$s</string>
+    <string name="memory_sheet_superseded_by">superseded by #%1$s</string>
+
+    <plurals name="memory_age_minutes">
+        <item quantity="one">%1$d minute ago</item>
+        <item quantity="other">%1$d minutes ago</item>
+    </plurals>
+    <plurals name="memory_age_hours">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <plurals name="memory_age_days">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+    <string name="memory_age_just_now">just now</string>
+    <string name="memory_updated">Updated %1$s</string>
+    <string name="memory_stale">Stale: titan has not refreshed this in over 5 minutes</string>
+</resources>

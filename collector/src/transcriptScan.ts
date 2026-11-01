@@ -178,8 +178,9 @@ export function scanTranscriptsOnce(
         // completion out across every open dispatch.
         // result.history (not priorHistory) is used so an Agent tool_use
         // and its completion arriving in the same scan tick still correlate --
-        // updateHistory never closes an Agent entry via a normal tool_result, so
-        // the open entry survives into result.history either way.
+        // updateHistory keeps an Agent entry open on the async-launch
+        // acknowledgement and ingestDispatchEvent never removes it, so the open
+        // entry survives into result.history either way.
         for (const event of notifications) {
           ingestDispatchEvent(db, result.history, event, { toolErrorsFor });
         }

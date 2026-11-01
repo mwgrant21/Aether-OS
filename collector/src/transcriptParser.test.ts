@@ -154,6 +154,20 @@ describe('parseTranscriptLine tool use/result parsing', () => {
     expect(event?.toolResults).toEqual([{ toolUseId: 'tu_1', resultLength: 20 }]);
   });
 
+  it('flags only the "Async agent launched" ack as asyncLaunch, for array and string content', () => {
+    const line = (content: unknown) => JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu_1', content }] },
+    });
+    const ack = 'Async agent launched successfully. (This tool result is ...';
+    const flag = (content: unknown) => parseTranscriptLine(line(content))?.toolResults[0].asyncLaunch;
+    expect(flag([{ type: 'text', text: ack }])).toBe(true);
+    expect(flag(ack)).toBe(true);
+    expect(flag([{ type: 'text', text: 'Fork started — processing in background' }])).toBeFalsy();
+    expect(flag('Failed to create worktree')).toBeFalsy();
+    expect(flag([{ type: 'text', text: 'all done' }])).toBeFalsy();
+  });
+
   it('returns empty arrays for events with no tool activity', () => {
     const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
     const event = parseTranscriptLine(line);

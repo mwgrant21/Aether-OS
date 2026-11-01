@@ -31,6 +31,18 @@ describe('createMemoryExtractQueue', () => {
     expect(queue.size()).toBe(0);
     expect(queue.drain()).toEqual([]);
   });
+
+  it('ignores a repeated toolUseId, including after it was drained', () => {
+    const queue = createMemoryExtractQueue();
+    queue.push(baseItem);
+    queue.push({ ...baseItem });
+    expect(queue.size()).toBe(1);
+    queue.drain();
+    queue.push({ ...baseItem });
+    expect(queue.size()).toBe(0);
+    queue.push({ ...baseItem, toolUseId: 'tu_2' });
+    expect(queue.size()).toBe(1);
+  });
 });
 
 describe('drainMemoryExtractQueue', () => {
