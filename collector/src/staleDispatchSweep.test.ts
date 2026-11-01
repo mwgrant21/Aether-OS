@@ -239,6 +239,64 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
     expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - THIRTY_MIN - 1).staleFound).toBe(1);
     db.close();
   });
+  describe('session absent from fleet_sessions: transcript mtime fallback', () => {
+    const NOW = 100000;
+    const run = (mtime: number | null | undefined, extra: Partial<{ sessionId: string | null }> = {}, own?: string | null) => {
+      const db = freshDb();
+      const h = historyWithOpen('tu_t', { startedAt: 0, sessionId: 'alive' in extra ? null : (extra.sessionId ?? 'alive') });
+      const calls: string[] = [];
+      const probe = mtime === undefined ? undefined : (sid: string) => { calls.push(sid); return mtime; };
+      const r = sweepStaleDispatches(db, h, NOW, undefined, own, probe);
+      const row: any = db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_t');
+      db.close();
+      return { r, row, calls };
+    };
+
+    it('fresh transcript mtime (<30s) -> not swept', () => {
+      expect(run(NOW - 10000).r.staleFound).toBe(0);
+    });
+
+    it('stale transcript mtime (>30s) -> fatal (the incident case)', () => {
+      const { r, row } = run(NOW - 31000);
+      expect(r.staleFound).toBe(1);
+      expect(row.exit_state).toBe('fatal');
+    });
+
+    it('fleet row present with fresh last_seen is unchanged (not swept, no stat)', () => {
+      const db = freshDb();
+      db.prepare('INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms) VALUES (?, 1, ?, ?, ?, ?, 0, ?)').run('alive', 'p', 'k', 's', 'n', NOW - 1000);
+      const calls: string[] = [];
+      const r = sweepStaleDispatches(db, historyWithOpen('tu_f', { startedAt: 0, sessionId: 'alive' }), NOW, undefined, null, (s) => { calls.push(s); return 0; });
+      expect(r.staleFound).toBe(0);
+      expect(calls).toEqual([]);
+      db.close();
+    });
+
+    it('no transcript path known (probe returns null or absent) -> swept as before', () => {
+      expect(run(null).r.staleFound).toBe(1);
+      expect(run(undefined).r.staleFound).toBe(1);
+    });
+
+    it('pinned own session stays exempt without stat', () => {
+      const { r, calls } = run(NOW - 60000, {}, 'alive');
+      expect(r.staleFound).toBe(0);
+      expect(calls).toEqual([]);
+    });
+
+    it('stats once per session per pass across many open dispatches', () => {
+      const db = freshDb();
+      const h = createEmptyHistory();
+      for (const id of ['a', 'b', 'c']) {
+        h.openByToolUseId[id] = { toolName: 'Agent', filePath: null, startedAt: 0, subagentType: 'x', sessionId: 'alive' };
+      }
+      const calls: string[] = [];
+      const r = sweepStaleDispatches(db, h, NOW, undefined, null, (s) => { calls.push(s); return NOW - 5000; });
+      expect(r.staleFound).toBe(0);
+      expect(calls).toEqual(['alive']);
+      db.close();
+    });
+  });
+
   describe('own (pinned) session', () => {
     it('is not fataled for lacking a fleet_sessions row', () => {
       const db = freshDb();

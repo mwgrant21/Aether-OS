@@ -146,6 +146,10 @@ export function scanTranscriptsOnce(
       const relativePath = join(dirName, file);
       const sessionBase = file.replace(/\.jsonl$/, '');
       const subagentProbe = linkIndex.probeFor(sessionBase);
+      const transcriptMtimeFor = (sid: string): number | null => {
+        if (sid !== sessionBase) return null;
+        try { return statSync(filePath).mtimeMs; } catch { return null; }
+      };
       const offset = getLastOffset(db, relativePath);
       let lines: string[];
       let newOffset: number;
@@ -175,7 +179,7 @@ export function scanTranscriptsOnce(
         // autocommit upsert, so no transaction is needed. An async-launched Agent
         // entry stays open (the launch ack does not close it), so these files
         // would otherwise pay a synchronous=FULL commit every tick.
-        sweepStaleDispatches(db, priorHistory, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
+        sweepStaleDispatches(db, priorHistory, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId, transcriptMtimeFor);
         filesScanned += 1;
       } else if (!idle) {
         const parsedEvents = lines
@@ -214,7 +218,7 @@ export function scanTranscriptsOnce(
           // sweep-stamped fatal rows whose entry is still open. ownSessionId (the pin, read fresh by the caller each scan) exempts the
           // pinned session from the not-in-fleet_sessions test. Its progress probe only stats subagent files of
           // dispatches that have no row yet.
-          sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
+          sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId, transcriptMtimeFor);
           recordOffset(db, relativePath, newOffset, nowMs);
           return { anomalyResult: result, usageCount: usage };
         });
