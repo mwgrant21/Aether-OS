@@ -24,6 +24,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 import { startCollector, memoryExtractionTick } from './index.js';
 import { createMemoryStore } from './memoryStore.js';
 import { createMemoryExtractQueue } from './memoryExtractQueue.js';
+import { openDatabase, migrate } from './schema.js';
+import { logDrift } from './canary.js';
 
 function agentToolUseLine(toolUseId: string, timestamp: string): string {
   return JSON.stringify({
@@ -286,6 +288,41 @@ describe('memoryExtractionTick', () => {
     await memoryExtractionTick(store, queue, settings, execFn);
     expect(execFn).toHaveBeenCalledTimes(1);
     expect(queue.size()).toBe(0);
+    store.close();
+  });
+
+  it('failure: an exec timeout reaches onIssue once through the tick', async () => {
+    const store = createMemoryStore(join(dir, 'memory.db'));
+    const settings = join(dir, 'collector-settings.json');
+    writeFileSync(settings, '{"memoryExtractionEnabled":true}', 'utf8');
+    const queue = queueWithOneItem();
+    const execFn = vi.fn(async () => {
+      throw Object.assign(new Error('timed out'), { killed: true });
+    });
+    const onIssue = vi.fn();
+    await memoryExtractionTick(store, queue, settings, execFn, onIssue);
+    expect(onIssue).toHaveBeenCalledTimes(1);
+    expect(onIssue.mock.calls[0][0]).toContain('exec_failed: timeout');
+    store.close();
+  });
+
+  it('failure: logDrift as onIssue writes one memory extraction drift_log row', async () => {
+    const store = createMemoryStore(join(dir, 'memory.db'));
+    const db = openDatabase(join(dir, 'collector.db'));
+    migrate(db);
+    const settings = join(dir, 'collector-settings.json');
+    writeFileSync(settings, '{"memoryExtractionEnabled":true}', 'utf8');
+    const queue = queueWithOneItem();
+    const execFn = vi.fn(async () => {
+      throw Object.assign(new Error('timed out'), { killed: true });
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await memoryExtractionTick(store, queue, settings, execFn, (d) => logDrift(db, 1, d));
+    errSpy.mockRestore();
+    const rows = db.prepare('SELECT detail FROM drift_log').all() as { detail: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail.startsWith('memory extraction ')).toBe(true);
+    db.close();
     store.close();
   });
 });
