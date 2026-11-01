@@ -128,6 +128,10 @@ export function ingestDispatchEvent(
     outcome.status,
   );
   noteDispatchRescore(db, endedAtMs);
+  // The dispatch is closed: drop its open entry so the file can go idle and the
+  // stale sweep stops offering it. Mutates the passed history; callers pass the
+  // fresh copy from updateHistory and only keep it after the transaction commits.
+  delete history.openByToolUseId[dispatchToolUseId];
   return true;
 }
 

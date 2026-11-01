@@ -46,11 +46,12 @@ export function sweepStaleDispatches(
   ownSessionId?: string | null
 ): { staleFound: number } {
   const sessionLookup = db.prepare('SELECT last_seen_ms FROM fleet_sessions WHERE session_id = ?');
-  // Agent entries stay open on the async-launch acknowledgement and are
-  // never removed by ingestDispatchEvent (the real completion arrives as a
-  // 'user'-kind task-notification), so a completed Agent entry lingers in
-  // history.openByToolUseId. Without this guard, a dispatch that
-  // completed genuinely ('ok') would be re-swept and overwritten as 'fatal'
+  // Agent entries stay open on the async-launch acknowledgement; the real
+  // completion arrives as a 'user'-kind task-notification and
+  // ingestDispatchEvent then removes the entry. Entries that already have a row
+  // can still reach this loop (a sweep-stamped fatal row whose entry was never
+  // closed, or history that was not pruned). Without this guard, a dispatch that
+  // completed genuinely ('ok') could be re-swept and overwritten as 'fatal'
   // the moment it aged past the grace period / session went stale. Skipping
   // ANY existing row (ok OR already-fatal) also makes a fatal row final once
   // written, instead of being re-upserted with a drifting duration_ms on every

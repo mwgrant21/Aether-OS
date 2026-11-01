@@ -200,21 +200,18 @@ export function scanTranscriptsOnce(
           // result.history (not priorHistory) is used so an Agent tool_use
           // and its completion arriving in the same scan tick still correlate --
           // updateHistory keeps an Agent entry open on the async-launch
-          // acknowledgement and ingestDispatchEvent never removes it, so the open
-          // entry survives into result.history either way.
+          // acknowledgement, so the open entry survives into result.history either
+          // way; ingestDispatchEvent removes it once the completion is stored.
           for (const event of notifications) {
             ingestDispatchEvent(db, result.history, event, { toolErrorsFor });
           }
 
           // Fatal-via-staleness sweep: run after the above ingest work so it sees
-          // this tick's freshest history. ingestDispatchEvent does not mutate
-          // history or remove entries from openByToolUseId, so an Agent entry
-          // that just completed via ingestDispatchEvent above still survives into
-          // result.history and is offered to the sweep below. It is only
-          // the existing-row guard inside sweepStaleDispatches (in
-          // staleDispatchSweep.ts) that prevents that already-completed dispatch
-          // from being re-flagged as fatal -- that guard is load-bearing, not
-          // redundant. ownSessionId (the pin, read fresh by the caller each scan) exempts the
+          // this tick's freshest history. ingestDispatchEvent removes the entry
+          // of a dispatch it just completed from result.history.openByToolUseId, so
+          // the sweep below is not offered it. The existing-row guard inside
+          // sweepStaleDispatches (in staleDispatchSweep.ts) stays load-bearing for
+          // sweep-stamped fatal rows whose entry is still open. ownSessionId (the pin, read fresh by the caller each scan) exempts the
           // pinned session from the not-in-fleet_sessions test. Its progress probe only stats subagent files of
           // dispatches that have no row yet.
           sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
