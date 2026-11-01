@@ -19,7 +19,7 @@ if (process.env.FAKE_CLAUDE_EXIT_AFTER_MS) {
   setTimeout(() => process.exit(0), Number(process.env.FAKE_CLAUDE_EXIT_AFTER_MS));
 }
 if (process.env.FAKE_CLAUDE_GRANDCHILD === '1') {
-  const gc = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', windowsHide: true });
+  const gc = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', windowsHide: true, detached: true });
   process.stderr.write('gc=' + gc.pid + '\n');
   setInterval(() => {}, 1000);
 }
