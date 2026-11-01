@@ -45,11 +45,11 @@ describe('phoneAnalyticsPayload', () => {
     expect(p.burn.map((b: any) => b.description)).toEqual(['desc t2']);
   });
   it('keeps the valid burn rows in token order when a NaN-token row sits between them', () => {
-    const pool = ['a', 'b', 'nan', 'c', 'd'].map((id) => agent(id, 0));
-    const tok: Record<string, number> = { a: 100, b: 300, nan: NaN, c: 500, d: 200 };
+    const pool = ['a', 'b', 'c', 'd', 'nan', 'e'].map((id) => agent(id, 0));
+    const tok: Record<string, number> = { a: 100, b: 300, c: 400, d: 500, nan: NaN, e: 200 };
     const dispatchUsage = Object.fromEntries(pool.map((d) => [d.toolUseId, { tokens: tok[d.toolUseId], toolUses: 1, durationMs: 1 }]));
     const p = get({ recentCompletedDispatches: pool, dispatchUsage });
-    expect(p.burn.map((b: any) => b.tokens)).toEqual([500, 300, 200, 100]);
+    expect(p.burn.map((b: any) => b.tokens)).toEqual([500, 400, 300, 200, 100]);
   });
   it('sends only the first word of each persisted command (cmdHist), lower-cased, top 5, never a command line', () => {
     const cmdHist = ['status now', 'Status', 'budget --verbose SECRET-ARG', 'a', 'b', 'c', 'd'];
