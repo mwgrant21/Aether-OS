@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { maskSecrets, SECRET_LABEL_SOURCE } from '../../src/shared/board/text';
 import { createSpeechFilter } from './speechFilter';
 
 function run(deltas: string[], opts?: Parameters<typeof createSpeechFilter>[0]) {
@@ -191,4 +192,86 @@ describe('leak property', () => {
       expect(run(chars(text)).all).toContain('[redacted]');
     });
   }
+});
+
+describe('label/value cross-product', () => {
+  const LABELS = [
+    'password',
+    'api_key',
+    'client_secret',
+    'private_key',
+    'pwd',
+    'auth_token',
+    'access-token',
+    'secret_key_base',
+    'SECRET-KEY-BASE',
+    'secret_key_id',
+    'db_password',
+    '"password"',
+    '\\"password\\"',
+  ];
+  const SEPS = [': ', ':\n', ':\r\n', '=\n\n'];
+  const QUOTED_VALUE = 'correct horse. battery staple? done';
+  const BARE_VALUE = 'hunter2Hunter2xyz';
+  const STYLES: Array<[string, string, string]> = [
+    ['none', '', BARE_VALUE],
+    ['double', '"', QUOTED_VALUE],
+    ['single', "'", QUOTED_VALUE],
+    ['escaped', '\\"', QUOTED_VALUE],
+  ];
+  const windows = (v: string) => {
+    const w: string[] = [];
+    for (let k = 0; k + 8 <= v.length; k += 4) w.push(v.slice(k, k + 8));
+    return w;
+  };
+  const leaks = (all: string, v: string) => windows(v).some((w) => all.includes(w));
+
+  it('never leaks where whole-text maskSecrets hides the value', () => {
+    let checked = 0;
+    for (const label of LABELS) {
+      for (const sep of SEPS) {
+        for (const [style, quote, value] of STYLES) {
+          const text = 'Intro line. ' + label + sep + quote + value + quote + ' and then more words. Last.';
+          if (leaks(maskSecrets(text), value)) continue;
+          checked++;
+          const tag = JSON.stringify([label, sep, style]);
+          expect(leaks(run([text]).all, value), 'whole ' + tag).toBe(false);
+          for (let i = 0; i <= text.length; i++) {
+            expect(leaks(run([text.slice(0, i), text.slice(i)]).all, value), 'split ' + i + ' ' + tag).toBe(false);
+          }
+          expect(leaks(run(chars(text)).all, value), '1-char ' + tag).toBe(false);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('never leaks across a holdCap forced release', () => {
+    const prose = 'Status looks fine and the deploy is progressing nicely today '.repeat(6);
+    expect(prose.length).toBeGreaterThan(300);
+    for (const [label, sep, value] of [
+      ['password', ': ', BARE_VALUE],
+      ['secret_key_base', ':\n', BARE_VALUE],
+      ['api_key', ' = "', QUOTED_VALUE + '"'],
+    ]) {
+      const text = prose + label + sep + value + ' done.';
+      expect(leaks(maskSecrets(text), value)).toBe(false);
+      expect(leaks(run([text]).all, value)).toBe(false);
+      for (let i = 0; i <= text.length; i++) {
+        expect(leaks(run([text.slice(0, i), text.slice(i)]).all, value), 'split ' + i + ' ' + label).toBe(false);
+      }
+      expect(leaks(run(chars(text)).all, value), '1-char ' + label).toBe(false);
+    }
+  });
+
+  it('drift: every label maskSecrets treats as a secret key holds the filter open', () => {
+    for (const label of LABELS) {
+      const bare = label.replace(/\\?"/g, '');
+      expect(maskSecrets(bare + ': ' + BARE_VALUE), bare).toContain('[redacted]');
+      const f = createSpeechFilter();
+      expect(f.push('Note. ' + bare + ':\n').spoken.join(''), bare).toBe('Note. ');
+    }
+    expect(SECRET_LABEL_SOURCE).toContain('secret');
+    expect(SECRET_LABEL_SOURCE).toContain('base|id');
+  });
 });

@@ -5,7 +5,7 @@
 // before it leaves, so a secret split across deltas cannot be matched half at a time.
 // Residual limit: a secret shape longer than holdCap with no sentence break can
 // straddle a forced release. A PEM block is held whole (up to PEM_HOLD_MAX).
-import { capBody, maskSecrets } from '../../src/shared/board/text';
+import { capBody, maskSecrets, SECRET_LABEL_SOURCE } from '../../src/shared/board/text';
 import { VOICE_DISPLAY_CAP, VOICE_SPOKEN_CAP } from '../../src/shared/voice/types';
 
 const PEM_HOLD_MAX = 16 * 1024;
@@ -24,20 +24,64 @@ export interface SpeechFilter {
   end(): { spoken: string[]; display: string; spokenDone: boolean };
 }
 
-// Labels whose value follows in the next token; mirrors the maskSecrets rules.
-const LABEL =
-  'password|passwd|pwd|secret[_-]?(?:access[_-]?)?key|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|bearer';
-const OPEN_LABEL = new RegExp('(?:' + LABEL + ')\\W*$', 'i');
-const OPEN_QUOTE = new RegExp(
-  '(?:' + LABEL + ')\\\\?["\']?\\s*[:=]\\s*(["\'])(?:(?!\\1)[\\s\\S])*$',
-  'i',
+// A unit boundary must not separate a secret's label from its value, or the per-unit
+// mask misses what the whole-text mask hides. The label alternation comes from
+// maskSecrets' own ASSIGN_RE (SECRET_LABEL_SOURCE), so the two cannot drift.
+const OPEN_LABEL = new RegExp('(?:' + SECRET_LABEL_SOURCE + '|bearer)\\W*$', 'i');
+const QUOTE_OPEN = new RegExp(
+  '(?<![A-Za-z0-9])(?:' + SECRET_LABEL_SOURCE + ')\\b\\\\?["\']?\\s*[:=]\\s*(\\\\?)(["\'])',
+  'gi',
 );
 
-// A boundary right after a label, or inside a quoted value that follows one, would
-// split the label from its value and defeat the per-unit mask.
+// True when s ends inside a quoted value opened after a label. The scan mirrors
+// ASSIGN_RE's value alternatives (plain quote with \ escapes, or an escaped \" quote
+// closed by an unescaped backslash-quote); a real newline ends either kind of value.
+function inOpenValue(s: string): boolean {
+  QUOTE_OPEN.lastIndex = 0;
+  for (let m = QUOTE_OPEN.exec(s); m; m = QUOTE_OPEN.exec(s)) {
+    const escaped = m[1] === '\\';
+    const q = m[2];
+    let i = m.index + m[0].length;
+    let closed = false;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === '\n' || c === '\r') {
+        closed = true;
+        break;
+      }
+      if (c === '\\') {
+        if (escaped) {
+          if (s.startsWith('\\\\\\\\', i)) {
+            i += 4;
+            continue;
+          }
+          if (s.startsWith('\\\\\\' + q, i)) {
+            i += 4;
+            continue;
+          }
+          if (s[i + 1] === q) {
+            closed = true;
+            break;
+          }
+        }
+        i += s[i + 1] === '\n' || s[i + 1] === '\r' ? 1 : 2;
+        continue;
+      }
+      if (!escaped && c === q) {
+        closed = true;
+        break;
+      }
+      i++;
+    }
+    if (!closed) return true;
+    QUOTE_OPEN.lastIndex = i;
+  }
+  return false;
+}
+
 function splitsSecret(s: string, end: number): boolean {
   const head = s.slice(0, end);
-  return OPEN_LABEL.test(head) || OPEN_QUOTE.test(head);
+  return OPEN_LABEL.test(head) || inOpenValue(head);
 }
 
 // Index just past the first complete unit in s, or -1 when there is none yet.
@@ -161,7 +205,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
       if (pending.length > holdCap) {
         let ws = -1;
         for (let i = pending.length - 1; i >= 0; i--) {
-          if (/\s/.test(pending[i])) {
+          if (/\s/.test(pending[i]) && !splitsSecret(pending, i + 1)) {
             ws = i;
             break;
           }

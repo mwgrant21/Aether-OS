@@ -44,6 +44,13 @@ const RULES: Array<[RegExp, string]> = [
 // after the body, so matching is linear.
 const ASSIGN_RE =
   /(?<![A-Za-z0-9])(password|passwd|pwd|secret[_-]?(?:access[_-]?)?key(?:[_-]?(?:base|id))?|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b(\\?["']?)(\s*[:=]\s*)(?:(?<qa>["'])(?<vqa>(?:\\.?|(?!\k<qa>)[^\\\r\n])*)(?<ca>\k<qa>)?|\\(?<qb>["'])(?<vqb>(?:(?!\\\k<qb>)(?:\\{4}|\\{3}\k<qb>|\\.?|[^\\\r\n]))*)(?<cb>\\\k<qb>)?|(?<vu>[^\s"',;[]{6,}))/gi;
+// The label alternation of ASSIGN_RE, read back out of its source so consumers (the
+// voice speech filter) track it instead of keeping a copy that can drift.
+export const SECRET_LABEL_SOURCE: string = (() => {
+  const m = /^\(\?<!\[A-Za-z0-9\]\)\((.*?)\)\\b\(\\\\\?/.exec(ASSIGN_RE.source);
+  if (!m) throw new Error('ASSIGN_RE label prefix changed');
+  return m[1];
+})();
 const TYPE_WORDS = new Set([
   'string',
   'number',
