@@ -139,6 +139,19 @@ describe('voiceSession protocol', () => {
     expect(text).toBe('café ☃ ok');
   });
 
+  it('the fake [[secret]] turn emits a real maskable key and password split across chunks', async () => {
+    const h = harness();
+    h.session.start();
+    await waitFor(() => ready(h));
+    h.session.send('turn0001', '[[secret]]');
+    await waitFor(() => !!resultFor(h, 'turn0001'));
+    const deltas = h.events.filter((e) => e.k === 'delta').map((e) => (e as { text: string }).text);
+    expect(deltas.length).toBeGreaterThanOrEqual(2);
+    const text = deltas.join('');
+    expect(text).toMatch(/sk-ant-[A-Za-z0-9]{30,}/);
+    expect(text).toContain('password=hunter2hunter2');
+  });
+
   it('emits permission events and answers them over stdin', async () => {
     const h = harness();
     h.session.start();
