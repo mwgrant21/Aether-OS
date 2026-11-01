@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,6 +119,73 @@ describe('drainMemoryExtractQueue', () => {
         }),
       ).resolves.not.toThrow();
       expect(callCount).toBe(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('reports an exec timeout through onIssue with ids and the sanitized reason', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const queue = createMemoryExtractQueue();
+      queue.push(baseItem);
+      const onIssue = vi.fn();
+      await drainMemoryExtractQueue(
+        store,
+        queue,
+        async () => {
+          throw Object.assign(new Error('timed out'), { killed: true });
+        },
+        onIssue,
+      );
+      expect(onIssue).toHaveBeenCalledTimes(1);
+      const detail = onIssue.mock.calls[0][0] as string;
+      expect(detail).toContain('memory extraction ');
+      expect(detail).toContain('CINDER');
+      expect(detail).toContain('tu_1');
+      expect(detail).toContain('exec_failed: timeout');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('never puts run content from an exec error message into onIssue', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const queue = createMemoryExtractQueue();
+      queue.push({ ...baseItem, runSummary: 'CANARY-RUN-SUMMARY' });
+      const onIssue = vi.fn();
+      await drainMemoryExtractQueue(
+        store,
+        queue,
+        async () => {
+          throw Object.assign(new Error('Command failed: claude -p CANARY-RUN-SUMMARY'), { code: 1 });
+        },
+        onIssue,
+      );
+      expect(onIssue).toHaveBeenCalledTimes(1);
+      expect(onIssue.mock.calls[0][0]).not.toContain('CANARY');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('a failed item is reported, not re-queued, and does not stop the next item', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const queue = createMemoryExtractQueue();
+      queue.push({ ...baseItem, toolUseId: 'tu_1' });
+      queue.push({ ...baseItem, toolUseId: 'tu_2' });
+      const onIssue = vi.fn();
+      const execFn = vi.fn(async () => {
+        if (execFn.mock.calls.length === 1) throw Object.assign(new Error('x'), { killed: true });
+        return { stdout: '[]' };
+      });
+      await drainMemoryExtractQueue(store, queue, execFn, onIssue);
+      expect(execFn).toHaveBeenCalledTimes(2);
+      expect(queue.size()).toBe(0);
+      expect(onIssue).toHaveBeenCalledTimes(1);
+      expect(onIssue.mock.calls[0][0]).toContain('tu_1');
     } finally {
       cleanup();
     }

@@ -1,16 +1,18 @@
 import { REMOTE_REPLAY_BYTES } from '../../src/shared/remote/types';
 import type { ChatEvent } from './types';
 
-export interface ReplayBuffer {
-  push(e: ChatEvent): void;
-  snapshot(): ChatEvent[];
+export interface ReplayBuffer<T = ChatEvent> {
+  push(e: T): void;
+  snapshot(): T[];
   clear(): void;
   readonly bytes: number;
 }
 
 /** Bounded buffer of the newest chat events. Size is UTF-8 bytes of the JSON form. Memory only. */
-export function createReplayBuffer(maxBytes: number = REMOTE_REPLAY_BYTES): ReplayBuffer {
-  let items: { e: ChatEvent; size: number }[] = [];
+export function createReplayBuffer<T = ChatEvent>(
+  maxBytes: number = REMOTE_REPLAY_BYTES,
+): ReplayBuffer<T> {
+  let items: { e: T; size: number }[] = [];
   let total = 0;
   return {
     push(e) {

@@ -18,6 +18,7 @@ import type { PermissionAutoAllowLevel } from '../src/shared/permissionRisk';
 import type { TranscriptReadResult, TranscriptSource } from './transcriptReader';
 import type { VerifierStatus, VerificationEvent } from '../src/shared/crossEngineTypes';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
+import type { VoicePairingResult, VoiceStatus } from '../src/shared/voice/types';
 import type { CommunicationPayload } from '../src/shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from './communicationBridge/mainIntegration';
 import type { QuotaEfficiency } from '../src/shared/quotaEfficiency';
@@ -50,6 +51,18 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, status: RemoteStatus) => callback(status);
       ipcRenderer.on('remote:statusChanged', listener);
       return () => ipcRenderer.removeListener('remote:statusChanged', listener);
+    },
+  },
+  voice: {
+    status: (): Promise<VoiceStatus> => ipcRenderer.invoke('voice:status'),
+    setEnabled: (enabled: boolean): Promise<VoiceStatus> => ipcRenderer.invoke('voice:setEnabled', enabled),
+    createPairing: (): Promise<VoicePairingResult> => ipcRenderer.invoke('voice:createPairing'),
+    revokeAll: (): Promise<VoiceStatus> => ipcRenderer.invoke('voice:revokeAll'),
+    revokeOne: (ref: string): Promise<VoiceStatus> => ipcRenderer.invoke('voice:revokeOne', ref),
+    onStatus: (callback: (status: VoiceStatus) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: VoiceStatus) => callback(status);
+      ipcRenderer.on('voice:statusChanged', listener);
+      return () => ipcRenderer.removeListener('voice:statusChanged', listener);
     },
   },
   control: {

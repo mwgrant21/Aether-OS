@@ -100,7 +100,8 @@ export function scanTranscriptsOnce(
   projectsRoot: string,
   nowMs: number,
   historyByFile: Map<string, ToolCallHistory>,
-  extractQueue?: MemoryExtractQueue
+  extractQueue?: MemoryExtractQueue,
+  ownSessionId: string | null = null
 ): { filesScanned: number; eventsIngested: number; toolCallsIngested: number; anomaliesIngested: number } {
   // Stamped first and unconditionally: the heartbeat proves the scan cycle is
   // alive, not that it succeeded (see stampTranscriptScanHeartbeat), so the
@@ -156,94 +157,113 @@ export function scanTranscriptsOnce(
         continue;
       }
 
-      const parsedEvents = lines
-        .map((l) => parseTranscriptLine(l))
-        .filter((e): e is NonNullable<typeof e> => e !== null);
-      const notifications = parsedEvents.filter((e) => e.originKind === 'task-notification');
-      const toolErrorsFor = resolveToolErrors(notifications, subagentProbe);
       const priorHistory = historyByFile.get(relativePath) ?? createEmptyHistory();
+      // Idle fast path: a file with no new bytes and no open Agent entry has
+      // nothing to parse, ingest or sweep, and its offset is already recorded, so
+      // opening a transaction (a synchronous=FULL commit, ~20 ms) would only
+      // rewrite last_scanned_ms, which nothing reads. A file with an open Agent
+      // entry runs only the staleness sweep (below), which must still fire on a
+      // later tick with no new bytes.
+      const noNewBytes = lines.length === 0 && newOffset === offset;
+      const hasOpenAgent = Object.values(priorHistory.openByToolUseId).some((o) => o.toolName === 'Agent');
+      const idle = noNewBytes && !hasOpenAgent;
+      if (noNewBytes && hasOpenAgent) {
+        // Idle with an open Agent entry: only the staleness sweep can change
+        // anything. Nothing was parsed, so the history and offset are unchanged
+        // (no historyByFile.set, no recordOffset), and the sweep skips entries
+        // that already have a dispatches row and writes a stale one as a single
+        // autocommit upsert, so no transaction is needed. An async-launched Agent
+        // entry stays open (the launch ack does not close it), so these files
+        // would otherwise pay a synchronous=FULL commit every tick.
+        sweepStaleDispatches(db, priorHistory, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
+        filesScanned += 1;
+      } else if (!idle) {
+        const parsedEvents = lines
+          .map((l) => parseTranscriptLine(l))
+          .filter((e): e is NonNullable<typeof e> => e !== null);
+        const notifications = parsedEvents.filter((e) => e.originKind === 'task-notification');
+        const toolErrorsFor = resolveToolErrors(notifications, subagentProbe);
 
-      const { anomalyResult, usageCount } = inTransaction(db, () => {
-        let usage = 0;
-        for (const event of parsedEvents) {
-          if (ingestUsageEvent(db, event, relativePath)) usage += 1;
+        const { anomalyResult, usageCount } = inTransaction(db, () => {
+          let usage = 0;
+          for (const event of parsedEvents) {
+            if (ingestUsageEvent(db, event, relativePath)) usage += 1;
+          }
+          const result = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
+
+          // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
+          // own guards and no-ops unless the event is a genuine 'user'-kind
+          // 'task-notification' carrying a <tool-use-id> that matches a still-open
+          // 'Agent' tool call, so it is simply offered every task-notification --
+          // no loop over openByToolUseId, which is what previously fanned one
+          // completion out across every open dispatch.
+          // result.history (not priorHistory) is used so an Agent tool_use
+          // and its completion arriving in the same scan tick still correlate --
+          // updateHistory keeps an Agent entry open on the async-launch
+          // acknowledgement, so the open entry survives into result.history either
+          // way; ingestDispatchEvent removes it once the completion is stored.
+          for (const event of notifications) {
+            ingestDispatchEvent(db, result.history, event, { toolErrorsFor });
+          }
+
+          // Fatal-via-staleness sweep: run after the above ingest work so it sees
+          // this tick's freshest history. ingestDispatchEvent removes the entry
+          // of a dispatch it just completed from result.history.openByToolUseId, so
+          // the sweep below is not offered it. The existing-row guard inside
+          // sweepStaleDispatches (in staleDispatchSweep.ts) stays load-bearing for
+          // sweep-stamped fatal rows whose entry is still open. ownSessionId (the pin, read fresh by the caller each scan) exempts the
+          // pinned session from the not-in-fleet_sessions test. Its progress probe only stats subagent files of
+          // dispatches that have no row yet.
+          sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
+          recordOffset(db, relativePath, newOffset, nowMs);
+          return { anomalyResult: result, usageCount: usage };
+        });
+        historyByFile.set(relativePath, anomalyResult.history);
+        eventsIngested += usageCount;
+        toolCallsIngested += anomalyResult.toolCallsIngested;
+        anomaliesIngested += anomalyResult.anomaliesIngested;
+        filesScanned += 1;
+
+        // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
+        // SS2). extractQueue is optional so every existing caller (including this
+        // file's own tests) is unaffected when omitted -- extraction is simply
+        // skipped. Reads event.humanText (already parsed, already in memory for
+        // this scan tick), never re-opens the file and never persists the text
+        // anywhere.
+        if (extractQueue) {
+          for (const event of parsedEvents) {
+            if (event.originKind !== 'task-notification') continue;
+            const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
+            if (!idMatch) continue;
+            const toolUseId = idMatch[1];
+
+            const row = db
+              .prepare(
+                'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
+              )
+              .get(toolUseId) as
+              | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number | null; tool_uses: number | null; exit_state: string }
+              | undefined;
+            if (!row || !row.agent_id) continue;
+            if (row.exit_state !== 'ok') continue;
+            if (row.duration_ms === null || row.tool_uses === null) continue;
+            if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
+
+            const runSummary = extractDispatchResultText(event.humanText);
+            if (!runSummary) continue;
+
+            extractQueue.push({
+              agentId: row.agent_id,
+              taskKind: row.task_kind ?? row.agent_id,
+              sessionId: row.session_id,
+              toolUseId,
+              runSummary,
+              queuedAtMs: nowMs,
+            });
+          }
         }
-        const result = ingestToolCallsAndAnomalies(db, priorHistory, parsedEvents, nowMs, relativePath);
 
-        // Dispatch (Agent subagent) completion. ingestDispatchEvent applies its
-        // own guards and no-ops unless the event is a genuine 'user'-kind
-        // 'task-notification' carrying a <tool-use-id> that matches a still-open
-        // 'Agent' tool call, so it is simply offered every task-notification --
-        // no loop over openByToolUseId, which is what previously fanned one
-        // completion out across every open dispatch.
-        // result.history (not priorHistory) is used so an Agent tool_use
-        // and its completion arriving in the same scan tick still correlate --
-        // updateHistory keeps an Agent entry open on the async-launch
-        // acknowledgement and ingestDispatchEvent never removes it, so the open
-        // entry survives into result.history either way.
-        for (const event of notifications) {
-          ingestDispatchEvent(db, result.history, event, { toolErrorsFor });
-        }
-
-        // Fatal-via-staleness sweep: run after the above ingest work so it sees
-        // this tick's freshest history. ingestDispatchEvent does not mutate
-        // history or remove entries from openByToolUseId, so an Agent entry
-        // that just completed via ingestDispatchEvent above still survives into
-        // result.history and is offered to the sweep below. It is only
-        // the existing-row guard inside sweepStaleDispatches (in
-        // staleDispatchSweep.ts) that prevents that already-completed dispatch
-        // from being re-flagged as fatal -- that guard is load-bearing, not
-        // redundant. Its progress probe only stats subagent files of
-        // dispatches that have no row yet.
-        sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
-        recordOffset(db, relativePath, newOffset, nowMs);
-        return { anomalyResult: result, usageCount: usage };
-      });
-      historyByFile.set(relativePath, anomalyResult.history);
-      eventsIngested += usageCount;
-      toolCallsIngested += anomalyResult.toolCallsIngested;
-      anomaliesIngested += anomalyResult.anomaliesIngested;
-      filesScanned += 1;
-
-      // Memory Layer 2 wiring (docs/superpowers/specs/2026-07-31-memory-layer2-wiring-design.md
-      // SS2). extractQueue is optional so every existing caller (including this
-      // file's own tests) is unaffected when omitted -- extraction is simply
-      // skipped. Reads event.humanText (already parsed, already in memory for
-      // this scan tick), never re-opens the file and never persists the text
-      // anywhere.
-      if (extractQueue) {
-        for (const event of parsedEvents) {
-          if (event.originKind !== 'task-notification') continue;
-          const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
-          if (!idMatch) continue;
-          const toolUseId = idMatch[1];
-
-          const row = db
-            .prepare(
-              'SELECT agent_id, task_kind, session_id, duration_ms, tool_uses, exit_state FROM dispatches WHERE tool_use_id = ?',
-            )
-            .get(toolUseId) as
-            | { agent_id: string | null; task_kind: string | null; session_id: string | null; duration_ms: number | null; tool_uses: number | null; exit_state: string }
-            | undefined;
-          if (!row || !row.agent_id) continue;
-          if (row.exit_state !== 'ok') continue;
-          if (row.duration_ms === null || row.tool_uses === null) continue;
-          if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
-
-          const runSummary = extractDispatchResultText(event.humanText);
-          if (!runSummary) continue;
-
-          extractQueue.push({
-            agentId: row.agent_id,
-            taskKind: row.task_kind ?? row.agent_id,
-            sessionId: row.session_id,
-            toolUseId,
-            runSummary,
-            queuedAtMs: nowMs,
-          });
-        }
       }
-
       // Subagent dispatch transcripts (Stage-5-era gap, closed here): each
       // dispatch's own tool calls live in a separate file this loop
       // otherwise never visits. See the reconciliation note §1.
@@ -267,6 +287,9 @@ export function scanTranscriptsOnce(
         } catch {
           continue;
         }
+        // Idle subagent file: nothing new to ingest, and nested histories are never
+        // swept (see below), so skip the transaction and the offset rewrite.
+        if (subLines.length === 0 && subNewOffset === subOffset) continue;
         const subParsedEvents = subLines.map((l) => parseTranscriptLine(l)).filter((e): e is NonNullable<typeof e> => e !== null);
 
         // A dispatched subagent's assistant turns carry their own token usage,

@@ -26,10 +26,14 @@ const SESSION_STALE_MS = 30000;
  * Two independent fatal conditions, either one triggers:
  *   (a) the dispatch's session has no fleet_sessions row at all, OR that row's
  *       last_seen_ms is older than SESSION_STALE_MS -- but only checked once
- *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old.
+ *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old. The
+ *       pinned (own) session, ownSessionId, is exempt from this condition:
+ *       filterOwnSession (fleetPoll.ts) removes it from fleet_sessions, so its
+ *       absence there says nothing about liveness.
  *   (b) no progress for longer than STALL_MS (./severity/isStalled.js, 30 min),
  *       measured from lastProgressFor (the dispatch's subagent file mtime),
  *       falling back to the entry's start, regardless of session liveness.
+ *       This still applies to the pinned session.
  *
  * Only 'Agent'-named open entries are ever swept; any other tool call is left
  * untouched regardless of age.
@@ -38,14 +42,16 @@ export function sweepStaleDispatches(
   db: DatabaseSync,
   history: ToolCallHistory,
   nowMs: number,
-  lastProgressFor?: (toolUseId: string) => number | null
+  lastProgressFor?: (toolUseId: string) => number | null,
+  ownSessionId?: string | null
 ): { staleFound: number } {
   const sessionLookup = db.prepare('SELECT last_seen_ms FROM fleet_sessions WHERE session_id = ?');
-  // Agent entries stay open on the async-launch acknowledgement and are
-  // never removed by ingestDispatchEvent (the real completion arrives as a
-  // 'user'-kind task-notification), so a completed Agent entry lingers in
-  // history.openByToolUseId. Without this guard, a dispatch that
-  // completed genuinely ('ok') would be re-swept and overwritten as 'fatal'
+  // Agent entries stay open on the async-launch acknowledgement; the real
+  // completion arrives as a 'user'-kind task-notification and
+  // ingestDispatchEvent then removes the entry. Entries that already have a row
+  // can still reach this loop (a sweep-stamped fatal row whose entry was never
+  // closed, or history that was not pruned). Without this guard, a dispatch that
+  // completed genuinely ('ok') could be re-swept and overwritten as 'fatal'
   // the moment it aged past the grace period / session went stale. Skipping
   // ANY existing row (ok OR already-fatal) also makes a fatal row final once
   // written, instead of being re-upserted with a drifting duration_ms on every
@@ -75,7 +81,8 @@ export function sweepStaleDispatches(
     const ageMs = nowMs - open.startedAt;
 
     let sessionEnded = false;
-    if (ageMs >= SESSION_CHECK_MIN_AGE_MS) {
+    const isOwnSession = ownSessionId != null && open.sessionId === ownSessionId;
+    if (!isOwnSession && ageMs >= SESSION_CHECK_MIN_AGE_MS) {
       const row = sessionLookup.get(open.sessionId) as { last_seen_ms: number } | undefined;
       sessionEnded = !row || nowMs - row.last_seen_ms > SESSION_STALE_MS;
     }

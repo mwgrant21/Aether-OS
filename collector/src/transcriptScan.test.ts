@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, statSync, utimesSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, statSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
@@ -248,6 +248,123 @@ describe('scanTranscriptsOnce', () => {
     expect(rows[0].exit_state).toBe('ok');
     expect(rows[1].tool_use_id).toBe('tu_b');
     expect(rows[1].exit_state).toBe('fatal');
+    db.close();
+  });
+
+  it('ingests a queued_command task-notification attachment as ok before the sweep can fatal it', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const ack = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tu_q', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }],
+      },
+    });
+    const notification = JSON.stringify({
+      type: 'attachment',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:18Z',
+      attachment: {
+        type: 'queued_command',
+        commandMode: 'task-notification',
+        prompt:
+          '<task-notification><tool-use-id>tu_q</tool-use-id><status>completed</status>' +
+          '<usage><subagent_tokens>90</subagent_tokens><tool_uses>7</tool_uses><duration_ms>17993</duration_ms></usage></task-notification>',
+      },
+    });
+    writeFileSync(
+      join(projDir, 'session.jsonl'),
+      `${agentToolUseLine('tu_q', '2026-07-08T09:00:00Z')}
+${ack}
+${notification}
+`,
+      'utf8'
+    );
+
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 58), new Map());
+
+    const row: any = db.prepare('SELECT exit_state, tool_uses, dispatch_status FROM dispatches WHERE tool_use_id = ?').get('tu_q');
+    expect(row).toEqual({ exit_state: 'ok', tool_uses: 7, dispatch_status: 'completed' });
+    db.close();
+  });
+
+  it('does not sweep an open dispatch from the pinned session, but sweeps it when the pin is not passed', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'session.jsonl'), `${agentToolUseLine('tu_pin', '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+
+    const pinned = freshDb();
+    scanTranscriptsOnce(pinned, projectsRoot, nowMs, new Map(), undefined, 's1');
+    expect(pinned.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    pinned.close();
+
+    const unpinned = freshDb();
+    scanTranscriptsOnce(unpinned, projectsRoot, nowMs, new Map());
+    const row: any = unpinned.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_pin');
+    expect(row.exit_state).toBe('fatal');
+    unpinned.close();
+  });
+
+  it('a late task-notification overwrites a sweep fatal when the same history map is reused', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const file = join(projDir, 'session.jsonl');
+    const ack = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tu_late', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }],
+      },
+    });
+    writeFileSync(file, `${agentToolUseLine('tu_late', '2026-07-08T09:00:00Z')}
+${ack}
+`, 'utf8');
+    const history = new Map();
+    const db = freshDb();
+
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 40), history);
+    const first: any = db.prepare('SELECT exit_state, started_at_ms FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(first.exit_state).toBe('fatal');
+
+    const completion = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:50Z',
+      origin: { kind: 'task-notification' },
+      message: {
+        content: [
+          {
+            type: 'text',
+            text:
+              '<tool-use-id>tu_late</tool-use-id><subagent_tokens>90</subagent_tokens><tool_uses>3</tool_uses>' +
+              '<duration_ms>12000</duration_ms><status>completed</status>',
+          },
+        ],
+      },
+    });
+    appendFileSync(file, `${completion}
+`, 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 1, 0), history);
+
+    const second: any = db
+      .prepare('SELECT exit_state, tool_uses, duration_ms, dispatch_status, started_at_ms FROM dispatches WHERE tool_use_id = ?')
+      .get('tu_late');
+    expect(second).toEqual({
+      exit_state: 'ok',
+      tool_uses: 3,
+      duration_ms: 12000,
+      dispatch_status: 'completed',
+      started_at_ms: first.started_at_ms,
+    });
     db.close();
   });
 
@@ -753,6 +870,222 @@ describe('scanTranscriptsOnce -- a failed file checkpoints nothing', () => {
     expect((db.prepare('SELECT COUNT(*) AS n FROM usage_events').get() as any).n).toBe(0);
     expect((db.prepare('SELECT COUNT(*) AS n FROM transcript_files').get() as any).n).toBe(0);
     expect(histories.size).toBe(0);
+    db.close();
+  });
+});
+
+describe('scanTranscriptsOnce -- idle files are not rewritten', () => {
+  const closedRead = (id: string) => [
+    JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:00Z',
+      message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: 'src/a.ts' } }] },
+    }),
+    JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:01Z',
+      message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+    }),
+  ].join('\n') + '\n';
+  const fileRow = (db: ReturnType<typeof freshDb>, rel: string) =>
+    db.prepare('SELECT last_offset, last_scanned_ms FROM transcript_files WHERE file_path = ?').get(rel) as
+      | { last_offset: number; last_scanned_ms: number }
+      | undefined;
+
+  it('does not rewrite a top-level file with no new bytes and no open Agent entry', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'session.jsonl'), closedRead('tu_1'), 'utf8');
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, 1000, history);
+    const first = fileRow(db, join('my-project', 'session.jsonl'));
+    scanTranscriptsOnce(db, projectsRoot, 2000, history);
+    expect(first?.last_scanned_ms).toBe(1000);
+    expect(fileRow(db, join('my-project', 'session.jsonl'))).toEqual(first);
+    db.close();
+  });
+
+  it('does not rewrite an idle subagent file', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'sess-1.jsonl'), closedRead('tu_top'), 'utf8');
+    const subagentsDir = join(projDir, 'sess-1', 'subagents');
+    mkdirSync(subagentsDir, { recursive: true });
+    writeFileSync(join(subagentsDir, 'agent-x.jsonl'), closedRead('tu_sub'), 'utf8');
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, 1000, history);
+    const rel = join('my-project', 'sess-1', 'subagents', 'agent-x.jsonl');
+    const first = fileRow(db, rel);
+    expect(first?.last_scanned_ms).toBe(1000);
+    scanTranscriptsOnce(db, projectsRoot, 2000, history);
+    expect(fileRow(db, rel)).toEqual(first);
+    db.close();
+  });
+
+  it('still sweeps a ghost dispatch on a later tick when the file has no new bytes', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'session.jsonl'), `${agentToolUseLine('tu_ghost', '2026-07-08T09:00:00Z')}\n`, 'utf8');
+    const t0 = Date.UTC(2026, 6, 8, 9, 0, 0);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    const row: any = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_ghost');
+    expect(row.exit_state).toBe('fatal');
+    db.close();
+  });
+
+  it('picks up new bytes appended after an idle tick', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const file = join(projDir, 'session.jsonl');
+    writeFileSync(file, closedRead('tu_1'), 'utf8');
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, 1000, history);
+    scanTranscriptsOnce(db, projectsRoot, 2000, history);
+    appendFileSync(file, assistantLine(5) + '\n', 'utf8');
+    const result = scanTranscriptsOnce(db, projectsRoot, 3000, history);
+    expect(result.eventsIngested).toBe(1);
+    expect(fileRow(db, join('my-project', 'session.jsonl'))?.last_scanned_ms).toBe(3000);
+    db.close();
+  });
+});
+
+describe('scanTranscriptsOnce -- idle files with an open Agent entry skip the transaction', () => {
+  const t0 = Date.UTC(2026, 6, 8, 9, 0, 0);
+  const setup = (names: string[]) => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    for (const n of names) {
+      writeFileSync(join(projDir, `${n}.jsonl`), `${agentToolUseLine(`tu_${n}`, '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    }
+    return { projectsRoot, projDir };
+  };
+  const fileRows = (db: ReturnType<typeof freshDb>) =>
+    db.prepare('SELECT file_path, last_offset, last_scanned_ms FROM transcript_files ORDER BY file_path').all();
+  const countBegins = (db: ReturnType<typeof freshDb>) => {
+    let n = 0;
+    const orig = db.exec.bind(db);
+    db.exec = (sql: string) => {
+      if (sql.trim().toUpperCase().startsWith('BEGIN')) n += 1;
+      return orig(sql);
+    };
+    return () => n;
+  };
+
+  it('leaves transcript_files and an existing dispatches row untouched on idle ticks', () => {
+    const { projectsRoot } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    const rowsBefore = fileRows(db);
+    const dispatchBefore = db.prepare('SELECT * FROM dispatches').all();
+    expect(dispatchBefore).toHaveLength(1);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 50_000, history);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 60_000, history);
+    expect(fileRows(db)).toEqual(rowsBefore);
+    expect(db.prepare('SELECT * FROM dispatches').all()).toEqual(dispatchBefore);
+    db.close();
+  });
+
+  it('issues no BEGIN for idle open-Agent files (only the final rescore transaction)', () => {
+    const { projectsRoot } = setup(['a', 'b', 'c']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    const begins = countBegins(db);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 6_000, history);
+    expect(begins()).toBe(1);
+    db.close();
+  });
+
+  it('still sweeps an idle open-Agent file once stale, as one complete row', () => {
+    const { projectsRoot } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    const before = fileRows(db);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    const rows: any[] = db.prepare('SELECT * FROM dispatches').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tool_use_id).toBe('tu_session');
+    expect(rows[0].exit_state).toBe('fatal');
+    expect(fileRows(db)).toEqual(before);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 70_000, history);
+    expect(db.prepare('SELECT * FROM dispatches').all()).toEqual(rows);
+    db.close();
+  });
+
+  it('ingests bytes appended to an idle open-Agent file and advances its offset and history', () => {
+    const { projectsRoot, projDir } = setup(['session']);
+    const file = join(projDir, 'session.jsonl');
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 6_000, history);
+    appendFileSync(file, assistantLine(5) + '\n', 'utf8');
+    const result = scanTranscriptsOnce(db, projectsRoot, t0 + 7_000, history);
+    expect(result.eventsIngested).toBe(1);
+    const row: any = db.prepare('SELECT last_offset, last_scanned_ms FROM transcript_files').get();
+    expect(row).toEqual({ last_offset: statSync(file).size, last_scanned_ms: t0 + 7_000 });
+    expect(Object.keys(history.get(join('my-project', 'session.jsonl')).openByToolUseId)).toContain('tu_session');
+    db.close();
+  });
+
+  it('prunes a completed Agent entry so the file goes fully idle on the next tick', () => {
+    const { projectsRoot, projDir } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    appendFileSync(join(projDir, 'session.jsonl'), taskNotificationLine('tu_session', '2026-07-08T09:00:10Z') + String.fromCharCode(10), 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 6_000, history);
+    expect(db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_session')).toEqual({ exit_state: 'ok' });
+    expect(Object.keys(history.get(join('my-project', 'session.jsonl')).openByToolUseId)).not.toContain('tu_session');
+    const rowsBefore = fileRows(db);
+    const begins = countBegins(db);
+    const result = scanTranscriptsOnce(db, projectsRoot, t0 + 7_000, history);
+    expect(result.filesScanned).toBe(0);
+    expect(begins()).toBe(1);
+    expect(fileRows(db)).toEqual(rowsBefore);
+    db.close();
+  });
+
+  it('a late completion after a sweep fatal flips the row and then prunes the entry', () => {
+    const { projectsRoot, projDir } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    const key = join('my-project', 'session.jsonl');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    expect(db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_session')).toEqual({ exit_state: 'fatal' });
+    expect(Object.keys(history.get(key).openByToolUseId)).toContain('tu_session');
+    appendFileSync(join(projDir, 'session.jsonl'), taskNotificationLine('tu_session', '2026-07-08T09:00:50Z') + String.fromCharCode(10), 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 60_000, history);
+    expect(db.prepare('SELECT exit_state, tool_uses FROM dispatches WHERE tool_use_id = ?').get('tu_session')).toEqual({ exit_state: 'ok', tool_uses: 6 });
+    expect(Object.keys(history.get(key).openByToolUseId)).not.toContain('tu_session');
+    db.close();
+  });
+
+  it('keeps the pinned session exempt from the sweep on idle ticks', () => {
+    const { projectsRoot } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history, undefined, 's1');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history, undefined, 's1');
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
     db.close();
   });
 });

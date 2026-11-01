@@ -230,6 +230,7 @@ describe('cross-engine Codex boundary', () => {
     ['electron/crossEngine/providers/claudeHeadlessCli.ts', 'test-only adapter, privacy §12'],
     ['collector/src/fleetPoll.ts', '`claude agents --json` session listing, no prompt, no model; argv pinned'],
     ['collector/src/memoryExtract.ts', 'opt-in memory extraction, default off, gated in collector/src/index.ts; privacy §14'],
+    ['electron/voice/voiceSession.ts', 'opt-in voice gateway session, privacy §18, hooks disabled, no persistence'],
   ]);
 
   function posixRel(file: string): string {

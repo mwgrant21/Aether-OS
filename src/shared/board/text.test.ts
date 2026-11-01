@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capBody, maskSecrets } from './text';
+import { capBody, maskSecrets, SECRET_LABEL_SOURCE } from './text';
 
 describe('maskSecrets', () => {
   it('masks an Anthropic key', () => {
@@ -309,5 +309,15 @@ describe('capBody', () => {
     const x = 'a'.repeat(7989) + ' sk-ant-' + 'z'.repeat(40);
     expect(capBody(maskSecrets(x)).body).not.toContain('sk-ant-');
     expect(capBody(x).body).toContain('sk-ant-');
+  });
+});
+
+describe('SECRET_LABEL_SOURCE', () => {
+  it('is the label alternation of the key=value rule', () => {
+    expect(SECRET_LABEL_SOURCE.length).toBeGreaterThan(0);
+    for (const label of ['password', 'passwd', 'pwd', 'api[_-]?key', 'client[_-]?secret', 'base|id']) {
+      expect(SECRET_LABEL_SOURCE).toContain(label);
+    }
+    expect(new RegExp('^(?:' + SECRET_LABEL_SOURCE + ')$', 'i').test('SECRET-KEY-BASE')).toBe(true);
   });
 });

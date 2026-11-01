@@ -1,9 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore } from './memoryStore.js';
-import { runExtractor } from './memoryExtract.js';
+import { runExtractor, defaultExtractExec, EXTRACT_TIMEOUT_MS } from './memoryExtract.js';
+
+const execFileMock = vi.hoisted(() => vi.fn());
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFile: execFileMock };
+});
 
 function tempStore() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-memextract-'));
@@ -70,11 +76,38 @@ describe('runExtractor', () => {
     try {
       const result = await runExtractor(
         { store, writer: 'CINDER', sourceKind: 'run', runSummary: 'x', existingMemories: [] },
-        async () => { throw new Error('spawn ENOENT'); },
+        async () => { throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }); },
       );
-      expect(result.parseError).toBe('exec_failed: spawn ENOENT');
+      expect(result.parseError).toBe('exec_failed: ENOENT');
       expect(result.added).toBe(0);
       expect(result.rejected).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('reports exec_failed: timeout when the child was killed by the timeout', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const result = await runExtractor(
+        { store, writer: 'CINDER', sourceKind: 'run', runSummary: 'x', existingMemories: [] },
+        async () => { throw Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }); },
+      );
+      expect(result.parseError).toBe('exec_failed: timeout');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('never puts the exec error message (which carries the prompt) in parseError', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const result = await runExtractor(
+        { store, writer: 'CINDER', sourceKind: 'run', runSummary: 'x', existingMemories: [] },
+        async () => { throw new Error('Command failed: claude -p SECRET-RUN-SUMMARY'); },
+      );
+      expect(result.parseError).toBe('exec_failed: error');
+      expect(result.parseError).not.toContain('SECRET-RUN-SUMMARY');
     } finally {
       cleanup();
     }
@@ -132,5 +165,22 @@ describe('runExtractor', () => {
     } finally {
       cleanup();
     }
+  });
+});
+
+describe('defaultExtractExec', () => {
+  it('runs claude with hooks disabled via --settings and a bounded timeout', async () => {
+    execFileMock.mockReset();
+    execFileMock.mockImplementation((...a: unknown[]) => {
+      const cb = a[a.length - 1];
+      if (typeof cb === 'function') cb(null, { stdout: '[]', stderr: '' });
+    });
+    await defaultExtractExec('hello');
+    const [file, args, opts] = execFileMock.mock.calls[0] as [string, string[], { timeout?: number }];
+    expect(file).toBe('claude');
+    const i = args.indexOf('--settings');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('{"disableAllHooks":true}');
+    expect(opts.timeout).toBe(EXTRACT_TIMEOUT_MS);
   });
 });

@@ -131,3 +131,50 @@ describe('pollAndUpsertFleet', () => {
     db.close();
   });
 });
+
+describe('startCollector -- pinned session reaches the stale-dispatch sweep', () => {
+  function runInitialScan(pin: string | null): number {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-index-pin-'));
+    const projectsRoot = join(dir, 'projects');
+    mkdirSync(join(projectsRoot, 'proj'), { recursive: true });
+    const ownSessionFilePath = join(dir, 'own-session.json');
+    if (pin !== null) writeFileSync(ownSessionFilePath, JSON.stringify({ sessionId: pin, updatedAtMs: 1 }), 'utf8');
+    writeFileSync(
+      join(projectsRoot, 'proj', 's1.jsonl'),
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 's1',
+        timestamp: new Date(Date.now() - 60_000).toISOString(),
+        message: { model: 'claude-sonnet-4-6', content: [{ type: 'tool_use', id: 'tu_pin', name: 'Agent', input: {} }] },
+      }) + '\n',
+      'utf8'
+    );
+    const dbPath = join(dir, 'collector.db');
+    const stop = startCollector({
+      dbPath,
+      spoolDir: join(dir, 'spool'),
+      tailIntervalMs: 1_000_000,
+      compactIntervalMs: 1_000_000,
+      projectsRoot,
+      transcriptScanIntervalMs: 1_000_000,
+      ownSessionFilePath,
+      fleetPollIntervalMs: 1_000_000,
+      memoryDbPath: join(dir, 'memory.db'),
+      memoryExtractIntervalMs: 1_000_000,
+      collectorSettingsPath: join(dir, 'collector-settings.json'),
+    });
+    const db = openDatabase(dbPath);
+    const c: any = db.prepare('SELECT COUNT(*) AS c FROM dispatches').get();
+    db.close();
+    stop();
+    return c.c;
+  }
+
+  it('the initial scan does not fatal an open dispatch from the session named in own-session.json', () => {
+    expect(runInitialScan('s1')).toBe(0);
+  });
+
+  it('with no own-session.json the same dispatch is swept as fatal (behaviour unchanged)', () => {
+    expect(runInitialScan(null)).toBe(1);
+  });
+});

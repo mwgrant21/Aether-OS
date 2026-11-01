@@ -7,6 +7,7 @@ import { compact } from './retention.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { pollFleet, upsertFleetSessions, type FleetExecFn } from './fleetPoll.js';
+import { logDrift } from './canary.js';
 import { readOwnSessionId } from './ownSessionFile.js';
 import { createMemoryStore } from './memoryStore.js';
 import {
@@ -51,14 +52,15 @@ export async function memoryExtractionTick(
   store: MemoryStore,
   queue: MemoryExtractQueue,
   settingsPath: string,
-  execFn?: ExtractExecFn
+  execFn?: ExtractExecFn,
+  onIssue?: (detail: string) => void
 ): Promise<void> {
   const batch = queue.drain();
   for (const item of batch) {
     if (!readMemoryExtractionEnabled(settingsPath)) return;
     const single = createMemoryExtractQueue();
     single.push(item);
-    await drainMemoryExtractQueue(store, single, execFn);
+    await drainMemoryExtractQueue(store, single, execFn, onIssue);
   }
 }
 
@@ -87,11 +89,18 @@ export function startCollector(options: {
   // Passing no queue skips enqueueing entirely, so dispatch result text is not even
   // staged in memory while memory extraction is off.
   const scanQueue = () => (readMemoryExtractionEnabled(options.collectorSettingsPath) ? extractQueue : undefined);
-  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, scanQueue());
-  const transcriptScanTimer = setInterval(
-    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, scanQueue()),
-    options.transcriptScanIntervalMs
-  );
+  // The pin changes at runtime, so it is re-read on every scan, never captured once.
+  const scan = () =>
+    scanTranscriptsOnce(
+      db,
+      options.projectsRoot,
+      Date.now(),
+      toolCallHistoryByFile,
+      scanQueue(),
+      readOwnSessionId(options.ownSessionFilePath)
+    );
+  scan();
+  const transcriptScanTimer = setInterval(scan, options.transcriptScanIntervalMs);
 
   pollAndUpsertFleet(db, options.ownSessionFilePath).catch((err) =>
     console.error('[aether-collector] fleet poll failed:', err)
@@ -102,11 +111,15 @@ export function startCollector(options: {
     );
   }, options.fleetPollIntervalMs);
 
-  memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath).catch((err) =>
+  memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
+      logDrift(db, Date.now(), d)
+  ).catch((err) =>
     console.error('[aether-collector] memory extraction failed:', err)
   );
   const memoryExtractTimer = setInterval(() => {
-    memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath).catch((err) =>
+    memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
+      logDrift(db, Date.now(), d)
+  ).catch((err) =>
       console.error('[aether-collector] memory extraction failed:', err)
     );
   }, options.memoryExtractIntervalMs);

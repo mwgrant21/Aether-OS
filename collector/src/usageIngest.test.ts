@@ -136,6 +136,38 @@ describe('ingestDispatchEvent', () => {
     db.close();
   });
 
+  it('removes the closed dispatch from openByToolUseId and leaves unrelated open entries', () => {
+    const db = freshDb();
+    const history = updateHistory(openDispatch('tu_1', 1000), [{
+      kind: 'assistant', sessionId: null, timestamp: new Date(2000), cwd: null, model: null, usage: null,
+      toolUses: [{ id: 'tu_2', name: 'Agent', input: { subagent_type: 'general-purpose' } }],
+      toolResults: [], humanText: null, originKind: null,
+    }], 2000);
+    expect(Object.keys(history.openByToolUseId).sort()).toEqual(['tu_1', 'tu_2']);
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_1', 13000))).toBe(true);
+    expect(Object.keys(history.openByToolUseId)).toEqual(['tu_2']);
+    db.close();
+  });
+
+  it('ignores a replayed notification for an already closed dispatch and leaves the row unchanged', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_1', 13000, { tokens: 111 }))).toBe(true);
+    const first = db.prepare('SELECT * FROM dispatches').all();
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_1', 14000, { tokens: 222 }))).toBe(false);
+    expect(db.prepare('SELECT * FROM dispatches').all()).toEqual(first);
+    expect(first).toHaveLength(1);
+    db.close();
+  });
+
+  it('leaves history untouched when the notification id matches no open dispatch (guard)', () => {
+    const db = freshDb();
+    const history = openDispatch('tu_1', 1000);
+    expect(ingestDispatchEvent(db, history, completionEvent('tu_other', 13000))).toBe(false);
+    expect(Object.keys(history.openByToolUseId)).toEqual(['tu_1']);
+    db.close();
+  });
+
   it('returns false when the notification carries no <tool-use-id> tag at all', () => {
     const db = freshDb();
     const history = openDispatch('tu_1', 1000);
@@ -210,7 +242,9 @@ describe('ingestDispatchEvent', () => {
     const db = freshDb();
     const history = openDispatch('tu_1', 1000);
     ingestDispatchEvent(db, history, completionEvent('tu_1', 13000, { tokens: 100 }));
-    ingestDispatchEvent(db, history, completionEvent('tu_1', 14000, { tokens: 250 }));
+    // A closed entry is pruned, so a second completion only reaches the upsert when the
+    // dispatch is open again (e.g. a fresh history); the ON CONFLICT path is what is under test.
+    ingestDispatchEvent(db, openDispatch('tu_1', 1000), completionEvent('tu_1', 14000, { tokens: 250 }));
     const rows: any[] = db.prepare('SELECT * FROM dispatches').all() as any[];
     expect(rows.length).toBe(1);
     expect(rows[0].tokens).toBe(250);

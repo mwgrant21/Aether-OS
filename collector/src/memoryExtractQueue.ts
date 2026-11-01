@@ -55,10 +55,22 @@ export type MemoryExtractQueue = ReturnType<typeof createMemoryExtractQueue>;
 // practical-ceiling note).
 const EXISTING_MEMORIES_LIMIT = 20;
 
+// Detail strings are built only from fixed text, ids, a sanitized parseError, a
+// count, or err.name: never err.message/cmd/stderr (they carry the prompt).
+function report(onIssue: ((detail: string) => void) | undefined, detail: string): void {
+  if (!onIssue) return;
+  try {
+    onIssue(detail);
+  } catch {
+    // a closed db after stop() must not escape the drain
+  }
+}
+
 export async function drainMemoryExtractQueue(
   store: MemoryStore,
   queue: MemoryExtractQueue,
   execFn?: ExtractExecFn,
+  onIssue?: (detail: string) => void,
 ): Promise<void> {
   for (const item of queue.drain()) {
     const existingMemories = store
@@ -82,11 +94,20 @@ export async function drainMemoryExtractQueue(
           `[aether-collector] memory extraction issue for ${item.agentId} (${item.toolUseId}):`,
           result.parseError ?? result.rejected,
         );
+        report(
+          onIssue,
+          `memory extraction issue for ${item.agentId} (${item.toolUseId}): ` +
+            (result.parseError ?? `rejected=${result.rejected.length}`),
+        );
       }
     } catch (err) {
       console.error(
         `[aether-collector] memory extraction failed for ${item.agentId} (${item.toolUseId}):`,
-        err instanceof Error ? err.message : String(err),
+        err instanceof Error ? err.name : 'non-error',
+      );
+      report(
+        onIssue,
+        `memory extraction failed for ${item.agentId} (${item.toolUseId}): ${err instanceof Error ? err.name : 'non-error'}`,
       );
     }
   }
