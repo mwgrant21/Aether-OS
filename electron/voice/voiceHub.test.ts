@@ -417,7 +417,7 @@ describe('voiceHub', () => {
     expect(JSON.stringify(r.statuses)).not.toContain('qrSvg');
     expect(r.logs).toContain('voice: disabled');
   });
-  it('stop() kills the child and its grandchild well inside the quit bound even when a connected phone never answers the close', async () => {
+  it('stop() starts the session stop before a stuck phone releases the server, and the child and grandchild die', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-stop-'));
     const pidFile = path.join(dir, 'grandchild.pid');
     const script = "const {spawn}=require('child_process');"
@@ -425,12 +425,20 @@ describe('voiceHub', () => {
       + "require('fs').writeFileSync(process.argv[1],String(g.pid));process.stdin.resume();setInterval(()=>{},1000)";
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
     let child: ReturnType<typeof spawn> | null = null;
+    // Structural, load-independent evidence: when the session's stop() is first called vs when the server stop resolves.
+    let sessionStopAt = 0;
+    let serverStopDoneAt = 0;
     const r = rig(fakeStore(), {
-      createSession: ((d: any) => createVoiceSession({
-        ...d,
-        killGraceMs: 400,
-        spawnFn: (_args: string[], opts: any) => (child = spawn(process.execPath, ['-e', script, pidFile], opts)),
-      })) as any,
+      createSession: ((d: any) => {
+        const s = createVoiceSession({
+          ...d,
+          killGraceMs: 400,
+          spawnFn: (_args: string[], opts: any) => (child = spawn(process.execPath, ['-e', script, pidFile], opts)),
+        });
+        const realStop = s.stop.bind(s);
+        s.stop = () => { if (!sessionStopAt) sessionStopAt = Date.now(); return realStop(); };
+        return s;
+      }) as any,
     });
     let grandchild = 0;
     try {
@@ -441,15 +449,23 @@ describe('voiceHub', () => {
       const childPid = child!.pid!;
       expect(alive(childPid) && alive(grandchild)).toBe(true);
       (c.ws as any)._socket.pause(); // the phone is asleep: it never reads, so it never answers the close frame
+      const handle = r.handles[r.handles.length - 1];
+      const realServerStop = handle.stop.bind(handle);
+      handle.stop = async () => { try { await realServerStop(); } finally { serverStopDoneAt = Date.now(); } };
       const t0 = Date.now();
       const stopped = r.hub.stop();
-      await waitFor(() => !alive(childPid) && (process.platform !== 'win32' || !alive(grandchild)), 4000);
-      const elapsed = Date.now() - t0;
       await stopped;
-      expect(elapsed).toBeLessThan(1000);
+      expect(serverStopDoneAt).toBeGreaterThan(0);
+      // Ordering: the session stop began before the stuck phone let the server stop finish (sequential teardown fails this).
+      expect(sessionStopAt).toBeGreaterThan(0);
+      expect(sessionStopAt).toBeLessThan(serverStopDoneAt);
+      // Old sequential code reached the session stop only after the server's ~1 s terminate fallback.
+      expect(sessionStopAt - t0).toBeLessThan(400);
+      // Liveness only, with a generous window: the child tree dies.
+      await waitFor(() => !alive(childPid) && (process.platform !== 'win32' || !alive(grandchild)), 5000);
     } finally {
       if (grandchild && alive(grandchild)) { try { process.kill(grandchild); } catch { /* gone */ } }
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

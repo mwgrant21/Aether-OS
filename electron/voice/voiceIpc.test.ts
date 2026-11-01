@@ -129,20 +129,35 @@ describe('voice preload and main wiring', () => {
     expect(block).toContain('createVoiceSession({ ...d, killGraceMs: VOICE_KILL_GRACE_MS })');
   });
 
-  it('stop() kills a child that ignores stdin EOF within the quit bound using the main.ts grace', async () => {
+  it('stop() ends stdin, then waits and kills a child that ignores EOF using exactly the main.ts grace', async () => {
+    // Wall-clock latency depends on machine load, so assert the structure instead: the order of events and the
+    // timer delays the session requested (via its setTimeoutFn seam), plus a generous liveness window for the death.
+    const events: string[] = [];
+    const delays: number[] = [];
+    let recording = false;
     const session = createVoiceSession({
       killGraceMs: KILL_GRACE,
-      spawnFn: (_args, opts) => spawn(process.execPath, ['-e', 'process.stdin.on("data",()=>{});process.stdin.on("end",()=>{});setInterval(()=>{},1000)'], opts),
+      setTimeoutFn: (fn, ms) => { if (recording) { delays.push(ms); events.push('wait'); } return setTimeout(fn, ms); },
+      spawnFn: (_args, opts) => {
+        const c = spawn(process.execPath, ['-e', 'process.stdin.on("data",()=>{});process.stdin.on("end",()=>{});setInterval(()=>{},1000)'], opts);
+        const end = c.stdin!.end.bind(c.stdin);
+        c.stdin!.end = ((...a: unknown[]) => { events.push('eof'); return (end as (...x: unknown[]) => unknown)(...a); }) as never;
+        return c;
+      },
     });
     session.start();
     const pid = session.pid();
     expect(pid).not.toBeNull();
-    const t0 = Date.now();
+    recording = true;
     await session.stop();
-    expect(Date.now() - t0).toBeLessThan(1200);
-    await new Promise(r => setTimeout(r, 200));
-    expect(() => process.kill(pid as number, 0)).toThrow();
-  });
+    // EOF first, then a full grace wait (child ignored it), then the kill path and a second grace wait.
+    expect(events).toEqual(['eof', 'wait', 'wait']);
+    expect(delays).toEqual([KILL_GRACE, KILL_GRACE]);
+    const end = Date.now() + 5000;
+    const alive = (): boolean => { try { process.kill(pid as number, 0); return true; } catch { return false; } };
+    while (alive() && Date.now() < end) await new Promise(r => setTimeout(r, 25));
+    expect(alive()).toBe(false);
+  }, 20_000);
 
   it('main registers the voice IPC behind the trusted-window predicate and a native confirm', () => {
     expect(main).toContain('registerVoiceIpc(');
