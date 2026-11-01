@@ -100,7 +100,8 @@ export function scanTranscriptsOnce(
   projectsRoot: string,
   nowMs: number,
   historyByFile: Map<string, ToolCallHistory>,
-  extractQueue?: MemoryExtractQueue
+  extractQueue?: MemoryExtractQueue,
+  ownSessionId: string | null = null
 ): { filesScanned: number; eventsIngested: number; toolCallsIngested: number; anomaliesIngested: number } {
   // Stamped first and unconditionally: the heartbeat proves the scan cycle is
   // alive, not that it succeeded (see stampTranscriptScanHeartbeat), so the
@@ -193,9 +194,10 @@ export function scanTranscriptsOnce(
         // the existing-row guard inside sweepStaleDispatches (in
         // staleDispatchSweep.ts) that prevents that already-completed dispatch
         // from being re-flagged as fatal -- that guard is load-bearing, not
-        // redundant. Its progress probe only stats subagent files of
+        // redundant. ownSessionId (the pin, read fresh by the caller each scan) exempts the
+        // pinned session from the not-in-fleet_sessions test. Its progress probe only stats subagent files of
         // dispatches that have no row yet.
-        sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id));
+        sweepStaleDispatches(db, result.history, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
         recordOffset(db, relativePath, newOffset, nowMs);
         return { anomalyResult: result, usageCount: usage };
       });

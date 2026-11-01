@@ -87,11 +87,18 @@ export function startCollector(options: {
   // Passing no queue skips enqueueing entirely, so dispatch result text is not even
   // staged in memory while memory extraction is off.
   const scanQueue = () => (readMemoryExtractionEnabled(options.collectorSettingsPath) ? extractQueue : undefined);
-  scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, scanQueue());
-  const transcriptScanTimer = setInterval(
-    () => scanTranscriptsOnce(db, options.projectsRoot, Date.now(), toolCallHistoryByFile, scanQueue()),
-    options.transcriptScanIntervalMs
-  );
+  // The pin changes at runtime, so it is re-read on every scan, never captured once.
+  const scan = () =>
+    scanTranscriptsOnce(
+      db,
+      options.projectsRoot,
+      Date.now(),
+      toolCallHistoryByFile,
+      scanQueue(),
+      readOwnSessionId(options.ownSessionFilePath)
+    );
+  scan();
+  const transcriptScanTimer = setInterval(scan, options.transcriptScanIntervalMs);
 
   pollAndUpsertFleet(db, options.ownSessionFilePath).catch((err) =>
     console.error('[aether-collector] fleet poll failed:', err)
