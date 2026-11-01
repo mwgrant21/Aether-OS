@@ -135,6 +135,14 @@ describe('control hub enable/disable', () => {
     expect(s).toMatchObject({ state: 'off', reenableAtLaunch: false });
   });
 
+  it('a disable that throws partway still emits the off status so the phone view caches clear', async () => {
+    const { hub, settings, emitted } = setup({ flag: true });
+    await hub.setEnabled(true);
+    settings.persist.mockImplementationOnce(() => { throw new Error('disk'); });
+    await expect(hub.setEnabled(false)).rejects.toThrow('disk');
+    expect(emitted.at(-1)?.state).toBe('off');
+  });
+
   it('a disable does not revoke devices', async () => {
     const { hub } = setup();
     await hub.setEnabled(true);

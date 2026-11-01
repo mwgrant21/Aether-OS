@@ -426,8 +426,11 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     status,
     port,
     async setEnabled(on) {
-      await queue(on ? enable : disable);
-      emit();
+      try {
+        await queue(on ? enable : disable);
+      } finally {
+        emit(); // a disable that throws after state = 'off' must still reach onStatus, which clears the phone view caches
+      }
       return status();
     },
     async setReenableAtLaunch(on) {
