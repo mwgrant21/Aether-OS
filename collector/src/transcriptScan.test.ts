@@ -251,6 +251,47 @@ describe('scanTranscriptsOnce', () => {
     db.close();
   });
 
+  it('ingests a queued_command task-notification attachment as ok before the sweep can fatal it', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const ack = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tu_q', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }],
+      },
+    });
+    const notification = JSON.stringify({
+      type: 'attachment',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:18Z',
+      attachment: {
+        type: 'queued_command',
+        commandMode: 'task-notification',
+        prompt:
+          '<task-notification><tool-use-id>tu_q</tool-use-id><status>completed</status>' +
+          '<usage><subagent_tokens>90</subagent_tokens><tool_uses>7</tool_uses><duration_ms>17993</duration_ms></usage></task-notification>',
+      },
+    });
+    writeFileSync(
+      join(projDir, 'session.jsonl'),
+      `${agentToolUseLine('tu_q', '2026-07-08T09:00:00Z')}
+${ack}
+${notification}
+`,
+      'utf8'
+    );
+
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 58), new Map());
+
+    const row: any = db.prepare('SELECT exit_state, tool_uses, dispatch_status FROM dispatches WHERE tool_use_id = ?').get('tu_q');
+    expect(row).toEqual({ exit_state: 'ok', tool_uses: 7, dispatch_status: 'completed' });
+    db.close();
+  });
+
   it('also scans a session subagents/*.jsonl file, ingesting tool calls with source_file_rel set to the subagent path', () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
     const projDir = join(projectsRoot, 'my-project');

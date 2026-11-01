@@ -200,4 +200,41 @@ describe('parseTranscriptLine tool use/result parsing', () => {
     const event = parseTranscriptLine(line);
     expect(event?.originKind).toBeNull();
   });
+
+  describe('queued_command task-notification attachments', () => {
+    const prompt = '<task-notification><tool-use-id>tu_q</tool-use-id><tool_uses>7</tool_uses></task-notification>';
+    const attachmentLine = (commandMode: string) =>
+      JSON.stringify({
+        type: 'attachment',
+        sessionId: 's1',
+        timestamp: '2026-07-08T09:00:00Z',
+        attachment: { type: 'queued_command', prompt, commandMode },
+      });
+
+    it('parses a task-notification queued_command attachment as a user-kind task-notification', () => {
+      const event = parseTranscriptLine(attachmentLine('task-notification'));
+      expect(event).toMatchObject({
+        kind: 'user',
+        sessionId: 's1',
+        timestamp: new Date('2026-07-08T09:00:00Z'),
+        originKind: 'task-notification',
+        humanText: prompt,
+        toolUses: [],
+        toolResults: [],
+      });
+    });
+
+    it('leaves a queued_command with another commandMode as kind other', () => {
+      const event = parseTranscriptLine(attachmentLine('prompt'));
+      expect(event?.kind).toBe('other');
+      expect(event?.originKind).toBeNull();
+    });
+
+    it('leaves a queue-operation line carrying the notification as kind other', () => {
+      const line = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 's1', content: prompt });
+      const event = parseTranscriptLine(line);
+      expect(event?.kind).toBe('other');
+      expect(event?.originKind).toBeNull();
+    });
+  });
 });
