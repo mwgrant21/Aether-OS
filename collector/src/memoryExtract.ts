@@ -48,12 +48,18 @@ export function scrubbedEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Pro
 
 export type ExtractExecFn = (prompt: string) => Promise<{ stdout: string }>;
 
+/** Upper bound for one extraction child; execFile kills it with SIGTERM (err.killed = true). */
+export const EXTRACT_TIMEOUT_MS = 90_000;
+
+/** The user's hooks hung the headless child (measured: >90 s hooks on, 27.8 s hooks off). */
+export const EXTRACT_CHILD_SETTINGS = '{"disableAllHooks":true}';
+
 /** The real call: a cheap headless model invocation, no interactive session. */
 export async function defaultExtractExec(prompt: string): Promise<{ stdout: string }> {
   const { stdout } = await execFileAsync(
     'claude',
-    ['-p', prompt, '--model', 'haiku', '--output-format', 'text'],
-    { env: scrubbedEnv(), windowsHide: true }
+    ['-p', prompt, '--model', 'haiku', '--output-format', 'text', '--settings', EXTRACT_CHILD_SETTINGS],
+    { env: scrubbedEnv(), windowsHide: true, timeout: EXTRACT_TIMEOUT_MS }
   );
   return { stdout };
 }
@@ -91,10 +97,15 @@ export async function runExtractor(
   try {
     stdout = (await execFn(prompt)).stdout;
   } catch (err) {
-    return {
-      ...emptyApplyResult(),
-      parseError: `exec_failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    // Never err.message / err.cmd: execFile puts the full prompt (run text) in both.
+    const e = err as { killed?: unknown; code?: unknown } | null;
+    const reason =
+      e?.killed === true
+        ? 'timeout'
+        : typeof e?.code === 'string' || typeof e?.code === 'number'
+          ? String(e.code)
+          : 'error';
+    return { ...emptyApplyResult(), parseError: `exec_failed: ${reason}` };
   }
 
   const { ops, parseError } = parseExtractorOutput(stdout);
