@@ -90,10 +90,13 @@ export async function drainMemoryExtractQueue(
         execFn,
       );
       if (result.parseError || result.rejected.length) {
-        console.error(
-          `[aether-collector] memory extraction issue for ${item.agentId} (${item.toolUseId}):`,
-          result.parseError ?? result.rejected,
-        );
+        // With a sink (logDrift) the console line comes from the sink; print here only without one.
+        if (!onIssue) {
+          console.error(
+            `[aether-collector] memory extraction issue for ${item.agentId} (${item.toolUseId}):`,
+            result.parseError ?? `rejected=${result.rejected.length}`,
+          );
+        }
         report(
           onIssue,
           `memory extraction issue for ${item.agentId} (${item.toolUseId}): ` +
@@ -101,10 +104,12 @@ export async function drainMemoryExtractQueue(
         );
       }
     } catch (err) {
-      console.error(
-        `[aether-collector] memory extraction failed for ${item.agentId} (${item.toolUseId}):`,
-        err instanceof Error ? err.name : 'non-error',
-      );
+      if (!onIssue) {
+        console.error(
+          `[aether-collector] memory extraction failed for ${item.agentId} (${item.toolUseId}):`,
+          err instanceof Error ? err.name : 'non-error',
+        );
+      }
       report(
         onIssue,
         `memory extraction failed for ${item.agentId} (${item.toolUseId}): ${err instanceof Error ? err.name : 'non-error'}`,
