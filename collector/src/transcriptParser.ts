@@ -157,6 +157,31 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     };
   }
 
+  // A completion can also reach the transcript ONLY as a queue-operation
+  // 'enqueue' line whose content is the <task-notification> (no user or
+  // attachment line follows). Only 'enqueue' counts: 'remove' repeats the same
+  // content when the queued item is cancelled or consumed, and 'dequeue'
+  // carries none. Ordinary prompts enqueue without a <task-notification>.
+  if (
+    json.type === 'queue-operation' &&
+    json.operation === 'enqueue' &&
+    typeof json.content === 'string' &&
+    json.content.trimStart().startsWith('<task-notification>')
+  ) {
+    return {
+      kind: 'user',
+      sessionId,
+      timestamp,
+      cwd,
+      model: null,
+      usage: null,
+      toolUses: [],
+      toolResults: [],
+      humanText: json.content,
+      originKind: 'task-notification',
+    };
+  }
+
   return {
     kind: 'other',
     sessionId,
