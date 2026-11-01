@@ -292,6 +292,42 @@ ${notification}
     db.close();
   });
 
+  it('an unpinned session with no fleet row and a fresh transcript mtime is not swept until the mtime is 30 s old', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const f = join(projDir, 's1.jsonl');
+    writeFileSync(f, `${agentToolUseLine('tu_alive', '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+    const mtimeMs = nowMs - 5_000;
+    utimesSync(f, mtimeMs / 1000, mtimeMs / 1000);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, nowMs, history, undefined, 'other-pin');
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    scanTranscriptsOnce(db, projectsRoot, mtimeMs + 31_000, history, undefined, 'other-pin');
+    const row: any = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_alive');
+    expect(row.exit_state).toBe('fatal');
+    db.close();
+  });
+
+  it('a session id that differs from the transcript filename gets no mtime fallback (swept as before)', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const f = join(projDir, 'other-file.jsonl');
+    writeFileSync(f, `${agentToolUseLine('tu_mismatch', '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+    utimesSync(f, (nowMs - 5_000) / 1000, (nowMs - 5_000) / 1000);
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, nowMs, new Map(), undefined, 'other-pin');
+    const row: any = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_mismatch');
+    expect(row.exit_state).toBe('fatal');
+    db.close();
+  });
+
   it('does not sweep an open dispatch from the pinned session, but sweeps it when the pin is not passed', () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
     const projDir = join(projectsRoot, 'my-project');

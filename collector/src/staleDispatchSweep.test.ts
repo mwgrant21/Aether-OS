@@ -262,6 +262,11 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
       expect(row.exit_state).toBe('fatal');
     });
 
+    it('transcript mtime far in the future is ignored -> treated as unavailable (swept)', () => {
+      expect(run(NOW + FUTURE_MTIME_TOLERANCE_MS + 1).r.staleFound).toBe(1);
+      expect(run(NOW + 1000).r.staleFound).toBe(0);
+    });
+
     it('fleet row present with fresh last_seen is unchanged (not swept, no stat)', () => {
       const db = freshDb();
       db.prepare('INSERT INTO fleet_sessions (session_id, pid, project_name, kind, status, name, started_at_ms, last_seen_ms) VALUES (?, 1, ?, ?, ?, ?, 0, ?)').run('alive', 'p', 'k', 's', 'n', NOW - 1000);
