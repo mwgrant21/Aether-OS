@@ -29,7 +29,9 @@ function mtime(p: string): number {
 
 describe.skipIf(!LIVE)('voiceSession against the real claude CLI', () => {
   it('primes, answers, survives an interrupt, and writes no machine-global state', async () => {
-    const projects = path.join(os.homedir(), '.claude', 'projects');
+    // The child runs in os.tmpdir(), so a transcript it wrote would land in that project dir.
+    // (The whole projects tree is not checked: the session running this test writes there too.)
+    const projects = path.join(os.homedir(), '.claude', 'projects', os.tmpdir().replace(/[^A-Za-z0-9]/g, '-'));
     const statusline = path.join(os.homedir(), '.aether-os', 'statusline.json');
     const jsonlBefore = newestJsonl(projects);
     const statuslineBefore = mtime(statusline);
