@@ -109,6 +109,9 @@ import { createSessionStore } from './remote/sessionStore';
 import { registerRemoteIpc } from './remote/remoteIpc';
 import type { PairingResult, RemoteStatus, ControlStatus, ControlPairingResult } from '../src/shared/remote/types';
 import { renderQrSvg } from './remote/pairingQr';
+import { createVoiceHub } from './voice/voiceHub';
+import { registerVoiceIpc } from './voice/voiceIpc';
+import type { VoicePairingResult, VoiceStatus } from '../src/shared/voice/types';
 import { createControlHub } from './control/controlHub';
 import { createMinInterval } from './minInterval';
 import { registerControlIpc } from './control/controlIpc';
@@ -745,6 +748,8 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   remoteQuitting = true;
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
+    // The voice gateway stops its Claude child inside the same held quit; skipped unless the private dir is ready.
+    remoteDirReady ? voiceHub.stop() : Promise.resolve(),
     // Phone control stops first (its sockets and listener hold), then the remote hub; control's stop() leaves the
     // persisted re-enable flag alone. Both are skipped unless the private dir is ready: ACL pending or failed means
     // the stores were never loaded, so stop() must not read them at quit either.
@@ -971,9 +976,12 @@ app.whenReady().then(async () => {
       sendToWindow('remote:statusChanged', remoteHub.status());
       controlHub.init(); // reads remote-devices.json and control-settings.json: only after the ACL
       sendToWindow('control:statusChanged', controlHub.status());
+      voiceHub.init(); // reads voice-sessions.json: only after the ACL
+      sendToWindow('voice:statusChanged', voiceHub.status());
     } else {
       sendToWindow('remote:statusChanged', remoteStatusOrUnavailable());
       sendToWindow('control:statusChanged', controlStatusOrUnavailable());
+      sendToWindow('voice:statusChanged', voiceStatusOrUnavailable());
     }
     resolveRemotePrivateDir();
     // Opt-in launch re-enable: acquires only when the persisted flag is true (no confirm, no flag write).
@@ -1646,6 +1654,40 @@ registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
     detail: "Read-only. A paired phone sees your prompts, Claude's replies, agent messages and tool names from the pinned Claude session, with obvious secrets masked (masking is pattern-based and not perfect).\n\n"
       + 'It is reachable by any device on your tailnet that holds a pairing code or an already-paired phone. Paired phones stay paired across restarts until they expire or you revoke them. Access itself turns off when Aether restarts.',
     buttons: ['Cancel', 'Allow read-only access'],
+    defaultId: 0,
+    cancelId: 0,
+  })).response === 1);
+
+// Voice gateway (privacy section 18): a paired phone talks to one Claude session on this PC. Created once at start and
+// stopped only at quit like the remote hub; off at every launch; enabling needs the native dialog below. Its session
+// store lives in the private dir, so every store access waits for the ACL exactly as the remote hub does.
+const voiceHub = createVoiceHub({
+  store: createSessionStore(join(aetherOsDir, 'voice-sessions.json')),
+  onStatus: s => sendToWindow('voice:statusChanged', s),
+  log: l => diagLog.write(l),
+});
+const voiceStatusOrUnavailable = (): VoiceStatus => !remoteDirFailed
+  ? voiceHub.status()
+  : { ...voiceHub.status(), state: 'unavailable', reason: 'error', address: null, connected: false, session: 'none' };
+const voiceHubForIpc = {
+  init: () => { if (remoteDirReady) voiceHub.init(); },
+  status: () => voiceStatusOrUnavailable(),
+  setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? voiceStatusOrUnavailable() : voiceHub.setEnabled(on); },
+  createPairing: async (): Promise<VoicePairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : voiceHub.createPairing(); },
+  revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? voiceStatusOrUnavailable() : voiceHub.revokeAll(); },
+  revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? voiceStatusOrUnavailable() : voiceHub.revokeOne(ref); },
+};
+registerVoiceIpc(ipcMain, voiceHubForIpc, event => !!mainWindow
+  && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+  && event.senderFrame === mainWindow.webContents.mainFrame,
+  async () => (await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Allow voice gateway?',
+    message: 'Let a paired phone talk to a Claude session on this PC?',
+    detail: 'A paired phone can speak and type to a Claude session running on this PC, under your Claude subscription, with the same tool permissions a terminal session has. Permission requests need an explicit tap on the phone.\n\n'
+      + 'Replies shown or spoken are masked for obvious secrets (masking is pattern-based and not perfect).\n\n'
+      + 'It is reachable by any device on your tailnet that holds a pairing code or an already-paired phone. Paired phones stay paired until you revoke them. Access turns off when Aether restarts. The session keeps no transcript on disk.',
+    buttons: ['Cancel', 'Allow voice gateway'],
     defaultId: 0,
     cancelId: 0,
   })).response === 1);
