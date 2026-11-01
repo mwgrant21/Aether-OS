@@ -239,4 +239,34 @@ describe('sweepStaleDispatches -- subagent progress (F15)', () => {
     expect(sweepStaleDispatches(db, h, nowMs, () => nowMs - THIRTY_MIN - 1).staleFound).toBe(1);
     db.close();
   });
+  describe('own (pinned) session', () => {
+    it('is not fataled for lacking a fleet_sessions row', () => {
+      const db = freshDb();
+      const h = historyWithOpen('tu_own', { startedAt: 0, sessionId: 'pin' });
+      expect(sweepStaleDispatches(db, h, FIFTEEN_S + 1000, undefined, 'pin').staleFound).toBe(0);
+      expect(db.prepare('SELECT * FROM dispatches WHERE tool_use_id = ?').get('tu_own')).toBeUndefined();
+      db.close();
+    });
+
+    it('a different ownSessionId does not exempt the session', () => {
+      const db = freshDb();
+      const h = historyWithOpen('tu_other', { startedAt: 0, sessionId: 'pin' });
+      expect(sweepStaleDispatches(db, h, FIFTEEN_S + 1000, undefined, 'someone-else').staleFound).toBe(1);
+      db.close();
+    });
+
+    it('still fatals on the 30-minute inactivity path', () => {
+      const db = freshDb();
+      const h = historyWithOpen('tu_own_idle', { startedAt: 0, sessionId: 'pin' });
+      expect(sweepStaleDispatches(db, h, THIRTY_MIN + 1000, () => null, 'pin').staleFound).toBe(1);
+      db.close();
+    });
+
+    it('null ownSessionId does not match a null open.sessionId', () => {
+      const db = freshDb();
+      const h = historyWithOpen('tu_null', { startedAt: 0, sessionId: null });
+      expect(sweepStaleDispatches(db, h, FIFTEEN_S + 1000, undefined, null).staleFound).toBe(1);
+      db.close();
+    });
+  });
 });
