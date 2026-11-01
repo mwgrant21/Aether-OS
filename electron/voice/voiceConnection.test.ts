@@ -331,7 +331,7 @@ describe('exactly-once with a real event log', () => {
   it('a busy second turn.start does not displace the in-flight turn for gap cancel', () => {
     const elog = createEventLog({ maxBytes: 200 });
     const handled: ClientMessage[] = [];
-    let l: ((e: ServerEvent) => void) | null = null;
+    let l = null as ((e: ServerEvent) => void) | null;
     const core: VoiceGatewayCore = {
       sessionId: () => elog.sessionId,
       state: () => 'ready',
