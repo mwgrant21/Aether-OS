@@ -70,6 +70,7 @@
     <string name="dash_ready_collector_no_events">Collector: running, no events in the last 24h.</string>
     <string name="dash_ready_collector_last_event">Collector: running, last event %1$s.</string>
 
+    <string name="dash_open_terminal">Open terminal</string>
     <string name="dash_strip_agents">Agents %1$s</string>
     <string name="dash_strip_alerts">Alerts %1$s</string>
     <plurals name="dash_strip_memory">

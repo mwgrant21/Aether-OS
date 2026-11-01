@@ -118,7 +118,7 @@ private fun ReadyBody(s: ProjectsSnapshot, hostNowMs: Long, modifier: Modifier) 
     LaunchedEffect(hostNowMs) {
         while (true) { delay(TICK_MS); ticks++ }
     }
-    val now = hostNowMs + ticks * TICK_MS
+    val now = hostNowMs + LocalPaneEnv.current.titanClockOffsetMs + ticks * TICK_MS
     var openKey by remember { mutableStateOf<String?>(null) }
     var expanded by remember { mutableStateOf(setOf<String>()) }
     val scroll = rememberScrollState()

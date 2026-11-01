@@ -60,6 +60,7 @@ import com.matt.aethermobile.ui.StormCore
 import com.matt.aethermobile.ui.StormMode
 import com.matt.aethermobile.ui.components.aeInset
 import com.matt.aethermobile.ui.components.aePanel
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.shell.mouseDragScroll
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
@@ -77,8 +78,7 @@ private val CoreSize = 236.dp
  * Read-only Dashboard body: recap banner, REACTOR STATUS (core, rate line, snapshot age, KPI tiles), READINESS and the
  * standby strip. Live vs standby is whatever titan published; the phone never re-derives it, and the age line says how
  * old that reading is. Only the recap dismissal is local state (never saved; it returns when the recap text changes).
- * There is no OPEN TERMINAL button: the pane render signature carries no navigation callback, so adding one needs a
- * shell edit.
+ * The READINESS card ends with OPEN TERMINAL, which only navigates to the Terminal view.
  */
 @Composable
 fun DashboardScreen(ui: ViewUi<DashSnapshot>, nowMs: Long, modifier: Modifier = Modifier) {
@@ -104,7 +104,8 @@ private fun ReadyBody(s: DashSnapshot, hostNowMs: Long, modifier: Modifier) {
     LaunchedEffect(hostNowMs) {
         while (true) { delay(TICK_MS); ticks++ }
     }
-    val now = hostNowMs + ticks * TICK_MS
+    val env = LocalPaneEnv.current
+    val now = hostNowMs + env.titanClockOffsetMs + ticks * TICK_MS
     val scroll = rememberScrollState()
 
     // The core is composed only while its slot overlaps the viewport; off-screen it leaves the composition and its
@@ -159,6 +160,7 @@ private fun ReadyBody(s: DashSnapshot, hostNowMs: Long, modifier: Modifier) {
         }
         Card(stringResource(R.string.dash_readiness_title)) {
             readinessRows(s, now, zone).forEach { ReadinessRow(it) }
+            OpenTerminalRow(env.openTerminal)
         }
         Strip(s)
     }
@@ -310,6 +312,18 @@ private fun Tile(t: KpiTile, s: DashSnapshot, modifier: Modifier) {
             BasicText(stringResource(res).uppercase(Locale.US), style = type.meta.copy(color = c))
         }
         BasicText(caption, style = type.meta.copy(color = AetherColors.textMuted))
+    }
+}
+
+/** Navigation only: switches to the Terminal view, sends nothing to titan. */
+@Composable
+private fun OpenTerminalRow(onOpen: () -> Unit) {
+    val label = stringResource(R.string.dash_open_terminal)
+    Box(
+        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(role = Role.Button, onClickLabel = label, onClick = onOpen),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        BasicText(label.uppercase(Locale.US), style = type.label.copy(color = AetherColors.cyanBright))
     }
 }
 

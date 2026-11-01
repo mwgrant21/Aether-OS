@@ -110,7 +110,7 @@ private fun ReadyBody(s: MemorySnapshot, hostNowMs: Long, modifier: Modifier) {
     LaunchedEffect(hostNowMs) {
         while (true) { delay(TICK_MS); ticks++ }
     }
-    val now = hostNowMs + ticks * TICK_MS
+    val now = hostNowMs + LocalPaneEnv.current.titanClockOffsetMs + ticks * TICK_MS
     var chosen by remember { mutableStateOf<MemoryFilter>(MemoryFilter.All) }
     var open by remember { mutableStateOf<Open?>(null) }
     val scroll = rememberScrollState()
