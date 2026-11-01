@@ -118,7 +118,7 @@ describe('VoiceGatewayCard', () => {
   it('the pairing box says the code stays valid after Done until used or expired', async () => {
     await pairFlow();
     const text = screen.getByText(/Done only hides this code/).textContent!;
-    for (const k of ['still works', 'used once', 'replaced by a new code', 'gateway is turned off', 'expires']) expect(text).toContain(k);
+    for (const k of ['still works', 'used once', 'replaced by a new code', 'gateway is turned off', 'wrong codes', 'expires']) expect(text).toContain(k);
     expect(text).not.toContain('60 minutes');
   });
 
