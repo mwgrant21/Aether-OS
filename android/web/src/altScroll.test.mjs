@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import {
-  chainDrag, toNotches, wheelBytes, shouldIntercept,
+  chainDrag, toNotches, wheelBytes, shouldIntercept, flushAlt, finishAlt,
   MAX_NOTCHES_PER_TICK, PAGE_EVERY_NOTCHES,
 } from './altScroll.js';
 import { shouldSend } from './inputFilter.js';
@@ -86,5 +86,69 @@ describe('shouldIntercept', () => {
     expect(shouldIntercept({ bufferType: 'alternate', dx: 9, dy: 2 })).toBe(false);
     expect(shouldIntercept({ bufferType: 'normal', dx: 2, dy: 9 })).toBe(false);
     expect(shouldIntercept({ bufferType: 'alternate', dx: NaN, dy: 9 })).toBe(false);
+  });
+});
+
+describe('flushAlt / finishAlt', () => {
+  const mkAlt = (pending, mode = 'any', hidden = false) => ({
+    slot: { id: 'claude', el: { hidden }, term: { cols: 80, rows: 24, modes: { mouseTrackingMode: mode } } },
+    pending, timer: 0,
+  });
+  const rig = () => {
+    const sent = [];
+    const cleared = [];
+    return { sent, cleared, send: (m) => sent.push(m), clear: (t) => cleared.push(t) };
+  };
+
+  it('a normal end flushes pending notches the 50 ms timer has not sent yet', () => {
+    const r = rig();
+    const alt = mkAlt(3);
+    alt.timer = 42;
+    finishAlt(alt, { commit: true, stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toEqual([{ t: 'input', s: 'claude', d: wheelBytes({ notches: 3, trackingMode: 'any', col: 41, row: 13 }) }]);
+    expect(r.cleared).toEqual([42]);
+    expect(alt.timer).toBe(0);
+    expect(alt.pending).toBe(0);
+  });
+  it('a cancel or abort discards pending notches and disarms the timer', () => {
+    const r = rig();
+    const alt = mkAlt(3);
+    alt.timer = 42;
+    finishAlt(alt, { commit: false, stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toEqual([]);
+    expect(r.cleared).toEqual([42]);
+    expect(alt.timer).toBe(0);
+  });
+  it('the end flush never double-sends: the timer is cleared and a later flush has nothing left', () => {
+    const r = rig();
+    const alt = mkAlt(-2);
+    alt.timer = 7;
+    finishAlt(alt, { commit: true, stdinOn: true, send: r.send, clear: r.clear });
+    flushAlt(alt, { stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toHaveLength(1);
+    expect(r.cleared).toEqual([7]);
+  });
+  it('a normal end does not send when stdin is off or the slot is hidden', () => {
+    const r = rig();
+    finishAlt(mkAlt(3), { commit: true, stdinOn: false, send: r.send, clear: r.clear });
+    finishAlt(mkAlt(3, 'any', true), { commit: true, stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toEqual([]);
+  });
+  it('a sub-threshold remainder in mode none is kept, not sent', () => {
+    const r = rig();
+    const alt = mkAlt(PAGE_EVERY_NOTCHES - 1, 'none');
+    finishAlt(alt, { commit: true, stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toEqual([]);
+    expect(alt.pending).toBe(PAGE_EVERY_NOTCHES - 1);
+  });
+  it('clamps the flushed batch to the per-tick maximum', () => {
+    const r = rig();
+    finishAlt(mkAlt(MAX_NOTCHES_PER_TICK + 5), { commit: true, stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent[0].d).toBe(wheelBytes({ notches: MAX_NOTCHES_PER_TICK, trackingMode: 'any', col: 41, row: 13 }));
+  });
+  it('a null gesture is a no-op', () => {
+    const r = rig();
+    expect(() => finishAlt(null, { commit: true, stdinOn: true, send: r.send })).not.toThrow();
+    expect(r.sent).toEqual([]);
   });
 });

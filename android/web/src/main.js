@@ -10,7 +10,7 @@ import { composeInputs } from './compose.js';
 import { followCursor } from './cursorFollow.js';
 import { settledLines, needsRebuild, renderHistory } from './wrapHistory.js';
 import { THEME } from './theme.js';
-import { chainDrag, toNotches, wheelBytes, shouldIntercept } from './altScroll.js';
+import { chainDrag, toNotches, flushAlt, finishAlt, shouldIntercept } from './altScroll.js';
 import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 
@@ -246,24 +246,12 @@ const ALT_FLUSH_MS = 50;
 let alt = null; // { slot, x, y, decided, on, carry, pending, timer }
 
 function altFlush() {
-  if (!alt) return;
-  alt.timer = 0;
-  const slot = alt.slot;
-  if (alt.pending === 0 || !stdinOn || slot.el.hidden) return;
-  const n = Math.max(-8, Math.min(8, alt.pending));
-  const d = wheelBytes({
-    notches: n,
-    trackingMode: slot.term.modes.mouseTrackingMode,
-    col: Math.floor(slot.term.cols / 2) + 1,
-    row: Math.floor(slot.term.rows / 2) + 1,
-  });
-  if (d === null) return; // below the PgUp/PgDn threshold: keep accumulating
-  alt.pending = 0;
-  send({ t: 'input', s: slot.id, d });
+  flushAlt(alt, { stdinOn, send });
 }
 
-function altEnd() {
-  if (alt && alt.timer) clearTimeout(alt.timer);
+// commit = normal gesture end (flush pending notches first); default discards (cancel/abort/reset).
+function altEnd(commit = false) {
+  finishAlt(alt, { commit, stdinOn, send });
   alt = null;
 }
 
@@ -309,8 +297,8 @@ root.addEventListener('touchmove', (ev) => {
   if (alt.pending !== 0 && !alt.timer) alt.timer = setTimeout(altFlush, ALT_FLUSH_MS);
 }, { passive: false });
 
-root.addEventListener('touchend', altEnd);
-root.addEventListener('touchcancel', altEnd);
+root.addEventListener('touchend', () => altEnd(true));
+root.addEventListener('touchcancel', () => altEnd());
 
 // Mouse (Phone Link etc.): Pointer Events drag + wheel. Touch pointers are left to the touch
 // handlers above. Wheel bytes go straight through send(), never term.onData.
@@ -327,10 +315,10 @@ function cellSize(slot) {
   };
 }
 
-function mouseEnd() {
+function mouseEnd(commit = false) {
   if (!mouse) return; // never touch the touch gesture's alt state
   mouse = null;
-  altEnd();
+  altEnd(commit);
 }
 
 root.addEventListener('pointerdown', (ev) => {
@@ -347,7 +335,7 @@ root.addEventListener('pointerdown', (ev) => {
 root.addEventListener('pointermove', (ev) => {
   if (!mouse || ev.pointerId !== mouse.id) return;
   if ((ev.buttons & 1) !== 1) {
-    mouseEnd();
+    mouseEnd(true); // button released outside the page: a normal end
     return;
   }
   const slot = mouse.slot;
@@ -387,9 +375,9 @@ root.addEventListener('pointermove', (ev) => {
   if (r.scrollLeft !== lx.scrollLeft) lx.scrollLeft = r.scrollLeft;
 });
 
-root.addEventListener('pointerup', mouseEnd);
-root.addEventListener('pointercancel', mouseEnd);
-root.addEventListener('lostpointercapture', mouseEnd);
+root.addEventListener('pointerup', () => mouseEnd(true));
+root.addEventListener('pointercancel', () => mouseEnd());
+root.addEventListener('lostpointercapture', () => mouseEnd());
 
 root.addEventListener('wheel', (ev) => {
   const slot = slots.get(visible);

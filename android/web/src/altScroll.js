@@ -48,6 +48,36 @@ export function wheelBytes({ notches, trackingMode, col, row }) {
   return `${ESC}${up ? '[5~' : '[6~'}`.repeat(Math.floor(count / PAGE_EVERY_NOTCHES));
 }
 
+// Send the accumulated whole notches of an alt-screen gesture. Disarms the pending timer first,
+// so a flush from gesture end can never double-send with a still-armed timer. Sub-threshold
+// remainders stay in alt.pending.
+export function flushAlt(alt, { stdinOn, send, clear = clearTimeout }) {
+  if (!alt) return;
+  if (alt.timer) clear(alt.timer);
+  alt.timer = 0;
+  const slot = alt.slot;
+  if (alt.pending === 0 || !stdinOn || slot.el.hidden) return;
+  const n = Math.max(-MAX_NOTCHES_PER_TICK, Math.min(MAX_NOTCHES_PER_TICK, alt.pending));
+  const d = wheelBytes({
+    notches: n,
+    trackingMode: slot.term.modes.mouseTrackingMode,
+    col: Math.floor(slot.term.cols / 2) + 1,
+    row: Math.floor(slot.term.rows / 2) + 1,
+  });
+  if (d === null) return; // below the PgUp/PgDn threshold: keep accumulating
+  alt.pending = 0;
+  send({ t: 'input', s: slot.id, d });
+}
+
+// End a gesture. commit = a normal finish (touchend, pointerup): flush what is pending first so a
+// quick swipe still scrolls. Cancel/abort/reset paths leave commit false and discard it.
+export function finishAlt(alt, { commit, stdinOn, send, clear = clearTimeout }) {
+  if (!alt) return;
+  if (commit) flushAlt(alt, { stdinOn, send, clear });
+  else if (alt.timer) clear(alt.timer);
+  alt.timer = 0;
+}
+
 // Decide once at gesture start: alt buffer and vertical-dominant.
 export function shouldIntercept({ bufferType, dx, dy }) {
   return bufferType === 'alternate' && fin(dx) && fin(dy) && Math.abs(dy) > Math.abs(dx);
