@@ -202,6 +202,7 @@ class MainActivity : AppCompatActivity() {
         val panes: Map<AppView, ViewUi<*>> = emptyMap(),
         val supportedPanes: Set<AppView> = emptySet(),
         val viewCtl: ViewCtlUi = ViewCtlUi(),
+        val titanClockOffsetMs: Long = 0L,
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -885,6 +886,7 @@ class MainActivity : AppCompatActivity() {
             panes = paneHosts?.snapshots() ?: emptyMap(),
             supportedPanes = PaneRegistry.entries.filter { client?.supportsView(it.spec.viewId) == true }.map { it.spec.appView }.toSet(),
             viewCtl = ViewCtlUi(zoomPx, orientation),
+            titanClockOffsetMs = client?.titanClockOffsetMs ?: 0L,
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
@@ -907,7 +909,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, nowMs = System.currentTimeMillis()),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, titanClockOffsetMs = snap.titanClockOffsetMs, nowMs = System.currentTimeMillis()),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
