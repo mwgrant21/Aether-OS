@@ -3,16 +3,24 @@
 //
 // AST guard for the voice gateway: electron/voice/ has one listener, one child launch, no disk
 // writes, no pty, no wildcard bind and a closed phone-to-PC message set. Discovery-based: every
-// non-test .ts/.mjs/.js file under electron/voice/ (fixtures included) is parsed with the TypeScript
+// non-test file under electron/voice/ with one of the eight extensions .ts .mts .cts .tsx .js .mjs .cjs
+// .jsx (matched case-insensitively; fixtures included) is parsed with the TypeScript
 // compiler API (syntax only), so a new file is fenced the moment it exists. Name-based and
 // scope-insensitive: a drift-and-mistakes guard, not a sandbox (transitive imports are out of reach).
-// Paths resolve from this file, not the cwd.
+// Paths resolve from this file, not the cwd. Files named *.test.* / *.spec.* and *.d.ts are exempt from
+// scanning by design, so a production-looking module must never be given such a name.
 //
 // What a name-based guard cannot catch (explicit, not silent): bracket calls such as server['listen'](0)
 // or l.call(server, 0) on an aliased method, computed strings such as '0.0.0.' + '0', assertBindableHost
 // sitting under if (false) (it only has to appear earlier in the file), a second spawn reached through an
-// object the guard does not name, and anything transitive through an imported module. It guards against drift
-// and mistakes, not against a determined author.
+// object the guard does not name, and anything transitive through an imported module. Also out of reach:
+// require('ws').Server and a re-export of WebSocketServer under a new name (rule 2 matches constructor
+// text and import bindings only), dgram.bind and Bun.listen/Bun.serve (rule 1 sees .listen( only),
+// spawn aliases such as `const sp = spawn` and promisify(execFile) (noApiCalls.test.ts covers literal
+// 'claude' launches repo-wide), process aliases that survive rule 6 (a destructure such as
+// `const { process: p } = globalThis`, or a process value reached through a call result), and fs write
+// names reached through an alias of an alias beyond plain `const x = fsNamespace` chains. It guards
+// against drift and mistakes, not against a determined author.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import { builtinModules } from 'node:module';
@@ -45,14 +53,14 @@ const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises'])
 const CLIENT_T = ['permission.reply', 'resume', 'turn.cancel', 'turn.start'];
 
 function isTestOrDecl(name: string): boolean {
-  return /\.(test|spec)\.[cm]?[tj]sx?$/.test(name) || /\.d\.[cm]?ts$/.test(name);
+  return /\.(test|spec)\.[cm]?[tj]sx?$/i.test(name) || /\.d\.[cm]?ts$/i.test(name);
 }
 
 function walk(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
-    else if (entry.isFile() && SOURCE_EXTENSIONS.includes(path.extname(entry.name)) && !isTestOrDecl(entry.name)) out.push(full);
+    else if (entry.isFile() && SOURCE_EXTENSIONS.includes(path.extname(entry.name).toLowerCase()) && !isTestOrDecl(entry.name)) out.push(full);
   }
 }
 
@@ -67,7 +75,7 @@ const files: string[] = [];
 walk(VOICE_DIR, files);
 const scanned: Scanned[] = files.map((full) => {
   const rel = path.relative(VOICE_DIR, full).split(path.sep).join('/');
-  const ext = path.extname(full);
+  const ext = path.extname(full).toLowerCase();
   const kind = ext === '.tsx' ? ts.ScriptKind.TSX : ext === '.jsx' ? ts.ScriptKind.JSX : /^\.[cm]?ts$/.test(ext) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
   const sf = ts.createSourceFile(full, fs.readFileSync(full, 'utf8'), ts.ScriptTarget.Latest, true, kind);
   return { rel, base: path.basename(full), fixture: rel.startsWith('__fixtures__/'), sf };
@@ -152,6 +160,96 @@ function isProcessEnv(n: ts.Node): boolean {
   return false;
 }
 
+const parseSnippet = (text: string): ts.SourceFile => ts.createSourceFile('snippet.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+
+// Every string piece (plain, no-substitution template, template head/middle/tail) in a file.
+function stringPieces(sf: ts.SourceFile): { n: ts.Node; text: string }[] {
+  const out: { n: ts.Node; text: string }[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isStringLiteralLike(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) out.push({ n, text: n.text });
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+const GLOBAL_ROOTS = new Set(['globalThis', 'global', 'self', 'window']);
+
+// `process` used as a value other than as the object of .x / ['x']: const p = process, f(process),
+// globalThis.process, globalThis['process'] / globalThis[expr]. A local function named process (declared
+// name or call callee), property names, import specifiers and type positions are not aliases.
+function processAliases(sf: ts.SourceFile): ts.Node[] {
+  const out: ts.Node[] = [];
+  for (const n of find(sf, ts.isIdentifier)) {
+    if (n.text !== 'process') continue;
+    const p = n.parent;
+    if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === n) continue;
+    if (ts.isPropertyAccessExpression(p)) {
+      if (GLOBAL_ROOTS.has(p.expression.getText())) out.push(n);
+      continue;
+    }
+    if (ts.isCallExpression(p) && p.expression === n) continue;
+    if ((ts.isFunctionDeclaration(p) || ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isPropertyAssignment(p) || ts.isPropertySignature(p)
+      || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isBindingElement(p)) && p.name === n) continue;
+    if (ts.isImportSpecifier(p) || ts.isTypeQueryNode(p) || ts.isQualifiedName(p) || ts.isExportSpecifier(p)) continue;
+    out.push(n);
+  }
+  for (const e of find(sf, ts.isElementAccessExpression)) {
+    const a = e.argumentExpression;
+    if (GLOBAL_ROOTS.has(e.expression.getText()) && (!ts.isStringLiteralLike(a) || a.text === 'process')) out.push(e);
+  }
+  return out;
+}
+
+// Calls to fs write names, only where the callee is bound to fs: a named import / destructure of a write
+// name from fs, or a member of an fs namespace (import * / default / require / createRequire(...)('fs')).
+function fsWriteCalls(sf: ts.SourceFile): ts.CallExpression[] {
+  const ns = new Set<string>();
+  const fnLocals = new Set<string>();
+  const isFsLit = (e: ts.Expression | undefined): boolean => !!e && ts.isStringLiteralLike(e) && FS_MODULES.has(e.text);
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    while (ts.isParenthesizedExpression(e) || ts.isAwaitExpression(e) || ts.isAsExpression(e)) e = e.expression;
+    return e;
+  };
+  const fsSource = (init: ts.Expression | undefined): boolean => {
+    if (!init) return false;
+    const e = unwrap(init);
+    if (ts.isIdentifier(e)) return ns.has(e.text);
+    if (!ts.isCallExpression(e)) return false;
+    const isLoad = (c: ts.CallExpression): boolean => c.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(c.expression) && c.expression.text === 'require');
+    return (isLoad(e) || ts.isCallExpression(e.expression)) && isFsLit(e.arguments[0]);
+  };
+  for (const imp of importsOf(sf).filter((i) => FS_MODULES.has(i.spec))) {
+    for (const b of imp.bindings) if (WRITE_NAMES.has(b.imported)) fnLocals.add(b.local);
+  }
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier) || !FS_MODULES.has(st.moduleSpecifier.text)) continue;
+    const c = st.importClause;
+    if (c?.name) ns.add(c.name.text);
+    if (c?.namedBindings && ts.isNamespaceImport(c.namedBindings)) ns.add(c.namedBindings.name.text);
+  }
+  for (const n of find(sf, ts.isImportEqualsDeclaration)) {
+    if (ts.isExternalModuleReference(n.moduleReference) && isFsLit(n.moduleReference.expression)) ns.add(n.name.text);
+  }
+  for (const d of find(sf, ts.isVariableDeclaration)) {
+    if (!fsSource(d.initializer)) continue;
+    if (ts.isIdentifier(d.name)) ns.add(d.name.text);
+    else if (ts.isObjectBindingPattern(d.name)) {
+      for (const e of d.name.elements) if (WRITE_NAMES.has((e.propertyName ?? e.name).getText())) fnLocals.add(e.name.getText());
+    }
+  }
+  const rootOf = (e: ts.Expression): string => {
+    while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isParenthesizedExpression(e)) e = e.expression;
+    return ts.isIdentifier(e) ? e.text : '';
+  };
+  return find(sf, isCall).filter((c) => {
+    const e = c.expression;
+    if (ts.isIdentifier(e)) return fnLocals.has(e.text);
+    if (ts.isPropertyAccessExpression(e)) return WRITE_NAMES.has(e.name.text) && ns.has(rootOf(e.expression));
+    return false;
+  });
+}
+
 describe('voice boundary', () => {
   it('(7) scans a non-vacuous file set including the required sources', () => {
     for (const r of REQUIRED) {
@@ -209,16 +307,19 @@ describe('voice boundary', () => {
         expect(cp[0].defaultOrNs, 'no default/namespace child_process import').toBe(false);
         expect(cp[0].bindings.map((b) => `${b.imported}>${b.local}`).sort()).toEqual(['execFile>execFile', 'spawn>spawn']);
       }
+    }
+    // Banned process-launch calls apply to every scanned file, fixtures included.
+    for (const s of scanned) {
       for (const c of find(s.sf, isCall)) {
         const n = calleeName(c);
         if (['execSync', 'execFileSync', 'spawnSync', 'fork'].includes(n) || (n === 'exec' && ts.isIdentifier(c.expression))) throw new Error(`${n}( at ${here(s, c)}`);
         if (n === 'execFile') expect(c.arguments[0]?.getText(), `execFile at ${here(s, c)}`).toBe("'taskkill'");
       }
     }
-    // The fixture legitimately spawns a grandchild (process.execPath) to exercise tree-kill; it must never launch claude.
+    // The fixture legitimately spawns a grandchild to exercise tree-kill; its program must be process.execPath.
     for (const s of scanned.filter((x) => x.fixture)) {
       for (const c of find(s.sf, isCall)) {
-        if (calleeName(c) === 'spawn') expect(c.arguments[0]?.getText(), `fixture spawn at ${here(s, c)}`).not.toMatch(/claude/);
+        if (calleeName(c) === 'spawn') expect(c.arguments[0]?.getText(), `fixture spawn at ${here(s, c)}`).toBe('process.execPath');
       }
     }
     for (const s of scanned) {
@@ -242,12 +343,18 @@ describe('voice boundary', () => {
     expect(arrays).toHaveLength(1);
     const strs = arrays[0].elements.filter(ts.isStringLiteral).map((e) => e.text);
     expect(strs).toContain('--no-session-persistence');
-    for (const f of FORBIDDEN_FLAGS) expect(strs, `forbidden spawn arg ${f}`).not.toContain(f);
+    // Forbidden flags are looked for in EVERY string piece of the file, not just the args array literal,
+    // so args.push('--add-dir') or [...buildArgs(), '--add-dir', x] is caught.
+    for (const { n, text } of stringPieces(sess.sf)) {
+      for (const f of FORBIDDEN_FLAGS) expect(text.includes(f), `forbidden flag ${f} at ${here(sess, n)}`).toBe(false);
+    }
     const pm = strs.indexOf('--permission-mode');
     if (pm >= 0) expect(strs[pm + 1], '--permission-mode value').toBe('manual');
     const at = strs.indexOf('--settings');
     expect(at).toBeGreaterThanOrEqual(0);
-    expect(strs[at + 1]).toContain('disableAllHooks');
+    let settings: { disableAllHooks?: unknown } = {};
+    try { settings = JSON.parse(strs[at + 1]); } catch { /* asserted below */ }
+    expect(settings.disableAllHooks, '--settings disableAllHooks').toBe(true);
   });
 
   it('(4) no pty, electron value, store/persistence imports and no fs write names', () => {
@@ -260,11 +367,33 @@ describe('voice boundary', () => {
           expect(i.names.filter((x) => WRITE_NAMES.has(x) || ['promises', 'open', 'openSync'].includes(x)), `${s.rel} fs write import`).toEqual([]);
         }
       }
-      for (const c of find(s.sf, isCall)) {
-        const n = calleeName(c);
-        expect(WRITE_NAMES.has(n), `write call at ${here(s, c)}`).toBe(false);
-      }
+      for (const c of fsWriteCalls(s.sf)) expect.fail(`fs write call at ${here(s, c)}`);
     }
+  });
+
+  it('(4c) fs write names only count when bound to fs (no false trips on truncate/link/rename lookalikes)', () => {
+    const hits = (t: string): number => fsWriteCalls(parseSnippet(t)).length;
+    expect(hits("function truncate(t: string, n: number) { return t.slice(0, n); }\ntruncate(text, 3);")).toBe(0);
+    expect(hits('bus.link(x); x.rm(); registry.unlink(y);')).toBe(0);
+    expect(hits('function rename() {}\nrename();')).toBe(0);
+    expect(hits("import { truncateSync } from 'node:fs';\ntruncateSync(p, 3);")).toBe(1);
+    expect(hits("import * as fs from 'node:fs';\nfs.rmSync(p);")).toBe(1);
+    expect(hits("import fsp from 'node:fs/promises';\nawait fsp.writeFile(p, d);")).toBe(1);
+    expect(hits("const f = require('fs');\nf.unlinkSync(p);")).toBe(1);
+    expect(hits("const { rmSync } = require('node:fs');\nrmSync(p);")).toBe(1);
+    expect(hits("const r = createRequire(import.meta.url);\nconst f = r('fs');\nf.mkdirSync(p);")).toBe(0);
+    expect(hits("const f = createRequire(import.meta.url)('fs');\nf.mkdirSync(p);")).toBe(1);
+    expect(hits("const m = await import('fs');\nm.cpSync(a, b);")).toBe(1);
+  });
+
+  it('(6b) process aliases are found; plain process.x and a local process() function are not', () => {
+    const n = (t: string): number => processAliases(parseSnippet(t)).length;
+    expect(n('const p = process;')).toBe(1);
+    expect(n('const e = globalThis.process.env;')).toBe(1);
+    expect(n("const e = globalThis['process'];")).toBe(1);
+    expect(n('use(process);')).toBe(1);
+    expect(n('const a = process.platform; const b = process.env.X; process.exit(0);')).toBe(0);
+    expect(n('function process(f: boolean) { return f; }\nprocess(true);')).toBe(0);
   });
 
   it('(4b) pty module matching is segment based', () => {
@@ -289,6 +418,8 @@ describe('voice boundary', () => {
       }
     }
     for (const s of prod()) {
+      for (const a of processAliases(s.sf)) expect.fail(`process alias at ${here(s, a)}`);
+      for (const i of importsOf(s.sf)) expect(['process', 'node:process'].includes(i.spec), `${s.rel} imports ${i.spec}`).toBe(false);
       for (const d of find(s.sf, ts.isVariableDeclaration)) {
         const bad = ts.isObjectBindingPattern(d.name) && d.initializer?.getText() === 'process'
           && d.name.elements.some((e) => (e.propertyName ?? e.name).getText() === 'env');
