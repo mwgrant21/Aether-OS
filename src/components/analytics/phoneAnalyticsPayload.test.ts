@@ -52,4 +52,16 @@ describe('phoneAnalyticsPayload', () => {
     expect(p.commands.every((c: any) => !/\s/.test(c.name))).toBe(true);
     expect(JSON.stringify(p)).not.toMatch(/SECRET-ARG|--verbose|onlysession/);
   });
+  it('masks a secret first word before reducing, so AKIA and JWT tokens never survive lower-cased', () => {
+    const akia = 'AKIAIOSFODNN7EXAMPLE';
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N';
+    const p = get({ cmdHist: [akia + ' --region us', jwt, 'Status', 'status now'] });
+    expect(p.commands).toContainEqual({ name: '[redacted]', count: 2 });
+    expect(p.commands).toContainEqual({ name: 'status', count: 2 });
+    expect(JSON.stringify(p)).not.toMatch(/akiaiosfodnn7example|AKIAIOSFODNN7EXAMPLE|eyjhbgci|eyJhbGci/);
+  });
+  it('keeps the first word of an ordinary command line that carries a secret later in the line', () => {
+    const p = get({ cmdHist: ['deploy --token sk-ant-abcdefghijklmnopqrstuvwxyz0123'] });
+    expect(p.commands).toEqual([{ name: 'deploy', count: 1 }]);
+  });
 });

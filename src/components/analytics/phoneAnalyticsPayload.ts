@@ -1,9 +1,12 @@
 // Builds the phone `analytics` view payload (privacy section 17) in the renderer, from the same pure functions the
 // Analytics pane draws from. Free text is limited to dispatch descriptions/types and the first word of the owner's own
 // typed commands; main masks and caps it again in encodeAnalyticsView. Never sent: raw `logs`, a dispatch `prompt`, a
-// full command line. Commands mirror the desktop TopCommandsCard: the full persisted `state.cmdHist` (last 30 lines,
+// full command line. Each command line is masked (maskSecrets) on its RAW text BEFORE computeTopCommands reduces it to a
+// lower-cased first word, so the case-sensitive key rules (AKIA, eyJ) still fire. Commands mirror the desktop
+// TopCommandsCard: the full persisted `state.cmdHist` (last 30 lines,
 // kept across restarts), not the session-only history.
 import type { AetherState } from '../../state/types';
+import { maskSecrets } from '../../shared/board/text';
 import type { RealAgentDispatch } from '../../state/liveAgentsMath';
 import { computeCompletedDispatchBurn, computeLogFrequency, computeRealAgentBreakdown, computeTopCommands } from './analyticsMath';
 
@@ -34,6 +37,6 @@ export function phoneAnalyticsPayload(state: AetherState, nowMs: number): Record
       toolUses: goodNum(r.toolUses) && r.toolUses >= 0 ? r.toolUses : null,
       durationMs: r.durationMs,
     }));
-  const commands = computeTopCommands(state.cmdHist, ANALYTICS_COMMANDS_CAP).map((c) => ({ name: c.name, count: c.count }));
+  const commands = computeTopCommands(state.cmdHist.map((line) => maskSecrets(line)), ANALYTICS_COMMANDS_CAP).map((c) => ({ name: c.name, count: c.count }));
   return { computedAtMs: nowMs, logs: { success, info, denied, other }, longest, burn, commands };
 }
