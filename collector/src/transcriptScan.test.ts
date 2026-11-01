@@ -1046,6 +1046,39 @@ describe('scanTranscriptsOnce -- idle files with an open Agent entry skip the tr
     db.close();
   });
 
+  it('prunes a completed Agent entry so the file goes fully idle on the next tick', () => {
+    const { projectsRoot, projDir } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    appendFileSync(join(projDir, 'session.jsonl'), taskNotificationLine('tu_session', '2026-07-08T09:00:10Z') + String.fromCharCode(10), 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 6_000, history);
+    expect(db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_session')).toEqual({ exit_state: 'ok' });
+    expect(Object.keys(history.get(join('my-project', 'session.jsonl')).openByToolUseId)).not.toContain('tu_session');
+    const rowsBefore = fileRows(db);
+    const begins = countBegins(db);
+    const result = scanTranscriptsOnce(db, projectsRoot, t0 + 7_000, history);
+    expect(result.filesScanned).toBe(0);
+    expect(begins()).toBe(1);
+    expect(fileRows(db)).toEqual(rowsBefore);
+    db.close();
+  });
+
+  it('a late completion after a sweep fatal flips the row and then prunes the entry', () => {
+    const { projectsRoot, projDir } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    const key = join('my-project', 'session.jsonl');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    expect(db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_session')).toEqual({ exit_state: 'fatal' });
+    expect(Object.keys(history.get(key).openByToolUseId)).toContain('tu_session');
+    appendFileSync(join(projDir, 'session.jsonl'), taskNotificationLine('tu_session', '2026-07-08T09:00:50Z') + String.fromCharCode(10), 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 60_000, history);
+    expect(db.prepare('SELECT exit_state, tool_uses FROM dispatches WHERE tool_use_id = ?').get('tu_session')).toEqual({ exit_state: 'ok', tool_uses: 6 });
+    expect(Object.keys(history.get(key).openByToolUseId)).not.toContain('tu_session');
+    db.close();
+  });
+
   it('keeps the pinned session exempt from the sweep on idle ticks', () => {
     const { projectsRoot } = setup(['session']);
     const db = freshDb();
