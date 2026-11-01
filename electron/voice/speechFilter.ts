@@ -138,7 +138,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
     return unsafe[unsafeOff + end] === 1;
   };
 
-  function process(final: boolean): string[] {
+  function process(final: boolean, prefixOnly = false): string[] {
     const out: string[] = [];
     const release = (raw: string): void => {
       // A release at a safe cut leaves the rest of the table valid; any other cut rebuilds it.
@@ -154,12 +154,8 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
       spokenLen += masked.length;
       if (spokenLen >= spokenCap) spokenDone = true;
     };
+    let prefixChecked = false;
     for (;;) {
-      if (spokenDone) {
-        displayRaw += pending;
-        pending = '';
-        return out;
-      }
       if (pending.length === 0) return out;
 
       if (inPemOverflow) {
@@ -183,16 +179,35 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
         continue;
       }
 
-      const begin = pending.indexOf(PEM_BEGIN);
+      if (spokenDone) {
+        displayRaw += pending;
+        pending = '';
+        return out;
+      }
+      const begin = prefixOnly ? -1 : pending.indexOf(PEM_BEGIN);
       if (begin >= 0) {
+        if (begin > 0 && !prefixChecked) {
+          // Text before the block goes through the normal delimiter/unit logic first, so
+          // output does not depend on where the deltas fell.
+          const tail = pending.slice(begin);
+          pending = pending.slice(0, begin);
+          unsafe = null;
+          out.push(...process(final, true));
+          pending += tail;
+          unsafe = null;
+          prefixChecked = true;
+          continue;
+        }
         const end = pending.indexOf(PEM_END, begin);
         const close = end >= 0 ? pending.indexOf('-----', end + PEM_END.length) : -1;
         if (close >= 0) {
+          prefixChecked = false;
           release(pending.slice(0, close + 5));
           continue;
         }
         if (final || pending.length > PEM_HOLD_MAX) {
           if (!final && end < 0) inPemOverflow = true;
+          prefixChecked = false;
           release(pending);
           continue;
         }
