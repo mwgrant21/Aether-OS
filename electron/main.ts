@@ -1664,7 +1664,9 @@ registerRemoteIpc(ipcMain, remoteHubForIpc, event => !!mainWindow
 // stopped only at quit like the remote hub; off at every launch; enabling needs the native dialog below. Its session
 // store lives in the private dir, so every store access waits for the ACL exactly as the remote hub does.
 // The quit gate gives up at 1500 ms and nothing else reaps the Claude child, so the session's kill grace (stdin EOF,
-// wait, then taskkill /T /F, wait) must finish well inside that bound: two waits of VOICE_KILL_GRACE_MS.
+// wait, then taskkill /T /F, wait) must finish well inside that bound: two waits of VOICE_KILL_GRACE_MS. The hub stops
+// its server and its session concurrently, so a phone that never answers the close (server.stop() waits out a 1 s
+// terminate timer) no longer delays the session stop.
 const VOICE_KILL_GRACE_MS = 400;
 const VOICE_TTL_DAYS = Math.round(VOICE_SESSION_TTL_MS / 86_400_000);
 const voiceHub = createVoiceHub({

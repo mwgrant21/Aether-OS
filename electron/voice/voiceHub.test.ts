@@ -1,5 +1,9 @@
 // @vitest-environment node
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import type { VoiceStatus } from '../../src/shared/voice/types';
@@ -7,6 +11,7 @@ import type { SessionStorePort, StoredSession } from '../remote/types';
 import type { SessionEvent } from './voiceSession';
 import { createVoiceGateway } from './voiceGateway';
 import { createVoiceHub, type VoiceHub } from './voiceHub';
+import { createVoiceSession } from './voiceSession';
 import { startVoiceServer, type VoiceServerHandle } from './voiceServer';
 
 const TAILNET_IP = '100.64.0.5';
@@ -411,5 +416,40 @@ describe('voiceHub', () => {
     expect(blob).not.toMatch(/[0-9a-f]{64}/);
     expect(JSON.stringify(r.statuses)).not.toContain('qrSvg');
     expect(r.logs).toContain('voice: disabled');
+  });
+  it('stop() kills the child and its grandchild well inside the quit bound even when a connected phone never answers the close', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-stop-'));
+    const pidFile = path.join(dir, 'grandchild.pid');
+    const script = "const {spawn}=require('child_process');"
+      + "const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});"
+      + "require('fs').writeFileSync(process.argv[1],String(g.pid));process.stdin.resume();setInterval(()=>{},1000)";
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    let child: ReturnType<typeof spawn> | null = null;
+    const r = rig(fakeStore(), {
+      createSession: ((d: any) => createVoiceSession({
+        ...d,
+        killGraceMs: 400,
+        spawnFn: (_args: string[], opts: any) => (child = spawn(process.execPath, ['-e', script, pidFile], opts)),
+      })) as any,
+    });
+    let grandchild = 0;
+    try {
+      const { address, cookie } = await pairAndRedeem(r);
+      const c = await connect(address, cookie);
+      await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8') !== '', 8000);
+      grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
+      const childPid = child!.pid!;
+      expect(alive(childPid) && alive(grandchild)).toBe(true);
+      (c.ws as any)._socket.pause(); // the phone is asleep: it never reads, so it never answers the close frame
+      const t0 = Date.now();
+      const stopped = r.hub.stop();
+      await waitFor(() => !alive(childPid) && (process.platform !== 'win32' || !alive(grandchild)), 4000);
+      const elapsed = Date.now() - t0;
+      await stopped;
+      expect(elapsed).toBeLessThan(1000);
+    } finally {
+      if (grandchild && alive(grandchild)) { try { process.kill(grandchild); } catch { /* gone */ } }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

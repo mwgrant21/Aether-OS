@@ -136,7 +136,7 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
     }
   }
 
-  // Closes clients, stops the server, then the gateway (which stops the child and clears the event log).
+  // Closes clients, then stops the server and the gateway (which stops the child and clears the event log) together.
   async function teardown(): Promise<void> {
     clearRetry();
     auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
@@ -157,12 +157,13 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
     if (c) {
       try { c.closeAll('disabled'); } catch { /* closing is best effort */ }
     }
-    if (s) {
-      try { await s.stop(); } catch { /* already down */ }
-    }
-    if (g) {
-      try { await g.stop(); } catch { /* the child is best-effort stopped */ }
-    }
+    // Concurrent, not sequential: server.stop() can wait out the 1 s terminate timer of a phone that never answers
+    // the close, and the Claude child must not wait behind it (the quit gate gives up at 1.5 s). Each side's
+    // failure is swallowed on its own so neither skips the other.
+    await Promise.all([
+      s ? Promise.resolve().then(() => s.stop()).catch(() => { /* already down */ }) : undefined,
+      g ? Promise.resolve().then(() => g.stop()).catch(() => { /* the child is best-effort stopped */ }) : undefined,
+    ]);
   }
 
   function mapReason(e: unknown): VoiceUnavailableReason {
