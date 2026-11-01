@@ -427,6 +427,7 @@ describe('voiceHub', () => {
     let child: ReturnType<typeof spawn> | null = null;
     // Structural, load-independent evidence: when the session's stop() is first called vs when the server stop resolves.
     let sessionStopAt = 0;
+    const order: string[] = [];
     let serverStopDoneAt = 0;
     const r = rig(fakeStore(), {
       createSession: ((d: any) => {
@@ -436,7 +437,7 @@ describe('voiceHub', () => {
           spawnFn: (_args: string[], opts: any) => (child = spawn(process.execPath, ['-e', script, pidFile], opts)),
         });
         const realStop = s.stop.bind(s);
-        s.stop = () => { if (!sessionStopAt) sessionStopAt = Date.now(); return realStop(); };
+        s.stop = () => { if (!sessionStopAt) { sessionStopAt = Date.now(); order.push("session-stop"); } return realStop(); };
         return s;
       }) as any,
     });
@@ -451,14 +452,14 @@ describe('voiceHub', () => {
       (c.ws as any)._socket.pause(); // the phone is asleep: it never reads, so it never answers the close frame
       const handle = r.handles[r.handles.length - 1];
       const realServerStop = handle.stop.bind(handle);
-      handle.stop = async () => { try { await realServerStop(); } finally { serverStopDoneAt = Date.now(); } };
+      handle.stop = async () => { try { await realServerStop(); } finally { serverStopDoneAt = Date.now(); order.push("server-stop-done"); } };
       const t0 = Date.now();
       const stopped = r.hub.stop();
       await stopped;
       expect(serverStopDoneAt).toBeGreaterThan(0);
       // Ordering: the session stop began before the stuck phone let the server stop finish (sequential teardown fails this).
       expect(sessionStopAt).toBeGreaterThan(0);
-      expect(sessionStopAt).toBeLessThan(serverStopDoneAt);
+      expect(order).toEqual(["session-stop", "server-stop-done"]);
       // Old sequential code reached the session stop only after the server's ~1 s terminate fallback.
       expect(sessionStopAt - t0).toBeLessThan(400);
       // Liveness only, with a generous window: the child tree dies.
