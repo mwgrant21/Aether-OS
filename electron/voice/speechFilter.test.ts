@@ -275,3 +275,30 @@ describe('label/value cross-product', () => {
     expect(SECRET_LABEL_SOURCE).toContain('base|id');
   });
 });
+
+describe('hostile streams stay cheap', () => {
+  function timeIt(text: string, step: number): { ms: number; all: string } {
+    const t0 = Date.now();
+    const f = createSpeechFilter();
+    const spoken: string[] = [];
+    for (let i = 0; i < text.length; i += step) spoken.push(...f.push(text.slice(i, i + step)).spoken);
+    const e = f.end();
+    spoken.push(...e.spoken);
+    return { ms: Date.now() - t0, all: spoken.join('') + '\n' + e.display };
+  }
+  const LATER = 'ghp_' + 'a1B2c3D4e5'.repeat(4);
+
+  it('an unterminated quote after a label does not go quadratic', () => {
+    const text = 'password="' + 'a '.repeat(8 * 1024) + '\nlater ' + LATER + ' end.';
+    const r = timeIt(text, 16);
+    expect(r.ms).toBeLessThan(2000);
+    expect(r.all).not.toContain('a1B2c3D4e5');
+  });
+
+  it('a label followed by a long run of spaces does not go quadratic', () => {
+    const text = 'password' + ' '.repeat(16 * 1024) + 'x\nlater ' + LATER + ' end.';
+    const r = timeIt(text, 16);
+    expect(r.ms).toBeLessThan(2000);
+    expect(r.all).not.toContain('a1B2c3D4e5');
+  });
+});

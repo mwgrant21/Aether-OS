@@ -27,78 +27,88 @@ export interface SpeechFilter {
 // A unit boundary must not separate a secret's label from its value, or the per-unit
 // mask misses what the whole-text mask hides. The label alternation comes from
 // maskSecrets' own ASSIGN_RE (SECRET_LABEL_SOURCE), so the two cannot drift.
-const OPEN_LABEL = new RegExp('(?:' + SECRET_LABEL_SOURCE + '|bearer)\\W*$', 'i');
+const LABEL_ANY = new RegExp('(?:' + SECRET_LABEL_SOURCE + '|bearer)', 'gi');
 const QUOTE_OPEN = new RegExp(
   '(?<![A-Za-z0-9])(?:' + SECRET_LABEL_SOURCE + ')\\b\\\\?["\']?\\s*[:=]\\s*(\\\\?)(["\'])',
   'gi',
 );
+const WORD = /\w/;
 
-// True when s ends inside a quoted value opened after a label. The scan mirrors
-// ASSIGN_RE's value alternatives (plain quote with \ escapes, or an escaped \" quote
-// closed by an unescaped backslash-quote); a real newline ends either kind of value.
-function inOpenValue(s: string): boolean {
-  QUOTE_OPEN.lastIndex = 0;
-  for (let m = QUOTE_OPEN.exec(s); m; m = QUOTE_OPEN.exec(s)) {
-    const escaped = m[1] === '\\';
-    const q = m[2];
-    let i = m.index + m[0].length;
-    let closed = false;
-    while (i < s.length) {
-      const c = s[i];
-      if (c === '\n' || c === '\r') {
-        closed = true;
-        break;
-      }
-      if (c === '\\') {
-        if (escaped) {
-          if (s.startsWith('\\\\\\\\', i)) {
-            i += 4;
-            continue;
-          }
-          if (s.startsWith('\\\\\\' + q, i)) {
-            i += 4;
-            continue;
-          }
-          if (s[i + 1] === q) {
-            closed = true;
-            break;
-          }
+// Last head length at which a quoted value that opened at `from` is still open (s.length
+// when it never closes). The scan mirrors ASSIGN_RE's value
+// alternatives (plain quote with \ escapes, or an escaped \" quote closed by an
+// unescaped backslash-quote); a real newline ends either kind of value.
+function valueEnd(s: string, from: number, escaped: boolean, q: string): number {
+  let i = from;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\n' || c === '\r') return i;
+    if (c === '\\') {
+      if (escaped) {
+        if (s.startsWith('\\\\\\\\', i)) {
+          i += 4;
+          continue;
         }
-        i += s[i + 1] === '\n' || s[i + 1] === '\r' ? 1 : 2;
-        continue;
+        if (s.startsWith('\\\\\\' + q, i)) {
+          i += 4;
+          continue;
+        }
+        if (s[i + 1] === q) return i + 1;
       }
-      if (!escaped && c === q) {
-        closed = true;
-        break;
-      }
-      i++;
+      i += s[i + 1] === '\n' || s[i + 1] === '\r' ? 1 : 2;
+      continue;
     }
-    if (!closed) return true;
-    QUOTE_OPEN.lastIndex = i;
+    if (!escaped && c === q) return i;
+    i++;
   }
-  return false;
+  return s.length;
 }
 
-function splitsSecret(s: string, end: number): boolean {
-  const head = s.slice(0, end);
-  return OPEN_LABEL.test(head) || inOpenValue(head);
+// One forward pass over s. t[e] is 1 when cutting s after its first e characters would
+// separate a label from its value: the head ends in a label (plus any non-word run) or
+// inside a quoted value opened after a label. Linear in s.length, so every later lookup
+// is O(1) and a hostile stream (an unterminated quote, a long run of spaces) stays cheap.
+function buildUnsafe(s: string): Uint8Array {
+  const n = s.length;
+  const t = new Uint8Array(n + 1);
+  LABEL_ANY.lastIndex = 0;
+  let any = false;
+  for (let m = LABEL_ANY.exec(s); m; m = LABEL_ANY.exec(s)) {
+    any = true;
+    LABEL_ANY.lastIndex = m.index + 1;
+    const p = m.index + m[0].length;
+    if (p < n && WORD.test(s[p])) continue;
+    for (let e = p; e <= n; e++) {
+      t[e] = 1;
+      if (e < n && WORD.test(s[e])) break;
+    }
+  }
+  if (!any) return t;
+  QUOTE_OPEN.lastIndex = 0;
+  for (let m = QUOTE_OPEN.exec(s); m; m = QUOTE_OPEN.exec(s)) {
+    const start = m.index + m[0].length;
+    const end = valueEnd(s, start, m[1] === '\\', m[2]);
+    for (let e = start; e <= end; e++) t[e] = 1;
+    QUOTE_OPEN.lastIndex = Math.max(end, start);
+  }
+  return t;
 }
 
 // Index just past the first complete unit in s, or -1 when there is none yet.
 // A terminator (plus closers) at the very end of s is not a boundary: more text
 // may follow ("3." then "14").
-function findUnitEnd(s: string): number {
+function findUnitEnd(s: string, splits: (end: number) => boolean): number {
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (c === '\n') {
-      if (!splitsSecret(s, i + 1)) return i + 1;
+      if (!splits(i + 1)) return i + 1;
       continue;
     }
     if (c === '.' || c === '!' || c === '?') {
       let j = i + 1;
       while (j < s.length && '"\')]'.includes(s[j])) j++;
       if (j >= s.length) return -1;
-      if (/\s/.test(s[j]) && !splitsSecret(s, j + 1)) return j + 1;
+      if (/\s/.test(s[j]) && !splits(j + 1)) return j + 1;
       i = j - 1;
     }
   }
@@ -117,9 +127,25 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
   let spokenLen = 0;
   let inPemOverflow = false;
 
+  // Unsafe-cut table for pending (see buildUnsafe), built lazily once per change of pending.
+  let unsafe: Uint8Array | null = null;
+  let unsafeOff = 0;
+  const splits = (end: number): boolean => {
+    if (!unsafe || unsafe.length - 1 - unsafeOff !== pending.length) {
+      unsafe = buildUnsafe(pending);
+      unsafeOff = 0;
+    }
+    return unsafe[unsafeOff + end] === 1;
+  };
+
   function process(final: boolean): string[] {
     const out: string[] = [];
     const release = (raw: string): void => {
+      // A release at a safe cut leaves the rest of the table valid; any other cut rebuilds it.
+      if (unsafe) {
+        if (unsafe[unsafeOff + raw.length] === 1) unsafe = null;
+        else unsafeOff += raw.length;
+      }
       pending = pending.slice(raw.length);
       if (raw.length === 0) return;
       atLineStart = raw.endsWith('\n');
@@ -193,7 +219,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
         }
       }
 
-      const unitEnd = findUnitEnd(pending);
+      const unitEnd = findUnitEnd(pending, splits);
       if (unitEnd >= 0) {
         release(pending.slice(0, unitEnd));
         continue;
@@ -205,7 +231,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
       if (pending.length > holdCap) {
         let ws = -1;
         for (let i = pending.length - 1; i >= 0; i--) {
-          if (/\s/.test(pending[i]) && !splitsSecret(pending, i + 1)) {
+          if (/\s/.test(pending[i]) && !splits(i + 1)) {
             ws = i;
             break;
           }
@@ -222,6 +248,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
   return {
     push(delta) {
       pending += delta;
+      unsafe = null;
       return { spoken: process(false), spokenDone };
     },
     end() {
