@@ -160,4 +160,35 @@ describe('leak property', () => {
     expect(r.all).not.toContain('MIIEvQIBADANBgkqhkiG9w0B');
     expect(r.spoken.join('')).toContain('After.');
   });
+
+  it('masks a PEM block larger than PEM_HOLD_MAX streamed in 200-char deltas', () => {
+    const line = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC\n';
+    const pem = '-----BEGIN ' + 'PRIVATE KEY-----\n' + line.repeat(400) + '-----END ' + 'PRIVATE KEY-----\n';
+    expect(pem.length).toBeGreaterThan(16 * 1024);
+    const text = 'Key follows.\n' + pem + 'After it.';
+    const deltas: string[] = [];
+    for (let i = 0; i < text.length; i += 200) deltas.push(text.slice(i, i + 200));
+    const r = run(deltas);
+    expect(r.all).not.toContain('MIIEvQIBADANBg');
+    expect(r.all).toContain('[redacted]');
+    expect(r.spoken.join('')).toContain('After it.');
+  });
+
+  // A unit boundary must never separate a secret's label from its value.
+  const splitCases: Array<[string, string, string]> = [
+    ['label then newline then value', 'Here:\npassword:\nhunter2hunter2 done.', 'hunter2hunter2'],
+    ['Bearer then newline then token', 'Header: Bearer\nabcdefghijklmnopqrstuvwx ok.', 'abcdefghijklmnopqrstuvwx'],
+    ['quoted value with a period', 'Set password: "correct horse. battery staple" now.', 'battery staple'],
+    ['quoted value with a question mark', 'api_key = "what? is this secret value" ok', 'is this secret value'],
+  ];
+  for (const [name, text, needle] of splitCases) {
+    it(`${name}: whole text, 2-way split and 1-char deltas mask`, () => {
+      expect(run([text]).all).not.toContain(needle);
+      for (let i = 0; i <= text.length; i++) {
+        expect(run([text.slice(0, i), text.slice(i)]).all, `split at ${i}`).not.toContain(needle);
+      }
+      expect(run(chars(text)).all).not.toContain(needle);
+      expect(run(chars(text)).all).toContain('[redacted]');
+    });
+  }
 });

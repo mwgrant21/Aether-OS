@@ -24,18 +24,37 @@ export interface SpeechFilter {
   end(): { spoken: string[]; display: string; spokenDone: boolean };
 }
 
+// Labels whose value follows in the next token; mirrors the maskSecrets rules.
+const LABEL =
+  'password|passwd|pwd|secret[_-]?(?:access[_-]?)?key|private[_-]?key|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|bearer';
+const OPEN_LABEL = new RegExp('(?:' + LABEL + ')\\W*$', 'i');
+const OPEN_QUOTE = new RegExp(
+  '(?:' + LABEL + ')\\\\?["\']?\\s*[:=]\\s*(["\'])(?:(?!\\1)[\\s\\S])*$',
+  'i',
+);
+
+// A boundary right after a label, or inside a quoted value that follows one, would
+// split the label from its value and defeat the per-unit mask.
+function splitsSecret(s: string, end: number): boolean {
+  const head = s.slice(0, end);
+  return OPEN_LABEL.test(head) || OPEN_QUOTE.test(head);
+}
+
 // Index just past the first complete unit in s, or -1 when there is none yet.
 // A terminator (plus closers) at the very end of s is not a boundary: more text
 // may follow ("3." then "14").
 function findUnitEnd(s: string): number {
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    if (c === '\n') return i + 1;
+    if (c === '\n') {
+      if (!splitsSecret(s, i + 1)) return i + 1;
+      continue;
+    }
     if (c === '.' || c === '!' || c === '?') {
       let j = i + 1;
       while (j < s.length && '"\')]'.includes(s[j])) j++;
       if (j >= s.length) return -1;
-      if (/\s/.test(s[j])) return j + 1;
+      if (/\s/.test(s[j]) && !splitsSecret(s, j + 1)) return j + 1;
       i = j - 1;
     }
   }
@@ -52,6 +71,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
   let spokenDone = false;
   let atLineStart = true;
   let spokenLen = 0;
+  let inPemOverflow = false;
 
   function process(final: boolean): string[] {
     const out: string[] = [];
@@ -72,6 +92,27 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
       }
       if (pending.length === 0) return out;
 
+      if (inPemOverflow) {
+        // Past PEM_HOLD_MAX the block was already released masked; drop the rest of it.
+        if (final) {
+          pending = '';
+          return out;
+        }
+        const e = pending.indexOf(PEM_END);
+        if (e < 0) {
+          pending = pending.slice(-(PEM_END.length - 1));
+          return out;
+        }
+        const c = pending.indexOf('-----', e + PEM_END.length);
+        if (c < 0) {
+          pending = pending.slice(e);
+          return out;
+        }
+        pending = pending.slice(c + 5);
+        inPemOverflow = false;
+        continue;
+      }
+
       const begin = pending.indexOf(PEM_BEGIN);
       if (begin >= 0) {
         const end = pending.indexOf(PEM_END, begin);
@@ -81,6 +122,7 @@ export function createSpeechFilter(opts: SpeechFilterOptions = {}): SpeechFilter
           continue;
         }
         if (final || pending.length > PEM_HOLD_MAX) {
+          if (!final && end < 0) inPemOverflow = true;
           release(pending);
           continue;
         }
