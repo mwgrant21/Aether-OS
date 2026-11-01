@@ -95,7 +95,7 @@ export function startCollector(options: {
       Date.now(),
       toolCallHistoryByFile,
       scanQueue(),
-      null
+      readOwnSessionId(options.ownSessionFilePath)
     );
   scan();
   const transcriptScanTimer = setInterval(scan, options.transcriptScanIntervalMs);
