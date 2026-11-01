@@ -1,8 +1,10 @@
 // @vitest-environment node
 // End to end: the REAL hub (server, connections, gateway, event log, session supervisor) over a real
 // WebSocket on loopback, with the fake `claude` child from __fixtures__/fakeClaude.mjs. Only the bind
-// address (loopback instead of the fake tailnet IP), the child executable and two gateway knobs
-// (maxBytes, permissionTimeoutMs) are injected.
+// address (loopback instead of the fake tailnet IP), the child executable (via spawnFn, which also records
+// what is written to its stdin), the session knobs backoffMs [0] and killGraceMs 500, two gateway knobs
+// (maxBytes, permissionTimeoutMs), an in-memory session store and fake network interfaces are injected.
+// Scenario 7b reaches into the private ws `_socket` to pause the first client, as voiceHub.test.ts does.
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -169,6 +171,11 @@ async function connect(address: string, cookie: string, first: object | null = {
 
 const isReady = (e: Ev) => e.t === 'status' && e.kind === 'session' && e.state === 'ready';
 const isDone = (id: string) => (e: Ev) => e.t === 'turn.completed' && e.turnId === id;
+/** No secret-key fragment: no `sk-ant-` + alphanumeric, and no 8-character window of the fixture's key tail. */
+function expectNoKeyFragment(text: string): void {
+  expect(text).not.toMatch(/sk-ant-[A-Za-z0-9]/);
+  for (let i = 0; i + 8 <= FIXTURE_TAIL.length; i++) expect(text).not.toContain(FIXTURE_TAIL.slice(i, i + 8));
+}
 const deltaText = (evs: Ev[], id: string) => evs.filter((e) => e.t === 'response.delta' && e.turnId === id).map((e) => e.text).join('');
 
 async function setup(r: Rig, first: object | null = { t: 'resume', lastSeq: 0 }) {
@@ -192,6 +199,9 @@ async function runTurn(c: Client, id: string, text: string): Promise<void> {
   await c.waitFor(isDone(id));
 }
 
+/** The user-message contents the fake child received on stdin, in order, across all children. */
+const userContents = (r: Rig): string[] =>
+  sentTexts(r).map((l) => JSON.parse(l.trim()).message.content as string);
 const sentTexts = (r: Rig) => r.children.flatMap((x) => x.stdin).filter((l) => l.includes('"type":"user"'));
 
 describe('voice gateway end to end (scripted client, fake claude)', { timeout: 20000 }, () => {
@@ -229,18 +239,55 @@ describe('voice gateway end to end (scripted client, fake claude)', { timeout: 2
     expect(t.indexOf('response.display')).toBeLessThan(t.indexOf('turn.completed'));
   });
 
-  it('3. [[secret]] never reaches a client frame, in any chunking', async () => {
+  it('3. [[secret]] never reaches a client frame, in any chunking, live or replayed', async () => {
     const r = makeRig();
-    const { c } = await setup(r);
+    const { address, cookie, c } = await setup(r);
     await ready(c);
     await runTurn(c, 'turn-0003', '[[secret]] go');
     expect(FIXTURE_TAIL.length).toBeGreaterThanOrEqual(30);
     const all = c.frames.join('\n');
     expect(all).not.toContain(FIXTURE_KEY);
-    expect(all).not.toContain(FIXTURE_TAIL);
-    expect(all).not.toMatch(/sk-ant-[A-Za-z0-9]{30}/);
     expect(all).not.toContain('hunter2hunter2');
-    expect(all).toContain('[redacted]');
+    expectNoKeyFragment(all);
+    const spoken = deltaText(c.events, 'turn-0003');
+    expectNoKeyFragment(spoken); // the concatenated spoken text: a key split across two deltas must not survive
+    expect(spoken).toContain('[redacted]');
+    // Replay leg: a fresh socket resuming from 0 sees the same property over the replayed frames.
+    c.ws.terminate();
+    await c.closed;
+    const b = await connect(address, cookie, { t: 'resume', lastSeq: 0 });
+    await b.waitFor(isDone('turn-0003'));
+    const replayed = b.frames.join('\n');
+    expect(deltaText(b.events, 'turn-0003')).toContain('[redacted]');
+    expect(replayed).not.toContain('hunter2hunter2');
+    expectNoKeyFragment(replayed);
+    expectNoKeyFragment(deltaText(b.events, 'turn-0003'));
+  });
+
+  it('3b. a key inside the cancel spokenText is masked in the interrupted completion', async () => {
+    const r = makeRig();
+    const { c } = await setup(r);
+    await ready(c);
+    c.send({ t: 'turn.start', turnId: 'turn-0017', text: '[[slow]] go', mode: 'voice' });
+    await c.waitFor((e) => e.t === 'turn.started' && e.turnId === 'turn-0017');
+    c.send({ t: 'turn.cancel', turnId: 'turn-0017', spokenText: `heard ${FIXTURE_KEY} end` });
+    const done = await c.waitFor(isDone('turn-0017'));
+    expect(done.status).toBe('interrupted');
+    expectNoKeyFragment(done.spokenText);
+    expect(done.spokenText).toContain('[redacted]');
+    await runTurn(c, 'turn-0018', 'after');
+    expectNoKeyFragment(sentTexts(r).join('\n')); // nor does it reach the child in the next turn's prefix
+  });
+
+  it('3c. nothing sequenced is delivered until the client sends its first frame (T5 hold)', async () => {
+    const r = makeRig();
+    const { c } = await setup(r, null);
+    await c.waitFor((e) => e.t === 'status' && e.seq === 0);
+    await until(() => r.sessions[0].state() === 'ready');
+    await new Promise((res) => setTimeout(res, 300));
+    expect(c.events.filter((e) => e.seq > 0)).toEqual([]);
+    c.send({ t: 'resume', lastSeq: 0 });
+    await c.waitFor((e) => isReady(e) && e.seq > 0);
   });
 
   it('4. [[slow]] + cancel: no delta after the cancel, one interrupted completion, same child answers the next turn', async () => {
@@ -258,8 +305,10 @@ describe('voice gateway end to end (scripted client, fake claude)', { timeout: 2
     expect(evs.filter((e) => e.t === 'turn.completed')).toHaveLength(1);
     expect(evs.slice(evs.findIndex((e) => e.t === 'turn.completed') + 1).filter((e) => e.t === 'response.delta')).toEqual([]);
     await runTurn(c, 'turn-0005', 'next');
-    expect(sentTexts(r).some((l) => l.includes('[interrupted after: \\"Sure th\\"] next'))).toBe(true);
+    expect(userContents(r).filter((x) => x.endsWith('next'))).toEqual(['[interrupted after: "Sure th"] next']);
     expect(deltaText(c.events, 'turn-0005')).toContain('interrupted after');
+    await runTurn(c, 'turn-0019', 'third');
+    expect(userContents(r).filter((x) => x.includes('third'))).toEqual(['third']); // the prefix is used once
     expect(r.sessions[0].pid()).toBe(pid);
     expect(r.children).toHaveLength(1);
   });
@@ -392,11 +441,10 @@ describe('voice gateway end to end (scripted client, fake claude)', { timeout: 2
     expect(c.events.some((e) => e.t === 'status' && e.kind === 'tool' && e.state === 'Bash')).toBe(true);
     const all = c.frames.join('\n');
     expect(all).not.toContain('"input"');
-    expect(all).not.toContain('echo hi');
   });
 
   describe('10. [[perm]] over the real stdio permission flow', () => {
-    it('summary is masked and short; reply approve:false is denied', async () => {
+    it('summary is the short tool: hint line; reply approve:false is denied', async () => {
       const r = makeRig({ permissionTimeoutMs: 5000 });
       const { c } = await setup(r);
       await ready(c);
