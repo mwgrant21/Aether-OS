@@ -138,7 +138,7 @@ export function VoiceGatewayCard() {
           <p style={{ ...hintStyle(colors), marginTop: 8 }}>Code: <strong>{pairing.code}</strong></p>
           <p style={{ ...hintStyle(colors), marginTop: 4 }}>Expires in {mmss(pairing.expiresAtMs - now)}</p>
           <p style={{ ...hintStyle(colors), marginTop: 4 }}>
-            Done only hides this code. It stays valid until it is used once or expires (60 minutes after it was made).
+            Done only hides this code. It still works until it is used once, replaced by a new code, the gateway is turned off, or it expires (see the countdown).
           </p>
           <div style={{ marginTop: 8 }}>
             <Button onClick={() => setPairing(null)} style={buttonStyle(colors, false)}>Done</Button>
