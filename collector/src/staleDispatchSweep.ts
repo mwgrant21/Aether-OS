@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ToolCallHistory } from './toolCallHistory.js';
 import { computeSeverity } from './severity/computeSeverity.js';
-import { isStalled, STALL_MS, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
+import { isStalled, STALL_MS, FUTURE_MTIME_TOLERANCE_MS, lastProgressMs as resolveLastProgressMs } from './severity/isStalled.js';
 
 // Grace period before a dispatch's session liveness is even checked: an entry
 // that opened moments ago may simply predate the first fleet poll ever seeing
@@ -28,7 +28,9 @@ const SESSION_STALE_MS = 30000;
  *       last_seen_ms is older than SESSION_STALE_MS -- but only checked once
  *       the open entry itself is at least SESSION_CHECK_MIN_AGE_MS old. With no
  *       row, the parent transcript's mtime (transcriptMtimeFor) stands in for
- *       last_seen_ms; no mtime available means ended. The pinned (own) session, ownSessionId, is exempt from this condition:
+ *       last_seen_ms; no mtime available (or one more than
+ *       FUTURE_MTIME_TOLERANCE_MS in the future) means ended. The pinned
+ *       (own) session, ownSessionId, is exempt from this condition:
  *       filterOwnSession (fleetPoll.ts) removes it from fleet_sessions, so its
  *       absence there says nothing about liveness.
  *   (b) no progress for longer than STALL_MS (./severity/isStalled.js, 30 min),
@@ -101,7 +103,8 @@ export function sweepStaleDispatches(
         // removed it from fleet_sessions). Fall back to the parent transcript's
         // mtime; with no mtime available, treat it as ended.
         const mtime = open.sessionId == null ? null : transcriptMtime(open.sessionId);
-        sessionEnded = mtime == null || nowMs - mtime > SESSION_STALE_MS;
+        const usable = mtime != null && mtime <= nowMs + FUTURE_MTIME_TOLERANCE_MS;
+        sessionEnded = !usable || nowMs - mtime > SESSION_STALE_MS;
       }
     }
 
