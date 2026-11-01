@@ -162,8 +162,8 @@ export function scanTranscriptsOnce(
       // nothing to parse, ingest or sweep, and its offset is already recorded, so
       // opening a transaction (a synchronous=FULL commit, ~20 ms) would only
       // rewrite last_scanned_ms, which nothing reads. A file with an open Agent
-      // entry still runs the pass: the staleness sweep must fire on a later tick
-      // with no new bytes.
+      // entry runs only the staleness sweep (below), which must still fire on a
+      // later tick with no new bytes.
       const noNewBytes = lines.length === 0 && newOffset === offset;
       const hasOpenAgent = Object.values(priorHistory.openByToolUseId).some((o) => o.toolName === 'Agent');
       const idle = noNewBytes && !hasOpenAgent;
@@ -172,9 +172,9 @@ export function scanTranscriptsOnce(
         // anything. Nothing was parsed, so the history and offset are unchanged
         // (no historyByFile.set, no recordOffset), and the sweep skips entries
         // that already have a dispatches row and writes a stale one as a single
-        // autocommit upsert, so no transaction is needed. An open Agent entry
-        // never closes in memory, so these files would otherwise pay a
-        // synchronous=FULL commit every tick.
+        // autocommit upsert, so no transaction is needed. An async-launched Agent
+        // entry stays open (the launch ack does not close it), so these files
+        // would otherwise pay a synchronous=FULL commit every tick.
         sweepStaleDispatches(db, priorHistory, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
         filesScanned += 1;
       } else if (!idle) {
