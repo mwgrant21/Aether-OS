@@ -27,8 +27,16 @@ export interface QueuedExtraction {
 
 export function createMemoryExtractQueue() {
   const items: QueuedExtraction[] = [];
+  // toolUseIds queued or drained earlier in this process, so a duplicate
+  // task-notification for the same dispatch cannot extract twice. Bounded,
+  // oldest-first eviction; drain() does not clear it.
+  const seen = new Set<string>();
+  const SEEN_CAP = 500;
   return {
     push(item: QueuedExtraction): void {
+      if (seen.has(item.toolUseId)) return;
+      seen.add(item.toolUseId);
+      if (seen.size > SEEN_CAP) seen.delete(seen.values().next().value as string);
       items.push(item);
     },
     drain(): QueuedExtraction[] {
