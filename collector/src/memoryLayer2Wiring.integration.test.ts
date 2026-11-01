@@ -22,6 +22,24 @@ function agentToolUseLine(toolUseId: string, timestamp: string): string {
   });
 }
 
+// Shaped like the real immediate tool_result a background Agent call receives.
+function toolResultLine(toolUseId: string, timestamp: string): string {
+  return JSON.stringify({
+    type: 'user',
+    sessionId: 's1',
+    timestamp,
+    message: {
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: [{ type: 'text', text: 'Async agent launched successfully. (This tool result is only the launch acknowledgement.)' }],
+        },
+      ],
+    },
+  });
+}
+
 function taskNotificationLine(toolUseId: string, timestamp: string): string {
   // Shaped after a REAL captured task-notification event: message.content is
   // a plain string with every tag inline, including <result> -- not a
@@ -73,6 +91,36 @@ describe('Memory Layer 2 wiring -- end to end', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].content).toContain('unbounded retry');
       expect(rows[0].kind).toBe('overrule');
+    } finally {
+      memoryStore.close();
+      db.close();
+      rmSync(projectsRoot, { recursive: true, force: true });
+      rmSync(dbDir, { recursive: true, force: true });
+    }
+  });
+  it('a background Agent: tool_use, async-launch ack, then task-notification still writes an ok dispatches row and queues extraction', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-e2e-mem-projects-'));
+    const dbDir = mkdtempSync(join(tmpdir(), 'aether-e2e-mem-db-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const lines = [
+      agentToolUseLine('tu_bg', '2026-07-08T09:00:00Z'),
+      toolResultLine('tu_bg', '2026-07-08T09:00:01Z'),
+      taskNotificationLine('tu_bg', '2026-07-08T09:01:30Z'),
+    ].join('\n');
+    writeFileSync(join(projDir, 'session.jsonl'), `${lines}\n`, 'utf8');
+
+    const db = openDatabase(join(dbDir, 'collector.db'));
+    migrate(db);
+    const memoryStore = createMemoryStore(join(dbDir, 'memory.db'));
+    const extractQueue = createMemoryExtractQueue();
+
+    try {
+      scanTranscriptsOnce(db, projectsRoot, Date.now(), new Map(), extractQueue);
+      const rows = db.prepare('SELECT exit_state FROM dispatches').all() as { exit_state: string }[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0].exit_state).toBe('ok');
+      expect(extractQueue.size()).toBe(1);
     } finally {
       memoryStore.close();
       db.close();

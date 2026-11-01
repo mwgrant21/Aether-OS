@@ -14,6 +14,20 @@ export interface TranscriptToolUse {
 export interface TranscriptToolResult {
   toolUseId: string;
   resultLength: number;
+  // True iff the result text starts with the background-Agent launch
+  // acknowledgement ("Async agent launched"). Computed from the text and
+  // discarded: the text itself is never stored or logged.
+  asyncLaunch?: boolean;
+}
+
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((c: any) => c && c.type === 'text' && typeof c.text === 'string')
+    .map((c: any) => c.text)
+    .join('')
+    .trim();
 }
 
 export interface TranscriptEvent {
@@ -102,6 +116,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       .map((item: any) => ({
         toolUseId: item.tool_use_id,
         resultLength: JSON.stringify(item.content ?? '').length,
+        ...(resultText(item.content).startsWith('Async agent launched') ? { asyncLaunch: true } : {}),
       }));
     const textItem = content.find((item: any) => item.type === 'text');
     return {

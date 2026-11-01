@@ -96,7 +96,12 @@ export function updateHistory(
           startedAt: open.startedAt,
           closedAt,
         });
-        delete newOpen[toolResult.toolUseId];
+        // A background Agent's async-launch ack is not its completion: the
+        // real completion arrives later as a task-notification, which needs the
+        // open entry (usageIngest.ingestDispatchEvent). Keep it open.
+        if (!(toolResult.asyncLaunch === true && open.toolName === 'Agent')) {
+          delete newOpen[toolResult.toolUseId];
+        }
       }
     }
   }
