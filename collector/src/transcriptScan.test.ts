@@ -961,3 +961,98 @@ describe('scanTranscriptsOnce -- idle files are not rewritten', () => {
     db.close();
   });
 });
+
+describe('scanTranscriptsOnce -- idle files with an open Agent entry skip the transaction', () => {
+  const t0 = Date.UTC(2026, 6, 8, 9, 0, 0);
+  const setup = (names: string[]) => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    for (const n of names) {
+      writeFileSync(join(projDir, `${n}.jsonl`), `${agentToolUseLine(`tu_${n}`, '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    }
+    return { projectsRoot, projDir };
+  };
+  const fileRows = (db: ReturnType<typeof freshDb>) =>
+    db.prepare('SELECT file_path, last_offset, last_scanned_ms FROM transcript_files ORDER BY file_path').all();
+  const countBegins = (db: ReturnType<typeof freshDb>) => {
+    let n = 0;
+    const orig = db.exec.bind(db);
+    db.exec = (sql: string) => {
+      if (sql.trim().toUpperCase().startsWith('BEGIN')) n += 1;
+      return orig(sql);
+    };
+    return () => n;
+  };
+
+  it('leaves transcript_files and an existing dispatches row untouched on idle ticks', () => {
+    const { projectsRoot } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    const rowsBefore = fileRows(db);
+    const dispatchBefore = db.prepare('SELECT * FROM dispatches').all();
+    expect(dispatchBefore).toHaveLength(1);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 50_000, history);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 60_000, history);
+    expect(fileRows(db)).toEqual(rowsBefore);
+    expect(db.prepare('SELECT * FROM dispatches').all()).toEqual(dispatchBefore);
+    db.close();
+  });
+
+  it('issues no BEGIN for idle open-Agent files (only the final rescore transaction)', () => {
+    const { projectsRoot } = setup(['a', 'b', 'c']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    const begins = countBegins(db);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 6_000, history);
+    expect(begins()).toBe(1);
+    db.close();
+  });
+
+  it('still sweeps an idle open-Agent file once stale, as one complete row', () => {
+    const { projectsRoot } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    const before = fileRows(db);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history);
+    const rows: any[] = db.prepare('SELECT * FROM dispatches').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tool_use_id).toBe('tu_session');
+    expect(rows[0].exit_state).toBe('fatal');
+    expect(fileRows(db)).toEqual(before);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 70_000, history);
+    expect(db.prepare('SELECT * FROM dispatches').all()).toEqual(rows);
+    db.close();
+  });
+
+  it('ingests bytes appended to an idle open-Agent file and advances its offset and history', () => {
+    const { projectsRoot, projDir } = setup(['session']);
+    const file = join(projDir, 'session.jsonl');
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history);
+    scanTranscriptsOnce(db, projectsRoot, t0 + 6_000, history);
+    appendFileSync(file, assistantLine(5) + '\n', 'utf8');
+    const result = scanTranscriptsOnce(db, projectsRoot, t0 + 7_000, history);
+    expect(result.eventsIngested).toBe(1);
+    const row: any = db.prepare('SELECT last_offset, last_scanned_ms FROM transcript_files').get();
+    expect(row).toEqual({ last_offset: statSync(file).size, last_scanned_ms: t0 + 7_000 });
+    expect(Object.keys(history.get(join('my-project', 'session.jsonl')).openByToolUseId)).toContain('tu_session');
+    db.close();
+  });
+
+  it('keeps the pinned session exempt from the sweep on idle ticks', () => {
+    const { projectsRoot } = setup(['session']);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, t0 + 5_000, history, undefined, 's1');
+    scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history, undefined, 's1');
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    db.close();
+  });
+});

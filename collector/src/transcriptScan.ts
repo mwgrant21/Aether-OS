@@ -164,11 +164,20 @@ export function scanTranscriptsOnce(
       // rewrite last_scanned_ms, which nothing reads. A file with an open Agent
       // entry still runs the pass: the staleness sweep must fire on a later tick
       // with no new bytes.
-      const idle =
-        lines.length === 0 &&
-        newOffset === offset &&
-        !Object.values(priorHistory.openByToolUseId).some((o) => o.toolName === 'Agent');
-      if (!idle) {
+      const noNewBytes = lines.length === 0 && newOffset === offset;
+      const hasOpenAgent = Object.values(priorHistory.openByToolUseId).some((o) => o.toolName === 'Agent');
+      const idle = noNewBytes && !hasOpenAgent;
+      if (noNewBytes && hasOpenAgent) {
+        // Idle with an open Agent entry: only the staleness sweep can change
+        // anything. Nothing was parsed, so the history and offset are unchanged
+        // (no historyByFile.set, no recordOffset), and the sweep skips entries
+        // that already have a dispatches row and writes a stale one as a single
+        // autocommit upsert, so no transaction is needed. An open Agent entry
+        // never closes in memory, so these files would otherwise pay a
+        // synchronous=FULL commit every tick.
+        sweepStaleDispatches(db, priorHistory, nowMs, (id) => subagentProbe.lastWriteMsFor(id), ownSessionId);
+        filesScanned += 1;
+      } else if (!idle) {
         const parsedEvents = lines
           .map((l) => parseTranscriptLine(l))
           .filter((e): e is NonNullable<typeof e> => e !== null);
