@@ -106,6 +106,43 @@ describe('VoiceGatewayCard', () => {
     expect(screen.getByTestId('voice-status-line').textContent).toBe('on - 100.1.2.3:47822 - phone connected - session restarting');
   });
 
+  it('session none is idle, session starting stays starting', async () => {
+    const { push } = install({ status: mkStatus({ session: 'none' }) });
+    render(<VoiceGatewayCard />);
+    await settle();
+    expect(screen.getByTestId('voice-status-line').textContent).toBe('on - 100.1.2.3:47822 - phone not connected - session idle (starts when a phone connects)');
+    act(() => push(mkStatus({ session: 'starting' })));
+    expect(screen.getByTestId('voice-status-line').textContent).toBe('on - 100.1.2.3:47822 - phone not connected - session starting');
+  });
+
+  it('the pairing box says the code stays valid after Done until used or expired', async () => {
+    await pairFlow();
+    expect(screen.getByText(/Done only hides this code\. It stays valid until it is used once or expires \(60 minutes/)).toBeTruthy();
+  });
+
+  it('PAIR A PHONE ignores a second click while pending and recovers after resolve and reject', async () => {
+    const h = install();
+    let resolve!: (v: unknown) => void;
+    h.voice.createPairing.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+    render(<VoiceGatewayCard />);
+    await settle();
+    const btn = () => screen.getByText('PAIR A PHONE') as HTMLButtonElement;
+    fireEvent.click(btn());
+    fireEvent.click(btn());
+    expect(h.voice.createPairing).toHaveBeenCalledTimes(1);
+    expect(btn().disabled).toBe(true);
+    await act(async () => { resolve({ ok: true, code: 'ABCD-1234', address: 'a', qrSvg: '<svg/>', expiresAtMs: Date.now() + 90_000 }); });
+    expect(btn().disabled).toBe(false);
+    h.voice.createPairing.mockRejectedValueOnce(new Error('x'));
+    fireEvent.click(btn());
+    await settle();
+    expect(h.voice.createPairing).toHaveBeenCalledTimes(2);
+    expect(btn().disabled).toBe(false);
+    fireEvent.click(btn());
+    await settle();
+    expect(h.voice.createPairing).toHaveBeenCalledTimes(3);
+  });
+
   it('a status push updates the UI', async () => {
     const { push } = install();
     render(<VoiceGatewayCard />);

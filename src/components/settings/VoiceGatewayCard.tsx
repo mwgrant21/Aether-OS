@@ -10,7 +10,8 @@ type Pairing = Extract<VoicePairingResult, { ok: true }>;
 export function voiceStatusLine(s: VoiceStatus): string {
   if (s.state === 'off') return 'off';
   if (s.state === 'on') {
-    const session = s.session === 'none' ? 'starting' : s.session;
+    // 'none' is idle: the Claude child is spawned lazily at the first authenticated attach.
+    const session = s.session === 'none' ? 'idle (starts when a phone connects)' : s.session;
     return `on - ${s.address ?? 'address unknown'} - phone ${s.connected ? 'connected' : 'not connected'} - session ${session}`;
   }
   if (s.reason === 'no-tailnet-address') return 'unavailable: Tailscale address not found';
@@ -30,6 +31,7 @@ export function VoiceGatewayCard() {
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [pairPending, setPairPending] = useState(false);
   // Bumped by every push so a slower action readback never overwrites newer state.
   const pushSeq = useRef(0);
   const onRef = useRef(false);
@@ -83,7 +85,9 @@ export function VoiceGatewayCard() {
     }
   };
   const pair = async () => {
+    if (pairPending) return;
     setMessage(null);
+    setPairPending(true);
     try {
       const r = await voice.createPairing();
       // A code that resolves after the gateway left 'on' is dropped, not shown.
@@ -92,6 +96,8 @@ export function VoiceGatewayCard() {
       } else setMessage('Turn the voice gateway on first.');
     } catch {
       setMessage('Could not create a pairing code.');
+    } finally {
+      setPairPending(false);
     }
   };
   const revoke = async (act: () => Promise<VoiceStatus>) => {
@@ -117,7 +123,7 @@ export function VoiceGatewayCard() {
 
       {on && (
         <div style={{ marginTop: 10 }}>
-          <Button onClick={() => void pair()} style={buttonStyle(colors, false)}>PAIR A PHONE</Button>
+          <Button onClick={() => void pair()} disabled={pairPending} style={buttonStyle(colors, false)}>PAIR A PHONE</Button>
         </div>
       )}
       {pairing && (
@@ -131,6 +137,9 @@ export function VoiceGatewayCard() {
           />
           <p style={{ ...hintStyle(colors), marginTop: 8 }}>Code: <strong>{pairing.code}</strong></p>
           <p style={{ ...hintStyle(colors), marginTop: 4 }}>Expires in {mmss(pairing.expiresAtMs - now)}</p>
+          <p style={{ ...hintStyle(colors), marginTop: 4 }}>
+            Done only hides this code. It stays valid until it is used once or expires (60 minutes after it was made).
+          </p>
           <div style={{ marginTop: 8 }}>
             <Button onClick={() => setPairing(null)} style={buttonStyle(colors, false)}>Done</Button>
           </div>
