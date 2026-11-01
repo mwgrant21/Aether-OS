@@ -320,7 +320,7 @@ describe('rework edge cases', () => {
   it('a key straddling char 500 of spokenText leaks no fragment into events or replay', () => {
     const { s, gw, events } = setup();
     gw.handle(start('turn-0001'));
-    gw.handle({ t: 'turn.cancel', turnId: 'turn-0001', spokenText: 'a'.repeat(495) + ' ' + KEY });
+    gw.handle({ t: 'turn.cancel', turnId: 'turn-0001', spokenText: 'a'.repeat(485) + ' ' + KEY });
     s.emit({ k: 'result', turnId: 'turn-0001', ok: true, interrupted: true });
     gw.handle(start('turn-0002'));
     const all = JSON.stringify(events) + JSON.stringify(gw.replayAfter(0)) + JSON.stringify(s.sent);
