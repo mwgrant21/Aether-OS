@@ -127,7 +127,7 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
     }
     if (!unsaved) log('voice: session store save failed');
     unsaved = true;
-    if (allowRetry && !stopped && retryTimer === null && retries < MAX_RETRIES) {
+    if (allowRetry && !stopped && state === 'on' && retryTimer === null && retries < MAX_RETRIES) {
       retries++;
       retryTimer = setT(() => {
         retryTimer = null;
@@ -173,7 +173,7 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
 
   async function enable(): Promise<void> {
     init();
-    if (state === 'on') return;
+    if (state === 'on' || stopped) return;
     if (unsaved) await settle(true); // retry a pending revoke save before opening the listener
     try {
       const address = findTailnetAddress(ifaces() as any);
@@ -189,7 +189,7 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
       // The gateway subscribes to session events first; session.start() runs only on the first attach,
       // otherwise its synchronous initial `starting` event would be lost.
       gw.start();
-      unsubSession = sess.on(() => emit());
+      unsubSession = sess.on((e) => { if (e.k === 'state') emit(); }); // state changes only: no per-token status traffic
       const cn = createVoiceConnections({ gateway: gw, log });
       conns = cn;
       let started = false;
@@ -240,19 +240,23 @@ export function createVoiceHub(deps: VoiceHubDeps): VoiceHub {
     return p;
   }
 
-  async function revoke(fn: () => void): Promise<VoiceStatus> {
-    init();
-    fn();
-    server?.recheckAuth();
-    await settle(true);
-    emit();
-    return status();
+  // Queued with enable/disable so a retry timer can never be scheduled behind a disable.
+  function revoke(fn: () => void): Promise<VoiceStatus> {
+    return queue(async () => {
+      init();
+      fn();
+      server?.recheckAuth();
+      await settle(true);
+      emit();
+      return status();
+    });
   }
 
   return {
     init,
     status,
     async setEnabled(on) {
+      if (on && stopped) return status(); // after stop() nothing may start again
       await queue(on ? enable : disable);
       emit();
       return status();

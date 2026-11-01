@@ -33,6 +33,7 @@ function fakeSession() {
     sent: [] as string[],
     st: 'none' as string,
     start() { f.starts++; f.set('starting'); },
+    emit(e: SessionEvent) { for (const l of [...listeners]) l(e); },
     set(s: 'starting' | 'ready' | 'restarting' | 'down') {
       f.st = s;
       for (const l of [...listeners]) l({ k: 'state', state: s });
@@ -303,6 +304,48 @@ describe('voiceHub', () => {
     expect(r.timers.size).toBe(1);
     await r.hub.setEnabled(false);
     expect(r.timers.size).toBe(0);
+  });
+
+  it('onStatus fires on session state changes only, not per delta', async () => {
+    const r = rig(fakeStore());
+    const { address, cookie } = await pairAndRedeem(r);
+    const c = await connect(address, cookie);
+    const s = r.sessions[0];
+    await waitFor(() => s.starts === 1);
+    s.set('ready');
+    c.ws.send(JSON.stringify({ t: 'turn.start', turnId: 'turn-cccc3333', text: 'hi', mode: 'voice' }));
+    await waitFor(() => s.sent.length === 1);
+    const before = r.statuses.length;
+    for (let i = 0; i < 20; i++) s.emit({ k: 'delta', turnId: 'turn-cccc3333', text: `word${i} ` });
+    s.emit({ k: 'tool', turnId: 'turn-cccc3333', name: 'Bash', agent: false });
+    s.emit({ k: 'result', turnId: 'turn-cccc3333', ok: true, interrupted: false });
+    expect(r.statuses.length).toBe(before);
+    s.set('restarting');
+    expect(r.statuses.length).toBe(before + 1);
+  });
+
+  it('setEnabled(true) after stop() starts nothing, even when queued before stop()', async () => {
+    const r = rig(fakeStore());
+    const { address } = await pairAndRedeem(r);
+    const racing = r.hub.setEnabled(false).then(() => r.hub.setEnabled(true));
+    const stopping = r.hub.stop();
+    const late = r.hub.setEnabled(true);
+    await Promise.all([racing, stopping, late]);
+    expect(r.startServer).toHaveBeenCalledTimes(1);
+    expect(r.hub.status().state).toBe('off');
+    expect(await refused(address)).toBe(true);
+    expect(r.timers.size).toBe(0);
+  });
+
+  it('a failing-save revokeAll racing setEnabled(false) leaves no hub timer', async () => {
+    const store = fakeStore();
+    const r = rig(store, { retryMs: 20 });
+    await pairAndRedeem(r);
+    store.save = async () => { throw new Error('disk full'); };
+    await Promise.all([r.hub.setEnabled(false), r.hub.revokeAll()]);
+    await new Promise((res) => setTimeout(res, 80));
+    expect(r.timers.size).toBe(0);
+    expect(r.hub.status().state).toBe('off');
   });
 
   it('status, onStatus payloads and logs never carry a secret over a full cycle', async () => {
