@@ -117,7 +117,7 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     controlIpc.ts         trusted IPC for the Settings block.
     controlBoundary.test.ts   AST guard for this directory: import allow-list, one input sink, closed message set, escape hatches.
     inputRouter.ts        BUILT (V3 Type): dedupe, ordering, rate limits; the ONLY phone write site, via `terminalHub.writePort()`.
-  voice/                opt-in voice gateway over Tailscale (privacy §18): a paired phone talks to one `claude -p` session on this PC, launched with hooks disabled. Writes nothing itself; the only disk write is `~/.aether-os/voice-sessions.json`, through `electron/remote`'s session store. No pty code.
+  voice/                opt-in voice gateway over Tailscale (privacy §18): a paired phone talks to one `claude -p` session on this PC, launched with hooks disabled. `electron/voice/` opens no files itself; the only file it persists is `~/.aether-os/voice-sessions.json` (through `electron/remote`'s session store), plus fixed-format lines handed to the injected diag log (`diag.log`). No pty code.
     protocol.ts / eventLog.ts   closed four-message client set and the server event types; sequenced in-memory log with a 64 KB resume window.
     speechFilter.ts       streaming filter: masked spoken units, then one masked display block.
     voiceSession.ts       the ONLY `child_process` importer: supervises the one `claude -p` child (fixed argv, allowlisted env, restart backoff, kill on stop).
@@ -256,7 +256,7 @@ deliberate scope exclusions exist (Grid/Reactor theming, packaging, etc.).
 **Aether OS is single-user and local-only.** Full stance in `docs/privacy-and-data.md` — read it
 before designing anything that persists or transmits data. The short version:
 
-- **Outbound content requires a named boundary:** manual Codex verification, separately opted-in Claude–Codex communication, or operator-driven terminals, or the opt-in collector memory extraction via the Claude CLI (default off), or the opt-in voice gateway (`electron/voice/`), which launches the Claude CLI under the user's subscription launched with hooks disabled and session persistence off (both by flag; the no-transcript claim is checked by the opt-in live test only), off at every launch. See privacy §9, §11, §13, §14 and §18; no telemetry, and no background model summarization unless opted in (§14).
+- **Outbound content requires a named boundary:** manual Codex verification, separately opted-in Claude–Codex communication, or operator-driven terminals, or the opt-in collector memory extraction via the Claude CLI (default off), or the opt-in voice gateway (`electron/voice/`), which launches the Claude CLI under the user's Claude login with hooks disabled and session persistence off (both by flag; the no-transcript claim is checked by the opt-in live test only), off at every launch. See privacy §9, §11, §13, §14 and §18; no telemetry, and no background model summarization unless opted in (§14).
 - **No telemetry, ever.** Not opt-out, not anonymous, not aggregate.
 - **No externally-reachable listener.** Hook ingest itself is an append-only file spool
   (`~/.aether-os/spool/`), not an HTTP server. Separately, `electron/permissionServer.ts` runs a
