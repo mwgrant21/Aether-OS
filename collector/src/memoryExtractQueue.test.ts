@@ -190,4 +190,35 @@ describe('drainMemoryExtractQueue', () => {
       cleanup();
     }
   });
+
+  it('logs the rejected count, never model-derived ops, and prints once only when no sink is present', async () => {
+    const { store, cleanup } = tempStore();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // 'decision' is shared-writer-only, so a CINDER write is a scope_violation reject.
+      const execFn = async () => ({ stdout: '[{"op":"ADD","kind":"decision","content":"CANARY-OP-TEXT"}]' });
+
+      const noSink = createMemoryExtractQueue();
+      noSink.push(baseItem);
+      await drainMemoryExtractQueue(store, noSink, execFn);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const printed = errorSpy.mock.calls[0].join(' ');
+      expect(printed).toContain('rejected=1');
+      expect(printed).not.toContain('CANARY');
+
+      errorSpy.mockClear();
+      const withSink = createMemoryExtractQueue();
+      withSink.push({ ...baseItem, toolUseId: 'tu_2' });
+      const onIssue = vi.fn();
+      await drainMemoryExtractQueue(store, withSink, execFn, onIssue);
+      expect(onIssue).toHaveBeenCalledTimes(1);
+      const detail = onIssue.mock.calls[0][0] as string;
+      expect(detail).toContain('rejected=1');
+      expect(detail).not.toContain('CANARY');
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      cleanup();
+    }
+  });
 });
