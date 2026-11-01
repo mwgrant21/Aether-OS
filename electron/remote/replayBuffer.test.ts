@@ -68,6 +68,15 @@ describe('replayBuffer', () => {
     expect(c.snapshot()).toEqual([]);
   });
 
+  it('is generic over the event type', () => {
+    const b = createReplayBuffer<{ seq: number }>(64);
+    for (let i = 1; i <= 20; i++) b.push({ seq: i });
+    const seqs = b.snapshot().map((e) => e.seq);
+    expect(seqs[seqs.length - 1]).toBe(20);
+    expect(seqs[0]).toBeGreaterThan(1);
+    expect(b.bytes).toBeLessThanOrEqual(64);
+  });
+
   it('source has no fs, timers, or writes', () => {
     const src = readFileSync(new URL('./replayBuffer.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/node:fs|from 'fs'|writeFile|setInterval|setTimeout/);
