@@ -117,6 +117,15 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     controlIpc.ts         trusted IPC for the Settings block.
     controlBoundary.test.ts   AST guard for this directory: import allow-list, one input sink, closed message set, escape hatches.
     inputRouter.ts        BUILT (V3 Type): dedupe, ordering, rate limits; the ONLY phone write site, via `terminalHub.writePort()`.
+  voice/                opt-in voice gateway over Tailscale (privacy §18): a paired phone talks to one hook-free `claude -p` session on this PC. Writes nothing itself; the only disk write is `~/.aether-os/voice-sessions.json`, through `electron/remote`'s session store. No pty code.
+    protocol.ts / eventLog.ts   closed four-message client set and the server event types; sequenced in-memory log with a 64 KB resume window.
+    speechFilter.ts       streaming filter: masked spoken units, then one masked display block.
+    voiceSession.ts       the ONLY `child_process` importer: supervises the one `claude -p` child (fixed argv, allowlisted env, restart backoff, kill on stop).
+    voiceGateway.ts / voicePermissions.ts   turn state machine, permission requests (tap to approve, auto-deny on timeout), masked one-line summaries.
+    voiceConnection.ts    one live connection (a new one replaces the old), resume, slow-consumer close.
+    voiceServer.ts        the ONE listener: tailnet IPv4 only, ws noServer, host and Origin checks, pairing POST.
+    voiceHub.ts / voiceIpc.ts   enable/disable, pairing, revoke, status; trusted IPC for the Settings card.
+    voiceBoundary.test.ts   AST guard for this directory: one listener, one child launch, no writes, no pty, no `process.env` spread.
   controlSettings.ts    owner of ~/.aether-os/control-settings.json (two persisted booleans: `reenableAtLaunch` and `phoneTyping`).
   terminalHub.ts        BUILT (V2): owns the three pty slots; main hands control only readPort() (list/attach/onState/retain). Mirror + 256 KB ring exist only while control is retained; cleared on release, quit, slot exit. Importers of the pty managers are guarded by controlBoundary rule 6.
   terminalMirror.ts     BUILT (V2): headless xterm screen model + bounded snapshot (the only @xterm/headless importer).
@@ -247,7 +256,7 @@ deliberate scope exclusions exist (Grid/Reactor theming, packaging, etc.).
 **Aether OS is single-user and local-only.** Full stance in `docs/privacy-and-data.md` — read it
 before designing anything that persists or transmits data. The short version:
 
-- **Outbound content requires a named boundary:** manual Codex verification, separately opted-in Claude–Codex communication, or operator-driven terminals, or the opt-in collector memory extraction via the Claude CLI (default off). See privacy §9, §11, §13 and §14; no telemetry, and no background model summarization unless opted in (§14).
+- **Outbound content requires a named boundary:** manual Codex verification, separately opted-in Claude–Codex communication, or operator-driven terminals, or the opt-in collector memory extraction via the Claude CLI (default off), or the opt-in voice gateway (`electron/voice/`), which launches the Claude CLI under the user's subscription with hooks disabled and no transcript persisted, off at every launch. See privacy §9, §11, §13, §14 and §18; no telemetry, and no background model summarization unless opted in (§14).
 - **No telemetry, ever.** Not opt-out, not anonymous, not aggregate.
 - **No externally-reachable listener.** Hook ingest itself is an append-only file spool
   (`~/.aether-os/spool/`), not an HTTP server. Separately, `electron/permissionServer.ts` runs a
@@ -262,10 +271,11 @@ before designing anything that persists or transmits data. The short version:
   listens on the Tailscale interface IPv4 address only (never `0.0.0.0`, `::` or a LAN address; the
   only `listen(` under `electron/remote` is in `remoteServer.ts`, after `assertBindableHost`), is off at every launch, needs a
   native confirm to enable, and requires a one-time pairing code plus a hashed 30-day session cookie.
-  `remoteHub` and `noWildcardListener.test.ts` guard it; never add another bind, and never add a pty/write path under `electron/remote/`.
+  `remoteHub` guards it; never add a pty/write path under `electron/remote/`.
   **Separate second opt-in: phone control** (privacy §17): V1 is built (pairing + an authenticated `/ctl` handshake from a paired Android app over the same tailnet-only
   listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); V3 Type adds phone typing (privacy §17); permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
   to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Treat as R3.
+  **Third deliberate, opt-in exception: the voice gateway** (`electron/voice/`, privacy §18). Its own listener on port 47822, separate from the 47821 viewer/control listener, tailnet IPv4 only via `assertBindableHost`, off at every launch with a native confirm, a pairing code plus a hashed 30-day cookie, and it rejects any request that carries an `Origin` header. Treat as R3. The only reviewed binds are `remoteServer.ts` and `voiceServer.ts`; `noWildcardListener.test.ts` and `voiceBoundary.test.ts` guard them. Never add another bind.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
   detector and optimize rule has been checked against this and none of them need content.
@@ -276,7 +286,7 @@ before designing anything that persists or transmits data. The short version:
   rest of the chat model call path — the surface they guarded no longer exists.
 
 Single-user also **deletes** a lot of scope permanently: no account or multi-user auth model (the only
-auth is the phone-pairing gates of the opt-in remote view and phone control, privacy §16 and §17; phone control's terminal output is built read-only in V2; its input and approval paths are still planned), no multi-tenant schema, no
+auth is the phone-pairing gates of the opt-in remote view, phone control and the voice gateway, privacy §16, §17 and §18; phone control's terminal output is built read-only in V2; its input and approval paths are still planned), no multi-tenant schema, no
 shared folder or report writing, no roll-up, no sharing links, no cloud sync. TokenMonitor is the
 fleet product and writes per-seat reports to a shared folder by design; Aether OS has no equivalent
 and should never grow one.
