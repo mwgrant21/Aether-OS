@@ -75,7 +75,7 @@ function makeRig(opts: { maxBytes?: number; permissionTimeoutMs?: number; maxCli
     networkInterfaces: tailnetIfaces,
     // The hub picks the (fake) tailnet address, as it must; the wrapper rebinds the real server to loopback.
     startServer: ((o: Parameters<typeof startVoiceServer>[0]) =>
-      startVoiceServer({ ...o, host: '127.0.0.1', port: 0, maxClients: opts.maxClients })) as any,
+      startVoiceServer({ ...o, host: '127.0.0.1', port: 0 })) as any,
     createSession: ((d: Parameters<typeof createVoiceSession>[0]) => {
       const s = createVoiceSession({
         ...d,
@@ -335,9 +335,7 @@ describe('voice gateway end to end (scripted client, fake claude)', { timeout: 2
   });
 
   it('7. a second connection replaces the first (error replaced, close 4000)', async () => {
-    // The hub does not pass maxClients, so the server default (1) refuses a second socket with 503 and the
-    // connection layer's replace path is unreachable in production; open the server to 2 to exercise it.
-    const r = makeRig({ maxClients: 2 });
+    const r = makeRig();
     const { address, cookie, c: a } = await setup(r);
     await ready(a);
     const b = await connect(address, cookie);
@@ -345,14 +343,19 @@ describe('voice gateway end to end (scripted client, fake claude)', { timeout: 2
     expect(a.events.some((e) => e.t === 'error' && e.code === 'replaced')).toBe(true);
     await b.waitFor((e) => e.t === 'status');
     await runTurn(b, 'turn-0011', 'still works');
+    expect(r.children).toHaveLength(1);
   });
 
-  it('7b. with the default server limit a second socket is refused (503) while the first stays live', async () => {
+  it('7b. a third socket while the replaced first is still closing is refused (503); the second stays live', async () => {
     const r = makeRig();
     const { address, cookie, c: a } = await setup(r);
     await ready(a);
+    (a.ws as any)._socket.pause(); // A never answers the close frame, so the server keeps counting it
+    const b = await connect(address, cookie);
+    await b.waitFor((e) => e.t === 'status');
     await expect(connect(address, cookie)).rejects.toThrow(/503/);
-    await runTurn(a, 'turn-0016', 'still mine');
+    expect(b.ws.readyState).toBe(WebSocket.OPEN);
+    await runTurn(b, 'turn-0016', 'still mine');
   });
 
   it('8a. revokeAll closes the socket with 4001', async () => {
