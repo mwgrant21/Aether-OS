@@ -2,6 +2,8 @@ package com.matt.aethermobile.ui.shell
 
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import com.matt.aethermobile.R
 import com.matt.aethermobile.net.ControlClient
@@ -23,6 +25,19 @@ import org.json.JSONObject
 /** The JVM-testable half of a pane: which view id it reads and how its payload decodes. */
 class PaneSpec<T : Any>(val appView: AppView, val viewId: String, val decode: (JSONObject) -> T?)
 
+/**
+ * Shell state a pane needs but does not own. [backEnabled] is false while the burger menu is open, so a pane's own
+ * BackHandler (sheet, detail) never outranks the menu's: Compose runs the last-registered enabled callback.
+ */
+data class PaneEnv(val backEnabled: Boolean = true) {
+    /** A pane's Back condition [wants], silenced while the shell owns Back. */
+    fun gateBack(wants: Boolean): Boolean = wants && backEnabled
+}
+
+val LocalPaneEnv = staticCompositionLocalOf { PaneEnv() }
+
+fun paneEnvFor(menuOpen: Boolean): PaneEnv = PaneEnv(backEnabled = !menuOpen)
+
 /** One registered pane: its [spec], burger strings and screen. Adding a pane means adding one entry to [PaneRegistry.entries]. */
 class PaneEntry<T : Any>(
     val spec: PaneSpec<T>,
@@ -32,7 +47,9 @@ class PaneEntry<T : Any>(
 ) {
     @Suppress("UNCHECKED_CAST")
     @Composable
-    fun render(ui: ViewUi<*>, nowMs: Long, modifier: Modifier) = content(ui as ViewUi<T>, nowMs, modifier)
+    fun render(ui: ViewUi<*>, nowMs: Long, modifier: Modifier, env: PaneEnv = PaneEnv()) {
+        CompositionLocalProvider(LocalPaneEnv provides env) { content(ui as ViewUi<T>, nowMs, modifier) }
+    }
 }
 
 object PaneRegistry {
