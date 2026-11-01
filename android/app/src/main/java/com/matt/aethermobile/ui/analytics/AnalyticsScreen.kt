@@ -55,6 +55,7 @@ import com.matt.aethermobile.analytics.longestElapsed
 import com.matt.aethermobile.ledger.AgeLabel
 import com.matt.aethermobile.ui.components.aeInset
 import com.matt.aethermobile.ui.components.aePanel
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.shell.mouseDragScroll
 import com.matt.aethermobile.ui.theme.AetherColors
 import com.matt.aethermobile.ui.theme.AetherType
@@ -66,13 +67,6 @@ import kotlinx.coroutines.delay
 private val type = AetherType()
 private const val TICK_MS = 1_000L
 private val BarShape = RoundedCornerShape(3.dp)
-
-/**
- * The titan clock offset (ControlClient.titanClockOffsetMs) is not reachable from the pane render signature, so the
- * timers and the age line use offset 0 (phone clock). A phone clock that disagrees with titan's skews both by that
- * difference; wiring the offset needs a shell edit.
- */
-private const val TITAN_CLOCK_OFFSET_MS = 0L
 
 /**
  * Read-only Analytics body: log frequency, longest-running agents (live timers), real token burn (tap a row to expand)
@@ -197,12 +191,13 @@ private fun LongestCard(ui: AnalyticsUi, nowMs: Long) {
 
 @Composable
 private fun LongestRow(r: LongestRowUi, nowMs: Long) {
+    val offsetMs = LocalPaneEnv.current.titanClockOffsetMs
     Row(Modifier.fillMaxWidth().aeInset().padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             BasicText(r.type, maxLines = 1, overflow = TextOverflow.Ellipsis, style = type.body.copy(color = AetherColors.textBright))
             BasicText(r.description, maxLines = 2, overflow = TextOverflow.Ellipsis, style = type.meta.copy(color = AetherColors.textMuted))
         }
-        BasicText(longestElapsed(r.startedAtMs, nowMs, TITAN_CLOCK_OFFSET_MS), style = type.data.copy(color = AetherColors.cyanBright))
+        BasicText(longestElapsed(r.startedAtMs, nowMs, offsetMs), style = type.data.copy(color = AetherColors.cyanBright))
     }
 }
 
@@ -290,7 +285,8 @@ private fun CommandRow(rank: Int, c: CommandRowUi) {
 
 @Composable
 private fun Footer(computedAtMs: Long, nowMs: Long) {
-    val age = when (val a = analyticsAge(computedAtMs, nowMs, TITAN_CLOCK_OFFSET_MS)) {
+    val offsetMs = LocalPaneEnv.current.titanClockOffsetMs
+    val age = when (val a = analyticsAge(computedAtMs, nowMs, offsetMs)) {
         AgeLabel.JustNow -> stringResource(R.string.analytics_age_just_now)
         is AgeLabel.Minutes -> pluralStringResource(R.plurals.analytics_age_minutes, a.n.toCount(), a.n.toInt())
         is AgeLabel.Hours -> pluralStringResource(R.plurals.analytics_age_hours, a.n.toCount(), a.n.toInt())

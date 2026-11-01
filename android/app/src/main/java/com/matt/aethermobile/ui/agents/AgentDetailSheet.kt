@@ -37,6 +37,7 @@ import com.matt.aethermobile.R
 import com.matt.aethermobile.agents.RunningRowUi
 import com.matt.aethermobile.agents.agentElapsed
 import com.matt.aethermobile.ui.components.aeSheet
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.theme.AetherColors
 import java.util.Locale
 
@@ -100,8 +101,9 @@ fun AgentDetailSheet(r: RunningRowUi, now: State<Long>) {
 
 @Composable
 private fun SheetElapsed(startedAtMs: Long, now: State<Long>) {
+    val offsetMs = LocalPaneEnv.current.titanClockOffsetMs
     BasicText(
-        stringResource(R.string.agents_sheet_elapsed, agentElapsed(startedAtMs, now.value, TITAN_CLOCK_OFFSET_MS)),
+        stringResource(R.string.agents_sheet_elapsed, agentElapsed(startedAtMs, now.value, offsetMs)),
         style = type.data.copy(color = AetherColors.cyanBright),
     )
 }

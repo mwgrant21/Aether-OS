@@ -27,6 +27,7 @@ import com.matt.aethermobile.agents.TimelineKind
 import com.matt.aethermobile.agents.TimelineUi
 import com.matt.aethermobile.agents.dispatchUsage
 import com.matt.aethermobile.agents.timelineAge
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.theme.AetherColors
 
 /** Newest first, exactly as titan sent it, down a vertical rail. */
@@ -70,7 +71,8 @@ private fun TimelineRow(item: TimelineItem, now: State<Long>) {
 /** Reads the clock itself so a tick recomposes only this text. */
 @Composable
 private fun AgoText(atMs: Long, now: State<Long>) {
-    BasicText(ageText(timelineAge(atMs, now.value, TITAN_CLOCK_OFFSET_MS)), style = type.meta.copy(color = AetherColors.textMuted))
+    val offsetMs = LocalPaneEnv.current.titanClockOffsetMs
+    BasicText(ageText(timelineAge(atMs, now.value, offsetMs)), style = type.meta.copy(color = AetherColors.textMuted))
 }
 
 /** Rail column: the line runs the full row height, the marker sits at the top. Anomaly square amber, dispatch circle cyan with glow, tool circle muted. */

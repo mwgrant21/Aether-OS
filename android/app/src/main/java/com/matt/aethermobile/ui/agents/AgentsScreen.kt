@@ -56,13 +56,6 @@ internal val type = AetherType()
 private const val TICK_MS = 1_000L
 
 /**
- * The titan clock offset (ControlClient.titanClockOffsetMs) is not reachable from the pane render signature, so the
- * timers and the age line use offset 0 (phone clock). A phone clock that disagrees with titan's skews both by that
- * difference; wiring the offset needs a shell edit.
- */
-internal const val TITAN_CLOCK_OFFSET_MS = 0L
-
-/**
  * Read-only Agents pane: ROSTER / FLEET / TIMELINE tabs and a detail sheet for a running agent. Nothing here sends
  * anything to titan, and tapping a needs-input row opens the same detail sheet as any other row (no approval UI).
  */
@@ -186,7 +179,8 @@ private fun Tabs(selected: AgentsTab, needsInput: Int, badge: String?, onPick: (
 
 @Composable
 private fun Footer(computedAtMs: Long, now: State<Long>) {
-    val age = ageText(agentsAge(computedAtMs, now.value, TITAN_CLOCK_OFFSET_MS))
+    val offsetMs = LocalPaneEnv.current.titanClockOffsetMs
+    val age = ageText(agentsAge(computedAtMs, now.value, offsetMs))
     BasicText(stringResource(R.string.agents_updated, age), style = type.meta.copy(color = AetherColors.textMuted))
 }
 

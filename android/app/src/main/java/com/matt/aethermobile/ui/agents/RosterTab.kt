@@ -49,6 +49,7 @@ import com.matt.aethermobile.agents.DoneRowUi
 import com.matt.aethermobile.agents.RunningRowUi
 import com.matt.aethermobile.agents.agentElapsed
 import com.matt.aethermobile.ui.components.aeInset
+import com.matt.aethermobile.ui.shell.LocalPaneEnv
 import com.matt.aethermobile.ui.theme.AetherColors
 import java.util.Locale
 
@@ -157,7 +158,8 @@ private fun DoneRow(r: DoneRowUi) {
 /** Reads the clock itself so a tick recomposes only this text. */
 @Composable
 internal fun ElapsedText(startedAtMs: Long, now: State<Long>, style: TextStyle) {
-    BasicText(agentElapsed(startedAtMs, now.value, TITAN_CLOCK_OFFSET_MS), maxLines = 1, style = style)
+    val offsetMs = LocalPaneEnv.current.titanClockOffsetMs
+    BasicText(agentElapsed(startedAtMs, now.value, offsetMs), maxLines = 1, style = style)
 }
 
 /** 48dp (or [size]) striped avatar with the first letter of the type. */
