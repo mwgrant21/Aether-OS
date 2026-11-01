@@ -71,6 +71,45 @@ describe('eventLog', () => {
     expect(log.after(0)).toEqual({ ok: false, reason: 'gap' });
   });
 
+  it('an oversize event dropped mid-stream makes every spanning after() a gap', () => {
+    const log = createEventLog({ maxBytes: 400 });
+    log.append(null, delta('a'));
+    log.append(null, delta('z'.repeat(500)));
+    log.append(null, delta('b'));
+    expect(log.after(0)).toEqual({ ok: false, reason: 'gap' });
+    expect(log.after(1)).toEqual({ ok: false, reason: 'gap' });
+    const r = log.after(2);
+    expect(r.ok && r.events.map((e) => e.seq)).toEqual([3]);
+  });
+
+  it('a trailing oversize event makes after() a gap, not a silent omission', () => {
+    const log = createEventLog({ maxBytes: 400 });
+    log.append(null, delta('a'));
+    log.append(null, delta('z'.repeat(500)));
+    expect(log.lastSeq).toBe(2);
+    expect(log.after(0)).toEqual({ ok: false, reason: 'gap' });
+    expect(log.after(1)).toEqual({ ok: false, reason: 'gap' });
+    expect(log.after(2)).toEqual({ ok: true, events: [] });
+  });
+
+  it('sweep with an oversize event in the middle: every ok result is gapless', () => {
+    const log = createEventLog({ maxBytes: 4000 });
+    for (let i = 0; i < 30; i++) {
+      log.append(null, delta(i === 20 ? 'z'.repeat(5000) : 'y'.repeat(20)));
+    }
+    for (let n = 0; n <= log.lastSeq; n++) {
+      const r = log.after(n);
+      if (r.ok) {
+        expect(r.events.map((e) => e.seq)).toEqual(
+          Array.from({ length: log.lastSeq - n }, (_, i) => n + 1 + i),
+        );
+      }
+    }
+    // the oversize event is seq 21
+    expect(log.after(20)).toEqual({ ok: false, reason: 'gap' });
+    expect(log.after(21).ok).toBe(true);
+  });
+
   it('two logs have different sessionIds and events carry it', () => {
     const a = createEventLog();
     const b = createEventLog();

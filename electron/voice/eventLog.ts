@@ -34,9 +34,10 @@ export function createEventLog(opts: { maxBytes?: number; newId?: () => string }
     after(n) {
       if (n > lastSeq) return { ok: false, reason: 'ahead' };
       if (n === lastSeq) return { ok: true, events: [] };
-      const all = buf.snapshot();
-      if (all.length === 0 || all[0].seq > n + 1) return { ok: false, reason: 'gap' };
-      return { ok: true, events: all.filter((e) => e.seq > n) };
+      // seqs are unique and increasing, so a full count means every seq in (n, lastSeq] is held.
+      const events = buf.snapshot().filter((e) => e.seq > n);
+      if (events.length !== lastSeq - n) return { ok: false, reason: 'gap' };
+      return { ok: true, events };
     },
     clear() {
       buf.clear();
