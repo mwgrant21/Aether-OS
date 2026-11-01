@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ exposeInMainWorld: vi.fn(), invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn() }));
 vi.mock('electron', () => ({ contextBridge: { exposeInMainWorld: mocks.exposeInMainWorld }, ipcRenderer: mocks }));
 import '../preload';
+import { spawn } from 'node:child_process';
+import { createVoiceSession } from './voiceSession';
 import { registerVoiceIpc, type VoiceHubLike } from './voiceIpc';
 import type { VoiceStatus } from '../../src/shared/voice/types';
 
@@ -42,6 +44,7 @@ describe('registerVoiceIpc', () => {
     await expect(call('voice:setEnabled', true, 1)).rejects.toThrow('INVALID_INPUT');
     await expect(call('voice:revokeOne', 'zz')).rejects.toThrow('INVALID_INPUT');
     await expect(call('voice:revokeOne', 'A'.repeat(12))).rejects.toThrow('INVALID_INPUT');
+    await expect(call('voice:revokeOne', 'abcdef012345\n')).rejects.toThrow('INVALID_INPUT');
     await expect(call('voice:revokeOne', 'a'.repeat(12), 'x')).rejects.toThrow('INVALID_INPUT');
     await expect(call('voice:status', 1)).rejects.toThrow('INVALID_INPUT');
     await expect(call('voice:createPairing', 1)).rejects.toThrow('INVALID_INPUT');
@@ -55,6 +58,18 @@ describe('registerVoiceIpc', () => {
     await expect(call('voice:setEnabled', true)).resolves.toBe(STATUS);
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(hub.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it('does not enable when the confirm throws or never resolves', async () => {
+    const thrown = setup();
+    thrown.confirm.mockImplementationOnce(async () => { throw new Error('dialog failed'); });
+    await expect(thrown.call('voice:setEnabled', true)).rejects.toThrow('dialog failed');
+    expect(thrown.hub.setEnabled).not.toHaveBeenCalled();
+    const hung = setup();
+    hung.confirm.mockImplementationOnce(() => new Promise<boolean>(() => {}));
+    void hung.call('voice:setEnabled', true);
+    await new Promise(r => setTimeout(r, 20));
+    expect(hung.hub.setEnabled).not.toHaveBeenCalled();
   });
 
   it('enables only after the confirm resolves, and never prompts to disable', async () => {
@@ -101,7 +116,32 @@ describe('voice preload and main wiring', () => {
   const main = readFileSync('electron/main.ts', 'utf8');
   it('main stops the voice hub inside the quit gate callback, guarded by the private dir', () => {
     const gate = main.slice(main.indexOf('const baselineQuitGate'), main.indexOf('let lastStallCheckMs'));
-    expect(gate).toContain('remoteDirReady ? voiceHub.stop() : Promise.resolve()');
+    expect(gate).toContain('remoteDirReady ? voiceHub.stop().catch(');
+    expect(gate).toContain('[diag] voice stop failed at quit');
+  });
+
+  const KILL_GRACE = Number(/const VOICE_KILL_GRACE_MS = (\d+);/.exec(main)?.[1]);
+  it('main passes a kill grace to the voice session that fits twice inside the 1500 ms quit bound', () => {
+    expect(Number.isInteger(KILL_GRACE)).toBe(true);
+    expect(KILL_GRACE * 2).toBeLessThan(1500 - 300);
+    const start = main.indexOf('createVoiceHub({');
+    const block = main.slice(start, main.indexOf('const voiceStatusOrUnavailable', start));
+    expect(block).toContain('createVoiceSession({ ...d, killGraceMs: VOICE_KILL_GRACE_MS })');
+  });
+
+  it('stop() kills a child that ignores stdin EOF within the quit bound using the main.ts grace', async () => {
+    const session = createVoiceSession({
+      killGraceMs: KILL_GRACE,
+      spawnFn: (_args, opts) => spawn(process.execPath, ['-e', 'process.stdin.on("data",()=>{});process.stdin.on("end",()=>{});setInterval(()=>{},1000)'], opts),
+    });
+    session.start();
+    const pid = session.pid();
+    expect(pid).not.toBeNull();
+    const t0 = Date.now();
+    await session.stop();
+    expect(Date.now() - t0).toBeLessThan(1200);
+    await new Promise(r => setTimeout(r, 200));
+    expect(() => process.kill(pid as number, 0)).toThrow();
   });
 
   it('main registers the voice IPC behind the trusted-window predicate and a native confirm', () => {
@@ -114,7 +154,7 @@ describe('voice preload and main wiring', () => {
     expect(reg).toContain('defaultId: 0');
     expect(reg).toContain('cancelId: 0');
     expect(reg).toContain('response === 1');
-    for (const phrase of ['under your Claude subscription', 'same tool permissions', 'explicit tap on the phone', 'masked for obvious secrets', 'any device on your tailnet', 'stay paired until you revoke', 'turns off when Aether restarts', 'no transcript on disk']) {
+    for (const phrase of ['under your Claude subscription', 'same tool permissions', 'explicit tap on the phone', 'masked for obvious secrets', 'any device on your tailnet', 'stay paired for up to ${VOICE_TTL_DAYS} days, until you revoke them', 'turns off when Aether restarts', 'no transcript on disk']) {
       expect(reg).toContain(phrase);
     }
   });
