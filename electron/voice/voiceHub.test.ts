@@ -339,11 +339,10 @@ describe('voiceHub', () => {
 
   it('a failing-save revokeAll racing setEnabled(false) leaves no hub timer', async () => {
     const store = fakeStore();
-    const r = rig(store, { retryMs: 20 });
+    const r = rig(store, { retryMs: 60_000 });
     await pairAndRedeem(r);
     store.save = async () => { throw new Error('disk full'); };
     await Promise.all([r.hub.setEnabled(false), r.hub.revokeAll()]);
-    await new Promise((res) => setTimeout(res, 80));
     expect(r.timers.size).toBe(0);
     expect(r.hub.status().state).toBe('off');
   });
