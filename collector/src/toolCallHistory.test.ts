@@ -33,6 +33,37 @@ describe('collector toolCallHistory', () => {
     expect(history.openByToolUseId['tu_1']).toBeUndefined();
   });
 
+  it('keeps an Agent entry open on an async-launch ack, but closes on any other result', () => {
+    const t0 = new Date('2026-07-28T00:00:00Z');
+    const t1 = new Date('2026-07-28T00:00:01Z');
+    const agentUse = (id: string): TranscriptEvent => ({
+      kind: 'assistant', sessionId: 'sess_1', timestamp: t0, cwd: null, model: null, usage: null,
+      toolUses: [{ id, name: 'Agent', input: { subagent_type: 'CINDER' } }],
+      toolResults: [], humanText: null, originKind: null,
+    });
+    const result = (id: string, asyncLaunch?: boolean): TranscriptEvent => ({
+      kind: 'user', sessionId: 'sess_1', timestamp: t1, cwd: null, model: null, usage: null,
+      toolUses: [], toolResults: [{ toolUseId: id, resultLength: 10, ...(asyncLaunch ? { asyncLaunch } : {}) }],
+      humanText: null, originKind: null,
+    });
+
+    let h = updateHistory(createEmptyHistory(), [agentUse('tu_bg')], t0.getTime());
+    h = updateHistory(h, [result('tu_bg', true)], t1.getTime());
+    expect(h.events).toHaveLength(1);
+    expect(h.events[0].toolUseId).toBe('tu_bg');
+    expect(h.openByToolUseId['tu_bg']).toMatchObject({ toolName: 'Agent', subagentType: 'CINDER', sessionId: 'sess_1' });
+
+    let plain = updateHistory(createEmptyHistory(), [agentUse('tu_fg')], t0.getTime());
+    plain = updateHistory(plain, [result('tu_fg')], t1.getTime());
+    expect(plain.events).toHaveLength(1);
+    expect(plain.openByToolUseId['tu_fg']).toBeUndefined();
+
+    let other = updateHistory(createEmptyHistory(), [assistantEvent('tu_rd', 'Read', 'a.ts', t0)], t0.getTime());
+    other = updateHistory(other, [result('tu_rd', true)], t1.getTime());
+    expect(other.events).toHaveLength(1);
+    expect(other.openByToolUseId['tu_rd']).toBeUndefined();
+  });
+
   it('captures subagent_type from Agent tool_use input', () => {
     const t0 = new Date('2026-07-28T00:00:00Z');
     let history = createEmptyHistory();
