@@ -133,6 +133,30 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     };
   }
 
+  // Mid-turn task-notification: when the parent session is busy, Claude Code
+  // delivers the completion as an attachment line instead of a user line. It
+  // is normalized to the same shape as the idle (user-kind) notification so
+  // ingestDispatchEvent and memory extraction treat both alike.
+  if (
+    json.type === 'attachment' &&
+    json.attachment?.type === 'queued_command' &&
+    json.attachment.commandMode === 'task-notification' &&
+    typeof json.attachment.prompt === 'string'
+  ) {
+    return {
+      kind: 'user',
+      sessionId,
+      timestamp,
+      cwd,
+      model: null,
+      usage: null,
+      toolUses: [],
+      toolResults: [],
+      humanText: json.attachment.prompt,
+      originKind: 'task-notification',
+    };
+  }
+
   return {
     kind: 'other',
     sessionId,
