@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, statSync, utimesSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, statSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
@@ -289,6 +289,82 @@ ${notification}
 
     const row: any = db.prepare('SELECT exit_state, tool_uses, dispatch_status FROM dispatches WHERE tool_use_id = ?').get('tu_q');
     expect(row).toEqual({ exit_state: 'ok', tool_uses: 7, dispatch_status: 'completed' });
+    db.close();
+  });
+
+  it('does not sweep an open dispatch from the pinned session, but sweeps it when the pin is not passed', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    writeFileSync(join(projDir, 'session.jsonl'), `${agentToolUseLine('tu_pin', '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+
+    const pinned = freshDb();
+    scanTranscriptsOnce(pinned, projectsRoot, nowMs, new Map(), undefined, 's1');
+    expect(pinned.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    pinned.close();
+
+    const unpinned = freshDb();
+    scanTranscriptsOnce(unpinned, projectsRoot, nowMs, new Map());
+    const row: any = unpinned.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_pin');
+    expect(row.exit_state).toBe('fatal');
+    unpinned.close();
+  });
+
+  it('a late task-notification overwrites a sweep fatal when the same history map is reused', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const file = join(projDir, 'session.jsonl');
+    const ack = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:01Z',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tu_late', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }],
+      },
+    });
+    writeFileSync(file, `${agentToolUseLine('tu_late', '2026-07-08T09:00:00Z')}
+${ack}
+`, 'utf8');
+    const history = new Map();
+    const db = freshDb();
+
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 40), history);
+    const first: any = db.prepare('SELECT exit_state, started_at_ms FROM dispatches WHERE tool_use_id = ?').get('tu_late');
+    expect(first.exit_state).toBe('fatal');
+
+    const completion = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:50Z',
+      origin: { kind: 'task-notification' },
+      message: {
+        content: [
+          {
+            type: 'text',
+            text:
+              '<tool-use-id>tu_late</tool-use-id><subagent_tokens>90</subagent_tokens><tool_uses>3</tool_uses>' +
+              '<duration_ms>12000</duration_ms><status>completed</status>',
+          },
+        ],
+      },
+    });
+    appendFileSync(file, `${completion}
+`, 'utf8');
+    scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 1, 0), history);
+
+    const second: any = db
+      .prepare('SELECT exit_state, tool_uses, duration_ms, dispatch_status, started_at_ms FROM dispatches WHERE tool_use_id = ?')
+      .get('tu_late');
+    expect(second).toEqual({
+      exit_state: 'ok',
+      tool_uses: 3,
+      duration_ms: 12000,
+      dispatch_status: 'completed',
+      started_at_ms: first.started_at_ms,
+    });
     db.close();
   });
 
