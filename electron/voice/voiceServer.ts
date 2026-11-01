@@ -15,6 +15,8 @@ export interface VoiceServerOptions {
   maxClients?: number;
   onClients?: (n: number) => void;
   log?: (line: string) => void;
+  /** Test seam: clock for the incoming-ping window. Defaults to Date.now. */
+  now?: () => number;
 }
 
 export interface VoiceServerHandle {
@@ -39,6 +41,8 @@ const PAIR_BODY_CAP = 1024;
 const PING_MS = 25_000;
 const PONG_TIMEOUT_MS = 60_000;
 const RECHECK_MS = 30_000;
+/** Incoming ping control frames allowed per connection per 1 s window (matches the viewer in remoteServer). */
+export const VOICE_PING_MAX_PER_SEC = 20;
 const ADDRESS_RE = /^[0-9A-Za-z.:[\]-]+$/;
 
 interface Client {
@@ -46,12 +50,16 @@ interface Client {
   cookie: string | undefined;
   lastPong: number;
   closed: boolean;
+  pingWindowStart: number;
+  pingCount: number;
+  limited: boolean;
 }
 
 export async function startVoiceServer(opts: VoiceServerOptions): Promise<VoiceServerHandle> {
   assertBindableHost(opts.host);
   const maxClients = opts.maxClients ?? 1;
   const log = opts.log ?? (() => {});
+  const now = opts.now ?? Date.now;
   const clients = new Set<Client>();
   let address = '';
   let refCounter = 0;
@@ -152,15 +160,28 @@ export async function startVoiceServer(opts: VoiceServerOptions): Promise<VoiceS
   }
 
   function attach(ws: WebSocket, cookie: string | undefined): void {
-    const c: Client = { ws, cookie, lastPong: Date.now(), closed: false };
+    const c: Client = { ws, cookie, lastPong: Date.now(), closed: false, pingWindowStart: now(), pingCount: 0, limited: false };
     const messageCbs: Array<(text: string) => void> = [];
     const closeCbs: Array<() => void> = [];
     clients.add(c);
     ws.on('pong', () => {
       c.lastPong = Date.now();
     });
+    // The ws library auto-answers every incoming ping, so a flooding peer is capped here (fixed 1 s window).
+    ws.on('ping', () => {
+      if (c.closed || c.limited) return;
+      const t = now();
+      if (t - c.pingWindowStart >= 1000) {
+        c.pingWindowStart = t;
+        c.pingCount = 0;
+      }
+      if (++c.pingCount <= VOICE_PING_MAX_PER_SEC) return;
+      c.limited = true;
+      log(`voice: ping rate limit exceeded max=${VOICE_PING_MAX_PER_SEC}/s`);
+      closeSoon(ws, 1008);
+    });
     ws.on('message', (data, isBinary) => {
-      if (c.closed) return;
+      if (c.closed || c.limited) return;
       if (isBinary) return closeSoon(ws, 1003);
       const text = String(data);
       try {

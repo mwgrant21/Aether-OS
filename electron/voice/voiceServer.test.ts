@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { RemoteAuthGate } from '../remote/types';
 import type { VoiceGatewayPort, VoiceSocket } from './protocol';
-import { startVoiceServer, type VoiceServerHandle } from './voiceServer';
+import { startVoiceServer, type VoiceServerHandle, type VoiceServerOptions } from './voiceServer';
 
 const GOOD_COOKIE = 'aether_remote=good';
 
@@ -39,10 +39,17 @@ afterEach(async () => {
   running = null;
 });
 
-async function boot(maxClients?: number) {
+async function boot(maxClients?: number, extra: Partial<VoiceServerOptions> = {}) {
   const auth = fakeAuth();
   const gw = fakeGateway();
-  running = await startVoiceServer({ host: '127.0.0.1', port: 0, auth: auth.gate, gateway: gw.port, maxClients });
+  running = await startVoiceServer({
+    host: '127.0.0.1',
+    port: 0,
+    auth: auth.gate,
+    gateway: gw.port,
+    maxClients,
+    ...extra,
+  });
   return { srv: running, auth, gw };
 }
 
@@ -207,6 +214,79 @@ describe('WebSocket upgrade', () => {
     await tick();
     expect(gw.received).toEqual(['{"t":"resume","lastSeq":0}']);
     r.ws.close();
+  });
+
+  describe('incoming ping rate cap', () => {
+    async function pingBoot(maxClients = 2) {
+      const clock = { t: 1_000_000 };
+      const lines: string[] = [];
+      const b = await boot(maxClients, { now: () => clock.t, log: (l) => lines.push(l) });
+      const r = await connect(b.srv);
+      if (!('ws' in r)) throw new Error('no ws');
+      let pongs = 0;
+      r.ws.on('pong', () => pongs++);
+      return { ...b, clock, lines, ws: r.ws, pongs: () => pongs };
+    }
+
+    it('a burst of exactly 20 pings in one second keeps the socket open and is answered', async () => {
+      const p = await pingBoot();
+      for (let i = 0; i < 20; i++) p.ws.ping();
+      await tick(150);
+      expect(p.ws.readyState).toBe(WebSocket.OPEN);
+      expect(p.pongs()).toBe(20);
+      expect(p.srv.clients()).toBe(1);
+      p.ws.close();
+    });
+
+    it('the 21st ping in a second closes with 1008, drops clients() to 0 once, and silences the gateway', async () => {
+      const p = await pingBoot();
+      const code = closeCode(p.ws);
+      for (let i = 0; i < 21; i++) p.ws.ping();
+      p.ws.send('{"t":"resume","lastSeq":0}');
+      expect(await code).toBe(1008);
+      await tick();
+      expect(p.srv.clients()).toBe(0);
+      expect(p.lines.filter((l) => l.startsWith('voice: ping rate limit')).length).toBe(1);
+      expect(p.lines.filter((l) => l.startsWith('voice: client disconnected')).length).toBe(1);
+      expect(p.gw.received).toHaveLength(0);
+    });
+
+    it('notifies onClients exactly once for the over-limit disconnect', async () => {
+      const calls: number[] = [];
+      const { srv } = await boot(1, { onClients: (n) => calls.push(n) });
+      const r = await connect(srv);
+      if (!('ws' in r)) throw new Error('no ws');
+      const code = closeCode(r.ws);
+      for (let i = 0; i < 21; i++) r.ws.ping();
+      expect(await code).toBe(1008);
+      await tick();
+      expect(calls).toEqual([1, 0]);
+    });
+
+    it('a slow ping rate (20 per window across many windows) never closes', async () => {
+      const p = await pingBoot();
+      for (let w = 0; w < 3; w++) {
+        for (let i = 0; i < 20; i++) p.ws.ping();
+        await tick(100);
+        p.clock.t += 1000;
+      }
+      expect(p.ws.readyState).toBe(WebSocket.OPEN);
+      expect(p.pongs()).toBe(60);
+      p.ws.close();
+    });
+
+    it('the cap is per connection: a flooding client does not close another', async () => {
+      const p = await pingBoot();
+      const other = await connect(p.srv);
+      if (!('ws' in other)) throw new Error('no ws');
+      const code = closeCode(p.ws);
+      for (let i = 0; i < 21; i++) p.ws.ping();
+      expect(await code).toBe(1008);
+      await tick();
+      expect(other.ws.readyState).toBe(WebSocket.OPEN);
+      expect(p.srv.clients()).toBe(1);
+      other.ws.close();
+    });
   });
 
   it('a 17 KiB frame is rejected by the library (1009) and never reaches the gateway', async () => {
