@@ -4,6 +4,8 @@
 // and missing ones registered, keyed by line:kind:part:x:width.
 // Limitation: only the last SCAN_ROWS absolute rows are scanned, and fence state starts false at
 // the first scanned row, so a ``` fence opened more than SCAN_ROWS rows above the end is not seen.
+// The same holds for a marker block: if its marker row is above the window, its continuation rows
+// inside the window are not colored.
 // Rows that scrolled out of the window keep their decorations.
 import {
   MARKER_STYLE, readLineText, scanMarkerLines,
