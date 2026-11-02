@@ -4,7 +4,10 @@ import { createFixtureCollectorDb, itWithAuthorizer } from './collectorDb.fixtur
 import { evaluatePanel } from './evaluatePanel';
 import type { PanelSpec } from '../../src/shared/dashboards/spec';
 
-const now = Date.now();
+// Pinned: a Date.now() seed makes the day count depend on the clock. The 7d window is exactly 168 h, so
+// in a DST zone it spans 7 or 9 local days for a week after a clock change (the hour before / after local
+// midnight). Mid-July has no transition within 8 days before it in any IANA zone.
+const now = Date.UTC(2026, 6, 15, 12, 0, 0);
 const DAILY_EXACT = `SELECT date(occurred_at_ms/1000,'unixepoch','localtime') AS day, model,
   SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
   SUM(cache_creation_input_tokens) AS cache_creation_input_tokens, SUM(cache_read_input_tokens) AS cache_read_input_tokens
