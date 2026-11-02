@@ -43,10 +43,28 @@ describe('scanMarkerLines', () => {
     ]);
   });
 
-  it('ignores mid-line, lowercase and malformed markers', () => {
-    expect(scanMarkerLines([
-      L('see [STOP] here'), L('[stop] x'), L('[STOPX] x'), L('[STOP ] x'), L('[ASKING] x'),
-    ])).toEqual([]);
+  it('ignores lowercase and malformed markers', () => {
+    expect(scanMarkerLines([L('[stop] x'), L('[STOPX] x'), L('[STOP ] x'), L('[ASKING] x')])).toEqual([]);
+  });
+
+  it('gives a mid-line marker a chip on the token alone, several per row, none after a block marker', () => {
+    expect(scanMarkerLines([L('you run [STOP] then [ASK] ok')])).toEqual([
+      { row: 0, kind: 'STOP', part: 'chip', x: 8, width: 6 },
+      { row: 0, kind: 'ASK', part: 'chip', x: 20, width: 5 },
+    ]);
+    expect(scanMarkerLines([L('[WARN] a [STOP] b')]).map((s) => [s.kind, s.part])).toEqual([['WARN', 'chip'], ['WARN', 'rest']]);
+  });
+
+  it('colors every following non-blank row until a blank row, fence or new marker', () => {
+    const spans = scanMarkerLines([
+      L('[STOP] a'), L('plain'), L('- bullet [WARN] x'), L(''), L('after'),
+      L('[MANUAL] m'), L('more'), L('```'), L('code'), L('[ASK] b'),
+    ]);
+    expect(spans.filter((s) => s.part === 'rest').map((s) => [s.row, s.kind])).toEqual([
+      [0, 'STOP'], [1, 'STOP'], [2, 'STOP'], [5, 'MANUAL'], [6, 'MANUAL'],
+    ]);
+    expect(spans.filter((s) => s.row === 4)).toEqual([]);
+    expect(spans.filter((s) => s.row === 9).map((s) => s.kind)).toEqual([]);
   });
 
   it('matches through ANSI-colored input written to a headless terminal', async () => {
@@ -55,14 +73,14 @@ describe('scanMarkerLines', () => {
     expect(chips.map((s) => [s.row, s.kind, s.x, s.width])).toEqual([[0, 'STOP', 0, 6], [1, 'WARN', 2, 6]]);
   });
 
-  it('gives wrapped continuation rows rest-only spans and never matches a marker at a wrapped row start', async () => {
+  it('colors wrapped continuation rows with rest spans and chips a marker at a wrapped row start', async () => {
     const a = await scanHeadless(`[MANUAL] ${'x'.repeat(50)}`, 20);
     expect(a.spans.filter((s) => s.row === 0).map((s) => s.part)).toEqual(['chip', 'rest']);
     expect(a.spans.filter((s) => s.row === 1)).toEqual([{ row: 1, kind: 'MANUAL', part: 'rest', x: 0, width: 20 }]);
     expect(a.spans.filter((s) => s.row === 2).map((s) => [s.part, s.x])).toEqual([['rest', 0]]);
     const b = await scanHeadless(`${'a'.repeat(20)}[STOP] x`, 20);
     expect(b.rows[1].isWrapped).toBe(true);
-    expect(b.spans).toEqual([]);
+    expect(b.spans.map((s) => [s.row, s.part, s.x])).toEqual([[1, 'chip', 0], [1, 'rest', 6]]);
   });
 
   it('skips fenced code, resumes after the closing fence, and an unclosed fence suppresses the rest', () => {
@@ -76,7 +94,7 @@ describe('scanMarkerLines', () => {
     for (const r of rows) expect(r.text.length).toBe(20);
     expect(rows[0].text.slice(0, 2)).toBe('世 ');
     expect(rows[1].text[0]).toBe('￿');
-    expect(scanMarkerLines(rows.slice(0, 2))).toEqual([]);
+    expect(scanMarkerLines(rows.slice(0, 2)).map((s) => [s.row, s.x, s.width])).toEqual([[0, 2, 6], [1, rows[1].text.indexOf('[STOP]'), 6]]);
     const rest = scanMarkerLines([rows[2]]).find((s) => s.part === 'rest');
     expect(rest).toEqual({ row: 0, kind: 'STOP', part: 'rest', x: 6, width: 14 });
   });

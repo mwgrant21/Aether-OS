@@ -48,7 +48,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('attachTerminalMarkers', () => {
   it('starts disabled, then registers chip and rest decorations with the right colors', () => {
-    const t = makeTerm(['[STOP] go', 'plain']);
+    const t = makeTerm(['[STOP] go', '']);
     const m = attachTerminalMarkers(t.term);
     m.flush();
     expect(t.decos).toHaveLength(0);
