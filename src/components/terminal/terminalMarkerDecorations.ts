@@ -17,8 +17,8 @@ interface MarkerLike extends Disposable { readonly line: number; readonly isDisp
 interface DecorationLike extends Disposable { readonly isDisposed?: boolean }
 interface DecorationOptions {
   marker: MarkerLike;
-  x: number;
-  width: number;
+  x?: number;
+  width?: number;
   foregroundColor?: string;
   backgroundColor?: string;
   layer?: 'bottom' | 'top';
@@ -30,13 +30,12 @@ export interface MarkerTerm {
   readonly rows: number;
   readonly buffer: { readonly active: BufferLike & {
     readonly type: string; readonly baseY: number; readonly cursorY: number; readonly length: number;
-  } };
+  }; onBufferChange(cb: () => void): Disposable };
   registerMarker(cursorYOffset?: number): MarkerLike | undefined;
   registerDecoration(options: DecorationOptions): DecorationLike | undefined;
   onWriteParsed(cb: () => void): Disposable;
   onResize(cb: () => void): Disposable;
   onScroll(cb: () => void): Disposable;
-  onBufferChange(cb: () => void): Disposable;
 }
 
 export interface TerminalMarkers {
@@ -127,7 +126,7 @@ export function attachTerminalMarkers(term: MarkerTerm): TerminalMarkers {
     term.onWriteParsed(schedule),
     term.onResize(schedule),
     term.onScroll(schedule),
-    term.onBufferChange(() => { disposeAll(); schedule(); }),
+    term.buffer.onBufferChange(() => { disposeAll(); schedule(); }),
   ];
 
   return {

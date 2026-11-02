@@ -9,6 +9,8 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   attachCustomKeyEventHandler(cb: (ev: KeyboardEvent) => boolean) { mocks.key = cb; }
   loadAddon() {} open() {} onData(cb: (input: string) => void) { mocks.data = cb; } onResize() {}
 } }));
+const markers = vi.hoisted(() => { const setEnabled = vi.fn(); return { setEnabled, attach: vi.fn(() => ({ setEnabled, flush() {}, dispose() {} })) }; });
+vi.mock('../terminal/terminalMarkerDecorations', () => ({ attachTerminalMarkers: markers.attach }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); delete (window as unknown as { aetherElectron?: unknown }).aetherElectron; delete (navigator as unknown as { clipboard?: unknown }).clipboard; });
 it('starts its own session once, after subscribing, and keeps it across tab remounts without touching the pinned pty', () => {
@@ -151,4 +153,21 @@ it('right-click pastes unless a program is tracking the mouse', async () => {
   expect(fireEvent.contextMenu(host)).toBe(true);
   await Promise.resolve(); await Promise.resolve();
   expect(mocks.paste).not.toHaveBeenCalled();
+});
+
+it('enables marker colors from cfg.terminalMarkerColors and follows the toggle', async () => {
+  vi.resetModules();
+  markers.attach.mockClear(); markers.setEnabled.mockClear();
+  Object.defineProperty(window, 'aetherElectron', { configurable: true, value: {
+    terminal2Pty: { start: vi.fn(() => Promise.resolve()), onData: () => () => {}, onExit: () => () => {}, onAlive: () => () => {}, write() {}, resize() {} },
+  } });
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const { AetherStoreProvider: Provider, useAetherStore: useStore } = await import('../../state/store');
+  const { PtyTerminal2: Fresh } = await import('./PtyTerminal2');
+  const Flip = () => { const { dispatch } = useStore(); return <button onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { terminalMarkerColors: false } })}>flip</button>; };
+  const { getByText } = render(<Provider><Fresh /><Flip /></Provider>);
+  expect(markers.attach).toHaveBeenCalledOnce();
+  expect(markers.setEnabled).toHaveBeenLastCalledWith(true);
+  fireEvent.click(getByText('flip'));
+  expect(markers.setEnabled).toHaveBeenLastCalledWith(false);
 });

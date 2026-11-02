@@ -17,7 +17,7 @@ function makeTerm(initial: string[], cols = 20) {
   };
   const term: MarkerTerm = {
     cols, rows: 24,
-    buffer: { active: {
+    buffer: { onBufferChange: on('buffer'), active: {
       type: 'normal', baseY: 0, cursorY: 0,
       get length() { return rows.length; },
       getLine: (y) => (y < rows.length ? {
@@ -36,7 +36,7 @@ function makeTerm(initial: string[], cols = 20) {
       decos.push(d);
       return d;
     },
-    onWriteParsed: on('write'), onResize: on('resize'), onScroll: on('scroll'), onBufferChange: on('buffer'),
+    onWriteParsed: on('write'), onResize: on('resize'), onScroll: on('scroll'),
   };
   const setRow = (y: number, t: string) => { rows[y] = t.padEnd(cols); };
   return { term, handlers, unsub, decos, markers, state, setRow };
