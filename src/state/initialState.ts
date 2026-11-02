@@ -24,6 +24,7 @@ export const initialState: AetherState = {
     theme: 'cyan',
     glow: 70,
     glowFx: true,
+    terminalMarkerColors: true,
     showReactorLegend: false,
     capM: 2.0,
     alarm: 120,

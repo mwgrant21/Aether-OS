@@ -18,6 +18,11 @@ describe('buildPtyEnv', () => {
     expect(env.PATH).toBe('/usr/bin');
   });
 
+  it('sets COLORTERM=truecolor, overwriting any existing value', () => {
+    expect(buildPtyEnv({ PATH: '/usr/bin' }).COLORTERM).toBe('truecolor');
+    expect(buildPtyEnv({ COLORTERM: '24bit' }).COLORTERM).toBe('truecolor');
+  });
+
   it('does not mutate the source env object', () => {
     const source = { ANTHROPIC_API_KEY: 'sk-ant-secret' };
     buildPtyEnv(source);
