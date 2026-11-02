@@ -114,6 +114,17 @@ export function AppearanceCard() {
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={labelStyle(colors)}>TERMINAL MARKER COLORS</div>
+        <Button
+          onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { terminalMarkerColors: !cfg.terminalMarkerColors } })}
+          style={pillToggleStyle(colors, cfg.terminalMarkerColors)}
+          title={cfg.terminalMarkerColors ? 'Disable terminal marker colors' : 'Enable terminal marker colors'}
+        >
+          {cfg.terminalMarkerColors ? 'ON' : 'OFF'}
+        </Button>
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={labelStyle(colors)}>REACTOR LEGEND</div>
         <Button
           onClick={() => dispatch({ type: 'UPDATE_CFG', patch: { showReactorLegend: !cfg.showReactorLegend } })}

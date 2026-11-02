@@ -168,6 +168,7 @@ export interface Cfg {
   theme: ThemeName;
   glow: number;
   glowFx: boolean;
+  terminalMarkerColors: boolean;
   showReactorLegend: boolean;
   capM: number;
   alarm: number;
