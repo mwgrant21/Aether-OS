@@ -292,6 +292,42 @@ ${notification}
     db.close();
   });
 
+  it('an unpinned session with no fleet row and a fresh transcript mtime is not swept until the mtime is 30 s old', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const f = join(projDir, 's1.jsonl');
+    writeFileSync(f, `${agentToolUseLine('tu_alive', '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+    const mtimeMs = nowMs - 5_000;
+    utimesSync(f, mtimeMs / 1000, mtimeMs / 1000);
+    const db = freshDb();
+    const history = new Map();
+    scanTranscriptsOnce(db, projectsRoot, nowMs, history, undefined, 'other-pin');
+    expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
+    scanTranscriptsOnce(db, projectsRoot, mtimeMs + 31_000, history, undefined, 'other-pin');
+    const row: any = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_alive');
+    expect(row.exit_state).toBe('fatal');
+    db.close();
+  });
+
+  it('a session id that differs from the transcript filename gets no mtime fallback (swept as before)', () => {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const f = join(projDir, 'other-file.jsonl');
+    writeFileSync(f, `${agentToolUseLine('tu_mismatch', '2026-07-08T09:00:00Z')}
+`, 'utf8');
+    const nowMs = Date.UTC(2026, 6, 8, 9, 0, 30);
+    utimesSync(f, (nowMs - 5_000) / 1000, (nowMs - 5_000) / 1000);
+    const db = freshDb();
+    scanTranscriptsOnce(db, projectsRoot, nowMs, new Map(), undefined, 'other-pin');
+    const row: any = db.prepare('SELECT exit_state FROM dispatches WHERE tool_use_id = ?').get('tu_mismatch');
+    expect(row.exit_state).toBe('fatal');
+    db.close();
+  });
+
   it('does not sweep an open dispatch from the pinned session, but sweeps it when the pin is not passed', () => {
     const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
     const projDir = join(projectsRoot, 'my-project');
@@ -366,6 +402,64 @@ ${ack}
       started_at_ms: first.started_at_ms,
     });
     db.close();
+  });
+
+  describe('queue-operation enqueue completions', () => {
+    const qopLine = (content: string | undefined, operation = 'enqueue', ts = '2026-07-08T09:00:18Z') =>
+      JSON.stringify({ type: 'queue-operation', operation, timestamp: ts, sessionId: 's1', ...(content === undefined ? {} : { content }) });
+    const notification = (status: string, id = 'tu_q') =>
+      `<task-notification><task-id>a1</task-id><tool-use-id>${id}</tool-use-id><status>${status}</status>` +
+      '<usage><subagent_tokens>90</subagent_tokens><tool_uses>7</tool_uses><duration_ms>17993</duration_ms></usage></task-notification>';
+    const ack = JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      timestamp: '2026-07-08T09:00:01Z',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu_q', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] },
+    });
+    const scan = (...lines: string[]) => {
+      const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-projects-'));
+      const projDir = join(projectsRoot, 'my-project');
+      mkdirSync(projDir);
+      writeFileSync(join(projDir, 'session.jsonl'), [agentToolUseLine('tu_q', '2026-07-08T09:00:00Z'), ack, ...lines].join('\n') + '\n', 'utf8');
+      const db = freshDb();
+      scanTranscriptsOnce(db, projectsRoot, Date.UTC(2026, 6, 8, 9, 0, 58), new Map());
+      const rows = db.prepare('SELECT exit_state, tool_uses, tokens, dispatch_status FROM dispatches WHERE tool_use_id = ?').all('tu_q') as any[];
+      db.close();
+      return rows;
+    };
+
+    // Nothing closes the dispatch, so the stale sweep marks it fatal with no dispatch_status.
+    const unclosed = [{ exit_state: 'fatal', tool_uses: null, tokens: null, dispatch_status: null }];
+
+    it('closes the open Agent entry as ok from a completed enqueue line', () => {
+      expect(scan(qopLine(notification('completed')))).toEqual([{ exit_state: 'ok', tool_uses: 7, tokens: 90, dispatch_status: 'completed' }]);
+    });
+
+    it.each(['failed', 'killed'])('maps a %s enqueue line like a task-notification (not ok)', (status) => {
+      const rows = scan(qopLine(notification(status)));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dispatch_status).toBe(status);
+      expect(rows[0].exit_state).not.toBe('ok');
+    });
+
+    it('closes nothing from an ordinary-prompt enqueue, a dequeue, or a remove', () => {
+      expect(scan(qopLine('please run the tests'), qopLine(undefined, 'dequeue'), qopLine(notification('completed'), 'remove'))).toEqual(unclosed);
+    });
+
+    it('is idempotent when the same completion also arrives as a user task-notification', () => {
+      const userNotification = JSON.stringify({
+        type: 'user',
+        sessionId: 's1',
+        timestamp: '2026-07-08T09:00:19Z',
+        origin: { kind: 'task-notification' },
+        message: { content: [{ type: 'text', text: notification('completed') }] },
+      });
+      expect(scan(qopLine(notification('completed')), userNotification)).toEqual([{ exit_state: 'ok', tool_uses: 7, tokens: 90, dispatch_status: 'completed' }]);
+    });
+
+    it('ignores a missing tool-use-id and a truncated line without throwing or closing', () => {
+      expect(scan(qopLine('<task-notification><status>completed</status></task-notification>'), qopLine(notification('completed')).slice(0, 80))).toEqual(unclosed);
+    });
   });
 
   it('also scans a session subagents/*.jsonl file, ingesting tool calls with source_file_rel set to the subagent path', () => {

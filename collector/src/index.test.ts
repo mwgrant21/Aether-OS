@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { startCollector, pollAndUpsertFleet } from './index.js';
@@ -149,6 +149,10 @@ describe('startCollector -- pinned session reaches the stale-dispatch sweep', ()
       }) + '\n',
       'utf8'
     );
+    // The transcript has been silent for 60 s (a session with no fleet row is only
+    // swept once its transcript mtime is older than 30 s).
+    const silent = new Date(Date.now() - 60_000);
+    utimesSync(join(projectsRoot, 'proj', 's1.jsonl'), silent, silent);
     const dbPath = join(dir, 'collector.db');
     const stop = startCollector({
       dbPath,

@@ -175,6 +175,49 @@ describe('leak property', () => {
     expect(r.spoken.join('')).toContain('After it.');
   });
 
+  // Fake key material assembled from filler so no real key is in the repo.
+  const dashes = '-'.repeat(5);
+  const pemHead = `${dashes}BEGIN PRIVATE KEY${dashes}\n`;
+  const pemEnd = `${dashes}END PRIVATE KEY${dashes}`;
+  const pemBlock = (n: number) => pemHead + 'A'.repeat(n) + '\n' + pemEnd + '\n';
+
+  it('keeps masking an oversized PEM block after the spoken cap trips mid-block', () => {
+    const tail = 'TAILKEYMATERIAL'.repeat(4);
+    const text = 'x'.repeat(590) + '\n' + pemHead + 'A'.repeat(17000) + tail + '\n' + pemEnd + '\nAfter.\n';
+    const deltas = [text.slice(0, 591 + pemHead.length + 17000), text.slice(591 + pemHead.length + 17000)];
+    for (const d of [deltas, chars(text), [text]]) {
+      const r = run(d);
+      expect(r.all).not.toContain('TAILKEYMATERIAL');
+      expect(r.all).not.toContain('AAAAAAAAAAAAAAAA');
+    }
+  });
+
+  it('applies the --- delimiter before a PEM block in the same delta', () => {
+    const text = 'Short answer.\n---\nDisplay-only details\n' + pemBlock(200);
+    const r = run([text]);
+    expect(r.spoken.join('')).toBe('Short answer.\n');
+    expect(r.display).toContain('Display-only details');
+    expect(r.all).not.toContain('AAAAAAAAAAAAAAAA');
+  });
+
+  it('gives identical output at every delta split around a PEM block', () => {
+    const text = 'Short answer.\n---\nDisplay-only details\n' + pemBlock(200) + 'More.';
+    const ref = run(chars(text));
+    for (let i = 0; i <= text.length; i++) {
+      const r = run([text.slice(0, i), text.slice(i)]);
+      expect(r.spoken.join(''), `spoken at ${i}`).toBe(ref.spoken.join(''));
+      expect(r.display, `display at ${i}`).toBe(ref.display);
+      expect(r.all, `split at ${i}`).not.toContain('AAAAAAAAAAAAAAAA');
+    }
+    const spokenText = 'Hello there. ' + pemBlock(200) + 'After it.';
+    const ref2 = run(chars(spokenText));
+    for (let i = 0; i <= spokenText.length; i++) {
+      const r = run([spokenText.slice(0, i), spokenText.slice(i)]);
+      expect(r.spoken.join(''), `spoken2 at ${i}`).toBe(ref2.spoken.join(''));
+      expect(r.all, `split2 at ${i}`).not.toContain('AAAAAAAAAAAAAAAA');
+    }
+  });
+
   // A unit boundary must never separate a secret's label from its value.
   const splitCases: Array<[string, string, string]> = [
     ['label then newline then value', 'Here:\npassword:\nhunter2hunter2 done.', 'hunter2hunter2'],

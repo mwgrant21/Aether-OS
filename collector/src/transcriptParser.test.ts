@@ -230,11 +230,30 @@ describe('parseTranscriptLine tool use/result parsing', () => {
       expect(event?.originKind).toBeNull();
     });
 
-    it('leaves a queue-operation line carrying the notification as kind other', () => {
-      const line = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 's1', content: prompt });
+    it('parses a queue-operation enqueue carrying a task-notification as a user-kind task-notification', () => {
+      const line = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', timestamp: '2026-07-08T09:00:00Z', sessionId: 's1', content: prompt });
+      expect(parseTranscriptLine(line)).toMatchObject({
+        kind: 'user',
+        sessionId: 's1',
+        originKind: 'task-notification',
+        humanText: prompt,
+        toolResults: [],
+      });
+    });
+
+    it.each(['remove', 'dequeue'])('leaves a queue-operation %s carrying the notification as kind other', (operation) => {
+      const line = JSON.stringify({ type: 'queue-operation', operation, sessionId: 's1', content: prompt });
       const event = parseTranscriptLine(line);
       expect(event?.kind).toBe('other');
       expect(event?.originKind).toBeNull();
+    });
+
+    it('leaves a queue-operation enqueue of an ordinary prompt, or with no content, as kind other', () => {
+      for (const content of ['please run the tests', undefined, 42]) {
+        const event = parseTranscriptLine(JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 's1', content }));
+        expect(event?.kind).toBe('other');
+        expect(event?.originKind).toBeNull();
+      }
     });
   });
 });
