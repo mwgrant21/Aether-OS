@@ -5,6 +5,8 @@ import { FitAddon } from '@xterm/addon-fit';
 // outside React and can't call useColors() -- always the dark palette.
 import { colors as darkColors, fonts } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { useAetherStore } from '../../state/store';
+import { attachTerminalMarkers, type TerminalMarkers } from './terminalMarkerDecorations';
 import '@xterm/xterm/css/xterm.css';
 
 // Module-level (not component state) so the real claude session survives
@@ -18,6 +20,8 @@ import '@xterm/xterm/css/xterm.css';
 let sharedHostEl: HTMLDivElement | null = null;
 let sharedTerm: Terminal | null = null;
 let sharedFit: FitAddon | null = null;
+// Starts disabled; the component effect follows cfg.terminalMarkerColors.
+let sharedMarkers: TerminalMarkers | null = null;
 let didRequestStart = false;
 let pendingFocus = false;
 
@@ -28,6 +32,7 @@ function getOrCreateHost(ensureStart = true): { hostEl: HTMLDivElement; fit: Fit
     sharedHostEl.style.height = '100%';
 
     sharedTerm = new Terminal({
+      allowProposedApi: true, // registerDecoration (terminal marker colors) is proposed API
       fontFamily: fonts.mono,
       fontSize: 13,
       theme: { background: darkColors.bgTerminal, foreground: darkColors.textBody },
@@ -35,6 +40,7 @@ function getOrCreateHost(ensureStart = true): { hostEl: HTMLDivElement; fit: Fit
     sharedFit = new FitAddon();
     sharedTerm.loadAddon(sharedFit);
     sharedTerm.open(sharedHostEl);
+    sharedMarkers = attachTerminalMarkers(sharedTerm);
 
     // window.aetherElectron.pty is guaranteed present here -- the caller
     // (PtyTerminal's effect) only calls getOrCreateHost() after its own
@@ -70,6 +76,7 @@ export function focusClaudeTerminal(): void {
 
 export function PtyTerminal() {
   const colors = useColors();
+  const markersOn = useAetherStore().state.cfg.terminalMarkerColors;
   const anchorRef = useRef<HTMLDivElement>(null);
   // Survive StrictMode's effect replay: both setups belong to this focus-only mount.
   const focusOnMount = useRef(pendingFocus);
@@ -101,6 +108,10 @@ export function PtyTerminal() {
     if (!sharedTerm) return;
     sharedTerm.options.theme = { background: colors.bgTerminal, foreground: colors.textBody };
   }, [colors]);
+
+  useEffect(() => {
+    sharedMarkers?.setEnabled(markersOn);
+  }, [markersOn]);
 
   if (!hasElectronPty) {
     return <div style={fallbackStyle}>Real terminal requires the Electron app — run `npm run electron:dev`</div>;

@@ -5,6 +5,8 @@ import { FitAddon } from '@xterm/addon-fit';
 // outside React and can't call useColors() -- always the dark palette.
 import { colors as darkColors, fonts } from '../../styles/tokens';
 import { useColors } from '../shared/useColors';
+import { useAetherStore } from '../../state/store';
+import { attachTerminalMarkers, type TerminalMarkers } from '../terminal/terminalMarkerDecorations';
 import '@xterm/xterm/css/xterm.css';
 
 // Module-level, independent from Claude terminal's own singleton in
@@ -14,6 +16,8 @@ import '@xterm/xterm/css/xterm.css';
 let sharedHostEl: HTMLDivElement | null = null;
 let sharedTerm: Terminal | null = null;
 let sharedFit: FitAddon | null = null;
+// Starts disabled; the component effect follows cfg.terminalMarkerColors.
+let sharedMarkers: TerminalMarkers | null = null;
 
 function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
   if (!sharedHostEl) {
@@ -22,6 +26,7 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     sharedHostEl.style.height = '100%';
 
     sharedTerm = new Terminal({
+      allowProposedApi: true, // registerDecoration (terminal marker colors) is proposed API
       fontFamily: fonts.mono,
       fontSize: 13,
       theme: { background: darkColors.bgTerminal, foreground: darkColors.textBody },
@@ -29,6 +34,7 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     sharedFit = new FitAddon();
     sharedTerm.loadAddon(sharedFit);
     sharedTerm.open(sharedHostEl);
+    sharedMarkers = attachTerminalMarkers(sharedTerm);
 
     const codexPty = window.aetherElectron!.codexPty;
     codexPty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once per app lifetime
@@ -41,6 +47,7 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
 
 export function PtyCodexTerminal() {
   const colors = useColors();
+  const markersOn = useAetherStore().state.cfg.terminalMarkerColors;
   const anchorRef = useRef<HTMLDivElement>(null);
   const hasElectronCodexPty = typeof window !== 'undefined' && !!window.aetherElectron?.codexPty;
 
@@ -65,6 +72,10 @@ export function PtyCodexTerminal() {
     if (!sharedTerm) return;
     sharedTerm.options.theme = { background: colors.bgTerminal, foreground: colors.textBody };
   }, [colors]);
+
+  useEffect(() => {
+    sharedMarkers?.setEnabled(markersOn);
+  }, [markersOn]);
 
   if (!hasElectronCodexPty) {
     return <div style={fallbackStyle}>Codex terminal requires the Electron app — run `npm run electron:dev`</div>;

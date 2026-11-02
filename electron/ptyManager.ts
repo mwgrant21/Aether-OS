@@ -22,6 +22,8 @@ const API_KEY_ENV_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPI
 export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...source };
   for (const key of API_KEY_ENV_VARS) delete env[key];
+  // The renderer is xterm.js, which handles 24-bit color; advertise it so TUIs emit truecolor.
+  env.COLORTERM = 'truecolor';
   return env;
 }
 
