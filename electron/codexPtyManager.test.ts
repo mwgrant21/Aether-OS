@@ -31,6 +31,11 @@ describe('buildCodexPtyEnv', () => {
     const env = buildCodexPtyEnv(source, 'C:/fake/codex-home');
     expect(env.CODEX_HOME).toBe('C:/fake/codex-home');
   });
+
+  it('sets COLORTERM=truecolor, overwriting any existing value', () => {
+    expect(buildCodexPtyEnv({ PATH: '/usr/bin' }, 'C:/fake/codex-home').COLORTERM).toBe('truecolor');
+    expect(buildCodexPtyEnv({ COLORTERM: '24bit' }, 'C:/fake/codex-home').COLORTERM).toBe('truecolor');
+  });
 });
 
 // Guards against a shell profile (~/.bashrc, ~/.zshrc, $PROFILE) re-exporting

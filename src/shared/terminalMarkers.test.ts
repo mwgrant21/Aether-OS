@@ -55,7 +55,7 @@ describe('scanMarkerLines', () => {
     expect(scanMarkerLines([L('[WARN] a [STOP] b')]).map((s) => [s.kind, s.part])).toEqual([['WARN', 'chip'], ['WARN', 'rest']]);
   });
 
-  it('colors every following non-blank row until a blank row, fence or new marker', () => {
+  it('colors every following non-blank row until a blank row or fence', () => {
     const spans = scanMarkerLines([
       L('[STOP] a'), L('plain'), L('- bullet [WARN] x'), L(''), L('after'),
       L('[MANUAL] m'), L('more'), L('```'), L('code'), L('[ASK] b'),
