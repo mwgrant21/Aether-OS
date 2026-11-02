@@ -144,6 +144,9 @@ export function buildCodexPtyEnv(
   // Dedicated, isolated home shared with the cross-engine verifier -- never
   // the operator's global ~/.codex. See electron/crossEngine/acpProcess.ts.
   env.CODEX_HOME = codexHome;
+  // The renderer is xterm.js, which handles 24-bit color; advertise it so the TUI emits truecolor.
+  // Mirrors buildPtyEnv in ptyManager.ts.
+  env.COLORTERM = 'truecolor';
   return env;
 }
 
