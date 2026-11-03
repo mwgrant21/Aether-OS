@@ -1,7 +1,7 @@
 // Headless screen model of one PTY stream. Pure: no I/O, no logging, and it never
 // subscribes to the mirror's onData, so query replies cannot reach a PTY.
-// write/resize/snapshot run in call order through one queue: writes are paced by the parse callback,
-// and resize/snapshot wait until every earlier write has been parsed.
+// write/resize/snapshot/viewportText run in call order through one queue: writes are paced by the parse callback,
+// and resize/snapshot/viewportText wait until every earlier write has been parsed.
 import headlessPkg from '@xterm/headless';
 import serializePkg from '@xterm/addon-serialize';
 
@@ -39,6 +39,8 @@ export interface TerminalMirror {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   snapshot(): Promise<TerminalSnapshot>;
+  /** Visible rows as plain text (right-trimmed), after every earlier write is parsed; [] once disposed. */
+  viewportText(): Promise<string[]>;
   dispose(): void;
   /** UTF-16 units written but not yet parsed (queued here plus in xterm); for load measurement. */
   pendingBytes(): number;
@@ -63,7 +65,8 @@ export function createTerminalMirror(opts: {
   type Op =
     | { k: 'w'; data: string }
     | { k: 'r'; cols: number; rows: number }
-    | { k: 's'; resolve: (s: TerminalSnapshot) => void };
+    | { k: 's'; resolve: (s: TerminalSnapshot) => void }
+    | { k: 'v'; resolve: (rows: string[]) => void };
   let queue: Op[] = [];
   let head = 0;
   let pumping = false;
@@ -123,6 +126,13 @@ export function createTerminalMirror(opts: {
           head++;
           if (op.k === 'r') {
             term.resize(op.cols, op.rows);
+          } else if (op.k === 'v') {
+            let rows: string[] = [];
+            try {
+              const b = term.buffer.active;
+              for (let i = 0; i < term.rows; i++) rows.push(b.getLine(b.viewportY + i)?.translateToString(true) ?? '');
+            } catch { rows = []; }
+            op.resolve(rows);
           } else {
             let snap = NO_SNAPSHOT;
             try { snap = { cols: term.cols, rows: term.rows, d: serializeBounded() }; } catch { /* no snapshot */ }
@@ -155,12 +165,20 @@ export function createTerminalMirror(opts: {
         pump();
       });
     },
+    viewportText() {
+      if (disposed) return Promise.resolve([]);
+      return new Promise<string[]>((resolve) => {
+        queue.push({ k: 'v', resolve });
+        pump();
+      });
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       for (let i = head; i < queue.length; i++) {
         const op = queue[i];
         if (op.k === 's') op.resolve(NO_SNAPSHOT);
+        else if (op.k === 'v') op.resolve([]);
       }
       queue = [];
       head = 0;
