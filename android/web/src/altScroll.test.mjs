@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   chainDrag, toNotches, wheelBytes, shouldIntercept, flushAlt, finishAlt,
-  MAX_NOTCHES_PER_TICK, PAGE_EVERY_NOTCHES,
+  MAX_NOTCHES_PER_TICK, PAGE_EVERY_NOTCHES, ARROWS_PER_NOTCH,
 } from './altScroll.js';
 import { shouldSend } from './inputFilter.js';
 
@@ -65,10 +65,26 @@ describe('wheelBytes', () => {
     expect(wheelBytes({ notches: 1, trackingMode: 'x10', col: 0, row: -3.5 })).toBe('\x1b[<65;1;1M');
     expect(wheelBytes({ notches: 1, trackingMode: 'x10', col: 7.9, row: 2.2 })).toBe('\x1b[<65;7;2M');
   });
-  it('mode none sends PgUp/PgDn only at the threshold', () => {
-    expect(wheelBytes({ notches: -(PAGE_EVERY_NOTCHES - 1), trackingMode: 'none', col: 1, row: 1 })).toBeNull();
-    expect(wheelBytes({ notches: -PAGE_EVERY_NOTCHES, trackingMode: 'none', col: 1, row: 1 })).toBe('\x1b[5~');
-    expect(wheelBytes({ notches: PAGE_EVERY_NOTCHES, trackingMode: 'none', col: 1, row: 1 })).toBe('\x1b[6~');
+  it('mode none pages at the threshold and below it sends cursor keys', () => {
+    expect(wheelBytes({ notches: -(PAGE_EVERY_NOTCHES - 1), trackingMode: 'none', col: 1, row: 1 }))
+      .toBe('[A'.repeat((PAGE_EVERY_NOTCHES - 1) * ARROWS_PER_NOTCH));
+    expect(wheelBytes({ notches: -PAGE_EVERY_NOTCHES, trackingMode: 'none', col: 1, row: 1 })).toBe('[5~');
+    expect(wheelBytes({ notches: PAGE_EVERY_NOTCHES, trackingMode: 'none', col: 1, row: 1 })).toBe('[6~');
+  });
+  it('mode none: a 200 px drag at 17 px cells (5 notches) yields up/down arrows', () => {
+    const up = toNotches({ leftover: 200, carry: 0, cellH: 17 }); // finger down = older content
+    expect(up.notches).toBe(-5);
+    expect(wheelBytes({ notches: up.notches, trackingMode: 'none', col: 1, row: 1 })).toBe('[A'.repeat(5 * ARROWS_PER_NOTCH));
+    const down = toNotches({ leftover: -200, carry: 0, cellH: 17 });
+    expect(wheelBytes({ notches: down.notches, trackingMode: 'none', col: 1, row: 1 })).toBe('[B'.repeat(5 * ARROWS_PER_NOTCH));
+  });
+  it('tracking modes are byte-for-byte unchanged for every notch count', () => {
+    for (const mode of ['x10', 'vt200', 'drag', 'any']) {
+      for (let n = 1; n <= MAX_NOTCHES_PER_TICK; n++) {
+        expect(wheelBytes({ notches: -n, trackingMode: mode, col: 41, row: 13 })).toBe('[<64;41;13M'.repeat(n));
+        expect(wheelBytes({ notches: n, trackingMode: mode, col: 41, row: 13 })).toBe('[<65;41;13M'.repeat(n));
+      }
+    }
   });
   it('zero or non-finite notches give null', () => {
     expect(wheelBytes({ notches: 0, trackingMode: 'any', col: 1, row: 1 })).toBeNull();
@@ -134,12 +150,29 @@ describe('flushAlt / finishAlt', () => {
     finishAlt(mkAlt(3, 'any', true), { commit: true, stdinOn: true, send: r.send, clear: r.clear });
     expect(r.sent).toEqual([]);
   });
-  it('a sub-threshold remainder in mode none is kept, not sent', () => {
+  it('a sub-page swipe in mode none flushes as cursor keys', () => {
     const r = rig();
     const alt = mkAlt(PAGE_EVERY_NOTCHES - 1, 'none');
     finishAlt(alt, { commit: true, stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toEqual([{ t: 'input', s: 'claude', d: '[B'.repeat((PAGE_EVERY_NOTCHES - 1) * ARROWS_PER_NOTCH) }]);
+    expect(alt.pending).toBe(0);
+  });
+  it('keep receives the px carry and unsent notches so the next gesture continues them', () => {
+    const r = rig();
+    const keep = { carry: 0, pending: 0 };
+    const a = mkAlt(2, 'none');
+    a.carry = 20;
+    finishAlt(a, { commit: true, stdinOn: false, send: r.send, clear: r.clear, keep }); // stdin off: not sent
     expect(r.sent).toEqual([]);
-    expect(alt.pending).toBe(PAGE_EVERY_NOTCHES - 1);
+    expect(keep).toEqual({ carry: 20, pending: 2 });
+    // next gesture starts from keep; 20 px carry + 14 px drag crosses one 34 px notch
+    const nn = toNotches({ leftover: 14, carry: keep.carry, cellH: 17 });
+    expect(nn.notches).toBe(-1);
+    // abort keeps the px carry but drops pending
+    const b = mkAlt(3, 'none');
+    b.carry = 5;
+    finishAlt(b, { commit: false, stdinOn: true, send: r.send, clear: r.clear, keep });
+    expect(keep).toEqual({ carry: 5, pending: 0 });
   });
   it('clamps the flushed batch to the per-tick maximum', () => {
     const r = rig();

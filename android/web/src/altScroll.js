@@ -7,6 +7,9 @@
 export const NOTCH_CELLS = 2;
 export const MAX_NOTCHES_PER_TICK = 8;
 export const PAGE_EVERY_NOTCHES = 8;
+// Mode none, below a page: one notch = NOTCH_CELLS cells of finger travel, so send that many
+// cursor-key lines per notch and the text follows the finger.
+export const ARROWS_PER_NOTCH = NOTCH_CELLS;
 
 const ESC = '\x1b';
 const fin = Number.isFinite;
@@ -44,13 +47,15 @@ export function wheelBytes({ notches, trackingMode, col, row }) {
     const seq = `${ESC}[<${up ? 64 : 65};${pos(col)};${pos(row)}M`;
     return seq.repeat(count);
   }
-  if (count < PAGE_EVERY_NOTCHES) return null;
+  // No mouse tracking: a short swipe sends cursor keys (less, man, vim scroll on them), a long
+  // one pages. Tracking-mode output above is untouched.
+  if (count < PAGE_EVERY_NOTCHES) return `${ESC}${up ? '[A' : '[B'}`.repeat(count * ARROWS_PER_NOTCH);
   return `${ESC}${up ? '[5~' : '[6~'}`.repeat(Math.floor(count / PAGE_EVERY_NOTCHES));
 }
 
 // Send the accumulated whole notches of an alt-screen gesture. Disarms the pending timer first,
 // so a flush from gesture end can never double-send with a still-armed timer. Sub-threshold
-// remainders stay in alt.pending.
+// remainders (null from wheelBytes) stay in alt.pending.
 export function flushAlt(alt, { stdinOn, send, clear = clearTimeout }) {
   if (!alt) return;
   if (alt.timer) clear(alt.timer);
@@ -64,7 +69,7 @@ export function flushAlt(alt, { stdinOn, send, clear = clearTimeout }) {
     col: Math.floor(slot.term.cols / 2) + 1,
     row: Math.floor(slot.term.rows / 2) + 1,
   });
-  if (d === null) return; // below the PgUp/PgDn threshold: keep accumulating
+  if (d === null) return;
   alt.pending = 0;
   send({ t: 'input', s: slot.id, d });
 }
