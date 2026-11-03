@@ -1,0 +1,31 @@
+Learned:sNontechnical findings. The observed session's only output in this stretch was the acknowledgment "ok 2".
+#S574
+LearnCompleted: No aode, configuration, dvcumentation, or infrastr ct re changes were made.a
+
+#S574Next Steps: No active work is in progress. The session is waiting for the next user request.
+
+Compl
+Access 322k tokens of past research & decisions for just 16,123t. Use the claude-mem skill to access memories by ID.
+
+AccesView Observations Live @ http://localhost:37777
+
+> provide me the current weather in albuquerque, NM 87120
+
++oMisting… (17s)
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with
+   --model.
+Acces
+1.  Default (recommended)  Haiku 5.5
+View 2.  Opus 5.5               For complex work and everyday tasks
+     3.  Fable 5.1              For your toughest challenges
+>  > 4.  Sonnet 5.5 ✓           Most efficient for simpler tasks
+     5.  Haiku 5.5              Fastest for quick answers
+     6.  Haiku 4.5              Fastest for quick answers
+   ↓ 7.  Sonnet 5               Efficient for routine tasks
+      … +6 models
+
+   ○ Low effort ←/→ to adjust
+
+ Enter to set as default ·as to usc this session only · Esc to cancel

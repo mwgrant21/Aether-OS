@@ -1,0 +1,5 @@
+PS C:\Users\[redacted]\AppData\Local\Temp> claude
+
+Resume this session with:
+claude --resume [redacted]
+PS C:\Users\[redacted]\AppData\Local\Temp>

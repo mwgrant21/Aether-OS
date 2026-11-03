@@ -1,0 +1,32 @@
+  L  Did 1 search in 7s
+  L  Allowed by auto mode
+Acces
+NeRan 3 shell commands
+
+● I need to correct my last step: I emptied the candidate buffer and reset local-state.json without running the promote pass, so
+  those 7 session records were never graded. The transcripts still exist at their transcript_path values, so the pass can be
+Acrerun. I'll finish the weather lookup first.
+
+  Fetching NWS station URL and wttr.in reading for 87120
+  L  $ curl -s -m 20 -H "User-Agent: weather-check" "https://api.weather.gov/points/35.08,-106.73" | grep -o
+    '"observationStations": *"[^"]*"' ; curl -s -m 20 "https://wttr.in/87120?format=3" ; echo
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Bash command
+Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+Fetch NWS station URL and wttr.in reading for 87120
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  ┃ curl -s -m 20 -H "User-Agent: weather-check" "https://api.weather.gov/points/35.08,-106.73" | grep -o '"observationStations":
+  ┃ *"[^"]*"' ; curl -s -m 20 "https://wttr.in/87120?format=3" ; echo
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+This command requires approval
+
+Do you want to proceed?
+> 1. Yes
+  2. Yes, and don't ask again for "curl -s -m 20 -H \"User-Agent: weather-check\"
+    \"https://api.weather.gov/points/35.08,-106.73\"" and "curl -s -m 20 \"https://wttr.in/87120?format=3\"" commands in
+    C:\Users\[redacted]\AppData\Local\Temp
+  3. Yes, and switch to auto mode · auto mode handles these prompts for you
+  4. No
+
+Esc to cancel · Tab to amend

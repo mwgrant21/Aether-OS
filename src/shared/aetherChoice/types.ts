@@ -30,3 +30,15 @@ export type ReadoutState =
   | 'blocked'
   | 'notApplied'
   | 'unconfirmed';
+
+/** What a slot's visible screen shows, as read by the idle classifier. Only 'idle' permits a write. */
+export type IdleReading =
+  | 'idle'
+  | 'generating'
+  | 'busy'
+  | 'picker'
+  | 'modal'
+  | 'switch-model-modal'
+  | 'draft'
+  | 'shell'
+  | 'unknown';

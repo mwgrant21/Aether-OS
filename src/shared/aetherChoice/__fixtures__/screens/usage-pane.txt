@@ -1,0 +1,31 @@
+✻ Gitifying… (1m 46s · ↓ 2.5k tokens)
+──────────────────────────────────────────────────────────────────────────────────────────────────────────── ◐ medium · /effort ─
+Ne Settings   Status   Config   Usage   Stats
+
+   Session
+
+ c Total cost:            $0.4834
+   Total duration (API):  33s
+   Total duration (wall): 5m 6s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage by model:
+       claude-haiku-5-5:  15.1k input, 1.8k output, 0 cache read, 113.7k cache write, 1 web search ($0.1281)
+      claude-sonnet-5-5:  8 input, 1.5k output, 244.7k cache read, 79.0k cache write ($0.3553)
+   Prompt cache (main):   4 requests · 56% of input tokens from cache · 1 miss (last 47s ago, 113.7k tokens re-cached) · warm
+   (1h TTL, last activity 47s ago)
+
+
+   Plugin skill-listing footprint
+   What each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP tools
+   not yet counted.
+
+   commit-commands              3 skills · ~99 tok/turn
+   product-management           1 skill · ~42 tok/turn
+   pr-review-toolkit            1 skill · ~27 tok/turn
+   code-review                  1 skill · ~18 tok/turn
+
+   Total                        ~186 tok/turn
+
+   Current session
+   ██████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 27% used
+   Resets 4:20am (America/Denver)                                                                                          ↓

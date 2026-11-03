@@ -1,0 +1,15 @@
+  [unreadable]   Claude Code v2.1.317
+                 Haiku 5.5 with low effort · Claude Max
+                 ~\AppData\Local\Temp
+
+  L  SessionStart:startup says: Resume tip: the last session here replied 2 min ago (~115k tokens cached). /resume now is cheap:
+Learnthe cache stays warm for ~58 more min.
+  L  SessionStart:startup hook error
+  L  Hook output looks like a JSON object but is not valid JSON — JSON Parse error: Unable to parse JSON string. Emit the payload
+     with a JSON encoder (jq, ConvertTo-Json, json.dumps) rather than string con…
+  L  SessionStart:startup says: [Temp] recent context, 2026-11-03 12:55am MST
+     ────────────────────────────────────────────────────────
+
+     Legend: session-request | ● bugfix | ◆ feature | ↻ refactor | ✓ change | ○ discovery | ⚖decision | ⚠security_alert | ⚷
+src/trenurity_note
+View
