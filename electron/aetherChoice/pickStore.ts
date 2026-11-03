@@ -174,6 +174,13 @@ export async function savePicks(dir: string, records: Record<string, ThreadPickR
     const clean = id.length <= MAX_ID ? parseRecord(id, rec) : undefined;
     if (clean) threads[id] = clean;
   }
+  const json = JSON.stringify({ v: 1, threads });
+  const bytes = Buffer.byteLength(json, 'utf8');
+  // loadPicks rejects a file over the cap whole, so an oversized save would silently lose every pick on restart.
+  // Refuse before any write; the previous readable file stays. The caller must prune.
+  if (bytes > MAX_PICKS_FILE_BYTES) {
+    throw new Error(`aether-choice picks too large to save: ${bytes} bytes exceeds the ${MAX_PICKS_FILE_BYTES} byte cap`);
+  }
   mkdirSync(dir, { recursive: true });
-  await writeFileAtomically(join(dir, PICKS_FILE), JSON.stringify({ v: 1, threads }));
+  await writeFileAtomically(join(dir, PICKS_FILE), json);
 }

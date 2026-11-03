@@ -216,6 +216,7 @@ describe('randomized invariant sweep', () => {
     let highWrites = 0;
     let manualLive = 0;
     let roundTrips = 0;
+    let notLiveChecks = 0;
     try {
       for (let s = 0; s < SEQUENCES; s++) {
         const start = pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS));
@@ -247,6 +248,10 @@ describe('randomized invariant sweep', () => {
               }
             }
             if (source === 'auto' && trigger === 'budget') expect(r.intended, where + ' I1 submit').toEqual(rec0.intended);
+            // F1: an auto budget submit never touches a manual-sourced record or one with a pending manual pick.
+            if (source === 'auto' && trigger === 'budget' && (rec0.source === 'manual' || rec0.pendingSource === 'manual')) {
+              expect(r, where + ' F1 submit').toEqual(rec0);
+            }
           } else if (op === 4 || op === 5) {
             if (!rec0.live) {
               const usage = { sessionPct: int(100), weekPct: int(100) };
@@ -266,6 +271,14 @@ describe('randomized invariant sweep', () => {
           } else if (op <= 8) {
             h.st.usage = int(100);
             h.st.reading = pick1(READINGS);
+            if (!rec0.live) {
+              // F2: a not-live record gets no write and no queue change at any reading.
+              const before = h.writes.length;
+              expect(h.engine.onIdleCheck(T), where + ' F2').toBe('skipped');
+              expect(h.writes.length, where + ' F2 writes').toBe(before);
+              expect(h.st.rec, where + ' F2 record').toEqual(rec0);
+              notLiveChecks++;
+            }
             if (rec0.live) {
               const before = h.writes.length;
               const result = h.engine.onIdleCheck(T);
@@ -289,6 +302,11 @@ describe('randomized invariant sweep', () => {
             h.engine.reportOutcome(T, rand() < 0.7 ? 'confirmed' : 'not-applied', null);
           }
           const r = h.st.rec;
+          // F1: a manual-sourced record (or one with a pending manual pick) never carries a budget queue.
+          if (r.queue?.trigger === 'budget') {
+            expect(r.source, where + ' F1 source').toBe('auto');
+            expect(r.pendingSource, where + ' F1 pendingSource').not.toBe('manual');
+          }
           // I2: launched is exactly what is running.
           expect(r.launched, where + ' I2').toEqual(running);
           // I1: the desired pick is always recoverable at low usage.
@@ -317,5 +335,6 @@ describe('randomized invariant sweep', () => {
     expect(highWrites).toBeGreaterThan(0);
     expect(manualLive).toBeGreaterThan(1000);
     expect(roundTrips).toBe(SEQUENCES / 10);
+    expect(notLiveChecks).toBeGreaterThan(300);
   }, 120_000);
 });

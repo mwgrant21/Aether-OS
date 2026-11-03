@@ -114,6 +114,8 @@ export function submitPick(
   }
   const base = rec.launched ?? rec.intended;
   if (budgetSubmit) {
+    // A manual pick is never silently reverted: a budget step-down never touches a manual record (live matches launch, I4).
+    if (rec.source === 'manual' || rec.pendingSource === 'manual') return { record: rec, rejected: null };
     // Effort only (Option R), and never over a pending desire. The engine re-runs the budget when it writes.
     if (rec.modelPending !== null || (rec.queue !== null && rec.queue.trigger !== 'budget')) {
       return { record: rec, rejected: null };

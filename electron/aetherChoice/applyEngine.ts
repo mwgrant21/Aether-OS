@@ -86,7 +86,9 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
   function onIdleCheck(threadId: string): 'sent' | 'skipped' {
     const rec = deps.getRecord(threadId);
     // Ruling 9b: zero bytes reach a halted slot.
-    if (!rec || rec.halted || !rec.queue) return 'skipped';
+    // A queued effort survives an exit (markExited keeps it) and waits for the next live thread: with
+    // no live thread the command could reach the underlying shell, so nothing is written or cleared.
+    if (!rec || !rec.live || rec.halted || !rec.queue) return 'skipped';
     const slot = deps.slotFor(threadId);
     if (slot !== 'claude' && slot !== 'terminal2') return 'skipped';
     const q = rec.queue;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TerminalSlotId } from '../../src/shared/remote/types';
 import type { Pick } from '../../src/shared/aetherChoice/types';
-import { markLaunched, newRecord } from '../../src/shared/aetherChoice/pickRecord';
+import { markExited, markLaunched, newRecord } from '../../src/shared/aetherChoice/pickRecord';
 import type { ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
 import { createApplyEngine, formatPickLine, unknownIdle } from './applyEngine';
 import type { IdleReading } from './applyEngine';
@@ -238,5 +238,33 @@ describe('applyEngine', () => {
     expect(s.logs).toHaveLength(0);
     s.engine.onIdleCheck(T);
     expect(s.writes).toHaveLength(0);
+  });
+});
+
+describe('applyEngine: queued effort needs a live thread (F2)', () => {
+  const exited = (s: ReturnType<typeof setup>) => {
+    s.records.set(T, markExited(s.records.get(T)!));
+  };
+
+  it('a not-live record gets no write and keeps its queue', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    exited(s);
+    const before = s.records.get(T);
+    expect(before?.queue).not.toBeNull();
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toEqual([]);
+    expect(s.records.get(T)).toEqual(before);
+  });
+
+  it('a not-live record whose queue equals the running effort keeps the queue (no-op path)', () => {
+    const s = setup({ usage: 95 });
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, { ...META, trigger: 'budget', source: 'auto' });
+    s.records.set(T, { ...s.records.get(T)!, launched: { model: 'sonnet', effort: 'low' }, queue: { pick: { model: 'sonnet', effort: 'medium' }, reason: 'b', trigger: 'budget', source: 'auto', queuedAt: 1 } });
+    exited(s);
+    const before = s.records.get(T);
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toEqual([]);
+    expect(s.records.get(T)?.queue).toEqual(before?.queue);
   });
 });

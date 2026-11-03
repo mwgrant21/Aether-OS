@@ -209,3 +209,28 @@ describe('pickRecord', () => {
     expect(deriveReadoutState(markNotApplied(base, SONNET_MED, null))).toBe('notApplied');
   });
 });
+
+describe('submitPick: auto budget never touches a manual record (F1)', () => {
+  const liveManual = (): ThreadPickRecord =>
+    markLaunched(newRecord('t1', { model: 'opus', effort: 'high' }, { reason: 'u', trigger: 'manual', source: 'manual' }), {
+      model: 'opus', effort: 'high', resume: false, reasonSuffix: '', budgetLevel: 'none',
+    });
+  const budget = { reason: 'b', trigger: 'budget', source: 'auto', now: 1 } as const;
+
+  it('a manual-source live record ignores an auto budget submit', () => {
+    const rec = liveManual();
+    const r = submitPick(rec, { model: 'haiku', effort: 'low' }, budget);
+    expect(r.record).toEqual(rec);
+    expect(r.record.queue).toBeNull();
+  });
+
+  it('a record with a pending manual pick ignores an auto budget submit', () => {
+    const auto = markLaunched(newRecord('t1', { model: 'sonnet', effort: 'high' }, { reason: 'a', trigger: 'task-class', source: 'auto' }), {
+      model: 'sonnet', effort: 'high', resume: false, reasonSuffix: '', budgetLevel: 'none',
+    });
+    const rec = submitPick(auto, { model: 'sonnet', effort: 'low' }, { reason: 'u', trigger: 'manual', source: 'manual', now: 1 }).record;
+    expect(rec.pendingSource).toBe('manual');
+    const r = submitPick(rec, { model: 'sonnet', effort: 'medium' }, budget);
+    expect(r.record).toEqual(rec);
+  });
+});

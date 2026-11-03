@@ -98,3 +98,35 @@ describe('pickStore', () => {
     for (const k of ['"prompt"', '"text"', '"transcript"']) expect(raw).not.toContain(k);
   });
 });
+
+describe('pickStore size cap (F3)', () => {
+  const many = (n: number) => {
+    const out: Record<string, ReturnType<typeof rec>> = {};
+    for (let i = 0; i < n; i++) out[`thread-${i}`] = rec(`thread-${i}`);
+    return out;
+  };
+
+  it('a save over the load cap throws naming size and cap, and leaves the previous file untouched', async () => {
+    let n = 1;
+    await savePicks(dir, many(n));
+    for (;;) {
+      const bytes = readFileSync(file());
+      let threw: unknown = null;
+      try {
+        await savePicks(dir, many(n + 1));
+      } catch (e) {
+        threw = e;
+      }
+      if (threw) {
+        expect(String((threw as Error).message)).toContain(String(MAX_PICKS_FILE_BYTES));
+        expect(readFileSync(file()).equals(bytes)).toBe(true);
+        expect(Object.keys(loadPicks(dir))).toHaveLength(n);
+        expect(loadPicks(dir)).toEqual(many(n));
+        break;
+      }
+      n++;
+      expect(n).toBeLessThan(2000);
+    }
+    expect(n).toBeGreaterThan(50);
+  });
+});
