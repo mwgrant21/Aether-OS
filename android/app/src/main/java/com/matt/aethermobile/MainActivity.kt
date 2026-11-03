@@ -857,7 +857,7 @@ class MainActivity : AppCompatActivity() {
     private fun onPageMessage(m: PageMessage) {
         when (m) {
             is PageMessage.Sel -> {
-                if (!terminalLive && termHost == null) return // a page cannot raise the bar with no live terminal
+                if (!terminalLive) return // a page cannot raise the bar unless the terminal is live
                 selActiveSlot = if (m.on) m.session else null
                 if (!m.on) copyGate.disarm()
                 if (!isDestroyed) renderTabs()
