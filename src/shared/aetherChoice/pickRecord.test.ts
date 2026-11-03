@@ -167,6 +167,28 @@ describe('pickRecord', () => {
     expect(lowered.modelPending).toBe('opus');
   });
 
+  it('markLaunched makes intended the budget-adjusted launched pick, so a later sonnet/high submit is a change', () => {
+    const fresh = newRecord('t2', { model: 'sonnet', effort: 'high' }, META);
+    const plan = planLaunch(fresh, { sessionPct: 95, weekPct: 0 }) as LaunchPlan;
+    expect([plan.model, plan.effort]).toEqual(['haiku', 'low']);
+    const launched = markLaunched(fresh, plan);
+    expect(launched.intended).toEqual({ model: 'haiku', effort: 'low' });
+    const { record } = sub(launched, { model: 'sonnet', effort: 'high' }, 'manual');
+    expect(record.modelPending).toBe('sonnet');
+    expect(record.queue?.pick.effort).toBe('high');
+  });
+
+  it('markLaunched promotes a consumed manual pending pick to source so later launches never budget-adjust it', () => {
+    const live1 = { ...live(), intended: { model: 'sonnet', effort: 'high' } as Pick };
+    const held = markExited(sub(live1, { model: 'opus', effort: 'high' }, 'manual').record);
+    expect(held.modelPending).toBe('opus');
+    const first = markLaunched(held, planLaunch(held, LOW) as LaunchPlan);
+    expect(first.source).toBe('manual');
+    expect(first.pendingSource).toBeNull();
+    const second = planLaunch(markExited(first), { sessionPct: 95, weekPct: 0 }) as LaunchPlan;
+    expect([second.model, second.effort]).toEqual(['opus', 'high']);
+  });
+
   it('set/clearPendingStepDown toggle the flag', () => {
     const r = setPendingStepDown(live());
     expect(r.pendingStepDown).toBe(true);

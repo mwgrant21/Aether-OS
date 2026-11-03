@@ -170,22 +170,29 @@ export function planLaunch(
   };
 }
 
+/**
+ * `intended` becomes the pick that actually launched (after any budget lowering), because
+ * submitPick and the apply engine diff against it as the live baseline. Pending parts that
+ * match the launch are consumed, and a consumed pending pick hands its source to the record.
+ */
 export function markLaunched(rec: ThreadPickRecord, plan: LaunchPlan): ThreadPickRecord {
-  let { intended, queue, modelPending } = rec;
+  let { queue, modelPending } = rec;
+  let consumed = false;
   if (modelPending !== null && modelPending === plan.model) {
-    intended = { ...intended, model: modelPending };
     modelPending = null;
+    consumed = true;
   }
   if (queue && queue.pick.effort === plan.effort) {
-    intended = { ...intended, effort: queue.pick.effort };
     queue = null;
+    consumed = true;
   }
   return {
     ...rec,
     live: true,
     lastLaunchedModel: plan.model,
     lastBudgetLevel: plan.budgetLevel,
-    intended,
+    intended: { model: plan.model, effort: plan.effort },
+    source: consumed && rec.pendingSource ? rec.pendingSource : rec.source,
     queue,
     modelPending,
     pendingSource: queue || modelPending ? rec.pendingSource : null,
