@@ -29,6 +29,7 @@ function harness(start: ThreadPickRecord, init: { usage?: number; reading?: Idle
     slotFor: () => 'claude',
     idle: () => st.reading,
     now: () => 1_700_000_000_000,
+    minWriteGapMs: 0,
     log: (l) => logs.push(l),
     notifyFailure: () => {},
     awayMode: () => false,
