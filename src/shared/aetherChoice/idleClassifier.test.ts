@@ -146,7 +146,6 @@ describe('idleClassifier: fail closed (never idle)', () => {
     expect(read(rows)).toBe('generating');
   });
 
-
   it('a spinner is found through a task list and in looser shapes -> not idle', () => {
     const empty = (): string[] => {
       const r = [...IDLE];
@@ -165,7 +164,6 @@ describe('idleClassifier: fail closed (never idle)', () => {
     expect(read(put('✻ Stewing (esc to interrupt)'))).toBe('generating');
     for (const tail of ['(↓ 9 tokens)', '(thinking)', '(1h 2m)']) expect(read(put('✻ Stewing… ' + tail))).toBe('generating');
   });
-
 
   it('a spinner is found above any number of task rows, blank-separated or not', () => {
     const base = [...IDLE];
@@ -193,6 +191,36 @@ describe('idleClassifier: fail closed (never idle)', () => {
     for (const l of ['✻ Worked for 1m 3s', '✻ Cogitated for 12s', '  ⎿ … +42 lines (ctrl+o to expand)', 'Read 12 lines (ctrl+o to expand)', 'foo(…)']) {
       expect(read(put(l)), l).toBe('idle');
     }
+  });
+
+  const putAbove = (line: string): string[] => {
+    const r = [...IDLE];
+    r[inputAt(r)] = '>';
+    r.splice(inputAt(r) - 1, 0, line);
+    return r;
+  };
+
+  it('(a) interrupt hint on the footer row or a status row below the lower rule is not idle', () => {
+    const foot = [...IDLE];
+    foot[foot.length - 1] += ' · esc to interrupt';
+    expect(read(foot)).not.toBe('idle');
+    const status = [...IDLE];
+    status.splice(status.length - 1, 0, '  esc to interrupt');
+    expect(read(status)).not.toBe('idle');
+  });
+
+  it('(b) a glyph-less spinner row, with or without surrounding spaces, is not idle', () => {
+    for (const l of ['Stewing…', '  Stewing… ']) expect(read(putAbove(l)), l).not.toBe('idle');
+  });
+
+  it('(c) a spinner row with no space after the glyph is not idle', () => {
+    expect(read(putAbove('✻Stewing…'))).not.toBe('idle');
+  });
+
+  it('a user draft ending in an ellipsis stays a draft (input row is not a spinner source)', () => {
+    const rows = [...IDLE];
+    rows[inputAt(rows)] = '> wait…';
+    expect(read(rows)).toBe('draft');
   });
 
   it('every idle fixture still reads idle after the spinner widening', () => {
