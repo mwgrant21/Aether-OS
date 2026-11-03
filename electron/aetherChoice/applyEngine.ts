@@ -4,7 +4,7 @@
 import type { TerminalSlotId, TerminalWritePort } from '../../src/shared/remote/types';
 import { LAUNCH_EFFORTS } from '../../src/shared/aetherChoice/types';
 import type { Pick, PickSource, PickTrigger, ReadoutState } from '../../src/shared/aetherChoice/types';
-import { LADDER_RUNGS, applyBudget } from '../../src/shared/aetherChoice/pickPolicy';
+import { applyBudget } from '../../src/shared/aetherChoice/pickPolicy';
 import {
   clearHalt,
   clearPendingStepDown,
@@ -61,6 +61,8 @@ export type ApplyEngineDeps = {
 
 export type PickMetaIn = { reason: string; trigger: PickTrigger; source: PickSource };
 
+const WRITABLE_EFFORTS = ['low', 'medium', 'high'] as const;
+
 const fmt = (p: Pick): string => `${p.model}/${p.effort}`;
 
 export function createApplyEngine(deps: ApplyEngineDeps) {
@@ -79,7 +81,7 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const changed =
       JSON.stringify([r.record.queue, r.record.modelPending, r.record.intended]) !==
       JSON.stringify([rec.queue, rec.modelPending, rec.intended]);
-    if (changed) line(rec.intended, pick, meta.source, meta.trigger, 'queued');
+    if (changed) line(rec.launched ?? rec.intended, pick, meta.source, meta.trigger, 'queued');
     return { rejected: null };
   }
 
@@ -97,10 +99,19 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const b = applyBudget({ model: base.model, effort: q.pick.effort }, deps.usage(), q.source, rec.lastBudgetLevel);
     const effort = b.pick.effort;
     if (!(LAUNCH_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
+    // A budget step-down is never a desire; a real desire the budget held down is kept as intent.
+    const desire = q.trigger !== 'budget';
     if (effort === base.effort) {
-      deps.setRecord(threadId, { ...rec, queue: null });
+      deps.setRecord(threadId, {
+        ...rec,
+        intended: desire ? { ...rec.intended, effort: q.pick.effort } : rec.intended,
+        source: desire ? q.source : rec.source,
+        queue: null,
+      });
       return 'skipped';
     }
+    // Only these bytes ever reach the pty; xhigh/max stay queued for the next launch (--effort).
+    if (!(WRITABLE_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
     const order = LAUNCH_EFFORTS as readonly string[];
     const stepDown = order.indexOf(effort) < order.indexOf(base.effort);
     const reading = deps.idle(slot);
@@ -109,16 +120,17 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     if (!deps.writePort.write(slot, `/effort ${effort}\r`)) return 'skipped';
     let next: ThreadPickRecord = {
       ...rec,
-      intended: { ...rec.intended, effort },
-      launched: rec.launched ? { ...rec.launched, effort } : null,
+      // The write changes what is running; only a real desire changes what is wanted.
+      intended: desire ? { ...rec.intended, effort: q.pick.effort } : rec.intended,
+      launched: { ...base, effort },
       queue: null,
-      source: q.source,
+      source: desire ? q.source : rec.source,
       pendingSource: rec.modelPending ? rec.pendingSource : null,
       outcome: 'sent',
     };
     if (q.trigger === 'budget') next = setPendingStepDown(next);
     deps.setRecord(threadId, next);
-    line(rec.intended, next.intended, q.source, q.trigger, 'sent');
+    line(base, next.launched ?? base, q.source, q.trigger, 'sent');
     return 'sent';
   }
 
@@ -132,14 +144,14 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     if (outcome === 'confirmed') {
       const next = clearPendingStepDown({ ...rec, lastConfirmed: { ...(rec.launched ?? rec.intended) }, outcome: 'confirmed' });
       deps.setRecord(threadId, next);
-      line(rec.intended, rec.intended, rec.source, rec.trigger, 'confirmed');
+      line(rec.launched ?? rec.intended, rec.launched ?? rec.intended, rec.source, rec.trigger, 'confirmed');
       return;
     }
     if (rec.halted) return;
     deps.setRecord(threadId, markNotApplied(rec, rec.launched ?? rec.intended, actual));
     // A15 port level: notified regardless of awayMode().
     deps.notifyFailure({ threadId, wanted: { ...(rec.launched ?? rec.intended) }, actual });
-    line(rec.intended, actual ?? rec.intended, rec.source, rec.trigger, 'not-applied');
+    line(rec.launched ?? rec.intended, actual ?? rec.launched ?? rec.intended, rec.source, rec.trigger, 'not-applied');
   }
 
   function clearThreadHalt(threadId: string): void {

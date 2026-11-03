@@ -29,7 +29,7 @@ export type ThreadPickRecord = {
   live: boolean;
   /** The desired pick. A budget step-down is re-evaluated from it on every launch, never stored over it. */
   intended: Pick;
-  /** The pick actually running (set at launch, after budget lowering). null until a launch; diffs run against `launched ?? intended`. */
+  /** The pick actually running: set at launch (after budget lowering) and by successful /effort writes. null until a launch; diffs run against `launched ?? intended`. */
   launched: Pick | null;
   lastConfirmed: Pick | null;
   lastLaunchedModel: ModelAlias | null;
@@ -92,8 +92,12 @@ export function submitPick(
     // An auto pick never overwrites a pending manual one.
     if (rec.pendingSource === 'manual') return { record: rec, rejected: 'pending manual pick wins' };
   }
-  // Not live and not halted: nothing is running, so the pick simply becomes the intent.
-  if (!rec.live && !rec.halted) {
+  // A budget step-down is never a desire: it must not touch `intended` or the desired pending pick.
+  const budgetSubmit = meta.source === 'auto' && meta.trigger === 'budget';
+  const live = rec.live || rec.halted !== null;
+  if (!live) {
+    if (budgetSubmit) return { record: rec, rejected: null };
+    // Nothing is running, so the pick simply becomes the intent.
     return {
       record: {
         ...rec,
@@ -108,28 +112,48 @@ export function submitPick(
       rejected: null,
     };
   }
-  // Live (or halted): model part is held for the next resume, effort part is queued.
-  // Latest wins: both pending slots are rebuilt from this submit alone.
   const base = rec.launched ?? rec.intended;
-  const modelPending = next.model !== base.model ? next.model : null;
-  const effortChanged = next.effort !== base.effort;
-  const queue: QueuedPick | null = effortChanged
-    ? {
-        pick: { model: base.model, effort: next.effort },
-        reason: meta.reason,
-        trigger: meta.trigger,
-        source: meta.source,
-        queuedAt: meta.now,
-      }
-    : null;
+  if (budgetSubmit) {
+    // Effort only (Option R), and never over a pending desire. The engine re-runs the budget when it writes.
+    if (rec.modelPending !== null || (rec.queue !== null && rec.queue.trigger !== 'budget')) {
+      return { record: rec, rejected: null };
+    }
+    const queue: QueuedPick | null =
+      next.effort !== base.effort
+        ? { pick: { model: base.model, effort: next.effort }, reason: meta.reason, trigger: meta.trigger, source: meta.source, queuedAt: meta.now }
+        : null;
+    return { record: { ...rec, queue, pendingSource: queue ? meta.source : null }, rejected: null };
+  }
+  // Live (or halted): a part that differs from the running pick is held (model, applies at the next
+  // resume) or queued (effort). A part equal to the running pick needs nothing applied, so it becomes
+  // `intended` now. Latest wins: both pending slots are rebuilt from this submit alone.
+  let intended = rec.intended;
+  let modelPending: ModelAlias | null = null;
+  if (next.model !== base.model) modelPending = next.model;
+  else if (next.model !== intended.model) intended = { ...intended, model: next.model };
+  let queue: QueuedPick | null = null;
+  if (next.effort !== base.effort) {
+    queue = {
+      pick: { model: base.model, effort: next.effort },
+      reason: meta.reason,
+      trigger: meta.trigger,
+      source: meta.source,
+      queuedAt: meta.now,
+    };
+  } else if (next.effort !== intended.effort) intended = { ...intended, effort: next.effort };
+  const intendedChanged = intended !== rec.intended;
+  const changed = intendedChanged || queue !== null || modelPending !== null;
   return {
     record: {
       ...rec,
+      intended,
       queue,
       modelPending,
       pendingSource: queue || modelPending ? meta.source : null,
-      reason: queue || modelPending ? meta.reason : rec.reason,
-      trigger: queue || modelPending ? meta.trigger : rec.trigger,
+      // A manual submit is never silently reverted: it owns the record's source.
+      source: meta.source === 'manual' || intendedChanged ? meta.source : rec.source,
+      reason: changed ? meta.reason : rec.reason,
+      trigger: changed ? meta.trigger : rec.trigger,
     },
     rejected: null,
   };
@@ -153,11 +177,13 @@ export function planLaunch(
   rec: ThreadPickRecord,
   usage: { sessionPct: number; weekPct: number },
 ): LaunchPlan | LaunchPlanError {
+  // A budget-queued effort is a step-down in flight, not a desire: it never enters the plan.
+  const desiredQueue = rec.queue && rec.queue.trigger !== 'budget' ? rec.queue : null;
   const folded: Pick = {
     model: rec.modelPending ?? rec.intended.model,
-    effort: rec.queue?.pick.effort ?? rec.intended.effort,
+    effort: desiredQueue?.pick.effort ?? rec.intended.effort,
   };
-  const hasPending = rec.queue !== null || rec.modelPending !== null;
+  const hasPending = desiredQueue !== null || rec.modelPending !== null;
   const source = hasPending && rec.pendingSource ? rec.pendingSource : rec.source;
   // applyBudget only understands ladder picks; anything else is left untouched.
   const budgetSource: PickSource = source === 'auto' && !onLadder(folded) ? 'manual' : source;
@@ -188,7 +214,10 @@ export function markLaunched(rec: ThreadPickRecord, plan: LaunchPlan): ThreadPic
     modelPending = null;
     consumed = true;
   }
-  if (queue && queue.pick.effort === plan.effort) {
+  if (queue && queue.trigger === 'budget') {
+    // The plan re-evaluates the budget itself; a queued step-down is stale and never becomes intent.
+    queue = null;
+  } else if (queue && queue.pick.effort === plan.effort) {
     intended = { ...intended, effort: queue.pick.effort };
     queue = null;
     consumed = true;

@@ -211,11 +211,19 @@ describe('applyEngine', () => {
     expect(s.records.get(T)?.queue).toBeNull();
   });
 
-  it('manual non-ladder picks are not lowered by the budget', () => {
+  it('manual picks are not lowered by the budget', () => {
     const s = setup({ usage: 91 });
-    s.engine.onPick(T, { model: 'sonnet', effort: 'xhigh' }, META);
+    s.engine.onPick(T, HIGH, META);
     s.engine.onIdleCheck(T);
-    expect(s.writes).toEqual([['claude', '/effort xhigh\r']]);
+    expect(s.writes).toEqual([['claude', '/effort high\r']]);
+  });
+
+  it('a manual xhigh stays queued for the next launch and is never written', () => {
+    const s = setup();
+    s.engine.onPick(T, { model: 'sonnet', effort: 'xhigh' }, META);
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toEqual([]);
+    expect(s.records.get(T)?.queue?.pick.effort).toBe('xhigh');
   });
 
   it('a rejected auto pick queues nothing and logs nothing', () => {
