@@ -108,7 +108,7 @@ fun ThreadScreen(
             }
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().mouseDragScroll(listState),
+                modifier = Modifier.fillMaxSize().mouseDragScroll(listState, yieldToChildren = true),
                 verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.Bottom),
                 contentPadding = PaddingValues(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 10.dp),
             ) {

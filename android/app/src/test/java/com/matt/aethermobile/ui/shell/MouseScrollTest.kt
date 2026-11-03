@@ -40,4 +40,39 @@ class MouseScrollTest {
         assertNull(t.move(0f, 502f))
         assertEquals(0f, t.move(0f, 520f)!!, 0f)
     }
+
+    @Test fun claimStopsDeltasEvenPastSlop() {
+        val t = MouseDragTracker(6f, false)
+        t.down(0f, 100f)
+        t.claim()
+        assertNull(t.move(0f, 50f))
+        assertNull(t.move(0f, 20f))
+    }
+
+    @Test fun claimAfterDraggingReturnsNullAfterwards() {
+        val t = MouseDragTracker(6f, false)
+        t.down(0f, 100f)
+        t.move(0f, 90f)
+        assertEquals(10f, t.move(0f, 80f)!!, 0f)
+        t.claim()
+        assertFalse(t.dragging)
+        assertNull(t.move(0f, 60f))
+    }
+
+    @Test fun downClearsClaim() {
+        val t = MouseDragTracker(6f, false)
+        t.down(0f, 0f)
+        t.claim()
+        t.down(0f, 500f)
+        assertEquals(0f, t.move(0f, 520f)!!, 0f)
+    }
+
+    @Test fun claimBeforeSlopReturnsNullOnCrossingMove() {
+        val t = MouseDragTracker(6f, false)
+        t.down(0f, 0f)
+        assertNull(t.move(0f, 2f))
+        t.claim()
+        assertNull(t.move(0f, 30f))
+        assertFalse(t.dragging)
+    }
 }
