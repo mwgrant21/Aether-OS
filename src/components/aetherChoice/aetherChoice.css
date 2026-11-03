@@ -1,0 +1,53 @@
+/* AetherChoice readout. Locked values: design kit PALETTE LOCKED. */
+@keyframes aetherChoicePulse {
+  0% {
+    box-shadow: 0 0 18px rgba(255, 92, 87, 0.85);
+  }
+  50% {
+    box-shadow: 0 0 8px rgba(255, 92, 87, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 18px rgba(255, 92, 87, 0.85);
+  }
+}
+
+.aetherChoicePulse {
+  animation: aetherChoicePulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aetherChoicePulse {
+    animation: none;
+  }
+}
+
+.aetherChoiceReadout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.aetherChoiceTag {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+}
+
+.aetherChoiceTag--filled {
+  padding: 0 6px;
+  border-radius: 3px;
+}
+
+.aetherChoiceBars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+}
+
+.aetherChoiceBar {
+  width: 3px;
+  background: currentColor;
+}
