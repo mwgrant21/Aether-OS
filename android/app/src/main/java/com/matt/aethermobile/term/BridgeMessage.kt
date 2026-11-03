@@ -13,6 +13,8 @@ sealed class PageMessage {
     data class Resize(val session: String, val cols: Int, val rows: Int) : PageMessage()
     data class Consumed(val session: String, val bytes: Int) : PageMessage()
     data class Copy(val text: String) : PageMessage()
+    /** Selection became active (`on`) or ended in a slot; carries no text and arms nothing. */
+    data class Sel(val session: String, val on: Boolean) : PageMessage()
 }
 
 /**
@@ -58,6 +60,11 @@ object BridgeValidator {
                 val text = o.opt("text") as? String ?: return null
                 if (utf8Size(text) > MAX_COPY_BYTES) return null
                 PageMessage.Copy(text)
+            }
+            "sel" -> {
+                val s = session(o) ?: return null
+                val on = o.opt("on") as? Boolean ?: return null
+                PageMessage.Sel(s, on)
             }
             else -> null
         }
@@ -157,4 +164,10 @@ object BridgeOut {
     /** Native compose text for the page to turn into `input` messages (it owns bracketed-paste state). */
     fun compose(s: String, d: String, enter: Boolean): String =
         JSONObject().put("t", "compose").put("s", s).put("d", d).put("enter", enter).toString()
+
+    /** Ask the page for its selected text; the answer is accepted only through [CopyGate]. */
+    fun copyReq(s: String): String = JSONObject().put("t", "copyreq").put("s", s).toString()
+
+    /** Drop the page's selection highlight. */
+    fun selClear(s: String): String = JSONObject().put("t", "selclear").put("s", s).toString()
 }
