@@ -79,7 +79,7 @@ class DemoTerminalActivity : AppCompatActivity() {
             PageMessage.Ready -> reply.postMessage(source.banner())
             is PageMessage.Input -> source.onInput(msg.data)?.let(reply::postMessage)
             // Accepted by the validator, no behaviour until their slices (resize V4b, flow control V2, copy V3).
-            is PageMessage.Resize, is PageMessage.Consumed, is PageMessage.Copy -> Unit
+            is PageMessage.Resize, is PageMessage.Consumed, is PageMessage.Copy, is PageMessage.Sel -> Unit
             null -> if (debuggable) Log.w(TAG, "bridge message rejected")
         }
     }
