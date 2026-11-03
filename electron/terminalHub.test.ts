@@ -176,6 +176,7 @@ function fakeMirrors() {
           st.resolvers.push(() => resolve({ cols: st.cols, rows: st.rows, d: st.writes.slice(0, upTo).join('') }));
         });
       },
+      viewportText: () => Promise.resolve([]),
       dispose: () => { st.disposed = true; },
       pendingBytes: () => 0,
     };

@@ -271,4 +271,37 @@ describe('terminalMirror', () => {
     m.dispose();
     expect(await m.snapshot()).toEqual({ cols: 0, rows: 0, d: '' });
   });
+
+  it('viewportText returns the visible rows as plain text', async () => {
+    const m = createTerminalMirror({ cols: 20, rows: 3 });
+    m.write('\x1b[31mred\x1b[0m one\r\ntwo');
+    expect(await m.viewportText()).toEqual(['red one', 'two', '']);
+    m.dispose();
+  });
+
+  it('viewportText sees a write issued just before it (queue order)', async () => {
+    const m = createTerminalMirror({ cols: 20, rows: 3 });
+    for (let i = 0; i < 50; i++) m.write('x\r\n');
+    m.write('LATE');
+    const rows = await m.viewportText();
+    expect(rows.join('|')).toContain('LATE');
+    m.dispose();
+  });
+
+  it('viewportText row count follows resize', async () => {
+    const m = createTerminalMirror({ cols: 20, rows: 3 });
+    m.write('a');
+    m.resize(20, 6);
+    expect((await m.viewportText()).length).toBe(6);
+    m.dispose();
+  });
+
+  it('viewportText is [] after dispose, including a pending call', async () => {
+    const m = createTerminalMirror({ cols: 10, rows: 3 });
+    m.write('x'.repeat(100));
+    const pending = m.viewportText();
+    m.dispose();
+    expect(await pending).toEqual([]);
+    expect(await m.viewportText()).toEqual([]);
+  });
 });
