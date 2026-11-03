@@ -1,0 +1,33 @@
+     Completed: No code, configuration, documentation, or infrastructure changes were made.
+
+#S574Next Steps: Nokactive work is in psogrn r. The session is waiting for the nextruser request.
+#S574
+
+#S574Access 322k tokens of past research & decisions for just 16,123t. Use the claude-mem skill to access memories by ID.
+
+View Observations Live @ http://localhost:37777
+
+> Write me what the current weather conditions are for Albuquerque 87120
+Learn
+●oSkill(agent-learn)
+  L  Successfully loaded skill
+Next
+✻eGitifying… (running PostToolUse hooks… 3/4 · 25s · ↓ 588 tokens)
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   Select model
+AccSwitch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with
+Vie--model.
+View
+     1.  Default (recommended)  Opus 5.5 · Best for everyday, complex tasks
+     2.  Opus 5.5               For complex work and everyday tasks
+     3.  Fable 5.1              For your toughest challenges
+>  > 4.  Sonnet 5.5 ✓           Most efficient for simpler tasks
+     5.  Haiku 5.5              Fastest for quick answers
+     6.  Haiku 4.5              Fastest for quick answers
+   ↓ 7.  Sonnet 5               Efficient for routine tasks
+      … +6 models
+
+   ● High effort ←/→ to adjust
+
+ Enter to set as default ·as to usc this session only · Esc to cancel
