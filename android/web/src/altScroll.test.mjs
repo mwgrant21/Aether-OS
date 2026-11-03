@@ -78,11 +78,18 @@ describe('wheelBytes', () => {
     const down = toNotches({ leftover: -200, carry: 0, cellH: 17 });
     expect(wheelBytes({ notches: down.notches, trackingMode: 'none', col: 1, row: 1 })).toBe('[B'.repeat(5 * ARROWS_PER_NOTCH));
   });
+  it('mode none with appCursor sends SS3 up/down; paging ignores the flag', () => {
+    expect(wheelBytes({ notches: -2, trackingMode: 'none', appCursor: true, col: 1, row: 1 })).toBe('OA'.repeat(2 * ARROWS_PER_NOTCH));
+    expect(wheelBytes({ notches: 2, trackingMode: 'none', appCursor: true, col: 1, row: 1 })).toBe('OB'.repeat(2 * ARROWS_PER_NOTCH));
+    expect(wheelBytes({ notches: -PAGE_EVERY_NOTCHES, trackingMode: 'none', appCursor: true, col: 1, row: 1 })).toBe('[5~');
+  });
   it('tracking modes are byte-for-byte unchanged for every notch count', () => {
     for (const mode of ['x10', 'vt200', 'drag', 'any']) {
       for (let n = 1; n <= MAX_NOTCHES_PER_TICK; n++) {
         expect(wheelBytes({ notches: -n, trackingMode: mode, col: 41, row: 13 })).toBe('[<64;41;13M'.repeat(n));
         expect(wheelBytes({ notches: n, trackingMode: mode, col: 41, row: 13 })).toBe('[<65;41;13M'.repeat(n));
+        expect(wheelBytes({ notches: -n, trackingMode: mode, col: 41, row: 13, appCursor: true })).toBe('[<64;41;13M'.repeat(n));
+        expect(wheelBytes({ notches: n, trackingMode: mode, col: 41, row: 13, appCursor: true })).toBe('[<65;41;13M'.repeat(n));
       }
     }
   });
@@ -157,14 +164,14 @@ describe('flushAlt / finishAlt', () => {
     expect(r.sent).toEqual([{ t: 'input', s: 'claude', d: '[B'.repeat((PAGE_EVERY_NOTCHES - 1) * ARROWS_PER_NOTCH) }]);
     expect(alt.pending).toBe(0);
   });
-  it('keep receives the px carry and unsent notches so the next gesture continues them', () => {
+  it('keep receives only the px carry; unsent notches are never carried', () => {
     const r = rig();
-    const keep = { carry: 0, pending: 0 };
+    const keep = { carry: 0 };
     const a = mkAlt(2, 'none');
     a.carry = 20;
     finishAlt(a, { commit: true, stdinOn: false, send: r.send, clear: r.clear, keep }); // stdin off: not sent
     expect(r.sent).toEqual([]);
-    expect(keep).toEqual({ carry: 20, pending: 2 });
+    expect(keep).toEqual({ carry: 20 }); // pending 2 is dropped, not carried
     // next gesture starts from keep; 20 px carry + 14 px drag crosses one 34 px notch
     const nn = toNotches({ leftover: 14, carry: keep.carry, cellH: 17 });
     expect(nn.notches).toBe(-1);
@@ -172,7 +179,24 @@ describe('flushAlt / finishAlt', () => {
     const b = mkAlt(3, 'none');
     b.carry = 5;
     finishAlt(b, { commit: false, stdinOn: true, send: r.send, clear: r.clear, keep });
-    expect(keep).toEqual({ carry: 5, pending: 0 });
+    expect(keep).toEqual({ carry: 5 });
+  });
+  it('flushAlt sends nothing for a gesture that never took over (on === false)', () => {
+    const r = rig();
+    const alt = mkAlt(3, 'none');
+    alt.on = false;
+    flushAlt(alt, { stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent).toEqual([]);
+  });
+  it('flushAlt uses SS3 arrows when the term is in application cursor mode, and not otherwise', () => {
+    const r = rig();
+    const a = mkAlt(-1, 'none');
+    a.slot.term.modes.applicationCursorKeysMode = true;
+    flushAlt(a, { stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent[0].d).toBe('OA'.repeat(ARROWS_PER_NOTCH));
+    const b = mkAlt(1, 'none');
+    flushAlt(b, { stdinOn: true, send: r.send, clear: r.clear });
+    expect(r.sent[1].d).toBe('[B'.repeat(ARROWS_PER_NOTCH));
   });
   it('clamps the flushed batch to the per-tick maximum', () => {
     const r = rig();
