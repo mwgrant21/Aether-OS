@@ -200,8 +200,10 @@ function rng(seed: number): () => number {
   };
 }
 const TRIGGERS: readonly PickTrigger[] = ['new-thread', 'miss', 'budget', 'task-class', 'think-harder', 'manual'];
-// The engine still declares its own 8-member IdleReading; 'shell' (the shared 9th) is cast in until the engine adopts the shared type.
-const READINGS: readonly SharedIdleReading[] = ['idle', 'idle', 'idle', 'generating', 'busy', 'unknown', 'shell'];
+// 'idle' is repeated so the idle share stays at least what it was with the original four non-idle readings.
+const READINGS: readonly SharedIdleReading[] = [
+  'idle', 'idle', 'idle', 'idle', 'idle', 'idle', 'idle', 'generating', 'busy', 'unknown', 'shell', 'draft', 'picker', 'modal', 'switch-model-modal',
+];
 
 const foldOf = (r: ThreadPickRecord): Pick => ({
   model: r.modelPending ?? r.intended.model,
@@ -240,6 +242,9 @@ describe('randomized invariant sweep', () => {
     let ownerRetries = 0;
     let haltedPlanChecks = 0;
     let queueModelChecks = 0;
+    let launchHookChecks = 0;
+    let exitHookChecks = 0;
+    let deadSentChecks = 0;
     try {
       for (let s = 0; s < SEQUENCES; s++) {
         const start = pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS));
@@ -293,17 +298,35 @@ describe('randomized invariant sweep', () => {
               const pendingNow = rec0.modelPending !== null || (rec0.queue !== null && rec0.queue.trigger !== 'budget');
               const manualNow = pendingNow ? rec0.pendingSource === 'manual' : rec0.source === 'manual';
               if (manualNow) expect([plan.model, plan.effort], where + ' I4').toEqual([fold.model, fold.effort]);
-              h.st.rec = markLaunched(rec0, plan);
+              const writesBefore = h.writes.length;
+              h.engine.onLaunched(T, plan);
               running = { model: plan.model, effort: plan.effort };
               const r = h.st.rec;
+              // T7b: the hook marks live, never masks a held pick with sent, mirrors the budget level, writes nothing.
+              expect(r.live, where + ' launch live').toBe(true);
+              expect(r.outcome, where + ' launch outcome').toBe(r.queue === null && r.modelPending === null ? 'sent' : 'none');
+              expect(r.pendingStepDown, where + ' launch pendingStepDown').toBe(plan.budgetLevel !== 'none');
+              expect(r.halted, where + ' launch halted').toBe(rec0.halted);
+              expect(h.writes.length, where + ' launch writes').toBe(writesBefore);
+              launchHookChecks++;
               if (!pendingNow) expect(r.intended, where + ' I1 launch').toEqual(rec0.intended);
               expect(r.intended.model === rec0.intended.model || rec0.modelPending === r.intended.model, where).toBe(true);
             }
           } else if (op === 6) {
-            if (rec0.live) h.st.rec = markExited(rec0);
+            if (rec0.live) {
+              const writesBefore = h.writes.length;
+              h.engine.onExited(T);
+              const r = h.st.rec;
+              expect(r.live, where + ' exit live').toBe(false);
+              expect(r.queue, where + ' exit queue').toEqual(rec0.queue);
+              expect(r.modelPending, where + ' exit modelPending').toBe(rec0.modelPending);
+              expect(r.halted, where + ' exit halted').toBe(rec0.halted);
+              expect(h.writes.length, where + ' exit writes').toBe(writesBefore);
+              exitHookChecks++;
+            }
           } else if (op <= 8) {
             h.st.usage = int(100);
-            h.st.reading = pick1(READINGS) as IdleReading;
+            h.st.reading = pick1(READINGS);
             if (!rec0.live) {
               // F2: a not-live record gets no write and no queue change at any reading.
               const before = h.writes.length;
@@ -415,6 +438,11 @@ describe('randomized invariant sweep', () => {
             expect(['queued', 'queuedModel'], where + ' H2').toContain(deriveReadoutState(r, { hasReadback: false }));
             h2Checks++;
           }
+          // T7b: a dead thread never reads as sent, in any order of launch, exit and clearHalt.
+          if (!r.live) {
+            expect(r.outcome, where + ' dead outcome').not.toBe('sent');
+            deadSentChecks++;
+          }
           // I2: launched is exactly what is running.
           expect(r.launched, where + ' I2').toEqual(running);
           // I1: the desired pick is always recoverable at low usage.
@@ -455,6 +483,9 @@ describe('randomized invariant sweep', () => {
     expect(ownerRetries, 'ownership probes').toBeGreaterThan(300);
     expect(haltedPlanChecks, 'halted plan checks').toBeGreaterThan(100);
     expect(queueModelChecks, 'queue model checks').toBeGreaterThan(300);
+    expect(launchHookChecks, 'launch hook checks').toBeGreaterThan(300);
+    expect(exitHookChecks, 'exit hook checks').toBeGreaterThan(300);
+    expect(deadSentChecks, 'dead record checks').toBeGreaterThan(300);
   }, 120_000);
 });
 
