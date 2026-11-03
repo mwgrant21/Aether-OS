@@ -21,8 +21,8 @@ const RULE = /^[─━]{10,}\s*$/;
 // is treated as a typed draft (non-idle), so a new placeholder fails closed.
 const PLACEHOLDER = /^Try "(how does <filepath> work\?|write a test for <filepath>)"$/;
 const FOOTER = /^ {1,3}\S.*\(shift\+tab to cycle\)/;
-// Any of: ellipsis then a parenthetical (counter, tokens, thinking), glyph + word + ellipsis, or the interrupt hint.
-const SPINNER = /…\s*\(|^\s*\S\s+\S+…(\s|$)|esc to interrupt/;
+// Any of: ellipsis then a parenthetical, glyph + words ending in an ellipsis (unicode or ASCII), a (Ns counter, or the interrupt hint.
+const SPINNER = /…\s*\(|…\s+\d+s\b|^\s*\S\s+\S+…(\s|$)|esc to interrupt|^\s*\S\s+\S[^()]*(…|\.{3})\s*$|^\s*\S\s+\S+.*\(\d+s\b/;
 const SWITCH_NOTICE = /Set model to .+ and saved as your default for new sessions/;
 const PICKER_FOOT = /^\s*Enter to set as default\b.*Esc to cancel\s*$/;
 const PICKER_HEAD = /^\s*Select model\s*$/;
@@ -78,7 +78,7 @@ function classifyInputBlock(rows: string[]): IdleReading {
   const input = rows.slice(r1 + 1, r2);
   if (input.length === 0 || !input[0].startsWith('>')) return 'unknown';
 
-  const near = above(rows, r1, 14);
+  const near = above(rows, r1, rows.length);
   if (near.some((r) => SWITCH_NOTICE.test(r))) return 'switch-model-modal';
   const text = input[0].slice(1).trim();
   if (input.length > 1 || (text !== '' && !PLACEHOLDER.test(text))) return 'draft';

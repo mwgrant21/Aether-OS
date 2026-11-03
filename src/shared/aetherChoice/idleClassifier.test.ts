@@ -166,6 +166,35 @@ describe('idleClassifier: fail closed (never idle)', () => {
     for (const tail of ['(↓ 9 tokens)', '(thinking)', '(1h 2m)']) expect(read(put('✻ Stewing… ' + tail))).toBe('generating');
   });
 
+
+  it('a spinner is found above any number of task rows, blank-separated or not', () => {
+    const base = [...IDLE];
+    base[inputAt(base)] = '>';
+    for (const n of [14, 15, 20, 200]) {
+      for (const sep of ['', ' ']) {
+        const tasks = Array.from({ length: n }, (_, k) => '  ⎿ ◻ task ' + k);
+        const rows = [...base];
+        rows.splice(inputAt(rows) - 1, 0, '✻ Stewing… (running UserPromptSubmit hooks… 3/4 · 2s)', ...tasks.flatMap((t) => (sep ? [t, sep] : [t])));
+        expect(read(rows), n + ' tasks sep=' + JSON.stringify(sep)).toBe('generating');
+      }
+    }
+  });
+
+  it('looser spinner shapes -> generating; finished-turn lines stay idle', () => {
+    const put = (line: string): string[] => {
+      const r = [...IDLE];
+      r[inputAt(r)] = '>';
+      r.splice(inputAt(r) - 1, 0, line);
+      return r;
+    };
+    for (const l of ['✻ Stewing (2s)', '✻ Stewing (12s · ↓ 9 tokens)', '✻ Stewing...', '✻ Compacting conversation…', '✻ Running tools… 3s']) {
+      expect(read(put(l)), l).not.toBe('idle');
+    }
+    for (const l of ['✻ Worked for 1m 3s', '✻ Cogitated for 12s', '  ⎿ … +42 lines (ctrl+o to expand)', 'Read 12 lines (ctrl+o to expand)', 'foo(…)']) {
+      expect(read(put(l)), l).toBe('idle');
+    }
+  });
+
   it('every idle fixture still reads idle after the spinner widening', () => {
     for (const name of ['idle-empty', 'idle-empty2']) expect(read(load(name)), name).toBe('idle');
   });
