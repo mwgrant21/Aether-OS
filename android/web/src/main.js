@@ -411,6 +411,7 @@ root.dataset.altScroll = 'aether-alt-scroll-v1';
 const ALT_DECIDE_PX = 8;
 const ALT_FLUSH_MS = 50;
 let alt = null; // { slot, x, y, decided, on, carry, pending, timer }
+const altKeep = { carry: 0 }; // sub-notch px carried into the next gesture
 
 function altFlush() {
   flushAlt(alt, { stdinOn, send });
@@ -418,7 +419,7 @@ function altFlush() {
 
 // commit = normal gesture end (flush pending notches first); default discards (cancel/abort/reset).
 function altEnd(commit = false) {
-  finishAlt(alt, { commit, stdinOn, send });
+  finishAlt(alt, { commit, stdinOn, send, keep: altKeep });
   alt = null;
 }
 
@@ -433,7 +434,7 @@ root.addEventListener('touchstart', (ev) => {
   const t = ev.touches[0];
   lpTouch.start(t.clientX, t.clientY);
   if (sel) tapTouch = { x: t.clientX, y: t.clientY, at: Date.now() };
-  alt = { slot, x: t.clientX, y: t.clientY, decided: false, on: false, carry: 0, pending: 0, timer: 0 };
+  alt = { slot, x: t.clientX, y: t.clientY, decided: false, on: false, carry: altKeep.carry, pending: 0, timer: 0 };
 });
 
 root.addEventListener('touchmove', (ev) => {
@@ -550,7 +551,7 @@ root.addEventListener('pointermove', (ev) => {
     mouse.decided = true;
     const type = slot.term.buffer.active.type;
     if (stdinOn && shouldIntercept({ bufferType: type, dx: tx, dy: ty })) {
-      alt = { slot, x: 0, y: 0, decided: true, on: true, carry: 0, pending: 0, timer: 0 };
+      alt = { slot, x: 0, y: 0, decided: true, on: true, carry: altKeep.carry, pending: 0, timer: 0 };
     }
   }
   ev.preventDefault();
@@ -606,6 +607,7 @@ root.addEventListener('wheel', (ev) => {
       const d = wheelBytes({
         notches: wheelPending,
         trackingMode: slot.term.modes.mouseTrackingMode,
+        appCursor: slot.term.modes.applicationCursorKeysMode === true,
         col: Math.floor(slot.term.cols / 2) + 1,
         row: Math.floor(slot.term.rows / 2) + 1,
       });
