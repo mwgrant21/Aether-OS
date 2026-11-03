@@ -100,6 +100,7 @@ describe('applyEngine', () => {
     s.engine.onIdleCheck(T);
     s.engine.reportOutcome(T, 'not-applied', null);
     s.writes.length = 0;
+    s.state.now += 2000;
     s.engine.onPick(T, { model: 'sonnet', effort: 'low' }, META);
     s.engine.onIdleCheck(T);
     expect(s.writes).toHaveLength(0);
