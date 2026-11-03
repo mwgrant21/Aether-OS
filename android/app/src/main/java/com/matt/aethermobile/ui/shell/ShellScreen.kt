@@ -151,6 +151,8 @@ class ShellActions(
     /** The native COPY tap: the only caller that arms the copy gate. */
     val onCopySelection: () -> Unit = {},
     val onClearSelection: () -> Unit = {},
+    /** The native PASTE tap: the only place the clipboard is read. */
+    val onPaste: () -> Unit = {},
 )
 
 private val dims = AetherDimens()

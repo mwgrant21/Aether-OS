@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.matt.aethermobile.ui.shell.InputDiag
 import com.matt.aethermobile.ui.shell.NotSentLine
 import com.matt.aethermobile.ui.shell.toDiag
+import com.matt.aethermobile.ui.shell.pasteText
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
@@ -856,7 +857,9 @@ class MainActivity : AppCompatActivity() {
     private fun onPageMessage(m: PageMessage) {
         when (m) {
             is PageMessage.Sel -> {
+                if (!terminalLive && termHost == null) return // a page cannot raise the bar with no live terminal
                 selActiveSlot = if (m.on) m.session else null
+                if (!m.on) copyGate.disarm()
                 if (!isDestroyed) renderTabs()
             }
             is PageMessage.Copy -> copyGate.accept(m.text)?.let { writeClipboard(it) }
@@ -909,6 +912,16 @@ class MainActivity : AppCompatActivity() {
     /** Null host: the bar is only composed while connected, so nothing is counted here. */
     private fun sendCompose(text: String, enter: Boolean): TerminalHost.ComposeResult =
         (termHost?.sendCompose(text, enter) ?: TerminalHost.ComposeResult.NOT_ACCEPTED).also { renderTabs() }
+
+    /**
+     * The only clipboard read: runs from the native PASTE tap, never from a page message. Sends through
+     * [sendCompose] (bracketed paste, 64 KiB cap, TOO_LARGE notice) with no Enter. The text is never logged.
+     */
+    private fun pasteClipboard() {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val text = pasteText(cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)) ?: return
+        sendCompose(text, enter = false)
+    }
 
     private fun restartTerminal2(): Boolean = (termHost?.restartTerminal2() ?: false).also { renderTabs() }
 
@@ -990,6 +1003,7 @@ class MainActivity : AppCompatActivity() {
                         onSetOrientation = ::setOrientation,
                         onCopySelection = ::copySelection,
                         onClearSelection = ::clearSelectionTap,
+                        onPaste = ::pasteClipboard,
                     ),
                     terminalHolder = webHolder,
                 )
