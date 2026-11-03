@@ -57,6 +57,8 @@ export type ApplyEngineDeps = {
   usage(): { sessionPct: number; weekPct: number };
   getRecord(threadId: string): ThreadPickRecord | undefined;
   setRecord(threadId: string, rec: ThreadPickRecord): void;
+  /** Minimum ms between two writes to one thread (default 2000): the screen can read idle for a repaint after a write. */
+  minWriteGapMs?: number;
 };
 
 export type PickMetaIn = { reason: string; trigger: PickTrigger; source: PickSource };
@@ -67,6 +69,8 @@ const ownerAfterQueueConsumed = (rec: ThreadPickRecord): PickSource | null => (r
 const fmt = (p: Pick): string => `${p.model}/${p.effort}`;
 
 export function createApplyEngine(deps: ApplyEngineDeps) {
+  const minGap = deps.minWriteGapMs ?? 2000;
+  const lastWriteAt = new Map<string, number>();
   const stamp = (): string => new Date(deps.now()).toISOString();
 
   function line(from: Pick, to: Pick, source: PickSource, trigger: PickTrigger, outcome: PickLineOutcome): void {
@@ -122,10 +126,13 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     }
     const order = LAUNCH_EFFORTS as readonly string[];
     const stepDown = order.indexOf(effort) < order.indexOf(base.effort);
+    const last = lastWriteAt.get(threadId);
+    if (last !== undefined && deps.now() - last < minGap) return 'skipped';
     const reading = deps.idle(slot);
     const midTurnOk = reading === 'generating' && q.trigger === 'budget' && stepDown;
     if (reading !== 'idle' && !midTurnOk) return 'skipped';
     if (!deps.writePort.write(slot, `/effort ${effort}\r`)) return 'skipped';
+    lastWriteAt.set(threadId, deps.now());
     let next: ThreadPickRecord = {
       ...rec,
       // The write changes what is running; only a real desire changes what is wanted.

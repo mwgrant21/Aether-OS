@@ -9,6 +9,7 @@
 // file-list assertion stops the scan passing on an empty tree.
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { MODEL_ALIASES } from '../../src/shared/aetherChoice/types';
@@ -65,13 +66,17 @@ function check(rel: string, text: string): string[] {
   return [...hit].sort();
 }
 
-function listFiles(): string[] {
+/** Recursive over `dirs` under `root`; skips __fixtures__ and node_modules. Paths are root-relative posix. */
+function listFiles(root: string = REPO, dirs: string[] = DIRS): string[] {
   const out: string[] = [];
-  for (const d of DIRS) {
-    for (const e of fs.readdirSync(path.join(REPO, d), { withFileTypes: true })) {
-      if (e.isFile() && /\.tsx?$/.test(e.name) && !/\.(?:test|spec)\.tsx?$/.test(e.name)) out.push(`${d}/${e.name}`);
+  const walk = (rel: string): void => {
+    for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      if (e.isDirectory()) {
+        if (e.name !== '__fixtures__' && e.name !== 'node_modules') walk(`${rel}/${e.name}`);
+      } else if (e.isFile() && /\.tsx?$/.test(e.name) && !/\.(?:test|spec)\.tsx?$/.test(e.name)) out.push(`${rel}/${e.name}`);
     }
-  }
+  };
+  for (const d of dirs) walk(d);
   return out.sort();
 }
 
@@ -133,5 +138,27 @@ describe('AetherChoice boundary: the rules are live', () => {
   it('a clean file stays clean, so no rule passes by rejecting everything', () => {
     const src = "import type { X } from '../../src/shared/aetherChoice/types';\nexport const w = (l: string) => `/effort ${l}\\r`;";
     expect(check(E, src)).toEqual([]);
+  });
+});
+
+describe('AetherChoice boundary: the scan recurses', () => {
+  it('flags a violation planted in a nested directory and skips __fixtures__ and node_modules', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ac-boundary-'));
+    try {
+      const put = (rel: string, text: string): void => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), text);
+      };
+      put('d/a.ts', 'export const a = 1;');
+      put('d/sub/deep/bad.ts', "export const p = '~/.claude/settings.json';");
+      put('d/__fixtures__/skip.ts', "export const p = 'settings.json';");
+      put('d/node_modules/skip.ts', "export const p = 'settings.json';");
+      const files = listFiles(root, ['d']);
+      expect(files).toEqual(['d/a.ts', 'd/sub/deep/bad.ts']);
+      const bad = files.filter((f) => check(f, fs.readFileSync(path.join(root, f), 'utf8')).length > 0);
+      expect(bad).toEqual(['d/sub/deep/bad.ts']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

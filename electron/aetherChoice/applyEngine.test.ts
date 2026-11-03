@@ -14,7 +14,7 @@ const META = { reason: 'r', trigger: 'miss' as const, source: 'manual' as const 
 function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usage?: number; writeOk?: boolean } = {}) {
   const writes: Array<[string, string]> = [];
   const logs: string[] = [];
-  const state = { reading: opts.reading ?? 'idle', usage: opts.usage ?? 0, writeOk: opts.writeOk ?? true };
+  const state = { reading: opts.reading ?? 'idle', usage: opts.usage ?? 0, writeOk: opts.writeOk ?? true, now: 1_700_000_000_000 };
   const records = new Map<string, ThreadPickRecord>();
   const live = markLaunched(newRecord(T, { model: 'sonnet', effort: 'medium' }, { reason: 'x', trigger: 'new-thread', source: 'auto' }), {
     model: 'sonnet', effort: 'medium', resume: false, reasonSuffix: '', budgetLevel: 'none',
@@ -26,7 +26,7 @@ function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usag
     writePort: { write: (s, d) => { writes.push([s, d]); return state.writeOk; } },
     slotFor: () => (opts.slot === undefined ? 'claude' : opts.slot),
     idle: () => state.reading,
-    now: () => 1_700_000_000_000,
+    now: () => state.now,
     log: (l) => logs.push(l),
     notifyFailure,
     awayMode,
@@ -104,8 +104,30 @@ describe('applyEngine', () => {
     s.engine.onIdleCheck(T);
     expect(s.writes).toHaveLength(0);
     s.engine.clearHalt(T);
+    s.state.now += 2000;
     s.engine.onIdleCheck(T);
     expect(s.writes).toEqual([['claude', '/effort low\r']]);
+  });
+
+  it('write gap: a second pick 100 ms later is skipped, one after 2000 ms writes', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    s.state.now += 100;
+    s.engine.onPick(T, { model: 'sonnet', effort: 'low' }, META);
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toHaveLength(1);
+    s.state.now += 1900;
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.writes).toEqual([['claude', '/effort high\r'], ['claude', '/effort low\r']]);
+  });
+
+  it('a record that is not live gets zero writes', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    s.records.set(T, markExited(s.records.get(T)!));
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toHaveLength(0);
   });
 
   it('not-applied notifies exactly once regardless of awayMode', () => {
@@ -317,6 +339,7 @@ describe('applyEngine: a reported apply failure reconciles the live baseline (G2
     s.engine.clearHalt(T);
     s.engine.onPick(T, HIGH, META);
     expect(s.records.get(T)?.queue?.pick.effort).toBe('high');
+    s.state.now += 2000;
     expect(s.engine.onIdleCheck(T)).toBe('sent');
     expect(s.writes).toHaveLength(2);
   });
@@ -358,6 +381,7 @@ describe('applyEngine: budget hysteresis survives the engine writes (H3)', () =>
       const r = s.records.get(T)!;
       const want = applyBudget({ model: 'sonnet', effort: r.intended.effort }, { sessionPct: pct, weekPct: 0 }, 'auto', r.lastBudgetLevel).pick;
       s.engine.onPick(T, want, { reason: 'b', trigger: 'budget', source: 'auto' });
+      s.state.now += 2000;
       s.engine.onIdleCheck(T);
       seen.push(s.records.get(T)!.launched!.effort);
     }

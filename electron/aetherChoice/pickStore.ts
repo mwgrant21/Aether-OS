@@ -157,7 +157,7 @@ export function loadPicks(dir: string): Record<string, ThreadPickRecord> {
     const threads = obj(root?.threads);
     if (!root || root.v !== 1 || !threads) return out;
     for (const [id, raw] of Object.entries(threads)) {
-      if (id.length === 0 || id.length > MAX_ID) continue;
+      if (id.length === 0 || id.length > MAX_ID || id === '__proto__') continue;
       const rec = parseRecord(id, raw);
       if (rec) out[id] = rec;
     }
@@ -171,7 +171,7 @@ export function loadPicks(dir: string): Record<string, ThreadPickRecord> {
 export async function savePicks(dir: string, records: Record<string, ThreadPickRecord>): Promise<void> {
   const threads: Record<string, ThreadPickRecord> = {};
   for (const [id, rec] of Object.entries(records)) {
-    const clean = id.length <= MAX_ID ? parseRecord(id, rec) : undefined;
+    const clean = id.length <= MAX_ID && id !== '__proto__' ? parseRecord(id, rec) : undefined;
     if (clean) threads[id] = clean;
   }
   const json = JSON.stringify({ v: 1, threads });
