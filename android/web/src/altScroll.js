@@ -75,12 +75,18 @@ export function flushAlt(alt, { stdinOn, send, clear = clearTimeout }) {
 }
 
 // End a gesture. commit = a normal finish (touchend, pointerup): flush what is pending first so a
-// quick swipe still scrolls. Cancel/abort/reset paths leave commit false and discard it.
-export function finishAlt(alt, { commit, stdinOn, send, clear = clearTimeout }) {
+// quick swipe still scrolls. Cancel/abort/reset paths leave commit false and discard pending.
+// `keep` (optional) receives the sub-notch px carry, and on commit the unsent pending notches,
+// so the next gesture starts from them instead of throwing them away.
+export function finishAlt(alt, { commit, stdinOn, send, clear = clearTimeout, keep }) {
   if (!alt) return;
   if (commit) flushAlt(alt, { stdinOn, send, clear });
   else if (alt.timer) clear(alt.timer);
   alt.timer = 0;
+  if (keep) {
+    keep.carry = fin(alt.carry) ? alt.carry : 0;
+    keep.pending = commit && fin(alt.pending) ? alt.pending : 0;
+  }
 }
 
 // Decide once at gesture start: alt buffer and vertical-dominant.
