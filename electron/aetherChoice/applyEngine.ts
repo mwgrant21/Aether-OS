@@ -61,6 +61,9 @@ export type ApplyEngineDeps = {
 
 export type PickMetaIn = { reason: string; trigger: PickTrigger; source: PickSource };
 
+/** Once the queue is consumed, only a held model pick still has an owner. Both queue-consuming branches use this. */
+const ownerAfterQueueConsumed = (rec: ThreadPickRecord): PickSource | null => (rec.modelPending ? rec.pendingSource : null);
+
 const fmt = (p: Pick): string => `${p.model}/${p.effort}`;
 
 export function createApplyEngine(deps: ApplyEngineDeps) {
@@ -112,6 +115,7 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
         intended: desire ? { ...rec.intended, effort: q.pick.effort } : rec.intended,
         source: desire ? q.source : rec.source,
         queue: null,
+        pendingSource: ownerAfterQueueConsumed(rec),
         lastBudgetLevel: levelAfter,
       });
       return 'skipped';
@@ -129,7 +133,7 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
       launched: { ...base, effort },
       queue: null,
       source: desire ? q.source : rec.source,
-      pendingSource: rec.modelPending ? rec.pendingSource : null,
+      pendingSource: ownerAfterQueueConsumed(rec),
       lastBudgetLevel: levelAfter,
       // A held model pick stays visible in the readout: 'sent' would mask it until a confirmed report.
       outcome: rec.modelPending ? 'none' : 'sent',

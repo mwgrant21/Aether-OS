@@ -364,3 +364,22 @@ describe('applyEngine: budget hysteresis survives the engine writes (H3)', () =>
     expect(seen).toEqual(['high', 'medium', 'medium', 'low', 'low', 'medium', 'medium', 'medium', 'high', 'high']);
   });
 });
+
+describe('applyEngine: consuming a no-op queue releases pending ownership (round 3)', () => {
+  it('manual high sent, medium queued, high reported not applied (actual medium), halt cleared: the no-op clear drops pendingSource and an auto pick queues', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, META);
+    expect(s.records.get(T)?.pendingSource).toBe('manual');
+    s.engine.reportOutcome(T, 'not-applied', { model: 'sonnet', effort: 'medium' });
+    s.engine.clearHalt(T);
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    const r = s.records.get(T)!;
+    expect(r.queue).toBeNull();
+    expect(r.pendingSource).toBeNull();
+    const res = s.engine.onPick(T, HIGH, { reason: 'm', trigger: 'miss', source: 'auto' });
+    expect(res.rejected).toBeNull();
+    expect(s.records.get(T)?.queue?.pick.effort).toBe('high');
+  });
+});

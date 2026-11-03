@@ -234,6 +234,8 @@ describe('randomized invariant sweep', () => {
     let h1Trips = 0;
     let h2Checks = 0;
     let h3Checks = 0;
+    let ownerChecks = 0;
+    let ownerRetries = 0;
     try {
       for (let s = 0; s < SEQUENCES; s++) {
         const start = pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS));
@@ -382,6 +384,18 @@ describe('randomized invariant sweep', () => {
             expect(r.source, where + ' F1 source').toBe('auto');
             expect(r.pendingSource, where + ' F1 pendingSource').not.toBe('manual');
           }
+          // Ownership: pendingSource exists only while a queue or a held model remains; with nothing
+          // pending, an auto pick must queue normally instead of losing to a phantom manual owner.
+          if (r.queue === null && r.modelPending === null) {
+            expect(r.pendingSource, where + ' stale pendingSource').toBeNull();
+            ownerChecks++;
+            if (r.live && !r.halted) {
+              const eff = r.launched?.effort === 'low' ? 'medium' : 'low';
+              const probe = submitPick(r, { model: (r.launched ?? r.intended).model, effort: eff }, { reason: 'p', trigger: 'miss', source: 'auto', now: 1 });
+              expect(probe.rejected, where + ' auto pick rejected').toBeNull();
+              ownerRetries++;
+            }
+          }
           // H2: a held model pick is never masked by a sent outcome.
           if (r.modelPending && !r.halted) {
             expect(['queued', 'queuedModel'], where + ' H2').toContain(deriveReadoutState(r, { hasReadback: false }));
@@ -423,6 +437,8 @@ describe('randomized invariant sweep', () => {
     expect(h1Trips, 'H1 round trips').toBeGreaterThan(300);
     expect(h2Checks, 'H2 checks').toBeGreaterThan(300);
     expect(h3Checks, 'H3 checks').toBeGreaterThan(0);
+    expect(ownerChecks, 'ownership checks').toBeGreaterThan(300);
+    expect(ownerRetries, 'ownership probes').toBeGreaterThan(300);
   }, 120_000);
 });
 
