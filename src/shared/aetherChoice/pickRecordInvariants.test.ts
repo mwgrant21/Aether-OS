@@ -11,7 +11,7 @@ import { clearHalt, deriveReadoutState, markExited, markLaunched, newRecord, pla
 import { LADDER_RUNGS, applyBudget } from './pickPolicy';
 import type { LaunchPlan, ThreadPickRecord } from './pickRecord';
 import { LAUNCH_EFFORTS, MODEL_ALIASES } from './types';
-import type { ModelAlias, Pick, PickSource, PickTrigger } from './types';
+import type { IdleReading as SharedIdleReading, ModelAlias, Pick, PickSource, PickTrigger } from './types';
 
 const T = 't1';
 const LOW0 = { sessionPct: 0, weekPct: 0 };
@@ -200,7 +200,8 @@ function rng(seed: number): () => number {
   };
 }
 const TRIGGERS: readonly PickTrigger[] = ['new-thread', 'miss', 'budget', 'task-class', 'think-harder', 'manual'];
-const READINGS: readonly IdleReading[] = ['idle', 'idle', 'idle', 'generating', 'busy', 'unknown'];
+// The engine still declares its own 8-member IdleReading; 'shell' (the shared 9th) is cast in until the engine adopts the shared type.
+const READINGS: readonly SharedIdleReading[] = ['idle', 'idle', 'idle', 'generating', 'busy', 'unknown', 'shell'];
 
 const foldOf = (r: ThreadPickRecord): Pick => ({
   model: r.modelPending ?? r.intended.model,
@@ -237,6 +238,8 @@ describe('randomized invariant sweep', () => {
     let h3Checks = 0;
     let ownerChecks = 0;
     let ownerRetries = 0;
+    let haltedPlanChecks = 0;
+    let queueModelChecks = 0;
     try {
       for (let s = 0; s < SEQUENCES; s++) {
         const start = pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS));
@@ -278,7 +281,12 @@ describe('randomized invariant sweep', () => {
               expect(r, where + ' F1 submit').toEqual(rec0);
             }
           } else if (op === 4 || op === 5) {
-            if (!rec0.live) {
+            if (!rec0.live && rec0.halted) {
+              // A halted thread gets no launch plan until an explicit clear.
+              expect(planLaunch(rec0, { sessionPct: int(100), weekPct: int(100) }), where + ' halted plan').toEqual({ error: 'halted' });
+              expect(h.st.rec, where + ' halted plan record').toBe(rec0);
+              haltedPlanChecks++;
+            } else if (!rec0.live) {
               const usage = { sessionPct: int(100), weekPct: int(100) };
               const plan = planLaunch(rec0, usage) as LaunchPlan;
               const fold = foldOf(rec0);
@@ -295,7 +303,7 @@ describe('randomized invariant sweep', () => {
             if (rec0.live) h.st.rec = markExited(rec0);
           } else if (op <= 8) {
             h.st.usage = int(100);
-            h.st.reading = pick1(READINGS);
+            h.st.reading = pick1(READINGS) as IdleReading;
             if (!rec0.live) {
               // F2: a not-live record gets no write and no queue change at any reading.
               const before = h.writes.length;
@@ -349,7 +357,7 @@ describe('randomized invariant sweep', () => {
                 expect(h.writes.length, where).toBe(before);
               }
             }
-          } else if (rec0.live && rec0.halted && rand() < 0.5) {
+          } else if (rec0.halted && rand() < 0.5) {
             h.engine.clearHalt(T);
           } else if (rec0.live) {
             const notApplied = rand() >= 0.7;
@@ -397,6 +405,11 @@ describe('randomized invariant sweep', () => {
               ownerRetries++;
             }
           }
+          // Q: a queued pick names the model that is running (or intended, before any launch).
+          if (r.queue !== null) {
+            expect(r.queue.pick.model, where + ' Q queue model').toBe((r.launched ?? r.intended).model);
+            queueModelChecks++;
+          }
           // H2: a held model pick is never masked by a sent outcome.
           if (r.modelPending && !r.halted) {
             expect(['queued', 'queuedModel'], where + ' H2').toContain(deriveReadoutState(r, { hasReadback: false }));
@@ -405,7 +418,7 @@ describe('randomized invariant sweep', () => {
           // I2: launched is exactly what is running.
           expect(r.launched, where + ' I2').toEqual(running);
           // I1: the desired pick is always recoverable at low usage.
-          const back = planLaunch(r, LOW0) as LaunchPlan;
+          const back = planLaunch(r.halted ? clearHalt(r) : r, LOW0) as LaunchPlan;
           expect([back.model, back.effort], where + ' I1 recovery').toEqual([desired.model, desired.effort]);
           // I5: no fable/ultra anywhere; models are launchable aliases.
           const json = JSON.stringify(r);
@@ -440,6 +453,8 @@ describe('randomized invariant sweep', () => {
     expect(h3Checks, 'H3 checks').toBeGreaterThan(0);
     expect(ownerChecks, 'ownership checks').toBeGreaterThan(300);
     expect(ownerRetries, 'ownership probes').toBeGreaterThan(300);
+    expect(haltedPlanChecks, 'halted plan checks').toBeGreaterThan(100);
+    expect(queueModelChecks, 'queue model checks').toBeGreaterThan(300);
   }, 120_000);
 });
 

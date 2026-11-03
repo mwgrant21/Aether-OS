@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  clearHalt,
   markNotApplied,
   newRecord,
   planLaunch,
@@ -88,7 +89,8 @@ describe('pickStore', () => {
     const loaded = loadPicks(dir).t1;
     expect(loaded.pendingStepDown).toBe(true);
     expect(loaded.halted).not.toBeNull();
-    expect(planLaunch(loaded, { sessionPct: 91, weekPct: 0 })).toMatchObject({ model: 'haiku', effort: 'low' });
+    expect(planLaunch(loaded, { sessionPct: 91, weekPct: 0 })).toEqual({ error: 'halted' });
+    expect(planLaunch(clearHalt(loaded), { sessionPct: 91, weekPct: 0 })).toMatchObject({ model: 'haiku', effort: 'low' });
     expect(readFileSync(file(), 'utf8')).not.toContain('settings');
   });
 
