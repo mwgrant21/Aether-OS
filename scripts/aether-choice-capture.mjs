@@ -13,9 +13,9 @@
 //   <outDir>/<label>.txt       visible rows, right-trimmed, one per line
 //   <outDir>/<label>.raw.txt   last 4 KB of raw output, control chars escaped (ESC = \x1b)
 //   <outDir>/<label>.title.txt last OSC 0/2 window title seen
-// It never starts claude (you type it), never touches ~/.claude, and the only
-// paths it writes are under outDir. outDir must be under os.tmpdir() or
-// ~/.claude/handoffs/ (and never inside the repo); anything else is refused.
+// It never starts claude (you type it) and the only paths it writes are under
+// outDir. outDir must be under os.tmpdir() or ~/.claude/handoffs/ (and never
+// inside the repo, nor elsewhere in ~/.claude); anything else is refused.
 //
 // --watch-statusline <outDir>: every 500 ms copy ~/.aether-os/statusline.json
 // to <outDir>/statusline-<n>-t<monotonicMs>.json, only when the content changed.
@@ -50,6 +50,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -153,6 +154,15 @@ export function createStatuslineWatcher({ src, outDir, nowMs }) {
   };
 }
 
+/**
+ * Stateful UTF-8 decoder for forwarded stdin bytes. Returns decode(bytes) -> string;
+ * a multibyte character split across chunks is held back until its tail arrives.
+ */
+export function createInputDecoder() {
+  const decoder = new StringDecoder('utf8');
+  return (bytes) => decoder.write(Buffer.from(bytes));
+}
+
 function monotonicClock() {
   const t0 = process.hrtime.bigint();
   return () => Number((process.hrtime.bigint() - t0) / 1_000_000n);
@@ -210,6 +220,7 @@ async function runCapture(outDirArg) {
       process.stderr.write(`\r\n[capture] wrote ${safe}.txt, ${safe}.raw.txt, ${safe}.title.txt\r\n`);
     });
   }
+  const decodeInput = createInputDecoder();
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.on('data', (buf) => {
     const fwd = [];
@@ -224,7 +235,10 @@ async function runCapture(outDirArg) {
         process.stderr.write('\r\n[capture] label then Enter: ');
       } else fwd.push(b);
     }
-    if (fwd.length) proc.write(Buffer.from(fwd).toString('latin1'));
+    if (fwd.length) {
+      const text = decodeInput(fwd);
+      if (text) proc.write(text);
+    }
   });
 }
 

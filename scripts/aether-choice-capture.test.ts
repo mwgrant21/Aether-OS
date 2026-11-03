@@ -5,9 +5,28 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createRequire } from 'module';
 // @ts-expect-error plain .mjs script, no declaration file
-import { renderRows, escapeRaw, checkOutDir, createStatuslineWatcher } from './aether-choice-capture.mjs';
+import { renderRows, escapeRaw, checkOutDir, createStatuslineWatcher, createInputDecoder } from './aether-choice-capture.mjs';
 
 const require = createRequire(import.meta.url);
+// @xterm/headless is a root devDependency only; the collector/ vitest run also
+// picks this file up (../scripts/**) and cannot resolve it there.
+let xtermHeadless: { Terminal: new (opts: object) => any } | null = null;
+try { xtermHeadless = require('@xterm/headless'); } catch { /* unresolvable in collector/ */ }
+
+// Probe once whether this host lets us create a directory symlink/junction.
+const canSymlink = (() => {
+  const d = mkdtempSync(join(tmpdir(), 'aether-capture-probe-'));
+  try {
+    mkdirSync(join(d, 'a'));
+    symlinkSync(join(d, 'a'), join(d, 'b'), 'junction');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+})();
+
 const made: string[] = [];
 function tmp(): string {
   const d = mkdtempSync(join(tmpdir(), 'aether-capture-test-'));
@@ -17,8 +36,8 @@ function tmp(): string {
 afterEach(() => { for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 describe('aether-choice-capture', () => {
-  it('renderRows returns the visible rows right-trimmed', async () => {
-    const { Terminal } = require('@xterm/headless');
+  it.skipIf(!xtermHeadless)('renderRows returns the visible rows right-trimmed (needs @xterm/headless, root install only)', async () => {
+    const { Terminal } = xtermHeadless!;
     const term = new Terminal({ cols: 20, rows: 3, scrollback: 0, allowProposedApi: true });
     await new Promise<void>((r) => term.write('hello   \r\nworld', r));
     expect(renderRows(term)).toEqual(['hello', 'world', '']);
@@ -45,11 +64,11 @@ describe('aether-choice-capture', () => {
     expect(checkOutDir(join(home, '.claude', 'handoffs', 'a'), { home, tmpDir: join(home, 'elsewhere') })).toContain('handoffs');
   });
 
-  it('rejects a symlink under tmp that points into ~/.claude', () => {
+  it.skipIf(!canSymlink)('rejects a symlink under tmp that points into ~/.claude', () => {
     const home = tmp();
     mkdirSync(join(home, '.claude'), { recursive: true });
     const link = join(tmp(), 'link');
-    try { symlinkSync(join(home, '.claude'), link, 'junction'); } catch { return; }
+    symlinkSync(join(home, '.claude'), link, 'junction');
     expect(() => checkOutDir(join(link, 'sub'), { home })).toThrow(/\.claude/);
   });
 
@@ -68,5 +87,23 @@ describe('aether-choice-capture', () => {
     expect(w.tick()).toMatch(/^statusline-0002-t\d+\.json$/);
     expect(readdirSync(out)).toHaveLength(2);
     expect(readFileSync(src, 'utf8')).toBe('{"a":2}');
+  });
+
+  it('createInputDecoder decodes UTF-8 and leaves ASCII unchanged', () => {
+    const dec = createInputDecoder();
+    expect(dec(Buffer.from('café'))).toBe('café');
+    expect(dec([...Buffer.from('echo hi\r')])).toBe('echo hi\r');
+  });
+
+  it('createInputDecoder keeps multibyte characters split across chunks', () => {
+    const two = Buffer.from('é'); // 2 bytes
+    const three = Buffer.from('€'); // 3 bytes
+    const four = Buffer.from('😀'); // 4 bytes, three chunks
+    const d1 = createInputDecoder();
+    expect(d1(two.subarray(0, 1)) + d1(two.subarray(1))).toBe('é');
+    const d2 = createInputDecoder();
+    expect(d2(three.subarray(0, 1)) + d2(three.subarray(1, 2)) + d2(three.subarray(2))).toBe('€');
+    const d3 = createInputDecoder();
+    expect(d3(four.subarray(0, 2)) + d3(four.subarray(2, 3)) + d3(four.subarray(3))).toBe('😀');
   });
 });
