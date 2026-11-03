@@ -146,6 +146,30 @@ describe('idleClassifier: fail closed (never idle)', () => {
     expect(read(rows)).toBe('generating');
   });
 
+
+  it('a spinner is found through a task list and in looser shapes -> not idle', () => {
+    const empty = (): string[] => {
+      const r = [...IDLE];
+      r[inputAt(r)] = '>';
+      return r;
+    };
+    const put = (...lines: string[]): string[] => {
+      const r = empty();
+      r.splice(inputAt(r) - 1, 0, ...lines);
+      return r;
+    };
+    const tasks = ['  ⎿ ◼ a', '    ◻ b', '    ◻ c', '    ◻ d'];
+    expect(read(put('✻ Stewing… (2s)', ...tasks))).toBe('generating');
+    expect(read(put('✻ Stewing…'))).toBe('generating');
+    expect(read(put('✻ Stewing… (esc to interrupt)'))).toBe('generating');
+    expect(read(put('✻ Stewing (esc to interrupt)'))).toBe('generating');
+    for (const tail of ['(↓ 9 tokens)', '(thinking)', '(1h 2m)']) expect(read(put('✻ Stewing… ' + tail))).toBe('generating');
+  });
+
+  it('every idle fixture still reads idle after the spinner widening', () => {
+    for (const name of ['idle-empty', 'idle-empty2']) expect(read(load(name)), name).toBe('idle');
+  });
+
   it('modal footers with their body deleted -> unknown', () => {
     expect(read(load('model-picker2').filter((r) => !/Select model/.test(r)))).toBe('unknown');
     expect(read(load('permission-prompt').filter((r) => !/Do you want to proceed/.test(r)))).toBe('unknown');
