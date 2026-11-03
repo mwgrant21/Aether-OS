@@ -61,8 +61,6 @@ export type ApplyEngineDeps = {
 
 export type PickMetaIn = { reason: string; trigger: PickTrigger; source: PickSource };
 
-const WRITABLE_EFFORTS = ['low', 'medium', 'high'] as const;
-
 const fmt = (p: Pick): string => `${p.model}/${p.effort}`;
 
 export function createApplyEngine(deps: ApplyEngineDeps) {
@@ -110,8 +108,6 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
       });
       return 'skipped';
     }
-    // Only these bytes ever reach the pty; xhigh/max stay queued for the next launch (--effort).
-    if (!(WRITABLE_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
     const order = LAUNCH_EFFORTS as readonly string[];
     const stepDown = order.indexOf(effort) < order.indexOf(base.effort);
     const reading = deps.idle(slot);

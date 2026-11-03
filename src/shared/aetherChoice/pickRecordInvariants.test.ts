@@ -16,7 +16,7 @@ const T = 't1';
 const LOW0 = { sessionPct: 0, weekPct: 0 };
 const HI = { sessionPct: 95, weekPct: 0 };
 const AUTO = { reason: 'a', trigger: 'task-class', source: 'auto' } as const;
-const WRITE_RE = /^\/effort (low|medium|high)\r$/;
+const WRITE_RE = /^\/effort (low|medium|high|xhigh|max)\r$/;
 
 type Harness = ReturnType<typeof harness>;
 function harness(start: ThreadPickRecord, init: { usage?: number; reading?: IdleReading } = {}) {
@@ -162,13 +162,15 @@ describe('I4 manual is never budget-lowered at planLaunch', () => {
 });
 
 describe('I5 fail-closed', () => {
-  it('xhigh/max are never written live; only low|medium|high bytes are', () => {
+  it('xhigh/max are written live only for a manual source; auto never reaches them', () => {
     const h = harness(newRecord(T, pk('sonnet', 'medium'), AUTO));
     launch(h);
-    h.engine.onPick(T, pk('sonnet', 'xhigh'), { reason: 'u', trigger: 'manual', source: 'manual' });
+    const auto = h.engine.onPick(T, pk('sonnet', 'xhigh'), { reason: 'a', trigger: 'miss', source: 'auto' });
+    expect(auto.rejected).not.toBeNull();
     expect(h.engine.onIdleCheck(T)).toBe('skipped');
-    expect(h.writes).toEqual([]);
-    expect(planLaunch(markExited(h.st.rec), HI)).toMatchObject({ model: 'sonnet', effort: 'xhigh' });
+    h.engine.onPick(T, pk('sonnet', 'xhigh'), { reason: 'u', trigger: 'manual', source: 'manual' });
+    expect(h.engine.onIdleCheck(T)).toBe('sent');
+    expect(h.writes).toEqual(['/effort xhigh\r']);
   });
 });
 
@@ -211,6 +213,7 @@ describe('randomized invariant sweep', () => {
     const pick1 = <T>(l: readonly T[]): T => l[int(l.length)];
     const dir = mkdtempSync(join(tmpdir(), 'pickinv-'));
     let writesTotal = 0;
+    let highWrites = 0;
     let manualLive = 0;
     let roundTrips = 0;
     try {
@@ -271,6 +274,11 @@ describe('randomized invariant sweep', () => {
                 writesTotal++;
                 const bytes = h.writes[h.writes.length - 1];
                 expect(bytes, where).toMatch(WRITE_RE);
+                if (/xhigh|max/.test(bytes)) {
+                  highWrites++;
+                  // xhigh/max are manual-only: only a manual-sourced queued pick can carry them.
+                  expect(rec0.queue?.source, where + ' I5 manual-only effort').toBe('manual');
+                }
                 running = { model: (rec0.launched ?? rec0.intended).model, effort: bytes.slice(8, -1) as Pick['effort'] };
                 if (rec0.queue?.trigger === 'budget') expect(r.intended, where + ' I1 idle').toEqual(rec0.intended);
               } else {
@@ -306,6 +314,7 @@ describe('randomized invariant sweep', () => {
     }
     // Guard against a vacuous sweep.
     expect(writesTotal).toBeGreaterThan(300);
+    expect(highWrites).toBeGreaterThan(0);
     expect(manualLive).toBeGreaterThan(1000);
     expect(roundTrips).toBe(SEQUENCES / 10);
   }, 120_000);
