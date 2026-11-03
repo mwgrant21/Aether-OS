@@ -171,6 +171,37 @@ describe('applyEngine', () => {
     expect(s.writes).toEqual([['claude', '/effort low\r']]);
   });
 
+  function liveAs(s: ReturnType<typeof setup>, model: 'opus' | 'haiku', effort: 'high' | 'low') {
+    s.records.set(T, markLaunched(newRecord(T, { model, effort }, { reason: 'x', trigger: 'new-thread', source: 'auto' }), {
+      model, effort, resume: false, reasonSuffix: '', budgetLevel: 'none',
+    }));
+  }
+
+  it('a hybrid auto repick is budgeted against the live model (floor)', () => {
+    const s = setup({ usage: 95 });
+    liveAs(s, 'opus', 'high');
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, { ...META, trigger: 'budget', source: 'auto' });
+    s.engine.onIdleCheck(T);
+    expect(s.writes).toEqual([['claude', '/effort low\r']]);
+  });
+
+  it('a hybrid auto repick at the step level steps down from the live rung', () => {
+    const s = setup({ usage: 72 });
+    liveAs(s, 'opus', 'high');
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, { ...META, trigger: 'budget', source: 'auto' });
+    s.engine.onIdleCheck(T);
+    expect(s.writes).toEqual([['claude', '/effort medium\r']]);
+  });
+
+  it('a budget-lowered effort equal to the live effort writes nothing but clears the queue', () => {
+    const s = setup({ usage: 95 });
+    liveAs(s, 'haiku', 'low');
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, { ...META, trigger: 'budget', source: 'auto' });
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toHaveLength(0);
+    expect(s.records.get(T)?.queue).toBeNull();
+  });
+
   it('manual non-ladder picks are not lowered by the budget', () => {
     const s = setup({ usage: 91 });
     s.engine.onPick(T, { model: 'sonnet', effort: 'xhigh' }, META);

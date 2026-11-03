@@ -63,10 +63,6 @@ export type PickMetaIn = { reason: string; trigger: PickTrigger; source: PickSou
 
 const fmt = (p: Pick): string => `${p.model}/${p.effort}`;
 
-function onLadder(p: Pick): boolean {
-  return LADDER_RUNGS.some((r) => r.model === p.model && r.effort === p.effort);
-}
-
 export function createApplyEngine(deps: ApplyEngineDeps) {
   const stamp = (): string => new Date(deps.now()).toISOString();
 
@@ -80,7 +76,10 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const r = submitPick(rec, pick, { ...meta, now: deps.now() });
     if (r.rejected !== null) return { rejected: r.rejected };
     deps.setRecord(threadId, r.record);
-    line(rec.intended, pick, meta.source, meta.trigger, 'queued');
+    const changed =
+      JSON.stringify([r.record.queue, r.record.modelPending, r.record.intended]) !==
+      JSON.stringify([rec.queue, rec.modelPending, rec.intended]);
+    if (changed) line(rec.intended, pick, meta.source, meta.trigger, 'queued');
     return { rejected: null };
   }
 
@@ -92,11 +91,14 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     if (slot !== 'claude' && slot !== 'terminal2') return 'skipped';
     const q = rec.queue;
     // The queued model may be stale and the plan may have been budget-lowered since:
-    // re-run the budget now and read only the effort, never queue.pick.model.
-    const budgetSource: PickSource = q.source === 'auto' && !onLadder(q.pick) ? 'manual' : q.source;
-    const b = applyBudget(q.pick, deps.usage(), budgetSource, rec.lastBudgetLevel);
+    // re-run the budget against the live model and the queued effort, and read only the effort.
+    const b = applyBudget({ model: rec.intended.model, effort: q.pick.effort }, deps.usage(), q.source, rec.lastBudgetLevel);
     const effort = b.pick.effort;
     if (!(LAUNCH_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
+    if (effort === rec.intended.effort) {
+      deps.setRecord(threadId, { ...rec, queue: null });
+      return 'skipped';
+    }
     const order = LAUNCH_EFFORTS as readonly string[];
     const stepDown = order.indexOf(effort) < order.indexOf(rec.intended.effort);
     const reading = deps.idle(slot);
@@ -107,6 +109,7 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
       ...rec,
       intended: { ...rec.intended, effort },
       queue: null,
+      source: q.source,
       pendingSource: rec.modelPending ? rec.pendingSource : null,
       outcome: 'sent',
     };
