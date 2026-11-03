@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand } from './ptyManager';
+import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand, launchLine } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -54,5 +54,24 @@ describe('buildClaudeLaunchCommand', () => {
   it('passes the pinned session id when given, and stays a bare fresh launch without one', () => {
     expect(buildClaudeLaunchCommand('0b9a6f1e-1d2c-4e5f-8a7b-1c2d3e4f5a6b')).toBe('claude --session-id 0b9a6f1e-1d2c-4e5f-8a7b-1c2d3e4f5a6b\r');
     expect(buildClaudeLaunchCommand()).toBe('claude\r');
+  });
+});
+
+describe('launchLine', () => {
+  const id = '11111111-2222-3333-4444-555555555555';
+  it('with no override is byte-identical to buildClaudeLaunchCommand', () => {
+    expect(launchLine()).toBe('claude\r');
+    expect(launchLine(id)).toBe(`claude --session-id ${id}\r`);
+    expect(launchLine(id)).toBe(buildClaudeLaunchCommand(id));
+    expect(launchLine(undefined, undefined)).toBe(buildClaudeLaunchCommand());
+  });
+  it('returns an override verbatim, ignoring the session id', () => {
+    const cmd = `claude --session-id ${id} --model sonnet --effort medium\r`;
+    expect(launchLine(id, cmd)).toBe(cmd);
+    expect(launchLine(undefined, cmd)).toBe(cmd);
+  });
+  it('does not alter or append to an override (embedded text, no trailing CR)', () => {
+    const odd = 'claude --x "a  b"; echo \n  end';
+    expect(launchLine(id, odd)).toBe(odd);
   });
 });

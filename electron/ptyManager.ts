@@ -51,13 +51,20 @@ export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly stri
   return `unset ${vars.join(' ')}\r`;
 }
 
+// The one launch-line decision, pulled out of spawnPty (not unit-testable: node-pty).
+// With no override this is exactly buildClaudeLaunchCommand. An override is
+// returned verbatim -- the caller's builder owns the trailing carriage return; nothing is appended.
+export function launchLine(sessionId?: string, launchCommand?: string): string {
+  return launchCommand ?? buildClaudeLaunchCommand(sessionId);
+}
+
 export interface BridgePtyLaunch { scriptPath: string; env: NodeJS.ProcessEnv }
 
 // Marks a terminal's claude as unmonitored for scripts/aether-statusline.mjs,
 // which then renders its line but never writes the shared statusline.json.
 export const UNMONITORED_TERMINAL_ENV: NodeJS.ProcessEnv = { AETHER_STATUSLINE_NO_PERSIST: '1' };
 
-export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv) {
+export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string) {
   if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
   const ptyProcess = pty.spawn(shell, bridge ? ['-NoExit', '-File', bridge.scriptPath] : [], {
@@ -69,7 +76,7 @@ export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessio
   });
   if (!bridge) {
     ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));
-    ptyProcess.write(buildClaudeLaunchCommand(sessionId));
+    ptyProcess.write(launchLine(sessionId, launchCommand));
   }
   return ptyProcess;
 }
