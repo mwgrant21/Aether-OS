@@ -83,6 +83,13 @@ function parseRecord(id: string, v: unknown): ThreadPickRecord | undefined {
   const claudeVersion = o.claudeVersion === null ? null : shortStr(o.claudeVersion, MAX_VERSION);
   if (claudeVersion === undefined) return undefined;
 
+  // Optional: files written before `launched` existed have no key; fall back to null (= use intended).
+  let launched: Pick | null = null;
+  if (o.launched !== undefined && o.launched !== null) {
+    const p = parsePick(o.launched);
+    if (!p) return undefined;
+    launched = p;
+  }
   let lastConfirmed: Pick | null = null;
   if (o.lastConfirmed !== null) {
     const p = parsePick(o.lastConfirmed);
@@ -124,6 +131,7 @@ function parseRecord(id: string, v: unknown): ThreadPickRecord | undefined {
     claudeVersion,
     live: o.live,
     intended,
+    launched,
     lastConfirmed,
     lastLaunchedModel,
     lastBudgetLevel,

@@ -38,6 +38,15 @@ function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usag
 const HIGH: Pick = { model: 'sonnet', effort: 'high' };
 
 describe('applyEngine', () => {
+  it('a successful /effort write updates launched.effort and leaves the desired intended model alone', () => {
+    const s = setup();
+    s.records.set(T, { ...s.records.get(T)!, launched: { model: 'haiku', effort: 'low' }, intended: { model: 'sonnet', effort: 'medium' } });
+    s.engine.onPick(T, HIGH, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.records.get(T)?.launched).toEqual({ model: 'haiku', effort: 'high' });
+    expect(s.records.get(T)?.intended.model).toBe('sonnet');
+  });
+
   it('writes exactly /effort <level>\\r at idle', () => {
     const s = setup();
     s.engine.onPick(T, HIGH, META);

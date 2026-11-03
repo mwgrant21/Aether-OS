@@ -167,12 +167,14 @@ describe('pickRecord', () => {
     expect(lowered.modelPending).toBe('opus');
   });
 
-  it('markLaunched makes intended the budget-adjusted launched pick, so a later sonnet/high submit is a change', () => {
+  it('markLaunched records the budget-lowered pick in launched; intended stays desired and recovers on a later resume', () => {
     const fresh = newRecord('t2', { model: 'sonnet', effort: 'high' }, META);
     const plan = planLaunch(fresh, { sessionPct: 95, weekPct: 0 }) as LaunchPlan;
     expect([plan.model, plan.effort]).toEqual(['haiku', 'low']);
     const launched = markLaunched(fresh, plan);
-    expect(launched.intended).toEqual({ model: 'haiku', effort: 'low' });
+    expect(launched.launched).toEqual({ model: 'haiku', effort: 'low' });
+    expect(launched.intended).toEqual({ model: 'sonnet', effort: 'high' });
+    expect(planLaunch(markExited(launched), LOW)).toMatchObject({ model: 'sonnet', effort: 'high' });
     const { record } = sub(launched, { model: 'sonnet', effort: 'high' }, 'manual');
     expect(record.modelPending).toBe('sonnet');
     expect(record.queue?.pick.effort).toBe('high');

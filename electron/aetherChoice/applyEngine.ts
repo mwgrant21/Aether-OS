@@ -90,17 +90,19 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const slot = deps.slotFor(threadId);
     if (slot !== 'claude' && slot !== 'terminal2') return 'skipped';
     const q = rec.queue;
+    // The running pick is the baseline; `intended` is the desired pick and may differ after a budget lowering.
+    const base = rec.launched ?? rec.intended;
     // The queued model may be stale and the plan may have been budget-lowered since:
     // re-run the budget against the live model and the queued effort, and read only the effort.
-    const b = applyBudget({ model: rec.intended.model, effort: q.pick.effort }, deps.usage(), q.source, rec.lastBudgetLevel);
+    const b = applyBudget({ model: base.model, effort: q.pick.effort }, deps.usage(), q.source, rec.lastBudgetLevel);
     const effort = b.pick.effort;
     if (!(LAUNCH_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
-    if (effort === rec.intended.effort) {
+    if (effort === base.effort) {
       deps.setRecord(threadId, { ...rec, queue: null });
       return 'skipped';
     }
     const order = LAUNCH_EFFORTS as readonly string[];
-    const stepDown = order.indexOf(effort) < order.indexOf(rec.intended.effort);
+    const stepDown = order.indexOf(effort) < order.indexOf(base.effort);
     const reading = deps.idle(slot);
     const midTurnOk = reading === 'generating' && q.trigger === 'budget' && stepDown;
     if (reading !== 'idle' && !midTurnOk) return 'skipped';
@@ -108,6 +110,7 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     let next: ThreadPickRecord = {
       ...rec,
       intended: { ...rec.intended, effort },
+      launched: rec.launched ? { ...rec.launched, effort } : null,
       queue: null,
       source: q.source,
       pendingSource: rec.modelPending ? rec.pendingSource : null,
@@ -127,15 +130,15 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const rec = deps.getRecord(threadId);
     if (!rec) return;
     if (outcome === 'confirmed') {
-      const next = clearPendingStepDown({ ...rec, lastConfirmed: { ...rec.intended }, outcome: 'confirmed' });
+      const next = clearPendingStepDown({ ...rec, lastConfirmed: { ...(rec.launched ?? rec.intended) }, outcome: 'confirmed' });
       deps.setRecord(threadId, next);
       line(rec.intended, rec.intended, rec.source, rec.trigger, 'confirmed');
       return;
     }
     if (rec.halted) return;
-    deps.setRecord(threadId, markNotApplied(rec, rec.intended, actual));
+    deps.setRecord(threadId, markNotApplied(rec, rec.launched ?? rec.intended, actual));
     // A15 port level: notified regardless of awayMode().
-    deps.notifyFailure({ threadId, wanted: { ...rec.intended }, actual });
+    deps.notifyFailure({ threadId, wanted: { ...(rec.launched ?? rec.intended) }, actual });
     line(rec.intended, actual ?? rec.intended, rec.source, rec.trigger, 'not-applied');
   }
 

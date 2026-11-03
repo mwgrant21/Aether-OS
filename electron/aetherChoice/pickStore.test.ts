@@ -32,6 +32,17 @@ describe('pickStore', () => {
     expect(loadPicks(dir)).toEqual({ t1: r });
   });
 
+  it('round-trips launched; a file without it loads as null; a bad launched drops the record', async () => {
+    const r = { ...rec(), launched: { model: 'haiku', effort: 'low' } } as const;
+    await savePicks(dir, { t1: r });
+    expect(loadPicks(dir).t1.launched).toEqual({ model: 'haiku', effort: 'low' });
+    const { launched: _drop, ...old } = rec('o');
+    write({ o: old, f: { ...rec('f'), launched: { model: 'fable', effort: 'low' } }, u: { ...rec('u'), launched: { model: 'sonnet', effort: 'ultra' } } });
+    const out = loadPicks(dir);
+    expect(Object.keys(out)).toEqual(['o']);
+    expect(out.o.launched).toBeNull();
+  });
+
   it('drops a record with model fable or an unlaunchable effort, keeping the good one', () => {
     write({
       ok: rec('ok'),

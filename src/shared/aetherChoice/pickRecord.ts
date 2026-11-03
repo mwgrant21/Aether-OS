@@ -27,7 +27,10 @@ export type ThreadPickRecord = {
   threadId: string;
   claudeVersion: string | null;
   live: boolean;
+  /** The desired pick. A budget step-down is re-evaluated from it on every launch, never stored over it. */
   intended: Pick;
+  /** The pick actually running (set at launch, after budget lowering). null until a launch; diffs run against `launched ?? intended`. */
+  launched: Pick | null;
   lastConfirmed: Pick | null;
   lastLaunchedModel: ModelAlias | null;
   /** Budget level of the last launch; feeds applyBudget's hysteresis on the next one. */
@@ -60,6 +63,7 @@ export function newRecord(
     claudeVersion,
     live: false,
     intended: { ...pick },
+    launched: null,
     lastConfirmed: null,
     lastLaunchedModel: null,
     lastBudgetLevel: 'none',
@@ -106,11 +110,12 @@ export function submitPick(
   }
   // Live (or halted): model part is held for the next resume, effort part is queued.
   // Latest wins: both pending slots are rebuilt from this submit alone.
-  const modelPending = next.model !== rec.intended.model ? next.model : null;
-  const effortChanged = next.effort !== rec.intended.effort;
+  const base = rec.launched ?? rec.intended;
+  const modelPending = next.model !== base.model ? next.model : null;
+  const effortChanged = next.effort !== base.effort;
   const queue: QueuedPick | null = effortChanged
     ? {
-        pick: { model: rec.intended.model, effort: next.effort },
+        pick: { model: base.model, effort: next.effort },
         reason: meta.reason,
         trigger: meta.trigger,
         source: meta.source,
@@ -171,18 +176,20 @@ export function planLaunch(
 }
 
 /**
- * `intended` becomes the pick that actually launched (after any budget lowering), because
- * submitPick and the apply engine diff against it as the live baseline. Pending parts that
- * match the launch are consumed, and a consumed pending pick hands its source to the record.
+ * `launched` records what actually started (after any budget lowering); `intended` stays the
+ * desired pick and only advances for a pending part the launch consumed. A consumed pending
+ * pick hands its source to the record.
  */
 export function markLaunched(rec: ThreadPickRecord, plan: LaunchPlan): ThreadPickRecord {
-  let { queue, modelPending } = rec;
+  let { intended, queue, modelPending } = rec;
   let consumed = false;
   if (modelPending !== null && modelPending === plan.model) {
+    intended = { ...intended, model: modelPending };
     modelPending = null;
     consumed = true;
   }
   if (queue && queue.pick.effort === plan.effort) {
+    intended = { ...intended, effort: queue.pick.effort };
     queue = null;
     consumed = true;
   }
@@ -191,7 +198,8 @@ export function markLaunched(rec: ThreadPickRecord, plan: LaunchPlan): ThreadPic
     live: true,
     lastLaunchedModel: plan.model,
     lastBudgetLevel: plan.budgetLevel,
-    intended: { model: plan.model, effort: plan.effort },
+    intended,
+    launched: { model: plan.model, effort: plan.effort },
     source: consumed && rec.pendingSource ? rec.pendingSource : rec.source,
     queue,
     modelPending,
