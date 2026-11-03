@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { cellAt, orderRange, wordBounds, clampText, sliceLines, createLongPress } from './selection.js';
+import { cellAt, orderRange, wordBounds, cellWordBounds, clampText, sliceLines, createLongPress } from './selection.js';
 
 const grid = { left: 10, top: 20, width: 100, height: 50, cols: 10, rows: 5 };
 
@@ -53,6 +53,49 @@ describe('wordBounds', () => {
   });
   it('returns an empty span for empty text', () => {
     expect(wordBounds('', 3)).toEqual({ start: 0, end: 0 });
+  });
+});
+
+// xterm-like cells from a string: a wide char is a width-2 cell plus a width-0 continuation, a
+// combining mark joins its base cell's chars, `pad` adds trailing empty cells.
+function cellsOf(str, { wide = '', pad = 0 } = {}) {
+  const out = [];
+  for (const ch of str) {
+    if (/\p{M}/u.test(ch)) out[out.length - 1].chars += ch;
+    else if (wide.includes(ch)) out.push({ chars: ch, width: 2 }, { chars: '', width: 0 });
+    else out.push({ chars: ch, width: 1 });
+  }
+  for (let i = 0; i < pad; i++) out.push({ chars: '', width: 1 });
+  return out;
+}
+
+describe('cellWordBounds', () => {
+  it('matches plain wordBounds on ASCII', () => {
+    expect(cellWordBounds(cellsOf('foo bar baz', { pad: 5 }), 5)).toEqual({ start: 4, end: 7 });
+  });
+  it('returns cell columns when a wide char precedes the word', () => {
+    const cells = cellsOf('中 foo', { wide: '中', pad: 3 }); // cells: 中 _ ' ' f o o
+    expect(cellWordBounds(cells, 3)).toEqual({ start: 3, end: 6 });
+    expect(cellWordBounds(cells, 5)).toEqual({ start: 3, end: 6 });
+  });
+  it('treats a hit on either cell of a wide char as that character', () => {
+    const cells = cellsOf('中 foo', { wide: '中' });
+    expect(cellWordBounds(cells, 0)).toEqual({ start: 0, end: 2 });
+    expect(cellWordBounds(cells, 1)).toEqual({ start: 0, end: 2 });
+  });
+  it('keeps a combining char in its base cell', () => {
+    const cells = cellsOf('éx foo'); // cells: e+acute x ' ' f o o
+    expect(cells[0].chars.length).toBe(2);
+    expect(cellWordBounds(cells, 4)).toEqual({ start: 3, end: 6 });
+    expect(cellWordBounds(cells, 1)).toEqual({ start: 0, end: 2 });
+  });
+  it('spans a wide char inside the word', () => {
+    const cells = cellsOf('a中b c', { wide: '中' }); // a 中 _ b ' ' c
+    expect(cellWordBounds(cells, 3)).toEqual({ start: 0, end: 4 });
+    expect(cellWordBounds(cells, 0)).toEqual({ start: 0, end: 4 });
+  });
+  it('gives the single cell past the last character', () => {
+    expect(cellWordBounds(cellsOf('foo', { pad: 4 }), 5)).toEqual({ start: 5, end: 6 });
   });
 });
 

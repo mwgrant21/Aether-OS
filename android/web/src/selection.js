@@ -36,6 +36,36 @@ export function wordBounds(text, i) {
   return { start, end };
 }
 
+// Word around terminal CELL col, as {start,end} cells (end exclusive). cells[i] is {chars,width} for
+// buffer cell i: chars '' on an empty cell (a blank), width 0 on the continuation cell of a wide
+// character (no text of its own; a hit on it counts as its base cell), and chars longer than one
+// unit for a combining sequence or astral character. wordBounds works in UTF-16 offsets, so the line
+// is built as a string with an offset-to-cell map and converted back. Trailing empty cells are not
+// text: a col past the last character gives the single cell at col.
+export function cellWordBounds(cells, col) {
+  let n = cells.length;
+  while (n > 0 && cells[n - 1].chars === '' && cells[n - 1].width !== 0) n--;
+  if (col >= n) return { start: col, end: col + 1 };
+  let text = '';
+  const cellOf = [];
+  const offOf = [];
+  for (let i = 0; i < n; i++) {
+    const { chars, width } = cells[i];
+    if (width === 0) {
+      offOf[i] = Math.max(0, text.length - 1);
+      continue;
+    }
+    const t = chars === '' ? ' ' : chars;
+    offOf[i] = text.length;
+    for (let k = 0; k < t.length; k++) cellOf.push(i);
+    text += t;
+  }
+  if (!text) return { start: col, end: col + 1 };
+  const w = wordBounds(text, offOf[Math.max(0, col)]);
+  const last = cellOf[w.end - 1];
+  return { start: cellOf[w.start], end: last + Math.max(1, cells[last].width) };
+}
+
 // Longest prefix of text that fits maxBytes of UTF-8, cut on a code-point boundary.
 export function clampText(text, maxBytes) {
   let bytes = 0;

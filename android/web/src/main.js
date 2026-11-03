@@ -14,7 +14,7 @@ import { chainDrag, toNotches, flushAlt, finishAlt, shouldIntercept, wheelBytes 
 import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 import {
-  cellAt, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
+  cellAt, cellWordBounds, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
 } from './selection.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
@@ -324,8 +324,13 @@ function beginSel(x, y) {
     const buf = slot.term.buffer.active;
     const row = buf.viewportY + c.row;
     const line = buf.getLine(row);
-    const text = line ? line.translateToString(true) : '';
-    const w = c.col < text.length ? wordBounds(text, c.col) : { start: c.col, end: c.col + 1 };
+    const cells = [];
+    for (let x = 0; line && x < cols; x++) {
+      const cell = line.getCell(x);
+      if (!cell) break;
+      cells.push({ chars: cell.getChars(), width: cell.getWidth() });
+    }
+    const w = cellWordBounds(cells, c.col);
     sel = { kind: 'live', slot, cols, a: row * cols + w.start, e: row * cols + w.end - 1 };
     applyLive(x, y);
   } else if (histApi() && !slot.hist.hidden && inRect(slot.hist.getBoundingClientRect(), x, y)) {
