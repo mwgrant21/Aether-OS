@@ -33,6 +33,12 @@ val KEY_ORDER: List<Key> = listOf(
 fun keysEnabled(cur: TerminalHost.Tab?, flow: FlowState.Connected?, hostAccepts: Boolean): Boolean =
     hostAccepts && flow != null && cur != null && cur.state == SlotState.RUNNING
 
+/** Clipboard text to paste, or null when there is nothing to send (null or empty clip). */
+fun pasteText(clip: CharSequence?): String? = clip?.toString()?.takeIf { it.isNotEmpty() }
+
+/** PASTE is offered only where typing is: same gate as the keys and the compose bar. */
+fun pasteVisible(keysEnabled: Boolean): Boolean = keysEnabled
+
 /** Chars not sent since the last successful ack or slot switch, and why the last whole-input refusal happened. */
 data class NotSentNotice(val chars: Int = 0, val refusal: InputSender.Refusal? = null) {
     val visible: Boolean get() = chars > 0

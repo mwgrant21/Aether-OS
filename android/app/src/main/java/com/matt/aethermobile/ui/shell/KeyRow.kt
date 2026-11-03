@@ -47,6 +47,12 @@ fun KeyRow(enabled: Boolean, ctrlOn: Boolean, actions: ShellActions) {
                     )
                 }
             }
+            if (pasteVisible(enabled)) {
+                val pasteDesc = stringResource(R.string.key_paste_desc)
+                Box(Modifier.width(72.dp).semantics { contentDescription = pasteDesc }) {
+                    AeSecondaryButton(stringResource(R.string.key_paste), { actions.onPaste() }, enabled = enabled)
+                }
+            }
         }
     }
 }

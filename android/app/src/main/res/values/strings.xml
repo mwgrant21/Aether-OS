@@ -69,4 +69,6 @@
     <string name="sel_copy_desc">Copy the selected terminal text</string>
     <string name="sel_cancel_desc">Clear the terminal selection</string>
     <string name="sel_copied">Copied</string>
+    <string name="key_paste">PASTE</string>
+    <string name="key_paste_desc">Paste the clipboard into the terminal without pressing Enter</string>
 </resources>
