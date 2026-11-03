@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { createApplyEngine } from '../../../electron/aetherChoice/applyEngine';
 import type { IdleReading } from '../../../electron/aetherChoice/applyEngine';
 import { loadPicks, savePicks } from '../../../electron/aetherChoice/pickStore';
-import { markExited, markLaunched, newRecord, planLaunch } from './pickRecord';
+import { clearHalt, deriveReadoutState, markExited, markLaunched, newRecord, planLaunch, submitPick } from './pickRecord';
+import { applyBudget } from './pickPolicy';
 import type { LaunchPlan, ThreadPickRecord } from './pickRecord';
 import { LAUNCH_EFFORTS, MODEL_ALIASES } from './types';
 import type { ModelAlias, Pick, PickSource, PickTrigger } from './types';
@@ -207,7 +208,7 @@ const foldOf = (r: ThreadPickRecord): Pick => ({
 const same = (a: Pick | null, b: Pick | null) => JSON.stringify(a) === JSON.stringify(b);
 
 describe('randomized invariant sweep', () => {
-  it(`holds I1-I5 over ${SEQUENCES} sequences x ${OPS} ops (seed 0x${SEED.toString(16)})`, async () => {
+  it(`holds I1-I5 and G1-G3 over ${SEQUENCES} sequences x ${OPS} ops (seed 0x${SEED.toString(16)})`, async () => {
     const rand = rng(SEED);
     const int = (n: number) => Math.floor(rand() * n);
     const pick1 = <T>(l: readonly T[]): T => l[int(l.length)];
@@ -217,6 +218,10 @@ describe('randomized invariant sweep', () => {
     let manualLive = 0;
     let roundTrips = 0;
     let notLiveChecks = 0;
+    let g1Checks = 0;
+    let g2Checks = 0;
+    let g2Retries = 0;
+    let g3Checks = 0;
     try {
       for (let s = 0; s < SEQUENCES; s++) {
         const start = pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS));
@@ -248,6 +253,11 @@ describe('randomized invariant sweep', () => {
               }
             }
             if (source === 'auto' && trigger === 'budget') expect(r.intended, where + ' I1 submit').toEqual(rec0.intended);
+            // G3: an accepted pick that leaves something pending reads as pending, never as a stale sent.
+            if (res.rejected === null && r !== rec0 && rec0.live && !r.halted && (r.queue || r.modelPending)) {
+              expect(['queued', 'queuedModel'], where + ' G3').toContain(deriveReadoutState(r, { hasReadback: false }));
+              g3Checks++;
+            }
             // F1: an auto budget submit never touches a manual-sourced record or one with a pending manual pick.
             if (source === 'auto' && trigger === 'budget' && (rec0.source === 'manual' || rec0.pendingSource === 'manual')) {
               expect(r, where + ' F1 submit').toEqual(rec0);
@@ -280,6 +290,14 @@ describe('randomized invariant sweep', () => {
               notLiveChecks++;
             }
             if (rec0.live) {
+              let rec1 = rec0;
+              // Policy-shaped budget submit: the one-rung step from the desired pick at the current usage.
+              if (rand() < 0.6) {
+                const b0 = rec1.launched ?? rec1.intended;
+                const step = applyBudget({ model: b0.model, effort: rec1.intended.effort }, { sessionPct: h.st.usage, weekPct: 0 }, 'auto', rec1.lastBudgetLevel).pick;
+                h.engine.onPick(T, step, { reason: 'b', trigger: 'budget', source: 'auto' });
+              }
+              rec1 = h.st.rec;
               const before = h.writes.length;
               const result = h.engine.onIdleCheck(T);
               const r = h.st.rec;
@@ -290,16 +308,45 @@ describe('randomized invariant sweep', () => {
                 if (/xhigh|max/.test(bytes)) {
                   highWrites++;
                   // xhigh/max are manual-only: only a manual-sourced queued pick can carry them.
-                  expect(rec0.queue?.source, where + ' I5 manual-only effort').toBe('manual');
+                  expect(rec1.queue?.source, where + ' I5 manual-only effort').toBe('manual');
                 }
-                running = { model: (rec0.launched ?? rec0.intended).model, effort: bytes.slice(8, -1) as Pick['effort'] };
-                if (rec0.queue?.trigger === 'budget') expect(r.intended, where + ' I1 idle').toEqual(rec0.intended);
+                running = { model: (rec1.launched ?? rec1.intended).model, effort: bytes.slice(8, -1) as Pick['effort'] };
+                if (rec1.queue?.trigger === 'budget') {
+                  expect(r.intended, where + ' I1 idle').toEqual(rec1.intended);
+                  // G1: a budget-triggered write is applyBudget of the desired pick, applied exactly once.
+                  const base = rec1.launched ?? rec1.intended;
+                  const want = applyBudget(
+                    { model: base.model, effort: rec1.intended.effort },
+                    { sessionPct: h.st.usage, weekPct: 0 },
+                    rec1.queue.source,
+                    rec1.lastBudgetLevel,
+                  ).pick.effort;
+                  expect(bytes, where + ' G1').toBe('/effort ' + want + String.fromCharCode(13));
+                  g1Checks++;
+                }
               } else {
                 expect(h.writes.length, where).toBe(before);
               }
             }
+          } else if (rec0.live && rec0.halted && rand() < 0.5) {
+            h.engine.clearHalt(T);
           } else if (rec0.live) {
-            h.engine.reportOutcome(T, rand() < 0.7 ? 'confirmed' : 'not-applied', null);
+            const notApplied = rand() >= 0.7;
+            const actual = notApplied && rand() < 0.5 ? pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS)) : null;
+            h.engine.reportOutcome(T, notApplied ? 'not-applied' : 'confirmed', actual);
+            if (notApplied && actual && !rec0.halted) {
+              // G2: the reported actual pick becomes the baseline; the desire is kept and can be retried.
+              const r = h.st.rec;
+              expect(r.launched, where + ' G2 launched').toEqual(actual);
+              expect(r.intended, where + ' G2 intended').toEqual(rec0.intended);
+              running = { ...actual };
+              g2Checks++;
+              if (!same(r.intended, actual)) {
+                const retry = submitPick(clearHalt(r), r.intended, { reason: 'r', trigger: 'manual', source: 'manual', now: 1 });
+                expect(retry.record.queue !== null || retry.record.modelPending !== null, where + ' G2 retry').toBe(true);
+                g2Retries++;
+              }
+            }
           }
           const r = h.st.rec;
           // F1: a manual-sourced record (or one with a pending manual pick) never carries a budget queue.
@@ -336,5 +383,43 @@ describe('randomized invariant sweep', () => {
     expect(manualLive).toBeGreaterThan(1000);
     expect(roundTrips).toBe(SEQUENCES / 10);
     expect(notLiveChecks).toBeGreaterThan(300);
+    expect(g1Checks, 'G1 checks').toBeGreaterThan(30);
+    expect(g2Checks, 'G2 checks').toBeGreaterThan(300);
+    expect(g2Retries, 'G2 retries').toBeGreaterThan(300);
+    expect(g3Checks, 'G3 checks').toBeGreaterThan(300);
+  }, 120_000);
+});
+
+// Auto records are a minority of the main sweep (any manual pick sticks), so G1 also gets its own
+// seeded sweep over auto-sourced threads whose usage crosses the 70/75/90 thresholds and hysteresis band.
+describe('G1 budget sweep: one threshold crossing is one step', () => {
+  it('every budget-triggered write equals applyBudget(desired, usage) over 1500 sequences x 20 ops', () => {
+    const rand = rng(SEED ^ 0x9e3779b1);
+    const int = (n: number) => Math.floor(rand() * n);
+    let checks = 0;
+    for (let s = 0; s < 1500; s++) {
+      const h = harness(newRecord(T, pk(['haiku', 'sonnet', 'opus'][int(3)] as ModelAlias, ['low', 'medium', 'high'][int(3)] as Pick['effort']), AUTO));
+      launch(h);
+      for (let o = 0; o < 20; o++) {
+        const where = 'g1 seq ' + s + ' op ' + o;
+        h.st.usage = [0, 30, 64, 66, 69, 70, 72, 75, 80, 88, 90, 95][int(12)];
+        h.st.reading = 'idle';
+        if (!h.st.rec.live) { launch(h, { sessionPct: h.st.usage, weekPct: 0 }); continue; }
+        if (rand() < 0.2) h.engine.onPick(T, pk(['haiku', 'sonnet', 'opus'][int(3)] as ModelAlias, ['low', 'medium', 'high'][int(3)] as Pick['effort']), AUTO);
+        const r0 = h.st.rec;
+        const b0 = r0.launched ?? r0.intended;
+        const step = applyBudget({ model: b0.model, effort: r0.intended.effort }, { sessionPct: h.st.usage, weekPct: 0 }, 'auto', r0.lastBudgetLevel).pick;
+        h.engine.onPick(T, step, { reason: 'b', trigger: 'budget', source: 'auto' });
+        const r1 = h.st.rec;
+        const before = h.writes.length;
+        if (h.engine.onIdleCheck(T) === 'sent' && r1.queue?.trigger === 'budget') {
+          const want = applyBudget({ model: b0.model, effort: r1.intended.effort }, { sessionPct: h.st.usage, weekPct: 0 }, 'auto', r1.lastBudgetLevel).pick.effort;
+          expect(h.writes[before], where).toBe('/effort ' + want + String.fromCharCode(13));
+          checks++;
+        }
+        if (rand() < 0.15) h.st.rec = markExited(h.st.rec);
+      }
+    }
+    expect(checks).toBeGreaterThan(300);
   }, 120_000);
 });

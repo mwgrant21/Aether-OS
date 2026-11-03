@@ -94,9 +94,12 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const q = rec.queue;
     // The running pick is the baseline; `intended` is the desired pick and may differ after a budget lowering.
     const base = rec.launched ?? rec.intended;
-    // The queued model may be stale and the plan may have been budget-lowered since:
-    // re-run the budget against the live model and the queued effort, and read only the effort.
-    const b = applyBudget({ model: base.model, effort: q.pick.effort }, deps.usage(), q.source, rec.lastBudgetLevel);
+    // The queued model may be stale and the plan may have been budget-lowered since: re-run the budget
+    // against the live model and read only the effort. A budget-triggered queue already carries one policy
+    // step, so it is re-evaluated from the desired effort (never from the queued, already-lowered one):
+    // one threshold crossing is one step.
+    const budgetInput = q.trigger === 'budget' ? rec.intended.effort : q.pick.effort;
+    const b = applyBudget({ model: base.model, effort: budgetInput }, deps.usage(), q.source, rec.lastBudgetLevel);
     const effort = b.pick.effort;
     if (!(LAUNCH_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
     // A budget step-down is never a desire; a real desire the budget held down is kept as intent.

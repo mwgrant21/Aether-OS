@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TerminalSlotId } from '../../src/shared/remote/types';
 import type { Pick } from '../../src/shared/aetherChoice/types';
 import { markExited, markLaunched, newRecord } from '../../src/shared/aetherChoice/pickRecord';
+import { applyBudget } from '../../src/shared/aetherChoice/pickPolicy';
+import type { BudgetLevel } from '../../src/shared/aetherChoice/pickPolicy';
 import type { ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
 import { createApplyEngine, formatPickLine, unknownIdle } from './applyEngine';
 import type { IdleReading } from './applyEngine';
@@ -194,12 +196,13 @@ describe('applyEngine', () => {
     expect(s.writes).toEqual([['claude', '/effort low\r']]);
   });
 
-  it('a hybrid auto repick at the step level steps down from the live rung', () => {
+  it('a hybrid auto repick at the step level steps one rung from the desired pick (opus/high -> sonnet/high, effort unchanged)', () => {
     const s = setup({ usage: 72 });
     liveAs(s, 'opus', 'high');
     s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, { ...META, trigger: 'budget', source: 'auto' });
-    s.engine.onIdleCheck(T);
-    expect(s.writes).toEqual([['claude', '/effort medium\r']]);
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toEqual([]);
+    expect(s.records.get(T)?.queue).toBeNull();
   });
 
   it('a budget-lowered effort equal to the live effort writes nothing but clears the queue', () => {
@@ -266,5 +269,63 @@ describe('applyEngine: queued effort needs a live thread (F2)', () => {
     expect(s.engine.onIdleCheck(T)).toBe('skipped');
     expect(s.writes).toEqual([]);
     expect(s.records.get(T)?.queue).toEqual(before?.queue);
+  });
+});
+
+describe('applyEngine: budget write is one step from the desired pick (G1)', () => {
+  const BUDGET = { reason: 'b', trigger: 'budget' as const, source: 'auto' as const };
+  function autoHigh(usage: number, lastBudgetLevel: BudgetLevel = 'none') {
+    const s = setup({ usage });
+    s.records.set(T, { ...s.records.get(T)!, intended: HIGH, launched: HIGH, lastBudgetLevel });
+    return s;
+  }
+
+  it('usage 72 with the policy sonnet/medium budget pick writes /effort medium, not low', () => {
+    const s = autoHigh(72);
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, BUDGET);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.writes).toEqual([['claude', '/effort medium\r']]);
+    expect(s.records.get(T)?.intended).toEqual(HIGH);
+  });
+
+  it('across 70/75/90 and hysteresis the write equals applyBudget(desired, usage) exactly once', () => {
+    let checked = 0;
+    for (const prev of ['none', 'step', 'floor'] as const) {
+      for (const pct of [0, 64, 65, 69, 70, 72, 74, 75, 79, 85, 89, 90, 95, 100]) {
+        const s = autoHigh(pct, prev);
+        const want = applyBudget(HIGH, { sessionPct: pct, weekPct: 0 }, 'auto', prev).pick;
+        s.engine.onPick(T, want, BUDGET);
+        if (want.effort === HIGH.effort) { expect(s.records.get(T)?.queue).toBeNull(); continue; }
+        expect(s.engine.onIdleCheck(T)).toBe('sent');
+        expect(s.writes).toEqual([['claude', `/effort ${want.effort}\r`]]);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(10);
+  });
+});
+
+describe('applyEngine: a reported apply failure reconciles the live baseline (G2)', () => {
+  it('not-applied with an actual pick sets launched to it, keeps intended, and a retry queues again', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.records.get(T)?.launched?.effort).toBe('high');
+    s.engine.reportOutcome(T, 'not-applied', { model: 'sonnet', effort: 'medium' });
+    expect(s.records.get(T)?.launched).toEqual({ model: 'sonnet', effort: 'medium' });
+    expect(s.records.get(T)?.intended).toEqual(HIGH);
+    s.engine.clearHalt(T);
+    s.engine.onPick(T, HIGH, META);
+    expect(s.records.get(T)?.queue?.pick.effort).toBe('high');
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.writes).toHaveLength(2);
+  });
+
+  it('an invalid actual pick is ignored and launched stays as it was', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    s.engine.onIdleCheck(T);
+    s.engine.reportOutcome(T, 'not-applied', { model: 'fable', effort: 'ultra' } as unknown as Pick);
+    expect(s.records.get(T)?.launched).toEqual(HIGH);
   });
 });

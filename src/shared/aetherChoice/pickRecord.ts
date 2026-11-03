@@ -1,7 +1,7 @@
 // AetherChoice per-thread pick record. Pure: immutable records, no I/O, no clock
 // (callers pass `now`), no prompt text. Option R: a model pick on a live thread
 // is held in modelPending and never enters the apply queue.
-import { LAUNCH_EFFORTS } from './types';
+import { LAUNCH_EFFORTS, MODEL_ALIASES } from './types';
 import type {
   LaunchEffort,
   ModelAlias,
@@ -124,7 +124,10 @@ export function submitPick(
       next.effort !== base.effort
         ? { pick: { model: base.model, effort: next.effort }, reason: meta.reason, trigger: meta.trigger, source: meta.source, queuedAt: meta.now }
         : null;
-    return { record: { ...rec, queue, pendingSource: queue ? meta.source : null }, rejected: null };
+    return {
+      record: { ...rec, queue, pendingSource: queue ? meta.source : null, outcome: queue && rec.outcome === 'sent' ? 'none' : rec.outcome },
+      rejected: null,
+    };
   }
   // Live (or halted): a part that differs from the running pick is held (model, applies at the next
   // resume) or queued (effort). A part equal to the running pick needs nothing applied, so it becomes
@@ -152,6 +155,8 @@ export function submitPick(
       queue,
       modelPending,
       pendingSource: queue || modelPending ? meta.source : null,
+      // A new pending part supersedes an earlier sent write: the readout shows what waits now.
+      outcome: (queue || modelPending) && rec.outcome === 'sent' ? 'none' : rec.outcome,
       // A manual submit is never silently reverted: it owns the record's source.
       source: meta.source === 'manual' || intendedChanged ? meta.source : rec.source,
       reason: changed ? meta.reason : rec.reason,
@@ -251,12 +256,24 @@ export function clearPendingStepDown(rec: ThreadPickRecord): ThreadPickRecord {
   return { ...rec, pendingStepDown: false };
 }
 
+function isLaunchablePick(p: Pick): boolean {
+  return (MODEL_ALIASES as readonly string[]).includes(p.model) && (LAUNCH_EFFORTS as readonly string[]).includes(p.effort);
+}
+
 export function markNotApplied(
   rec: ThreadPickRecord,
   wanted: Pick,
   actual: Pick | null,
 ): ThreadPickRecord {
-  return { ...rec, halted: { wanted: { ...wanted }, actual: actual ? { ...actual } : null }, outcome: 'not-applied' };
+  // A reported actual pick is what is really running: it replaces the optimistic `launched`.
+  // `intended` stays, so an explicit retry of the desired pick queues again. An unlaunchable actual is ignored.
+  const known = actual !== null && isLaunchablePick(actual);
+  return {
+    ...rec,
+    launched: known ? { ...actual } : rec.launched,
+    halted: { wanted: { ...wanted }, actual: actual ? { ...actual } : null },
+    outcome: 'not-applied',
+  };
 }
 
 /** Only clears the halt; the explicit clear is the caller's decision. */

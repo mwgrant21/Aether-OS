@@ -234,3 +234,20 @@ describe('submitPick: auto budget never touches a manual record (F1)', () => {
     expect(r.record).toEqual(rec);
   });
 });
+
+describe('a new pending pick supersedes an earlier sent outcome (G3)', () => {
+  const sent = (): ThreadPickRecord => ({ ...live(), outcome: 'sent' });
+
+  it('a model pick after a sent effort write reads queuedModel, not unconfirmed', () => {
+    const r = sub(sent(), { model: 'opus', effort: 'medium' }, 'manual').record;
+    expect(r.modelPending).toBe('opus');
+    expect(deriveReadoutState(r, { hasReadback: false })).toBe('queuedModel');
+  });
+
+  it('an effort pick after a sent write reads queued; a pick that changes nothing keeps sent', () => {
+    const r = sub(sent(), { model: 'sonnet', effort: 'high' }, 'manual').record;
+    expect(deriveReadoutState(r, { hasReadback: false })).toBe('queued');
+    const same = sub(sent(), SONNET_MED, 'manual').record;
+    expect(deriveReadoutState(same, { hasReadback: false })).toBe('unconfirmed');
+  });
+});
