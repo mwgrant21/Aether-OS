@@ -8,7 +8,7 @@ import { createApplyEngine } from '../../../electron/aetherChoice/applyEngine';
 import type { IdleReading } from '../../../electron/aetherChoice/applyEngine';
 import { loadPicks, savePicks } from '../../../electron/aetherChoice/pickStore';
 import { clearHalt, deriveReadoutState, markExited, markLaunched, newRecord, planLaunch, submitPick } from './pickRecord';
-import { applyBudget } from './pickPolicy';
+import { LADDER_RUNGS, applyBudget } from './pickPolicy';
 import type { LaunchPlan, ThreadPickRecord } from './pickRecord';
 import { LAUNCH_EFFORTS, MODEL_ALIASES } from './types';
 import type { ModelAlias, Pick, PickSource, PickTrigger } from './types';
@@ -205,6 +205,15 @@ const foldOf = (r: ThreadPickRecord): Pick => ({
   model: r.modelPending ?? r.intended.model,
   effort: r.queue && r.queue.trigger !== 'budget' ? r.queue.pick.effort : r.intended.effort,
 });
+// H3: reaching the desired effort from a lowered rung needs usage below the hysteresis band
+// (65, or 70 when the last level was none). Only meaningful when the desired pick has a rung to step down to.
+const reachedDesireNeedsBand = (base: Pick, desired: Pick, written: string, level: string, usage: number): boolean | null => {
+  const idx = LADDER_RUNGS.findIndex((r) => r.model === base.model && r.effort === desired.effort);
+  const ord = LAUNCH_EFFORTS as readonly string[];
+  // A step that changes only the model leaves the effort equal to the desired one; that is not a step-up.
+  if (idx <= 0 || LADDER_RUNGS[idx - 1].effort === desired.effort || written !== desired.effort || ord.indexOf(written) <= ord.indexOf(base.effort)) return null;
+  return usage < (level === 'none' ? 70 : 65);
+};
 const same = (a: Pick | null, b: Pick | null) => JSON.stringify(a) === JSON.stringify(b);
 
 describe('randomized invariant sweep', () => {
@@ -222,6 +231,9 @@ describe('randomized invariant sweep', () => {
     let g2Checks = 0;
     let g2Retries = 0;
     let g3Checks = 0;
+    let h1Trips = 0;
+    let h2Checks = 0;
+    let h3Checks = 0;
     try {
       for (let s = 0; s < SEQUENCES; s++) {
         const start = pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS));
@@ -323,6 +335,12 @@ describe('randomized invariant sweep', () => {
                   ).pick.effort;
                   expect(bytes, where + ' G1').toBe('/effort ' + want + String.fromCharCode(13));
                   g1Checks++;
+                  // H3: no step-up while the hysteresis band (or the 70 threshold) still holds the level.
+                  const band = reachedDesireNeedsBand(base, rec1.intended, bytes.slice(8, -1), rec1.lastBudgetLevel, h.st.usage);
+                  if (band !== null) {
+                    expect(band, where + ' H3').toBe(true);
+                    h3Checks++;
+                  }
                 }
               } else {
                 expect(h.writes.length, where).toBe(before);
@@ -332,16 +350,26 @@ describe('randomized invariant sweep', () => {
             h.engine.clearHalt(T);
           } else if (rec0.live) {
             const notApplied = rand() >= 0.7;
-            const actual = notApplied && rand() < 0.5 ? pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS)) : null;
+            const bad = [{ model: 'fable', effort: 'low' }, { model: 'sonnet', effort: 'ultra' }, { model: 'opus', effort: 'max', extra: 1 }];
+            const actual = (notApplied && rand() < 0.5
+              ? rand() < 0.3 ? pick1(bad) : pk(pick1(MODEL_ALIASES), pick1(LAUNCH_EFFORTS))
+              : null) as Pick | null;
+            const valid = actual !== null && (MODEL_ALIASES as readonly string[]).includes(actual.model) && (LAUNCH_EFFORTS as readonly string[]).includes(actual.effort);
             h.engine.reportOutcome(T, notApplied ? 'not-applied' : 'confirmed', actual);
             if (notApplied && actual && !rec0.halted) {
               // G2: the reported actual pick becomes the baseline; the desire is kept and can be retried.
               const r = h.st.rec;
-              expect(r.launched, where + ' G2 launched').toEqual(actual);
+              const want = valid ? { model: actual.model, effort: actual.effort } : rec0.launched;
+              expect(r.launched, where + ' G2 launched').toStrictEqual(want);
+              expect(r.halted?.actual ?? null, where + ' H1 halted.actual').toStrictEqual(valid ? want : null);
               expect(r.intended, where + ' G2 intended').toEqual(rec0.intended);
-              running = { ...actual };
+              running = want ? { ...want } : null;
               g2Checks++;
-              if (!same(r.intended, actual)) {
+              // H1: a halted record survives save/load unchanged, whatever the report carried.
+              await savePicks(dir, { [T]: r });
+              expect(loadPicks(dir)[T], where + ' H1 round trip').toEqual(r);
+              h1Trips++;
+              if (valid && !same(r.intended, want)) {
                 const retry = submitPick(clearHalt(r), r.intended, { reason: 'r', trigger: 'manual', source: 'manual', now: 1 });
                 expect(retry.record.queue !== null || retry.record.modelPending !== null, where + ' G2 retry').toBe(true);
                 g2Retries++;
@@ -353,6 +381,11 @@ describe('randomized invariant sweep', () => {
           if (r.queue?.trigger === 'budget') {
             expect(r.source, where + ' F1 source').toBe('auto');
             expect(r.pendingSource, where + ' F1 pendingSource').not.toBe('manual');
+          }
+          // H2: a held model pick is never masked by a sent outcome.
+          if (r.modelPending && !r.halted) {
+            expect(['queued', 'queuedModel'], where + ' H2').toContain(deriveReadoutState(r, { hasReadback: false }));
+            h2Checks++;
           }
           // I2: launched is exactly what is running.
           expect(r.launched, where + ' I2').toEqual(running);
@@ -387,6 +420,9 @@ describe('randomized invariant sweep', () => {
     expect(g2Checks, 'G2 checks').toBeGreaterThan(300);
     expect(g2Retries, 'G2 retries').toBeGreaterThan(300);
     expect(g3Checks, 'G3 checks').toBeGreaterThan(300);
+    expect(h1Trips, 'H1 round trips').toBeGreaterThan(300);
+    expect(h2Checks, 'H2 checks').toBeGreaterThan(300);
+    expect(h3Checks, 'H3 checks').toBeGreaterThan(0);
   }, 120_000);
 });
 
@@ -397,6 +433,7 @@ describe('G1 budget sweep: one threshold crossing is one step', () => {
     const rand = rng(SEED ^ 0x9e3779b1);
     const int = (n: number) => Math.floor(rand() * n);
     let checks = 0;
+    let stepUps = 0;
     for (let s = 0; s < 1500; s++) {
       const h = harness(newRecord(T, pk(['haiku', 'sonnet', 'opus'][int(3)] as ModelAlias, ['low', 'medium', 'high'][int(3)] as Pick['effort']), AUTO));
       launch(h);
@@ -416,10 +453,16 @@ describe('G1 budget sweep: one threshold crossing is one step', () => {
           const want = applyBudget({ model: b0.model, effort: r1.intended.effort }, { sessionPct: h.st.usage, weekPct: 0 }, 'auto', r1.lastBudgetLevel).pick.effort;
           expect(h.writes[before], where).toBe('/effort ' + want + String.fromCharCode(13));
           checks++;
+          const band = reachedDesireNeedsBand(b0, r1.intended, h.writes[before].slice(8, -1), r1.lastBudgetLevel, h.st.usage);
+          if (band !== null) {
+            expect(band, where + ' H3').toBe(true);
+            stepUps++;
+          }
         }
         if (rand() < 0.15) h.st.rec = markExited(h.st.rec);
       }
     }
     expect(checks).toBeGreaterThan(300);
+    expect(stepUps, 'H3 step-ups').toBeGreaterThan(100);
   }, 120_000);
 });

@@ -101,6 +101,8 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     const budgetInput = q.trigger === 'budget' ? rec.intended.effort : q.pick.effort;
     const b = applyBudget({ model: base.model, effort: budgetInput }, deps.usage(), q.source, rec.lastBudgetLevel);
     const effort = b.pick.effort;
+    // The level this budget run reached feeds the next run's hysteresis (a manual source is never budgeted).
+    const levelAfter = q.source === 'manual' ? rec.lastBudgetLevel : b.level;
     if (!(LAUNCH_EFFORTS as readonly string[]).includes(effort)) return 'skipped';
     // A budget step-down is never a desire; a real desire the budget held down is kept as intent.
     const desire = q.trigger !== 'budget';
@@ -110,6 +112,7 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
         intended: desire ? { ...rec.intended, effort: q.pick.effort } : rec.intended,
         source: desire ? q.source : rec.source,
         queue: null,
+        lastBudgetLevel: levelAfter,
       });
       return 'skipped';
     }
@@ -127,7 +130,9 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
       queue: null,
       source: desire ? q.source : rec.source,
       pendingSource: rec.modelPending ? rec.pendingSource : null,
-      outcome: 'sent',
+      lastBudgetLevel: levelAfter,
+      // A held model pick stays visible in the readout: 'sent' would mask it until a confirmed report.
+      outcome: rec.modelPending ? 'none' : 'sent',
     };
     if (q.trigger === 'budget') next = setPendingStepDown(next);
     deps.setRecord(threadId, next);

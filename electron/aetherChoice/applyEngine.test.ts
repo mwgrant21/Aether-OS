@@ -329,3 +329,38 @@ describe('applyEngine: a reported apply failure reconciles the live baseline (G2
     expect(s.records.get(T)?.launched).toEqual(HIGH);
   });
 });
+
+describe('applyEngine: a sent write keeps a held model pick visible (H2)', () => {
+  it('manual opus/high on sonnet/medium: after the effort write the readout is still queuedModel', () => {
+    const s = setup();
+    s.engine.onPick(T, { model: 'opus', effort: 'high' }, META);
+    expect(s.engine.readoutState(T)).toBe('queued');
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.records.get(T)?.modelPending).toBe('opus');
+    expect(s.engine.readoutState(T)).toBe('queuedModel');
+  });
+
+  it('with nothing held, a sent write still reads unconfirmed', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    s.engine.onIdleCheck(T);
+    expect(s.engine.readoutState(T)).toBe('unconfirmed');
+  });
+});
+
+describe('applyEngine: budget hysteresis survives the engine writes (H3)', () => {
+  it('real policy over 0,72,76,91,86,71,66,65,64,0 follows T2 thresholds', () => {
+    const s = setup();
+    s.records.set(T, { ...s.records.get(T)!, intended: HIGH, launched: HIGH });
+    const seen: string[] = [];
+    for (const pct of [0, 72, 76, 91, 86, 71, 66, 65, 64, 0]) {
+      s.state.usage = pct;
+      const r = s.records.get(T)!;
+      const want = applyBudget({ model: 'sonnet', effort: r.intended.effort }, { sessionPct: pct, weekPct: 0 }, 'auto', r.lastBudgetLevel).pick;
+      s.engine.onPick(T, want, { reason: 'b', trigger: 'budget', source: 'auto' });
+      s.engine.onIdleCheck(T);
+      seen.push(s.records.get(T)!.launched!.effort);
+    }
+    expect(seen).toEqual(['high', 'medium', 'medium', 'low', 'low', 'medium', 'medium', 'medium', 'high', 'high']);
+  });
+});

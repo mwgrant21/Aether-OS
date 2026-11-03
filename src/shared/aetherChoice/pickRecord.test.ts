@@ -251,3 +251,18 @@ describe('a new pending pick supersedes an earlier sent outcome (G3)', () => {
     expect(deriveReadoutState(same, { hasReadback: false })).toBe('unconfirmed');
   });
 });
+
+describe('markNotApplied copies only a launchable actual (H1)', () => {
+  it('copies exactly model and effort into launched and halted.actual; extra keys do not leak', () => {
+    const r = markNotApplied({ ...live(), launched: { model: 'sonnet', effort: 'high' } }, { model: 'sonnet', effort: 'high' }, { model: 'haiku', effort: 'low', x: 1 } as Pick);
+    expect(r.launched).toStrictEqual({ model: 'haiku', effort: 'low' });
+    expect(r.halted?.actual).toStrictEqual({ model: 'haiku', effort: 'low' });
+  });
+
+  it('an unlaunchable actual is stored as null, the halt is still recorded, launched is untouched', () => {
+    const base = { ...live(), launched: SONNET_MED };
+    const r = markNotApplied(base, { model: 'sonnet', effort: 'high' }, { model: 'fable', effort: 'ultra' } as unknown as Pick);
+    expect(r.halted).toEqual({ wanted: { model: 'sonnet', effort: 'high' }, actual: null });
+    expect(r.launched).toEqual(SONNET_MED);
+  });
+});

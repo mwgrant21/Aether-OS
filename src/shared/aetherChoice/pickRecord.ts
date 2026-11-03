@@ -267,11 +267,12 @@ export function markNotApplied(
 ): ThreadPickRecord {
   // A reported actual pick is what is really running: it replaces the optimistic `launched`.
   // `intended` stays, so an explicit retry of the desired pick queues again. An unlaunchable actual is ignored.
-  const known = actual !== null && isLaunchablePick(actual);
+  // Only a launchable actual is stored (the pick store rejects any other and would drop the whole record).
+  const known: Pick | null = actual !== null && isLaunchablePick(actual) ? { model: actual.model, effort: actual.effort } : null;
   return {
     ...rec,
-    launched: known ? { ...actual } : rec.launched,
-    halted: { wanted: { ...wanted }, actual: actual ? { ...actual } : null },
+    launched: known ? { ...known } : rec.launched,
+    halted: { wanted: { ...wanted }, actual: known },
     outcome: 'not-applied',
   };
 }

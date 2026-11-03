@@ -130,3 +130,15 @@ describe('pickStore size cap (F3)', () => {
     expect(n).toBeGreaterThan(50);
   });
 });
+
+describe('pickStore: a halted record with an unlaunchable reported actual survives save/load (H1)', () => {
+  it('stores no actual for fable/ultra/junk, keeps the halt, and loads unchanged', async () => {
+    for (const actual of [{ model: 'fable', effort: 'low' }, { model: 'sonnet', effort: 'ultra' }, { model: 1, effort: null }]) {
+      const live = { ...rec(), live: true, launched: { model: 'sonnet', effort: 'medium' } } as const;
+      const r = markNotApplied(live, { model: 'sonnet', effort: 'high' }, actual as never);
+      expect(r.halted?.actual).toBeNull();
+      await savePicks(dir, { t1: r });
+      expect(loadPicks(dir)).toEqual({ t1: r });
+    }
+  });
+});
