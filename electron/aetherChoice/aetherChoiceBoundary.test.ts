@@ -1,0 +1,137 @@
+// @vitest-environment node
+// electron/aetherChoice/aetherChoiceBoundary.test.ts
+//
+// Source-scan guard for the whole AetherChoice feature (src/shared/aetherChoice, src/components/aetherChoice,
+// electron/aetherChoice). Every non-test .ts/.tsx file is comment-stripped, then matched against the rules below.
+// Limitation: matching is plain regex over the comment-free text, so a string literal that merely mentions a
+// forbidden word trips it too (intended: the words have no business in this feature), and a value built at
+// runtime from fragments is out of reach. The planted-violation self-test proves every rule fires, and the
+// file-list assertion stops the scan passing on an empty tree.
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import ts from 'typescript';
+import { MODEL_ALIASES } from '../../src/shared/aetherChoice/types';
+
+const REPO = path.resolve(__dirname, '../..');
+const DIRS = ['src/shared/aetherChoice', 'src/components/aetherChoice', 'electron/aetherChoice'];
+const REQUIRED = [
+  'src/shared/aetherChoice/types.ts',
+  'src/shared/aetherChoice/tiers.ts',
+  'src/shared/aetherChoice/pickPolicy.ts',
+  'src/shared/aetherChoice/pickRecord.ts',
+  'src/components/aetherChoice/PickReadout.tsx',
+  'electron/aetherChoice/launchCommand.ts',
+  'electron/aetherChoice/applyEngine.ts',
+  'electron/aetherChoice/pickStore.ts',
+];
+const FS_OWNER = 'electron/aetherChoice/pickStore.ts';
+
+/** Source text with every comment removed: re-joins the syntax-tree tokens, so comment-like text inside strings survives. */
+function stripComments(text: string, name: string): string {
+  const sf = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const out: string[] = [];
+  const walk = (n: ts.Node): void => {
+    const kids = n.getChildren(sf);
+    if (kids.length === 0) out.push(text.slice(n.getStart(sf), n.getEnd()));
+    else kids.forEach(walk);
+  };
+  walk(sf);
+  return out.join(' ');
+}
+
+const FORBIDDEN_IMPORT = /node-pty|ptyManager|codexPtyManager|ptyLifecycle|^(?:node:)?child_process$|^electron$/;
+const FS_IMPORT = /^(?:node:)?fs(?:\/promises)?$|atomicWrite/;
+const ESC_BYTE = new RegExp('\\\\x1b|\\\\u001b|\\\\u\\{1b\\}|\\\\0?33|\\u001b', 'i');
+
+function specifiers(code: string): string[] {
+  const re = /(?:\bfrom|\bimport|\brequire\s*\()\s*\(?\s*(['"`])([^'"`]+)\1/g;
+  return [...code.matchAll(re)].map((m) => m[2]);
+}
+
+/** Returns the rule ids a file breaks. `rel` is the repo-relative posix path. */
+function check(rel: string, text: string): string[] {
+  const code = stripComments(text, rel);
+  const hit = new Set<string>();
+  if (/settings\.json/.test(code)) hit.add('settings-json');
+  if (/ANTHROPIC_MODEL|CLAUDE_CODE_EFFORT_LEVEL/.test(code)) hit.add('forbidden-env');
+  if (/\/model\b/.test(code)) hit.add('slash-model');
+  if (ESC_BYTE.test(code)) hit.add('escape-byte');
+  if (/\bultra\b/i.test(code)) hit.add('ultra');
+  for (const s of specifiers(code)) {
+    if (FORBIDDEN_IMPORT.test(s)) hit.add('forbidden-import');
+    if (FS_IMPORT.test(s) && rel !== FS_OWNER) hit.add('fs-outside-pickstore');
+  }
+  return [...hit].sort();
+}
+
+function listFiles(): string[] {
+  const out: string[] = [];
+  for (const d of DIRS) {
+    for (const e of fs.readdirSync(path.join(REPO, d), { withFileTypes: true })) {
+      if (e.isFile() && /\.tsx?$/.test(e.name) && !/\.(?:test|spec)\.tsx?$/.test(e.name)) out.push(`${d}/${e.name}`);
+    }
+  }
+  return out.sort();
+}
+
+describe('AetherChoice boundary: real tree', () => {
+  const files = listFiles();
+
+  it('the scan reaches the feature modules (cannot pass vacuously)', () => {
+    for (const r of REQUIRED) expect(files).toContain(r);
+  });
+
+  it('no scanned file breaks a rule', () => {
+    const bad = files.map((f) => ({ f, v: check(f, fs.readFileSync(path.join(REPO, f), 'utf8')) })).filter((x) => x.v.length > 0);
+    expect(bad).toEqual([]);
+  });
+
+  it('MODEL_ALIASES never lists fable', () => {
+    expect([...MODEL_ALIASES] as string[]).not.toContain('fable');
+  });
+});
+
+describe('AetherChoice boundary: the rules are live', () => {
+  const E = 'electron/aetherChoice/applyEngine.ts';
+  const PLANTED: Array<[string, string, string]> = [
+    ['settings-json', E, "export const p = '~/.claude/settings.json';"],
+    ['forbidden-env', E, "export const e = { ANTHROPIC_MODEL: 'sonnet' };"],
+    ['forbidden-env', E, "export const e = 'CLAUDE_CODE_EFFORT_LEVEL';"],
+    ['slash-model', E, 'export const w = (m: string) => `/model ${m}\\r`;'],
+    ['escape-byte', E, "export const esc = '\\x1b';"],
+    ['escape-byte', E, "export const esc = '\\u001b';"],
+    ['ultra', 'src/shared/aetherChoice/types.ts', "export const L = ['low', 'ultra'];"],
+    ['forbidden-import', E, "import * as pty from 'node-pty';"],
+    ['forbidden-import', E, "import { x } from '../ptyManager';"],
+    ['forbidden-import', E, "import { x } from '../codexPtyManager';"],
+    ['forbidden-import', E, "import { x } from '../ptyLifecycle';"],
+    ['forbidden-import', E, "import { spawn } from 'node:child_process';"],
+    ['forbidden-import', 'src/components/aetherChoice/PickReadout.tsx', "import { ipcRenderer } from 'electron';"],
+    ['fs-outside-pickstore', E, "import { readFileSync } from 'node:fs';"],
+    ['fs-outside-pickstore', 'src/shared/aetherChoice/pickRecord.ts', "import { writeFileAtomically } from '../../../electron/atomicWrite';"],
+  ];
+
+  it('every rule fires on a planted violation', () => {
+    for (const [rule, rel, src] of PLANTED) expect({ rule, rel, hit: check(rel, src).includes(rule) }).toEqual({ rule, rel, hit: true });
+    expect([...new Set(PLANTED.map((p) => p[0]))].sort()).toEqual([
+      'escape-byte', 'forbidden-env', 'forbidden-import', 'fs-outside-pickstore', 'settings-json', 'slash-model', 'ultra',
+    ]);
+  });
+
+  it('pickStore.ts alone may import node:fs and atomicWrite', () => {
+    const src = "import { readFileSync } from 'node:fs';\nimport { writeFileAtomically } from '../atomicWrite';";
+    expect(check(FS_OWNER, src)).toEqual([]);
+  });
+
+  it('comments are stripped, the same text as live code is not', () => {
+    const text = 'Never touches ~/.claude settings.json; typing /model or \\x1b or ultra is banned';
+    expect(check(FS_OWNER, `// ${text}\n/* ${text} */\nexport const a = 1;`)).toEqual([]);
+    expect(check(FS_OWNER, `export const a = '${text}';`)).toEqual(['escape-byte', 'settings-json', 'slash-model', 'ultra']);
+  });
+
+  it('a clean file stays clean, so no rule passes by rejecting everything', () => {
+    const src = "import type { X } from '../../src/shared/aetherChoice/types';\nexport const w = (l: string) => `/effort ${l}\\r`;";
+    expect(check(E, src)).toEqual([]);
+  });
+});
