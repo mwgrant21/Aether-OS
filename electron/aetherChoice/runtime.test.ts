@@ -597,4 +597,32 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     r.t.throwSchedule = false;
     expect(rt.state('claude')?.readout).not.toBe('notApplied'); // the halt was cleared before the timer threw
   });
+
+  it('28: launchCommandFor with a throwing host returns undefined, does not throw, logs once', () => {
+    const r = rig();
+    const rt = must(r);
+    r.t.throwNow = true;
+    let out: string | undefined = 'unset';
+    expect(() => {
+      out = rt.launchCommandFor('claude', { sessionId: SID });
+    }).not.toThrow();
+    expect(out).toBeUndefined();
+    expect(r.logs.filter((l) => l.startsWith('launch-failed'))).toEqual(['launch-failed claude']);
+    expect(r.logs.join('\n')).not.toContain('clock');
+    expect(r.writes).toEqual([]);
+    r.t.throwNow = false;
+    expect(rt.launchCommandFor('claude', { sessionId: SID })).toBe(`claude --session-id ${SID} --model sonnet --effort medium\r`);
+  });
+
+  it('29: a failed replacement launch clears the earlier plan, so the next start is foreign', async () => {
+    const r = rig({ records: autoHigh() });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.t.throwNow = true;
+    expect(rt.launchCommandFor('claude', { sessionId: OTHER_SID })).toBeUndefined();
+    r.t.throwNow = false;
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+    expect(r.logs).toContain('launch-failed claude');
+  });
 });

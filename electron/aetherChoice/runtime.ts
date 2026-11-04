@@ -124,13 +124,20 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
   return {
     launchCommandFor(slot, o) {
       if (disposed) return undefined;
-      const d = host.launchFor(slot, { sessionId: o?.sessionId });
-      if (d.command !== null) {
-        planned.set(slot, o?.sessionId);
-        return d.command;
+      try {
+        const d = host.launchFor(slot, { sessionId: o?.sessionId });
+        if (d.command !== null) {
+          planned.set(slot, o?.sessionId);
+          return d.command;
+        }
+        planned.delete(slot);
+        return undefined;
+      } catch {
+        // a host fault must not reach pty:start: launch unmanaged and drop any plan from an earlier call
+        planned.delete(slot);
+        safe(() => deps.log(`launch-failed ${slot}`));
+        return undefined;
       }
-      planned.delete(slot);
-      return undefined;
     },
     onForeignLaunch(slot) {
       planned.delete(slot);
