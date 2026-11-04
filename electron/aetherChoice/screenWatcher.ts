@@ -37,6 +37,9 @@ const SLOT_IDS: readonly WatchedSlot[] = ['claude', 'terminal2'];
 const validDims = (cols: unknown, rows: unknown): boolean =>
   Number.isInteger(cols) && (cols as number) > 0 && Number.isInteger(rows) && (rows as number) > 0;
 
+// The newest banner is the lowest one on screen, so scan from the bottom.
+const lastClaudeVersion = (rows: string[]): string | null => extractClaudeVersion([...rows].reverse());
+
 export function createScreenWatcher(deps: ScreenWatcherDeps): ScreenWatcher {
   const makeMirror: ScreenMirrorFactory = deps.createMirror ?? ((o) => createTerminalMirror(o));
   const classify = deps.classify ?? classifyScreen;
@@ -72,7 +75,11 @@ export function createScreenWatcher(deps: ScreenWatcherDeps): ScreenWatcher {
     const g = s.gen;
     try {
       const rows = await m.viewportText();
-      if (s.gen === g && s.version === null) s.version = extractClaudeVersion(rows);
+      // A shell screen can still show the old banner row; latching it would relatch a cleared version.
+      if (s.gen === g && s.version === null
+        && classify({ rows, coverage: s.coverage, claudeVersion: null }) !== 'shell') {
+        s.version = lastClaudeVersion(rows);
+      }
     } catch { /* probe is best effort */ }
     s.probing = false;
     if (s.probeAgain) {
@@ -123,7 +130,7 @@ export function createScreenWatcher(deps: ScreenWatcherDeps): ScreenWatcher {
         const g = s.gen;
         const rows = await s.mirror.viewportText();
         if (disposed || s.gen !== g) return 'unknown';
-        const seen = extractClaudeVersion(rows);
+        const seen = lastClaudeVersion(rows);
         if (seen !== null) s.version = seen;
         const reading = classify({ rows, coverage: s.coverage, claudeVersion: s.version });
         if (reading === 'shell') s.version = null;

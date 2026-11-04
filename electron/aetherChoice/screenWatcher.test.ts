@@ -260,6 +260,49 @@ describe('screenWatcher', () => {
     }
   });
 
+  it('a shell reading clears the version and the stale banner row on screen does not relatch it', async () => {
+    const claude = fakeSlot();
+    const w = createScreenWatcher({ slots: { claude: claude.slot, terminal2: fakeSlot().slot } });
+    try {
+      claude.start(130, 40);
+      claude.emit(out([...load('banner-version'), ...load('shell-prompt2')].join('\r\n')));
+      expect(await w.read('claude')).toBe('shell');
+      expect(w.version('claude')).toBeNull();
+      claude.emit(out('x'));
+      await flush();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(w.version('claude')).toBeNull();
+    } finally {
+      w.dispose();
+    }
+  });
+
+  it('a new banner below an old visible one latches the new version', async () => {
+    const claude = fakeSlot();
+    const w = createScreenWatcher({ slots: { claude: claude.slot, terminal2: fakeSlot().slot } });
+    try {
+      claude.start(130, 40);
+      claude.emit(out(`Claude Code v${V}\r\n\r\nClaude Code v9.9.9`));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(w.version('claude')).toBe('9.9.9');
+      await w.read('claude');
+      expect(w.version('claude')).toBe('9.9.9');
+    } finally {
+      w.dispose();
+    }
+  });
+
+  it('a probe that resolves after a replacement start does not latch', async () => {
+    const old = fakeMirror({ manual: true });
+    const { w, claude } = setup({ mirrors: [old, fakeMirror({ manual: true })] });
+    claude.start();
+    claude.emit(out('x'));
+    claude.start();
+    old.pending[0].resolve(BANNER);
+    await flush();
+    expect(w.version('claude')).toBeNull();
+  });
+
   it('source scan: no logging or timers, only the mirror is written, no pty/electron/fs imports', () => {
     const src = fs.readFileSync(path.join(__dirname, 'screenWatcher.ts'), 'utf8');
     for (const word of ['console', 'diag', 'logger', 'setTimeout', 'setInterval', 'writePort']) expect(src).not.toContain(word);
