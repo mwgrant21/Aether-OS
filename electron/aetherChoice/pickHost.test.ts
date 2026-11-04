@@ -457,24 +457,81 @@ describe('pickHost', () => {
     for (const s of specs) expect(s).not.toMatch(/ptyManager|ptyLifecycle|node-pty|electron|node:fs|pickStore|screenWatcher|terminalHub/);
   });
 
-  it('18: with the quiet signal absent, random readings, clock jumps and lifecycle never write', async () => {
-    let seed = 20261104;
-    const rnd = (): number => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
-    const readings: IdleReading[] = ['idle', 'generating', 'busy', 'picker', 'modal', 'switch-model-modal', 'draft', 'shell', 'unknown'];
-    const loaded = { claude: { ...blank('claude'), live: true, outcome: 'sent' as const } };
-    const r = rig({ loaded });
-    for (let i = 0; i < 300; i++) {
-      r.reading.v = readings[Math.floor(rnd() * readings.length)];
-      r.t.now += Math.floor(rnd() * 20_000);
-      const slot: OwnedSlot = rnd() < 0.5 ? 'claude' : 'terminal2';
-      const k = rnd();
-      if (k < 0.2) r.host.submitPick(slot, rnd() < 0.5 ? HIGH : LOW, 'r');
-      else if (k < 0.3) { if (r.host.launchFor(slot).command !== null) r.host.onLaunched(slot); }
-      else if (k < 0.4) r.host.onSlotExit(slot);
-      else if (k < 0.45) r.host.onForeignLaunch(slot);
-      else if (k < 0.5) r.host.noteUserInput(slot);
-      await r.runNext();
+  it('18: random readings, clock jumps and lifecycle never write without output since the last launch or exit', async () => {
+    for (const withOutput of [false, true]) {
+      let seed = 20261104;
+      const rnd = (): number => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+      const readings: IdleReading[] = ['idle', 'generating', 'busy', 'picker', 'modal', 'switch-model-modal', 'draft', 'shell', 'unknown'];
+      const loaded = { claude: { ...blank('claude'), live: true, outcome: 'sent' as const } };
+      const r = rig({ loaded });
+      const outputSince: Record<string, boolean> = { claude: false, terminal2: false };
+      for (let i = 0; i < 400; i++) {
+        r.reading.v = readings[Math.floor(rnd() * readings.length)];
+        r.t.now += Math.floor(rnd() * 20_000);
+        const slot: OwnedSlot = rnd() < 0.5 ? 'claude' : 'terminal2';
+        const k = rnd();
+        if (k < 0.2) r.host.submitPick(slot, rnd() < 0.5 ? HIGH : LOW, 'r');
+        else if (k < 0.3) {
+          if (r.host.launchFor(slot).command !== null) {
+            r.host.onLaunched(slot);
+            outputSince[slot] = false;
+          }
+        } else if (k < 0.4) {
+          r.host.onSlotExit(slot);
+          outputSince[slot] = false;
+        } else if (k < 0.45) {
+          r.host.onForeignLaunch(slot);
+          outputSince[slot] = false;
+        } else if (k < 0.5) r.host.noteUserInput(slot);
+        else if (withOutput && k < 0.7) {
+          r.host.noteOutput(slot);
+          outputSince[slot] = true;
+        }
+        const before = r.writes.length;
+        await r.runNext();
+        for (const w of r.writes.slice(before)) expect(outputSince[w.slot], `${w.slot} wrote without output since its last launch/exit`).toBe(true);
+      }
+      if (!withOutput) expect(r.writes).toEqual([]);
     }
+  });
+
+  it('19: output from a previous process does not make a new, silent process quiet', async () => {
+    const r = rig();
+    launch(r);
+    r.host.noteOutput('claude');
+    r.t.now += 20_000;
+    r.host.onSlotExit('claude');
+    launch(r);
+    r.t.now += 100;
+    r.host.submitPick('claude', HIGH, 'x');
+    await r.runNext();
+    r.t.now += 5000;
+    await r.runNext();
     expect(r.writes).toEqual([]);
+    r.host.noteOutput('claude');
+    r.t.now += 1600;
+    await r.runNext();
+    expect(r.writes).toEqual([{ slot: 'claude', d: '/effort high\r' }]);
+  });
+
+  it('20: a throwing write port is contained and the tick reschedules', async () => {
+    let boom = true;
+    const r = rig({
+      deps: {
+        writePort: {
+          write: () => {
+            if (boom) throw new Error('port');
+            return true;
+          },
+        },
+      },
+    });
+    queued(r);
+    await r.runNext();
+    expect(r.logs).toContain('tick-failed claude');
+    expect(r.scheduled.filter((s) => !s.cancelled)).toHaveLength(1);
+    boom = false;
+    await r.runNext();
+    expect(r.logs.filter((l) => l === 'tick-failed claude')).toHaveLength(1);
   });
 });

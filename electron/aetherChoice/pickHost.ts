@@ -97,6 +97,8 @@ export function createPickHost(deps: PickHostDeps): PickHost {
   const bump = (slot: OwnedSlot): void => {
     epoch.set(slot, epochOf(slot) + 1);
     readings.delete(slot);
+    // Output from a previous process says nothing about the new one: quiet must be re-earned.
+    lastOutputAt.delete(slot);
   };
   const safeLog = (line: string): void => {
     try {
@@ -116,7 +118,7 @@ export function createPickHost(deps: PickHostDeps): PickHost {
     const out = lastOutputAt.get(slot);
     if (out === undefined || startedAt - out < quietMs) return 'unknown';
     const user = lastUserInputAt.get(slot);
-    if (user !== undefined && (startedAt - user < quietMs || deps.now() - user < quietMs)) return 'draft';
+    if (user !== undefined && startedAt - user < quietMs) return 'draft';
     return 'ok';
   }
 
@@ -167,27 +169,31 @@ export function createPickHost(deps: PickHostDeps): PickHost {
       for (const slot of owned) {
         if (disposed) return;
         if (!hasPendingQueue(slot)) continue;
-        const startedAt = deps.now();
-        const startEpoch = epochOf(slot);
-        let reading: IdleReading;
         try {
-          reading = await deps.readScreen(slot);
+          const startedAt = deps.now();
+          const startEpoch = epochOf(slot);
+          let reading: IdleReading;
+          try {
+            reading = await deps.readScreen(slot);
+          } catch {
+            reading = 'unknown';
+          }
+          if (disposed || epochOf(slot) !== startEpoch) continue;
+          readings.set(slot, { reading, startedAt, epoch: startEpoch });
+          if (reading === 'shell' && settled(slot, startedAt) === 'ok' && deps.now() - (launchAt.get(slot) ?? 0) >= launchGraceMs) {
+            engine.onExited(slot);
+            bump(slot);
+            continue;
+          }
+          engine.onIdleCheck(slot);
         } catch {
-          reading = 'unknown';
+          safeLog(`tick-failed ${slot}`);
         }
-        if (disposed || epochOf(slot) !== startEpoch) continue;
-        readings.set(slot, { reading, startedAt, epoch: startEpoch });
-        if (reading === 'shell' && settled(slot, startedAt) === 'ok' && deps.now() - (launchAt.get(slot) ?? 0) >= launchGraceMs) {
-          engine.onExited(slot);
-          bump(slot);
-          continue;
-        }
-        engine.onIdleCheck(slot);
       }
     } finally {
       ticking = false;
+      ensureTick();
     }
-    ensureTick();
   }
 
   const engine = createApplyEngine({
