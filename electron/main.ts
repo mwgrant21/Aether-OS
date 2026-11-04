@@ -14,6 +14,8 @@ import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { createTerminalHub } from './terminalHub';
+import { createAetherChoiceRuntime } from './aetherChoice/runtime';
+import { loadPicks, savePicks, defaultPicksDir } from './aetherChoice/pickStore';
 import { scanAllProjects } from './historyScanner';
 import { type TranscriptEvent } from './transcriptParser';
 import { readUsageEventsSince, readFleetSessions, readDiagnostics, READ_BUSY_TIMEOUT_MS, type CollectorUsageEvent } from './collectorStore';
@@ -750,6 +752,7 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   remoteQuitting = true;
   await Promise.allSettled([
     narrationDurationBaseline.flush(),
+    aetherChoice ? aetherChoice.flush() : Promise.resolve(),
     // The voice gateway stops its Claude child inside the same held quit; skipped unless the private dir is ready.
     remoteDirReady ? voiceHub.stop().catch(() => { diagLog.write(`[diag] voice stop failed at quit at=${new Date().toISOString()}`); }) : Promise.resolve(),
     // Phone control stops first (its sockets and listener hold), then the remote hub; control's stop() leaves the
@@ -1017,6 +1020,7 @@ app.whenReady().then(async () => {
   setInterval(scanAndPushMemory, MEMORY_SCAN_INTERVAL_MS);
 
   stopStatuslineWatcher = startStatuslineWatcher(statuslinePayloadPath, (snapshot) => {
+    try { aetherChoice?.onStatusline(snapshot); } catch { /* the host must never break the dashboard feed */ }
     // Quota is account-wide, so any session's seven-day reading is a valid
     // sample (below); only the dashboard snapshot is limited to the pinned terminal.
     // After /clear the live session id is the tracker's rolled pin, not the launch id.
@@ -1157,6 +1161,7 @@ app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
   if (!baselineQuitGate(event)) return;
   isQuitting = true;
+  aetherChoice?.dispose();
   phoneViewCache.clear();
   agentsDiagFeed.clear();
   stopDashboardsWatch?.();
@@ -1382,6 +1387,19 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const terminalHub = createTerminalHub();
+// AETHER_CHOICE_HOST=1 switch: null when unset, so every call site below is a no-op.
+// writePort is the ENGINE port; the user-input wrapper is only for the phone path.
+const aetherChoice = createAetherChoiceRuntime({
+  env: process.env,
+  slots: { claude: terminalHub.slot('claude'), terminal2: terminalHub.slot('terminal2') },
+  writePort: terminalHub.writePort(),
+  loadRecords: () => loadPicks(defaultPicksDir()),
+  save: (records) => savePicks(defaultPicksDir(), records),
+  now: Date.now,
+  schedule: (fn, ms) => { const h = setTimeout(fn, ms); return () => clearTimeout(h); },
+  log: (line) => diagLog.write('[aetherchoice] ' + line),
+  sendToWindow: (channel, payload) => sendToWindow(channel, payload),
+});
 const ptyLifecycle = terminalHub.slot('claude');
 const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
 // A detached renderer retains its fitted xterm geometry. Replacement must use
@@ -1410,6 +1428,7 @@ const communicationSessions = new CommunicationSessionControl({
     const launchId = communicationBridge.currentLaunchId();
     if (!launchId) throw new Error('REVOKED');
     const dimensions = { ...claudeTerminalDimensions };
+    aetherChoice?.onForeignLaunch('claude'); // not an Aether launch command
     connectedPromptObserver.start(launchId, dimensions, () => spawnPty(dimensions.cols, dimensions.rows, bundle), {
       onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
@@ -1441,23 +1460,30 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   // Pinned by id, not by newest transcript: Terminal 2 (and any other claude
   // started in ~) writes to the same project dir and could otherwise win.
   const sessionId = crypto.randomUUID();
-  ptyLifecycle.start(() => spawnPty(cols, rows, undefined, sessionId), {
-    onData: (data) => {
-      if (!sender.isDestroyed()) sender.send('pty:data', data);
-      planUsageScraper.ingest(data);
-    },
-    // Lets the renderer's Uplinks view show real terminal liveness instead of
-    // an always-on fake status -- see useTerminalAliveSync.ts. terminalAlive
-    // starts false (no pty is started until the Terminal tab is actually
-    // visited, and never at all outside Electron), so this is the event that
-    // turns it on; pty:exit turns it back off.
-    onAlive: () => sendToWindow('pty:alive', undefined),
-    onExit: () => {
-      pinnedPtyExited = true;
-      sendToWindow('pty:exit', undefined);
-      planUsageScraper.reset(); // a new pty means a fresh /usage read next time
-    },
-  }, { cols, rows });
+  const launchCommand = aetherChoice?.launchCommandFor('claude', { sessionId });
+  if (launchCommand === undefined) aetherChoice?.onForeignLaunch('claude'); // not an Aether launch (flag off: no-op)
+  try {
+    ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId) : spawnPty(cols, rows, undefined, sessionId, undefined, launchCommand), {
+      onData: (data) => {
+        if (!sender.isDestroyed()) sender.send('pty:data', data);
+        planUsageScraper.ingest(data);
+      },
+      // Lets the renderer's Uplinks view show real terminal liveness instead of
+      // an always-on fake status -- see useTerminalAliveSync.ts. terminalAlive
+      // starts false (no pty is started until the Terminal tab is actually
+      // visited, and never at all outside Electron), so this is the event that
+      // turns it on; pty:exit turns it back off.
+      onAlive: () => sendToWindow('pty:alive', undefined),
+      onExit: () => {
+        pinnedPtyExited = true;
+        sendToWindow('pty:exit', undefined);
+        planUsageScraper.reset(); // a new pty means a fresh /usage read next time
+      },
+    }, { cols, rows });
+  } catch (error) {
+    aetherChoice?.onForeignLaunch('claude'); // no start event follows a failed spawn: drop the stashed plan
+    throw error;
+  }
   if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
     claudeTerminalDimensions = { cols, rows };
   pinnedPtyExited = false;
@@ -1466,6 +1492,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
 });
 
 ipcMain.on('pty:write', (_event, input: string) => {
+  aetherChoice?.noteUserInput('claude');
   ptyLifecycle.write(input);
 });
 
@@ -1518,18 +1545,26 @@ const terminal2PtyLifecycle = terminalHub.slot('terminal2');
 
 ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
   const sender = event.sender;
-  const spawn = (size: { cols: number; rows: number }) =>
-    terminal2PtyLifecycle.start(() => spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV), {
-      onData: (data) => {
-        if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
-      },
-      // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
-      // can reset its xterm after a restart (also fires on the first start).
-      onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
-      // Tell the renderer so it can offer an Enter-to-restart; still not wired
-      // into pinnedPtyExited, the usage scraper or the tracker.
-      onExit: () => sendToWindow('terminal2Pty:exit', undefined),
-    }, size);
+  const spawn = (size: { cols: number; rows: number }) => {
+    const launchCommand = aetherChoice?.launchCommandFor('terminal2');
+    if (launchCommand === undefined) aetherChoice?.onForeignLaunch('terminal2'); // not an Aether launch (flag off: no-op)
+    try {
+      terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV) : spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV, launchCommand), {
+        onData: (data) => {
+          if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
+        },
+        // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
+        // can reset its xterm after a restart (also fires on the first start).
+        onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
+        // Tell the renderer so it can offer an Enter-to-restart; still not wired
+        // into pinnedPtyExited, the usage scraper or the tracker.
+        onExit: () => sendToWindow('terminal2Pty:exit', undefined),
+      }, size);
+    } catch (error) {
+      aetherChoice?.onForeignLaunch('terminal2'); // no start event follows a failed spawn: drop the stashed plan
+      throw error;
+    }
+  };
   // Enter on an exited Terminal 2 (desktop IPC write or phone input) respawns it at its last size.
   terminal2PtyLifecycle.setRestarter(() => {
     const { cols: lastCols, rows: lastRows } = terminal2PtyLifecycle.info();
@@ -1540,6 +1575,7 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
 
 ipcMain.on('terminal2Pty:write', (_event, input: string) => {
   try {
+    aetherChoice?.noteUserInput('terminal2');
     terminal2PtyLifecycle.write(input);
   } catch (error) {
     diagLog.write(`[diag] terminal2 write failed at=${new Date().toISOString()} error=${error instanceof Error ? error.message : String(error)}`);
@@ -1608,7 +1644,7 @@ const statusScans = createMinInterval(() => { scanAndPushFleet(); scanAndPushDia
 const controlHub = createControlHub({
   listener: remoteHub.listenerPort(),
   terminals: terminalHub.readPort(), // read-only: list/attach/onState/retain, never terminalHub or a slot
-  input: terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
+  input: aetherChoice ? aetherChoice.wrapUserWritePort(terminalHub.writePort()) : terminalHub.writePort(), // write-only handle, used solely by control/inputRouter; no desktop IPC handler uses it
   threads: threadFeed, // read-only transcript thread, Claude slot only
   ledger: ledgerFeed.port, // read-only derived cost numbers, no text
   views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView), analytics: createCacheViewFeed(phoneViewCache, 'analytics', encodeAnalyticsView), agents: agentsDiagFeed.port }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only; analytics: counts plus masked, capped dispatch descriptions and first words of typed commands; agents: masked, capped dispatch descriptions, headlines, narration and prompt text, plus fleet process and project names and timeline tool names with file basenames from the collector (no paths, no session ids)

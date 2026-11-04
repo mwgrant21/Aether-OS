@@ -256,4 +256,69 @@ describe('parseTranscriptLine tool use/result parsing', () => {
       }
     });
   });
+
+  describe('hand-back reports', () => {
+    const origin = { kind: 'peer', from: 'agent-from', senderTaskId: 'a1b2c3', name: 'CINDER', handback: true, handbackReportText: 'REAL REPORT' };
+    const framed = '<agent-message from="a1b2c3">REAL REPORT</agent-message>';
+    const userLine = (o: unknown) =>
+      JSON.stringify({ type: 'user', isMeta: true, sessionId: 's1', origin: o, message: { role: 'user', content: framed } });
+    const attLine = (o: unknown) =>
+      JSON.stringify({ type: 'attachment', sessionId: 's1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: framed, origin: o } });
+
+    it('exposes handback on the user shape and keeps originKind peer', () => {
+      const event = parseTranscriptLine(userLine(origin));
+      expect(event?.handback).toEqual({ agentId: 'a1b2c3', reportText: 'REAL REPORT' });
+      expect(event?.kind).toBe('user');
+      expect(event?.originKind).toBe('peer');
+    });
+
+    it('exposes handback on the attachment shape, still kind other with null originKind', () => {
+      const event = parseTranscriptLine(attLine(origin));
+      expect(event?.handback).toEqual({ agentId: 'a1b2c3', reportText: 'REAL REPORT' });
+      expect(event?.kind).toBe('other');
+      expect(event?.originKind).toBeNull();
+    });
+
+    it('falls back to origin.from when senderTaskId is missing', () => {
+      const { senderTaskId, ...rest } = origin;
+      expect(parseTranscriptLine(userLine(rest))?.handback?.agentId).toBe('agent-from');
+      expect(parseTranscriptLine(attLine(rest))?.handback?.agentId).toBe('agent-from');
+    });
+
+    const { handbackReportText, ...noText } = origin;
+    const { senderTaskId, from, ...noId } = origin;
+    it.each([
+      ['missing text', noText],
+      ['empty text', { ...origin, handbackReportText: '' }],
+      ['whitespace text', { ...origin, handbackReportText: '   ' }],
+      ['non-string text', { ...origin, handbackReportText: 42 }],
+      ['handback not true', { ...origin, handback: 'true' }],
+      ['handback absent', { kind: 'peer', from: 'x', handbackReportText: 'T' }],
+      ['task-notification origin', { kind: 'task-notification' }],
+      ['string origin', 'peer'],
+      ['null origin', null],
+      ['array origin', [origin]],
+      ['number origin', 7],
+      ['no agent id', noId],
+    ])('yields no handback key for %s', (_name, o) => {
+      for (const line of [userLine(o), attLine(o)]) {
+        const event = parseTranscriptLine(line);
+        expect(event).not.toBeNull();
+        expect(event).not.toHaveProperty('handback');
+      }
+    });
+
+    it('carries no handback on queue-operation records or ordinary task-notification attachments', () => {
+      for (const operation of ['enqueue', 'remove']) {
+        const event = parseTranscriptLine(JSON.stringify({ type: 'queue-operation', operation, sessionId: 's1', content: framed }));
+        expect(event).not.toHaveProperty('handback');
+      }
+      const note = JSON.stringify({
+        type: 'attachment',
+        sessionId: 's1',
+        attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification><task-id>a1b2c3</task-id></task-notification>' },
+      });
+      expect(parseTranscriptLine(note)).not.toHaveProperty('handback');
+    });
+  });
 });
