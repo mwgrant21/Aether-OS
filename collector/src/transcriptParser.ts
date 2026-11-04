@@ -50,6 +50,26 @@ export interface TranscriptEvent {
   // (electron/transcriptParser.ts only reads it on 'user' messages); only the
   // 'user' branch's value is load-bearing -- it marks dispatch completions.
   originKind: string | null;
+  // Subagent hand-back report (origin.handbackReportText), present ONLY on the
+  // hand-back 'user' record and the hand-back queued_command attachment record.
+  // Transient: NEVER persisted, NEVER logged, same contract as humanText. The
+  // parser does not truncate; consumers bound it. Absent key when not a hand-back.
+  handback?: { agentId: string; reportText: string };
+}
+
+// Tolerant read of a hand-back origin; never throws, null on any wrong shape.
+function parseHandback(origin: unknown): { agentId: string; reportText: string } | null {
+  if (typeof origin !== 'object' || origin === null || Array.isArray(origin)) return null;
+  const o = origin as Record<string, unknown>;
+  if (o.handback !== true) return null;
+  if (typeof o.handbackReportText !== 'string' || !o.handbackReportText.trim()) return null;
+  const agentId =
+    typeof o.senderTaskId === 'string' && o.senderTaskId.trim()
+      ? o.senderTaskId
+      : typeof o.from === 'string' && o.from.trim()
+        ? o.from
+        : null;
+  return agentId ? { agentId, reportText: o.handbackReportText } : null;
 }
 
 export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
@@ -72,6 +92,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
   const parsedTime = json.timestamp ? new Date(json.timestamp) : null;
   const timestamp = parsedTime !== null && !Number.isNaN(parsedTime.getTime()) ? parsedTime : null;
   const cwd = json.cwd || null;
+  const handback = parseHandback(json.type === 'attachment' ? json.attachment?.origin : json.origin);
 
   if (json.type === 'assistant' && json.message) {
     const msg = json.message;
@@ -130,6 +151,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       toolResults,
       humanText: textItem ? textItem.text : null,
       originKind: (json.origin && json.origin.kind) || null,
+      ...(handback ? { handback } : {}),
     };
   }
 
@@ -193,5 +215,6 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     toolResults: [],
     humanText: null,
     originKind: (json.origin && json.origin.kind) || null,
+    ...(handback ? { handback } : {}),
   };
 }

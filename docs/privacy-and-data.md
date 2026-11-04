@@ -640,7 +640,7 @@ extraction queue, and a drain tick also discards anything already queued rather 
 `CostGuardCard` lists the row as a network surface.
 
 **What is sent, and to whom.** To Anthropic, or whichever provider Claude Code is configured
-for (see below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification) plus up to 20
+for (see below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification; when that result is the harness stub or empty, the subagent's own hand-back report, at most 8,000 characters, is sent instead) plus up to 20
 memories previously extracted for that agent. Aether-initiated with no human typing the turn,
 which is what makes it a distinct boundary, like §12. It is usually sent within about 30 seconds
 of the dispatch completing.
