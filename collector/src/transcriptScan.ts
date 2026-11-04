@@ -7,7 +7,13 @@ import { ingestUsageEvent, ingestDispatchEvent, rescorePendingDispatches } from 
 import { ingestToolCallsAndAnomalies } from './anomalyIngest.js';
 import { createEmptyHistory, type ToolCallHistory } from './toolCallHistory.js';
 import { sweepStaleDispatches } from './staleDispatchSweep.js';
-import { extractDispatchResultText } from './dispatchResultText.js';
+import {
+  extractDispatchResultText,
+  extractDispatchTaskId,
+  isHandbackStub,
+  createHandbackReportStore,
+  type HandbackReportStore,
+} from './dispatchResultText.js';
 import type { MemoryExtractQueue } from './memoryExtractQueue.js';
 import { createSubagentLinkIndex, type SubagentFileProbe } from './severity/subagentLink.js';
 import { parseDispatchOutcome } from './severity/parseDispatchOutcome.js';
@@ -101,7 +107,8 @@ export function scanTranscriptsOnce(
   nowMs: number,
   historyByFile: Map<string, ToolCallHistory>,
   extractQueue?: MemoryExtractQueue,
-  ownSessionId: string | null = null
+  ownSessionId: string | null = null,
+  handbackReports?: HandbackReportStore
 ): { filesScanned: number; eventsIngested: number; toolCallsIngested: number; anomaliesIngested: number } {
   // Stamped first and unconditionally: the heartbeat proves the scan cycle is
   // alive, not that it succeeded (see stampTranscriptScanHeartbeat), so the
@@ -121,6 +128,14 @@ export function scanTranscriptsOnce(
   // live under a different project dir than its parent transcript, and this
   // keeps that lookup from rescanning every project dir per dispatch.
   const linkIndex = createSubagentLinkIndex(projectsRoot);
+
+  // Hand-back report text waits here for its notification, possibly across
+  // ticks (the caller owns a long-lived store). Per-call fallback keeps callers
+  // that pass none working for a hand-back and notification in the same tick.
+  const reports = handbackReports ?? createHandbackReportStore();
+  // Extraction off: hand-back text is never held (matches index.ts). Cleared up
+  // front, not per file, so a switch-off drops it even when no file has new lines.
+  if (!extractQueue) reports.clear();
 
   let filesScanned = 0;
   let eventsIngested = 0;
@@ -236,6 +251,12 @@ export function scanTranscriptsOnce(
         // anywhere.
         if (extractQueue) {
           for (const event of parsedEvents) {
+            // In file order, not a pre-pass: a cold backfill with many hand-backs
+            // would otherwise evict all but the newest before notifications are seen.
+            if (event.handback) {
+              reports.put(event.handback.agentId, event.handback.reportText);
+              continue;
+            }
             if (event.originKind !== 'task-notification') continue;
             const idMatch = (event.humanText || '').match(/<tool-use-id>(.*?)<\/tool-use-id>/);
             if (!idMatch) continue;
@@ -253,8 +274,17 @@ export function scanTranscriptsOnce(
             if (row.duration_ms === null || row.tool_uses === null) continue;
             if (!clearsExtractionBar(row.duration_ms, row.tool_uses)) continue;
 
-            const runSummary = extractDispatchResultText(event.humanText);
-            if (!runSummary) continue;
+            // The inline <result> wins. Only an empty or stub result falls back to
+            // the hand-back text remembered for the same task-id.
+            let runSummary = extractDispatchResultText(event.humanText);
+            let usedHandbackFor: string | null = null;
+            if (!runSummary || isHandbackStub(runSummary)) {
+              const taskId = extractDispatchTaskId(event.humanText);
+              const report = taskId ? reports.get(taskId) : null;
+              if (!taskId || !report) continue;
+              runSummary = report;
+              usedHandbackFor = taskId;
+            }
 
             extractQueue.push({
               agentId: row.agent_id,
@@ -264,6 +294,7 @@ export function scanTranscriptsOnce(
               runSummary,
               queuedAtMs: nowMs,
             });
+            if (usedHandbackFor) reports.delete(usedHandbackFor);
           }
         }
 

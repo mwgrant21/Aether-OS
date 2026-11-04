@@ -6,6 +6,7 @@ import { startSpoolTailer } from './spoolTailer.js';
 import { compact } from './retention.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
 import type { ToolCallHistory } from './toolCallHistory.js';
+import { createHandbackReportStore } from './dispatchResultText.js';
 import { pollFleet, upsertFleetSessions, type FleetExecFn } from './fleetPoll.js';
 import { logDrift } from './canary.js';
 import { readOwnSessionId } from './ownSessionFile.js';
@@ -86,6 +87,8 @@ export function startCollector(options: {
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
   const compactTimer = setInterval(() => compact(db, Date.now()), options.compactIntervalMs);
   const toolCallHistoryByFile = new Map<string, ToolCallHistory>();
+  // Survives across ticks so a hand-back and its later notification still link.
+  const handbackReports = createHandbackReportStore();
   // Passing no queue skips enqueueing entirely, so dispatch result text is not even
   // staged in memory while memory extraction is off.
   const scanQueue = () => (readMemoryExtractionEnabled(options.collectorSettingsPath) ? extractQueue : undefined);
@@ -97,7 +100,8 @@ export function startCollector(options: {
       Date.now(),
       toolCallHistoryByFile,
       scanQueue(),
-      readOwnSessionId(options.ownSessionFilePath)
+      readOwnSessionId(options.ownSessionFilePath),
+      handbackReports
     );
   scan();
   const transcriptScanTimer = setInterval(scan, options.transcriptScanIntervalMs);
