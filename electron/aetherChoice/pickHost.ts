@@ -139,6 +139,12 @@ export function createPickHost(deps: PickHostDeps): PickHost {
   function idleFor(slot: OwnedSlot): IdleReading {
     const r = readings.get(slot);
     if (!r || r.epoch !== epochOf(slot) || deps.now() - r.startedAt > readMaxAgeMs) return 'unknown';
+    if (r.reading === 'generating') {
+      // Output is expected mid-turn, so only the user-input half of settled() applies. Input that arrived
+      // during the read (negative difference) or within quietMs before it may be an unpainted draft.
+      const user = lastUserInputAt.get(slot);
+      return user !== undefined && r.startedAt - user < quietMs ? 'draft' : 'generating';
+    }
     if (r.reading !== 'idle') return r.reading;
     const s = settled(slot, r.startedAt);
     return s === 'ok' ? 'idle' : s;
