@@ -184,7 +184,7 @@ describe('drainMemoryExtractQueue', () => {
       await drainMemoryExtractQueue(store, queue, execFn, onIssue);
       expect(execFn).toHaveBeenCalledTimes(2);
       expect(queue.size()).toBe(0);
-      expect(onIssue).toHaveBeenCalledTimes(1);
+      expect(onIssue).toHaveBeenCalledTimes(2);
       expect(onIssue.mock.calls[0][0]).toContain('tu_1');
     } finally {
       cleanup();
@@ -211,7 +211,7 @@ describe('drainMemoryExtractQueue', () => {
       withSink.push({ ...baseItem, toolUseId: 'tu_2' });
       const onIssue = vi.fn();
       await drainMemoryExtractQueue(store, withSink, execFn, onIssue);
-      expect(onIssue).toHaveBeenCalledTimes(1);
+      expect(onIssue).toHaveBeenCalledTimes(2);
       const detail = onIssue.mock.calls[0][0] as string;
       expect(detail).toContain('rejected=1');
       expect(detail).not.toContain('CANARY');
@@ -220,5 +220,52 @@ describe('drainMemoryExtractQueue', () => {
       errorSpy.mockRestore();
       cleanup();
     }
+  });
+
+  describe('per-attempt outcome line', () => {
+    async function run(execFn: () => Promise<{ stdout: string }>) {
+      const { store, cleanup } = tempStore();
+      try {
+        const queue = createMemoryExtractQueue();
+        queue.push({ ...baseItem, runSummary: 'CANARY-RUN-SUMMARY' });
+        const onIssue = vi.fn();
+        await drainMemoryExtractQueue(store, queue, execFn, onIssue);
+        return onIssue.mock.calls.map((c) => c[0] as string);
+      } finally {
+        cleanup();
+      }
+    }
+
+    it('logs ok with counts when ops were applied', async () => {
+      const lines = await run(async () => ({
+        stdout: '[{"op":"ADD","kind":"habit","content":"Matt always asks CINDER to double-check migrations."}]',
+      }));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^memory extraction ok for CINDER \(tu_1\): added=1 updated=0 superseded=0 revised=0 touched=0 rejected=0 ms=\d+$/);
+    });
+
+    it('logs empty for a successful extraction with zero ops', async () => {
+      const lines = await run(async () => ({ stdout: '[]' }));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^memory extraction empty for CINDER \(tu_1\): added=\d+ updated=\d+ superseded=\d+ revised=\d+ touched=\d+ rejected=\d+ ms=\d+$/);
+    });
+
+    it('adds no outcome line when the extractor fails: the issue line is the failed record', async () => {
+      const lines = await run(async () => {
+        throw Object.assign(new Error('timed out'), { killed: true });
+      });
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('exec_failed: timeout');
+      expect(lines[0]).not.toContain('ms=');
+    });
+
+    it('never leaks err.message, prompt or model output into any outcome line', async () => {
+      const failed = await run(async () => {
+        throw Object.assign(new Error('Command failed: claude -p CANARY-RUN-SUMMARY'), { code: 1 });
+      });
+      const ok = await run(async () => ({ stdout: '[{"op":"ADD","kind":"habit","content":"CANARY-OP-TEXT"}]' }));
+      for (const line of [...failed, ...ok]) expect(line).not.toContain('CANARY');
+      expect(ok).toHaveLength(1);
+    });
   });
 });
