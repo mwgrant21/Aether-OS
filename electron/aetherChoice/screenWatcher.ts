@@ -64,7 +64,7 @@ export function createScreenWatcher(deps: ScreenWatcherDeps): ScreenWatcher {
 
   // At most one probe in flight per slot; a request that arrives meanwhile earns exactly one follow-up.
   const requestProbe = (s: SlotState): void => {
-    if (s.version !== null || s.mirror === null) return;
+    if (s.mirror === null) return;
     if (s.probing) { s.probeAgain = true; return; }
     void runProbe(s);
   };
@@ -75,16 +75,19 @@ export function createScreenWatcher(deps: ScreenWatcherDeps): ScreenWatcher {
     const g = s.gen;
     try {
       const rows = await m.viewportText();
-      // A shell screen can still show the old banner row; latching it would relatch a cleared version.
-      if (s.gen === g && s.version === null
-        && classify({ rows, coverage: s.coverage, claudeVersion: null }) !== 'shell') {
-        s.version = lastClaudeVersion(rows);
+      if (s.gen === g) {
+        // A shell screen clears the latch and never sets it: it can still show the old banner row.
+        if (classify({ rows, coverage: s.coverage, claudeVersion: null }) === 'shell') s.version = null;
+        else {
+          const seen = lastClaudeVersion(rows);
+          if (seen !== null) s.version = seen;
+        }
       }
     } catch { /* probe is best effort */ }
     s.probing = false;
     if (s.probeAgain) {
       s.probeAgain = false;
-      if (s.version === null) requestProbe(s);
+      requestProbe(s);
     }
   };
 
@@ -97,7 +100,7 @@ export function createScreenWatcher(deps: ScreenWatcherDeps): ScreenWatcher {
       } else if (e.kind === 'out') {
         if (s.mirror === null) return;
         s.mirror.write(e.d);
-        if (s.version === null) requestProbe(s);
+        requestProbe(s);
       } else if (e.kind === 'size') {
         if (s.mirror !== null && validDims(e.cols, e.rows)) s.mirror.resize(e.cols, e.rows);
       } else if (e.state === 'exited') {
