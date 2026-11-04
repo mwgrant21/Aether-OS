@@ -19,6 +19,7 @@ const settle = async (): Promise<void> => {
 };
 
 function fakeSlot() {
+  let state: 'running' | 'exited' = 'running';
   const listeners = new Set<(e: SlotEvent) => void>();
   const observe = vi.fn((l: (e: SlotEvent) => void) => {
     listeners.add(l);
@@ -28,12 +29,15 @@ function fakeSlot() {
   });
   const slot: ObservableSlot = {
     observe,
-    info: () => ({ s: 'claude', label: 'x', state: 'running', cols: 100, rows: 30, q: 0 }),
+    info: () => ({ s: 'claude', label: 'x', state, cols: 100, rows: 30, q: 0 }),
   };
   return {
     slot,
     observe,
     count: () => listeners.size,
+    setState: (s: 'running' | 'exited') => {
+      state = s;
+    },
     fire: (e: SlotEvent) => {
       for (const l of [...listeners]) l(e);
     },
@@ -46,7 +50,7 @@ const exitEv: SlotEvent = { kind: 'state', state: 'exited' };
 
 type Mode = 'ok' | 'false' | 'throw';
 function rig(opts: { env?: Record<string, string | undefined>; records?: Record<string, ThreadPickRecord> } = {}) {
-  const t = { now: 1_000_000 };
+  const t = { now: 1_000_000, throwNow: false, throwSchedule: false };
   const claude = fakeSlot();
   const terminal2 = fakeSlot();
   const writes: { slot: string; d: string }[] = [];
@@ -72,8 +76,12 @@ function rig(opts: { env?: Record<string, string | undefined>; records?: Record<
     save: async (r) => {
       saves.push(r);
     },
-    now: () => t.now,
+    now: () => {
+      if (t.throwNow) throw new Error('clock');
+      return t.now;
+    },
     schedule: (fn) => {
+      if (t.throwSchedule) throw new Error('timer');
       const e = { fn, cancelled: false };
       scheduled.push(e);
       return () => {
@@ -517,5 +525,76 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     expect((await r.lastSave())?.claude.live).toBe(true);
     r.claude.fire(startEv);
     expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+  });
+
+  it('23: a start reported after a synchronous exit is not "running", so a later exit is not a retiring exit', async () => {
+    const r = rig({ records: autoHigh() });
+    const rt = must(r);
+    r.claude.setState('exited');
+    r.claude.fire(exitEv);
+    r.claude.fire(startEv); // the synchronously exited pty's late start: state is still exited
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(exitEv); // the new pty's own synchronous exit
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+    r.t.now += 20_000;
+    r.claude.fire(outEv);
+    r.t.now += 2000;
+    rt.onStatusline(snap(r, 72));
+    await r.runNext();
+    expect(r.writes).toEqual([]);
+  });
+
+  it('24: start, exit, a new launch and a second exit leave the next start foreign', async () => {
+    const r = rig({ records: autoHigh() });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    r.claude.fire(exitEv);
+    rt.launchCommandFor('claude', { sessionId: OTHER_SID });
+    r.claude.fire(exitEv);
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).not.toBe(true);
+  });
+
+  it('25: submitPick with a throwing host reports an error and the runtime survives', async () => {
+    const r = rig();
+    const rt = must(r);
+    liveClaude(r);
+    await r.lastSave();
+    const before = r.saves.length;
+    r.t.throwNow = true;
+    expect(rt.submitPick('claude', { ...SONNET_HIGH })).toEqual({ rejected: 'error' });
+    await r.lastSave();
+    expect(r.saves.length).toBe(before);
+    expect(r.writes).toEqual([]);
+    r.t.throwNow = false;
+    expect(rt.submitPick('claude', { ...SONNET_HIGH })).toEqual({ rejected: null });
+  });
+
+  it('26: state swallows a host that cannot read its record', () => {
+    const r = rig({ records: { claude: {} as ThreadPickRecord } });
+    expect(() => must(r).state('claude')).not.toThrow();
+    expect(must(r).state('claude')).toBeNull();
+  });
+
+  it('27: clearHalt swallows a host whose scheduler throws', async () => {
+    const r = rig();
+    const rt = must(r);
+    liveClaude(r);
+    rt.submitPick('claude', { ...SONNET_HIGH });
+    await r.runNext();
+    rt.onStatusline({ ...snap(r, 10), modelDisplayName: 'Haiku' }); // readback mismatch halts the slot
+    await settle();
+    rt.submitPick('claude', { model: 'sonnet', effort: 'max' }); // queued behind the halt
+    for (let i = 0; i < 4; i++) {
+      r.t.now += 500;
+      await r.runNext();
+    }
+    expect(rt.state('claude')?.readout).toBe('notApplied');
+    r.t.throwSchedule = true;
+    expect(() => rt.clearHalt('claude')).not.toThrow();
+    r.t.throwSchedule = false;
+    expect(rt.state('claude')?.readout).not.toBe('notApplied'); // the halt was cleared before the timer threw
   });
 });
