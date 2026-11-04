@@ -14,6 +14,7 @@ import { MemoryExtractionCard } from './MemoryExtractionCard';
 import { RemoteAccessCard } from './RemoteAccessCard';
 import { VoiceGatewayCard } from './VoiceGatewayCard';
 import { ControlAccessCard } from './ControlAccessCard';
+import { AetherChoiceCard } from '../aetherChoice/AetherChoiceCard';
 
 export function SettingsView() {
   return (
@@ -31,6 +32,7 @@ export function SettingsView() {
         <RemoteAccessCard />
         <ControlAccessCard />
         <VoiceGatewayCard />
+        <AetherChoiceCard />
         <CostGuardCard />
         <RetentionCard />
       </div>
