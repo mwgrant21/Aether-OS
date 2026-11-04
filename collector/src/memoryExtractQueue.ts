@@ -66,6 +66,24 @@ function report(onIssue: ((detail: string) => void) | undefined, detail: string)
   }
 }
 
+// One fixed-format line per successful attempt, so an attempt that returns zero ops is still visible.
+// A failed attempt is already reported by its issue line (exec_failed / parse error / err.name).
+// Only fixed text, ids, integer counts and elapsed ms: never prompt, model output or err.message.
+function reportOutcome(
+  onIssue: ((detail: string) => void) | undefined,
+  outcome: 'ok' | 'empty',
+  item: QueuedExtraction,
+  counts: { added: number; updated: number; superseded: number; revised: number; touched: number; rejected: number },
+  ms: number,
+): void {
+  report(
+    onIssue,
+    `memory extraction ${outcome} for ${item.agentId} (${item.toolUseId}): ` +
+      `added=${counts.added} updated=${counts.updated} superseded=${counts.superseded} ` +
+      `revised=${counts.revised} touched=${counts.touched} rejected=${counts.rejected} ms=${ms}`,
+  );
+}
+
 export async function drainMemoryExtractQueue(
   store: MemoryStore,
   queue: MemoryExtractQueue,
@@ -77,6 +95,7 @@ export async function drainMemoryExtractQueue(
       .getPrivateCandidates(item.agentId, EXISTING_MEMORIES_LIMIT)
       .map((m) => ({ id: m.id, kind: m.kind, content: m.content }));
 
+    const startedAt = Date.now();
     try {
       const result = await runExtractor(
         {
@@ -103,6 +122,17 @@ export async function drainMemoryExtractQueue(
             (result.parseError ?? `rejected=${result.rejected.length}`),
         );
       }
+      if (result.parseError) continue;
+      const counts = {
+        added: result.added,
+        updated: result.updated,
+        superseded: result.superseded,
+        revised: result.revised,
+        touched: result.touched,
+        rejected: result.rejected.length,
+      };
+      const changes = counts.added + counts.updated + counts.superseded + counts.revised + counts.touched;
+      reportOutcome(onIssue, changes > 0 ? 'ok' : 'empty', item, counts, Date.now() - startedAt);
     } catch (err) {
       if (!onIssue) {
         console.error(
