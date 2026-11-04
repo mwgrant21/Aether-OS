@@ -206,9 +206,9 @@ describe('screenWatcher', () => {
     expect(w.version('claude')).toBeNull();
   });
 
-  it('probing is bounded to one in flight plus one follow-up, and stops once latched', async () => {
+  it('probing is bounded to one in flight plus one follow-up, and keeps observing once latched', async () => {
     const m = fakeMirror({ manual: true });
-    const { claude } = setup({ mirrors: [m] });
+    const { w, claude } = setup({ mirrors: [m] });
     claude.start();
     for (let i = 0; i < 50; i++) claude.emit(out('x'));
     expect(m.views).toBe(1);
@@ -219,7 +219,62 @@ describe('screenWatcher', () => {
     await flush();
     expect(m.views).toBe(2);
     claude.emit(out('more'));
-    expect(m.views).toBe(2);
+    expect(m.views).toBe(3);
+    for (let i = 0; i < 50; i++) claude.emit(out('x'));
+    expect(m.views).toBe(3);
+    m.pending[2].resolve(['nothing']);
+    await flush();
+    expect(m.views).toBe(4);
+    expect(w.version('claude')).toBe(V);
+  });
+
+  it('a latched version is cleared by shell output and refreshed by a replacement banner without any read, then idle chrome is not trusted', async () => {
+    const join = (rows: string[]): string => rows.join('\r\n');
+    const wait = (): Promise<void> => new Promise((r) => setTimeout(r, 50));
+    const claude = fakeSlot();
+    const w = createScreenWatcher({ slots: { claude: claude.slot, terminal2: fakeSlot().slot } });
+    try {
+      claude.start(130, 60);
+      claude.emit(out(join(load('banner-version'))));
+      await wait();
+      expect(w.version('claude')).toBe(V);
+      claude.emit(out(`\x1b[2J\x1b[H${join(load('shell-prompt2'))}`));
+      await wait();
+      expect(w.version('claude')).toBeNull();
+      claude.emit(out('\x1b[2J\x1b[H  Claude Code v9.9.9\r\n\r\n'));
+      await wait();
+      expect(w.version('claude')).toBe('9.9.9');
+      claude.emit(out(`\x1b[2J\x1b[H${join(load('idle-empty'))}`));
+      await wait();
+      expect(await w.read('claude')).toBe('unknown');
+      expect(w.version('claude')).toBe('9.9.9');
+    } finally {
+      w.dispose();
+    }
+  });
+
+  it('while latched, the last banner row wins and a shell probe clears without relatching', async () => {
+    const m = fakeMirror({ manual: true });
+    let reading: IdleReading = 'idle';
+    const { w, claude } = setup({ mirrors: [m], classify: () => reading });
+    claude.start();
+    claude.emit(out('a'));
+    m.pending[0].resolve(BANNER);
+    await flush();
+    expect(w.version('claude')).toBe(V);
+    claude.emit(out('b'));
+    m.pending[1].resolve([`Claude Code v${V}`, '', 'Claude Code v9.9.9']);
+    await flush();
+    expect(w.version('claude')).toBe('9.9.9');
+    reading = 'shell';
+    claude.emit(out('c'));
+    m.pending[2].resolve(['$ ', 'Claude Code v9.9.9']);
+    await flush();
+    expect(w.version('claude')).toBeNull();
+    claude.emit(out('d'));
+    m.pending[3].resolve(['$ ', 'Claude Code v9.9.9']);
+    await flush();
+    expect(w.version('claude')).toBeNull();
   });
 
   it('dispose unsubscribes both slots, disposes mirrors, reads unknown, and is idempotent', async () => {
