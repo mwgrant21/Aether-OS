@@ -647,6 +647,22 @@ describe('pickHost budget pump and launch readback', () => {
     expect(m.writes).toEqual([]);
   });
 
+  it('b6b: a budget step-down is submitted while a turn is generating', async () => {
+    const r = liveQuiet();
+    r.reading.v = 'generating';
+    r.host.onStatusline(snap(r, { session: 72 }));
+    await r.runNext();
+    r.t.now += 3000;
+    r.host.onStatusline(snap(r, { session: 60 }));
+    await r.runNext();
+    expect(r.writes).toHaveLength(1);
+    r.t.now += 3000;
+    r.host.onStatusline(snap(r, { session: 72 }));
+    await r.runNext();
+    expect((await r.last()).claude.queue).toBeNull();
+    expect(r.writes).toHaveLength(1);
+  });
+
   it('b7: the 90% floor writes /effort low and never a model', async () => {
     const r = liveQuiet(SONNET_MED);
     r.host.onStatusline(snap(r, { session: 91 }));
