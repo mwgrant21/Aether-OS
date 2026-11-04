@@ -104,7 +104,8 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
         if (e.kind === 'out') {
           host.noteOutput(slot);
         } else if (e.kind === 'start') {
-          running.add(slot);
+          // TerminalSlot reports start even for a pty that exited while being wired; that slot is not running.
+          if (deps.slots[slot].info().state !== 'exited') running.add(slot);
           if (planned.delete(slot)) host.onLaunched(slot);
           else host.onForeignLaunch(slot);
         } else if (e.kind === 'state' && e.state === 'exited') {
