@@ -354,6 +354,19 @@ describe('applyEngine: a reported apply failure reconciles the live baseline (G2
     s.engine.reportOutcome(T, 'not-applied', { model: 'fable', effort: 'ultra' } as unknown as Pick);
     expect(s.records.get(T)?.launched).toEqual(HIGH);
   });
+
+  it('an invalid actual pick reaches neither notifyFailure nor the log line', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    s.engine.onIdleCheck(T);
+    const logsBefore = s.logs.length;
+    s.engine.reportOutcome(T, 'not-applied', { model: 'fable', effort: 'ultra' } as never);
+    expect(s.notifyFailure).toHaveBeenCalledTimes(1);
+    expect(s.notifyFailure.mock.calls[0][0]).toMatchObject({ threadId: T, wanted: HIGH, actual: null });
+    const added = s.logs.slice(logsBefore).join('\n');
+    expect(added).not.toContain('fable');
+    expect(added).not.toContain('ultra');
+  });
 });
 
 describe('applyEngine: a sent write keeps a held model pick visible (H2)', () => {
