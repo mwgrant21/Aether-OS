@@ -49,8 +49,17 @@ const outEv: SlotEvent = { kind: 'out', q: 1, d: 'x' };
 const exitEv: SlotEvent = { kind: 'state', state: 'exited' };
 
 type Mode = 'ok' | 'false' | 'throw';
-function rig(opts: { env?: Record<string, string | undefined>; records?: Record<string, ThreadPickRecord> } = {}) {
-  const t = { now: 1_000_000, throwNow: false, throwSchedule: false };
+function rig(
+  opts: {
+    env?: Record<string, string | undefined>;
+    records?: Record<string, ThreadPickRecord>;
+    trace?: boolean;
+    throwSchedule?: boolean;
+  } = {},
+) {
+  const t = { now: 1_000_000, throwNow: false, throwSchedule: opts.throwSchedule ?? false, throwTraceLog: false, nowCalls: 0, throwNowAt: -1 };
+  const rows = { v: ['row'] as string[] };
+  const viewport = { calls: 0, deferred: null as null | { promise: Promise<string[]> } };
   const claude = fakeSlot();
   const terminal2 = fakeSlot();
   const writes: { slot: string; d: string }[] = [];
@@ -58,7 +67,7 @@ function rig(opts: { env?: Record<string, string | undefined>; records?: Record<
   const reading = { v: 'idle' as IdleReading };
   const saves: Record<string, ThreadPickRecord>[] = [];
   const logs: string[] = [];
-  const scheduled: { fn: () => void; cancelled: boolean }[] = [];
+  const scheduled: { fn: () => void; cancelled: boolean; ms: number }[] = [];
   const loadRecords = vi.fn(() => opts.records ?? {});
   const writePort: TerminalWritePort = {
     write: (slot, d) => {
@@ -69,7 +78,7 @@ function rig(opts: { env?: Record<string, string | undefined>; records?: Record<
     },
   };
   const rt = createAetherChoiceRuntime({
-    env: opts.env ?? { AETHER_CHOICE_HOST: '1' },
+    env: opts.env ?? (opts.trace ? { AETHER_CHOICE_HOST: '1', AETHER_CHOICE_TRACE: '1' } : { AETHER_CHOICE_HOST: '1' }),
     slots: { claude: claude.slot, terminal2: terminal2.slot },
     writePort,
     loadRecords,
@@ -77,24 +86,32 @@ function rig(opts: { env?: Record<string, string | undefined>; records?: Record<
       saves.push(r);
     },
     now: () => {
+      t.nowCalls++;
+      if (t.throwNowAt === t.nowCalls) throw new Error('clock');
       if (t.throwNow) throw new Error('clock');
       return t.now;
     },
-    schedule: (fn) => {
+    schedule: (fn, ms) => {
       if (t.throwSchedule) throw new Error('timer');
-      const e = { fn, cancelled: false };
+      const e = { fn, cancelled: false, ms };
       scheduled.push(e);
       return () => {
         e.cancelled = true;
       };
     },
-    log: (l) => logs.push(l),
+    log: (l) => {
+      if (t.throwTraceLog && l.startsWith('trace')) throw new Error('log down');
+      logs.push(l);
+    },
     sendToWindow: () => {},
     watcher: {
       createMirror: () => ({
         write: () => {},
         resize: () => {},
-        viewportText: () => Promise.resolve(['row']),
+        viewportText: () => {
+          viewport.calls++;
+          return viewport.deferred ? viewport.deferred.promise : Promise.resolve(rows.v);
+        },
         dispose: () => {},
       }),
       classify: () => reading.v,
@@ -102,18 +119,29 @@ function rig(opts: { env?: Record<string, string | undefined>; records?: Record<
     host: { minWriteGapMs: 0 },
   });
   const runNext = async (): Promise<void> => {
-    const e = scheduled.find((s) => !s.cancelled);
+    const e = scheduled.find((s) => !s.cancelled && s.ms !== 1000);
     if (e) {
       e.cancelled = true;
       e.fn();
     }
     await settle();
   };
+  /** Runs every trace-chain entry (ms === 1000) that is armed right now, then settles. */
+  const runTrace = async (): Promise<void> => {
+    const due = scheduled.filter((s) => !s.cancelled && s.ms === 1000);
+    for (const e of due) {
+      e.cancelled = true;
+      e.fn();
+    }
+    await settle();
+  };
+  const traceLogs = (): string[] => logs.filter((l) => l.startsWith('trace'));
+  const armed = (): number => scheduled.filter((s) => !s.cancelled && s.ms === 1000).length;
   const lastSave = async (): Promise<Record<string, ThreadPickRecord> | undefined> => {
     await rt?.flush();
     return saves[saves.length - 1];
   };
-  return { t, rt, claude, terminal2, writes, mode, reading, saves, logs, loadRecords, runNext, lastSave, scheduled };
+  return { t, rt, claude, terminal2, writes, mode, reading, saves, logs, loadRecords, runNext, lastSave, scheduled, rows, viewport, runTrace, traceLogs, armed };
 }
 type Rig = ReturnType<typeof rig>;
 const must = (r: Rig): AetherChoiceRuntime => {
@@ -317,6 +345,8 @@ describe('aetherChoice runtime', () => {
 });
 
 const SONNET_HIGH = { model: 'sonnet', effort: 'high' } as const;
+const TRACE_LINE =
+  /^trace (claude|terminal2) reading=[a-z-]+ version=(\d+\.\d+\.\d+|none) quiet=(true|false) sinceOutMs=(\d+|none) sinceInMs=(\d+|none)$/;
 const EFFORT_ONLY = /^\/effort (low|medium|high|xhigh|max)\r$/;
 
 const haltedRec = (slot: string): ThreadPickRecord => ({
@@ -624,5 +654,221 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     r.claude.fire(startEv);
     expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
     expect(r.logs).toContain('launch-failed claude');
+  });
+
+  it('30: trace off adds nothing', async () => {
+    const calls: number[] = [];
+    const scripts = [
+      { AETHER_CHOICE_HOST: '1' },
+      { AETHER_CHOICE_HOST: '1', AETHER_CHOICE_TRACE: '0' },
+      { AETHER_CHOICE_HOST: '1', AETHER_CHOICE_TRACE: 'true' },
+    ];
+    for (const env of scripts) {
+      const r = rig({ env });
+      const rt = must(r);
+      rt.launchCommandFor('claude', { sessionId: SID });
+      r.claude.fire(startEv);
+      r.claude.fire(outEv);
+      r.t.now += 5000;
+      await r.runNext();
+      expect(r.scheduled.filter((s) => s.ms === 1000)).toHaveLength(0);
+      expect(r.traceLogs()).toEqual([]);
+      calls.push(r.t.nowCalls);
+    }
+    expect(calls[1]).toBe(calls[0]);
+    expect(calls[2]).toBe(calls[0]);
+    const off = rig({ env: { AETHER_CHOICE_TRACE: '1' } });
+    expect(off.rt).toBeNull();
+    expect(off.claude.observe).not.toHaveBeenCalled();
+    expect(off.scheduled).toHaveLength(0);
+  });
+
+  it('31: trace on arms one 1000 ms chain per owned slot and logs the first sample', async () => {
+    const r = rig({ trace: true });
+    expect(r.scheduled.filter((s) => s.ms === 1000)).toHaveLength(2);
+    must(r).launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    await r.runTrace();
+    const lines = r.traceLogs();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe('trace claude reading=idle version=none quiet=false sinceOutMs=none sinceInMs=none');
+    for (const l of lines) expect(l).toMatch(TRACE_LINE);
+    expect(lines[1]).toMatch(/^trace terminal2 /);
+  });
+
+  it('32: a line is logged only when reading, version or quiet changes', async () => {
+    const r = rig({ trace: true });
+    must(r).launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    const mine = (): string[] => r.traceLogs().filter((l) => l.startsWith('trace claude'));
+    for (let i = 0; i < 3; i++) await r.runTrace();
+    expect(mine()).toHaveLength(1);
+    expect(r.traceLogs()).toHaveLength(2);
+    r.reading.v = 'generating';
+    await r.runTrace();
+    expect(mine()).toHaveLength(2);
+    expect(mine()[1]).toContain('trace claude reading=generating');
+    r.reading.v = 'idle';
+    await r.runTrace();
+    expect(mine()).toHaveLength(3);
+    r.claude.fire(outEv);
+    await settle();
+    r.t.now += 1600;
+    await r.runTrace();
+    expect(mine()).toHaveLength(4);
+    expect(mine()[3]).toContain('quiet=true');
+    r.rows.v = ['Claude Code v2.1.317'];
+    await r.runTrace();
+    expect(mine()).toHaveLength(5);
+    expect(mine()[4]).toContain('version=2.1.317');
+    await r.runTrace();
+    expect(mine()).toHaveLength(5);
+  });
+
+  it('33: counters are real and engine writes do not count as input', async () => {
+    for (const viaWrapper of [false, true]) {
+      const r = rig({ trace: true });
+      const rt = must(r);
+      rt.launchCommandFor('claude', { sessionId: SID });
+      r.claude.fire(startEv);
+      r.claude.fire(outEv);
+      r.t.now += 700;
+      if (viaWrapper) rt.wrapUserWritePort({ write: () => true }).write('claude', 'x');
+      else rt.noteUserInput('claude');
+      r.t.now += 400;
+      r.reading.v = 'generating';
+      await r.runTrace();
+      expect(r.traceLogs().find((l) => l.startsWith('trace claude'))).toBe(
+        'trace claude reading=generating version=none quiet=false sinceOutMs=1100 sinceInMs=400',
+      );
+    }
+    const e = rig({ trace: true, records: autoHigh() });
+    queued(e);
+    await e.runNext();
+    expect(e.writes).toHaveLength(1);
+    await e.runTrace();
+    expect(e.traceLogs().find((l) => l.startsWith('trace claude'))).toContain('sinceInMs=none');
+    const u = rig({ trace: true });
+    must(u).noteUserInput('codex');
+    must(u).launchCommandFor('claude', { sessionId: SID });
+    u.claude.fire(startEv);
+    await u.runTrace();
+    expect(u.traceLogs().every((l) => l.endsWith('sinceInMs=none'))).toBe(true);
+  });
+
+  it('34: no screen text ever reaches a log line', async () => {
+    const r = rig({ trace: true });
+    r.rows.v = ['SENTINEL-4f9a-secret-prompt', 'Claude Code v2.1.317', 'SENTINEL-4f9a-another-row'];
+    must(r).launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    for (const v of ['idle', 'generating', 'draft', 'picker', 'modal', 'shell', 'unknown'] as const) {
+      r.reading.v = v;
+      await r.runTrace();
+    }
+    expect(r.traceLogs().length).toBeGreaterThan(5);
+    for (const l of r.traceLogs()) expect(l).toMatch(TRACE_LINE);
+    expect(r.logs.join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('35: the trace on or off yields identical host behavior', async () => {
+    const run = async (trace: boolean) => {
+      const r = rig({ trace, records: autoHigh() });
+      queued(r);
+      await r.runNext();
+      r.t.now += 500;
+      const rt = must(r);
+      rt.submitPick('claude', { ...SONNET_HIGH });
+      await r.runNext();
+      if (trace) await r.runTrace();
+      return { writes: r.writes, save: await r.lastSave(), logs: r.logs.filter((l) => !l.startsWith('trace')) };
+    };
+    const off = await run(false);
+    const on = await run(true);
+    expect(on).toEqual(off);
+    expect(off.writes.length).toBeGreaterThan(0);
+    for (const w of on.writes) expect(w.d).toMatch(EFFORT_ONLY);
+    const idle = rig({ trace: true });
+    for (let i = 0; i < 5; i++) await idle.runTrace();
+    expect(idle.writes).toEqual([]);
+  });
+
+  it('36: only a running slot is sampled and a restart logs afresh', async () => {
+    const r = rig({ trace: true });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    await r.runTrace();
+    const claudeLines = (): number => r.traceLogs().filter((l) => l.startsWith('trace claude')).length;
+    const logged = claudeLines();
+    r.claude.setState('exited');
+    const calls = r.viewport.calls;
+    const entries = r.scheduled.length;
+    await r.runTrace();
+    expect(claudeLines()).toBe(logged);
+    expect(r.viewport.calls).toBe(calls + 1); // terminal2 only
+    expect(r.scheduled.length).toBe(entries + 2); // both chains re-armed
+    r.claude.setState('running');
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    await r.runTrace();
+    expect(claudeLines()).toBe(logged + 1);
+  });
+
+  it('37: faults never escape and the chain survives', async () => {
+    const a = rig({ trace: true });
+    must(a).launchCommandFor('claude', { sessionId: SID });
+    a.claude.fire(startEv);
+    a.t.throwNow = true;
+    await expect(a.runTrace()).resolves.toBeUndefined();
+    expect(a.traceLogs()).toEqual([]);
+    expect(a.armed()).toBe(2);
+    a.t.throwNow = false;
+    await a.runTrace();
+    expect(a.traceLogs().length).toBeGreaterThan(0);
+
+    const b = rig({ trace: true });
+    b.t.throwTraceLog = true;
+    await expect(b.runTrace()).resolves.toBeUndefined();
+    expect(b.armed()).toBe(2);
+
+    const c = rig({ trace: true, throwSchedule: true });
+    expect(c.rt).not.toBeNull();
+    c.t.throwSchedule = false;
+    expect(must(c).launchCommandFor('claude', { sessionId: SID })).toContain('claude --session-id');
+
+    const d = rig({ trace: true, records: autoHigh() });
+    must(d).launchCommandFor('claude', { sessionId: SID });
+    d.claude.fire(startEv);
+    d.t.now += 20_000;
+    // the host stamps the output first (call 1); the trace stamp (call 2) throws and must change nothing
+    d.t.throwNowAt = d.t.nowCalls + 2;
+    expect(() => d.claude.fire(outEv)).not.toThrow();
+    d.t.now += 2000;
+    must(d).onStatusline(snap(d, 72));
+    await d.runNext();
+    expect(d.writes).toEqual([{ slot: 'claude', d: '/effort medium\r' }]);
+  });
+
+  it('38: dispose cancels the trace and an in-flight sample stays silent', async () => {
+    const r = rig({ trace: true });
+    const rt = must(r);
+    rt.dispose();
+    expect(r.scheduled.filter((s) => s.ms === 1000).every((s) => s.cancelled)).toBe(true);
+    const calls = r.viewport.calls;
+    await r.runTrace();
+    expect(r.traceLogs()).toEqual([]);
+    expect(r.viewport.calls).toBe(calls);
+    expect(() => rt.dispose()).not.toThrow();
+
+    const f = rig({ trace: true });
+    let release: (v: string[]) => void = () => {};
+    f.viewport.deferred = { promise: new Promise<string[]>((res) => (release = res)) };
+    const total = f.scheduled.length;
+    const run = f.runTrace();
+    must(f).dispose();
+    release(['row']);
+    await run;
+    expect(f.traceLogs()).toEqual([]);
+    expect(f.scheduled.length).toBe(total);
   });
 });
