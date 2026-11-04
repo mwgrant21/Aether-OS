@@ -307,3 +307,154 @@ describe('aetherChoice runtime', () => {
     expect(src.match(/\.write\(/g)).toHaveLength(2);
   });
 });
+
+const SONNET_HIGH = { model: 'sonnet', effort: 'high' } as const;
+const EFFORT_ONLY = /^\/effort (low|medium|high|xhigh|max)\r$/;
+
+const haltedRec = (slot: string): ThreadPickRecord => ({
+  ...newRecord(slot, { model: 'sonnet', effort: 'medium' }, { reason: 'seed', trigger: 'new-thread', source: 'auto' }),
+  halted: { wanted: { model: 'sonnet', effort: 'medium' }, actual: { model: 'haiku', effort: 'low' } },
+});
+
+/** Planned launch of claude, start, output, then `quiet` ms of silence: the idle gate can open. */
+function liveClaude(r: Rig, quiet = 2000): void {
+  must(r).launchCommandFor('claude', { sessionId: SID });
+  r.claude.fire(startEv);
+  r.t.now += 20_000;
+  r.claude.fire(outEv);
+  r.t.now += quiet;
+}
+
+describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
+  it('11: state reports a fresh owned slot and null for an unowned one', () => {
+    const r = rig();
+    const s = must(r).state('claude');
+    expect(s).toMatchObject({ readout: 'steady', tier: 'sonnet', effort: 'medium', auto: true });
+    expect(must(r).state('codex')).toBeNull();
+    expect(must(r).state('x')).toBeNull();
+  });
+
+  it('12: a seeded halted claude reads notApplied with both picks named, terminal2 unaffected', () => {
+    const r = rig({ records: { claude: haltedRec('claude') } });
+    const s = must(r).state('claude');
+    expect(s?.readout).toBe('notApplied');
+    expect(s?.haltedText).toContain('sonnet/medium');
+    expect(s?.haltedText).toContain('haiku/low');
+    expect(must(r).state('terminal2')?.readout).toBe('steady');
+  });
+
+  it('13: clearHalt clears only that slot, ignores unowned slots and never writes', async () => {
+    const r = rig({ records: { claude: haltedRec('claude'), terminal2: haltedRec('terminal2') } });
+    const rt = must(r);
+    expect(() => rt.clearHalt('codex')).not.toThrow();
+    expect(() => rt.clearHalt('')).not.toThrow();
+    expect(rt.state('claude')?.readout).toBe('notApplied');
+    rt.clearHalt('claude');
+    expect(rt.state('claude')?.readout).not.toBe('notApplied');
+    const saved = await r.lastSave();
+    expect(saved?.claude.halted).toBeNull();
+    expect(saved?.terminal2.halted).not.toBeNull();
+    expect(rt.state('terminal2')?.readout).toBe('notApplied');
+    expect(r.writes).toEqual([]);
+  });
+
+  it('14: a manual pick on a not-live record edits the record only', async () => {
+    const r = rig();
+    const rt = must(r);
+    expect(rt.submitPick('claude', { ...SONNET_HIGH })).toEqual({ rejected: null });
+    expect(rt.state('claude')).toMatchObject({ effort: 'high', auto: false, reason: 'manual pick' });
+    expect((await r.lastSave())?.claude.source).toBe('manual');
+    expect(r.writes).toEqual([]);
+  });
+
+  it('15: a manual pick on a live idle slot types exactly one /effort, once', async () => {
+    const r = rig();
+    const rt = must(r);
+    liveClaude(r);
+    // an ignored running-state event must not disturb the pick
+    r.claude.fire({ kind: 'state', state: 'running' });
+    expect(rt.submitPick('claude', { ...SONNET_HIGH })).toEqual({ rejected: null });
+    expect(rt.state('claude')).toMatchObject({ readout: 'queued', target: { tier: 'sonnet', effort: 'high' } });
+    await r.runNext();
+    expect(r.writes).toEqual([{ slot: 'claude', d: '/effort high\r' }]);
+    r.t.now += 500;
+    await r.runNext();
+    expect(r.writes).toHaveLength(1);
+  });
+
+  it('16: a model pick is held back (Option R) and every byte ever written is an /effort line', async () => {
+    const r = rig();
+    const rt = must(r);
+    liveClaude(r);
+    expect(rt.submitPick('claude', { model: 'opus', effort: 'medium' })).toEqual({ rejected: null });
+    expect(rt.state('claude')?.readout).toBe('queuedModel');
+    for (let i = 0; i < 4; i++) {
+      r.t.now += 500;
+      await r.runNext();
+    }
+    expect(r.writes).toEqual([]);
+    rt.submitPick('claude', { ...SONNET_HIGH });
+    r.t.now += 500;
+    await r.runNext();
+    expect(r.writes.length).toBeGreaterThan(0);
+    for (const w of r.writes) expect(w.d).toMatch(EFFORT_ONLY);
+  });
+
+  it('17: a halted live slot receives zero bytes until clearHalt, then exactly one /effort', async () => {
+    const r = rig();
+    const rt = must(r);
+    liveClaude(r);
+    rt.submitPick('claude', { ...SONNET_HIGH });
+    await r.runNext();
+    expect(r.writes).toHaveLength(1);
+    // readback shows a different model than the one launched: the engine halts the slot
+    rt.onStatusline({ ...snap(r, 10), modelDisplayName: 'Haiku' });
+    await settle();
+    expect(rt.state('claude')?.readout).toBe('notApplied');
+    expect(rt.submitPick('claude', { model: 'sonnet', effort: 'max' })).toEqual({ rejected: null });
+    for (let i = 0; i < 4; i++) {
+      r.t.now += 500;
+      await r.runNext();
+    }
+    expect(r.writes).toHaveLength(1);
+    rt.clearHalt('claude');
+    r.t.now += 500;
+    await r.runNext();
+    await r.runNext();
+    expect(r.writes.map((w) => w.d)).toEqual(['/effort high\r', '/effort max\r']);
+  });
+
+  it('18: invalid picks are rejected without a save or a write', async () => {
+    const r = rig();
+    const rt = must(r);
+    await r.lastSave();
+    const before = r.saves.length;
+    const bad = [
+      rt.submitPick('claude', { model: 'fable', effort: 'high' } as never),
+      rt.submitPick('claude', { model: 'sonnet', effort: 'ul' + 'tra' } as never),
+      rt.submitPick('claude', { model: 'Sonnet', effort: 'high' } as never),
+      rt.submitPick('codex', { ...SONNET_HIGH }),
+    ];
+    for (const b of bad) expect(b).toEqual({ rejected: 'invalid pick' });
+    await r.lastSave();
+    expect(r.saves.length).toBe(before);
+    expect(r.writes).toEqual([]);
+  });
+
+  it('19: after dispose, state is null, submitPick is disposed and clearHalt is inert', async () => {
+    const r = rig();
+    const rt = must(r);
+    liveClaude(r);
+    expect(rt.submitPick('claude', { ...SONNET_HIGH })).toEqual({ rejected: null });
+    await r.lastSave();
+    rt.dispose();
+    const before = r.saves.length;
+    expect(rt.state('claude')).toBeNull();
+    expect(rt.submitPick('claude', { ...SONNET_HIGH })).toEqual({ rejected: 'disposed' });
+    expect(() => rt.clearHalt('claude')).not.toThrow();
+    r.t.now += 1000;
+    await r.runNext();
+    expect(r.saves.length).toBe(before);
+    expect(r.writes).toEqual([]);
+  });
+});

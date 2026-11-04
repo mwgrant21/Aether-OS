@@ -4,13 +4,14 @@
 // that main wires up. Returns null unless AETHER_CHOICE_HOST is exactly '1'.
 // Pure of electron, fs, pty and timers: everything arrives through AetherChoiceRuntimeDeps.
 import { createPickHost } from './pickHost';
-import type { OwnedSlot, PickHostDeps } from './pickHost';
+import type { OwnedSlot, PickHostDeps, SlotState } from './pickHost';
 import { createScreenWatcher } from './screenWatcher';
 import type { ObservableSlot, ScreenWatcherDeps } from './screenWatcher';
 import type { FailureInfo } from './applyEngine';
 import type { SlotEvent } from '../terminalHub';
 import { ladderPick } from '../../src/shared/aetherChoice/pickPolicy';
 import type { ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
+import type { Pick as ModelPick } from '../../src/shared/aetherChoice/types';
 import type { TerminalWritePort } from '../../src/shared/remote/types';
 import type { StatuslineSnapshot } from '../../src/shared/statuslinePayload';
 
@@ -36,10 +37,14 @@ export type AetherChoiceRuntime = {
   noteUserInput(slot: string): void;
   wrapUserWritePort(port: TerminalWritePort): TerminalWritePort;
   onStatusline(snapshot: StatuslineSnapshot): void;
+  state(slot: string): SlotState | null;
+  submitPick(slot: string, pick: ModelPick): { rejected: string | null };
+  clearHalt(slot: string): void;
   flush(): Promise<void>;
   dispose(): void;
 };
 
+const MANUAL_REASON = 'manual pick';
 const OWNED: readonly OwnedSlot[] = ['claude', 'terminal2'];
 const isOwned = (slot: string): slot is OwnedSlot => (OWNED as readonly string[]).includes(slot);
 
@@ -134,6 +139,26 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
     },
     onStatusline(s) {
       if (!disposed) host.onStatusline(s);
+    },
+    state(slot) {
+      if (disposed) return null;
+      try {
+        return host.state(slot as OwnedSlot);
+      } catch {
+        return null;
+      }
+    },
+    submitPick(slot, pick) {
+      if (disposed) return { rejected: 'disposed' };
+      try {
+        return host.submitPick(slot as OwnedSlot, pick, MANUAL_REASON);
+      } catch {
+        return { rejected: 'error' };
+      }
+    },
+    clearHalt(slot) {
+      if (disposed) return;
+      safe(() => host.clearHalt(slot as OwnedSlot));
     },
     flush: () => host.flush(),
     dispose() {
