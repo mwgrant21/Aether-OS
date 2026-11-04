@@ -39,7 +39,7 @@ function fakePty() {
     fireData: (value: string) => data(value), fireExit: () => exit(),
   } satisfies PtyLike & { fireData(value: string): void; fireExit(): void };
 }
-function fixture() {
+function fixture(opts?: { aetherChoice?: unknown }) {
   const hub = createTerminalHub(), ptyLifecycle = hub.slot('claude'), codexPtyLifecycle = hub.slot('codex'), terminal2PtyLifecycle = hub.slot('terminal2');
   const spawnPty = vi.fn(), spawnCodexPty = vi.fn(), send = vi.fn(), sendToWindow = vi.fn();
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
@@ -53,14 +53,16 @@ function fixture() {
   const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
     UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
-    planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() } };
+    planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() },
+    aetherChoice: opts?.aetherChoice ?? null, diagLog: { write: vi.fn() } };
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context) as (...args: unknown[]) => void;
   return { ...context, prompt: () => prompt, launch: (id: string | undefined) => { launchId = id; prompt = 'unknown'; },
     resize: compile(callbackFor('pty:resize', 'on')), event: { sender: { isDestroyed: () => false, send } }, send,
     ordinary: compile(callbackFor('pty:start')), connected: compile(connectedCallback()), codex: compile(callbackFor('codexPty:start')),
-    terminal2: compile(callbackFor('terminal2Pty:start')) };
+    terminal2: compile(callbackFor('terminal2Pty:start')),
+    ptyWrite: compile(callbackFor('pty:write', 'on')), terminal2Write: compile(callbackFor('terminal2Pty:write', 'on')) };
 }
 
 describe('production terminal consumer ownership (deterministic callbacks)', () => {
@@ -335,5 +337,125 @@ describe('resize publication transaction ownership', () => {
     f.pty.fireData(redraw); expect(f.prompt()).toBe('unknown');
     f.resize({}, { cols: 100, rows: 30 }); f.pty.fireData(redraw);
     expect(f.prompt()).toBe('folder-trust');
+  });
+});
+
+function fakeRuntime(command: string | undefined) {
+  return { launchCommandFor: vi.fn(() => command), onForeignLaunch: vi.fn(), noteUserInput: vi.fn() };
+}
+
+describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => {
+  it('keeps the exact legacy spawn arity with no runtime', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty.mock.calls[0]).toHaveLength(4);
+    expect(f.spawnPty.mock.calls[1]).toHaveLength(5);
+  });
+
+  it('passes the launch command as the sixth spawn argument and does not mark it foreign', () => {
+    const rt = fakeRuntime('CMD\r'), f = fixture({ aetherChoice: rt });
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(rt.launchCommandFor).toHaveBeenCalledOnce();
+    expect(rt.launchCommandFor).toHaveBeenCalledWith('claude', { sessionId: 'pinned-id' });
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id', undefined, 'CMD\r');
+    expect(rt.onForeignLaunch).not.toHaveBeenCalled();
+  });
+
+  it('does not plan a launch when pty:start finds a live pty (remount)', () => {
+    const rt = fakeRuntime('CMD\r'), f = fixture({ aetherChoice: rt });
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    rt.launchCommandFor.mockClear();
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(rt.launchCommandFor).not.toHaveBeenCalled();
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(rt.onForeignLaunch).not.toHaveBeenCalled();
+  });
+
+  it('launches Terminal 2 with the command, and an Enter restart asks for a new one', () => {
+    const rt = fakeRuntime('CMD\r'), f = fixture({ aetherChoice: rt }), pty1 = fakePty(), pty2 = fakePty();
+    f.spawnPty.mockReturnValueOnce(pty1).mockReturnValueOnce(pty2);
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(rt.launchCommandFor).toHaveBeenLastCalledWith('terminal2');
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' }, 'CMD\r');
+    rt.launchCommandFor.mockReturnValueOnce('CMD2\r');
+    pty1.fireExit();
+    f.terminal2PtyLifecycle.write('\r');
+    expect(rt.launchCommandFor).toHaveBeenCalledTimes(2);
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' }, 'CMD2\r');
+  });
+
+  it('marks a refused launch foreign and keeps the exact legacy args on both slots', () => {
+    const rt = fakeRuntime(undefined), f = fixture({ aetherChoice: rt });
+    f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty.mock.calls[0]).toEqual([80, 24, undefined, 'pinned-id']);
+    expect(rt.onForeignLaunch).toHaveBeenLastCalledWith('claude');
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty.mock.calls[1]).toEqual([80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' }]);
+    expect(rt.onForeignLaunch).toHaveBeenLastCalledWith('terminal2');
+  });
+
+  it('marks the connected spawn foreign before it spawns', () => {
+    const rt = fakeRuntime('CMD\r'), f = fixture({ aetherChoice: rt });
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.connected({}, vi.fn());
+    expect(rt.onForeignLaunch).toHaveBeenCalledWith('claude');
+    expect(rt.onForeignLaunch.mock.invocationCallOrder[0]).toBeLessThan(f.spawnPty.mock.invocationCallOrder[0]);
+  });
+
+  it('drops the stashed plan and rethrows the same error when a managed spawn throws', () => {
+    const boom = new Error('boom');
+    const rt = fakeRuntime('CMD\r'), f = fixture({ aetherChoice: rt });
+    f.spawnPty.mockImplementation(() => { throw boom; });
+    expect(() => f.ordinary(f.event, { cols: 80, rows: 24 })).toThrow(boom);
+    expect(rt.launchCommandFor).toHaveBeenCalledOnce();
+    expect(rt.onForeignLaunch).toHaveBeenCalledOnce();
+    expect(rt.onForeignLaunch).toHaveBeenCalledWith('claude');
+    expect(rt.onForeignLaunch.mock.invocationCallOrder[0]).toBeGreaterThan(rt.launchCommandFor.mock.invocationCallOrder[0]);
+    expect(f.ptyLifecycle.current).toBeNull();
+    const rt2 = fakeRuntime('CMD\r'), g = fixture({ aetherChoice: rt2 });
+    g.spawnPty.mockImplementation(() => { throw boom; });
+    expect(() => g.terminal2(g.event, { cols: 80, rows: 24 })).toThrow(boom);
+    expect(rt2.onForeignLaunch).toHaveBeenCalledOnce();
+    expect(rt2.onForeignLaunch).toHaveBeenCalledWith('terminal2');
+    const h = fixture();
+    h.spawnPty.mockImplementation(() => { throw boom; });
+    expect(() => h.ordinary(h.event, { cols: 80, rows: 24 })).toThrow(boom);
+  });
+
+  it('notes typed input on both write handlers and never on plan:sync', () => {
+    const rt = fakeRuntime(undefined), f = fixture({ aetherChoice: rt }), pty1 = fakePty(), pty2 = fakePty();
+    f.spawnPty.mockReturnValueOnce(pty1).mockReturnValueOnce(pty2);
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    f.ptyWrite({}, 'a');
+    f.terminal2Write({}, 'b');
+    expect(rt.noteUserInput.mock.calls).toEqual([['claude'], ['terminal2']]);
+    expect(pty1.write).toHaveBeenCalledWith('a');
+    expect(pty2.write).toHaveBeenCalledWith('b');
+    expect(callbackFor('plan:sync')).not.toContain('noteUserInput');
+  });
+
+  it('keeps the wiring order: statusline first, launch after the guard, engine port, wrapped phone port, flush in the quit gate', () => {
+    const statusline = source.slice(source.indexOf('startStatuslineWatcher(statuslinePayloadPath'));
+    expect(statusline.indexOf('onStatusline(')).toBeGreaterThan(-1);
+    expect(statusline.indexOf('onStatusline(')).toBeLessThan(statusline.indexOf('isPinnedStatusline('));
+    const start = callbackFor('pty:start');
+    expect(start.indexOf("launchCommandFor('claude'")).toBeGreaterThan(start.indexOf('ptyLifecycle.current'));
+    expect(source).toMatch(/input: aetherChoice \? aetherChoice\.wrapUserWritePort\(terminalHub\.writePort\(\)\)/);
+    const engineLine = source.split(/\r?\n/).find(line => /^\s*writePort:/.test(line));
+    expect(engineLine).toContain('terminalHub.writePort()');
+    expect(engineLine).not.toContain('wrapUserWritePort');
+    let gate = '';
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.getText(ast) === 'createFlushQuitGate') gate = node.getText(ast);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect(gate).toContain('aetherChoice ? aetherChoice.flush() : Promise.resolve()');
   });
 });
