@@ -21,6 +21,7 @@ import type { TranscriptReadResult, TranscriptSource } from '../electron/transcr
 import type { VerifierStatus, VerificationEvent } from './shared/crossEngineTypes';
 import type { ControlPairingResult, ControlStatus, PairingResult, RemoteStatus } from './shared/remote/types';
 import type { VoicePairingResult, VoiceStatus } from './shared/voice/types';
+import type { AetherChoiceClear, AetherChoiceHalted, AetherChoiceState, AetherChoiceSubmit, AetherChoiceSubmitResult } from './shared/aetherChoice/ipc';
 import type { CommunicationPayload } from './shared/communicationTypes';
 import type { CommunicationBridgeSnapshot, BridgeShutdownResult } from '../electron/communicationBridge/mainIntegration';
 import type { QuotaEfficiency } from './shared/quotaEfficiency';
@@ -65,6 +66,12 @@ declare global {
         revokeAll: () => Promise<ControlStatus>;
         revokeOne: (ref: string) => Promise<ControlStatus>;
         onStatus: (cb: (s: ControlStatus) => void) => () => void;
+      };
+      aetherChoice: {
+        state: () => Promise<AetherChoiceState>;
+        submit: (p: AetherChoiceSubmit) => Promise<AetherChoiceSubmitResult>;
+        clearHalt: (p: AetherChoiceClear) => Promise<void>;
+        onHalted: (cb: (info: AetherChoiceHalted) => void) => () => void;
       };
       phoneView: {
         publish: (v: string, payload: Record<string, unknown>) => void;

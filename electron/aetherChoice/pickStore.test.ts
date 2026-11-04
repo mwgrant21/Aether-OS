@@ -58,6 +58,14 @@ describe('pickStore', () => {
     expect(Object.keys(loadPicks(dir))).toEqual(['ok']);
   });
 
+  it('drops a record whose queued pick is auto-sourced with a manual-only effort, keeps the manual one', () => {
+    const queue = (source: string) => ({ pick: { model: 'sonnet', effort: 'max' }, reason: 'r', trigger: 'manual', source, queuedAt: 1 });
+    write({ a: { ...rec('a'), queue: queue('auto') }, m: { ...rec('m'), queue: queue('manual') } });
+    const out = loadPicks(dir);
+    expect(Object.keys(out)).toEqual(['m']);
+    expect(out.m.queue?.pick.effort).toBe('max');
+  });
+
   it('drops malformed new fields and unknown extra fields', () => {
     write({
       a: { ...rec('a'), lastBudgetLevel: 'bogus' },
