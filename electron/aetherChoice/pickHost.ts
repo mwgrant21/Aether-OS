@@ -11,7 +11,8 @@ import type { IdleReading, LaunchEffort, ModelAlias, Pick, ReadoutState } from '
 import { newRecord, planLaunch } from '../../src/shared/aetherChoice/pickRecord';
 import type { LaunchPlan, ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
 import type { BudgetLevel } from '../../src/shared/aetherChoice/pickPolicy';
-import { usageFromSnapshot } from '../../src/shared/aetherChoice/readback';
+import { applyBudget } from '../../src/shared/aetherChoice/pickPolicy';
+import { aliasFromModel, judgeReadback, usageFromSnapshot } from '../../src/shared/aetherChoice/readback';
 import type { TerminalSlotId, TerminalWritePort } from '../../src/shared/remote/types';
 import type { StatuslineSnapshot } from '../../src/shared/statuslinePayload';
 
@@ -75,6 +76,7 @@ export function createPickHost(deps: PickHostDeps): PickHost {
   const readMaxAgeMs = deps.readMaxAgeMs ?? 2000;
   const tickMs = deps.tickMs ?? 500;
   const launchGraceMs = deps.launchGraceMs ?? 10000;
+  const readbackTimeoutMs = deps.readbackTimeoutMs ?? 60_000;
 
   const records = new Map<string, ThreadPickRecord>(Object.entries(deps.loadRecords()));
   const epoch = new Map<OwnedSlot, number>();
@@ -107,6 +109,18 @@ export function createPickHost(deps: PickHostDeps): PickHost {
       // a failing log sink must not break the host
     }
   };
+
+  // The launch-readback window of a slot: set by onLaunched (claude with a session id only), dead once the
+  // record is not live, once the first usable snapshot was judged, or once readbackTimeoutMs has passed.
+  function readbackWindow(slot: OwnedSlot): LaunchInfo | null {
+    const w = launch.get(slot);
+    if (!w || slot !== 'claude' || w.sessionId === null) return null;
+    if (!records.get(slot)?.live || deps.now() - w.sentAtMs >= readbackTimeoutMs) {
+      launch.delete(slot);
+      return null;
+    }
+    return w;
+  }
 
   function usage(): { sessionPct: number; weekPct: number } {
     const u = usageFromSnapshot(snapshot, deps.now());
@@ -183,6 +197,9 @@ export function createPickHost(deps: PickHostDeps): PickHost {
           if (reading === 'shell' && settled(slot, startedAt) === 'ok' && deps.now() - (launchAt.get(slot) ?? 0) >= launchGraceMs) {
             engine.onExited(slot);
             bump(slot);
+            // A demoted record keeps no launch window and no budget level from the process that is gone.
+            launch.delete(slot);
+            budgetLevel.set(slot, 'none');
             continue;
           }
           engine.onIdleCheck(slot);
@@ -212,7 +229,7 @@ export function createPickHost(deps: PickHostDeps): PickHost {
       ensureTick();
     },
     minWriteGapMs: deps.minWriteGapMs,
-    hasReadback: () => false,
+    hasReadback: (id) => (isOwned(id) ? readbackWindow(id) !== null : false),
   });
 
   for (const slot of owned) {
@@ -222,6 +239,45 @@ export function createPickHost(deps: PickHostDeps): PickHost {
   }
   // Nothing is live at app start: normalize a persisted live or sent record before any tick.
   for (const slot of owned) engine.onExited(slot);
+
+  // Budget pump: one budget pick per LEVEL CHANGE of a live auto record (usage is account-wide).
+  function budgetPass(): void {
+    const u = usageFromSnapshot(snapshot, deps.now());
+    if (!u.known) return;
+    for (const slot of owned) {
+      const rec = records.get(slot);
+      if (!rec || !rec.live || rec.halted || rec.source !== 'auto' || rec.pendingSource === 'manual') continue;
+      const prev = budgetLevel.get(slot) ?? 'none';
+      const b = applyBudget(rec.intended, { sessionPct: u.sessionPct, weekPct: u.weekPct }, 'auto', prev);
+      if (b.level === prev) continue;
+      budgetLevel.set(slot, b.level);
+      engine.onPick(slot, b.pick, { reason: b.reason || 'budget recovered', trigger: 'budget', source: 'auto' });
+    }
+  }
+
+  // Readback pump: only the FIRST usable snapshot of the launched session is judged. Absence never halts.
+  function readbackPass(s: StatuslineSnapshot): void {
+    const w = readbackWindow('claude');
+    const rec = records.get('claude');
+    if (!w || !rec || s.sessionId !== w.sessionId) return;
+    const wanted = rec.launched ?? rec.intended;
+    const j = judgeReadback({
+      wanted,
+      readback: { model: aliasFromModel(s), effort: null, capturedAtMs: s.capturedAtMs },
+      sentAtMs: w.sentAtMs,
+      nowMs: deps.now(),
+      timeoutMs: readbackTimeoutMs,
+      onTimeout: 'unconfirmed',
+    });
+    if (j.kind === 'pending') return;
+    launch.delete('claude');
+    if (j.kind === 'not-applied') {
+      engine.reportOutcome('claude', 'not-applied', null);
+      safeLog(`readback-mismatch claude wanted ${wanted.model} saw ${aliasFromModel(s) ?? 'none'}`);
+    } else if (j.kind === 'confirmed') {
+      engine.reportOutcome('claude', 'confirmed');
+    }
+  }
 
   function resetSlot(slot: OwnedSlot): void {
     engine.onExited(slot);
@@ -297,6 +353,17 @@ export function createPickHost(deps: PickHostDeps): PickHost {
 
     onStatusline(s) {
       snapshot = s;
+      if (disposed) return;
+      try {
+        budgetPass();
+      } catch {
+        safeLog('budget-pass-failed');
+      }
+      try {
+        readbackPass(s);
+      } catch {
+        safeLog('readback-pass-failed');
+      }
     },
 
     submitPick(slot, pick, reason) {
