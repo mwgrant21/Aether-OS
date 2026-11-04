@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileAtomically } from '../atomicWrite';
-import { LAUNCH_EFFORTS, MODEL_ALIASES } from '../../src/shared/aetherChoice/types';
+import { LAUNCH_EFFORTS, MANUAL_ONLY_EFFORTS, MODEL_ALIASES } from '../../src/shared/aetherChoice/types';
 import type { ModelAlias, Pick, PickSource, PickTrigger } from '../../src/shared/aetherChoice/types';
 import type { BudgetLevel } from '../../src/shared/aetherChoice/pickPolicy';
 import type { HaltInfo, QueuedPick, ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
@@ -55,6 +55,7 @@ function parseQueued(v: unknown): QueuedPick | undefined {
   const source = oneOf(SOURCES, o.source);
   if (!pick || reason === undefined || !trigger || !source) return undefined;
   if (typeof o.queuedAt !== 'number' || !Number.isFinite(o.queuedAt)) return undefined;
+  if (source === 'auto' && (MANUAL_ONLY_EFFORTS as readonly string[]).includes(pick.effort)) return undefined;
   return { pick, reason, trigger, source, queuedAt: o.queuedAt };
 }
 

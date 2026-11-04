@@ -161,10 +161,14 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
       return;
     }
     if (rec.halted) return;
-    deps.setRecord(threadId, markNotApplied(rec, rec.launched ?? rec.intended, actual));
+    const wanted = rec.launched ?? rec.intended;
+    const next = markNotApplied(rec, wanted, actual);
+    deps.setRecord(threadId, next);
+    // Sanitized copy: markNotApplied drops an actual outside the allow-lists.
+    const stored = next.halted?.actual ?? null;
     // A15 port level: notified regardless of awayMode().
-    deps.notifyFailure({ threadId, wanted: { ...(rec.launched ?? rec.intended) }, actual });
-    line(rec.launched ?? rec.intended, actual ?? rec.launched ?? rec.intended, rec.source, rec.trigger, 'not-applied');
+    deps.notifyFailure({ threadId, wanted: { ...wanted }, actual: stored });
+    line(wanted, stored ?? wanted, rec.source, rec.trigger, 'not-applied');
   }
 
   function clearThreadHalt(threadId: string): void {
