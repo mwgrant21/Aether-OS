@@ -5,6 +5,7 @@ import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
 import { scanTranscriptsOnce } from './transcriptScan.js';
 import { createMemoryExtractQueue } from './memoryExtractQueue.js';
+import { createHandbackReportStore, HANDBACK_REPORT_MAX_CHARS, HANDBACK_STORE_MAX_ENTRIES } from './dispatchResultText.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-scan-db-'));
@@ -597,16 +598,18 @@ function agentToolUseLine(toolUseId: string, timestamp: string): string {
 function taskNotificationLine(
   toolUseId: string,
   timestamp: string,
-  parts: { tokens?: number; toolUses?: number; durationMs?: number; resultBody?: string } = {},
+  parts: { tokens?: number; toolUses?: number; durationMs?: number; resultBody?: string; taskId?: string } = {},
 ): string {
   const {
     tokens = 100,
     toolUses = 6,
     durationMs = 65_000,
     resultBody = 'Implemented the feature, all tests passing.',
+    taskId,
   } = parts;
   const content =
     '<task-notification>\n' +
+    (taskId === undefined ? '' : `<task-id>${taskId}</task-id>\n`) +
     `<tool-use-id>${toolUseId}</tool-use-id>\n` +
     `<result>${resultBody}</result>\n` +
     `<subagent_tokens>${tokens}</subagent_tokens>\n` +
@@ -735,6 +738,234 @@ describe('scanTranscriptsOnce -- memory extraction queueing', () => {
     db.close();
   });
 
+});
+
+const STUB = 'This agent\'s report was delivered to you as a message from "AGENT" (its SubagentHandback call). Read it there; it is not repeated here.';
+
+function handbackUserLine(agentId: string, report: string, ts: string): string {
+  return JSON.stringify({
+    type: 'user',
+    isMeta: true,
+    sessionId: 's1',
+    timestamp: ts,
+    origin: { kind: 'peer', from: agentId, senderTaskId: agentId, name: 'CINDER', handback: true, handbackReportText: report },
+    message: { content: `<agent-message from="${agentId}">${report}</agent-message>` },
+  });
+}
+
+function handbackAttachmentLine(agentId: string, report: string, ts: string): string {
+  return JSON.stringify({
+    type: 'attachment',
+    sessionId: 's1',
+    timestamp: ts,
+    attachment: {
+      type: 'queued_command',
+      commandMode: 'prompt',
+      prompt: `<agent-message from="${agentId}">${report}</agent-message>`,
+      origin: { kind: 'peer', from: agentId, senderTaskId: agentId, name: 'CINDER', handback: true, handbackReportText: report },
+    },
+  });
+}
+
+describe('scanTranscriptsOnce -- hand-back report for stub notifications', () => {
+  const REPORT = 'Real report: fixed the retry loop and added a regression test.';
+  function setup(lines: string[]) {
+    const projectsRoot = mkdtempSync(join(tmpdir(), 'aether-collector-scan-hb-projects-'));
+    const projDir = join(projectsRoot, 'my-project');
+    mkdirSync(projDir);
+    const file = join(projDir, 'session.jsonl');
+    writeFileSync(file, lines.join('\n') + '\n', 'utf8');
+    return { projectsRoot, file };
+  }
+  const stubNote = (id: string, task: string, ts = '2026-07-08T09:01:05Z') =>
+    taskNotificationLine(id, ts, { resultBody: STUB, taskId: task });
+
+  it('uses a user-shape hand-back 13 lines earlier when the notification result is the stub, and drops it on use', () => {
+    const filler = Array.from({ length: 12 }, () => assistantLine(1));
+    const { projectsRoot } = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      ...filler,
+      stubNote('tu_1', 'a1'),
+    ]);
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    const store = createHandbackReportStore();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue, null, store);
+    const items = queue.drain();
+    expect(items).toHaveLength(1);
+    expect(items[0].runSummary).toBe(REPORT);
+    expect(items[0].runSummary).not.toContain('delivered to you');
+    expect(store.size()).toBe(0);
+    db.close();
+  });
+
+  it('uses an attachment-shape hand-back too', () => {
+    const { projectsRoot } = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackAttachmentLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      stubNote('tu_1', 'a1'),
+    ]);
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    const store = createHandbackReportStore();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue, null, store);
+    expect(queue.drain()[0].runSummary).toBe(REPORT);
+    expect(store.size()).toBe(0);
+    db.close();
+  });
+
+  it('leaves a real inline result untouched and keeps the stored hand-back', () => {
+    const { projectsRoot } = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { taskId: 'a1' }),
+    ]);
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    const store = createHandbackReportStore();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue, null, store);
+    expect(queue.drain()[0].runSummary).toBe('Implemented the feature, all tests passing.');
+    expect(store.get('a1')).toBe(REPORT);
+    db.close();
+  });
+
+  it('skips a stub with no hand-back, and uses the hand-back for an empty <result>', () => {
+    const none = setup([agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'), stubNote('tu_1', 'a1')]);
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, none.projectsRoot, 2000, new Map(), queue);
+    expect(queue.size()).toBe(0);
+    db.close();
+
+    const empty = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { resultBody: '', taskId: 'a1' }),
+    ]);
+    const db2 = freshDb();
+    const queue2 = createMemoryExtractQueue();
+    scanTranscriptsOnce(db2, empty.projectsRoot, 2000, new Map(), queue2);
+    expect(queue2.drain()[0].runSummary).toBe(REPORT);
+    db2.close();
+
+    const noId = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z', { resultBody: '' }),
+    ]);
+    const db3 = freshDb();
+    const queue3 = createMemoryExtractQueue();
+    scanTranscriptsOnce(db3, noId.projectsRoot, 2000, new Map(), queue3);
+    expect(queue3.size()).toBe(0);
+    db3.close();
+  });
+
+  it('links across ticks only when the caller shares a store', () => {
+    const run = (shared: boolean) => {
+      const { projectsRoot, file } = setup([
+        agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+        handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      ]);
+      const db = freshDb();
+      const history = new Map();
+      const store = createHandbackReportStore();
+      const queue = createMemoryExtractQueue();
+      scanTranscriptsOnce(db, projectsRoot, 2000, history, queue, null, shared ? store : undefined);
+      if (shared) expect(store.size()).toBe(1);
+      expect(queue.size()).toBe(0);
+      appendFileSync(file, stubNote('tu_1', 'a1') + '\n', 'utf8');
+      scanTranscriptsOnce(db, projectsRoot, 3000, history, queue, null, shared ? store : undefined);
+      db.close();
+      return queue.drain();
+    };
+    expect(run(true)[0].runSummary).toBe(REPORT);
+    expect(run(false)).toHaveLength(0);
+  });
+
+  it('caps an oversize report, processes events in order, and bounds unmatched hand-backs', () => {
+    const big = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', 'x'.repeat(20_000), '2026-07-08T09:01:00Z'),
+      stubNote('tu_1', 'a1'),
+    ]);
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, big.projectsRoot, 2000, new Map(), queue);
+    expect(queue.drain()[0].runSummary).toHaveLength(HANDBACK_REPORT_MAX_CHARS);
+    db.close();
+
+    const lines: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      lines.push(agentToolUseLine(`tu_${i}`, '2026-07-08T09:00:00Z'));
+      lines.push(handbackUserLine(`a${i}`, `report ${i}`, '2026-07-08T09:01:00Z'));
+      lines.push(stubNote(`tu_${i}`, `a${i}`));
+    }
+    const many = setup(lines);
+    const db2 = freshDb();
+    const queue2 = createMemoryExtractQueue();
+    scanTranscriptsOnce(db2, many.projectsRoot, 2000, new Map(), queue2);
+    expect(queue2.size()).toBe(40);
+    db2.close();
+
+    const unmatched = setup(Array.from({ length: 40 }, (_, i) => handbackUserLine(`u${i}`, `r${i}`, '2026-07-08T09:01:00Z')));
+    const db3 = freshDb();
+    const store = createHandbackReportStore();
+    scanTranscriptsOnce(db3, unmatched.projectsRoot, 2000, new Map(), createMemoryExtractQueue(), null, store);
+    expect(store.size()).toBe(HANDBACK_STORE_MAX_ENTRIES);
+    db3.close();
+  });
+
+  it('holds nothing when extraction is off, and clears a pre-filled store', () => {
+    const { projectsRoot } = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+    ]);
+    const db = freshDb();
+    const store = createHandbackReportStore();
+    expect(() => scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), undefined, null, store)).not.toThrow();
+    expect(store.size()).toBe(0);
+    store.put('old', 'old report');
+    scanTranscriptsOnce(db, projectsRoot, 3000, new Map(), undefined, null, store);
+    expect(store.size()).toBe(0);
+    db.close();
+  });
+
+  it('never persists the report text in collector.db', () => {
+    const MARKER = 'UNIQUE-MARKER-9f3b7c';
+    const { projectsRoot } = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', MARKER, '2026-07-08T09:01:00Z'),
+      stubNote('tu_1', 'a1'),
+    ]);
+    const db = freshDb();
+    const queue = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), queue);
+    expect(queue.drain()[0].runSummary).toBe(MARKER);
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+    let dump = JSON.stringify(db.prepare('SELECT * FROM sqlite_master').all());
+    for (const t of tables) dump += JSON.stringify(db.prepare(`SELECT * FROM "${t.name}"`).all());
+    expect(dump).not.toContain(MARKER);
+    db.close();
+  });
+
+  it('behaves identically with the pre-existing 5- and 6-arg signatures', () => {
+    const { projectsRoot } = setup([
+      agentToolUseLine('tu_1', '2026-07-08T09:00:00Z'),
+      handbackUserLine('a1', REPORT, '2026-07-08T09:01:00Z'),
+      taskNotificationLine('tu_1', '2026-07-08T09:01:05Z'),
+    ]);
+    const db = freshDb();
+    const q5 = createMemoryExtractQueue();
+    scanTranscriptsOnce(db, projectsRoot, 2000, new Map(), q5);
+    expect(q5.drain()[0].runSummary).toBe('Implemented the feature, all tests passing.');
+    const db6 = freshDb();
+    const q6 = createMemoryExtractQueue();
+    scanTranscriptsOnce(db6, projectsRoot, 2000, new Map(), q6, null);
+    expect(q6.drain()[0].runSummary).toBe('Implemented the feature, all tests passing.');
+    db.close();
+    db6.close();
+  });
 });
 
 describe('scanTranscriptsOnce -- tool-error floor and subagent progress (spike GO)', () => {
