@@ -3,27 +3,21 @@
 // clock of its own). Option R: it never emits /model; a model pick stays in modelPending.
 import type { TerminalSlotId, TerminalWritePort } from '../../src/shared/remote/types';
 import { LAUNCH_EFFORTS } from '../../src/shared/aetherChoice/types';
-import type { Pick, PickSource, PickTrigger, ReadoutState } from '../../src/shared/aetherChoice/types';
+import type { IdleReading, Pick, PickSource, PickTrigger, ReadoutState } from '../../src/shared/aetherChoice/types';
 import { applyBudget } from '../../src/shared/aetherChoice/pickPolicy';
 import {
   clearHalt,
   clearPendingStepDown,
   deriveReadoutState,
+  markExited,
+  markLaunched,
   markNotApplied,
   setPendingStepDown,
   submitPick,
 } from '../../src/shared/aetherChoice/pickRecord';
-import type { ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
+import type { LaunchPlan, ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
 
-export type IdleReading =
-  | 'idle'
-  | 'generating'
-  | 'busy'
-  | 'picker'
-  | 'modal'
-  | 'switch-model-modal'
-  | 'draft'
-  | 'unknown';
+export type { IdleReading };
 
 /** OPEN-2: no real idle detector exists. This stub refuses to guess. */
 export const unknownIdle = (_slot: TerminalSlotId): IdleReading => 'unknown';
@@ -57,6 +51,10 @@ export type ApplyEngineDeps = {
   usage(): { sessionPct: number; weekPct: number };
   getRecord(threadId: string): ThreadPickRecord | undefined;
   setRecord(threadId: string, rec: ThreadPickRecord): void;
+  /** Minimum ms between two writes to one thread (default 2000): the screen can read idle for a repaint after a write. */
+  minWriteGapMs?: number;
+  /** True once the host has read the running pick back from the thread; absent means never. */
+  hasReadback?(threadId: string): boolean;
 };
 
 export type PickMetaIn = { reason: string; trigger: PickTrigger; source: PickSource };
@@ -67,6 +65,8 @@ const ownerAfterQueueConsumed = (rec: ThreadPickRecord): PickSource | null => (r
 const fmt = (p: Pick): string => `${p.model}/${p.effort}`;
 
 export function createApplyEngine(deps: ApplyEngineDeps) {
+  const minGap = deps.minWriteGapMs ?? 2000;
+  const lastWriteAt = new Map<string, number>();
   const stamp = (): string => new Date(deps.now()).toISOString();
 
   function line(from: Pick, to: Pick, source: PickSource, trigger: PickTrigger, outcome: PickLineOutcome): void {
@@ -122,10 +122,13 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
     }
     const order = LAUNCH_EFFORTS as readonly string[];
     const stepDown = order.indexOf(effort) < order.indexOf(base.effort);
+    const last = lastWriteAt.get(threadId);
+    if (last !== undefined && deps.now() - last < minGap) return 'skipped';
     const reading = deps.idle(slot);
     const midTurnOk = reading === 'generating' && q.trigger === 'budget' && stepDown;
     if (reading !== 'idle' && !midTurnOk) return 'skipped';
     if (!deps.writePort.write(slot, `/effort ${effort}\r`)) return 'skipped';
+    lastWriteAt.set(threadId, deps.now());
     let next: ThreadPickRecord = {
       ...rec,
       // The write changes what is running; only a real desire changes what is wanted.
@@ -171,9 +174,36 @@ export function createApplyEngine(deps: ApplyEngineDeps) {
 
   function readoutState(threadId: string, opts: { blocked?: boolean } = {}): ReadoutState | null {
     const rec = deps.getRecord(threadId);
-    // No readback source is wired: 'sent' reads as 'unconfirmed', never 'applied'.
-    return rec ? deriveReadoutState(rec, { ...opts, hasReadback: false }) : null;
+    // Without a hasReadback dep, 'sent' reads as 'unconfirmed', never 'applied'.
+    return rec ? deriveReadoutState(rec, { ...opts, hasReadback: deps.hasReadback?.(threadId) ?? false }) : null;
   }
 
-  return { onPick, onIdleCheck, reportOutcome, clearHalt: clearThreadHalt, readoutState };
+  /** The host spawned the thread with `plan`. Writes nothing; does not clear a halt. */
+  function onLaunched(threadId: string, plan: LaunchPlan): void {
+    const rec = deps.getRecord(threadId);
+    if (!rec) return;
+    // A fresh process has no repaint to wait out.
+    lastWriteAt.delete(threadId);
+    const launched = markLaunched(rec, plan);
+    const next: ThreadPickRecord = {
+      ...launched,
+      // A held pick keeps display priority: 'sent' would mask it.
+      outcome: launched.queue !== null || launched.modelPending !== null ? 'none' : 'sent',
+      pendingStepDown: plan.budgetLevel !== 'none',
+    };
+    deps.setRecord(threadId, next);
+    line(rec.launched ?? rec.intended, next.launched ?? rec.intended, next.source, next.trigger, 'sent');
+  }
+
+  /** The host's process for the thread is gone. Keeps queue, held model pick and halt; writes nothing. */
+  function onExited(threadId: string): void {
+    const rec = deps.getRecord(threadId);
+    if (!rec) return;
+    lastWriteAt.delete(threadId);
+    if (!rec.live && rec.outcome !== 'sent') return;
+    const exited = markExited(rec);
+    deps.setRecord(threadId, rec.outcome === 'sent' ? { ...exited, outcome: 'none' } : exited);
+  }
+
+  return { onPick, onIdleCheck, reportOutcome, clearHalt: clearThreadHalt, readoutState, onLaunched, onExited };
 }

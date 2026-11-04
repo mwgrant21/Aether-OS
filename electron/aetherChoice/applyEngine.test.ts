@@ -1,20 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { TerminalSlotId } from '../../src/shared/remote/types';
-import type { Pick } from '../../src/shared/aetherChoice/types';
-import { markExited, markLaunched, newRecord } from '../../src/shared/aetherChoice/pickRecord';
+import type { IdleReading as SharedIdleReading, Pick } from '../../src/shared/aetherChoice/types';
+import { markExited, markLaunched, newRecord, planLaunch } from '../../src/shared/aetherChoice/pickRecord';
 import { applyBudget } from '../../src/shared/aetherChoice/pickPolicy';
 import type { BudgetLevel } from '../../src/shared/aetherChoice/pickPolicy';
-import type { ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
+import type { LaunchPlan, ThreadPickRecord } from '../../src/shared/aetherChoice/pickRecord';
 import { createApplyEngine, formatPickLine, unknownIdle } from './applyEngine';
 import type { IdleReading } from './applyEngine';
 
 const T = 't1';
 const META = { reason: 'r', trigger: 'miss' as const, source: 'manual' as const };
 
-function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usage?: number; writeOk?: boolean } = {}) {
+function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usage?: number; writeOk?: boolean; readback?: boolean } = {}) {
   const writes: Array<[string, string]> = [];
   const logs: string[] = [];
-  const state = { reading: opts.reading ?? 'idle', usage: opts.usage ?? 0, writeOk: opts.writeOk ?? true };
+  const state = { reading: opts.reading ?? 'idle', usage: opts.usage ?? 0, writeOk: opts.writeOk ?? true, now: 1_700_000_000_000 };
   const records = new Map<string, ThreadPickRecord>();
   const live = markLaunched(newRecord(T, { model: 'sonnet', effort: 'medium' }, { reason: 'x', trigger: 'new-thread', source: 'auto' }), {
     model: 'sonnet', effort: 'medium', resume: false, reasonSuffix: '', budgetLevel: 'none',
@@ -22,11 +22,13 @@ function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usag
   records.set(T, live);
   const notifyFailure = vi.fn();
   const awayMode = vi.fn(() => false);
+  const hasReadbackSpy = vi.fn((_id: string) => opts.readback === true);
   const engine = createApplyEngine({
+    hasReadback: opts.readback === undefined ? undefined : hasReadbackSpy,
     writePort: { write: (s, d) => { writes.push([s, d]); return state.writeOk; } },
     slotFor: () => (opts.slot === undefined ? 'claude' : opts.slot),
     idle: () => state.reading,
-    now: () => 1_700_000_000_000,
+    now: () => state.now,
     log: (l) => logs.push(l),
     notifyFailure,
     awayMode,
@@ -34,7 +36,7 @@ function setup(opts: { slot?: TerminalSlotId | null; reading?: IdleReading; usag
     getRecord: (id) => records.get(id),
     setRecord: (id, r) => { records.set(id, r); },
   });
-  return { engine, writes, logs, state, records, notifyFailure, awayMode };
+  return { engine, writes, logs, state, records, notifyFailure, awayMode, hasReadbackSpy };
 }
 
 const HIGH: Pick = { model: 'sonnet', effort: 'high' };
@@ -100,12 +102,35 @@ describe('applyEngine', () => {
     s.engine.onIdleCheck(T);
     s.engine.reportOutcome(T, 'not-applied', null);
     s.writes.length = 0;
+    s.state.now += 2000;
     s.engine.onPick(T, { model: 'sonnet', effort: 'low' }, META);
     s.engine.onIdleCheck(T);
     expect(s.writes).toHaveLength(0);
     s.engine.clearHalt(T);
+    s.state.now += 2000;
     s.engine.onIdleCheck(T);
     expect(s.writes).toEqual([['claude', '/effort low\r']]);
+  });
+
+  it('write gap: a second pick 100 ms later is skipped, one after 2000 ms writes', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    s.state.now += 100;
+    s.engine.onPick(T, { model: 'sonnet', effort: 'low' }, META);
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toHaveLength(1);
+    s.state.now += 1900;
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.writes).toEqual([['claude', '/effort high\r'], ['claude', '/effort low\r']]);
+  });
+
+  it('a record that is not live gets zero writes', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    s.records.set(T, markExited(s.records.get(T)!));
+    expect(s.engine.onIdleCheck(T)).toBe('skipped');
+    expect(s.writes).toHaveLength(0);
   });
 
   it('not-applied notifies exactly once regardless of awayMode', () => {
@@ -149,7 +174,7 @@ describe('applyEngine', () => {
   it('non-idle readings write nothing; a following idle writes exactly once', () => {
     const s = setup();
     s.engine.onPick(T, HIGH, META);
-    for (const r of ['busy', 'picker', 'modal', 'switch-model-modal', 'draft', 'unknown', 'generating'] as const) {
+    for (const r of ['busy', 'picker', 'modal', 'switch-model-modal', 'draft', 'unknown', 'generating', 'shell'] as const) {
       s.state.reading = r;
       s.engine.onIdleCheck(T);
     }
@@ -317,6 +342,7 @@ describe('applyEngine: a reported apply failure reconciles the live baseline (G2
     s.engine.clearHalt(T);
     s.engine.onPick(T, HIGH, META);
     expect(s.records.get(T)?.queue?.pick.effort).toBe('high');
+    s.state.now += 2000;
     expect(s.engine.onIdleCheck(T)).toBe('sent');
     expect(s.writes).toHaveLength(2);
   });
@@ -358,10 +384,160 @@ describe('applyEngine: budget hysteresis survives the engine writes (H3)', () =>
       const r = s.records.get(T)!;
       const want = applyBudget({ model: 'sonnet', effort: r.intended.effort }, { sessionPct: pct, weekPct: 0 }, 'auto', r.lastBudgetLevel).pick;
       s.engine.onPick(T, want, { reason: 'b', trigger: 'budget', source: 'auto' });
+      s.state.now += 2000;
       s.engine.onIdleCheck(T);
       seen.push(s.records.get(T)!.launched!.effort);
     }
     expect(seen).toEqual(['high', 'medium', 'medium', 'low', 'low', 'medium', 'medium', 'medium', 'high', 'high']);
+  });
+});
+
+describe('applyEngine: launch, exit and readback hooks (T7b)', () => {
+  const USAGE0 = { sessionPct: 0, weekPct: 0 };
+  const exitThenPlan = (s: ReturnType<typeof setup>, usage = USAGE0): LaunchPlan => {
+    s.engine.onExited(T);
+    return planLaunch(s.records.get(T)!, usage) as LaunchPlan;
+  };
+  const PLAN0: LaunchPlan = { model: 'sonnet', effort: 'medium', resume: false, reasonSuffix: '', budgetLevel: 'none' };
+
+  it('onLaunched consuming a held model pick: live, launched = plan, sent, one log line, zero writes', () => {
+    const s = setup();
+    s.engine.onPick(T, { model: 'opus', effort: 'medium' }, META);
+    expect(s.records.get(T)?.modelPending).toBe('opus');
+    const plan = exitThenPlan(s);
+    const logsBefore = s.logs.length;
+    s.engine.onLaunched(T, plan);
+    const r = s.records.get(T)!;
+    expect(r.live).toBe(true);
+    expect(r.launched).toEqual({ model: plan.model, effort: plan.effort });
+    expect(r.modelPending).toBeNull();
+    expect(r.intended.model).toBe('opus');
+    expect(r.outcome).toBe('sent');
+    expect(s.logs).toHaveLength(logsBefore + 1);
+    expect(s.logs[s.logs.length - 1].endsWith(' sent')).toBe(true);
+    expect(s.writes).toEqual([]);
+  });
+
+  it('onLaunched with a floor-lowered plan keeps a held model pick visible (D3) and sets pendingStepDown', () => {
+    const s = setup();
+    s.engine.onPick(T, { model: 'opus', effort: 'medium' }, { ...META, trigger: 'task-class', source: 'auto' });
+    expect(s.records.get(T)?.modelPending).toBe('opus');
+    const plan = exitThenPlan(s, { sessionPct: 95, weekPct: 0 });
+    expect(plan.budgetLevel).not.toBe('none');
+    expect(plan.model).not.toBe('opus');
+    s.engine.onLaunched(T, plan);
+    const r = s.records.get(T)!;
+    expect(r.pendingStepDown).toBe(true);
+    expect(r.modelPending).toBe('opus');
+    expect(r.outcome).toBe('none');
+    expect(s.engine.readoutState(T)).toBe('queuedModel');
+  });
+
+  it('onLaunched with budgetLevel none clears an earlier pendingStepDown (D4)', () => {
+    const s = setup();
+    s.records.set(T, { ...s.records.get(T)!, pendingStepDown: true });
+    const plan = exitThenPlan(s);
+    expect(plan.budgetLevel).toBe('none');
+    s.engine.onLaunched(T, plan);
+    expect(s.records.get(T)?.pendingStepDown).toBe(false);
+  });
+
+  it('onLaunched and onExited on an unknown thread do nothing', () => {
+    const s = setup();
+    const set = vi.spyOn(s.records, 'set');
+    expect(() => { s.engine.onLaunched('nope', PLAN0); s.engine.onExited('nope'); }).not.toThrow();
+    expect(set).not.toHaveBeenCalled();
+    expect(s.logs).toEqual([]);
+    expect(s.writes).toEqual([]);
+  });
+
+  it('onExited ends live, keeps queue, held model pick, halt and launched, turns sent into none, and is idempotent', () => {
+    const s = setup();
+    s.engine.onPick(T, { model: 'opus', effort: 'high' }, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    s.records.set(T, { ...s.records.get(T)!, outcome: 'sent', queue: { pick: HIGH, reason: 'q', trigger: 'miss', source: 'manual', queuedAt: 1 } });
+    const held = s.records.get(T)!;
+    s.engine.onExited(T);
+    const r = s.records.get(T)!;
+    expect(r.live).toBe(false);
+    expect(r.queue).toEqual(held.queue);
+    expect(r.modelPending).toBe('opus');
+    expect(r.halted).toEqual(held.halted);
+    expect(r.launched).toEqual(held.launched);
+    expect(r.outcome).toBe('none');
+    const set = vi.spyOn(s.records, 'set');
+    s.engine.onExited(T);
+    expect(set).not.toHaveBeenCalled();
+    expect(s.writes).toHaveLength(1);
+  });
+
+  it('write gap resets on launch and exit but not on clearHalt (D1)', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    const plan = exitThenPlan(s);
+    s.engine.onLaunched(T, plan);
+    s.state.now += 100;
+    s.engine.onPick(T, { model: plan.model, effort: 'low' }, META);
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+
+    const h = setup();
+    h.engine.onPick(T, HIGH, META);
+    expect(h.engine.onIdleCheck(T)).toBe('sent');
+    h.engine.reportOutcome(T, 'not-applied');
+    h.engine.clearHalt(T);
+    h.engine.onPick(T, { model: 'sonnet', effort: 'low' }, META);
+    h.state.now += 200;
+    expect(h.engine.onIdleCheck(T)).toBe('skipped');
+  });
+
+  it('hasReadback true turns a sent record into applying; false or absent stays unconfirmed; the dep gets the thread id', () => {
+    for (const [readback, want] of [[true, 'applying'], [false, 'unconfirmed'], [undefined, 'unconfirmed']] as const) {
+      const s = setup({ readback });
+      s.engine.onPick(T, HIGH, META);
+      s.engine.onIdleCheck(T);
+      expect(s.engine.readoutState(T)).toBe(want);
+      if (readback !== undefined) expect(s.hasReadbackSpy).toHaveBeenCalledWith(T);
+    }
+  });
+
+  it('the engine IdleReading is the shared 9-member type', () => {
+    expectTypeOf<IdleReading>().toEqualTypeOf<SharedIdleReading>();
+  });
+
+  it('A12 through the engine: step-down at 72, launch at 91 is haiku/low, launch at 0 recovers sonnet/high', () => {
+    const s = setup({ usage: 72 });
+    s.records.set(T, { ...s.records.get(T)!, intended: HIGH, launched: HIGH });
+    s.engine.onPick(T, { model: 'sonnet', effort: 'medium' }, { reason: 'b', trigger: 'budget', source: 'auto' });
+    expect(s.engine.onIdleCheck(T)).toBe('sent');
+    expect(s.writes).toEqual([['claude', '/effort medium\r']]);
+    expect(s.records.get(T)?.pendingStepDown).toBe(true);
+    const lowPlan = exitThenPlan(s, { sessionPct: 91, weekPct: 0 });
+    expect([lowPlan.model, lowPlan.effort]).toEqual(['haiku', 'low']);
+    s.engine.onLaunched(T, lowPlan);
+    let r = s.records.get(T)!;
+    expect(r.launched).toEqual({ model: 'haiku', effort: 'low' });
+    expect(r.intended).toEqual(HIGH);
+    expect(r.pendingStepDown).toBe(true);
+    const back = exitThenPlan(s, USAGE0);
+    expect([back.model, back.effort]).toEqual(['sonnet', 'high']);
+    s.engine.onLaunched(T, back);
+    r = s.records.get(T)!;
+    expect(r.launched).toEqual(HIGH);
+  });
+
+  it('onLaunched and onExited leave a halt in place; only clearHalt clears it', () => {
+    const s = setup();
+    s.engine.onPick(T, HIGH, META);
+    s.engine.onIdleCheck(T);
+    s.engine.reportOutcome(T, 'not-applied');
+    expect(s.records.get(T)?.halted).toBeTruthy();
+    s.engine.onExited(T);
+    expect(s.records.get(T)?.halted).toBeTruthy();
+    s.engine.onLaunched(T, PLAN0);
+    expect(s.records.get(T)?.halted).toBeTruthy();
+    s.engine.clearHalt(T);
+    expect(s.records.get(T)?.halted).toBeFalsy();
   });
 });
 

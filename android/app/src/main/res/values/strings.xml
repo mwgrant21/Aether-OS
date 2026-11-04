@@ -64,4 +64,11 @@
     <string name="status_not_started">Not started on titan</string>
     <string name="status_exited">Exited</string>
     <string name="status_waiting_output">Waiting for output from titan</string>
+    <string name="sel_copy">COPY</string>
+    <string name="sel_cancel">CANCEL</string>
+    <string name="sel_copy_desc">Copy the selected terminal text</string>
+    <string name="sel_cancel_desc">Clear the terminal selection</string>
+    <string name="sel_copied">Copied</string>
+    <string name="key_paste">PASTE</string>
+    <string name="key_paste_desc">Paste the clipboard into the terminal without pressing Enter</string>
 </resources>

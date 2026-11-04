@@ -10,7 +10,7 @@ import type {
   PickTrigger,
   ReadoutState,
 } from './types';
-import { LADDER_RUNGS, applyBudget, rejectAuto } from './pickPolicy';
+import { applyBudget, rejectAuto } from './pickPolicy';
 import type { BudgetLevel } from './pickPolicy';
 
 export type QueuedPick = {
@@ -174,16 +174,14 @@ export type LaunchPlan = {
   budgetLevel: BudgetLevel;
 };
 
-export type LaunchPlanError = { error: 'effort-not-launchable' };
-
-function onLadder(p: Pick): boolean {
-  return LADDER_RUNGS.some((r) => r.model === p.model && r.effort === p.effort);
-}
+export type LaunchPlanError = { error: 'effort-not-launchable' | 'halted' };
 
 export function planLaunch(
   rec: ThreadPickRecord,
   usage: { sessionPct: number; weekPct: number },
 ): LaunchPlan | LaunchPlanError {
+  // A halted thread stays halted until an explicit clearHalt: no plan for it.
+  if (rec.halted) return { error: 'halted' };
   // A budget-queued effort is a step-down in flight, not a desire: it never enters the plan.
   const desiredQueue = rec.queue && rec.queue.trigger !== 'budget' ? rec.queue : null;
   const folded: Pick = {
@@ -192,9 +190,7 @@ export function planLaunch(
   };
   const hasPending = desiredQueue !== null || rec.modelPending !== null;
   const source = hasPending && rec.pendingSource ? rec.pendingSource : rec.source;
-  // applyBudget only understands ladder picks; anything else is left untouched.
-  const budgetSource: PickSource = source === 'auto' && !onLadder(folded) ? 'manual' : source;
-  const b = applyBudget(folded, usage, budgetSource, rec.lastBudgetLevel);
+  const b = applyBudget(folded, usage, source, rec.lastBudgetLevel);
   if (!(LAUNCH_EFFORTS as readonly string[]).includes(b.pick.effort)) {
     return { error: 'effort-not-launchable' };
   }
@@ -237,7 +233,8 @@ export function markLaunched(rec: ThreadPickRecord, plan: LaunchPlan): ThreadPic
     intended,
     launched: { model: plan.model, effort: plan.effort },
     source: consumed && rec.pendingSource ? rec.pendingSource : rec.source,
-    queue,
+    // A surviving queued pick names the model that is now running.
+    queue: queue ? { ...queue, pick: { ...queue.pick, model: plan.model } } : null,
     modelPending,
     pendingSource: queue || modelPending ? rec.pendingSource : null,
   };
@@ -272,6 +269,8 @@ export function markNotApplied(
   return {
     ...rec,
     launched: known ? { ...known } : rec.launched,
+    // A queued pick names the model that is actually running.
+    queue: known && rec.queue ? { ...rec.queue, pick: { ...rec.queue.pick, model: known.model } } : rec.queue,
     halted: { wanted: { ...wanted }, actual: known },
     outcome: 'not-applied',
   };

@@ -7,6 +7,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KeyboardModelTest {
+    @Test fun pasteTextIsNullForNothingToSend() {
+        assertEquals(null, pasteText(null))
+        assertEquals(null, pasteText(""))
+        assertEquals("a\nb ", pasteText("a\nb "))
+    }
+
+    @Test fun pasteVisibleFollowsTypingGate() {
+        assertTrue(pasteVisible(true))
+        assertFalse(pasteVisible(false))
+    }
+
     @Test fun hardKeyboardTable() {
         assertTrue(hardKeyboardPresent(Configuration.KEYBOARD_QWERTY, Configuration.HARDKEYBOARDHIDDEN_NO))
         assertFalse(hardKeyboardPresent(Configuration.KEYBOARD_QWERTY, Configuration.HARDKEYBOARDHIDDEN_YES))

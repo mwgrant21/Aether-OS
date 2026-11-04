@@ -1,0 +1,18 @@
+  [unreadable]   Claude Code v2.1.317
+                 Haiku 5.5 · Claude Max
+                 ~\AppData\Local\Temp
+
+  L  SessionStart:startup hook error
+  L  Hook output looks like a JSON object but is not valid JSON — JSON Parse error: Unable to parse JSON string. Emit the payload
+     with a JSON encoder (jq, ConvertTo-Json, json.dumps) rather than string con…
+  L  SessionStart:startup says: [Temp] recent context, 2026-11-03 12:47am MST
+     ────────────────────────────────────────────────────────
+
+     Legend: session-request | ● bugfix | ◆ feature | ↻ refactor | ✓ change | ○ discovery | ⚖decision | ⚠security_alert | ⚷
+     security_note
+
+     Column Key
+       Read: Tokens to read this observation (cost to learn it now)
+       Work: Tokens spent on work that produced this record ( research, building, deciding)
+
+     Context Index: This semantic index (titles, types, files, tokens) is usually sufficient to understand past work.

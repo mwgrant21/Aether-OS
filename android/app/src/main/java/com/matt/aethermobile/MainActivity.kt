@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.matt.aethermobile.ui.shell.InputDiag
 import com.matt.aethermobile.ui.shell.NotSentLine
 import com.matt.aethermobile.ui.shell.toDiag
+import com.matt.aethermobile.ui.shell.pasteText
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
@@ -64,6 +65,16 @@ import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.protocol.ControlProtocol
 import com.matt.aethermobile.protocol.ControlProtocol.SlotState
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Build
+import android.os.PersistableBundle
+import android.widget.Toast
+import com.matt.aethermobile.term.BridgeOut
+import com.matt.aethermobile.term.CopyGate
+import com.matt.aethermobile.term.PageMessage
 import com.matt.aethermobile.term.FrameRouter
 import com.matt.aethermobile.term.InputSender
 import com.matt.aethermobile.term.SlotMemory
@@ -181,6 +192,9 @@ class MainActivity : AppCompatActivity() {
     private var selected = "claude"
     private var zoomPx = Zoom.DEFAULT // 0 = fit width (the Fit button)
     private var orientation = OrientationMode.AUTO
+    // Copy flow: the gate is armed only by the native COPY tap (onCopySelection); the page cannot arm it.
+    private val copyGate = CopyGate(now = SystemClock::elapsedRealtime)
+    private var selActiveSlot: String? = null // slot whose page selection is active, per the page's `sel` message
     private var snapLogged = false
     private var terminalLive = false
     private var lastSessions: List<ControlProtocol.SessionInfo> = emptyList()
@@ -203,6 +217,7 @@ class MainActivity : AppCompatActivity() {
         val supportedPanes: Set<AppView> = emptySet(),
         val viewCtl: ViewCtlUi = ViewCtlUi(),
         val titanClockOffsetMs: Long = 0L,
+        val selection: Boolean = false,
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -220,7 +235,7 @@ class MainActivity : AppCompatActivity() {
         screen = TerminalScreen(
             this,
             debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
-            onPage = { termHost?.onPage(it) },
+            onPage = ::onPageMessage,
             onRenderGone = { if (!isDestroyed) onRenderGone() },
             onResync = { termHost?.resync() },
             onDiag = { InputDiag.recorder.record(it) },
@@ -764,6 +779,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun openView(v: AppView) {
+        dropSelection(post = true)
         appView = v
         syncLedger()
         syncPanes()
@@ -778,6 +794,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun setView(v: ViewMode) {
+        dropSelection(post = true)
         view = v
         if (v == ViewMode.THREAD && terminalLive) termHost?.let { if (!it.isAttached(selected)) it.select(selected) }
         syncThread()
@@ -800,6 +817,7 @@ class MainActivity : AppCompatActivity() {
 
     /** The flow left Connected (lock, relock, error, socket closed): stop frames and drop what the page rendered. */
     private fun endTerminal() {
+        dropSelection(post = false) // screen.reset() below reloads the page; nothing to tell it
         if (!terminalLive) return
         terminalLive = false
         termHost?.onDisconnected()
@@ -815,6 +833,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun onRenderGone() {
         // The page lost its state: rebuild the host (fresh feed) and re-attach from a snapshot.
+        dropSelection(post = false)
         val old = termHost ?: return
         old.onDisconnected(connectionLost = false) // same connection: unacked input is not "not sent"
         termHost = newHost()
@@ -822,6 +841,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectSlot(s: String) {
+        dropSelection(post = true) // before `selected` changes: selClear goes to the slot that holds the selection
         selected = s
         slotMemory.remember(s) // the only writer: a user tap, never the automatic fallback
         notice = NotSentNotice.NONE
@@ -831,6 +851,52 @@ class MainActivity : AppCompatActivity() {
         syncPanes()
         syncThread()
         renderTabs()
+    }
+
+    /** Page messages: `sel` and `copy` are handled here and never forwarded to the host. */
+    private fun onPageMessage(m: PageMessage) {
+        when (m) {
+            is PageMessage.Sel -> {
+                if (!terminalLive) return // a page cannot raise the bar unless the terminal is live
+                selActiveSlot = if (m.on) m.session else null
+                if (!m.on) copyGate.disarm()
+                if (!isDestroyed) renderTabs()
+            }
+            is PageMessage.Copy -> copyGate.accept(m.text)?.let { writeClipboard(it) }
+            else -> termHost?.onPage(m)
+        }
+    }
+
+    /** The only caller of [CopyGate.arm]: the native COPY tap, and only for the slot that reports a selection. */
+    private fun copySelection() {
+        val slot = selActiveSlot ?: return
+        if (slot != selected) return
+        copyGate.arm()
+        screen.post(BridgeOut.copyReq(slot))
+    }
+
+    private fun clearSelectionTap() {
+        dropSelection(post = true)
+        renderTabs()
+    }
+
+    /** Forget the selection: disarm the gate, optionally tell the page to clear it. Callers re-render. */
+    private fun dropSelection(post: Boolean) {
+        copyGate.disarm()
+        val slot = selActiveSlot ?: return
+        selActiveSlot = null
+        if (post && ::screen.isInitialized) screen.post(BridgeOut.selClear(slot))
+    }
+
+    /** Called only with text returned by [CopyGate.accept]. */
+    private fun writeClipboard(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val clip = ClipData.newPlainText("terminal", text)
+        if (Build.VERSION.SDK_INT >= 33) {
+            clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+        }
+        cm.setPrimaryClip(clip)
+        if (Build.VERSION.SDK_INT < 33) Toast.makeText(this, R.string.sel_copied, Toast.LENGTH_SHORT).show()
     }
 
     private fun dismissNotice() {
@@ -846,6 +912,16 @@ class MainActivity : AppCompatActivity() {
     /** Null host: the bar is only composed while connected, so nothing is counted here. */
     private fun sendCompose(text: String, enter: Boolean): TerminalHost.ComposeResult =
         (termHost?.sendCompose(text, enter) ?: TerminalHost.ComposeResult.NOT_ACCEPTED).also { renderTabs() }
+
+    /**
+     * The only clipboard read: runs from the native PASTE tap, never from a page message. Sends through
+     * [sendCompose] (bracketed paste, 64 KiB cap, TOO_LARGE notice) with no Enter. The text is never logged.
+     */
+    private fun pasteClipboard() {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val text = pasteText(cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)) ?: return
+        sendCompose(text, enter = false)
+    }
 
     private fun restartTerminal2(): Boolean = (termHost?.restartTerminal2() ?: false).also { renderTabs() }
 
@@ -887,6 +963,7 @@ class MainActivity : AppCompatActivity() {
             supportedPanes = PaneRegistry.entries.filter { client?.supportsView(it.spec.viewId) == true }.map { it.spec.appView }.toSet(),
             viewCtl = ViewCtlUi(zoomPx, orientation),
             titanClockOffsetMs = client?.titanClockOffsetMs ?: 0L,
+            selection = selActiveSlot != null && selActiveSlot == selected,
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
@@ -909,7 +986,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, titanClockOffsetMs = snap.titanClockOffsetMs, nowMs = System.currentTimeMillis()),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, titanClockOffsetMs = snap.titanClockOffsetMs, nowMs = System.currentTimeMillis(), selection = snap.selection),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
@@ -924,6 +1001,9 @@ class MainActivity : AppCompatActivity() {
                         onToggleShare = ::toggleShare,
                         onOpenView = ::openView,
                         onSetOrientation = ::setOrientation,
+                        onCopySelection = ::copySelection,
+                        onClearSelection = ::clearSelectionTap,
+                        onPaste = ::pasteClipboard,
                     ),
                     terminalHolder = webHolder,
                 )

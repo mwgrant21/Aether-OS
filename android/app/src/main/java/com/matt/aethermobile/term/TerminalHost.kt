@@ -310,8 +310,8 @@ class TerminalHost(
             }
             is PageMessage.Input -> typeInto(msg.session, msg.data)
             // Resize is dropped until V4b (no `resize` verb).
-            // Ready and Copy are handled by the Android glue, not here.
-            is PageMessage.Resize, is PageMessage.Ready, is PageMessage.Copy -> Unit
+            // Ready, Copy and Sel are handled by the Android glue, not here.
+            is PageMessage.Resize, is PageMessage.Ready, is PageMessage.Copy, is PageMessage.Sel -> Unit
         }
     }
 

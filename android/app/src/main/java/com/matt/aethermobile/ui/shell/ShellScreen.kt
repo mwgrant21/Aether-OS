@@ -129,6 +129,8 @@ data class ShellUiState(
     /** [com.matt.aethermobile.net.ControlClient.titanClockOffsetMs]: titan clock minus phone clock. */
     val titanClockOffsetMs: Long = 0L,
     val viewCtl: ViewCtlUi = ViewCtlUi(),
+    /** The page reports an active text selection in the SELECTED slot. */
+    val selection: Boolean = false,
 )
 
 class ShellActions(
@@ -146,6 +148,11 @@ class ShellActions(
     val onToggleShare: (Boolean) -> Unit,
     val onOpenView: (AppView) -> Unit,
     val onSetOrientation: (OrientationMode) -> Unit = {},
+    /** The native COPY tap: the only caller that arms the copy gate. */
+    val onCopySelection: () -> Unit = {},
+    val onClearSelection: () -> Unit = {},
+    /** The native PASTE tap: the only place the clipboard is read. */
+    val onPaste: () -> Unit = {},
 )
 
 private val dims = AetherDimens()
@@ -180,6 +187,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
     val slideOffsetPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     // Registered before the menu handler: the last enabled one wins, so Back closes an open menu first.
     BackHandler(enabled = state.connected && backTarget(state.appView) != null && !menuOpen) { actions.onOpenView(AppView.TERMINAL) }
+    BackHandler(enabled = rawBody && state.selection) { actions.onClearSelection() }
     BackHandler(enabled = menuOpen) { menu = menu.onBack() }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -227,6 +235,7 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                 if (paneBody) PaneRegistry.entry(state.appView)?.render(state.panes[state.appView] ?: ViewUi.Off, state.nowMs, Modifier.weight(1f).fillMaxWidth(), paneEnvFor(menuOpen, state.titanClockOffsetMs) { actions.onOpenView(AppView.TERMINAL) })
                 // Only composed while connected, so a locked or dropped session shows no keys at all.
                 if (rawBody) {
+                    if (selectionBarVisible(rawBody, state.selection, state.connected)) SelectionBar(actions.onCopySelection, actions.onClearSelection)
                     if (restartVisible(cur, state.flow, state.restartAvailable)) RestartRow(actions.onRestart)
                     if (plan.keyRow) KeyRow(keysEnabled(cur, state.flow, state.hostAccepts), state.ctrlOn, actions)
                     // Last, so it sits nearest the keyboard.

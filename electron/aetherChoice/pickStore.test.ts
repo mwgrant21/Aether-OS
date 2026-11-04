@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  clearHalt,
   markNotApplied,
   newRecord,
   planLaunch,
@@ -88,7 +89,8 @@ describe('pickStore', () => {
     const loaded = loadPicks(dir).t1;
     expect(loaded.pendingStepDown).toBe(true);
     expect(loaded.halted).not.toBeNull();
-    expect(planLaunch(loaded, { sessionPct: 91, weekPct: 0 })).toMatchObject({ model: 'haiku', effort: 'low' });
+    expect(planLaunch(loaded, { sessionPct: 91, weekPct: 0 })).toEqual({ error: 'halted' });
+    expect(planLaunch(clearHalt(loaded), { sessionPct: 91, weekPct: 0 })).toMatchObject({ model: 'haiku', effort: 'low' });
     expect(readFileSync(file(), 'utf8')).not.toContain('settings');
   });
 
@@ -96,6 +98,16 @@ describe('pickStore', () => {
     await savePicks(dir, { t1: { ...rec(), prompt: 'hi', text: 'hi', transcript: 'hi' } as never });
     const raw = readFileSync(file(), 'utf8');
     for (const k of ['"prompt"', '"text"', '"transcript"']) expect(raw).not.toContain(k);
+  });
+
+  it('drops a __proto__ id on load and on save, keeping Object.prototype', async () => {
+    writeFileSync(file(), '{"v":1,"threads":{"__proto__":' + JSON.stringify(rec('__proto__')) + ',"ok":' + JSON.stringify(rec('ok')) + '}}');
+    const loaded = loadPicks(dir);
+    expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
+    expect(Object.keys(loaded)).toEqual(['ok']);
+    const evil = JSON.parse('{"__proto__":' + JSON.stringify(rec('__proto__')) + ',"ok":' + JSON.stringify(rec('ok')) + '}');
+    await savePicks(dir, evil);
+    expect(Object.keys(JSON.parse(readFileSync(file(), 'utf8')).threads)).toEqual(['ok']);
   });
 });
 

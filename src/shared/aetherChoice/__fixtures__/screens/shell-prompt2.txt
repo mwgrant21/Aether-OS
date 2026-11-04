@@ -1,0 +1,31 @@
+Resume this session with:
+claude --resume [redacted]
+PS C:\Users\[redacted]\AppData\Local\Temp> claude --session-id <new-uuid> --model sonnet --effort low.
+At line:1 char:21
++ claude --session-id <new-uuid> --model sonnet --effort low.
++                     ~
+The '<' operator is reserved for future use.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : RedirectionNotSupported
+
+PS C:\Users\[redacted]\AppData\Local\Temp> claude --session-id <new-uuid> --model sonnet --effort low
+At line:1 char:21
++ claude --session-id <new-uuid> --model sonnet --effort low
++                     ~
+The '<' operator is reserved for future use.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : RedirectionNotSupported
+
+PS C:\Users\[redacted]\AppData\Local\Temp> [guid]::NewGuid()
+
+Guid
+----
+[redacted]
+
+
+PS C:\Users\[redacted]\AppData\Local\Temp>
+PS C:\Users\[redacted]\AppData\Local\Temp> claude --session-id [redacted] --model sonnet --effort low
+
+Resume this session with:
+claude --model sonnet --effort low --resume [redacted]
+PS C:\Users\[redacted]\AppData\Local\Temp>

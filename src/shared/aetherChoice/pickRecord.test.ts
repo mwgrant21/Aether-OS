@@ -140,12 +140,62 @@ describe('pickRecord', () => {
     });
   });
 
-  it('planLaunch does not budget-rewrite a non-ladder auto pick', () => {
+  it('planLaunch budgets a non-ladder auto pick at the floor and leaves it at a step level', () => {
     const r = newRecord('a', { model: 'sonnet', effort: 'low' }, META);
-    expect(planLaunch(r, { sessionPct: 95, weekPct: 0 })).toMatchObject({
-      model: 'sonnet',
-      effort: 'low',
-    });
+    expect(planLaunch(r, { sessionPct: 95, weekPct: 0 })).toMatchObject({ model: 'haiku', effort: 'low' });
+    expect(planLaunch(r, { sessionPct: 72, weekPct: 0 })).toMatchObject({ model: 'sonnet', effort: 'low' });
+  });
+
+  it('planLaunch refuses a halted record until clearHalt, without mutating it', () => {
+    const r = { ...live(), halted: { wanted: SONNET_MED, actual: null } };
+    const before = JSON.stringify(r);
+    expect(planLaunch(r, LOW)).toEqual({ error: 'halted' });
+    expect(JSON.stringify(r)).toBe(before);
+    expect(planLaunch(clearHalt(r), LOW)).toMatchObject({ model: 'sonnet', effort: 'medium' });
+  });
+
+  it('A12: a step-down survives an exit because every plan re-runs the budget', () => {
+    const base: ThreadPickRecord = {
+      ...setPendingStepDown(live()),
+      intended: { model: 'sonnet', effort: 'high' },
+      launched: { model: 'sonnet', effort: 'medium' },
+      lastBudgetLevel: 'step',
+    };
+    const r = markExited(base);
+    const before = JSON.stringify(r);
+    const p91 = planLaunch(r, { sessionPct: 91, weekPct: 0 });
+    expect(p91).toMatchObject({ model: 'haiku', effort: 'low' });
+    expect(planLaunch(r, { sessionPct: 72, weekPct: 0 })).toMatchObject({ model: 'sonnet', effort: 'medium' });
+    expect(planLaunch(r, LOW)).toMatchObject({ model: 'sonnet', effort: 'high' });
+    expect(r.pendingStepDown).toBe(true);
+    expect(markLaunched(r, p91 as LaunchPlan).pendingStepDown).toBe(true);
+    expect(JSON.stringify(r)).toBe(before);
+  });
+
+  it('the queued pick names the running model, not a stale intended one', () => {
+    // (a) submit: launched (floor-lowered haiku) differs from intended (sonnet).
+    const lowered: ThreadPickRecord = {
+      ...live('manual'),
+      intended: { model: 'sonnet', effort: 'high' },
+      launched: { model: 'haiku', effort: 'low' },
+    };
+    expect(sub(lowered, { model: 'haiku', effort: 'medium' }, 'manual').record.queue?.pick.model).toBe('haiku');
+    // (b) markLaunched: a held model pick survives a floor launch, the queue is rebased.
+    const held: ThreadPickRecord = {
+      ...live(),
+      modelPending: 'opus',
+      pendingSource: 'auto',
+      queue: { pick: { model: 'sonnet', effort: 'high' }, reason: 'x', trigger: 'miss', source: 'auto', queuedAt: 1 },
+    };
+    const plan = planLaunch(held, { sessionPct: 95, weekPct: 0 }) as LaunchPlan;
+    expect(plan).toMatchObject({ model: 'haiku', effort: 'low' });
+    const launched = markLaunched(held, plan);
+    expect(launched.modelPending).toBe('opus');
+    expect(launched.queue?.pick).toEqual({ model: 'haiku', effort: 'high' });
+    // (c) markNotApplied with a known actual of a different model.
+    const queued = sub(live(), { model: 'sonnet', effort: 'high' }, 'auto').record;
+    const na = markNotApplied(queued, { model: 'sonnet', effort: 'high' }, { model: 'opus', effort: 'low' });
+    expect(na.queue?.pick).toEqual({ model: 'opus', effort: 'high' });
   });
 
   it('planLaunch returns an error for an effort outside the launch set', () => {

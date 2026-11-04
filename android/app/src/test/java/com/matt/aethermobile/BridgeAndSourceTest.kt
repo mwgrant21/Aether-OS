@@ -33,6 +33,33 @@ class BridgeAndSourceTest {
         assertEquals(PageMessage.Copy("x"), parse("""{"t":"copy","text":"x"}"""))
     }
 
+    @Test fun acceptsSelForEachSession() {
+        for (s in BridgeValidator.SESSIONS) {
+            assertEquals(PageMessage.Sel(s, true), parse("""{"t":"sel","s":"$s","on":true}"""))
+            assertEquals(PageMessage.Sel(s, false), parse("""{"t":"sel","s":"$s","on":false}"""))
+        }
+    }
+
+    @Test fun rejectsMalformedSel() {
+        assertNull(parse("""{"t":"sel","s":"powershell","on":true}"""))
+        assertNull(parse("""{"t":"sel","s":"claude","on":"true"}"""))
+        assertNull(parse("""{"t":"sel","s":"claude","on":1}"""))
+        assertNull(parse("""{"t":"sel","s":"claude"}"""))
+        assertNull(parse("""{"t":"sel","on":true}"""))
+    }
+
+    @Test fun copyReqAndSelClearHaveExactlyTypeAndSlot() {
+        // Key order differs between the JVM test org.json and Android's, so compare parsed fields.
+        val req = JSONObject(com.matt.aethermobile.term.BridgeOut.copyReq("codex"))
+        assertEquals(setOf("t", "s"), req.keys().asSequence().toSet())
+        assertEquals("copyreq", req.getString("t"))
+        assertEquals("codex", req.getString("s"))
+        val clr = JSONObject(com.matt.aethermobile.term.BridgeOut.selClear("claude"))
+        assertEquals(setOf("t", "s"), clr.keys().asSequence().toSet())
+        assertEquals("selclear", clr.getString("t"))
+        assertEquals("claude", clr.getString("s"))
+    }
+
     @Test fun rejectsUnknownTypesAndMalformedJson() {
         assertNull(parse("""{"t":"kill","s":"claude"}"""))
         assertNull(parse("""{"s":"claude"}"""))
