@@ -265,11 +265,11 @@ describe('screenWatcher', () => {
     const claude = fakeSlot();
     const w = createScreenWatcher({ slots: { claude: claude.slot, terminal2: fakeSlot().slot } });
     try {
-      claude.start(130, 40);
+      claude.start(130, 60);
       claude.emit(out([...load('banner-version'), ...load('shell-prompt2')].join('\r\n')));
       expect(await w.read('claude')).toBe('shell');
       expect(w.version('claude')).toBeNull();
-      claude.emit(out('x'));
+      claude.emit(out('[?25h'));
       await flush();
       await new Promise((r) => setTimeout(r, 50));
       expect(w.version('claude')).toBeNull();
