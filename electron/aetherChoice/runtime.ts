@@ -3,6 +3,9 @@
 // instead of throwing, and exposes the launch, user-input, statusline, flush and dispose surface
 // that main wires up. Returns null unless AETHER_CHOICE_HOST is exactly '1'.
 // Pure of electron, fs, pty and timers: everything arrives through AetherChoiceRuntimeDeps.
+// With AETHER_CHOICE_TRACE=1 it also samples each owned slot once a second through deps.schedule and
+// logs one change-only line of enums, a version number, a boolean and two counters. Observe-only: it
+// never writes to a slot and never calls a host method.
 import { createPickHost } from './pickHost';
 import type { OwnedSlot, PickHostDeps, SlotState } from './pickHost';
 import { createScreenWatcher } from './screenWatcher';
@@ -64,6 +67,24 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
     }
   };
 
+  // Trace state. Every field stays empty and unused unless the trace switch is exactly '1'.
+  const trace = deps.env.AETHER_CHOICE_TRACE === '1';
+  const quietMs = deps.host?.quietMs ?? 1500;
+  const lastOutAt = new Map<OwnedSlot, number>();
+  const lastInAt = new Map<OwnedSlot, number>();
+  const lastKey = new Map<OwnedSlot, string>();
+  const cancels = new Map<OwnedSlot, () => void>();
+  const stampOut = (slot: OwnedSlot): void => {
+    if (trace) safe(() => lastOutAt.set(slot, deps.now()));
+  };
+  const stampIn = (slot: OwnedSlot): void => {
+    if (trace) safe(() => lastInAt.set(slot, deps.now()));
+  };
+  const forgetOut = (slot: OwnedSlot): void => {
+    lastOutAt.delete(slot);
+    lastKey.delete(slot);
+  };
+
   const enginePort: TerminalWritePort = {
     write(s, d) {
       try {
@@ -97,18 +118,63 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
     ...deps.host,
   });
 
+  const sinceMs = (now: number, stamp: number | undefined): number | null =>
+    stamp === undefined ? null : Math.max(0, Math.round(now - stamp));
+
+  const arm = (slot: OwnedSlot): void => {
+    if (disposed) return;
+    safe(() => {
+      cancels.set(
+        slot,
+        deps.schedule(() => {
+          void sample(slot);
+        }, 1000),
+      );
+    });
+  };
+
+  // One sample per slot; the next is armed only after this one settles, so a slow read never overlaps.
+  const sample = async (slot: OwnedSlot): Promise<void> => {
+    if (disposed) return;
+    try {
+      if (deps.slots[slot].info().state === 'running') {
+        const reading = await watcher.read(slot);
+        if (disposed) return;
+        const version = watcher.version(slot) ?? 'none';
+        const now = deps.now();
+        const out = sinceMs(now, lastOutAt.get(slot));
+        const inp = sinceMs(now, lastInAt.get(slot));
+        const quiet = out !== null && out >= quietMs;
+        const key = `${reading}|${version}|${quiet}`;
+        if (lastKey.get(slot) !== key) {
+          lastKey.set(slot, key);
+          deps.log(
+            `trace ${slot} reading=${reading} version=${version} quiet=${quiet} sinceOutMs=${out ?? 'none'} sinceInMs=${inp ?? 'none'}`,
+          );
+        }
+      }
+    } catch {
+      // a failing clock, log or read must not stop the chain
+    }
+    arm(slot);
+  };
+  if (trace) for (const slot of OWNED) arm(slot);
+
   const unsubscribe: Array<() => void> = OWNED.map((slot) =>
     deps.slots[slot].observe((e: SlotEvent) => {
       if (disposed) return;
       safe(() => {
         if (e.kind === 'out') {
           host.noteOutput(slot);
+          stampOut(slot);
         } else if (e.kind === 'start') {
+          forgetOut(slot);
           // TerminalSlot reports start even for a pty that exited while being wired; that slot is not running.
           if (deps.slots[slot].info().state !== 'exited') running.add(slot);
           if (planned.delete(slot)) host.onLaunched(slot);
           else host.onForeignLaunch(slot);
         } else if (e.kind === 'state' && e.state === 'exited') {
+          forgetOut(slot);
           // A plan made while a process was still running belongs to its replacement, so this exit is the
           // retiring process's: retire the old session, then re-arm the same launch for the next start.
           const replacement = running.delete(slot) && planned.has(slot);
@@ -124,25 +190,38 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
   return {
     launchCommandFor(slot, o) {
       if (disposed) return undefined;
-      const d = host.launchFor(slot, { sessionId: o?.sessionId });
-      if (d.command !== null) {
-        planned.set(slot, o?.sessionId);
-        return d.command;
+      try {
+        const d = host.launchFor(slot, { sessionId: o?.sessionId });
+        if (d.command !== null) {
+          planned.set(slot, o?.sessionId);
+          return d.command;
+        }
+        planned.delete(slot);
+        return undefined;
+      } catch {
+        // a host fault must not reach pty:start: launch unmanaged and drop any plan from an earlier call
+        planned.delete(slot);
+        safe(() => deps.log(`launch-failed ${slot}`));
+        return undefined;
       }
-      planned.delete(slot);
-      return undefined;
     },
     onForeignLaunch(slot) {
       planned.delete(slot);
       host.onForeignLaunch(slot);
     },
     noteUserInput(slot) {
-      if (isOwned(slot)) host.noteUserInput(slot);
+      if (isOwned(slot)) {
+        stampIn(slot);
+        host.noteUserInput(slot);
+      }
     },
     wrapUserWritePort(port) {
       return {
         write(s, d) {
-          if (isOwned(s)) host.noteUserInput(s);
+          if (isOwned(s)) {
+            stampIn(s);
+            host.noteUserInput(s);
+          }
           return port.write(s, d);
         },
       };
@@ -175,6 +254,8 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
       if (disposed) return;
       disposed = true;
       for (const off of unsubscribe) safe(off);
+      for (const cancel of cancels.values()) safe(cancel);
+      cancels.clear();
       host.dispose();
       watcher.dispose();
     },
