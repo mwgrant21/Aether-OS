@@ -85,8 +85,8 @@ describe('screenWatcher', () => {
     await flush();
     expect(m.writes).toEqual(['hello']);
     expect(await w.read('claude')).toBe('draft');
-    expect(classify).toHaveBeenCalledTimes(1);
-    expect(classify).toHaveBeenCalledWith({ rows, coverage: 'full', claudeVersion: V });
+    expect(classify).toHaveBeenCalledTimes(2);
+    expect(classify).toHaveBeenLastCalledWith({ rows, coverage: 'full', claudeVersion: V });
   });
 
   it('exit clears: mirror disposed, read is unknown without touching mirror or classify, version null', async () => {
@@ -97,6 +97,7 @@ describe('screenWatcher', () => {
     await flush();
     expect(w.version('claude')).toBe(V);
     m.viewportText.mockClear();
+    classify.mockClear();
     claude.emit({ kind: 'state', state: 'exited' });
     expect(m.disposed).toBe(1);
     expect(await w.read('claude')).toBe('unknown');
@@ -169,7 +170,7 @@ describe('screenWatcher', () => {
     const reading = w.read('claude');
     m.pending[1].resolve(['no banner here']);
     await reading;
-    expect(classify.mock.calls[0][0].claudeVersion).toBe(V);
+    expect(classify.mock.lastCall?.[0].claudeVersion).toBe(V);
   });
 
   it('refreshes the latch from a new banner, clears it on shell, start and exit', async () => {
