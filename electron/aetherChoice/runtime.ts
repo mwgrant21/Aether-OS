@@ -52,7 +52,10 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
   if (deps.env.AETHER_CHOICE_HOST !== '1') return null;
 
   let disposed = false;
-  const planned = new Set<OwnedSlot>();
+  // slot -> session id of a launch handed out by launchCommandFor and not yet matched by a start event
+  const planned = new Map<OwnedSlot, string | undefined>();
+  // slots whose current process has started and not yet reported exit
+  const running = new Set<OwnedSlot>();
   const safe = (fn: () => void): void => {
     try {
       fn();
@@ -101,11 +104,17 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
         if (e.kind === 'out') {
           host.noteOutput(slot);
         } else if (e.kind === 'start') {
+          running.add(slot);
           if (planned.delete(slot)) host.onLaunched(slot);
           else host.onForeignLaunch(slot);
         } else if (e.kind === 'state' && e.state === 'exited') {
+          // A plan made while a process was still running belongs to its replacement, so this exit is the
+          // retiring process's: retire the old session, then re-arm the same launch for the next start.
+          const replacement = running.delete(slot) && planned.has(slot);
+          const sessionId = planned.get(slot);
           planned.delete(slot);
           host.onSlotExit(slot);
+          if (replacement && host.launchFor(slot, { sessionId }).command !== null) planned.set(slot, sessionId);
         }
       });
     }),
@@ -116,7 +125,7 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
       if (disposed) return undefined;
       const d = host.launchFor(slot, { sessionId: o?.sessionId });
       if (d.command !== null) {
-        planned.add(slot);
+        planned.set(slot, o?.sessionId);
         return d.command;
       }
       planned.delete(slot);

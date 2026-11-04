@@ -457,4 +457,65 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     expect(r.saves.length).toBe(before);
     expect(r.writes).toEqual([]);
   });
+
+  it('20: replacing a running slot keeps the new plan when the old process exit fires first', async () => {
+    const r = rig({ records: autoHigh() });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    // replacement: the plan is recorded, then the kill reports the old process's exit before the new start
+    rt.launchCommandFor('claude', { sessionId: OTHER_SID });
+    r.claude.fire(exitEv);
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude.live).toBe(true);
+    r.t.now += 20_000;
+    r.claude.fire(outEv);
+    r.t.now += 2000;
+    rt.onStatusline(snap(r, 72, OTHER_SID));
+    await r.runNext();
+    expect(r.writes).toEqual([{ slot: 'claude', d: '/effort medium\r' }]);
+  });
+
+  it('20b: the replacement start arms launch readback for the new session', async () => {
+    const r = rig();
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    rt.launchCommandFor('claude', { sessionId: OTHER_SID });
+    r.claude.fire(exitEv);
+    r.claude.fire(startEv);
+    rt.onStatusline({ ...snap(r, 10, OTHER_SID), modelDisplayName: 'Haiku' });
+    await settle();
+    expect(rt.state('claude')?.readout).toBe('notApplied');
+  });
+
+  it('21: an exit with no replacement in flight clears the plan, so a later start is foreign', async () => {
+    const r = rig({ records: autoHigh() });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    r.claude.fire(exitEv);
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+
+    // planned but never started, then an exit: also cleared
+    const r2 = rig({ records: autoHigh() });
+    must(r2).launchCommandFor('claude', { sessionId: SID });
+    r2.claude.fire(exitEv);
+    r2.claude.fire(startEv);
+    expect((await r2.lastSave())?.claude?.live ?? false).toBe(false);
+  });
+
+  it('22: after a replacement flow, a further start with no launch is foreign', async () => {
+    const r = rig({ records: autoHigh() });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    r.claude.fire(startEv);
+    rt.launchCommandFor('claude', { sessionId: OTHER_SID });
+    r.claude.fire(exitEv);
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude.live).toBe(true);
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+  });
 });
