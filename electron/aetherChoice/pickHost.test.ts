@@ -647,7 +647,7 @@ describe('pickHost budget pump and launch readback', () => {
     expect(m.writes).toEqual([]);
   });
 
-  it('b6b: a budget step-down is submitted while a turn is generating', async () => {
+  it('b6b: budget picks are submitted while a turn is generating', async () => {
     const r = liveQuiet();
     r.reading.v = 'generating';
     r.host.onStatusline(snap(r, { session: 72 }));
@@ -656,6 +656,7 @@ describe('pickHost budget pump and launch readback', () => {
     r.host.onStatusline(snap(r, { session: 60 }));
     await r.runNext();
     expect(r.writes).toHaveLength(1);
+    expect((await r.last()).claude.queue?.pick.effort).toBe('high');
     r.t.now += 3000;
     r.host.onStatusline(snap(r, { session: 72 }));
     await r.runNext();
