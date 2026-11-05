@@ -223,6 +223,8 @@ describe('termsSha256', () => {
 });
 ```
 
+Carry (build review): `terms.mjs` should clone its input first and use `Object.hasOwn` for key checks, so a hostile or inherited key (`__proto__`, `constructor`) is never trusted; pin that with a test.
+
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/terms.test.ts` (expect FAIL: cannot resolve the module). Implement `terms.mjs` to the interface above. Deep-freeze the defaults. No logic beyond the stated rules. Rerun (expect PASS). Commit: `git add -- scripts/afk/terms.mjs scripts/afk/terms.test.ts && git commit -m "feat(afk): standing terms schema, validation and amendments" -- scripts/afk/terms.mjs scripts/afk/terms.test.ts`.
 
 ---
@@ -276,6 +278,8 @@ describe('writeJsonAtomic', () => {
   });
 });
 ```
+
+Carry (build review): `readJsonSafe` has no size cap and no symlink check; a huge or symlinked file is read as-is. Accepted for Phase 1 (the directory is Matt's own); note it, and add a cap and an `lstat` check if the directory ever holds untrusted input.
 
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/fsJson.test.ts` (expect FAIL: cannot resolve the module). Implement `fsJson.mjs` to the interface. Rerun (expect PASS; the symlink case may report skipped without symlink rights, say so in the report). Commit: `git add -- scripts/afk/fsJson.mjs scripts/afk/fsJson.test.ts && git commit -m "feat(afk): safe JSON read and atomic write helpers" -- scripts/afk/fsJson.mjs scripts/afk/fsJson.test.ts`.
 
@@ -335,6 +339,8 @@ describe('writeLiveTerms', () => {
   });
 });
 ```
+
+Carry (build review): `readLiveTerms` echoes unknown keys from the file (decide: drop them or surface them as a warning; do not pass them through silently). `writeLiveTerms` throws on EPERM (and other fs errors); T17 must wrap every call and turn the throw into a clean exit with a message that carries no file content.
 
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/termsStore.test.ts` (expect FAIL: cannot resolve the module). Implement `termsStore.mjs`. Rerun (expect PASS). Commit: `git add -- scripts/afk/termsStore.mjs scripts/afk/termsStore.test.ts && git commit -m "feat(afk): live standing-terms store with fail-closed read" -- scripts/afk/termsStore.mjs scripts/afk/termsStore.test.ts`.
 
@@ -510,7 +516,12 @@ scripts/afk/classify.test.ts
 
 **Interfaces:**
 - Produces: `classifyItem(text): {verdict:'ready'|'question'|'barred'; reasons: string[]}`. Order: barred first, then question, else ready. Reasons are stable codes: `barred:delete`, `barred:force-push`, `barred:cleanup`, `question:marker`, `question:needs-matt`, `question:mark`.
-- Barred (case-insensitive): `\bdelet(e|ing)\b`, `\brm -rf?\b`, `\bRemove-Item\b`, `\bprune\b`, `force[- ]push`, `--force`, `reset --hard`, `branch -D` / `branch --delete` / `branch -d`, `worktree remove`, `\bcleanup\b`, `\bremov(e|ing)\b`, `\bpurge\b`, `\brmdir\b`, `git clean`, `git rm`. All are reason `barred:delete` except the force-push patterns (`barred:force-push`) and `cleanup` (`barred:cleanup`). False positives are accepted (held, never run).
+- Barred (case-insensitive), as a denylist of stems and bare command tokens, not an exact-phrase word list (an exact list was tried over three build rounds and cannot work: each spelling it missed was a false `ready`). Text is normalised first: NFKD, zero-width and combining marks dropped, unicode hyphens U+2010-2015 and U+2212 (and a few look-alikes) folded to `-`, `_` folded to a space (so `old_delete.md` is seen), a short Cyrillic/Greek homoglyph table folded to ASCII, whitespace runs to one space. Then three families, each a list of case-insensitive regexes with bounded `.{0,400}` gaps (linear time on long input):
+  - `barred:delete`: word-prefix stems `delet|remov|prun|eras|unlink|destroy|wip|nuk|trash|shred|truncat|purg|discard`; bare tokens `rm rmi del erase rd rmdir rimraf`; `Format-Volume`, `Clear-(Content|RecycleBin|Disk|Item)`, `drop table|database|schema|index`; git forms `git ... clean|rm`, `clean -[fd]`, `stash drop|clear`, `tag -d|--delete`, `update-ref -d`, `remote rm|remove`, `worktree remove`, `branch ... -d|-f|-m` flags, `--delete`, `reset ... --hard` and `hard reset` spellings, `checkout -f` / `checkout -- .`, `restore .`, `filter-branch|filter-repo`, `reflog expire`, `push :ref`, `push -d`.
+  - `barred:force-push`: `force`/`forced`/`forcing`/`forcibly`/`forcefully` followed by `push` (any gap of space, `_`, `-`), `push ... with force`, `--force`, `--mirror`, `push -f` (flag cluster containing `f`), `push +ref`.
+  - `barred:cleanup`: stems `clean*` and `tidy*` (so `clean up`, `cleaning`, `make clean` all match).
+  - Verdict order is unchanged: any barred match wins; reasons list each matching family code once (`barred:delete`, `barred:force-push`, `barred:cleanup`, in that order).
+  - **Known limit, stated in the module header and in RISKS: this is a denylist.** The homoglyph table is short and is not a confusables list, so other lookalike characters, leetspeak (`d3lete`), and exotic hyphens not in the fold set can still slip through as `ready`. False positives are accepted (held, never run); a false negative is the defect, and it is caught only by the allowlist/deny rules (T11) and Matt's per-item `confirm`, which are the real gates. The classifier is a first filter, not a security boundary.
 - Question: a `?` anywhere; needs-Matt phrases (`ask Matt`, `needs? (a )?(fresh )?(go|approval)`, `Matt'?s? (call|decision|go|approval)`, `pending Matt`, `awaiting Matt`, `fresh go`, `all need Matt`); marker words `TBD`, `UNVERIFIED`, `unconfirmed`, `unclear`, `decide`, `open question`, `option(s)`, `either`, `whether`, `optional`, `maybe`, `consider`, `possibly`.
 
 - [ ] **Step 1: Write the failing test.** Cases are taken verbatim from real handoffs (2026-11-04 handback and AFK handoffs) so the rules are checked against the text they will meet.
@@ -544,13 +555,70 @@ describe('classifyItem', () => {
     expect(r.verdict).toBe('barred');
     expect(r.reasons[0]).toBe('barred:delete');
   });
+  it.each([
+    'git push -f origin x', 'git push origin HEAD:master -f', 'git push origin +master',
+  ])('force-push variant is barred: %s', (text) => {
+    const r = classifyItem(text);
+    expect(r.verdict).toBe('barred');
+    expect(r.reasons).toContain('barred:force-push');
+  });
+  it.each([
+    'git push origin :old-branch', 'rm -fr build', 'git -C x clean -fd', 'Deleted the stale branch',
+    'del /s /q build', 'rd /s /q build', 'git stash drop', 'Deletion of old files', 'removal of old logs',
+    'Pruning stale branches', 'rm x.txt', 'rimraf dist', 'git reset origin/master --hard',
+    'git branch -vd x', 'git branch -fD x', 'git tag -d v1', 'git update-ref -d refs/heads/x', 'git remote rm origin',
+    'docker rm -f web', 'wipe the disk', 'nuke the cache', 'destroy the VM', 'shred secrets.txt',
+    'Format-Volume -DriveLetter E', 'Clear-Content log.txt', 'git checkout -f', 'git checkout -- .', 'git restore .',
+    'git filter-branch --all', 'git reflog expire --all', 'git push -d origin x', 'Hard-reset the repo', 'reset hard',
+    'git push\norigin\n:old', 'rm\u00A0x', '\uFF52\uFF4D -rf x', 'dele\u200Bte the logs', 'dele\u0301te the logs',
+  ])('delete variant is barred (broad stems): %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('barred');
+  });
+  it.each([
+    'git push origin master -fu', 'Force  push', 'force_push', 'forcepush', 'Forcibly push', 'push with force',
+    'force\u00A0push', 'force\npush', 'git push --mirror', 'git push -f -u origin x',
+  ])('force-push variant is barred (broad): %s', (text) => {
+    const r = classifyItem(text);
+    expect(r.verdict).toBe('barred');
+    expect(r.reasons).toContain('barred:force-push');
+  });
+  it.each([
+    'Clean up the worktree', 'cleaning up', 'clean   up', 'npm run clean', 'make clean', 'gradlew clean', 'tidy up',
+  ])('cleanup variant is barred (stem): %s', (text) => {
+    expect(classifyItem(text).reasons).toContain('barred:cleanup');
+  });
+  it.each([
+    'force\u2011push it', 'git push\u2011\u2011force', 'force\u2212push it', 'git push \u2043\u2043force',
+  ])('unicode-hyphen force-push is barred: %s', (text) => {
+    expect(classifyItem(text).reasons).toContain('barred:force-push');
+  });
+  it.each(['old_delete.md', 'old_cleanup.md', 'git_clean'])('underscore-hidden stem is barred: %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('barred');
+  });
+  it.each(['D\u0435lete the logs', 'r\u043C -rf x', 'F\u043Erce push', 'cl\u0435an up',
+    'tr\u03B1sh the build', '\u03C1urge old logs', 'trun\u03F2ate the log'])('homoglyph spelling is barred: %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('barred');
+  });
+  it.each(['wire up my_feature_flag', 'git push -u origin x'])('ordinary text stays ready: %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('ready');
+  });
+  it('long input classifies fast', () => {
+    const t0 = Date.now();
+    expect(classifyItem('push '.repeat(10000)).verdict).toBe('ready');
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+  it('full-width question mark is a question', () => {
+    expect(classifyItem('Which one\uFF1F').verdict).toBe('question');
+  });
   it('ready carries no reasons', () => {
     expect(classifyItem('Run npm test').reasons).toEqual([]);
   });
 });
 ```
 
-- [ ] **Steps 2-5:** run `npx vitest run scripts/afk/classify.test.ts` (expect FAIL: cannot resolve the module). Implement `classify.mjs` with the two regex tables above. Rerun (expect PASS). Commit: `git add -- scripts/afk/classify.mjs scripts/afk/classify.test.ts && git commit -m "feat(afk): decided/question/barred item classifier" -- scripts/afk/classify.mjs scripts/afk/classify.test.ts`.
+The block above is a summary of `scripts/afk/classify.test.ts` as built (it carries more rows per family, same categories: extra force-push, delete, cleanup, unicode-hyphen and homoglyph spellings). The `\uXXXX` escapes are real characters in the test file.
+
+- [ ] **Steps 2-5:** run `npx vitest run scripts/afk/classify.test.ts` (expect FAIL: cannot resolve the module). Implement `classify.mjs` with the normalise step and the stem tables above, plus the question tables (needs-Matt phrases, marker words, `?` or full-width `?`). Rerun (expect PASS). Commit: `git add -- scripts/afk/classify.mjs scripts/afk/classify.test.ts && git commit -m "feat(afk): decided/question/barred item classifier" -- scripts/afk/classify.mjs scripts/afk/classify.test.ts`.
 
 ---
 
@@ -624,7 +692,7 @@ scripts/afk/feasibility.test.ts
 - Consumes: `getRecipe` (T8).
 - Produces: `checkFeasibility(item, probes): {ok:boolean; checks:{name:string; ok:boolean; detail:string}[]; warnings:string[]}`; `realProbes({homeDir, repoRoots = {}, env = process.env}): Probes`.
 - `Probes = {repoRoot(project): string|null, fileExists(absPath): boolean, propKeysPresent(absFile, keys): Record<string,boolean>, propPathExists(absFile, key): boolean}`.
-- Behaviour: an item whose `kind` is not `'build'` returns `{ok:true, checks:[], warnings:[]}`. A build item with no recipe returns `ok:false` with check `no build recipe for <project>/<artifact>`. Otherwise one check per requirement; `ok` = all pass; an unverified recipe adds the warning `recipe not yet verified unattended`. A `scratchDir` requirement is NOT probed in Phase 1 (the runner supplies `{SCRATCH}`): it yields a passing check with detail `not probed: runner supplies the scratch dir` AND the warning `scratch dir is not probed until Phase 2`, so Matt can see it is unchecked rather than assume it passed. **Details name keys, never values.** `propKeysPresent` is true for a key that has a non-empty value in the file OR a non-empty entry in `env` (Gradle's `signingValue` order, `android/app/build.gradle:14`); comment lines and empty values are false. `propPathExists` reads one value only to test that the path exists and never returns it. `realProbes.repoRoot` = `repoRoots[project] ?? join(homeDir,'projects',project)` if it exists, else null.
+- Behaviour: an item whose `kind` is not `'build'` returns `{ok:true, checks:[], warnings:[]}`. A build item with no recipe returns `ok:false` with check `no build recipe for <project>/<artifact>`. Otherwise one check per requirement; `ok` = all pass; an unverified recipe adds the warning `recipe not yet verified unattended`. A `scratchDir` requirement is NOT probed in Phase 1 (the runner supplies `{SCRATCH}`): it yields a passing check with detail `not probed: runner supplies the scratch dir` AND the warning `scratch dir is not probed until Phase 2`, so Matt can see it is unchecked rather than assume it passed. **Details name keys, never values.** `propKeysPresent` is true for a key that has a non-empty value in the file OR a non-empty entry in `env` (Gradle's `signingValue` order, `android/app/build.gradle:14`); comment lines and empty values are false. `propPathExists` reads one value only to test that the path exists and never returns it. Its semantics: if the properties file has a non-empty value for the key, that value wins (and is unescaped, `\x` -> `x`, as Java properties are) and the environment is NOT consulted; otherwise the environment value is the fallback and is used RAW, not unescaped, so a Windows path with backslashes (`C:\keys\a.jks`) in the environment works. Empty value, missing file or key, and any read or stat error return `false`; nothing throws a message that carries file content. The properties parser reads `KEY=value` and `KEY: value` lines and skips blank lines and lines starting with `#` or `!`. `realProbes.fileExists` is `existsSync` with errors as `false`. `realProbes.repoRoot` = `repoRoots[project] ?? join(homeDir,'projects',project)` if it exists, else null.
 - Item `kind` is `'build'` when `detectArtifact(title)` is `'apk'` or `'installer'`; T10 sets it at compile. Key checks have the detail `<KEY> present` or `<KEY> missing`.
 
 - [ ] **Step 1: Write the failing test**
@@ -691,6 +759,49 @@ describe('realProbes', () => {
     const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
     const p = realProbes({ homeDir: home, env: { AETHER_KEY_PASSWORD: 'x' } });
     expect(p.propKeysPresent(join(home, 'missing.properties'), ['AETHER_KEY_PASSWORD'])).toEqual({ AETHER_KEY_PASSWORD: true });
+  });
+  it('propPathExists tests the path: file value wins over env, env is the fallback', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const real = join(home, 'real.jks'); writeFileSync(real, 'x');
+    const gone = join(home, 'gone.jks');
+    const fwd = (s: string) => s.replace(/\\/g, '/'); // the file value is unescaped, so use forward slashes
+    const file = join(home, 'a.properties');
+    writeFileSync(file, `AETHER_KEYSTORE_PATH=${fwd(gone)}\n`);
+    expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    // file value wins: a good env value does not rescue a bad file value
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: fwd(real) } }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    const none = join(home, 'none.properties'); // missing file: env is the fallback
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: fwd(gone) } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: fwd(real) } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
+    writeFileSync(file, `AETHER_KEYSTORE_PATH=${fwd(real)}\n`);
+    expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(true);
+  });
+  it('propPathExists does not unescape an env value (backslash Windows path)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const real = join(home, 'real.jks'); writeFileSync(real, 'x');
+    const win = real.replace(/\//g, '\\');
+    const none = join(home, 'none.properties');
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: win } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
+  });
+  it('fileExists is true for a real file and false for a missing one', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const f = join(home, 'pfx-password.txt'); writeFileSync(f, 'x');
+    const p = realProbes({ homeDir: home, env: {} });
+    expect(p.fileExists(f)).toBe(true);
+    expect(p.fileExists(join(home, 'missing.txt'))).toBe(false);
+  });
+  it('a "KEY: value" line counts as present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const file = join(home, 'a.properties');
+    writeFileSync(file, 'AETHER_KEY_ALIAS: somealias\n');
+    expect(realProbes({ homeDir: home, env: {} }).propKeysPresent(file, ['AETHER_KEY_ALIAS'])).toEqual({ AETHER_KEY_ALIAS: true });
+  });
+  it('commented lines (# and !, spaced or not) never count as present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const file = join(home, 'a.properties');
+    writeFileSync(file, '# AETHER_KEY_ALIAS=commented\n#AETHER_KEY_PASSWORD=x\n!AETHER_KEYSTORE_PASSWORD=x\n');
+    expect(realProbes({ homeDir: home, env: {} }).propKeysPresent(file, ['AETHER_KEY_ALIAS', 'AETHER_KEY_PASSWORD', 'AETHER_KEYSTORE_PASSWORD']))
+      .toEqual({ AETHER_KEY_ALIAS: false, AETHER_KEY_PASSWORD: false, AETHER_KEYSTORE_PASSWORD: false });
   });
 });
 ```
@@ -1030,6 +1141,8 @@ describe('tamper detection', () => {
 });
 ```
 
+Carry (build review): T12 has two unpinned behaviors, the write order of the record and the pointer, and the `v` / `via` checks on read; add a test for each, or record them as accepted gaps.
+
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/approval.test.ts` (expect FAIL: cannot resolve the module). Implement `approval.mjs`. Rerun (expect PASS). Commit: `git add -- scripts/afk/approval.mjs scripts/afk/approval.test.ts && git commit -m "feat(afk): self-hashing approved record with a mirrored pointer" -- scripts/afk/approval.mjs scripts/afk/approval.test.ts`.
 
 ---
@@ -1199,6 +1312,8 @@ describe('amendDraft', () => {
   });
 });
 ```
+
+Carry (build review): `replaceDraft` takes `createdAtMs` from `compiled.createdAtMs` (not from its `nowMs` argument); the fixture's `draftWith` overrides it with `nowMs` so tests control the clock. State this in `draft.mjs`'s header so the two are not confused.
 
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/draft.test.ts` (expect FAIL: cannot resolve the module). Implement `draft.mjs`. Rerun (expect PASS). Commit: `git add -- scripts/afk/draft.mjs scripts/afk/draft.test.ts scripts/afk/draftFixture.ts && git commit -m "feat(afk): the one draft with confirm, amend and live re-check" -- scripts/afk/draft.mjs scripts/afk/draft.test.ts scripts/afk/draftFixture.ts`.
 
@@ -1717,6 +1832,8 @@ describe('main() with a TTY (in process)', () => {
 });
 ```
 
+Carry (build review): (1) `confirm`'s unfinished-night allowlist preview must skip itself, or say so, when `draft.createdAtMs <= record.approvedAtMs` (the last approval is newer than the draft, so it is not an unfinished night for this draft). Add a cli test: compile at T0, then `confirm` and `amend` at T0 + 2*DAY must exit 4 with the stale-draft text. (2) Every `writeLiveTerms` call (T3) is wrapped: an EPERM or other fs error becomes a clean nonzero exit with a message that carries no file content.
+
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/cli.test.ts` (expect FAIL: cannot resolve the module). Implement `cli.mjs` and `afk.mjs`. Dispatch table keyed by verb; a verb in `TTY_VERBS` checks `deps.isTty` BEFORE reading anything or creating any directory. The in-process tests that confirm or approve inject no `probes` (their items are plain `work` items, so no probe runs), except the two allowlist tests, which inject `okProbes` because their items are build items. `cli.mjs` imports `unfinishedSelection` from `resolvePlan.mjs`; it must not recompute an allowlist. Rerun (expect PASS). Commit: `git add -- scripts/afk/cli.mjs scripts/afk/afk.mjs scripts/afk/cli.test.ts && git commit -m "feat(afk): afk CLI with TTY-gated write verbs" -- scripts/afk/cli.mjs scripts/afk/afk.mjs scripts/afk/cli.test.ts`.
 
 ---
@@ -1727,6 +1844,8 @@ describe('main() with a TTY (in process)', () => {
 ```owned T18
 scripts/afk/afkBoundary.test.ts
 ```
+
+**Carry (build review):** add a `strip` test: `const r = 'Edit(~/.aether-os/afk/**)'; /* c */ writeFileSync(p)` must still leave `writeFileSync(p)` visible so the WRITE pattern matches (a `/*` inside a string literal must not swallow the code after it).
 
 **Interfaces:** a test only, in the style of `electron/aetherChoice/aetherChoiceBoundary.test.ts` and `electron/voice/voiceBoundary.test.ts`: it pins design rules mechanically so a later edit cannot quietly break them. Source files are the non-test `.mjs` in `scripts/afk/`, comments stripped (a simple `//` and `/* */` strip is enough; strings still count; a `/*` opens a comment only at line start or after whitespace, so the quoted rule `'Edit(~/.aether-os/afk/**)'` in `denyRules.mjs` cannot open a fake comment and blind the scan).
 
@@ -1971,4 +2090,4 @@ Matt approved all of Claude's recommended answers on 2026-11-05. Item 9 changed 
 - The deny rules are all `Bash(...)`; whether they cover the PowerShell tool is unverified until T21 M2, and "delete barred" and "force-push barred" rest on it. The `run` group is never installed globally; Phase 2 passes it per run.
 - `buildAllowRules` is data. Whether a headless run denies an unlisted call, honours the flag names, lets deny beat the global allow list, and matches compound commands is unverified until T21 M2/M5; Phase 2 must not rely on it before then.
 - Time and run-once: `resolveNightPlan` is a pure read with no started-state. Phase 2 resolves ONCE at window start and persists the result; the run-once key is `targetWindowStartMs` (Phase 2 marks that window started; `nightId` is an audit label only); the 12h grace (`isNightCurrent`) means "may still start", not "may keep running" (design 8 has no total-night cap). Between the end of the window and the grace end a re-resolve returns the same plan again, and after the grace it returns `none`; neither says a run is in progress or done. For an unfinished night `nightId` is the draft label and every `compile` mints a new one for the same window, which is why it cannot be the key (Phase 2 owns the started-state; not built here).
-- Bare word matches: `detectArtifact` turns "fix the installer bug" into a build item, which adds `Bash(npm run dist:*)` to the allowlist; the allowlist is not project-scoped (aether-os and TokenMonitor both use `npm run dist`); and the barred table misses `wipe`, `drop`, `uninstall` and `erase`. Matt's `confirm` and the printed allowlist are the catch.
+- Bare word matches: `detectArtifact` turns "fix the installer bug" into a build item, which adds `Bash(npm run dist:*)` to the allowlist; the allowlist is not project-scoped (aether-os and TokenMonitor both use `npm run dist`); and the barred classifier is a denylist (T7): it still misses `uninstall`, leetspeak, homoglyphs outside its short fold table and exotic hyphens. Matt's `confirm` and the printed allowlist are the catch.
