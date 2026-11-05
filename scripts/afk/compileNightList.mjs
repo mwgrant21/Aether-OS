@@ -15,6 +15,7 @@ const TITLE_MAX = 140;
 const SKIP_PREFIX = /^(ledger|verdict|scratch|debug)-/i;
 const DEFAULT_WINDOW = { start: '01:00', end: '07:00' };
 
+const NEEDS_MATT_HEADING = /\b(?:needs?|awaiting|ask|requires?)\s+Matt\b|\bMatt\s+approval\b/i;
 const squash = (s) => String(s).replace(/\s+/g, ' ').trim();
 const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
 
@@ -62,11 +63,14 @@ function listMd(dir, nowMs, maxAgeMs, warnings, project) {
 
 // Configured repo roots decide ownership first; path-component matching is the fallback.
 function projectOfPath(p, projects, repoRoots) {
+  let best = null;
   for (const proj of projects) {
     if (!own(repoRoots, proj) || !repoRoots[proj]) continue;
     const root = resolve(repoRoots[proj]);
-    if (resolve(p) === root || inside(root, p)) return proj;
+    // relative() is case-insensitive on win32, so equality goes through it too; the longest root wins.
+    if ((relative(root, resolve(p)) === '' || inside(root, p)) && (!best || root.length > best.len)) best = { proj, len: root.length };
   }
+  if (best) return best.proj;
   const parts = resolve(p).split(/[\\/]/);
   for (const proj of projects) if (parts.includes(proj)) return proj;
   return projects[0];
@@ -112,6 +116,7 @@ export function compileNightList({
   const push = (it) => {
     const prev = seen.get(it.id);
     if (!prev) { seen.set(it.id, it); items.push(it); return; }
+    if (!prev.planRef && it.planRef) prev.planRef = it.planRef;
     if (RANK[it.verdict] > RANK[prev.verdict]) prev.verdict = it.verdict;
     for (const r of it.reasons) if (!prev.reasons.includes(r)) prev.reasons.push(r);
     if (prev.verdict === 'barred') prev.reasons = prev.reasons.filter((r) => !r.startsWith('question:'));
@@ -138,7 +143,7 @@ export function compileNightList({
     if (text === null) { warnings.push(`${project}: could not read ${basename(path)}`); return false; }
     const parsed = parseNextSteps(text);
     if (!parsed.found) return false;
-    const needsMatt = parsed.headingNote !== null && /needs? Matt/i.test(parsed.headingNote);
+    const needsMatt = parsed.headingNote !== null && NEEDS_MATT_HEADING.test(parsed.headingNote);
     for (const s of parsed.items) {
       const it = makeItem(project, s.text, { kind: 'handoff', file: basename(path), n: s.n }, needsMatt ? ['question:needs-matt'] : []);
       applyPlans(it, s.text);

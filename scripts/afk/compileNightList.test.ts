@@ -194,6 +194,46 @@ describe('compileNightList review fixes', () => {
     expect(l.items[0]).toMatchObject({ project: 'TarotApp', kind: 'plan', verdict: 'ready' });
   });
 });
+describe('compileNightList review nits', () => {
+  it('heading restriction matches the common needs-Matt phrasings and not "Matthew"', () => {
+    const yes = ['needs Matt', 'need Matt', 'needs  Matt', "needs Matt's approval", 'awaiting Matt', 'ask Matt', 'requires Matt', 'require Matt', 'Matt approval'];
+    const no = ['needs Matthew', 'ask Matthew', 'Matthew approval'];
+    for (const [phrases, want] of [[yes, 'question'], [no, 'ready']] as const) {
+      for (const h of phrases) {
+        const { home, put } = fixture();
+        put('.claude/handoffs/aether-os/h.md', `## Next steps (${h})\n1. Run npm test\n`);
+        expect(compileNightList(base(home)).items[0].verdict, h).toBe(want);
+      }
+    }
+  });
+  it('a handoff directly in a differently-cased or slash-suffixed root resolves to its project', () => {
+    const { home, put } = fixture();
+    const h = put('Custom-Root/h.md', '## Next steps\n1. Run npm test\n');
+    const l = compileNightList({ homeDir: home, projects: ['aether-os', 'TarotApp'], nowMs: NOW, handoffs: [h], repoRoots: { TarotApp: join(home, 'custom-root') + '/' } });
+    if (process.platform === 'win32') expect(l.items[0].project).toBe('TarotApp');
+    const l2 = compileNightList({ homeDir: home, projects: ['aether-os', 'TarotApp'], nowMs: NOW, handoffs: [h], repoRoots: { TarotApp: join(home, 'Custom-Root') + '/' } });
+    expect(l2.items[0].project).toBe('TarotApp');
+  });
+  it('nested repo roots: the longest matching root owns the path in either config order', () => {
+    const { home, put } = fixture();
+    const plan = put('outer/inner/docs/superpowers/plans/x.md', '**Spec:** `docs/superpowers/specs/x.md`\n');
+    put('outer/inner/docs/superpowers/specs/x.md', 'Status: approved\n');
+    const roots = { Outer: join(home, 'outer'), Inner: join(home, 'outer', 'inner') };
+    for (const projects of [['Outer', 'Inner'], ['Inner', 'Outer']]) {
+      const l = compileNightList({ homeDir: home, projects, nowMs: NOW, plans: [plan], repoRoots: roots });
+      expect(l.items[0]).toMatchObject({ project: 'Inner', verdict: 'ready' });
+    }
+  });
+  it('a duplicate that has a planRef fills in the first item when the first has none', () => {
+    const { home, put } = fixture();
+    const plan = put('projects/aether-os/docs/superpowers/plans/named.md', '**Spec:** `docs/superpowers/specs/n.md`\n');
+    put('projects/aether-os/docs/superpowers/specs/n.md', 'Status: approved\n');
+    put('.claude/handoffs/aether-os/h.md', '## Next steps\n1. Execute plan named.md\n');
+    const l = compileNightList(base(home, { plans: [plan] }));
+    expect(l.items).toHaveLength(1);
+    expect(l.items[0].planRef).toMatchObject({ file: 'named.md', specApproved: true });
+  });
+});
 describe('checkPlan', () => {
   it('reports found and specApproved, and refuses a spec path that escapes the repo root', () => {
     const { home, put } = fixture();
