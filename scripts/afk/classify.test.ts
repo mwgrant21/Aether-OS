@@ -26,6 +26,25 @@ describe('classifyItem', () => {
     expect(r.verdict).toBe('barred');
     expect(r.reasons[0]).toBe('barred:delete');
   });
+  it.each([
+    'git push -f origin x', 'git push origin HEAD:master -f', 'git push origin +master',
+  ])('force-push variant is barred: %s', (text) => {
+    const r = classifyItem(text);
+    expect(r.verdict).toBe('barred');
+    expect(r.reasons).toContain('barred:force-push');
+  });
+  it.each([
+    'git push origin :old-branch', 'rm -fr build', 'git -C x clean -fd', 'Deleted the stale branch',
+    'deletes old logs', 'del /s /q build', 'rd /s /q build', 'git stash drop',
+  ])('delete variant is barred: %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('barred');
+  });
+  it.each(['Clean up the worktree', 'clean up worktrees'])('cleanup variant is barred: %s', (text) => {
+    expect(classifyItem(text).reasons).toContain('barred:cleanup');
+  });
+  it('full-width question mark is a question', () => {
+    expect(classifyItem('Which one\uFF1F').verdict).toBe('question');
+  });
   it('ready carries no reasons', () => {
     expect(classifyItem('Run npm test').reasons).toEqual([]);
   });

@@ -1,21 +1,27 @@
 // The "decided" classifier. Conservative: barred wins over question, question over ready.
 // False positives are accepted (the item is held, never run).
 const BARRED = [
-  [/\bdelet(e|ing)\b/i, 'barred:delete'],
-  [/\brm -rf?\b/i, 'barred:delete'],
+  [/\bdelet(e|es|ed|ing)\b/i, 'barred:delete'],
+  [/\brm\s+-[a-z]*(rf|fr|r)[a-z]*\b/i, 'barred:delete'],
   [/\bRemove-Item\b/i, 'barred:delete'],
   [/\bprune\b/i, 'barred:delete'],
   [/force[- ]push/i, 'barred:force-push'],
   [/--force/i, 'barred:force-push'],
-  [/reset --hard/i, 'barred:delete'],
-  [/branch (-d|--delete)\b/i, 'barred:delete'],
-  [/worktree remove/i, 'barred:delete'],
-  [/\bcleanup\b/i, 'barred:cleanup'],
-  [/\bremov(e|ing)\b/i, 'barred:delete'],
+  [/\bpush\b[^\n]*\s-[a-z]*f\b/i, 'barred:force-push'],
+  [/\bpush\b[^\n]*\s\+\S/i, 'barred:force-push'],
+  [/\bpush\b[^\n]*\s:\S/, 'barred:delete'],
+  [/reset\s+--hard/i, 'barred:delete'],
+  [/branch\s+(-d|--delete)\b/i, 'barred:delete'],
+  [/worktree\s+remove/i, 'barred:delete'],
+  [/\bclean\s?-?up\b/i, 'barred:cleanup'],
+  [/\bremov(e|es|ed|ing)\b/i, 'barred:delete'],
   [/\bpurge\b/i, 'barred:delete'],
   [/\brmdir\b/i, 'barred:delete'],
-  [/git clean/i, 'barred:delete'],
-  [/git rm\b/i, 'barred:delete'],
+  [/\bclean\s+-[a-z]*[fd]/i, 'barred:delete'],
+  [/git\s+clean/i, 'barred:delete'],
+  [/git\s+rm\b/i, 'barred:delete'],
+  [/\b(del|rd)\s+\/[sq]\b/i, 'barred:delete'],
+  [/stash\s+(drop|clear)/i, 'barred:delete'],
 ];
 
 const NEEDS_MATT = [
@@ -38,7 +44,7 @@ export function classifyItem(text) {
   const reasons = [];
   if (MARKERS.test(s)) reasons.push('question:marker');
   if (NEEDS_MATT.some((re) => re.test(s))) reasons.push('question:needs-matt');
-  if (s.includes('?')) reasons.push('question:mark');
+  if (/[?\uFF1F]/.test(s)) reasons.push('question:mark');
   if (reasons.length) return { verdict: 'question', reasons };
   return { verdict: 'ready', reasons: [] };
 }
