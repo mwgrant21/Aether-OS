@@ -30,6 +30,8 @@ const BARRED = [
   r('\\brestore\\b' + G + '\\s\\.(\\s|$)', 'barred:delete'),
   r('\\bfilter-(branch|repo)\\b|\\breflog\\s+expire\\b', 'barred:delete'),
   r('\\bpush\\b' + G + '\\s:\\S', 'barred:delete'),
+  r('\\bpush\\b' + G + '\\s-[a-z]*d\\b', 'barred:delete'),
+  r('\\bhard[\\s_-]*reset|\\breset\\b' + G + '\\bhard\\b', 'barred:delete'),
   // force-push in any spelling
   r('forc(e|ed|ing|ibly|efully)[\\s_-]*push', 'barred:force-push'),
   r('\\bpush\\w*\\W+(\\w+\\W+){0,3}with\\W+force', 'barred:force-push'),

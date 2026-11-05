@@ -51,14 +51,16 @@ describe('classifyItem', () => {
     'wipe the disk', 'nuke the cache', 'destroy the VM', 'trash the old build', 'shred secrets.txt',
     'truncate -s 0 log', 'Format-Volume -DriveLetter E', 'Clear-Content log.txt',
     'git checkout -f', 'git checkout -- .', 'git restore .', 'git filter-branch --all', 'git reflog expire --all',
-    'git push\norigin\n:old', 'rm x', 'rm\tx',
-    'ｒｍ -rf x', 'dele​te the logs', 'deléte the logs',
+    'git push\norigin\n:old', 'rm\u00a0x', 'rm\tx',
+    '\uFF52\uFF4D -rf x', 'dele\u200bte the logs', 'dele\u0301te the logs',
+    'git push -d origin x', 'Hard reset the branch', 'Hard-reset the repo', 'hard reset to origin',
+    'reset hard', 'git reset -- hard',
   ])('delete variant is barred (broad stems): %s', (text) => {
     expect(classifyItem(text).verdict).toBe('barred');
   });
   it.each([
     'git push origin master -fu', 'Force  push', 'force_push', 'forcepush', 'Forcibly push', 'push with force',
-    'force push', 'force\tpush', 'force\npush', 'git push --mirror', 'git push -f -u origin x',
+    'force\u00a0push', 'force\tpush', 'force\npush', 'git push --mirror', 'git push -f -u origin x',
     'git push origin x\n\n -f',
   ])('force-push variant is barred (broad): %s', (text) => {
     const r = classifyItem(text);
