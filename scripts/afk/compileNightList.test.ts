@@ -167,6 +167,33 @@ describe('compileNightList', () => {
     expect(l.items[0]).toMatchObject({ verdict: 'ready', planRef: { file: 'r.md', specApproved: true } });
   });
 });
+describe('compileNightList review fixes', () => {
+  it('a duplicate keeps the most restrictive verdict in either encounter order', () => {
+    const { home, put } = fixture();
+    put('.claude/handoffs/aether-os/h.md', '## Next steps\n1. Restart collector\n2. Run npm test\n');
+    put('.claude/handoffs/aether-os/ledger-2026-11-04.md', '- [pending Matt] Restart collector\n');
+    const a = compileNightList(base(home)).items.find((i) => i.title === 'Restart collector')!;
+    expect(a.verdict).toBe('question'); expect(a.reasons).toContain('question:needs-matt');
+    const f2 = fixture();
+    f2.put('.claude/handoffs/aether-os/h.md', '## Next steps\n1. Run npm test\n');
+    f2.put('.claude/handoffs/aether-os/ledger-2026-11-04.md', '- [todo] Run npm test\n');
+    const pinned = f2.put('pinned/aether-os/p.md', '## Next steps (needs Matt approval)\n1. Run npm test\n');
+    const b = compileNightList(base(f2.home, { handoffs: [pinned] })).items;
+    expect(b).toHaveLength(1); expect(b[0]).toMatchObject({ verdict: 'question' });
+  });
+  it('heading "(needs Matt approval)" makes every item a question', () => {
+    const { home, put } = fixture();
+    put('.claude/handoffs/aether-os/h.md', '## Next steps (needs Matt approval)\n1. Run npm test\n');
+    expect(compileNightList(base(home)).items[0]).toMatchObject({ verdict: 'question', reasons: ['question:needs-matt'] });
+  });
+  it('an explicit plan under a repoRoots override is owned by that project', () => {
+    const { home, put } = fixture();
+    const plan = put('custom-root/docs/superpowers/plans/x.md', '**Spec:** `docs/superpowers/specs/x.md`\n');
+    put('custom-root/docs/superpowers/specs/x.md', 'Status: approved\n');
+    const l = compileNightList({ homeDir: home, projects: ['aether-os', 'TarotApp'], nowMs: NOW, plans: [plan], repoRoots: { TarotApp: join(home, 'custom-root') } });
+    expect(l.items[0]).toMatchObject({ project: 'TarotApp', kind: 'plan', verdict: 'ready' });
+  });
+});
 describe('checkPlan', () => {
   it('reports found and specApproved, and refuses a spec path that escapes the repo root', () => {
     const { home, put } = fixture();

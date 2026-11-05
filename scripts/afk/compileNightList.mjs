@@ -60,7 +60,13 @@ function listMd(dir, nowMs, maxAgeMs, warnings, project) {
   return out;
 }
 
-function projectOfPath(p, projects) {
+// Configured repo roots decide ownership first; path-component matching is the fallback.
+function projectOfPath(p, projects, repoRoots) {
+  for (const proj of projects) {
+    if (!own(repoRoots, proj) || !repoRoots[proj]) continue;
+    const root = resolve(repoRoots[proj]);
+    if (resolve(p) === root || inside(root, p)) return proj;
+  }
   const parts = resolve(p).split(/[\\/]/);
   for (const proj of projects) if (parts.includes(proj)) return proj;
   return projects[0];
@@ -98,9 +104,18 @@ export function compileNightList({
 }) {
   const warnings = [];
   const items = [];
-  const seen = new Set();
+  const seen = new Map();
   const maxAgeMs = maxAgeDays * DAY_MS;
-  const push = (it) => { if (!seen.has(it.id)) { seen.add(it.id); items.push(it); } };
+  // Duplicate ids merge conservatively in either encounter order: the most restrictive verdict wins
+  // (barred > question > ready) and reasons are kept, except that a barred item carries no question: reasons.
+  const RANK = { ready: 0, question: 1, barred: 2 };
+  const push = (it) => {
+    const prev = seen.get(it.id);
+    if (!prev) { seen.set(it.id, it); items.push(it); return; }
+    if (RANK[it.verdict] > RANK[prev.verdict]) prev.verdict = it.verdict;
+    for (const r of it.reasons) if (!prev.reasons.includes(r)) prev.reasons.push(r);
+    if (prev.verdict === 'barred') prev.reasons = prev.reasons.filter((r) => !r.startsWith('question:'));
+  };
 
   const applyPlans = (it, text) => {
     for (const file of planRefsIn(text)) {
@@ -123,7 +138,7 @@ export function compileNightList({
     if (text === null) { warnings.push(`${project}: could not read ${basename(path)}`); return false; }
     const parsed = parseNextSteps(text);
     if (!parsed.found) return false;
-    const needsMatt = parsed.headingNote !== null && /need Matt/i.test(parsed.headingNote);
+    const needsMatt = parsed.headingNote !== null && /needs? Matt/i.test(parsed.headingNote);
     for (const s of parsed.items) {
       const it = makeItem(project, s.text, { kind: 'handoff', file: basename(path), n: s.n }, needsMatt ? ['question:needs-matt'] : []);
       applyPlans(it, s.text);
@@ -155,13 +170,13 @@ export function compileNightList({
   }
 
   for (const path of handoffs) {
-    const project = projectOfPath(dirname(path), projects);
+    const project = projectOfPath(dirname(path), projects, repoRoots);
     if (!project) continue;
     if (!fromHandoff(project, path)) warnings.push(`${project}: handoff ${basename(path)} has no Next steps`);
   }
 
   for (const path of plans) {
-    const project = projectOfPath(path, projects);
+    const project = projectOfPath(path, projects, repoRoots);
     if (!project) continue;
     const file = basename(path);
     const r = checkPlan({ homeDir, repoRoots, project, file });
