@@ -73,6 +73,23 @@ describe('classifyItem', () => {
   ])('cleanup variant is barred (stem): %s', (text) => {
     expect(classifyItem(text).reasons).toContain('barred:cleanup');
   });
+  it.each([
+    'force\u2011push it', 'git push\u2011\u2011force', 'force\u2212push it', 'git push \u2212\u2212force',
+  ])('unicode-hyphen force-push is barred: %s', (text) => {
+    expect(classifyItem(text).reasons).toContain('barred:force-push');
+  });
+  it.each(['old_delete.md', 'old_cleanup.md', 'git_clean'])('underscore-hidden stem is barred: %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('barred');
+  });
+  it.each(['D\u0435lete the logs', 'r\u043C -rf x', 'F\u043Erce push', 'cl\u0435an up'])(
+    'homoglyph spelling is barred: %s',
+    (text) => {
+      expect(classifyItem(text).verdict).toBe('barred');
+    },
+  );
+  it.each(['wire up my_feature_flag', 'git push -u origin x'])('ordinary text stays ready: %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('ready');
+  });
   it('long input classifies fast', () => {
     const t0 = Date.now();
     const r = classifyItem('push '.repeat(10000));
