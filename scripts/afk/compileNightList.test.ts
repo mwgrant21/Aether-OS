@@ -129,6 +129,34 @@ describe('compileNightList', () => {
     expect(nope.reasons).toEqual(['question:plan-not-found']);
     expect(leaks(l, home)).toBe(false);
   });
+  it('a named plan with a barred file name stays barred even with an approved spec', () => {
+    const { home, put } = fixture();
+    const plan = put('projects/aether-os/docs/superpowers/plans/cleanup-old-worktrees.md', '**Spec:** `docs/superpowers/specs/c.md`\n');
+    put('projects/aether-os/docs/superpowers/specs/c.md', 'Status: approved\n');
+    const it = compileNightList(base(home, { plans: [plan] })).items[0];
+    expect(it).toMatchObject({ kind: 'plan', verdict: 'barred' });
+    expect(it.reasons.length).toBeGreaterThan(0);
+    expect(it.reasons.every((r: string) => r.startsWith('barred:'))).toBe(true);
+  });
+  it('a barred named plan that is missing stays barred and still warns', () => {
+    const { home } = fixture();
+    const plan = join(home, 'projects', 'aether-os', 'docs', 'superpowers', 'plans', 'delete-old-branches.md');
+    const l = compileNightList(base(home, { plans: [plan] }));
+    expect(l.items[0].verdict).toBe('barred');
+    expect(l.items[0].reasons.some((r: string) => r.startsWith('question:'))).toBe(false);
+    expect(l.warnings.join(' ')).toContain('delete-old-branches.md');
+  });
+  it('a benign named plan with an approved spec is ready with no reasons', () => {
+    const { home, put } = fixture();
+    const plan = put('projects/aether-os/docs/superpowers/plans/dashboards.md', '**Spec:** `docs/superpowers/specs/d.md`\n');
+    put('projects/aether-os/docs/superpowers/specs/d.md', 'Status: approved\n');
+    expect(compileNightList(base(home, { plans: [plan] })).items[0]).toMatchObject({ verdict: 'ready', reasons: [] });
+  });
+  it('an undefined repoRoots entry falls back to the default root instead of throwing', () => {
+    const { home, put } = fixture();
+    put('projects/aether-os/docs/superpowers/plans/u.md', '**Spec:** `s.md`\n');
+    expect(checkPlan({ homeDir: home, repoRoots: { 'aether-os': undefined }, project: 'aether-os', file: 'u.md' }).found).toBe(true);
+  });
   it('an explicit handoff path is compiled regardless of age, and repoRoots overrides the plan root', () => {
     const { home, put } = fixture();
     const h = put('.claude/handoffs/aether-os/pinned.md', '## Next steps\n1. Execute plans/r.md\n', 30);

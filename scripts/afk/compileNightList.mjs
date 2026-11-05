@@ -23,7 +23,7 @@ function readText(p) {
 }
 
 function repoRootOf(homeDir, repoRoots, project) {
-  return own(repoRoots, project) ? repoRoots[project] : join(homeDir, 'projects', project);
+  return (own(repoRoots, project) && repoRoots[project]) || join(homeDir, 'projects', project);
 }
 
 function inside(root, p) {
@@ -166,16 +166,19 @@ export function compileNightList({
     const file = basename(path);
     const r = checkPlan({ homeDir, repoRoots, project, file });
     const it = makeItem(project, `Execute plan ${file}`, { kind: 'plan', file }, []);
-    // A named plan is judged by its spec alone; the classifier text is fixed and carries no verdict of its own.
+    // The file name is item text, so a barred verdict from the classifier beats the spec result.
     it.kind = 'plan';
-    it.verdict = 'ready';
-    it.reasons = [];
+    const downgrade = (code) => {
+      if (it.verdict === 'barred') return;
+      it.verdict = 'question';
+      if (!it.reasons.includes(code)) it.reasons.push(code);
+    };
     if (!r.found) {
       warnings.push(`${project}: plan ${file} not found`);
-      it.verdict = 'question'; it.reasons = ['question:plan-not-found'];
+      downgrade('question:plan-not-found');
     } else {
       it.planRef = { file, specApproved: r.specApproved };
-      if (!r.specApproved) { it.verdict = 'question'; it.reasons = ['question:spec-not-approved']; }
+      if (!r.specApproved) downgrade('question:spec-not-approved');
     }
     push(it);
   }
