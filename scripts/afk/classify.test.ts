@@ -82,7 +82,9 @@ describe('classifyItem', () => {
     expect(classifyItem(text).verdict).toBe('barred');
   });
   it.each(['D\u0435lete the logs', 'r\u043C -rf x', 'F\u043Erce push', 'cl\u0435an up',
-    'de\u04CFete the logs', 'c\u04CFean up', 'd\u0131scard the branch'])(
+    'de\u04CFete the logs', 'c\u04CFean up', 'd\u0131scard the branch',
+    'tr\u03B1sh the build', 'w\u03B9pe the disk', '\u03C1urge old logs',
+    'n\u03C5ke the cache', 'unlin\u03BA x', 'trun\u03F2ate the log', 'w\u04C0pe the disk'])(
     'homoglyph spelling is barred: %s',
     (text) => {
       expect(classifyItem(text).verdict).toBe('barred');

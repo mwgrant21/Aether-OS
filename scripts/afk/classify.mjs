@@ -57,9 +57,9 @@ const MARKERS = /\b(TBD|UNVERIFIED|unconfirmed|unclear|decide|open question|opti
 // NFKD folds fullwidth/compatibility forms and splits accents off, so stripping marks leaves the
 // base letters; zero-width and bidi controls are dropped; every whitespace run (nbsp, tab,
 // newline) becomes one space.
-// Unicode hyphens (U+2010-U+2015, minus U+2212) fold to '-', '_' folds to a space (\b treats it as
-// a word char, so old_delete.md would otherwise hide "delete"), and lookalike Cyrillic/Greek
-// letters fold to ASCII. The homoglyph table is deliberately short, not exhaustive.
+// Unicode hyphens (U+2010-2015, U+2043, U+2212, U+2E3A, U+2E3B, U+058A, U+05BE, U+1806, U+02D7,
+// U+2796) fold to '-', '_' folds to a space (\b treats it as a word char, so
+// old_delete.md would otherwise hide "delete"), and lookalike Cyrillic/Greek letters fold to ASCII. The homoglyph table is deliberately short, not exhaustive.
 const HOMOGLYPHS = {
   // Cyrillic lowercase
   '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0445': 'x',
@@ -73,6 +73,9 @@ const HOMOGLYPHS = {
   '\u03BF': 'o', '\u03BD': 'v', '\u039F': 'O', '\u039D': 'N', '\u0391': 'A', '\u0392': 'B',
   '\u0395': 'E', '\u0399': 'I', '\u039A': 'K', '\u039C': 'M', '\u03A1': 'P', '\u03A4': 'T',
   '\u03A7': 'X', '\u03A5': 'Y', '\u0396': 'Z', '\u0397': 'H',
+  // Greek lowercase
+  '\u03B1': 'a', '\u03B9': 'i', '\u03C1': 'p', '\u03C5': 'u',
+  '\u03BA': 'k', '\u03C2': 'c',  // NFKD turns lunate sigma (U+03F2) into final sigma (U+03C2)
 };
 const HOMOGLYPH_RE = new RegExp('[' + Object.keys(HOMOGLYPHS).join('') + ']', 'g');
 
