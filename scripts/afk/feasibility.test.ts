@@ -75,12 +75,16 @@ describe('realProbes', () => {
     writeFileSync(file, `AETHER_KEYSTORE_PATH=${real.replace(/\\/g, '/')}\n`);
     expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(true);
   });
-  it('propPathExists does not unescape an env value (backslash Windows path)', () => {
+  it('propPathExists does not unescape an env value (a backslash in the path is kept)', () => {
+    // Platform-neutral: the directory name holds a backslash. On Windows join() makes it a nested
+    // dir a\b; on POSIX it is one dir literally named a\b. Either way the native path contains
+    // a backslash that unescaping would mangle, and the file exists only at the raw path.
     const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
-    const real = join(home, 'real.jks'); writeFileSync(real, 'x');
-    const win = real.replace(/\//g, '\\');
+    const dir = join(home, 'a\\b'); mkdirSync(dir, { recursive: true });
+    const real = join(dir, 'real.jks'); writeFileSync(real, 'x');
+    expect(real).toContain('\\');
     const none = join(home, 'none.properties');
-    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: win } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: real } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
   });
   it('fileExists is true for a real file and false for a missing one', () => {
     const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
