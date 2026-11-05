@@ -64,13 +64,14 @@ describe('realProbes', () => {
     const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
     const real = join(home, 'real.jks'); writeFileSync(real, 'x');
     const gone = join(home, 'gone.jks');
+    const fwd = (s: string) => s.replace(/\\/g, '/'); // env paths are unescaped by production code, so use forward slashes
     const file = join(home, 'a.properties');
     writeFileSync(file, `AETHER_KEYSTORE_PATH=${gone.replace(/\\/g, '/')}\n`);
     expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
-    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: real } }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: fwd(real) } }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
     const none = join(home, 'none.properties');
-    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: gone } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(false);
-    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: real } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: fwd(gone) } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: fwd(real) } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
     writeFileSync(file, `AETHER_KEYSTORE_PATH=${real.replace(/\\/g, '/')}\n`);
     expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(true);
   });
