@@ -279,7 +279,7 @@ describe('writeJsonAtomic', () => {
 });
 ```
 
-Carry (build review): `readJsonSafe` has no size cap and no symlink check; a huge or symlinked file is read as-is. Accepted for Phase 1 (the directory is Matt's own); note it, and add a cap and an `lstat` check if the directory ever holds untrusted input.
+Carry (build review): `readJsonSafe` has no size cap and no symlink check; a huge or symlinked file is read as-is. Matt decides whether Phase 1 adds a cap and an `lstat` check or leaves this as a known gap (the directory is Matt's own).
 
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/fsJson.test.ts` (expect FAIL: cannot resolve the module). Implement `fsJson.mjs` to the interface. Rerun (expect PASS; the symlink case may report skipped without symlink rights, say so in the report). Commit: `git add -- scripts/afk/fsJson.mjs scripts/afk/fsJson.test.ts && git commit -m "feat(afk): safe JSON read and atomic write helpers" -- scripts/afk/fsJson.mjs scripts/afk/fsJson.test.ts`.
 
