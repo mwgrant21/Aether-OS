@@ -207,7 +207,12 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
     },
     onForeignLaunch(slot) {
       planned.delete(slot);
-      host.onForeignLaunch(slot);
+      try {
+        host.onForeignLaunch(slot);
+      } catch {
+        // the next start event retries the reset while no plan is held
+        safe(() => deps.log(`foreign-launch-failed ${slot}`));
+      }
     },
     noteUserInput(slot) {
       if (isOwned(slot)) {

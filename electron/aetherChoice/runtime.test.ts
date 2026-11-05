@@ -656,6 +656,32 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     expect(r.logs).toContain('launch-failed claude');
   });
 
+  it('39: onForeignLaunch with a throwing host does not throw, drops the plan, logs once and the next start repairs the host', async () => {
+    const base = newRecord('claude', { model: 'sonnet', effort: 'high' }, { reason: 'seed', trigger: 'new-thread', source: 'auto' });
+    const armed = { v: false };
+    const rec = { ...base };
+    Object.defineProperty(rec, 'live', {
+      get() {
+        if (armed.v) throw new Error('boom');
+        return false;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    const r = rig({ records: { claude: rec } });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    armed.v = true;
+    expect(() => rt.onForeignLaunch('claude')).not.toThrow();
+    expect(r.logs.filter((l) => l.startsWith('foreign-launch-failed'))).toEqual(['foreign-launch-failed claude']);
+    expect(r.logs.join('\n')).not.toContain('boom');
+    armed.v = false;
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+    rt.onForeignLaunch('claude');
+    expect(r.logs.filter((l) => l.startsWith('foreign-launch-failed'))).toHaveLength(1);
+  });
+
   it('30: trace off adds nothing', async () => {
     const calls: number[] = [];
     const scripts = [
