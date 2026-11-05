@@ -42,6 +42,41 @@ describe('classifyItem', () => {
   it.each(['Clean up the worktree', 'clean up worktrees'])('cleanup variant is barred: %s', (text) => {
     expect(classifyItem(text).reasons).toContain('barred:cleanup');
   });
+  it.each([
+    'Deletion of old files', 'removal of old logs', 'Pruning stale branches', 'rm x.txt', 'rm -f x.txt',
+    'rm --recursive x', 'rm -f -r x', 'del x.txt', 'del /f /q x', 'erase x.txt', 'unlink x', 'rd build',
+    'rd/s/q x', 'rimraf dist', 'git reset origin/master --hard', 'git reset HEAD --hard',
+    'git branch -vd x', 'git branch -rd x', 'git branch -fD x', 'git tag -d v1', 'git tag --delete v1',
+    'git update-ref -d refs/heads/x', 'git remote rm origin', 'docker rm -f web', 'docker rmi img',
+    'wipe the disk', 'nuke the cache', 'destroy the VM', 'trash the old build', 'shred secrets.txt',
+    'truncate -s 0 log', 'Format-Volume -DriveLetter E', 'Clear-Content log.txt',
+    'git checkout -f', 'git checkout -- .', 'git restore .', 'git filter-branch --all', 'git reflog expire --all',
+    'git push\norigin\n:old', 'rm x', 'rm\tx',
+    'ｒｍ -rf x', 'dele​te the logs', 'deléte the logs',
+  ])('delete variant is barred (broad stems): %s', (text) => {
+    expect(classifyItem(text).verdict).toBe('barred');
+  });
+  it.each([
+    'git push origin master -fu', 'Force  push', 'force_push', 'forcepush', 'Forcibly push', 'push with force',
+    'force push', 'force\tpush', 'force\npush', 'git push --mirror', 'git push -f -u origin x',
+    'git push origin x\n\n -f',
+  ])('force-push variant is barred (broad): %s', (text) => {
+    const r = classifyItem(text);
+    expect(r.verdict).toBe('barred');
+    expect(r.reasons).toContain('barred:force-push');
+  });
+  it.each([
+    'cleaning up', 'cleaned up', 'clean   up', 'Clean the worktree', 'clean old worktrees', 'npm run clean',
+    'make clean', 'gradlew clean', 'tidy up',
+  ])('cleanup variant is barred (stem): %s', (text) => {
+    expect(classifyItem(text).reasons).toContain('barred:cleanup');
+  });
+  it('long input classifies fast', () => {
+    const t0 = Date.now();
+    const r = classifyItem('push '.repeat(10000));
+    expect(r.verdict).toBe('ready');
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
   it('full-width question mark is a question', () => {
     expect(classifyItem('Which one\uFF1F').verdict).toBe('question');
   });
