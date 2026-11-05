@@ -74,14 +74,15 @@ describe('classifyItem', () => {
     expect(classifyItem(text).reasons).toContain('barred:cleanup');
   });
   it.each([
-    'force\u2011push it', 'git push\u2011\u2011force', 'force\u2212push it', 'git push \u2212\u2212force',
+    'force\u2011push it', 'git push\u2011\u2011force', 'force\u2212push it', 'git push \u2212\u2212force', 'git push \u2043\u2043force',
   ])('unicode-hyphen force-push is barred: %s', (text) => {
     expect(classifyItem(text).reasons).toContain('barred:force-push');
   });
   it.each(['old_delete.md', 'old_cleanup.md', 'git_clean'])('underscore-hidden stem is barred: %s', (text) => {
     expect(classifyItem(text).verdict).toBe('barred');
   });
-  it.each(['D\u0435lete the logs', 'r\u043C -rf x', 'F\u043Erce push', 'cl\u0435an up'])(
+  it.each(['D\u0435lete the logs', 'r\u043C -rf x', 'F\u043Erce push', 'cl\u0435an up',
+    'de\u04CFete the logs', 'c\u04CFean up', 'd\u0131scard the branch'])(
     'homoglyph spelling is barred: %s',
     (text) => {
       expect(classifyItem(text).verdict).toBe('barred');

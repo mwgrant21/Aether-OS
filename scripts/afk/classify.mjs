@@ -64,11 +64,11 @@ const HOMOGLYPHS = {
   // Cyrillic lowercase
   '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0445': 'x',
   '\u0443': 'y', '\u0456': 'i', '\u0455': 's', '\u0458': 'j', '\u043A': 'k', '\u043C': 'm',
-  '\u0442': 't', '\u04BB': 'h', '\u0501': 'd',
+  '\u0442': 't', '\u04BB': 'h', '\u0501': 'd', '\u04CF': 'l', '\u0131': 'i',
   // Cyrillic uppercase
   '\u0410': 'A', '\u0412': 'B', '\u0415': 'E', '\u041A': 'K', '\u041C': 'M', '\u041D': 'H',
   '\u041E': 'O', '\u0420': 'P', '\u0421': 'C', '\u0422': 'T', '\u0425': 'X', '\u0406': 'I',
-  '\u0405': 'S', '\u0408': 'J',
+  '\u0405': 'S', '\u0408': 'J', '\u04C0': 'I',
   // Greek
   '\u03BF': 'o', '\u03BD': 'v', '\u039F': 'O', '\u039D': 'N', '\u0391': 'A', '\u0392': 'B',
   '\u0395': 'E', '\u0399': 'I', '\u039A': 'K', '\u039C': 'M', '\u03A1': 'P', '\u03A4': 'T',
@@ -80,7 +80,7 @@ function normalise(text) {
   return String(text)
     .normalize('NFKD')
     .replace(/[\u00AD\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\p{M}]/gu, '')
-    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/[\u2010-\u2015\u2043\u2212\u2E3A\u2E3B\u058A\u05BE\u1806\u02D7\u2796]/g, '-')
     .replace(/_/g, ' ')
     .replace(HOMOGLYPH_RE, (c) => HOMOGLYPHS[c])
     .replace(/\s+/g, ' ');
