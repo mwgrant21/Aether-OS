@@ -99,10 +99,11 @@ export function realProbes({ homeDir, repoRoots = {}, env = process.env } = {}) 
       return out;
     },
     propPathExists(absFile, key) {
-      const v = readProps(absFile).get(key) || envVal(key);
-      if (!v) return false;
+      const fileVal = readProps(absFile).get(key);
+      const p = fileVal ? unescapeProp(fileVal) : envVal(key);
+      if (!p) return false;
       try {
-        return existsSync(unescapeProp(v));
+        return existsSync(p);
       } catch {
         return false;
       }

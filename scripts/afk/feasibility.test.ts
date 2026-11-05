@@ -75,6 +75,13 @@ describe('realProbes', () => {
     writeFileSync(file, `AETHER_KEYSTORE_PATH=${real.replace(/\\/g, '/')}\n`);
     expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(true);
   });
+  it('propPathExists does not unescape an env value (backslash Windows path)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const real = join(home, 'real.jks'); writeFileSync(real, 'x');
+    const win = real.replace(/\//g, '\\');
+    const none = join(home, 'none.properties');
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: win } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
+  });
   it('fileExists is true for a real file and false for a missing one', () => {
     const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
     const f = join(home, 'pfx-password.txt'); writeFileSync(f, 'x');
