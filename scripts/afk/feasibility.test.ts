@@ -60,4 +60,38 @@ describe('realProbes', () => {
     const p = realProbes({ homeDir: home, env: { AETHER_KEY_PASSWORD: 'x' } });
     expect(p.propKeysPresent(join(home, 'missing.properties'), ['AETHER_KEY_PASSWORD'])).toEqual({ AETHER_KEY_PASSWORD: true });
   });
+  it('propPathExists tests the path: file value wins over env, env is the fallback', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const real = join(home, 'real.jks'); writeFileSync(real, 'x');
+    const gone = join(home, 'gone.jks');
+    const file = join(home, 'a.properties');
+    writeFileSync(file, `AETHER_KEYSTORE_PATH=${gone.replace(/\\/g, '/')}\n`);
+    expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: real } }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    const none = join(home, 'none.properties');
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: gone } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(false);
+    expect(realProbes({ homeDir: home, env: { AETHER_KEYSTORE_PATH: real } }).propPathExists(none, 'AETHER_KEYSTORE_PATH')).toBe(true);
+    writeFileSync(file, `AETHER_KEYSTORE_PATH=${real.replace(/\\/g, '/')}\n`);
+    expect(realProbes({ homeDir: home, env: {} }).propPathExists(file, 'AETHER_KEYSTORE_PATH')).toBe(true);
+  });
+  it('fileExists is true for a real file and false for a missing one', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const f = join(home, 'pfx-password.txt'); writeFileSync(f, 'x');
+    const p = realProbes({ homeDir: home, env: {} });
+    expect(p.fileExists(f)).toBe(true);
+    expect(p.fileExists(join(home, 'missing.txt'))).toBe(false);
+  });
+  it('a "KEY: value" line counts as present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const file = join(home, 'a.properties');
+    writeFileSync(file, 'AETHER_KEY_ALIAS: somealias\n');
+    expect(realProbes({ homeDir: home, env: {} }).propKeysPresent(file, ['AETHER_KEY_ALIAS'])).toEqual({ AETHER_KEY_ALIAS: true });
+  });
+  it('commented lines (# and !, spaced or not) never count as present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'afk-feas-'));
+    const file = join(home, 'a.properties');
+    writeFileSync(file, '# AETHER_KEY_ALIAS=commented\n#AETHER_KEY_PASSWORD=x\n!AETHER_KEYSTORE_PASSWORD=x\n');
+    expect(realProbes({ homeDir: home, env: {} }).propKeysPresent(file, ['AETHER_KEY_ALIAS', 'AETHER_KEY_PASSWORD', 'AETHER_KEYSTORE_PASSWORD']))
+      .toEqual({ AETHER_KEY_ALIAS: false, AETHER_KEY_PASSWORD: false, AETHER_KEYSTORE_PASSWORD: false });
+  });
 });
