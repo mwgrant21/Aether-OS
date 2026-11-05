@@ -4,7 +4,7 @@
 
 **Goal:** Matt can say "going to bed", get a text pre-flight in an ordinary Aether terminal, approve a night once, and leave behind three machine-readable things Phase 2's runner can trust: a terms snapshot, a confirmed night list, and an approval record. Nothing runs overnight yet.
 
-**Architecture:** Dependency-free ESM modules in `scripts/afk/` (`.mjs`, Node builtins only, same shape as `scripts/aether-hook-emit.mjs`, shipped by the existing `extraResources` rule). One CLI, `scripts/afk/afk.mjs`, has read verbs anyone can run and write verbs that refuse to run without a real TTY. A shipped skill, `skills/afk-preflight/SKILL.md`, drives the conversation (terms, compile, questions, feasibility, read-back) and tells Matt which TTY-gated command to type. State lives in `~/.aether-os/afk/`. No Electron, renderer, pty, or `.claude` config change.
+**Architecture:** Dependency-free ESM modules in `scripts/afk/` (`.mjs`, Node builtins only, same shape as `scripts/aether-hook-emit.mjs`, shipped by the existing `scripts/**/*.mjs` `extraResources` rule; the skill template ships through one added `extraResources` entry, T19). One CLI, `scripts/afk/afk.mjs`, has read verbs anyone can run and write verbs that refuse to run without a real TTY. A shipped skill, `skills/afk-preflight/SKILL.md`, drives the conversation (terms, compile, questions, feasibility, read-back) and tells Matt which TTY-gated command to type. State lives in `~/.aether-os/afk/`. No Electron, renderer, pty, or `.claude` config change (the one `electron-builder.yml` entry in T19 is packaging config, not Electron code).
 
 **Tech Stack:** Node ESM (`.mjs`, builtins only), vitest (`// @vitest-environment node`), tests beside the modules as `scripts/afk/*.test.ts`.
 
@@ -37,13 +37,14 @@
 ## Review Focus
 
 1. **An approved night must never read the night-list file, and a later `compile` must never demote it.** `resolveNightPlan` takes run items from `approval.json` only; a tampered `night-list.json` cannot add work; and an approved night for the window wins over a newer unapproved night for the same window (the "bad morning": approve, re-run `compile`, nothing runs). Pinned in T15.
-2. **An unfinished pre-flight must run on the LAST-APPROVED snapshot, not the live terms file and not the unconfirmed amendments**, and only for items Matt confirmed. Pinned in T15.
+2. **An unfinished pre-flight must run on the LAST-APPROVED STANDING terms (the live terms Matt approved, kept in the snapshot beside the night's amended terms): not the live terms file, not the unconfirmed amendments, and never an earlier night's one-night amendments** (design 5: amendments apply to that night only), and only for items Matt confirmed. Pinned in T5, T6, T14 and T15.
 3. **TTY gate.** `confirm`, `amend`, `approve`, `terms set` exit 3 and write nothing without a TTY on stdin and stdout. Pinned in T14 and T17 (spawned process, piped stdio).
 4. **Classifier conservatism and the "decided" test.** Any `?` or marker word makes an item a question; barred wins over question; unchecked plan checkboxes are NOT evidence of undone work (every shipped plan in this repo has 0 checked boxes). Pinned in T9 and T10.
 5. **No secret values leave the feasibility probe**, including via error strings. Pinned in T12.
 6. **Snapshot and approval are write-once and hash-checked.** A snapshot whose terms no longer match its recorded hash is refused. Pinned in T5 and T6.
 7. **The allowlist Matt approves is the allowlist stored.** The approve summary prints exactly the `allowRules` that are written to the approval record; `resolveNightPlan` returns the record's list for an approved night. Pinned in T14 and T15.
 8. **Staleness is judged against the window Matt actually set.** `compile` passes the live terms window, and amending `window` recomputes the night's `targetWindowStartMs`. Pinned in T13 and T17.
+9. **A `question` item becomes runnable only by Matt's TTY-gated `resolve`, and only for clarifiable questions.** The agent cannot record an answer, edit the night workspace, or reword a source handoff to clear a `?`; `question:spec-not-approved`, `question:plan-not-found` and `barred` items cannot be resolved at all. Pinned in T13 and T17.
 
 ## Decisions (each answers one of the six planning questions; evidence is file:line at the pinned commit)
 
@@ -52,10 +53,10 @@
 - Deviation from that pattern, on purpose: the owner is `scripts/afk/termsStore.mjs`, not `electron/afkSettings.ts`, because the writer is a CLI Matt runs in a terminal, not the Electron main process, and `scripts/*.mjs` already write `~/.aether-os` (`scripts/aether-hook-emit.mjs`, spool). Phase 2's supervisor will read it; it will not write it.
 - Who may write: only `afk terms set`, which needs a TTY (D2). Agents are blocked by two layers: the TTY gate, and a deny list (`buildDenyRules`, T16) that Matt pastes into settings (T21 step) covering `Edit/Write(~/.aether-os/afk/**)` and `Edit/Write(~/.claude/away*)`. Until Matt installs it, only the TTY gate protects an interactive session; this is stated in RISKS, not hidden.
 - The file is NOT under `.claude`. Evidence: headless Claude Code hard-denies Write/Edit on any path with a `.claude` segment (`agent-improvement/scripts/away-cmd.ps1:9-15`), so the prototype's `~/.claude/away.json` could not hold a grant that workers must read but never write.
-- Snapshot: at `approve`, a copy goes to `~/.aether-os/afk/nights/<nightId>/terms.snapshot.json` with its SHA-256, written once (`wx`), re-verified on every read (T5). The night runs on the snapshot (Phase 2).
+- Snapshot: at `approve`, a copy goes to `~/.aether-os/afk/nights/<nightId>/terms.snapshot.json`, written once (`wx`), re-verified on every read (T5). It holds two separately hashed term sets: `terms`, this night's EFFECTIVE terms (live plus one-night amendments), which the approved night runs on (Phase 2); and `standing`, the live terms Matt approved at that step, which is all an unfinished night may fall back to (design 5: amendments apply to that night only and never change the defaults). The last-approved pointer names `standing`, never `terms` (T6).
 
 **D2. How the text-first pre-flight runs in today's terminals.**
-- Smallest mechanism: a CLI (`scripts/afk/afk.mjs`) plus a skill (`skills/afk-preflight/SKILL.md`). Aether terminals are plain PowerShell PTYs with `claude` typed into them (`electron/ptyManager.ts:10-12` `buildClaudeLaunchCommand`, `:57` `launchLine`, `:67-82` `spawnPty`); the agent already has Bash, so a skill that calls a CLI needs no Aether code change at all. The repo already ships a skill the same way (`skills/aether-cross-check/SKILL.md`, copied by hand into `~/.claude/skills/`); `install-skill` (T19) automates the copy and bakes in the CLI path.
+- Smallest mechanism: a CLI (`scripts/afk/afk.mjs`) plus a skill (`skills/afk-preflight/SKILL.md`). Aether terminals are plain PowerShell PTYs with `claude` typed into them (`electron/ptyManager.ts:10-12` `buildClaudeLaunchCommand`, `:57` `launchLine`, `:67-82` `spawnPty`); the agent already has Bash, so a skill that calls a CLI needs no Aether code change at all. The repo already ships a skill the same way (`skills/aether-cross-check/SKILL.md`, copied by hand into `~/.claude/skills/`); `install-skill` (T19) automates the copy, bakes in the CLI path, and finds the template beside the scripts in both the repo and the packaged layout (`extraResources`, T19).
 - Matt's confirmations go through the TTY-gated verbs so the agent cannot approve on his behalf. `process.stdin.isTTY && process.stdout.isTTY` is false for an agent's Bash tool call. That is a guard against accident and drift, not a sandbox. UNVERIFIED: whether the claude TUI's `!` shell escape has a TTY; T22 measures it with a one-line probe BEFORE T14 (the answer decides where Matt types `confirm`/`approve`, so it must not wait for the last task), and T21/M1 re-checks it with the real CLI. If it does not, Matt runs the gated verbs in a plain PowerShell window (the Aether-hosted slots all run `claude`, so a second shell is not available inside Aether without `/exit`).
 - Trigger in Phase 1: Matt types `/afk-preflight`, or the skill's description matches his phrases (model-judged; best effort). The rules-first phrase detector with the tense guard is Phase 4 (design-kit part 7, line 232, `electron/control/inputRouter.ts`). This is a stated gap, not an equivalent.
 - Rejected: (a) a `UserPromptSubmit` hook injecting context: hooks cannot hold a question-and-answer round and the detector is Phase 4; (b) Aether main writing the pre-flight into the pty through `terminalHub.writePort()` the way AetherChoice writes `/effort`: needs idle detection and screen watching, touches `main.ts`, and sits in the aether-gui lane; (c) an MCP tool server like `aether-data` (`electron.vite.config.ts:12`, `electron/dashboards/dataServerEntry.ts`): needs a new build entry and `claude mcp add`, adds nothing over CLI plus skill in Phase 1; (d) a slash-command file under `~/.claude/commands`: equivalent to the skill, but the repo has a `skills/` precedent and no commands one.
@@ -77,7 +78,7 @@
 
 Projects with NO documented build recipe, so an APK/EXE item for them is held (`no build recipe`): MobileCrawler (Godot 4.7.2 export; CLAUDE.md:7,41 say paths live in Editor Settings and no export command is written down; Claude works in `MobileCrawler-t5`), nmmtools (`build.ps1` makes a script artifact, not an APK/EXE; tests must not run on the workstation, `nmmtools/CLAUDE.md:14-16`), tarot, Miriels-publish, TokenMonitorV2, uigen, cve-desk, and the rest of `~/projects`. Adding a row is a one-line change in `recipes.mjs`.
 
-**D5. Aether-OS app vs the aether-gui lane.** Phase 1 touches NO file the lane owns. New files only: `scripts/afk/`, `skills/afk-preflight/`; plus three shared doc files (`CLAUDE.md`, `PROGRESS.md`, `docs/privacy-and-data.md`) that the lane also edits, so T20 should rebase on master immediately before it commits. The lane owns (design-kit-v1 part 7, lines 231-245; aetherchoice host spec): phrase detection in `electron/control/inputRouter.ts` (design-kit line 232), the thread host and AetherChoice (`electron/aetherChoice/`, with `awayMode(): boolean` at `applyEngine.ts:50` stubbed `() => false` at `pickHost.ts:229`), and the away banner, possible-away timer and return-summary UI (Phase 3-4). The Aether-OS side owns the supervisor, runner, delete queue and morning-report data (Phase 2-3, future `electron/afk/`). Phase 1 can therefore run in parallel with the lane's open PRs (they touch `main.ts`, `ptyManager.ts`, `terminalHub.ts`; this plan touches none). Phase 2 must wire `awayMode` through `runtime.ts`: coordinate with the lane then.
+**D5. Aether-OS app vs the aether-gui lane.** Phase 1 touches NO file the lane owns. New files only: `scripts/afk/`, `skills/afk-preflight/`; plus one added `extraResources` entry in `electron-builder.yml` (T19: packaging config so the skill template ships, not Electron code, and not a file the lane owns); plus three shared doc files (`CLAUDE.md`, `PROGRESS.md`, `docs/privacy-and-data.md`) that the lane also edits, so T20 should rebase on master immediately before it commits. The lane owns (design-kit-v1 part 7, lines 231-245; aetherchoice host spec): phrase detection in `electron/control/inputRouter.ts` (design-kit line 232), the thread host and AetherChoice (`electron/aetherChoice/`, with `awayMode(): boolean` at `applyEngine.ts:50` stubbed `() => false` at `pickHost.ts:229`), and the away banner, possible-away timer and return-summary UI (Phase 3-4). The Aether-OS side owns the supervisor, runner, delete queue and morning-report data (Phase 2-3, future `electron/afk/`). Phase 1 can therefore run in parallel with the lane's open PRs (they touch `main.ts`, `ptyManager.ts`, `terminalHub.ts`; this plan touches none). Phase 2 must wire `awayMode` through `runtime.ts`: coordinate with the lane then.
 
 **D6. Prototype status and reuse** (`agent-improvement`, read at its `master` 69c8f59).
 - `away-t1-lib` through `away-t5-prekill` are ancestors of master. `away-t6-handoff-write` is not an ancestor, but its single unique commit `22bd64f` has an identical added/removed-line set to master's `58553ce` (same subject; compared by hashing the sorted diff lines), so its content landed. The runner is DRY-RUN ONLY: live cycles print "not implemented" (`scripts/away-runner.ps1:66`).
@@ -91,10 +92,10 @@ Projects with NO documented build recipe, so an APK/EXE item for them is held (`
 
 | Interface | Module | Contract |
 |---|---|---|
-| **Terms snapshot** | `snapshot.mjs` `readSnapshot(aetherDir, nightId)` | `{ok:true, snapshot:{v,nightId,takenAtMs,liveSha256,amendments,terms,termsSha256}}` or `{ok:false, reason}`; hash re-verified on read; written once at approval |
+| **Terms snapshot** | `snapshot.mjs` `readSnapshot(aetherDir, nightId)` | `{ok:true, snapshot:{v,nightId,takenAtMs,liveSha256,standing,amendments,terms,termsSha256}}` or `{ok:false, reason}`; `terms` = this night's effective terms, `standing` = the live terms Matt approved; both hashes re-verified on read; written once at approval |
 | **Night list** | `nightList.mjs` `readNightList(aetherDir, nightId)` | Compiled and annotated items with per-item `confirmed`, `feasibility`. A pre-flight workspace. **Phase 2 must not use it to decide what to run** |
 | **Approval record** | `approval.mjs` `readApproval(aetherDir, nightId)` | `{v,nightId,approvedAtMs,via:'tty',termsSha256,items:[{id,project,kind,artifact,title,source}],held:[{id,title,verdict,reason}],allowRules:string[]}`; write-once. `items` is the run list; `allowRules` is the allowlist Matt saw in the approve summary |
-| **What to run tonight** | `resolvePlan.mjs` `resolveNightPlan({aetherDir, nowMs})` | `{kind:'approved'|'unfinished'|'none', nightId?, terms?, termsSha256?, items, held, allowRules, reason}`. The one entry point the Phase 2 supervisor calls at window start. An approved night for the window beats a later unapproved compile of the same window |
+| **What to run tonight** | `resolvePlan.mjs` `resolveNightPlan({aetherDir, nowMs})` | `{kind:'approved'|'unfinished'|'none', nightId?, terms?, termsSha256?, items, held, allowRules, reason}`. The one entry point the Phase 2 supervisor calls at window start. An approved night for the window beats a later unapproved compile of the same window. An unfinished night runs on the last-approved STANDING terms, never an earlier night's one-night amendments |
 | **Enforcement vocabulary** | `denyRules.mjs` `buildDenyRules(terms)`, `buildAllowRules(terms, items)` | Permission-rule strings for the headless argv and for Matt's settings. The allowlist is data only: how a headless run treats it (permission-mode semantics) is UNVERIFIED until T21 |
 | **Build recipes** | `recipes.mjs` `getRecipe(project, artifact)` | `{cwd, argv, requires, evidence, verified}` |
 | **Night paths** | `nights.mjs` `nightPaths`, `listNightIds`, `windowFor`, `isNightCurrent` | Shared layout and window maths |
@@ -117,13 +118,13 @@ Phase 2 adds `.d.mts` declarations beside these files when `electron/` first imp
 | `scripts/afk/compileNightList.mjs` (+test) | Compiler |
 | `scripts/afk/recipes.mjs` (+test) | Build recipe table, artifact detection |
 | `scripts/afk/feasibility.mjs` (+test) | Presence-only feasibility probes |
-| `scripts/afk/nightList.mjs` (+test), `scripts/afk/nightFixture.ts` | Night workspace: open, annotate, confirm, amend, `approvedNightForWindow`; the fixture is shared test setup for T13/T14/T15 (not a test file, so not collected) |
+| `scripts/afk/nightList.mjs` (+test), `scripts/afk/nightFixture.ts` | Night workspace: open, annotate, confirm, resolve, amend, `approvedNightForWindow`; the fixture is shared test setup for T13/T14/T15 (not a test file, so not collected) |
 | `scripts/afk/approveFlow.mjs` (+test) | Approval flow, TTY and phrase gate |
 | `scripts/afk/resolvePlan.mjs` (+test) | `resolveNightPlan` |
 | `scripts/afk/denyRules.mjs` (+test) | Deny-rule and allow-rule builders |
 | `scripts/afk/cli.mjs`, `afk.mjs` (+test) | Verb dispatch and the executable entry |
 | `scripts/afk/afkBoundary.test.ts` | Guard test for the directory |
-| `scripts/afk/installSkill.mjs` (+test), `skills/afk-preflight/SKILL.md` | Skill and installer |
+| `scripts/afk/installSkill.mjs` (+test), `skills/afk-preflight/SKILL.md`, `electron-builder.yml` (one `extraResources` entry) | Skill, installer, and the packaging entry that ships the template |
 | `docs/privacy-and-data.md`, `CLAUDE.md`, `PROGRESS.md` | Document the new persisted state |
 
 ## Order and parallelism
@@ -498,7 +499,7 @@ scripts/afk/snapshot.test.ts
 
 **Interfaces:**
 - Consumes: `termsSha256`, `validateTerms` (T1); `writeJsonOnce`, `readJsonSafe` (T2); `nightPaths` (T4).
-- Produces: `writeSnapshot(aetherDir, nightId, {terms, amendments, liveSha256, nowMs}): Snapshot` (validates terms, computes `termsSha256`, write-once, throws on `EEXIST`); `readSnapshot(aetherDir, nightId): {ok:true; snapshot} | {ok:false; reason:'missing'|'invalid'|'hash-mismatch'}`. `Snapshot = {v:1, nightId, takenAtMs, liveSha256, amendments, terms, termsSha256}`. `liveSha256` is the hash of the LIVE terms at approval (so a later diff shows what was amended); `termsSha256` hashes the EFFECTIVE terms.
+- Produces: `writeSnapshot(aetherDir, nightId, {terms, standing, amendments, nowMs}): Snapshot` (validates BOTH `terms` and `standing`, computes `termsSha256` over `terms` and `liveSha256` over `standing`, write-once, throws on `EEXIST`; `standing` is required and has no default, so a caller cannot forget it); `readSnapshot(aetherDir, nightId): {ok:true; snapshot} | {ok:false; reason:'missing'|'invalid'|'hash-mismatch'}`. `Snapshot = {v:1, nightId, takenAtMs, liveSha256, standing, amendments, terms, termsSha256}`. `standing` is the LIVE terms Matt approved at the approve step (the standing-terms snapshot); `liveSha256` hashes it, so a later diff shows what was amended. `terms` is the EFFECTIVE terms for that night (standing plus `amendments`); `termsSha256` hashes it. `readSnapshot` re-verifies both hashes and returns `hash-mismatch` if either fails.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -514,7 +515,7 @@ import { readSnapshot, writeSnapshot } from './snapshot.mjs';
 
 const ID = 'n20261104T231509';
 const tmp = () => mkdtempSync(join(tmpdir(), 'afk-snap-'));
-const args = { terms: DEFAULT_TERMS, amendments: {}, liveSha256: termsSha256(DEFAULT_TERMS), nowMs: 1 };
+const args = { terms: DEFAULT_TERMS, standing: DEFAULT_TERMS, amendments: {}, nowMs: 1 };
 
 describe('snapshot', () => {
   it('round-trips with a verified hash', () => {
@@ -534,8 +535,21 @@ describe('snapshot', () => {
     writeFileSync(p, JSON.stringify(j));
     expect(readSnapshot(d, ID)).toEqual({ ok: false, reason: 'hash-mismatch' });
   });
+  it('keeps the standing terms apart from an amended night and verifies them separately', () => {
+    const d = tmp(); const amended = { ...DEFAULT_TERMS, opusEscalation: true };
+    writeSnapshot(d, ID, { ...args, terms: amended, amendments: { opusEscalation: true } });
+    const r = readSnapshot(d, ID);
+    expect(r.ok && r.snapshot.terms.opusEscalation).toBe(true);
+    expect(r.ok && r.snapshot.standing.opusEscalation).toBe(false);
+    expect(r.ok && r.snapshot.liveSha256).toBe(termsSha256(DEFAULT_TERMS));
+    const p = nightPaths(d, ID).snapshot;
+    const j = JSON.parse(readFileSync(p, 'utf8')); j.standing.opusEscalation = true;
+    writeFileSync(p, JSON.stringify(j));
+    expect(readSnapshot(d, ID)).toEqual({ ok: false, reason: 'hash-mismatch' });
+  });
   it('refuses to snapshot invalid terms', () => {
     expect(() => writeSnapshot(tmp(), ID, { ...args, terms: { ...DEFAULT_TERMS, delete: true } })).toThrow();
+    expect(() => writeSnapshot(tmp(), ID, { ...args, standing: { ...DEFAULT_TERMS, delete: true } })).toThrow();
   });
   it('missing reads as missing', () => {
     expect(readSnapshot(tmp(), ID)).toEqual({ ok: false, reason: 'missing' });
@@ -568,7 +582,7 @@ scripts/afk/approval.test.ts
 
 **Interfaces:**
 - Consumes: T2, T4, T5.
-- Produces: `writeApproval(aetherDir, nightId, record): Approval` (write-once; `record = {approvedAtMs, termsSha256, items, held, allowRules}` where `allowRules` must be an array of strings or the write throws; stamps `v:1, nightId, via:'tty'`); `readApproval(aetherDir, nightId): Approval | null` (null on missing or invalid shape); `writeLastApproved(aetherDir, {nightId, termsSha256, approvedAtMs}): void` (atomic, overwrites: it is a pointer); `readLastApproved(aetherDir): {nightId, approvedAtMs, snapshot} | null`. The pointer is honoured ONLY if the snapshot it names verifies (T5) AND its `termsSha256` equals the pointer's; otherwise `null`.
+- Produces: `writeApproval(aetherDir, nightId, record): Approval` (write-once; `record = {approvedAtMs, termsSha256, items, held, allowRules}` where `allowRules` must be an array of strings or the write throws; stamps `v:1, nightId, via:'tty'`); `readApproval(aetherDir, nightId): Approval | null` (null on missing or invalid shape); `writeLastApproved(aetherDir, {nightId, standingSha256, approvedAtMs}): void` (atomic, overwrites: it is a pointer); `readLastApproved(aetherDir): {nightId, approvedAtMs, standing, standingSha256} | null`. The pointer names the STANDING terms Matt approved, not the night's effective (possibly amended) terms: `standing` comes from the named snapshot's `standing` field, and `readLastApproved` never returns the snapshot's `terms`, so a one-night amendment cannot reach the unfinished-night fallback (design 5). It is honoured ONLY if the snapshot it names verifies (T5) AND its `liveSha256` equals the pointer's `standingSha256`; otherwise `null`.
 - `Approval.items[]` = `{id, project, kind, artifact, title, source}`; `held[]` = `{id, title, verdict, reason}`; `allowRules[]` = permission-rule strings from `buildAllowRules` (T16), exactly the list the approve summary printed.
 
 - [ ] **Step 1: Write the failing test**
@@ -607,24 +621,30 @@ describe('approval record', () => {
 });
 
 describe('last-approved pointer', () => {
-  it('resolves to the verified snapshot', () => {
+  it('resolves to the verified snapshot\'s standing terms', () => {
     const d = tmp();
-    writeSnapshot(d, ID, { terms: DEFAULT_TERMS, amendments: {}, liveSha256: H, nowMs: 1 });
-    writeLastApproved(d, { nightId: ID, termsSha256: H, approvedAtMs: 5 });
+    writeSnapshot(d, ID, { terms: DEFAULT_TERMS, standing: DEFAULT_TERMS, amendments: {}, nowMs: 1 });
+    writeLastApproved(d, { nightId: ID, standingSha256: H, approvedAtMs: 5 });
     const r = readLastApproved(d);
-    expect(r?.nightId).toBe(ID); expect(r?.snapshot.terms).toEqual(DEFAULT_TERMS);
+    expect(r?.nightId).toBe(ID); expect(r?.standing).toEqual(DEFAULT_TERMS);
+  });
+  it('returns the standing terms, not the night\'s amended terms', () => {
+    const d = tmp();
+    writeSnapshot(d, ID, { terms: { ...DEFAULT_TERMS, opusEscalation: true }, standing: DEFAULT_TERMS, amendments: { opusEscalation: true }, nowMs: 1 });
+    writeLastApproved(d, { nightId: ID, standingSha256: H, approvedAtMs: 5 });
+    expect(readLastApproved(d)?.standing.opusEscalation).toBe(false);
   });
   it('is null when the snapshot is gone', () => {
     const d = tmp();
-    writeSnapshot(d, ID, { terms: DEFAULT_TERMS, amendments: {}, liveSha256: H, nowMs: 1 });
-    writeLastApproved(d, { nightId: ID, termsSha256: H, approvedAtMs: 5 });
+    writeSnapshot(d, ID, { terms: DEFAULT_TERMS, standing: DEFAULT_TERMS, amendments: {}, nowMs: 1 });
+    writeLastApproved(d, { nightId: ID, standingSha256: H, approvedAtMs: 5 });
     rmSync(nightPaths(d, ID).snapshot);
     expect(readLastApproved(d)).toBeNull();
   });
   it('is null when the pointer hash disagrees with the snapshot', () => {
     const d = tmp();
-    writeSnapshot(d, ID, { terms: DEFAULT_TERMS, amendments: {}, liveSha256: H, nowMs: 1 });
-    writeLastApproved(d, { nightId: ID, termsSha256: 'f'.repeat(64), approvedAtMs: 5 });
+    writeSnapshot(d, ID, { terms: DEFAULT_TERMS, standing: DEFAULT_TERMS, amendments: {}, nowMs: 1 });
+    writeLastApproved(d, { nightId: ID, standingSha256: 'f'.repeat(64), approvedAtMs: 5 });
     expect(readLastApproved(d)).toBeNull();
   });
   it('is null when no pointer exists', () => { expect(readLastApproved(tmp())).toBeNull(); });
@@ -856,7 +876,7 @@ scripts/afk/compileNightList.test.ts
 - Produces: `compileNightList({homeDir, projects: string[], plans?: string[], handoffs?: string[], repoRoots?: Record<string,string>, nowMs, maxAgeDays = 3, window = {start:'01:00', end:'07:00'}}): NightList`.
 - `NightList = {v:1, createdAtMs, targetWindowStartMs, projects, warnings: string[], items: Item[]}` (the night id and the confirmation state are added by T13). `targetWindowStartMs = windowFor(nowMs, window).startMs`. The default `window` exists for tests only: callers pass the LIVE terms window (T17 does), and T13 `amendNight` recomputes the field when a night amends `window`.
 - `Item = {id, project, kind, artifact, title, source:{kind:'handoff'|'ledger'|'plan', file, n?}, verdict, reasons, planRef?:{file, specApproved}, confirmed:false, feasibility:null}`. `id` = first 12 hex of sha256 of `project|source.kind|normalised full text` (lowercase, whitespace collapsed); stable across recompiles. `title` = the first 140 characters of the normalised text. Items with the same id from two sources are de-duplicated (first wins).
-- Handoff choice, per D3: newest eligible handoff by mtime per project (see D3 for the filters) plus `handoffs` paths; ledger = newest `ledger-*.md` within `maxAgeDays`. Handoffs with `headingNote` containing `need Matt` make every item `question` with reason `question:needs-matt`. Ledger `pending` items are `question`.
+- Handoff choice, per D3: newest eligible handoff by mtime per project (see D3 for the filters) plus `handoffs` paths; ledger = newest `ledger-*.md` within `maxAgeDays`. Handoffs with `headingNote` containing `need Matt` make every item `question` with reason `question:needs-matt`. Ledger `pending` items are `question` with reason `question:needs-matt` (so T13's `resolveQuestions` can clear one once Matt has answered it).
 - Plans: for each plan file named in an item's text (`planRefsIn`) or in `plans`, look in `<repoRoots[project] ?? join(homeDir,'projects',project)>/docs/superpowers/plans/<file>`. Missing file: item becomes `question`, reason `question:plan-not-found`, plus a warning. Every reason code carries the T9 prefix (`barred:` / `question:`), so one filter works on all of them. Found: read its `**Spec:**` path (relative to the same repo root); spec missing or not approved: `question`, reason `question:spec-not-approved`; `planRef = {file, specApproved}`. A plan named by `plans` becomes its own item: `kind:'plan'`, title `Execute plan <file>`, `verdict` `ready` only if the spec is approved. **Checkboxes inside plans are never read.**
 - A missing project handoff dir adds a warning and compiles the rest; the function never throws on missing inputs.
 
@@ -1174,10 +1194,11 @@ scripts/afk/nightFixture.ts
 **Interfaces:**
 - Consumes: T3 (`readLiveTerms`), T4 (`newNightId`, `listNightIds`, `windowFor`, `isNightCurrent`, `nightPaths`), T1 (`applyAmendments`), T6 (`readApproval`), T11 (`detectArtifact`), T2.
 - Produces:
-  - `openNight(aetherDir, compiled, nowMs): {nightId, list}`. Reuses the newest night that is current (`isNightCurrent`) and has NO approval, else creates a new id. On reuse, replaces `items` with the new compile but keeps `confirmed:true` for ids still present (confirmations for vanished ids are dropped), and if `list.amendments.window` is set it recomputes `targetWindowStartMs = windowFor(nowMs, amendments.window).startMs` instead of taking the compile's value (a window amendment must survive a re-compile). Sets `kind:'build'` and `artifact` on items where `detectArtifact(title)` is non-null (and `kind !== 'plan'`). The stored list gains `nightId` and `amendments: {}` (kept on reuse).
+  - `openNight(aetherDir, compiled, nowMs): {nightId, list}`. Reuses the newest night that is current (`isNightCurrent`) and has NO approval, else creates a new id. On reuse, replaces `items` with the new compile but keeps `confirmed:true` for ids still present (confirmations for vanished ids are dropped), keeps a `resolved` clarification (see `resolveQuestions`) for ids still present while the new compile still classes them `question` for clarifiable reasons only (a recompile that makes the item `barred`, or adds another reason, drops it), and if `list.amendments.window` is set it recomputes `targetWindowStartMs = windowFor(nowMs, amendments.window).startMs` instead of taking the compile's value (a window amendment must survive a re-compile). Sets `kind:'build'` and `artifact` on items where `detectArtifact(title)` is non-null (and `kind !== 'plan'`). The stored list gains `nightId` and `amendments: {}` (kept on reuse).
   - `readNightList(aetherDir, nightId): NightListFile|null`.
   - `setFeasibility(aetherDir, nightId, results: Record<itemId, FeasibilityResult>): void`.
   - `confirmItems(aetherDir, nightId, ids): {confirmed: string[]; refused: {id: string; reason: string}[]}`. Refuses: unknown id (`unknown`), verdict not `ready` (`not-ready:<verdict>`), build item without `feasibility.ok === true` (`feasibility`), any id once `approval.json` exists (`already-approved`). Writes atomically.
+  - `resolveQuestions(aetherDir, nightId, ids): {resolved: string[]; refused: {id: string; reason: string}[]}`. The one supported transition from `question` to runnable, and it is Matt's act: the skill asks the clarifying questions in chat, Matt answers, then types `resolve <id>` himself (T17 gates it on a TTY, like `confirm`). Refuses: unknown id (`unknown`); verdict other than `question` (`not-a-question:<verdict>`; `barred` is never resolvable); any reason outside the clarifiable codes `question:marker`, `question:needs-matt`, `question:mark` (`not-clarifiable:<code>`: an unapproved spec or a missing plan, `question:spec-not-approved` and `question:plan-not-found`, is not settled by an answer, so the D3 spec-approved test stays intact); any id once `approval.json` exists (`already-approved`). On success the item gets `verdict:'ready'`, `resolved:true`, `resolvedFrom` (its old reasons) and `reasons:[]`. `confirmed` is untouched: Matt still runs `confirm` as a separate act, and `confirmItems` is unchanged (it keeps refusing every non-`ready` item). The answer text is not stored (store the signal, not the payload). Writes atomically.
   - `amendNight(aetherDir, nightId, patch, nowMs): {ok:boolean; errors: string[]}`. Validates `applyAmendments(readLiveTerms().terms, {...existing, ...patch})`; stores the merged patch in `list.amendments`; refuses after approval. **When the merged amendments contain `window`, it also sets `list.targetWindowStartMs = windowFor(nowMs, effective.window).startMs`**, so staleness (`isNightCurrent`) is judged against the window Matt amended, not the 01:00 default.
   - `latestOpenNight(aetherDir, nowMs): string|null`.
   - `approvedNightForWindow(aetherDir, targetWindowStartMs, nowMs): string|null` = the id of the newest night that has an `approval.json`, whose list's `targetWindowStartMs` equals the argument, and that is still current at `nowMs`; else `null`. T15 uses it (an approved night beats a later draft) and T17 uses it (`compile` warns).
@@ -1215,7 +1236,7 @@ export const approvalRecord = (over: Record<string, unknown> = {}) =>
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { writeApproval } from './approval.mjs';
-import { amendNight, approvedNightForWindow, confirmItems, latestOpenNight, readNightList, setFeasibility } from './nightList.mjs';
+import { amendNight, approvedNightForWindow, confirmItems, latestOpenNight, readNightList, resolveQuestions, setFeasibility } from './nightList.mjs';
 import { A, B, C, NOW, WIN, approvalRecord, mkItem, openWith, tmp } from './nightFixture';
 
 describe('openNight', () => {
@@ -1267,6 +1288,37 @@ describe('confirmItems', () => {
     expect(confirmItems(d, nightId, [A]).confirmed).toEqual([A]);
     writeApproval(d, nightId, approvalRecord());
     expect(confirmItems(d, nightId, [A]).refused[0].reason).toBe('already-approved');
+  });
+});
+
+describe('resolveQuestions', () => {
+  it('a clarified question item becomes confirmable; an unclarified one stays refused', () => {
+    const d = tmp();
+    const { nightId } = openWith(d, [mkItem(A, 'Ship it?', 'question'), mkItem(B, 'Pick one?', 'question')]);
+    expect(confirmItems(d, nightId, [A, B]).confirmed).toEqual([]);            // both held
+    expect(resolveQuestions(d, nightId, [A]).resolved).toEqual([A]);           // Matt clarified A only
+    const r = confirmItems(d, nightId, [A, B]);
+    expect(r.confirmed).toEqual([A]);
+    expect(r.refused).toEqual([{ id: B, reason: 'not-ready:question' }]);
+    expect(readNightList(d, nightId)?.items[0]).toMatchObject({ verdict: 'ready', resolved: true, reasons: [], confirmed: true });
+  });
+  it('refuses barred, ready, unknown, non-clarifiable and post-approval ids', () => {
+    const d = tmp();
+    const { nightId } = openWith(d, [mkItem(A, 'Delete x', 'barred'), mkItem(B, 'Run npm test'), mkItem(C, 'Run plan p', 'question', { reasons: ['question:spec-not-approved'] })]);
+    const r = resolveQuestions(d, nightId, [A, B, C, 'f'.repeat(12)]);
+    expect(r.resolved).toEqual([]);
+    expect(Object.fromEntries(r.refused.map((x) => [x.id.slice(0, 1), x.reason]))).toEqual({
+      a: 'not-a-question:barred', b: 'not-a-question:ready', c: 'not-clarifiable:question:spec-not-approved', f: 'unknown',
+    });
+    const e = tmp(); const n = openWith(e, [mkItem(A, 'Ship it?', 'question')]).nightId;
+    writeApproval(e, n, approvalRecord());
+    expect(resolveQuestions(e, n, [A]).refused[0].reason).toBe('already-approved');
+  });
+  it('a resolution survives a re-compile while the item is still a clarifiable question, and is dropped if it became barred', () => {
+    const d = tmp(); const { nightId } = openWith(d, [mkItem(A, 'Ship it?', 'question'), mkItem(B, 'Keep?', 'question')]);
+    resolveQuestions(d, nightId, [A, B]);
+    const again = openWith(d, [mkItem(A, 'Ship it?', 'question'), mkItem(B, 'Delete x', 'barred')], NOW + 1000);
+    expect(again.list.items.map((i: any) => [i.verdict, i.resolved === true])).toEqual([['ready', true], ['barred', false]]);
   });
 });
 
@@ -1333,8 +1385,8 @@ scripts/afk/approveFlow.test.ts
 **Interfaces:**
 - Consumes: T1, T3, T5, T6, T13, T16 (`buildAllowRules`, `buildDenyRules`); test setup from `nightFixture.ts` (T13).
 - Produces: `expectedPhrase(termsSha256): string` = `APPROVE ` + first 8 hex; `approveNight({aetherDir, nightId, nowMs, isTty, readLine, print}): Promise<{ok:true; approval} | {ok:false; code:'not-tty'|'already-approved'|'terms-invalid'|'no-confirmed-items'|'phrase-mismatch'|'snapshot-conflict'|'no-such-night'; message}>`.
-- Order (each early return writes nothing): (1) `!isTty` -> `not-tty`, `print` and `readLine` never called; (2) night exists; (3) no existing approval; (4) effective terms = `applyAmendments(readLiveTerms().terms, list.amendments)`, invalid -> `terms-invalid`; (5) >= 1 confirmed item; (6) `print` a summary: every effective term, which differ from defaults, `delete: NOT ALLOWED`, `force-push: NOT ALLOWED`, each confirmed item's id and title, each held item with its reason, then the **allowlist** (`allowRules = buildAllowRules(effectiveTerms, confirmedItems)`, one rule per line, with the sentence that Phase 2 will pass exactly these) and the deny list (`buildDenyRules(effectiveTerms)`); (7) `readLine("Type exactly: <phrase>")` and compare after trim; (8) write the snapshot, then the approval (`items` = confirmed items only, `held` = the rest, `allowRules` = the list printed in (6), not a recomputation), then last-approved, in that order.
-- Crash recovery at (8): if `terms.snapshot.json` already exists (a first attempt died after the snapshot write and before the approval), reuse it when `readSnapshot` verifies and its `termsSha256` equals the effective terms' hash; if it exists with a different hash or fails verification, return `snapshot-conflict` and write nothing. A plain retry then succeeds instead of hitting `EEXIST`.
+- Order (each early return writes nothing): (1) `!isTty` -> `not-tty`, `print` and `readLine` never called; (2) night exists; (3) no existing approval; (4) effective terms = `applyAmendments(readLiveTerms().terms, list.amendments)`, invalid -> `terms-invalid`; (5) >= 1 confirmed item; (6) `print` a summary: the STANDING terms (the live file) and, as a separate block, this night's one-night amendments with a sentence that amendments apply to tonight only and an unfinished night falls back to the standing terms; then every effective term, which differ from defaults, `delete: NOT ALLOWED`, `force-push: NOT ALLOWED`, each confirmed item's id and title, each held item with its reason, then the **allowlist** (`allowRules = buildAllowRules(effectiveTerms, confirmedItems)`, one rule per line, with the sentence that Phase 2 will pass exactly these) and the deny list (`buildDenyRules(effectiveTerms)`); (7) `readLine("Type exactly: <phrase>")` and compare after trim; (8) write the snapshot (`terms` = the effective terms, `standing` = the live terms exactly as read in (4), `amendments`), then the approval (`items` = confirmed items only, `held` = the rest, `allowRules` = the list printed in (6), not a recomputation), then last-approved (`standingSha256` = the hash of that `standing`, so the pointer never names the amended terms), in that order.
+- Crash recovery at (8): if `terms.snapshot.json` already exists (a first attempt died after the snapshot write and before the approval), reuse it when `readSnapshot` verifies and its `termsSha256` equals the effective terms' hash AND its `liveSha256` equals the hash of the live terms read in (4); if it exists with a different hash or fails verification, return `snapshot-conflict` and write nothing. A plain retry then succeeds instead of hitting `EEXIST`.
 - `held[].reason` = the first of `reasons` or `not-confirmed`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1410,17 +1462,19 @@ describe('approveNight', () => {
     const snap = readSnapshot(d, nightId);
     expect(snap.ok && snap.snapshot.terms.opusEscalation).toBe(true);
     expect(snap.ok && snap.snapshot.liveSha256).toBe(termsSha256(DEFAULT_TERMS));
+    expect(snap.ok && snap.snapshot.standing.opusEscalation).toBe(false);          // the standing terms stay unamended
+    expect(readLastApproved(d)?.standing.opusEscalation).toBe(false);              // and the pointer names them, not the amended terms
     expect(readFileSync(termsPath(d), 'utf8')).toBe(before);
   });
   it('a retry after a crash between the snapshot and the approval reuses the matching snapshot', async () => {
     const { d, nightId } = setup();
-    writeSnapshot(d, nightId, { terms: DEFAULT_TERMS, amendments: {}, liveSha256: termsSha256(DEFAULT_TERMS), nowMs: NOW });   // the half-finished first attempt
+    writeSnapshot(d, nightId, { terms: DEFAULT_TERMS, standing: DEFAULT_TERMS, amendments: {}, nowMs: NOW });   // the half-finished first attempt
     expect(await run(d, nightId).p).toMatchObject({ ok: true });
     expect(readApproval(d, nightId)).not.toBeNull();
   });
   it('a leftover snapshot with different terms is a conflict and writes no approval', async () => {
     const { d, nightId } = setup();
-    writeSnapshot(d, nightId, { terms: { ...DEFAULT_TERMS, push: false }, amendments: {}, liveSha256: termsSha256(DEFAULT_TERMS), nowMs: NOW });
+    writeSnapshot(d, nightId, { terms: { ...DEFAULT_TERMS, push: false }, standing: DEFAULT_TERMS, amendments: {}, nowMs: NOW });
     expect(await run(d, nightId).p).toMatchObject({ ok: false, code: 'snapshot-conflict' });
     expect(readApproval(d, nightId)).toBeNull();
   });
@@ -1459,7 +1513,7 @@ scripts/afk/resolvePlan.test.ts
 - Produces: `resolveNightPlan({aetherDir, nowMs}): {kind:'approved'|'unfinished'|'none'; nightId: string|null; terms: Terms|null; termsSha256: string|null; items: Item[]; held: {id,title,verdict,reason}[]; allowRules: string[]; reason: string}`. Never throws.
 - Rules: walk `listNightIds` newest first and take the first night whose list exists and `isNightCurrent(nowMs, list.targetWindowStartMs)` (a night with a torn or unreadable list is skipped); call it N. **An approved night beats a later draft for the same window:** let `id = approvedNightForWindow(aetherDir, N.targetWindowStartMs, nowMs)`; if non-null, resolve THAT night as `approved` (it may be N itself), otherwise resolve N. A `compile` re-run after approval creates a newer unapproved night; without this rule it would shadow the approval and nothing would run (the "bad morning"). Then:
   - **approved**: `approval.json` exists, its snapshot verifies (T5) and `snapshot.termsSha256 === approval.termsSha256`. `terms` from the snapshot; `items`, `held` and `allowRules` from the approval record. **The night-list file is not read for items.** Snapshot failure -> `kind:'none'`, `reason` names the snapshot; it does NOT fall back to a newer draft.
-  - **unfinished**: no approval on N, >= 1 `confirmed` item in N's list, and `readLastApproved` exists: `terms` = last-approved snapshot terms (NOT live terms, NOT `list.amendments`); `items` = the confirmed items; `held` = everything else (`reason`: its first reason or `not-confirmed`); `allowRules = buildAllowRules(terms, items)` computed here (Matt never saw this list as a whole: Open item 9). No last-approved -> `none`, reason `no last-approved terms` (Open item 8).
+  - **unfinished**: no approval on N, >= 1 `confirmed` item in N's list, and `readLastApproved` exists: `terms` = `readLastApproved(...).standing`, the STANDING terms Matt approved at his last approve step (NOT live terms, NOT `list.amendments`, and NOT the last-approved night's own effective terms: if that night was approved with `opusEscalation` or `fableElevation` amended, they stay off here, because design 5 says one-night amendments apply to that night only); `items` = the confirmed items; `held` = everything else (`reason`: its first reason or `not-confirmed`); `allowRules = buildAllowRules(terms, items)` computed here (Matt never saw this list as a whole: Open item 9). No last-approved -> `none`, reason `no last-approved terms` (Open item 8).
   - otherwise `none`, with `allowRules: []`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1519,6 +1573,22 @@ describe('resolveNightPlan', () => {
     expect(r.items.map((i: any) => i.id)).toEqual([A]); expect(r.held.map((h: any) => h.id)).toEqual([B]);
     expect(r.allowRules).toEqual(buildAllowRules(r.terms!, r.items as any));
     expect(readNightList(d, n2)?.amendments).toEqual({ opusEscalation: true });
+  });
+  it('unfinished: a previous night\'s one-night amendments do not carry forward', async () => {
+    const d = tmp('afk-resolve');
+    const Y = NOW - 864e5;                                                                       // yesterday
+    const n1 = openWith(d, two(), Y, { targetWindowStartMs: WIN - 864e5 }).nightId;
+    confirmItems(d, n1, [A]);
+    expect(amendNight(d, n1, { opusEscalation: true, fableElevation: true }, Y).ok).toBe(true);
+    const amended = { ...DEFAULT_TERMS, opusEscalation: true, fableElevation: true };
+    expect((await approveNight({ aetherDir: d, nightId: n1, nowMs: Y, isTty: true, print: () => {}, readLine: async () => expectedPhrase(termsSha256(amended)) })).ok).toBe(true);
+    expect(resolveNightPlan({ aetherDir: d, nowMs: WIN - 864e5 }).terms).toMatchObject({ opusEscalation: true, fableElevation: true });   // the approved night itself keeps its amendments
+    const n2 = open(d, NOW); confirmItems(d, n2, [A]);                                            // tonight: nothing amended, never approved
+    const r = resolveNightPlan({ aetherDir: d, nowMs: WIN });
+    expect(r.kind).toBe('unfinished'); expect(r.nightId).toBe(n2);
+    expect(r.terms).toMatchObject({ opusEscalation: false, fableElevation: false });             // fails if the fallback reads the snapshot's effective terms
+    expect(r.terms).toEqual(DEFAULT_TERMS);
+    expect(r.allowRules).toEqual(buildAllowRules(DEFAULT_TERMS, r.items as any));
   });
   it('unfinished with no last-approved terms runs nothing', () => {
     const d = tmp('afk-resolve'); const n = open(d, NOW); confirmItems(d, n, [A]);
@@ -1662,8 +1732,8 @@ scripts/afk/cli.test.ts
 ```
 
 **Interfaces:**
-- `cli.mjs` exports `VERBS` (array of verb names), `TTY_VERBS = ['terms set','amend','confirm','approve']` and `main(argv, deps): Promise<number>` with `deps = {homeDir, nowMs, isTty, readLine, print, env}`. `afk.mjs` is the executable entry only: reads `os.homedir()`, `Date.now()`, `process.stdin.isTTY && process.stdout.isTTY`, a `readline` question helper, then `process.exit(await main(...))`. Shebang `#!/usr/bin/env node`.
-- Verbs: `terms show`; `terms set <key> <value>` (TTY; keys: any amendable key; `window.start`/`window.end` also accepted; booleans `true|false`; `delete`/`forcePush`/`notifications` refused with exit 4); `compile --project <leaf>... [--plan <path>...] [--handoff <path>...] [--max-age-days N] [--json]` (read-only inputs, writes the night workspace via `openNight`; passes the LIVE terms window (`readLiveTerms(aetherDir).terms.window`) to `compileNightList`, never the compiler's default; prints the items grouped ready/question/barred with ids and the night id; if `approvedNightForWindow(aetherDir, list.targetWindowStartMs, nowMs)` returns a night other than the one just opened, it also prints, and adds to the `--json` `warnings`, `night <id> is already approved for this window and will run; this new night is a draft and does not replace it`); `feasibility [--night <id>]` (runs `realProbes`, stores via `setFeasibility`, prints per item); `confirm <id>... | --all-ready` (TTY); `amend <key> <value>` (TTY; the same key spellings as `terms set`, so `window.start`/`window.end` merge into the effective window; calls `amendNight(..., nowMs)`, which recomputes the night's target window); `approve [--night <id>]` (TTY); `plan [--json]` (prints `resolveNightPlan` for now); `deny-rules` (prints `buildDenyRules(readLiveTerms().terms)` as a JSON array); `install-skill` (T19 wires it; here it exits 4 `not available yet`).
+- `cli.mjs` exports `VERBS` (array of verb names), `TTY_VERBS = ['terms set','amend','confirm','resolve','approve']` and `main(argv, deps): Promise<number>` with `deps = {homeDir, nowMs, isTty, readLine, print, env}`. `afk.mjs` is the executable entry only: reads `os.homedir()`, `Date.now()`, `process.stdin.isTTY && process.stdout.isTTY`, a `readline` question helper, then `process.exit(await main(...))`. Shebang `#!/usr/bin/env node`.
+- Verbs: `terms show`; `terms set <key> <value>` (TTY; keys: any amendable key; `window.start`/`window.end` also accepted; booleans `true|false`; `delete`/`forcePush`/`notifications` refused with exit 4); `compile --project <leaf>... [--plan <path>...] [--handoff <path>...] [--max-age-days N] [--json]` (read-only inputs, writes the night workspace via `openNight`; passes the LIVE terms window (`readLiveTerms(aetherDir).terms.window`) to `compileNightList`, never the compiler's default; prints the items grouped ready/question/barred with ids and the night id; if `approvedNightForWindow(aetherDir, list.targetWindowStartMs, nowMs)` returns a night other than the one just opened, it also prints, and adds to the `--json` `warnings`, `night <id> is already approved for this window and will run; this new night is a draft and does not replace it`); `feasibility [--night <id>]` (runs `realProbes`, stores via `setFeasibility`, prints per item); `confirm <id>... | --all-ready` (TTY); `resolve <id>...` (TTY; `resolveQuestions` on `--night`; prints each resolved id and each refusal with its reason; exit 4 when nothing was resolved. It is how Matt turns a `question` item he has just answered into a `ready` one, after which `confirm` works; the agent cannot run it); `amend <key> <value>` (TTY; the same key spellings as `terms set`, so `window.start`/`window.end` merge into the effective window; calls `amendNight(..., nowMs)`, which recomputes the night's target window); `approve [--night <id>]` (TTY); `plan [--json]` (prints `resolveNightPlan` for now); `deny-rules` (prints `buildDenyRules(readLiveTerms().terms)` as a JSON array); `install-skill` (T19 wires it; here it exits 4 `not available yet`).
 - Exit codes: 0 ok, 2 usage/unknown verb, 3 TTY required and absent (nothing written, nothing read from stdin), 4 refused or invalid, 1 unexpected error (message only, no stack with paths).
 - `--night` defaults to `latestOpenNight`.
 
@@ -1693,6 +1763,7 @@ describe('TTY gate (spawned, piped stdio)', () => {
     [['terms', 'set', 'opusEscalation', 'true']],
     [['amend', 'opusEscalation', 'true']],
     [['confirm', '--all-ready']],
+    [['resolve', 'aaaaaaaaaaaa']],
     [['approve']],
   ])('%j exits 3 and writes nothing', (args) => {
     const home = tmpHome(); const r = run(home, args);
@@ -1768,8 +1839,20 @@ describe('main() with a TTY (in process)', () => {
     expect(out.join('\n')).toMatch(/already approved/i);
     expect(listNightIds(aether(home)).length).toBe(2);
   });
+  it('resolve turns a clarified question into a confirmable item; confirm --all-ready alone does not', async () => {
+    const home = tmpHome(); const d = join(home, '.claude', 'handoffs', 'p'); mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'h.md'), '## Next steps\n1. Ship it now?\n');
+    await main(['compile', '--project', 'p'], deps(home));
+    const [id] = listNightIds(aether(home));
+    const item = () => readNightList(aether(home), id)!.items[0];
+    await main(['confirm', '--all-ready'], deps(home));
+    expect(item()).toMatchObject({ verdict: 'question', confirmed: false });
+    expect(await main(['resolve', item().id], deps(home))).toBe(0);
+    expect(await main(['confirm', item().id], deps(home))).toBe(0);
+    expect(item()).toMatchObject({ verdict: 'ready', resolved: true, confirmed: true });
+  });
   it('TTY_VERBS is exactly the write set, and every verb is declared', () => {
-    expect([...TTY_VERBS].sort()).toEqual(['amend', 'approve', 'confirm', 'terms set']);
+    expect([...TTY_VERBS].sort()).toEqual(['amend', 'approve', 'confirm', 'resolve', 'terms set']);
     for (const v of ['terms show', 'compile', 'feasibility', 'plan', 'deny-rules', 'install-skill', ...TTY_VERBS]) expect(VERBS).toContain(v);
   });
 });
@@ -1861,6 +1944,7 @@ git add -- $P && git commit -m "test(afk): directory boundary guard" -- $P
 **Files:**
 - Create: `skills/afk-preflight/SKILL.md`, `scripts/afk/installSkill.mjs`
 - Modify: `scripts/afk/cli.mjs` (wire `install-skill`, replacing the T17 stub)
+- Modify: `electron-builder.yml` (one added `extraResources` entry so an installed build carries the template)
 - Test: `scripts/afk/installSkill.test.ts`
 
 ```owned T19
@@ -1868,23 +1952,26 @@ skills/afk-preflight/SKILL.md
 scripts/afk/installSkill.mjs
 scripts/afk/installSkill.test.ts
 scripts/afk/cli.mjs
+electron-builder.yml
 ```
 
 **Interfaces:**
 - `installSkill.mjs` exports `renderSkill(template, cliPath): string` (replaces every `{{AFK_CLI}}` token; throws if the token is absent or `cliPath` contains a quote, newline or backtick) and `installSkill({homeDir, templatePath, cliPath}): string` (writes `<homeDir>/.claude/skills/afk-preflight/SKILL.md`, returns the path). `install-skill` is run by Matt; it is the only code that writes under `~/.claude`.
-- `SKILL.md` frontmatter: `name: afk-preflight`; `description` lists Matt's confirmed phrases ("going to bed", "heading to bed", "off to bed", "going afk"; part 8 of the GUI design also lists "going to work", "stepping away", "heading out", "brb", "be right back": only the overnight ones belong here) and says it prepares an overnight run. Body, in this order, each as a short numbered step: (1) run `node "{{AFK_CLI}}" terms show` and show the terms; (2) ask which projects tonight covers (default: this repo's folder name; the handoff folder name, not a worktree name); (3) run `compile --project …`, show ready / question / barred; (4) ask the clarifying questions for `question` items, at most 3 rounds of at most 4 questions, then stop and say "no open doubts" or list what stays held; (5) run `feasibility`; (6) state back what will run, what is set aside, which terms apply, and that `approve` will print the exact allowlist rules for him to approve; (7) tell Matt to type `node "{{AFK_CLI}}" confirm --all-ready` (or specific ids), optionally `amend`, then `approve`, **himself in a shell with a TTY** (which shell, the claude `!` escape or a plain PowerShell window, is the T22 result and goes into the skill text) and to say "done" afterwards; (8) after "done" run `plan` and report what it returned. Rules block: never run `terms set`, `amend`, `confirm` or `approve` (they refuse without a TTY and trying is a violation); never edit anything under `~/.aether-os/afk`; never guess past an ambiguity; deletion, force-push and cleanup are never on the night; an unfinished pre-flight still runs the confirmed items on the last-approved terms and everything else is held.
+- **Template location (packaging).** `installSkill.mjs` imports Node builtins only (so a copy of it runs from the packaged `resources/scripts/afk/`) and also exports `defaultTemplatePath(): string` = `fileURLToPath(new URL('../../skills/afk-preflight/SKILL.md', import.meta.url))`. That one relative path is correct in both layouts: dev `<repo>/scripts/afk/` -> `<repo>/skills/afk-preflight/SKILL.md`; packaged `<resources>/scripts/afk/` -> `<resources>/skills/afk-preflight/SKILL.md`. The packaged file exists only because of the `electron-builder.yml` entry in Step 3b: the current config puts only `out/**/*` and `package.json` in the asar and copies only `scripts/**/*.mjs` through `extraResources`, and nothing under `skills/` is referenced by the config or the build scripts, so without the entry an installed build has the CLI but no template. `install-skill` passes `templatePath: defaultTemplatePath()`; a missing template exits 4 naming the path and writes nothing.
+- `SKILL.md` frontmatter: `name: afk-preflight`; `description` lists Matt's confirmed phrases ("going to bed", "heading to bed", "off to bed", "going afk"; part 8 of the GUI design also lists "going to work", "stepping away", "heading out", "brb", "be right back": only the overnight ones belong here) and says it prepares an overnight run. Body, in this order, each as a short numbered step: (1) run `node "{{AFK_CLI}}" terms show` and show the terms; (2) ask which projects tonight covers (default: this repo's folder name; the handoff folder name, not a worktree name); (3) run `compile --project …`, show ready / question / barred; (4) ask the clarifying questions for `question` items, at most 3 rounds of at most 4 questions, then stop and say "no open doubts" or list what stays held; the agent records no answer and does not reword any source handoff to make a `?` disappear: an item whose doubt Matt settled becomes runnable only when Matt types `resolve <ids>` himself (step 7), and questions about an unapproved spec or a missing plan cannot be resolved by an answer at all (they stay held); (5) run `feasibility`; (6) state back what will run, what is set aside, which terms apply, and that `approve` will print the exact allowlist rules for him to approve; (7) tell Matt to type, in order, `node "{{AFK_CLI}}" resolve <ids>` (only the question items he has just answered, ids listed for him), `node "{{AFK_CLI}}" confirm --all-ready` (or specific ids), optionally `amend`, then `approve`, **himself in a shell with a TTY** (which shell, the claude `!` escape or a plain PowerShell window, is the T22 result and goes into the skill text) and to say "done" afterwards; (8) after "done" run `plan` and report what it returned. Rules block: never run `terms set`, `amend`, `confirm`, `resolve` or `approve` (they refuse without a TTY and trying is a violation); never edit anything under `~/.aether-os/afk`; never guess past an ambiguity; deletion, force-push and cleanup are never on the night; an unfinished pre-flight still runs the confirmed items on the last-approved standing terms (never an earlier night's one-night amendments) and everything else is held.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, posix } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VERBS } from './cli.mjs';
-import { installSkill, renderSkill } from './installSkill.mjs';
+import { defaultTemplatePath, installSkill, renderSkill } from './installSkill.mjs';
 
 const templatePath = fileURLToPath(new URL('../../skills/afk-preflight/SKILL.md', import.meta.url));
 const template = readFileSync(templatePath, 'utf8');
@@ -1908,6 +1995,30 @@ describe('installSkill', () => {
   });
 });
 
+describe('template location', () => {
+  // Resolved from this file, not process.cwd(): collector/vitest.config.ts runs these tests from collector/.
+  const yml = readFileSync(fileURLToPath(new URL('../../electron-builder.yml', import.meta.url)), 'utf8');
+  it('electron-builder.yml ships SKILL.md to the folder defaultTemplatePath() reads in a packaged install', () => {
+    const m = yml.match(/- from: skills\/afk-preflight\r?\n\s+to: (\S+)\r?\n\s+filter:\r?\n\s+- '?SKILL\.md'?\r?\n/);
+    expect(m, 'extraResources has no skills/afk-preflight entry for SKILL.md').not.toBeNull();
+    // <resources>/scripts/afk/installSkill.mjs + ../../skills/afk-preflight/SKILL.md
+    expect(posix.normalize('scripts/afk/../../skills/afk-preflight/SKILL.md')).toBe(`${m![1]}/SKILL.md`);
+  });
+  it('in the repo, defaultTemplatePath() is the real template', () => {
+    expect(defaultTemplatePath()).toBe(templatePath); expect(existsSync(defaultTemplatePath())).toBe(true);
+  });
+  it('a copy laid out like resources/ finds the template beside it', () => {
+    const res = mkdtempSync(join(tmpdir(), 'afk-res-'));
+    mkdirSync(join(res, 'scripts', 'afk'), { recursive: true }); mkdirSync(join(res, 'skills', 'afk-preflight'), { recursive: true });
+    const copy = join(res, 'scripts', 'afk', 'installSkill.mjs');
+    copyFileSync(fileURLToPath(new URL('./installSkill.mjs', import.meta.url)), copy);
+    copyFileSync(templatePath, join(res, 'skills', 'afk-preflight', 'SKILL.md'));
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(copy).href)}).then((m) => console.log(m.defaultTemplatePath()))`], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(r.stdout.trim(), 'utf8')).toBe(template);
+  });
+});
+
 describe('SKILL.md template', () => {
   it('has the frontmatter name and the overnight phrases', () => {
     expect(template).toMatch(/^---\nname: afk-preflight\n/);
@@ -1919,7 +2030,7 @@ describe('SKILL.md template', () => {
     for (const v of verbs) expect(VERBS, v).toContain(v);
   });
   it('forbids the agent from the TTY verbs and from editing the afk dir', () => {
-    expect(template).toMatch(/never run[^.]*terms set[^.]*amend[^.]*confirm[^.]*approve/i);
+    expect(template).toMatch(/never run[^.]*terms set[^.]*amend[^.]*confirm[^.]*resolve[^.]*approve/i);
     expect(template).toContain('~/.aether-os/afk');
   });
   it('never mentions bypassPermissions', () => { expect(template).not.toMatch(/bypassPermissions/i); });
@@ -1927,7 +2038,17 @@ describe('SKILL.md template', () => {
 ```
 
 - [ ] **Step 2:** `npx vitest run scripts/afk/installSkill.test.ts` -> FAIL.
-- [ ] **Step 3: Implement** `installSkill.mjs`, write `skills/afk-preflight/SKILL.md` to the outline above (plain prose, ASCII punctuation, no emojis), and wire `install-skill` in `cli.mjs` (`cliPath` = the absolute path of `afk.mjs` itself via `import.meta.url`, forward slashes). Add `installSkill.mjs` to `WRITERS` in T18's guard (already listed). Update the T17 test if the stub's exit-4 case was asserted.
+- [ ] **Step 3: Implement** `installSkill.mjs`, write `skills/afk-preflight/SKILL.md` to the outline above (plain prose, ASCII punctuation, no emojis), and wire `install-skill` in `cli.mjs` (`cliPath` = the absolute path of `afk.mjs` itself via `import.meta.url`, forward slashes; `templatePath` = `defaultTemplatePath()`). Add `installSkill.mjs` to `WRITERS` in T18's guard (already listed). Update the T17 test if the stub's exit-4 case was asserted.
+- [ ] **Step 3b: Ship the template.** In `electron-builder.yml`, add this entry to the `extraResources:` list directly after the existing `scripts` entry, and extend the comment above the list (it currently talks about scripts only) with one line saying the AFK skill template rides along for `install-skill`:
+
+```yaml
+  - from: skills/afk-preflight
+    to: skills/afk-preflight
+    filter:
+      - SKILL.md
+```
+
+  Only `SKILL.md` is listed, so no other file under `skills/` ships. This is a packaging config line, not Electron code; nothing in `electron/`, `src/` or the build scripts changes. The first test in `describe('template location')` fails if the entry is removed.
 - [ ] **Step 4:** `npx vitest run scripts/afk` -> PASS (whole directory).
 - [ ] **Step 5: Commit**
 
@@ -1941,15 +2062,16 @@ git add -- $P && git commit -m "feat(afk): afk-preflight skill and install-skill
 ### Task 20: Documentation
 
 **Files:**
-- Modify: `docs/privacy-and-data.md` (add `## 19. AFK standing terms and night state`), `CLAUDE.md` (one line in the architecture map for `scripts/afk/` and `skills/afk-preflight/`), `PROGRESS.md` (a "Shipped plans" entry, written when the branch merges, in the style of the entries at `PROGRESS.md:60-70`)
+- Modify: `docs/privacy-and-data.md` (add `## 19. AFK standing terms and night state`), `docs/packaging.md` (one sentence in section 1: `extraResources` also copies `skills/afk-preflight/SKILL.md` to `resources/skills/afk-preflight/` so `install-skill` works from an installed build), `CLAUDE.md` (one line in the architecture map for `scripts/afk/` and `skills/afk-preflight/`), `PROGRESS.md` (a "Shipped plans" entry, written when the branch merges, in the style of the entries at `PROGRESS.md:60-70`)
 
 ```owned T20
 docs/privacy-and-data.md
+docs/packaging.md
 CLAUDE.md
 PROGRESS.md
 ```
 
-No new test. Content requirements for §19: what is persisted and where (`~/.aether-os/afk/`: terms, night list with titles of at most 140 characters, snapshot, approval, last-approved pointer; no handoff bodies, no absolute paths, no secrets); that the feasibility probe reads key names and a keystore path's existence but never prints or stores a value; that the CLI makes no network call and no model call; that the write verbs need a TTY and why that is a drift guard and not a sandbox; the deny rules Matt installs (list them, and say plainly that they are UNVERIFIED as enforcement until T21 M2 has been run and its result recorded: do not describe them as protection before that), and the allowlist stored in the approval record (data only; how a headless run treats it is UNVERIFIED until T21 M5); the install-skill write to `~/.claude/skills`; and that retention is "until Matt deletes the night directory" (nothing in Phase 1 purges; the agent cannot, by design).
+No new test. Content requirements for §19: what is persisted and where (`~/.aether-os/afk/`: terms, night list with titles of at most 140 characters, snapshot (this night's effective terms plus the standing terms it was approved from), approval, last-approved pointer (names the standing terms); no handoff bodies, no absolute paths, no secrets); that the feasibility probe reads key names and a keystore path's existence but never prints or stores a value; that the CLI makes no network call and no model call; that the write verbs need a TTY and why that is a drift guard and not a sandbox; the deny rules Matt installs (list them, and say plainly that they are UNVERIFIED as enforcement until T21 M2 has been run and its result recorded: do not describe them as protection before that), and the allowlist stored in the approval record (data only; how a headless run treats it is UNVERIFIED until T21 M5); the install-skill write to `~/.claude/skills`; and that retention is "until Matt deletes the night directory" (nothing in Phase 1 purges; the agent cannot, by design).
 
 - [ ] **Step 1:** Add the three edits.
 - [ ] **Step 2: Verify**
@@ -1976,8 +2098,8 @@ git add -- $P && git commit -m "docs(afk): privacy section 19, architecture map 
 
 - [ ] **M1: TTY reality, re-checked with the real CLI.** T22 already measured whether `!` has a TTY with a one-line probe. Here repeat it with the real verb: in an Aether terminal with `claude` running, type `! node scripts/afk/afk.mjs terms set opusEscalation false` and record the exit; then run the same in a plain PowerShell window. Expected: plain window exit 0 (or 4 if refused for no change); record what `!` does and whether it matches the T22 result. Also ask the agent to run the same command through its own Bash tool; expected exit 3.
 - [ ] **M2: Deny rules.** `node scripts/afk/afk.mjs deny-rules` prints the list. Matt pastes the rules into the `permissions.deny` array of `~/.claude/settings.json` himself. Then, in a fresh claude session, ask the agent to append a line to `~/.aether-os/afk/terms.json`. Expected: denied. Also confirm a deny rule beats the existing global `allow` entries by trying `git branch -D` on a throwaway branch of a throwaway repo. Record both. **M2b (Safety Net layer):** in a throwaway repo with a throwaway bare remote (`git init --bare` in a temp dir), ask the agent to run `git push origin +main`, then `git push origin main --force`, then `git push origin :scratch`. The prefix deny rules alone miss all three; record which ones the Safety Net hook blocks. UNVERIFIED until run.
-- [ ] **M3: Skill.** `node scripts/afk/afk.mjs install-skill`, start a new claude session, run `/afk-preflight` (fall back to the phrase "I'm going to bed" if the slash form is not offered; if neither works, move the skill to `~/.claude/commands/afk-preflight.md` and note it). Walk a full pre-flight on a THROWAWAY project with one ready item, one question item and one barred item. Expected end state: `afk plan` prints `kind: approved` with exactly the one confirmed item, and `held` lists the other two with reasons.
-- [ ] **M4: Unfinished path and the bad morning.** Compile again without approving, confirm one item, run `afk plan`. Expected: `kind: unfinished`, terms equal to the last-approved snapshot. Then approve that night, run `compile --project ...` once more, and run `afk plan`: expected `kind: approved` for the night just approved (the new draft must not replace it) and the compile output carries the `already approved` warning.
+- [ ] **M3: Skill.** `node scripts/afk/afk.mjs install-skill`, start a new claude session, run `/afk-preflight` (fall back to the phrase "I'm going to bed" if the slash form is not offered; if neither works, move the skill to `~/.claude/commands/afk-preflight.md` and note it). Walk a full pre-flight on a THROWAWAY project with one ready item, one question item and one barred item. Expected end state: `afk plan` prints `kind: approved` with exactly the one confirmed item, and `held` lists the other two with reasons. For the question item, Matt types `resolve <id>` then `confirm <id>` himself in the TTY shell; check that the agent's own Bash call to `resolve` exits 3 and that an unresolved question stays in `held`. **Packaged check:** build with `npm run dist:dir` outside the dev tree (D4 installer row; argument forwarding is UNVERIFIED), confirm `win-unpacked/resources/skills/afk-preflight/SKILL.md` sits beside `resources/scripts/afk/`, then run that copy's `afk.mjs install-skill` with `HOME` and `USERPROFILE` pointed at a temp folder. Expected: exit 0 and a rendered `SKILL.md` there.
+- [ ] **M4: Unfinished path and the bad morning.** Compile again without approving, confirm one item, run `afk plan`. Expected: `kind: unfinished`, terms equal to the last-approved STANDING terms (if the approved night carried an `amend`, the amended value must NOT appear). Then approve that night, run `compile --project ...` once more, and run `afk plan`: expected `kind: approved` for the night just approved (the new draft must not replace it) and the compile output carries the `already approved` warning.
 - [ ] **M5: Permission-mode semantics (D7, UNVERIFIED until run).** Matt runs this by hand in a throwaway repo; it is one cheap turn (`--model haiku`), never run by the plan's code. First run `claude --help` and record whether `--permission-mode`, `--allowedTools` and `--disallowedTools` exist on the installed version. Then run a headless `claude -p` with `--allowedTools` set to the rules from `afk plan --json` and ask it to run an allowed command (`git status`) and a command outside the list (`git clean -fd`). Record: is the unlisted call denied or does the run hang on a prompt; does a compound command (`cd x && git status`) match `Bash(git status:*)`; does the existing global `allow` list in `~/.claude/settings.json` widen the effective allowlist; do the recipe prefixes (`npm run dist`, `gradlew.bat assembleDebug`) match the real invocation. If any of these fails, the allowlist stays data and Phase 2 must not rely on it.
 
 Report PASS/FAIL per check with the real output lines. Nothing here is committed.
@@ -2011,6 +2133,7 @@ Report PASS/FAIL per check with the real output lines. Nothing here is committed
 7. **Allowlist and permission mode** (Matt's call 2026-11-04: build a minimal `buildAllowRules` now). Phase 1 prints it in the approve summary and stores it in the approval record, but does not choose the permission mode and does not derive Edit/Write/test rules for `work`/`plan` items. Say if Phase 2 should use `acceptEdits` scoped to the worktree, and whether push should stay the broad `Bash(git push:*)` allow (current; it leans on the deny list and Safety Net for force variants). How a headless run treats the list is UNVERIFIED until T21 M2/M5.
 8. **First-ever night with no last-approved terms runs nothing.** An unfinished pre-flight on a machine that has never approved a night resolves to `none` (`no last-approved terms`) rather than running on the defaults. Not decided here: say if the defaults should be an acceptable fallback for the very first night.
 9. **An unfinished night's allowlist is computed, not approved.** For `kind: unfinished`, `resolveNightPlan` returns `allowRules` computed from the last-approved terms and the confirmed items; Matt never saw it as one list. Say if `confirm` should print it.
+10. **`resolve` is a bare TTY assertion.** Matt types it after answering the skill's question in chat; the answer text itself is not stored (store the signal, not the payload). Say if a one-line answer should be kept in the night directory for the morning report.
 
 ## Risks recorded
 
