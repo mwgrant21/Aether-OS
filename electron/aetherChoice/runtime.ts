@@ -80,6 +80,19 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
   const stampIn = (slot: OwnedSlot): void => {
     if (trace) safe(() => lastInAt.set(slot, deps.now()));
   };
+  // a host fault while noting user input must never cost the user a keystroke; logged once per slot (per-keystroke path)
+  const inputFaultLogged = new Set<OwnedSlot>();
+  const noteInput = (slot: OwnedSlot): void => {
+    stampIn(slot);
+    try {
+      host.noteUserInput(slot);
+    } catch {
+      if (!inputFaultLogged.has(slot)) {
+        inputFaultLogged.add(slot);
+        safe(() => deps.log(`input-note-failed ${slot}`));
+      }
+    }
+  };
   const forgetOut = (slot: OwnedSlot): void => {
     lastOutAt.delete(slot);
     lastKey.delete(slot);
@@ -207,21 +220,20 @@ export function createAetherChoiceRuntime(deps: AetherChoiceRuntimeDeps): Aether
     },
     onForeignLaunch(slot) {
       planned.delete(slot);
-      host.onForeignLaunch(slot);
+      try {
+        host.onForeignLaunch(slot);
+      } catch {
+        // the next start event retries the reset while no plan is held
+        safe(() => deps.log(`foreign-launch-failed ${slot}`));
+      }
     },
     noteUserInput(slot) {
-      if (isOwned(slot)) {
-        stampIn(slot);
-        host.noteUserInput(slot);
-      }
+      if (isOwned(slot)) noteInput(slot);
     },
     wrapUserWritePort(port) {
       return {
         write(s, d) {
-          if (isOwned(s)) {
-            stampIn(s);
-            host.noteUserInput(s);
-          }
+          if (isOwned(s)) noteInput(s);
           return port.write(s, d);
         },
       };

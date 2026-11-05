@@ -656,6 +656,80 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     expect(r.logs).toContain('launch-failed claude');
   });
 
+  it('39: onForeignLaunch with a throwing host does not throw, drops the plan, logs once and the next start repairs the host', async () => {
+    const base = newRecord('claude', { model: 'sonnet', effort: 'high' }, { reason: 'seed', trigger: 'new-thread', source: 'auto' });
+    const armed = { v: false };
+    const rec = { ...base };
+    Object.defineProperty(rec, 'live', {
+      get() {
+        if (armed.v) throw new Error('boom');
+        return false;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    const r = rig({ records: { claude: rec } });
+    const rt = must(r);
+    rt.launchCommandFor('claude', { sessionId: SID });
+    armed.v = true;
+    expect(() => rt.onForeignLaunch('claude')).not.toThrow();
+    expect(r.logs.filter((l) => l.startsWith('foreign-launch-failed'))).toEqual(['foreign-launch-failed claude']);
+    expect(r.logs.join('\n')).not.toContain('boom');
+    armed.v = false;
+    r.claude.fire(startEv);
+    expect((await r.lastSave())?.claude?.live ?? false).toBe(false);
+    rt.onForeignLaunch('claude');
+    expect(r.logs.filter((l) => l.startsWith('foreign-launch-failed'))).toHaveLength(1);
+  });
+
+  it('40: wrapUserWritePort with a throwing host still delivers the write and logs once per slot', () => {
+    const r = rig();
+    const rt = must(r);
+    r.t.throwNow = true;
+    const inner: TerminalWritePort = { write: vi.fn(() => true) };
+    const wrapped = rt.wrapUserWritePort(inner);
+    let out: boolean | undefined;
+    expect(() => {
+      out = wrapped.write('claude', 'x');
+    }).not.toThrow();
+    expect(out).toBe(true);
+    expect(inner.write).toHaveBeenCalledTimes(1);
+    expect(inner.write).toHaveBeenCalledWith('claude', 'x');
+    wrapped.write('claude', 'y');
+    expect(r.logs).toEqual(['input-note-failed claude']);
+    wrapped.write('terminal2', 'z');
+    expect(r.logs).toEqual(['input-note-failed claude', 'input-note-failed terminal2']);
+    wrapped.write('codex', 'c');
+    expect(r.logs).toHaveLength(2);
+    expect(inner.write).toHaveBeenLastCalledWith('codex', 'c');
+    expect(r.logs.join('\n')).not.toContain('clock');
+    expect(r.writes).toEqual([]);
+    r.t.throwNow = false;
+    expect(wrapped.write('claude', 'w')).toBe(true);
+    expect(inner.write).toHaveBeenCalledTimes(5);
+    const bad: TerminalWritePort = {
+      write: () => {
+        throw new Error('port down');
+      },
+    };
+    expect(() => rt.wrapUserWritePort(bad).write('claude', 'x')).toThrow('port down');
+  });
+
+  it('41: noteUserInput with a throwing host does not throw and logs once; unowned is a no-op; trace stamp fault is swallowed', () => {
+    const r = rig();
+    const rt = must(r);
+    r.t.throwNow = true;
+    expect(() => rt.noteUserInput('claude')).not.toThrow();
+    expect(() => rt.noteUserInput('claude')).not.toThrow();
+    expect(r.logs).toEqual(['input-note-failed claude']);
+    expect(() => rt.noteUserInput('codex')).not.toThrow();
+    expect(r.logs).toHaveLength(1);
+    const t = rig({ trace: true });
+    t.t.throwNow = true;
+    expect(() => must(t).noteUserInput('claude')).not.toThrow();
+    expect(t.logs).toEqual(['input-note-failed claude']);
+  });
+
   it('30: trace off adds nothing', async () => {
     const calls: number[] = [];
     const scripts = [
