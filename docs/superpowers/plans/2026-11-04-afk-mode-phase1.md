@@ -40,7 +40,7 @@ State lives in four files under `~/.aether-os/afk/`: `terms.json` (live standing
 
 1. **One draft slot.** `compile` replaces `draft.json` wholesale: fresh items, nothing confirmed, no amendments. `confirm` and `amend` (TTY) edit only the draft.
 2. **One approved record.** `approve` (TTY) re-checks every confirmed item now, prints the summary, and on the typed phrase writes `approved.json` (items, held, allowRules, STANDING terms = the live file before any amendment, the one-night amendments, EFFECTIVE terms, target window, `recordSha256`) and then the pointer. A new approval replaces the old one.
-3. **`resolveNightPlan`.** A record that verifies (hash, pointer, terms) and whose target window is current (at most 12h past its start) is `approved`, and the draft is never read. Otherwise a current draft with confirmed items plus a verifying last record is `unfinished`: the record's STANDING terms, the confirmed items that still re-check. Otherwise `none`. Both kinds return `targetWindowStartMs` (the window the plan is FOR; `null` for `none`), so a caller can tell "tonight's window has not opened" from "tonight's window passed" without recomputing it (`windowFor(now)` points at tomorrow after 07:00).
+3. **`resolveNightPlan`.** A record that verifies (hash, pointer, terms) and whose target window is current (at most 12h past its start) is `approved`, and the draft is never read. Otherwise a current draft with confirmed items, compiled after that record's approval (`draft.createdAtMs > record.approvedAtMs`: the draft an approval was made from is never its own unfinished night, even when a `window` amendment moved the approved night's target), plus a verifying last record is `unfinished`: the record's STANDING terms, the confirmed items that still re-check. Otherwise `none`. Both kinds return `targetWindowStartMs` (the window the plan is FOR; `null` for `none`), so a caller can tell "tonight's window has not opened" from "tonight's window passed" without recomputing it (`windowFor(now)` points at tomorrow after 07:00).
 4. **Fail closed.** Any record, pointer or terms check that fails is `none` with the reason. A crash between the record write and the pointer write reads as a pointer failure until `approve` is run again.
 
 ## Review Focus
@@ -134,7 +134,7 @@ Phase 2 adds `.d.mts` declarations beside these files when `electron/` first imp
 
 ## Order and parallelism
 
-Dependencies (each task's Consumes line lists exactly its own): T2 none; T3 <- T1, T2; T4 none; T5, T6, T7, T8 none; T9 <- T8; T10 <- T4, T5, T6, T7, T8; T11 <- T1, T8; T12 <- T1, T2, T3; T13 none (Matt, no code); T14 <- T1, T2, T3, T4, T9, T10; T15 <- T1, T3, T11, T12, T14; T16 <- T4, T9, T11, T12, T14, T15; T17 <- T1, T3, T4, T9, T10, T11, T12, T14, T15, T16; T18 <- T17; T19 <- T17; T20, T21 last.
+Dependencies (each task's Consumes line lists exactly its own): T2 none; T3 <- T1, T2; T4 none; T5, T6, T7, T8 none; T9 <- T8; T10 <- T4, T5, T6, T7, T8; T11 <- T1, T8; T12 <- T1, T2, T3; T13 none (Matt, no code); T14 <- T1, T2, T3, T4, T9, T10; T15 <- T1, T3, T4, T11, T12, T14; T16 <- T1, T4, T9, T11, T12, T14, T15; T17 <- T1, T3, T4, T9, T10, T11, T12, T14, T15, T16; T18 <- T17; T19 <- T17; T20, T21 last.
 
 Sequential spine, which is also numeric order: T1 -> T2 -> T3 -> T4 -> T5 -> T6 -> T7 -> T8 -> T9 -> T10 -> T11 -> T12 -> T13 -> T14 -> T15 -> T16 -> T17 -> T18 -> T19 -> T20 -> T21. T13 (Matt's two-minute TTY probe, no code) can run any time before T15; its answer is wanted by T15's refusal wording and T19's skill step 7. Safe in separate worktrees, disjoint files, merge in numeric order: T5, T6, T7 and T8 -> T9 (all independent of the rest of the spine), and T11 (after T8) and T12 (after T3). Subagent-driven execution is sequential by default: follow numeric order unless dispatching those groups in parallel.
 ---
@@ -1058,13 +1058,13 @@ scripts/afk/draftFixture.ts
 ```
 
 **Interfaces:**
-- Consumes: T1 (`applyAmendments`), T2, T3 (`afkDir`, `readLiveTerms`), T4 (`newNightId`, `windowFor`), T9 (`checkFeasibility`), T10 (`checkPlan`).
+- Consumes: T1 (`applyAmendments`), T2, T3 (`afkDir`, `readLiveTerms`), T4 (`isNightCurrent`, `newNightId`, `windowFor`), T9 (`checkFeasibility`), T10 (`checkPlan`).
 - Produces (file `<afk>/draft.json`, the only draft there is):
   - `draftPath(aetherDir)`, `readDraft(aetherDir): Draft|null` (null on a missing file, unparseable JSON, or a file with no `items` array: a torn write reads as no draft).
   - `replaceDraft(aetherDir, compiled, nowMs): Draft`. Writes `{v:1, draftId: newNightId(nowMs), createdAtMs, targetWindowStartMs, projects, warnings, items, amendments: {}}` atomically with every item `confirmed:false`, replacing whatever was there: confirmations and amendments never survive a compile, so a confirmation cannot outlive the verdict it was made against.
   - `recheckItem(item, ctx): {ok:boolean; reason: string|null}` with `ctx = {homeDir, repoRoots?, probes}`. Checks in order: `item.verdict === 'ready'` (else `not-ready:<verdict>`); if `item.planRef`, `checkPlan` must find the plan (`plan-not-found`) and its spec must be approved (`spec-not-approved`); if `item.kind === 'build'`, `checkFeasibility(item, ctx.probes).ok` (else `feasibility`). It reads the world as it is now; it does not re-read handoffs (Risks).
-  - `confirmItems(aetherDir, ids, ctx): {confirmed: string[]; refused: {id, reason}[]}`. Refuses with `no-draft`, `unknown`, or the `recheckItem` reason. Atomic write.
-  - `amendDraft(aetherDir, patch, nowMs): {ok:boolean; errors: string[]}`. Validates `applyAmendments(readLiveTerms().terms, {...draft.amendments, ...patch})`, stores the merged patch in `draft.amendments`; when the merged patch contains `window` it also sets `targetWindowStartMs = windowFor(nowMs, effective.window).startMs`. No draft: `{ok:false, errors:['no draft']}`.
+  - `confirmItems(aetherDir, ids, ctx, nowMs): {confirmed: string[]; refused: {id, reason}[]}`. Refuses with `no-draft`, `stale-draft` (every id, when `!isNightCurrent(nowMs, draft.targetWindowStartMs)`: a draft whose window passed more than 12h ago cannot be confirmed into; compile again), `unknown`, or the `recheckItem` reason. Atomic write.
+  - `amendDraft(aetherDir, patch, nowMs): {ok:boolean; errors: string[]}`. Validates `applyAmendments(readLiveTerms().terms, {...draft.amendments, ...patch})`, stores the merged patch in `draft.amendments`; when the merged patch contains `window` it also sets `targetWindowStartMs = windowFor(nowMs, effective.window).startMs`. No draft: `{ok:false, errors:['no draft']}`. A stale draft (`!isNightCurrent(nowMs, draft.targetWindowStartMs)`, checked before the patch is applied, so a `window` patch cannot revive it): `{ok:false, errors:['stale-draft']}` and nothing is written.
 
 - [ ] **Step 1a: Write the shared fixture** `scripts/afk/draftFixture.ts` (no test in it; T15 and T16 import it and do not edit it)
 
@@ -1111,7 +1111,7 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { amendDraft, confirmItems, draftPath, readDraft, recheckItem } from './draft.mjs';
-import { A, B, C, NOW, WIN, ctxFor, draftWith, mkItem, okProbes, putPlan, tmp } from './draftFixture';
+import { A, B, C, DAY, NOW, WIN, ctxFor, draftWith, mkItem, okProbes, putPlan, tmp } from './draftFixture';
 const noKeys = { ...okProbes, propKeysPresent: (_f: string, keys: string[]) => Object.fromEntries(keys.map((k) => [k, false])) };
 describe('replaceDraft', () => {
   it('writes the one draft with a fresh label, every item unconfirmed', () => {
@@ -1121,7 +1121,7 @@ describe('replaceDraft', () => {
   });
   it('a second compile REPLACES the draft: confirmations and amendments are gone, even for an id whose verdict changed', () => {
     const d = tmp(); draftWith(d, [mkItem(A, 'x'), mkItem(B, 'y')]);
-    confirmItems(d, [A, B], ctxFor(tmp())); amendDraft(d, { opusEscalation: true }, NOW);
+    confirmItems(d, [A, B], ctxFor(tmp()), NOW); amendDraft(d, { opusEscalation: true }, NOW);
     draftWith(d, [mkItem(A, 'x', 'question'), mkItem(C, 'z')], NOW + 1000);   // A's verdict changed; B vanished
     const dr = readDraft(d)!;
     expect(dr.items.map((i: any) => [i.id.slice(0, 1), i.verdict, i.confirmed])).toEqual([['a', 'question', false], ['c', 'ready', false]]);
@@ -1138,18 +1138,24 @@ describe('confirmItems', () => {
   it('confirms a ready item and refuses unknown, question and barred ones with their reasons', () => {
     const d = tmp(); const [x, y, z] = [A, B, C];
     draftWith(d, [mkItem(x, 'Run npm test'), mkItem(y, 'Ask?', 'question'), mkItem(z, 'Delete x', 'barred')]);
-    const r = confirmItems(d, [x, y, z, 'f'.repeat(12)], ctxFor(tmp()));
+    const r = confirmItems(d, [x, y, z, 'f'.repeat(12)], ctxFor(tmp()), NOW);
     expect(r.confirmed).toEqual([x]);
     expect(Object.fromEntries(r.refused.map((q) => [q.id.slice(0, 1), q.reason]))).toEqual({ b: 'not-ready:question', c: 'not-ready:barred', f: 'unknown' });
     expect(readDraft(d)!.items.map((i: any) => i.confirmed)).toEqual([true, false, false]);
   });
   it('a build item is confirmed only while its feasibility check passes now', () => {
     const d = tmp(); draftWith(d, [mkItem(A, 'Build the APK', 'ready', { kind: 'build', artifact: 'apk' })]);
-    expect(confirmItems(d, [A], ctxFor(tmp(), noKeys)).refused).toEqual([{ id: A, reason: 'feasibility' }]);
-    expect(confirmItems(d, [A], ctxFor(tmp())).confirmed).toEqual([A]);
+    expect(confirmItems(d, [A], ctxFor(tmp(), noKeys), NOW).refused).toEqual([{ id: A, reason: 'feasibility' }]);
+    expect(confirmItems(d, [A], ctxFor(tmp()), NOW).confirmed).toEqual([A]);
   });
   it('refuses everything when there is no draft', () => {
-    expect(confirmItems(tmp(), [A], ctxFor(tmp()))).toEqual({ confirmed: [], refused: [{ id: A, reason: 'no-draft' }] });
+    expect(confirmItems(tmp(), [A], ctxFor(tmp()), NOW)).toEqual({ confirmed: [], refused: [{ id: A, reason: 'no-draft' }] });
+  });
+  it('refuses a stale draft (its window passed more than 12h ago) with stale-draft and writes nothing', () => {
+    const d = tmp(); draftWith(d, [mkItem(A, 'Run npm test')]);
+    expect(confirmItems(d, [A], ctxFor(tmp()), WIN + 12 * 3600e3 + 1)).toEqual({ confirmed: [], refused: [{ id: A, reason: 'stale-draft' }] });
+    expect(readDraft(d)!.items[0].confirmed).toBe(false);
+    expect(confirmItems(d, [A], ctxFor(tmp()), WIN + 12 * 3600e3).confirmed).toEqual([A]);   // control: exactly at the 12h edge it is still current
   });
 });
 describe('recheckItem', () => {
@@ -1184,6 +1190,13 @@ describe('amendDraft', () => {
     expect(readDraft(d)!.amendments).toEqual({});
   });
   it('without a draft it says so', () => { expect(amendDraft(tmp(), { push: false }, NOW)).toEqual({ ok: false, errors: ['no draft'] }); });
+  it('refuses a stale draft, even for a window patch that would revive it, and writes nothing', () => {
+    const d = tmp(); draftWith(d, []);
+    const later = NOW + 2 * DAY;
+    expect(amendDraft(d, { window: { start: '22:00', end: '06:00' } }, later)).toEqual({ ok: false, errors: ['stale-draft'] });
+    expect(readDraft(d)).toMatchObject({ amendments: {}, targetWindowStartMs: WIN });
+    expect(amendDraft(d, { opusEscalation: true }, WIN + 12 * 3600e3).ok).toBe(true);   // control: at the 12h edge it is still current
+  });
 });
 ```
 
@@ -1223,7 +1236,7 @@ const phrase = (terms = DEFAULT_TERMS) => expectedPhrase(termsSha256(terms));
 const apk = (id: string, verdict = 'ready') => mkItem(id, 'Build the APK', verdict, { kind: 'build', artifact: 'apk' });
 const exe = (id: string) => mkItem(id, 'Cut a new installer', 'ready', { kind: 'build', artifact: 'installer' });
 function setup(items = [mkItem(A, 'Run npm test'), mkItem(B, 'Ask Matt?', 'question')], confirm = [A]) {
-  const d = tmp('afk-approve'); draftWith(d, items); confirmItems(d, confirm, ctxFor(HOME)); return d;
+  const d = tmp('afk-approve'); draftWith(d, items); confirmItems(d, confirm, ctxFor(HOME), NOW); return d;
 }
 const run = (d: string, over: Record<string, unknown> = {}) => {
   const printed: string[] = []; let asked = 0;
@@ -1245,7 +1258,7 @@ describe('approveNight gates', () => {
   });
   it('a draft compiled 3 days earlier is refused as stale-draft, naming the window; nothing is asked or written', async () => {
     const d = tmp('afk-approve'); draftWith(d, [mkItem(A, 'Run npm test')], NOW - 3 * DAY, { targetWindowStartMs: WIN - 3 * DAY });
-    confirmItems(d, [A], ctxFor(HOME));
+    confirmItems(d, [A], ctxFor(HOME), NOW - 3 * DAY);   // confirmed on the draft's own evening, so the stale draft carries a confirmation
     const r = run(d);
     expect(await r.p).toMatchObject({ ok: false, code: 'stale-draft' }); expect((await r.p as any).message).toMatch(/compile/);
     expect(r.asked()).toBe(0); expect(existsSync(approvedPath(d))).toBe(false); expect(existsSync(pointerPath(d))).toBe(false);
@@ -1317,7 +1330,7 @@ describe('approveNight record', () => {
 describe('approveNight re-check', () => {
   it('(h) a confirmed item whose spec went back to draft is refused, and the earlier approval is untouched', async () => {
     const home = tmp('afk-home'); const plan = putPlan(home, 'approved');
-    const d = tmp('afk-approve'); draftWith(d, [plan, mkItem(A, 'Run npm test')]); confirmItems(d, [plan.id, A], ctxFor(home));
+    const d = tmp('afk-approve'); draftWith(d, [plan, mkItem(A, 'Run npm test')]); confirmItems(d, [plan.id, A], ctxFor(home), NOW);
     expect((await run(d, { homeDir: home }).p).ok).toBe(true);                          // control: the same draft approves while the spec is approved
     const hash = (readApproved(d) as any).record.recordSha256;
     putPlan(home, 'DRAFT');                                                              // the spec goes back to draft after the confirmation
@@ -1353,7 +1366,7 @@ scripts/afk/resolvePlan.test.ts
 - Rules, in order:
   1. `a = readApproved(aetherDir)`. If it failed for any reason other than `missing`, return `none` with `reason: 'approval record failed: <reason>'` (a tampered record is never rescued by a draft, and with no verifying record there are no last-approved terms to run an unfinished night on).
   2. **approved**: `a.ok` and `isNightCurrent(nowMs, record.targetWindowStartMs)`. `terms`, `termsSha256`, `items`, `held`, `allowRules`, `nightId` and `targetWindowStartMs` come from the record; `draft.json` is not read (a torn or missing draft changes nothing here).
-  3. **unfinished**: otherwise, a draft exists (`readDraft` non-null; a torn file is no draft), it has at least one `confirmed` item, `a.ok` (the record is then from an earlier night), and `isNightCurrent(nowMs, target)` where **`target = windowFor(draft.targetWindowStartMs, a.record.standingTerms.window).startMs`**. Why that source: the draft's own target was computed from the LIVE window at `compile`, or moved by an unconfirmed `window` amendment, yet this night runs on the STANDING terms, so its window is the standing window's start for the window that contains (or next follows) the draft's target. The gate and the returned `targetWindowStartMs` use the same value. `nightId` = `draft.draftId`; `terms` = `a.record.standingTerms` (NOT the live file, NOT `draft.amendments`, NOT the prior night's effective `terms`); `termsSha256` = its hash; `items` = the confirmed items for which `recheckItem` passes now, each projected to `{id, project, kind, artifact, title, source}` (the same key set as an approved record's items, so Phase 2 reads both kinds alike); `held` = every other draft item with `reason` = `recheck:<reason>` for a confirmed item that failed, else its first `reasons` entry, else `not-confirmed`; `allowRules = buildAllowRules(terms, items)`. These five values (`terms`, `termsSha256`, `items`, `held`, `allowRules`) come from `unfinishedSelection`; this rule adds only the gates, `nightId` and `targetWindowStartMs`. Matt sees this same list when he runs `confirm` (Open item 9). No verifying last record -> `none`, `reason: 'no last-approved terms'` (Open item 8).
+  3. **unfinished**: otherwise, a draft exists (`readDraft` non-null; a torn file is no draft), it has at least one `confirmed` item, `a.ok`, **`draft.createdAtMs > a.record.approvedAtMs`** (the draft was compiled after the last approval; a record that lapsed its 12h gate was approved FROM the draft still on disk, and without this clause that same confirmed item would come back as `unfinished` with a different `targetWindowStartMs` whenever the approval carried a `window` amendment, so Phase 2's run-once key would not dedupe it and the item would run twice), and `isNightCurrent(nowMs, target)` where **`target = windowFor(draft.targetWindowStartMs, a.record.standingTerms.window).startMs`**. Why that source: the draft's own target was computed from the LIVE window at `compile`, or moved by an unconfirmed `window` amendment, yet this night runs on the STANDING terms, so its window is the standing window's start for the window that contains (or next follows) the draft's target. The gate and the returned `targetWindowStartMs` use the same value. `nightId` = `draft.draftId`; `terms` = `a.record.standingTerms` (NOT the live file, NOT `draft.amendments`, NOT the prior night's effective `terms`); `termsSha256` = its hash; `items` = the confirmed items for which `recheckItem` passes now, each projected to `{id, project, kind, artifact, title, source}` (the same key set as an approved record's items, so Phase 2 reads both kinds alike); `held` = every other draft item with `reason` = `recheck:<reason>` for a confirmed item that failed, else its first `reasons` entry, else `not-confirmed`; `allowRules = buildAllowRules(terms, items)`. These five values (`terms`, `termsSha256`, `items`, `held`, `allowRules`) come from `unfinishedSelection`; this rule adds only the gates, `nightId` and `targetWindowStartMs`. Matt sees this same list when he runs `confirm` (Open item 9). No verifying last record -> `none`, `reason: 'no last-approved terms'` (Open item 8).
   4. Otherwise `none` (`reason: 'no current approved night and nothing confirmed'`), `items` and `allowRules` empty, `nightId` and `targetWindowStartMs` null (also for every `none` above).
 
 - [ ] **Step 1: Write the failing test.** Scenarios (a) to (g) are named as the review's scenarios; (h) is in T15.
@@ -1375,12 +1388,12 @@ const two = () => [mkItem(A, 'item a'), mkItem(B, 'item b')];
 const approve = (d: string, terms = DEFAULT_TERMS, nowMs = NOW) => approveNight({ aetherDir: d, homeDir: HOME, probes: okProbes, nowMs, isTty: true, print: () => {},
   readLine: async () => expectedPhrase(termsSha256(terms)) });
 const resolve = (d: string, nowMs: number, homeDir = HOME) => resolveNightPlan({ aetherDir: d, homeDir, probes: okProbes, nowMs });
-const confirm = (d: string, ids: string[], home = HOME) => confirmItems(d, ids, ctxFor(home));
+const confirm = (d: string, ids: string[], home = HOME, nowMs = NOW) => confirmItems(d, ids, ctxFor(home), nowMs);
 const ids = (xs: any[]) => xs.map((i) => i.id);
 const ITEM_KEYS = ['artifact', 'id', 'kind', 'project', 'source', 'title'];
 // A night approved yesterday on the defaults (its window start was WIN - DAY).
 async function approvedYesterday(d: string, amend?: Record<string, unknown>) {
-  draftWith(d, two(), NOW - DAY, { targetWindowStartMs: WIN - DAY }); confirm(d, [A]);
+  draftWith(d, two(), NOW - DAY, { targetWindowStartMs: WIN - DAY }); confirm(d, [A], HOME, NOW - DAY);
   if (amend) amendDraft(d, amend, NOW - DAY);
   await approve(d, { ...DEFAULT_TERMS, ...amend } as any, NOW - DAY);
 }
@@ -1475,6 +1488,14 @@ describe('resolveNightPlan: unfinished', () => {
     expect(r.targetWindowStartMs).toBe(WIN);                                                  // the standing 01:00, not the amended 22:00
     expect(resolve(d, new Date(2026, 10, 5, 11).getTime()).kind).toBe('unfinished');         // 11:00 is past 22:00+12h but inside 01:00+12h
   });
+  it('the draft an approval was made from is never its own unfinished night, even when the approval amended the window', async () => {
+    const d = tmp('afk-resolve'); draftWith(d, two()); confirm(d, [A]);
+    expect(amendDraft(d, { window: { start: '22:00', end: '06:00' } }, NOW).ok).toBe(true);
+    await approve(d, { ...DEFAULT_TERMS, window: { start: '22:00', end: '06:00' } } as any);   // approved at NOW: record target 22:00, gate 10:00 next day
+    const at = new Date(2026, 10, 5, 9).getTime();
+    expect(resolve(d, at)).toMatchObject({ kind: 'approved', targetWindowStartMs: new Date(2026, 10, 4, 22).getTime() });   // control: still inside the approved night's 12h gate
+    expect(resolve(d, new Date(2026, 10, 5, 10, 30).getTime())).toMatchObject({ kind: 'none', items: [], targetWindowStartMs: null });   // lapsed; without the createdAtMs clause this is unfinished for target 01:00
+  });
   it('(l) a corrupt live terms.json changes neither an approved nor an unfinished result (resolve never reads it)', async () => {
     const d = tmp('afk-resolve'); draftWith(d, two()); confirm(d, [A]); await approve(d);
     const before = resolve(d, WIN); writeFileSync(termsPath(d), '{nope');
@@ -1535,8 +1556,8 @@ scripts/afk/cli.test.ts
   - `terms show` (prints the effective live terms, `delete: NOT ALLOWED`, the hash, and any `live.warnings` as `WARNING live terms: ...`); `terms set <key> <value>` (TTY; keys: any amendable key, plus `window.start`/`window.end`; booleans `true|false`; `delete`/`forcePush`/`notifications` refused with exit 4).
   - `compile --project <leaf>... [--plan <path>...] [--handoff <path>...] [--max-age-days N] [--json]`: passes the LIVE terms window (`readLiveTerms(aetherDir).terms.window`) to `compileNightList`, never its default; REPLACES the draft via `replaceDraft`; prints the items grouped ready/question/barred with ids and the draft label, and says that confirmations and amendments start over. If `readApproved` verifies and `isNightCurrent(nowMs, record.targetWindowStartMs)`, it also prints, and adds to the `--json` `warnings`, `night <id> is approved and will run; this new draft does not replace it until you approve it`.
   - `feasibility`: read-only; runs `checkFeasibility` on each build item of the draft with the probes and prints the result per item; stores nothing.
-  - `confirm <id>... | --all-ready` (TTY): `confirmItems` with `{homeDir, probes}`; prints each refusal with its reason; exit 4 if any id was refused. Last, when the re-read draft has at least one confirmed item, it prints the **unfinished-night allowlist** (Open item 9, decided 2026-11-05), after the approved-night note if there is one. Header: `if this night ends unfinished (no approve), it would run on the last-approved standing terms with this allowlist:`. It calls `readApproved(aetherDir)`. If that is not `ok`, it prints `no unfinished-night allowlist exists yet: ` plus `no night has ever been approved, so an unfinished night would run nothing` for `reason: 'missing'` (Open item 8), else `the last approval record failed: <reason>`. If `ok`, it calls `unfinishedSelection({draft: readDraft(aetherDir), record: a.record, ctx: {homeDir, probes}})` (the same function `resolveNightPlan` uses; `cli.mjs` computes no rule itself) and prints the first 8 hex of `termsSha256`, each item's id and title, and `allowRules` one per line, then `these are the last-approved terms, not tonight's amendments; approve prints the list for the whole night`. The block is advisory: it does not change the exit code and ignores the 12h window gate.
-  - `amend <key> <value>` (TTY; same key spellings as `terms set`, so `window.start`/`window.end` merge into the effective window): `amendDraft(..., nowMs)`, which recomputes the draft's target window.
+  - `confirm <id>... | --all-ready` (TTY): `confirmItems(aetherDir, ids, {homeDir, probes}, nowMs)`; prints each refusal (including `stale-draft` for every id when the draft's window passed more than 12h ago: compile again) with its reason; exit 4 if any id was refused. Last, when the re-read draft has at least one confirmed item, it prints the **unfinished-night allowlist** (Open item 9, decided 2026-11-05), after the approved-night note if there is one. Header: `if this night ends unfinished (no approve), it would run on the last-approved standing terms with this allowlist:`. It calls `readApproved(aetherDir)`. If that is not `ok`, it prints `no unfinished-night allowlist exists yet: ` plus `no night has ever been approved, so an unfinished night would run nothing` for `reason: 'missing'` (Open item 8), else `the last approval record failed: <reason>`. If `ok`, it calls `unfinishedSelection({draft: readDraft(aetherDir), record: a.record, ctx: {homeDir, probes}})` (the same function `resolveNightPlan` uses; `cli.mjs` computes no rule itself) and prints the first 8 hex of `termsSha256`, each item's id and title, and `allowRules` one per line, then `these are the last-approved terms, not tonight's amendments; approve prints the list for the whole night`. The block is advisory: it does not change the exit code and ignores the 12h window gate.
+  - `amend <key> <value>` (TTY; same key spellings as `terms set`, so `window.start`/`window.end` merge into the effective window): `amendDraft(aetherDir, patch, nowMs)`, which recomputes the draft's target window; a stale draft is refused with `stale-draft` (exit 4).
   - After `confirm` and `amend` succeed, when a verifying approved record is current (the same test `compile` uses), each prints `night <id> is approved and will run; this change edits only the draft and does not alter it (only approve does)`, so Matt is not left thinking a confirmation joined tonight's run.
   - `approve` (TTY): `approveNight` with the draft, probes and `readLine`.
   - `plan [--json]` (prints `resolveNightPlan` for now); `deny-rules` (prints `buildDenyRules(readLiveTerms().terms)` as one JSON object `{"protect": [...], "run": [...]}`; `protect` is what Matt pastes into global settings, `run` is for Phase 2's per-run disallow list; any live-terms warning goes to stderr so stdout stays parseable); `install-skill` (T19 wires it; here it exits 4 `not available yet`).
@@ -1707,7 +1728,7 @@ describe('main() with a TTY (in process)', () => {
 scripts/afk/afkBoundary.test.ts
 ```
 
-**Interfaces:** a test only, in the style of `electron/aetherChoice/aetherChoiceBoundary.test.ts` and `electron/voice/voiceBoundary.test.ts`: it pins design rules mechanically so a later edit cannot quietly break them. Source files are the non-test `.mjs` in `scripts/afk/`, comments stripped (a simple `//` and `/* */` strip is enough; strings still count).
+**Interfaces:** a test only, in the style of `electron/aetherChoice/aetherChoiceBoundary.test.ts` and `electron/voice/voiceBoundary.test.ts`: it pins design rules mechanically so a later edit cannot quietly break them. Source files are the non-test `.mjs` in `scripts/afk/`, comments stripped (a simple `//` and `/* */` strip is enough; strings still count; a `/*` opens a comment only at line start or after whitespace, so the quoted rule `'Edit(~/.aether-os/afk/**)'` in `denyRules.mjs` cannot open a fake comment and blind the scan).
 
 - [ ] **Step 1: Write the failing test.** It passes immediately if T1-T17 obeyed the constraints; "fails first" is demonstrated by the red-proof below, not by a missing module.
 
@@ -1719,7 +1740,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const dir = dirname(fileURLToPath(import.meta.url));
 const files = readdirSync(dir).filter((f) => f.endsWith('.mjs'));
-const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+const strip = (s: string) => s.replace(/(^|\s)\/\*[\s\S]*?\*\//gm, '$1').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 const src = Object.fromEntries(files.map((f) => [f, strip(readFileSync(join(dir, f), 'utf8'))]));
 const WRITERS = ['fsJson.mjs', 'installSkill.mjs'];
 const DELETERS = ['fsJson.mjs'];   // may remove only its own *.afktmp-* file after a failed atomic write
