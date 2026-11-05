@@ -682,6 +682,54 @@ describe('aetherChoice runtime: state, submitPick, clearHalt', () => {
     expect(r.logs.filter((l) => l.startsWith('foreign-launch-failed'))).toHaveLength(1);
   });
 
+  it('40: wrapUserWritePort with a throwing host still delivers the write and logs once per slot', () => {
+    const r = rig();
+    const rt = must(r);
+    r.t.throwNow = true;
+    const inner: TerminalWritePort = { write: vi.fn(() => true) };
+    const wrapped = rt.wrapUserWritePort(inner);
+    let out: boolean | undefined;
+    expect(() => {
+      out = wrapped.write('claude', 'x');
+    }).not.toThrow();
+    expect(out).toBe(true);
+    expect(inner.write).toHaveBeenCalledTimes(1);
+    expect(inner.write).toHaveBeenCalledWith('claude', 'x');
+    wrapped.write('claude', 'y');
+    expect(r.logs).toEqual(['input-note-failed claude']);
+    wrapped.write('terminal2', 'z');
+    expect(r.logs).toEqual(['input-note-failed claude', 'input-note-failed terminal2']);
+    wrapped.write('codex', 'c');
+    expect(r.logs).toHaveLength(2);
+    expect(inner.write).toHaveBeenLastCalledWith('codex', 'c');
+    expect(r.logs.join('\n')).not.toContain('clock');
+    expect(r.writes).toEqual([]);
+    r.t.throwNow = false;
+    expect(wrapped.write('claude', 'w')).toBe(true);
+    expect(inner.write).toHaveBeenCalledTimes(5);
+    const bad: TerminalWritePort = {
+      write: () => {
+        throw new Error('port down');
+      },
+    };
+    expect(() => rt.wrapUserWritePort(bad).write('claude', 'x')).toThrow('port down');
+  });
+
+  it('41: noteUserInput with a throwing host does not throw and logs once; unowned is a no-op; trace stamp fault is swallowed', () => {
+    const r = rig();
+    const rt = must(r);
+    r.t.throwNow = true;
+    expect(() => rt.noteUserInput('claude')).not.toThrow();
+    expect(() => rt.noteUserInput('claude')).not.toThrow();
+    expect(r.logs).toEqual(['input-note-failed claude']);
+    expect(() => rt.noteUserInput('codex')).not.toThrow();
+    expect(r.logs).toHaveLength(1);
+    const t = rig({ trace: true });
+    t.t.throwNow = true;
+    expect(() => must(t).noteUserInput('claude')).not.toThrow();
+    expect(t.logs).toEqual(['input-note-failed claude']);
+  });
+
   it('30: trace off adds nothing', async () => {
     const calls: number[] = [];
     const scripts = [
