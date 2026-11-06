@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand, launchLine, terminalIdentityEnv } from './ptyManager';
+import { join } from 'node:path';
+import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand, launchLine, resolveBoardCliPath, terminalIdentityEnv } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -37,10 +38,40 @@ describe('buildPtyEnv', () => {
   });
 });
 
+describe('buildPtyEnv board CLI', () => {
+  it('drops an inherited AETHER_BOARD_CLI', () => {
+    const env = buildPtyEnv({ AETHER_BOARD_CLI: '/stale/aether-board.mjs', PATH: '/usr/bin' });
+    expect(env.AETHER_BOARD_CLI).toBeUndefined();
+    expect(env.PATH).toBe('/usr/bin');
+  });
+});
+
 describe('terminalIdentityEnv', () => {
   it('maps the claude slot to alpha and terminal2 to beta', () => {
     expect(terminalIdentityEnv('claude')).toEqual({ AETHER_TERMINAL: 'alpha' });
     expect(terminalIdentityEnv('terminal2')).toEqual({ AETHER_TERMINAL: 'beta' });
+  });
+
+  it('adds AETHER_BOARD_CLI only when a path is given', () => {
+    expect(terminalIdentityEnv('claude', '/x/aether-board.mjs')).toEqual({ AETHER_TERMINAL: 'alpha', AETHER_BOARD_CLI: '/x/aether-board.mjs' });
+    expect('AETHER_BOARD_CLI' in terminalIdentityEnv('terminal2')).toBe(false);
+    expect('AETHER_BOARD_CLI' in terminalIdentityEnv('terminal2', undefined)).toBe(false);
+  });
+});
+
+describe('resolveBoardCliPath', () => {
+  const opts = { isPackaged: false, resourcesPath: join('R', 'resources'), appPath: join('A', 'app') };
+
+  it('resolves under the app path in dev', () => {
+    expect(resolveBoardCliPath(opts, () => true)).toBe(join('A', 'app', 'scripts', 'aether-board.mjs'));
+  });
+
+  it('resolves under resourcesPath when packaged', () => {
+    expect(resolveBoardCliPath({ ...opts, isPackaged: true }, () => true)).toBe(join('R', 'resources', 'scripts', 'aether-board.mjs'));
+  });
+
+  it('returns undefined when the file does not exist', () => {
+    expect(resolveBoardCliPath(opts, () => false)).toBeUndefined();
   });
 });
 

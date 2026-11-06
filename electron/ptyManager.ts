@@ -1,5 +1,7 @@
 import * as pty from 'node-pty';
 import os from 'node:os';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The terminal ALWAYS starts a fresh claude session -- never add
 // resume flags (--continue/--resume/-c/-r) here, matching this app's
@@ -25,6 +27,7 @@ export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   // Drop a stale identity inherited from Aether's own parent shell; the real one
   // comes from terminalIdentityEnv (explicit identity wins over inherited env).
   delete env.AETHER_TERMINAL;
+  delete env.AETHER_BOARD_CLI;
   // The renderer is xterm.js, which handles 24-bit color; advertise it so TUIs emit truecolor.
   env.COLORTERM = 'truecolor';
   return env;
@@ -68,9 +71,28 @@ export interface BridgePtyLaunch { scriptPath: string; env: NodeJS.ProcessEnv }
 export const UNMONITORED_TERMINAL_ENV: NodeJS.ProcessEnv = { AETHER_STATUSLINE_NO_PERSIST: '1' };
 
 // Tells a CLI/skill running inside an Aether terminal which one it is. Spread
-// after buildPtyEnv (which strips any inherited value), so it always wins.
-export function terminalIdentityEnv(slot: 'claude' | 'terminal2'): NodeJS.ProcessEnv {
-  return { AETHER_TERMINAL: slot === 'claude' ? 'alpha' : 'beta' };
+// after buildPtyEnv (which strips any inherited AETHER_TERMINAL and
+// AETHER_BOARD_CLI), so it always wins. boardCliPath is a path only; when
+// undefined the AETHER_BOARD_CLI key is absent, not empty.
+export function terminalIdentityEnv(slot: 'claude' | 'terminal2', boardCliPath?: string): NodeJS.ProcessEnv {
+  return {
+    AETHER_TERMINAL: slot === 'claude' ? 'alpha' : 'beta',
+    ...(boardCliPath ? { AETHER_BOARD_CLI: boardCliPath } : {}),
+  };
+}
+
+// Absolute path to scripts/aether-board.mjs for AETHER_BOARD_CLI, or undefined
+// when the file is missing. Same rule as resolveStatuslineScriptPath
+// (electron/statuslineUninstallCli.ts): packaged builds ship it under
+// resources/scripts, dev runs read it from the repo.
+export function resolveBoardCliPath(
+  opts: { isPackaged: boolean; resourcesPath: string; appPath: string },
+  exists: (p: string) => boolean = existsSync,
+): string | undefined {
+  const p = opts.isPackaged
+    ? join(opts.resourcesPath, 'scripts', 'aether-board.mjs')
+    : join(opts.appPath, 'scripts', 'aether-board.mjs');
+  return exists(p) ? p : undefined;
 }
 
 export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string) {
