@@ -1,6 +1,6 @@
 ---
 name: aether-terminal-board
-description: Use inside an Aether terminal (Alpha or Beta, where AETHER_TERMINAL is alpha or beta): at the start of a task, before editing or waiting on any PR, branch, worktree or file you were not assigned, and when a task ends. Tells you how to use the shared terminal board so two terminals do not collide.
+description: "Use inside an Aether terminal (Alpha or Beta, where AETHER_TERMINAL is alpha or beta): at the start of a task, before editing or waiting on any PR, branch, worktree or file you were not assigned, and when a task ends. Tells you how to use the shared terminal board so two terminals do not collide."
 ---
 
 # Terminal board: stay out of the other terminal's way

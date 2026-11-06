@@ -25,6 +25,17 @@ describe('aether-terminal-board skill', () => {
     expect(/^description:.*AETHER_TERMINAL/m.test(fm![1])).toBe(true);
   });
 
+  it('keeps the description valid YAML: quoted, or a plain scalar with no ": " or " #"', () => {
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)![1];
+    const value = /^description:[ \t]*(.*)$/m.exec(fm)![1];
+    const quoted = /^["'>|]/.test(value);
+    expect(quoted || !/: | #|:$/.test(value)).toBe(true);
+    if (/^"/.test(value)) {
+      expect(value.endsWith('"')).toBe(true);
+      expect(value.slice(1, -1)).not.toMatch(/(^|[^\\])"/);
+    }
+  });
+
   it('only tells the agent to run real CLI verbs, and covers every verb', () => {
     const real = cliVerbs();
     expect(real).toEqual(expect.arrayContaining(['whoami', 'status', 'task', 'claim', 'release', 'blocked', 'clear']));
