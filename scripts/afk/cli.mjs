@@ -110,6 +110,10 @@ function termsSet(ctx, args) {
     return 1;
   }
   if (!r.ok) { ctx.printErr(`refused: ${r.errors.join('; ')}`); return 4; }
+  if (live.warnings.length) {
+    for (const w of live.warnings) ctx.print(`WARNING live terms: ${w}`);
+    ctx.print('the live terms file was invalid, so it was rewritten from the defaults plus this one change; run terms show and re-set anything else you want');
+  }
   ctx.print(`terms updated: ${args[0]} = ${args[1]}`);
   return 0;
 }

@@ -215,6 +215,20 @@ describe('main() additions beyond the plan test (in process)', () => {
     expect(await main(['terms', 'show'], boom)).toBe(1);
     expect(out.join('\n')).not.toContain('secret');
   });
+  it('terms set on an invalid terms file warns that it rewrote from the defaults, and exits 0', async () => {
+    const home = tmpHome(); mkdirSync(join(aether(home), 'afk'), { recursive: true });
+    writeFileSync(termsPath(aether(home)), JSON.stringify({ ...DEFAULT_TERMS, push: false, extra: 1 }));
+    const out: string[] = [];
+    expect(await main(['terms', 'set', 'opusEscalation', 'true'], deps(home, out))).toBe(0);
+    expect(out.join(' ')).toMatch(/WARNING live terms/); expect(out.join(' ')).toMatch(/rewritten from the defaults/);
+    const back = readLiveTerms(aether(home)); expect(back.warnings).toEqual([]); expect(back.terms.opusEscalation).toBe(true);
+  });
+  it('terms set on a valid terms file prints no warning', async () => {
+    const home = tmpHome(); const out: string[] = [];
+    expect(await main(['terms', 'set', 'push', 'false'], deps(home))).toBe(0);
+    expect(await main(['terms', 'set', 'opusEscalation', 'true'], deps(home, out))).toBe(0);
+    expect(out.join(' ')).not.toMatch(/WARNING/);
+  });
   it('cli.mjs reads no clock', () => {
     expect(readFileSync(fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'utf8')).not.toContain('Date.now');
   });
