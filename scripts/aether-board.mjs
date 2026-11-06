@@ -420,6 +420,109 @@ function cmdClear(me) {
   persist(me, emptyEntry(me, nowMs), nowMs);
 }
 
+// Comparison key only; the STORED ref is exactly as given. "155", "#155" and "PR 155" collide.
+function refKey(ref) {
+  const s = ref.toLowerCase().replace(/\\/g, '/');
+  const m = /^(?:pr\s*)?#?(\d+)$/i.exec(s);
+  return m ? `#${m[1]}` : s;
+}
+
+const OTHER = { alpha: 'beta', beta: 'alpha' };
+
+/** Runs the assembled entry through the carried validator before anything is written. */
+function assertValid(me, entry) {
+  const check = parseBoardEntry(JSON.parse(JSON.stringify(entry)), me);
+  if (!check.ok) {
+    throw new CliError(
+      1,
+      `aether-board: invalid input (${check.reason}); check length limits, control characters, and that refs are relative with no ".." segment. Nothing written.`,
+    );
+  }
+}
+
+function cmdTask(me, flags, positionals) {
+  if (positionals.length === 0) throw new CliError(1, 'aether-board: task needs a title\n' + USAGE);
+  if (positionals.length > 1) throw new CliError(1, 'aether-board: task takes exactly one title; quote the title');
+  const status = flags.status === undefined ? 'working' : flags.status;
+  if (!STATUSES.includes(status)) {
+    throw new CliError(1, `aether-board: --status must be one of ${STATUSES.join(', ')}`);
+  }
+  const nowMs = Date.now();
+  const entry = loadOwn(me, nowMs);
+  entry.task = { title: positionals[0], project: flags.project === undefined ? '' : flags.project, status };
+  assertValid(me, entry);
+  persist(me, entry, nowMs);
+  process.stdout.write(`task set: ${status} "${positionals[0]}"\n`);
+}
+
+function cmdClaim(me, flags, positionals) {
+  if (positionals.length !== 2) throw new CliError(1, 'aether-board: usage: claim <kind> <ref> [--note N]');
+  const [kind, ref] = positionals;
+  if (!CLAIM_KINDS.includes(kind)) {
+    throw new CliError(1, `aether-board: claim kind must be one of ${CLAIM_KINDS.join(', ')}`);
+  }
+  const nowMs = Date.now();
+  const key = refKey(ref);
+  const entry = loadOwn(me, nowMs);
+  const mine = entry.claims.find((c) => refKey(c.ref) === key);
+  if (mine) {
+    if (flags.note !== undefined) mine.note = flags.note;
+  } else {
+    const claim = { kind, ref, since: new Date(nowMs).toISOString() };
+    if (flags.note !== undefined) claim.note = flags.note;
+    entry.claims.push(claim);
+  }
+  assertValid(me, entry);
+
+  const other = OTHER[me];
+  const view = readView(other, nowMs);
+  const theirs = view.source === 'file' ? view.entry.claims.find((c) => refKey(c.ref) === key) : undefined;
+  let notice = '';
+  if (theirs && !view.stale) {
+    const note = theirs.note ? `, "${theirs.note}"` : '';
+    throw new CliError(
+      3,
+      `CONFLICT: ${theirs.ref} is claimed by ${other} (${theirs.kind}, since ${theirs.since}${note}). Do not edit it and do not wait. Run: aether-board blocked ${ref} and continue with other work.`,
+    );
+  }
+  if (theirs && view.stale) notice = `note: ${other}'s board is stale; its claim on ${theirs.ref} was ignored\n`;
+  persist(me, entry, nowMs);
+  process.stdout.write(notice + `claimed ${kind} ${ref}\n`);
+}
+
+function cmdRelease(me, positionals) {
+  if (positionals.length !== 1) throw new CliError(1, 'aether-board: usage: release <ref>');
+  const nowMs = Date.now();
+  const key = refKey(positionals[0]);
+  const entry = loadOwn(me, nowMs);
+  const claims = entry.claims.filter((c) => refKey(c.ref) !== key);
+  const blockedBy = entry.blockedBy.filter((b) => refKey(b.ref) !== key);
+  if (claims.length === entry.claims.length && blockedBy.length === entry.blockedBy.length) {
+    process.stdout.write('nothing to release\n');
+    return;
+  }
+  entry.claims = claims;
+  entry.blockedBy = blockedBy;
+  persist(me, entry, nowMs);
+  process.stdout.write(`released ${positionals[0]}\n`);
+}
+
+function cmdBlocked(me, positionals) {
+  if (positionals.length !== 1) throw new CliError(1, 'aether-board: usage: blocked <ref>');
+  const nowMs = Date.now();
+  const key = refKey(positionals[0]);
+  const other = OTHER[me];
+  const view = readView(other, nowMs);
+  const theirs = view.source === 'file' && !view.stale ? view.entry.claims.find((c) => refKey(c.ref) === key) : undefined;
+  if (!theirs) throw new CliError(1, `aether-board: no active claim on ${positionals[0]} by ${other}; nothing recorded`);
+  const entry = loadOwn(me, nowMs);
+  entry.blockedBy = entry.blockedBy.filter((b) => !(b.owner === other && refKey(b.ref) === key));
+  entry.blockedBy.push({ ref: theirs.ref, owner: other });
+  assertValid(me, entry);
+  persist(me, entry, nowMs);
+  process.stdout.write(`blocked by ${other} on ${theirs.ref}\n`);
+}
+
 function run(argv) {
   const verb = argv[0];
   if (verb === undefined) throw new CliError(1, USAGE);
@@ -447,8 +550,18 @@ function run(argv) {
       if (positionals.length) throw new CliError(1, 'clear takes no arguments');
       cmdClear(me);
       return;
-    default:
-      throw new CliError(1, `aether-board: ${verb} is not implemented yet`);
+    case 'task':
+      cmdTask(me, flags, positionals);
+      return;
+    case 'claim':
+      cmdClaim(me, flags, positionals);
+      return;
+    case 'release':
+      cmdRelease(me, positionals);
+      return;
+    case 'blocked':
+      cmdBlocked(me, positionals);
+      return;
   }
 }
 

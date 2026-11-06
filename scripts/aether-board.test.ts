@@ -219,3 +219,186 @@ describe('aether-board status', () => {
     expect(typeof out.at).toBe('string');
   });
 });
+
+const readEntry = (home: string, t = 'alpha') => JSON.parse(readFileSync(fileOf(home, t), 'utf8'));
+const bytes = (home: string, t: string) => readFileSync(fileOf(home, t));
+const claim = (ref: string, over: Record<string, unknown> = {}) => ({
+  kind: 'pr',
+  ref,
+  since: '2026-01-01T00:00:00.000Z',
+  ...over,
+});
+
+describe('aether-board task', () => {
+  it('sets the task, defaults status to working, keeps existing claims', () => {
+    const home = newHome();
+    seed(home, 'alpha', { claims: [claim('#9')] });
+    expect(run(home, 'alpha', 'task', 'Fix it', '--project', 'aether').status).toBe(0);
+    expect(readEntry(home).task).toEqual({ title: 'Fix it', project: 'aether', status: 'working' });
+    expect(readEntry(home).claims).toHaveLength(1);
+    expect(run(home, 'alpha', 'task', 'Wait', '--status=idle').status).toBe(0);
+    expect(readEntry(home).task).toEqual({ title: 'Wait', project: '', status: 'idle' });
+  });
+
+  it.each([
+    [['task', 'T', '--status', 'bogus']],
+    [['task', 'a', 'b']],
+    [['task', '']],
+    [['task', '   ']],
+    [['task']],
+    [['task', 'T', '--nope', 'x']],
+  ])('rejects %j with exit 1 and writes nothing', (args) => {
+    const home = newHome();
+    expect(run(home, 'alpha', ...args).status).toBe(1);
+    expect(existsSync(fileOf(home, 'alpha'))).toBe(false);
+  });
+});
+
+describe('aether-board claim / release / blocked', () => {
+  it('round-trips claim and release; a repeat claim is idempotent and only updates the note when passed', () => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'pr', '#155', '--note', 'mine').status).toBe(0);
+    const since = readEntry(home).claims[0].since;
+    expect(readEntry(home).claims[0]).toEqual({ kind: 'pr', ref: '#155', since, note: 'mine' });
+    expect(run(home, 'alpha', 'claim', 'pr', '155').status).toBe(0);
+    expect(readEntry(home).claims).toEqual([{ kind: 'pr', ref: '#155', since, note: 'mine' }]);
+    expect(run(home, 'alpha', 'claim', 'pr', '#155', '--note', 'newer').status).toBe(0);
+    expect(readEntry(home).claims[0]).toEqual({ kind: 'pr', ref: '#155', since, note: 'newer' });
+    expect(run(home, 'alpha', 'release', 'PR 155').status).toBe(0);
+    expect(readEntry(home).claims).toEqual([]);
+  });
+
+  it.each(['155', 'PR 155', '#155'])('CONFLICT on a non-stale beta claim: alpha claiming %j exits 3 naming beta and the ref', (ref) => {
+    const home = newHome();
+    seed(home, 'beta', { claims: [claim('#155', { note: 'review' })] }, 60_000);
+    const r = run(home, 'alpha', 'claim', 'pr', ref);
+    expect(r.status).toBe(3);
+    expect(r.stderr).toContain('CONFLICT: #155 is claimed by beta');
+    expect(r.stderr).toContain('aether-board blocked');
+    expect(existsSync(fileOf(home, 'alpha'))).toBe(false);
+    expect(run(home, 'alpha', 'claim', 'pr', '#156').status).toBe(0);
+  });
+
+  it('does not block on a stale, corrupt or missing beta, but still blocks at 4 h minus a minute', () => {
+    const stale = newHome();
+    seed(stale, 'beta', { claims: [claim('#155')] }, 4 * HOUR + 60_000);
+    const r = run(stale, 'alpha', 'claim', 'pr', '#155');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('stale');
+
+    const corrupt = newHome();
+    mkdirSync(dirOf(corrupt), { recursive: true });
+    writeFileSync(fileOf(corrupt, 'beta'), '{bad');
+    expect(run(corrupt, 'alpha', 'claim', 'pr', '#155').status).toBe(0);
+
+    expect(run(newHome(), 'alpha', 'claim', 'pr', '#155').status).toBe(0);
+
+    const fresh = newHome();
+    seed(fresh, 'beta', { claims: [claim('#155')] }, 4 * HOUR - 60_000);
+    expect(run(fresh, 'alpha', 'claim', 'pr', '#155').status).toBe(3);
+  });
+
+  it("blocked records beta's stored spelling, rejects a ref beta does not hold, and release removes it", () => {
+    const home = newHome();
+    seed(home, 'beta', { claims: [claim('#155')] });
+    const miss = run(home, 'alpha', 'blocked', '999');
+    expect(miss.status).toBe(1);
+    expect(miss.stderr).toContain('no active claim on 999 by beta');
+    expect(existsSync(fileOf(home, 'alpha'))).toBe(false);
+    expect(run(home, 'alpha', 'blocked', 'PR 155').status).toBe(0);
+    expect(readEntry(home).blockedBy).toEqual([{ ref: '#155', owner: 'beta' }]);
+    expect(run(home, 'alpha', 'blocked', '155').status).toBe(0);
+    expect(readEntry(home).blockedBy).toHaveLength(1);
+    expect(run(home, 'alpha', 'release', '#155').status).toBe(0);
+    expect(readEntry(home).blockedBy).toEqual([]);
+  });
+
+  it('release of an unknown ref exits 0 and does not write', () => {
+    const home = newHome();
+    seed(home, 'alpha', { claims: [claim('#1')] }, HOUR);
+    const before = bytes(home, 'alpha');
+    const r = run(home, 'alpha', 'release', '#2');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('nothing to release');
+    expect(bytes(home, 'alpha').equals(before)).toBe(true);
+  });
+
+  it('every successful write bumps updatedAt and never touches the other file; refusals leave own bytes alone', () => {
+    const home = newHome();
+    seed(home, 'beta', { claims: [claim('#155')] }, 60_000);
+    const beta = bytes(home, 'beta');
+    for (const args of [['task', 'T'], ['claim', 'branch', 'x'], ['blocked', '#155'], ['clear']]) {
+      seed(home, 'alpha', {}, 2 * HOUR);
+      expect(run(home, 'alpha', ...args).status).toBe(0);
+      expect(Date.now() - Date.parse(readEntry(home).updatedAt)).toBeLessThan(HOUR);
+    }
+    const alpha = bytes(home, 'alpha');
+    expect(run(home, 'alpha', 'claim', 'pr', '#155').status).toBe(3);
+    expect(run(home, 'alpha', 'task', 'T', '--status', 'bogus').status).toBe(1);
+    expect(run(home, 'alpha', 'claim', 'pr', '..').status).toBe(1);
+    expect(bytes(home, 'alpha').equals(alpha)).toBe(true);
+    expect(bytes(home, 'beta').equals(beta)).toBe(true);
+  });
+
+  it('preserves unrelated entries across read-modify-write', () => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'branch', 'feat/x').status).toBe(0);
+    expect(run(home, 'alpha', 'task', 'Work', '--status', 'blocked').status).toBe(0);
+    expect(readEntry(home).claims.map((c: { ref: string }) => c.ref)).toEqual(['feat/x']);
+    expect(run(home, 'alpha', 'claim', 'file', 'src/a.ts').status).toBe(0);
+    expect(readEntry(home).task.title).toBe('Work');
+  });
+});
+
+const REJECT_REFS = [
+  'C:\\x', 'c:/x', '/etc/x', '\\\\srv\\s', '~/x', 'file:///x', 'FILE:x', '..', 'a/../b', 'a\\..\\b', ' ..',
+  'a/ .. /b', '', '   ', 'a\tb', 'x'.repeat(201),
+];
+const ACCEPT_REFS = [
+  '.worktrees/x', '..foo', 'a..b', '#155', 'feat/terminal-cli', 'src/shared/terminalBoard.ts', 'x'.repeat(200),
+];
+
+describe('aether-board privacy and limit matrix', () => {
+  it.each(REJECT_REFS)('claim rejects ref %j', (ref) => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'file', ref).status).toBe(1);
+    expect(existsSync(fileOf(home, 'alpha'))).toBe(false);
+  });
+
+  it.each(ACCEPT_REFS)('claim accepts ref %j', (ref) => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'file', ref).status).toBe(0);
+    expect(readEntry(home).claims[0].ref).toBe(ref);
+  });
+
+  it.each([
+    ['title', 120, 121, (v: string) => ['task', v]],
+    ['project', 80, 81, (v: string) => ['task', 'T', '--project', v]],
+    ['note', 200, 201, (v: string) => ['claim', 'file', 'a', '--note', v]],
+  ] as const)('%s accepts %i chars and rejects %i', (_n, ok, bad, mk) => {
+    const home = newHome();
+    expect(run(home, 'alpha', ...mk('x'.repeat(ok))).status).toBe(0);
+    const h2 = newHome();
+    expect(run(h2, 'alpha', ...mk('x'.repeat(bad))).status).toBe(1);
+    expect(existsSync(fileOf(h2, 'alpha'))).toBe(false);
+  });
+
+  it.each([
+    ['title', (v: string) => ['task', v]],
+    ['project', (v: string) => ['task', 'T', '--project', v]],
+    ['note', (v: string) => ['claim', 'file', 'a', '--note', v]],
+  ] as const)('%s rejects a control character', (_n, mk) => {
+    const home = newHome();
+    expect(run(home, 'alpha', ...mk('a\u0007b')).status).toBe(1);
+    expect(existsSync(fileOf(home, 'alpha'))).toBe(false);
+  });
+
+  it('rejects an invalid kind and a 51st claim', () => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'dir', 'a').status).toBe(1);
+    seed(home, 'alpha', { claims: Array.from({ length: 50 }, (_, i) => claim(`r${i}`)) });
+    const before = bytes(home, 'alpha');
+    expect(run(home, 'alpha', 'claim', 'file', 'one-more').status).toBe(1);
+    expect(bytes(home, 'alpha').equals(before)).toBe(true);
+  });
+});
