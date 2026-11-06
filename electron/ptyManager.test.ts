@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand, launchLine } from './ptyManager';
+import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand, launchLine, terminalIdentityEnv } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -27,6 +27,20 @@ describe('buildPtyEnv', () => {
     const source = { ANTHROPIC_API_KEY: 'sk-ant-secret' };
     buildPtyEnv(source);
     expect(source.ANTHROPIC_API_KEY).toBe('sk-ant-secret');
+  });
+
+  it('drops an inherited AETHER_TERMINAL and lets terminalIdentityEnv win', () => {
+    const env = buildPtyEnv({ AETHER_TERMINAL: 'alpha', PATH: '/usr/bin' });
+    expect(env.AETHER_TERMINAL).toBeUndefined();
+    expect(env.PATH).toBe('/usr/bin');
+    expect({ ...buildPtyEnv({ AETHER_TERMINAL: 'alpha' }), ...terminalIdentityEnv('terminal2') }.AETHER_TERMINAL).toBe('beta');
+  });
+});
+
+describe('terminalIdentityEnv', () => {
+  it('maps the claude slot to alpha and terminal2 to beta', () => {
+    expect(terminalIdentityEnv('claude')).toEqual({ AETHER_TERMINAL: 'alpha' });
+    expect(terminalIdentityEnv('terminal2')).toEqual({ AETHER_TERMINAL: 'beta' });
   });
 });
 
