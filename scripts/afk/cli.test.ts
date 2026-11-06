@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -198,9 +198,12 @@ describe('main() additions beyond the plan test (in process)', () => {
     const text = out.join('\n');
     expect(text).toContain('plain PowerShell window'); expect(text).not.toContain('!');
   });
-  it('install-skill exits 4 not available yet', async () => {
-    const out: string[] = [];
-    expect(await main(['install-skill'], deps(tmpHome(), out))).toBe(4); expect(out.join('\n')).toContain('not available yet');
+  it('install-skill writes exactly one file under the given home', async () => {
+    const out: string[] = []; const home = tmpHome();
+    expect(await main(['install-skill'], deps(home, out))).toBe(0);
+    const dest = join(home, '.claude', 'skills', 'afk-preflight', 'SKILL.md');
+    expect(out.join('\n')).toContain(dest);
+    expect(readdirSync(home, { recursive: true }).map(String).filter((p) => !p.endsWith('afk-preflight') && !p.endsWith('skills') && !p.endsWith('.claude'))).toEqual([join('.claude', 'skills', 'afk-preflight', 'SKILL.md')]);
   });
   it('an fs error in terms set is a clean exit 1: no stack, no path', async () => {
     const home = tmpHome(); mkdirSync(aether(home), { recursive: true }); writeFileSync(join(aether(home), 'afk'), 'x');   // afk is a file, so the write fails
