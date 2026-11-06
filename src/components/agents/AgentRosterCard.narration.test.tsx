@@ -143,7 +143,7 @@ describe('AgentRosterCard empty state', () => {
     expect(screen.getByTestId('active-tab').textContent).toBe('Agents');
     expect(screen.getByText('No agents are running.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'OPEN TERMINAL' }));
-    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
+    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal Alpha');
   });
 
   it('renders OPEN TERMINAL through the shared button, so browser mode gets aria-disabled and the reason', () => {

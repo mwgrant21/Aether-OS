@@ -45,7 +45,7 @@ test('built connected replacement inherits fitted native console geometry at unc
     await window.getByRole('button', { name: 'Start fresh connected Claude', exact: true }).click();
     await expect.poll(async () => (await snapshot(window)).sessionStatus.client, { timeout: 30000 }).toBe('running');
     const firstSession = (await snapshot(window)).sessionStatus.sessionLabel;
-    await sidebar(window, 'Terminal');
+    await sidebar(window, 'Terminal Alpha');
     await expect(window.locator('.xterm-helper-textarea')).toBeVisible();
     let first: Geometry;
     // Opening Terminal must fit the real console away from its 100x30 spawn default.
@@ -66,7 +66,7 @@ test('built connected replacement inherits fitted native console geometry at unc
     const beforeReturn = await geometry();
     expect(beforeReturn.pid).not.toBe(first!.pid);
     expect.soft(size(beforeReturn), 'replacement console already fits while Settings is open').toEqual(size(first!));
-    await sidebar(window, 'Terminal');
+    await sidebar(window, 'Terminal Alpha');
     await expect(window.locator('.xterm-helper-textarea')).toBeVisible();
     await window.screenshot({ path: testInfo.outputPath('geometry-replacement.png'), animations: 'disabled' });
     screens.replacement = await window.locator('.xterm-screen').boundingBox();

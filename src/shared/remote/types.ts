@@ -122,7 +122,7 @@ export type ControlPairingResult =
 
 // ---- Terminal slots (mobile V2). Pinned by mobileProtocol.test.ts against protocol/mobile-protocol.json `terminals`.
 export const TERMINAL_SLOTS = [
-  { s: 'claude', label: 'Terminal' }, { s: 'terminal2', label: 'Terminal 2' }, { s: 'codex', label: 'Codex' },
+  { s: 'claude', label: 'Terminal Alpha' }, { s: 'terminal2', label: 'Terminal Beta' }, { s: 'codex', label: 'Codex' },
 ] as const;
 export type TerminalSlotId = (typeof TERMINAL_SLOTS)[number]['s'];
 export type TerminalSlotState = 'not-started' | 'running' | 'exited';

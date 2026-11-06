@@ -26,7 +26,7 @@ export function CommunicationClientStatus({ inTerminal = false }: { inTerminal?:
         setError('The session changed. Check the current session status.'); return;
       }
       focusClaudeTerminal();
-      dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' });
+      dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal Alpha' });
     } catch { setError('Could not check the session. Try focusing the terminal again.'); }
     finally { setFocusing(false); }
   };

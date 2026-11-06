@@ -11,7 +11,7 @@ import { computeSidebarReactorRate, computeSidebarReactorStatus, isSessionLive }
 
 const SIDEBAR_IDS = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
 const REACTOR_MINI_SIZE = 150;
-const IDLE_PULSE_IDS = new Set(['Terminal', 'Codex']);
+const IDLE_PULSE_IDS = new Set(['Terminal Alpha', 'Codex']);
 // Nav entry -> remote terminal slot. Display only: the phone never changes the PC's active tab.
 const PHONE_SLOT_BY_LABEL: Record<string, TerminalSlotId> = Object.fromEntries(TERMINAL_SLOTS.map((t) => [t.label, t.s]));
 
@@ -28,13 +28,13 @@ export function Sidebar() {
         <div data-testid="sidebar-nav" style={sidebarNavStyle}>
           {SIDEBAR_IDS.map((label) => {
             const on = label === state.activeTab;
-            const idleFlag = label === 'Terminal' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
+            const idleFlag = label === 'Terminal Alpha' ? state.terminalIdle : label === 'Codex' ? state.codexTerminalIdle : false;
             // Gate on liveness too: a pty that exited only clears its pending idle
             // timer (see useTerminalIdleSync.ts's onExit handler), it never forces
             // idle back to false, so without this an exited pty's dot would keep
             // pulsing forever. terminalAlive/codexTerminalAlive disambiguate "quiet"
             // from "dead".
-            const aliveFlag = label === 'Terminal' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
+            const aliveFlag = label === 'Terminal Alpha' ? state.terminalAlive : label === 'Codex' ? state.codexTerminalAlive : false;
             const showIdlePulse = IDLE_PULSE_IDS.has(label) && idleFlag && aliveFlag && !on;
             const slot = PHONE_SLOT_BY_LABEL[label];
             const phoneAttached = slot !== undefined && controlStatus?.phoneSlots?.includes(slot) === true;

@@ -8,8 +8,8 @@ import { PickReadout } from './PickReadout';
 import { useAetherChoice } from './useAetherChoice';
 
 const SLOTS: ReadonlyArray<{ slot: AetherChoiceSlot; label: string }> = [
-  { slot: 'claude', label: 'TERMINAL' },
-  { slot: 'terminal2', label: 'TERMINAL 2' },
+  { slot: 'claude', label: 'TERMINAL ALPHA' },
+  { slot: 'terminal2', label: 'TERMINAL BETA' },
 ];
 
 type Run = (action: () => Promise<boolean>) => Promise<void>;

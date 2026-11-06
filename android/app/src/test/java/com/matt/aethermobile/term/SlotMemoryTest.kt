@@ -13,8 +13,8 @@ class SlotMemoryTest {
     }
 
     private fun sess(c: SlotState, t2: SlotState, x: SlotState) = listOf(
-        SessionInfo("claude", "Terminal", c, 100, 30, 0),
-        SessionInfo("terminal2", "Terminal 2", t2, 100, 30, 0),
+        SessionInfo("claude", "Terminal Alpha", c, 100, 30, 0),
+        SessionInfo("terminal2", "Terminal Beta", t2, 100, 30, 0),
         SessionInfo("codex", "Codex", x, 100, 30, 0),
     )
 

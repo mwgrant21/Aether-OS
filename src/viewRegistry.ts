@@ -25,8 +25,8 @@ export interface ViewDef {
 
 export const VIEWS: ViewDef[] = [
   { id: 'Dashboard', inSidebar: true, component: DashboardView },
-  { id: 'Terminal', inSidebar: true, component: TerminalView },
-  { id: 'Terminal 2', inSidebar: true, component: Terminal2View },
+  { id: 'Terminal Alpha', inSidebar: true, component: TerminalView },
+  { id: 'Terminal Beta', inSidebar: true, component: Terminal2View },
   { id: 'Codex', inSidebar: true, component: CodexTerminalView },
   { id: 'Comms', inSidebar: true, component: CommsView },
   { id: 'Traffic', inSidebar: true, component: BoardView },

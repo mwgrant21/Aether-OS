@@ -24,7 +24,7 @@ it('focuses only the same displayed session, without starting or writing', async
   render(<AetherStoreProvider><Harness snapshot={base} /></AetherStoreProvider>);
   fireEvent.click(screen.getByRole('button', { name: 'Focus connected terminal' }));
   await waitFor(() => expect(terminal.focus).toHaveBeenCalledOnce());
-  expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
+  expect(screen.getByTestId('active-tab').textContent).toBe('Terminal Alpha');
   expect(api.start).not.toHaveBeenCalled(); expect(api.write).not.toHaveBeenCalled();
 });
 it('refuses stale session or instance focus and reports snapshot failure', async () => {

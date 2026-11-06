@@ -168,7 +168,7 @@ export function CrossCheckComposerProvider({ children }: { children: ReactNode }
       if (!currentOperation(token, undefined, capturedTarget)) return;
       if (!requireCurrentTarget(current, token)) return;
       if (!currentOperation(token, undefined, capturedTarget)) return;
-      focusClaudeTerminal(); dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' });
+      focusClaudeTerminal(); dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal Alpha' });
       setMessage('Terminal focused. Nothing was pasted or submitted.');
     } catch { if (currentOperation(token, undefined, capturedTarget)) setMessage('Could not check the current launch. The draft is preserved.'); }
     finally { finish(token); }

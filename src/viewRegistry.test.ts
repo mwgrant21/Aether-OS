@@ -11,8 +11,8 @@ describe('viewRegistry', () => {
     const sidebarIds = VIEWS.filter((v) => v.inSidebar).map((v) => v.id);
     expect(sidebarIds).toEqual([
       'Dashboard',
-      'Terminal',
-      'Terminal 2',
+      'Terminal Alpha',
+      'Terminal Beta',
       'Codex',
       'Comms',
       'Traffic',
@@ -90,7 +90,7 @@ describe('viewRegistry', () => {
     expect(getViewComponent('Codex')).not.toBeNull();
   });
 
-  it('getViewComponent resolves Terminal 2 now that it is built', () => {
-    expect(getViewComponent('Terminal 2')).not.toBeNull();
+  it('getViewComponent resolves Terminal Beta now that it is built', () => {
+    expect(getViewComponent('Terminal Beta')).not.toBeNull();
   });
 });

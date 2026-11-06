@@ -116,7 +116,7 @@ export function PtyTerminal2() {
   }, [markersOn]);
 
   if (!hasElectronPty) {
-    return <div style={fallbackStyle}>Terminal 2 requires the Electron app — run `npm run electron:dev`</div>;
+    return <div style={fallbackStyle}>Terminal Beta requires the Electron app — run `npm run electron:dev`</div>;
   }
 
   return <div ref={anchorRef} style={hostStyle} />;
