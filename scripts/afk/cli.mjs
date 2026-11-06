@@ -1,7 +1,10 @@
 // The afk CLI verbs (AFK Phase 1, T17). Pure dispatch: the clock, home dir, stdio and TTY facts all arrive in `deps`
 // (afk.mjs is the only file that reads them). The four write verbs refuse without a TTY BEFORE they read or create anything.
 // Exit codes: 0 ok, 2 usage/unknown verb, 3 TTY required and absent, 4 refused or invalid, 1 unexpected error (a code only, never a message, stack or path).
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { defaultTemplatePath, installSkill } from './installSkill.mjs';
 import { AMENDABLE_KEYS, termsSha256 } from './terms.mjs';
 import { readLiveTerms, writeLiveTerms } from './termsStore.mjs';
 import { isNightCurrent } from './nightWindow.mjs';
@@ -270,7 +273,15 @@ function denyRules(ctx) {
   return 0;
 }
 
-const errCode = (e) => (e && typeof e.code === 'string' ? e.code : 'internal error');
+function installSkillVerb(ctx) {
+  const templatePath = defaultTemplatePath();
+  if (!existsSync(templatePath)) { ctx.printErr(`install-skill: template not found at ${templatePath}. Nothing was written.`); return 4; }
+  const cliPath = fileURLToPath(new URL('./afk.mjs', import.meta.url)).replace(/\\/g, '/');
+  ctx.print(`installed ${installSkill({ homeDir: ctx.homeDir, templatePath, cliPath })}`);
+  return 0;
+}
+
+const errCode =(e) => (e && typeof e.code === 'string' ? e.code : 'internal error');
 
 function verbOf(argv) {
   if (argv[0] === 'terms') return { verb: `terms ${argv[1] ?? ''}`.trim(), args: argv.slice(2) };
@@ -300,7 +311,7 @@ export async function main(argv, deps) {
       case 'approve': return await approve(ctx, deps);
       case 'plan': return plan(ctx, args);
       case 'deny-rules': return denyRules(ctx);
-      default: printErr('install-skill: not available yet'); return 4;
+      default: return installSkillVerb(ctx);
     }
   } catch (e) {
     try { printErr(`unexpected error (${errCode(e)})`); } catch { /* stderr gone */ }
