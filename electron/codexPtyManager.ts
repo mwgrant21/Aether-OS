@@ -141,8 +141,10 @@ export function buildCodexPtyEnv(
 ): NodeJS.ProcessEnv {
   const env = stripNpmBinPathEntries(source, platform);
   for (const key of BILLING_AUTH_ENV_VARS) delete env[key];
-  // Codex is not an Alpha/Beta terminal; never inherit that identity.
+  // Codex is not an Alpha/Beta terminal; never inherit that identity or the
+  // board CLI path that goes with it.
   delete env.AETHER_TERMINAL;
+  delete env.AETHER_BOARD_CLI;
   // Dedicated, isolated home shared with the cross-engine verifier -- never
   // the operator's global ~/.codex. See electron/crossEngine/acpProcess.ts.
   env.CODEX_HOME = codexHome;
