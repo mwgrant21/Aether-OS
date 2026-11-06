@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import { join } from 'path';
 import { writeFileAtomically } from './atomicWrite';
+import type { SlotEvent } from './terminalHub';
 import {
   BOARD_TERMINALS,
   buildBoardSnapshot,
@@ -66,4 +67,27 @@ export async function resetTerminalBoardEntry(
     const code = (err as NodeJS.ErrnoException)?.code;
     return { ok: false, code: typeof code === 'string' ? code : 'EUNKNOWN' };
   }
+}
+
+type ObservableSlot = { observe(listener: (event: SlotEvent) => void): () => void };
+
+/** Resets a terminal's board entry whenever its slot's PTY starts or exits. The Codex slot is
+ *  deliberately not mapped. A failing or rejecting `reset` is swallowed. Returns detach-all. */
+export function attachTerminalBoardReset(
+  slots: { claude: ObservableSlot; terminal2: ObservableSlot },
+  reset: (terminal: BoardTerminal) => Promise<unknown> | unknown,
+): () => void {
+  const wire = (slot: ObservableSlot, terminal: BoardTerminal) =>
+    slot.observe((event) => {
+      if (event.kind !== 'start' && !(event.kind === 'state' && event.state === 'exited')) return;
+      try {
+        Promise.resolve(reset(terminal)).catch(() => {});
+      } catch {
+        /* a reset failure must never reach the pty path */
+      }
+    });
+  const detachers = [wire(slots.claude, 'alpha'), wire(slots.terminal2, 'beta')];
+  return () => {
+    for (const detach of detachers) detach();
+  };
 }

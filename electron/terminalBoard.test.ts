@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   chmodSync,
   lstatSync,
@@ -12,7 +12,9 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { readTerminalBoardSnapshot, resetTerminalBoardEntry, terminalBoardFile } from './terminalBoard';
+import { attachTerminalBoardReset, readTerminalBoardSnapshot, resetTerminalBoardEntry, terminalBoardFile } from './terminalBoard';
+import { createTerminalHub } from './terminalHub';
+import type { PtyLike } from './ptyLifecycle';
 import { TERMINAL_BOARD_STALE_MS, parseBoardEntry } from '../src/shared/terminalBoard';
 
 const NOW = 1_700_000_000_000;
@@ -126,5 +128,89 @@ describe('terminal board files', () => {
     const v = (await readTerminalBoardSnapshot(dir, NOW)).terminals.alpha;
     expect(v.source).toBe('file');
     expect(v.stale).toBe(true);
+  });
+});
+
+function fakePty() {
+  let exit: () => void = () => {};
+  return {
+    onData: () => {}, onExit: (cb: () => void) => { exit = cb; },
+    kill: vi.fn(), write: vi.fn(), resize: vi.fn(),
+    fireExit: () => exit(),
+  } satisfies PtyLike & { fireExit(): void };
+}
+const handlers = () => ({ onData: () => {}, onAlive: () => {}, onExit: () => {} });
+
+function wired(reset: (t: 'alpha' | 'beta') => unknown = () => {}) {
+  const hub = createTerminalHub();
+  const calls: string[] = [];
+  const spy = (t: 'alpha' | 'beta') => { calls.push(t); return reset(t); };
+  const detach = attachTerminalBoardReset({ claude: hub.slot('claude'), terminal2: hub.slot('terminal2') }, spy);
+  return { hub, calls, detach };
+}
+
+describe('attachTerminalBoardReset', () => {
+  it('resets alpha on every claude slot start and exit', () => {
+    const { hub, calls } = wired();
+    const pty = fakePty();
+    hub.slot('claude').start(() => pty, handlers());
+    expect(calls).toEqual(['alpha']);
+    pty.fireExit();
+    expect(calls).toEqual(['alpha', 'alpha']);
+  });
+
+  it('resets beta on every terminal2 slot start and exit', () => {
+    const { hub, calls } = wired();
+    const pty = fakePty();
+    hub.slot('terminal2').start(() => pty, handlers());
+    pty.fireExit();
+    expect(calls).toEqual(['beta', 'beta']);
+  });
+
+  it('never resets for the codex slot', () => {
+    const { hub, calls } = wired();
+    const pty = fakePty();
+    hub.slot('codex').start(() => pty, handlers());
+    pty.fireExit();
+    expect(calls).toEqual([]);
+  });
+
+  it('resets once per start on a replacement and not for the superseded pty exit', () => {
+    const { hub, calls } = wired();
+    const first = fakePty();
+    const second = fakePty();
+    hub.slot('claude').start(() => first, handlers());
+    hub.slot('claude').start(() => second, handlers());
+    first.fireExit();
+    expect(calls).toEqual(['alpha', 'alpha']);
+  });
+
+  it('swallows a throwing and a rejecting reset', async () => {
+    for (const reset of [() => { throw new Error('boom'); }, () => Promise.reject(new Error('boom'))]) {
+      const { hub } = wired(reset);
+      const pty = fakePty();
+      expect(() => hub.slot('claude').start(() => pty, handlers())).not.toThrow();
+      expect(() => pty.fireExit()).not.toThrow();
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  });
+
+  it('stops resetting after detach', () => {
+    const { hub, calls, detach } = wired();
+    detach();
+    const pty = fakePty();
+    hub.slot('claude').start(() => pty, handlers());
+    hub.slot('terminal2').start(() => fakePty(), handlers());
+    expect(calls).toEqual([]);
+  });
+
+  it('main.ts wires attachTerminalBoardReset once, for both terminals and the real reset (wiring pin)', () => {
+    const src = readFileSync(join(__dirname, 'main.ts'), 'utf8');
+    expect(src.match(/attachTerminalBoardReset\(/g)).toHaveLength(1);
+    const call = src.slice(src.indexOf('attachTerminalBoardReset('), src.indexOf('attachTerminalBoardReset(') + 600);
+    expect(call).toContain("terminalHub.slot('claude')");
+    expect(call).toContain("terminalHub.slot('terminal2')");
+    expect(call).toContain('resetTerminalBoardEntry');
   });
 });
