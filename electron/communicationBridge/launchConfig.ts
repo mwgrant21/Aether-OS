@@ -32,6 +32,8 @@ export interface LaunchConfigOptions {
   sourceEnv?: NodeJS.ProcessEnv;
   executable?: string;
   sessionId?: string;
+  /** Path to aether-board.mjs for AETHER_BOARD_CLI; omitted when the file does not exist. */
+  boardCliPath?: string;
 }
 interface LaunchDependencies {
   resolveClaude(): Promise<string>;
@@ -189,7 +191,7 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
     }), { mode: 0o600, flag: 'wx' });
     const scriptPath = join(directory, 'launch.ps1');
     await writeFile(scriptPath, BRIDGE_LAUNCH_SCRIPT, { mode: 0o600, flag: 'wx' });
-    const env = { ...buildPtyEnv(source), ...terminalIdentityEnv('claude'), [BACKGROUND]: '120000' };
+    const env = { ...buildPtyEnv(source), ...terminalIdentityEnv('claude', options.boardCliPath), [BACKGROUND]: '120000' };
     const preparedAt = Date.now();
     let observedPid: number | undefined;
     let cleaned = false;

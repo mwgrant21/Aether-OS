@@ -8,7 +8,7 @@ import { join, dirname } from 'path';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { spawnPty, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
+import { resolveBoardCliPath, spawnPty, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
@@ -432,6 +432,14 @@ const statuslineSettingsPath = join(os.homedir(), '.claude', 'settings.json');
 // from process.resourcesPath. In dev there is no asar and app.getAppPath() is the
 // project root, where scripts/ already sits.
 const statuslineScriptPath = resolveStatuslineScriptPath({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  appPath: app.getAppPath(),
+});
+
+// AETHER_BOARD_CLI for Alpha/Beta shells (never Codex): same packaged/dev rule as
+// the statusline script above; undefined (key absent) when the file is missing.
+const boardCliPath = resolveBoardCliPath({
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
   appPath: app.getAppPath(),
@@ -1432,7 +1440,7 @@ const communicationSessions = new CommunicationSessionControl({
     if (!await launchMaintenance) throw new Error('STALE_LAUNCH_CLEANUP_FAILED');
     connectedExecutable = await preflightBridgeLaunch(launchRuntime);
   },
-  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable, sessionId: crypto.randomUUID() }),
+  prepare: manifest => prepareBridgeLaunch({ ...launchRuntime, manifest, root: launchRoot, executable: connectedExecutable, sessionId: crypto.randomUUID(), boardCliPath }),
   spawn: (bundle, onExit) => {
     const launchId = communicationBridge.currentLaunchId();
     if (!launchId) throw new Error('REVOKED');
@@ -1472,7 +1480,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   const launchCommand = aetherChoice?.launchCommandFor('claude', { sessionId });
   if (launchCommand === undefined) aetherChoice?.onForeignLaunch('claude'); // not an Aether launch (flag off: no-op)
   try {
-    ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude')) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude'), launchCommand), {
+    ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath)) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath), launchCommand), {
       onData: (data) => {
         if (!sender.isDestroyed()) sender.send('pty:data', data);
         planUsageScraper.ingest(data);
@@ -1558,7 +1566,7 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
     const launchCommand = aetherChoice?.launchCommandFor('terminal2');
     if (launchCommand === undefined) aetherChoice?.onForeignLaunch('terminal2'); // not an Aether launch (flag off: no-op)
     try {
-      terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2') }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2') }, launchCommand), {
+      terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }, launchCommand), {
         onData: (data) => {
           if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
         },
