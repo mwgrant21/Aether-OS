@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, lstat, readFile, writeFile, rm, readdir } from 'node:fs
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { CommunicationLaunchManifest } from './mainIntegration';
-import { buildPtyEnv, type BridgePtyLaunch } from '../ptyManager';
+import { buildPtyEnv, terminalIdentityEnv, type BridgePtyLaunch } from '../ptyManager';
 
 const run = promisify(execFile);
 // Hosted Windows protection rejected around the former 10s limit (PR #76, 2026-09-15).
@@ -189,7 +189,7 @@ export async function prepareBridgeLaunch(options: LaunchConfigOptions,
     }), { mode: 0o600, flag: 'wx' });
     const scriptPath = join(directory, 'launch.ps1');
     await writeFile(scriptPath, BRIDGE_LAUNCH_SCRIPT, { mode: 0o600, flag: 'wx' });
-    const env = { ...buildPtyEnv(source), [BACKGROUND]: '120000' };
+    const env = { ...buildPtyEnv(source), ...terminalIdentityEnv('claude'), [BACKGROUND]: '120000' };
     const preparedAt = Date.now();
     let observedPid: number | undefined;
     let cleaned = false;

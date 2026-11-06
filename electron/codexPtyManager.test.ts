@@ -32,6 +32,12 @@ describe('buildCodexPtyEnv', () => {
     expect(env.CODEX_HOME).toBe('C:/fake/codex-home');
   });
 
+  it('drops an inherited AETHER_TERMINAL', () => {
+    const env = buildCodexPtyEnv({ AETHER_TERMINAL: 'beta', PATH: '/usr/bin' }, 'C:/fake/codex-home');
+    expect(env.AETHER_TERMINAL).toBeUndefined();
+    expect(env.PATH).toBe('/usr/bin');
+  });
+
   it('sets COLORTERM=truecolor, overwriting any existing value', () => {
     expect(buildCodexPtyEnv({ PATH: '/usr/bin' }, 'C:/fake/codex-home').COLORTERM).toBe('truecolor');
     expect(buildCodexPtyEnv({ COLORTERM: '24bit' }, 'C:/fake/codex-home').COLORTERM).toBe('truecolor');

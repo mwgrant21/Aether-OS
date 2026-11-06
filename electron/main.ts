@@ -8,7 +8,7 @@ import { join, dirname } from 'path';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { spawnPty, UNMONITORED_TERMINAL_ENV } from './ptyManager';
+import { spawnPty, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
@@ -1463,7 +1463,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   const launchCommand = aetherChoice?.launchCommandFor('claude', { sessionId });
   if (launchCommand === undefined) aetherChoice?.onForeignLaunch('claude'); // not an Aether launch (flag off: no-op)
   try {
-    ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId) : spawnPty(cols, rows, undefined, sessionId, undefined, launchCommand), {
+    ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude')) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude'), launchCommand), {
       onData: (data) => {
         if (!sender.isDestroyed()) sender.send('pty:data', data);
         planUsageScraper.ingest(data);
@@ -1549,7 +1549,7 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
     const launchCommand = aetherChoice?.launchCommandFor('terminal2');
     if (launchCommand === undefined) aetherChoice?.onForeignLaunch('terminal2'); // not an Aether launch (flag off: no-op)
     try {
-      terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV) : spawnPty(size.cols, size.rows, undefined, undefined, UNMONITORED_TERMINAL_ENV, launchCommand), {
+      terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2') }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2') }, launchCommand), {
         onData: (data) => {
           if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
         },
