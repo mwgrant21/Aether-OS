@@ -133,11 +133,13 @@ describe('terminal board files', () => {
 
 function fakePty() {
   let exit: () => void = () => {};
+  let data: (s: string) => void = () => {};
   return {
-    onData: () => {}, onExit: (cb: () => void) => { exit = cb; },
+    onData: (cb: (s: string) => void) => { data = cb; }, onExit: (cb: () => void) => { exit = cb; },
+    emitData: (s: string) => data(s),
     kill: vi.fn(), write: vi.fn(), resize: vi.fn(),
     fireExit: () => exit(),
-  } satisfies PtyLike & { fireExit(): void };
+  } satisfies PtyLike & { fireExit(): void; emitData(s: string): void };
 }
 const handlers = () => ({ onData: () => {}, onAlive: () => {}, onExit: () => {} });
 
@@ -154,6 +156,9 @@ describe('attachTerminalBoardReset', () => {
     const { hub, calls } = wired();
     const pty = fakePty();
     hub.slot('claude').start(() => pty, handlers());
+    expect(calls).toEqual(['alpha']);
+    pty.emitData('x'); // 'out' event
+    hub.slot('claude').resize(80, 24); // 'size' event
     expect(calls).toEqual(['alpha']);
     pty.fireExit();
     expect(calls).toEqual(['alpha', 'alpha']);

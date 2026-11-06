@@ -84,7 +84,7 @@ describe('parseBoardEntry', () => {
   });
 
   it('rejects absolute-path refs and accepts branch, PR and relative refs', () => {
-    const bad = [String.raw`C:\Users\x\f.ts`, 'D:/x', '/etc/passwd', String.raw`\\server\share`, '~/x', 'C:foo', '//host/x', '~user/x'];
+    const bad = [String.raw`C:\Users\x\f.ts`, 'D:/x', '/etc/passwd', String.raw`\\server\share`, '~/x', 'C:foo', '//host/x', '~user/x', ' /etc/passwd', ' D:/x'];
     for (const ref of bad) {
       expect(reasonOf(claimWith(ref)), ref).toBe('claim');
       expect(reasonOf(entry({ blockedBy: [{ ref, owner: 'beta' }] })), ref).toBe('blocked-by');

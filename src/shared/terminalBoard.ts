@@ -59,7 +59,7 @@ function isText(v: unknown, max: number, allowEmpty: boolean): v is string {
   return allowEmpty || v.trim().length > 0;
 }
 function isRef(v: unknown): v is string {
-  return isText(v, BOARD_LIMITS.ref, false) && !ABSOLUTE_REF.test(v);
+  return isText(v, BOARD_LIMITS.ref, false) && !ABSOLUTE_REF.test(v.trimStart());
 }
 function oneOf<T extends string>(list: readonly T[], v: unknown): v is T {
   return typeof v === 'string' && (list as readonly string[]).includes(v);
