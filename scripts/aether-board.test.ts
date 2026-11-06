@@ -421,11 +421,44 @@ describe('aether-board relative-path aliases', () => {
     expect(run(home, 'alpha', 'claim', 'pr', 'PR 155').status).toBe(0);
     expect(run(home, 'alpha', 'claim', 'file', 'src/x.ts').status).toBe(0);
     const c = run(home, 'beta', 'claim', 'pr', '#155');
-    expect(c.stderr).toContain('aether-board blocked "PR 155" and');
+    expect(c.stderr).toContain("aether-board blocked 'PR 155' and");
     expect(run(home, 'beta', 'blocked', './src/x.ts').status).toBe(0);
     expect(readEntry(home, 'beta').blockedBy).toEqual([{ ref: 'src/x.ts', owner: 'alpha' }]);
     expect(run(home, 'beta', 'release', './src/x.ts').status).toBe(0);
     expect(readEntry(home, 'beta').blockedBy).toEqual([]);
+  });
+
+  it.each(['a"b', 'a$b', 'a`b', 'a\\', "it's", 'PR 155'])(
+    'the conflict hint round-trips %j through POSIX single-quote parsing',
+    (ref) => {
+      const home = newHome();
+      seed(home, 'alpha', { claims: [{ kind: 'file', ref, since: new Date().toISOString() }] });
+      const r = run(home, 'beta', 'claim', 'file', ref);
+      expect(r.status).toBe(3);
+      const rest = r.stderr.slice(r.stderr.indexOf('aether-board blocked ') + 'aether-board blocked '.length);
+      let out = '';
+      let i = 0;
+      while (i < rest.length && rest[i] !== ' ') {
+        if (rest[i] === "'") {
+          const end = rest.indexOf("'", i + 1);
+          out += rest.slice(i + 1, end);
+          i = end + 1;
+        } else if (rest[i] === '\\' && rest[i + 1] === "'") {
+          out += "'";
+          i += 2;
+        } else {
+          throw new Error(`unquoted character in hint: ${rest[i]}`);
+        }
+      }
+      expect(out).toBe(ref);
+    },
+  );
+
+  it('validates before the conflict check: an invalid ref aliasing the other terminal\'s claim exits 1, not 3', () => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'file', 'x').status).toBe(0);
+    expect(run(home, 'beta', 'claim', 'file', '/x').status).toBe(1);
+    expect(existsSync(fileOf(home, 'beta'))).toBe(false);
   });
 
   it('a ref that reduces to nothing does not collide with an unrelated ref', () => {
