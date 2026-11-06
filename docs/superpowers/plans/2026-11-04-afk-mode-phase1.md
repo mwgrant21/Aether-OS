@@ -1181,7 +1181,7 @@ scripts/afk/draftFixture.ts
   - `replaceDraft(aetherDir, compiled, nowMs): Draft`. Writes `{v:1, draftId: newNightId(nowMs), createdAtMs, targetWindowStartMs, projects, warnings, items, amendments: {}}` atomically with every item `confirmed:false`, replacing whatever was there: confirmations and amendments never survive a compile, so a confirmation cannot outlive the verdict it was made against.
   - `recheckItem(item, ctx): {ok:boolean; reason: string|null}` with `ctx = {homeDir, repoRoots?, probes}`. Checks in order: `item.verdict === 'ready'` (else `not-ready:<verdict>`); if `item.planRef`, `checkPlan` must find the plan (`plan-not-found`) and its spec must be approved (`spec-not-approved`); if `item.kind === 'build'`, `checkFeasibility(item, ctx.probes).ok` (else `feasibility`). It reads the world as it is now; it does not re-read handoffs (Risks).
   - `confirmItems(aetherDir, ids, ctx, nowMs): {confirmed: string[]; refused: {id, reason}[]}`. Refuses with `no-draft`, `stale-draft` (every id, when `!isNightCurrent(nowMs, draft.targetWindowStartMs)`: a draft whose window passed more than 12h ago cannot be confirmed into; compile again), `unknown`, or the `recheckItem` reason. Atomic write.
-  - `amendDraft(aetherDir, patch, nowMs): {ok:boolean; errors: string[]}`. Validates `applyAmendments(readLiveTerms().terms, {...draft.amendments, ...patch})`, stores the merged patch in `draft.amendments`; when the merged patch contains `window` it also sets `targetWindowStartMs = windowFor(nowMs, effective.window).startMs`. No draft: `{ok:false, errors:['no draft']}`. A stale draft (`!isNightCurrent(nowMs, draft.targetWindowStartMs)`, checked before the patch is applied, so a `window` patch cannot revive it): `{ok:false, errors:['stale-draft']}` and nothing is written.
+  - `amendDraft(aetherDir, patch, nowMs): {ok:boolean; errors: string[]}`. Validates `applyAmendments(readLiveTerms().terms, {...draft.amendments, ...patch})`, stores the merged patch in `draft.amendments`; when the INCOMING patch contains `window` it also sets `targetWindowStartMs = windowFor(nowMs, effective.window).startMs`. The test is on the incoming patch, not the merged one: with the merged patch, any later unrelated amendment would recompute from a stored `window` and silently move the draft to the next night (Codex review of PR #175). No draft: `{ok:false, errors:['no draft']}`. A stale draft (`!isNightCurrent(nowMs, draft.targetWindowStartMs)`, checked before the patch is applied, so a `window` patch cannot revive it): `{ok:false, errors:['stale-draft']}` and nothing is written.
 
 - [ ] **Step 1a: Write the shared fixture** `scripts/afk/draftFixture.ts` (no test in it; T15 and T16 import it and do not edit it)
 
@@ -1300,6 +1300,14 @@ describe('amendDraft', () => {
     expect(amendDraft(d, { window: { start: '22:00', end: '06:00' } }, NOW).ok).toBe(true);
     expect(readDraft(d)!.targetWindowStartMs).toBe(new Date(2026, 10, 4, 22).getTime());   // NOW (23:00) is inside it
   });
+  it('a later unrelated amendment does not recompute the target window', () => {
+    const d = tmp(); draftWith(d, []);
+    amendDraft(d, { window: { start: '22:00', end: '06:00' } }, NOW);
+    const target = new Date(2026, 10, 4, 22).getTime();
+    expect(readDraft(d)!.targetWindowStartMs).toBe(target);
+    expect(amendDraft(d, { push: false }, new Date(2026, 10, 5, 7).getTime()).ok).toBe(true);   // inside the 12h grace
+    expect(readDraft(d)).toMatchObject({ amendments: { push: false }, targetWindowStartMs: target });
+  });
   it('rejects delete and an incoherent merge, keeping the stored amendments', () => {
     const d = tmp(); draftWith(d, []);
     expect(amendDraft(d, { delete: true }, NOW).ok).toBe(false);
@@ -1317,7 +1325,7 @@ describe('amendDraft', () => {
 });
 ```
 
-Carry (build review): `replaceDraft` takes `createdAtMs` from `compiled.createdAtMs` (not from its `nowMs` argument); the fixture's `draftWith` overrides it with `nowMs` so tests control the clock. State this in `draft.mjs`'s header so the two are not confused.
+Carry (build review): `replaceDraft` takes `createdAtMs` from `compiled.createdAtMs` (not from its `nowMs` argument); the fixture's `draftWith` does NOT override it: `mkCompiled` hardcodes `createdAtMs: NOW`, and `draftWith`'s `nowMs` only labels the draft (`draftId`). A test that needs another `createdAtMs` passes it through the fixture's `over` argument. State this in `draft.mjs`'s header so the two are not confused.
 
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/draft.test.ts` (expect FAIL: cannot resolve the module). Implement `draft.mjs`. Rerun (expect PASS). Commit: `git add -- scripts/afk/draft.mjs scripts/afk/draft.test.ts scripts/afk/draftFixture.ts && git commit -m "feat(afk): the one draft with confirm, amend and live re-check" -- scripts/afk/draft.mjs scripts/afk/draft.test.ts scripts/afk/draftFixture.ts`.
 
@@ -1333,8 +1341,8 @@ scripts/afk/approveFlow.test.ts
 
 **Interfaces:**
 - Consumes: T1 (`applyAmendments`, `termsSha256`, `DEFAULT_TERMS`), T3 (`readLiveTerms`), T4 (`isNightCurrent`), T11 (`buildAllowRules`, `buildDenyRules`), T12 (`buildRecord`, `writeApproved`, `readApproved`), T14 (`readDraft`, `recheckItem`); test setup from `draftFixture.ts` (T14).
-- Produces: `expectedPhrase(termsSha256): string` = `APPROVE ` + first 8 hex of the EFFECTIVE terms' hash (so approving a stale printed summary after the terms changed fails); `approveNight({aetherDir, homeDir, repoRoots?, probes, nowMs, isTty, readLine, print}): Promise<{ok:true; record} | {ok:false; code:'not-tty'|'no-draft'|'stale-draft'|'terms-invalid'|'no-confirmed-items'|'recheck-failed'|'phrase-mismatch'|'verify-failed'; message}>`.
-- Order (each early return writes nothing): (1) `!isTty` -> `not-tty`, `print` and `readLine` never called; (2) a draft exists; (3) `live = readLiveTerms()`; a non-empty `live.warnings` -> `terms-invalid` (a corrupt or invalid terms file reads as the permissive defaults, which is not something to approve; the message gives the warning and says `terms set` rewrites a valid file); effective terms = `applyAmendments(live.terms, draft.amendments)`, invalid -> `terms-invalid`; (4) at least one confirmed item, and `isNightCurrent(nowMs, draft.targetWindowStartMs)` else `stale-draft` (a draft compiled for a window that is already more than 12h past would produce a record Phase 2 resolves to `none`; the message names that window start in local time and says to re-run `compile`, then `confirm`); (5) `recheckItem` on EVERY confirmed item with `{homeDir, repoRoots, probes}`; any failure -> `recheck-failed`, the message lists each failing id, title and reason, and says to re-run `compile` and `confirm`; (6) `print` the summary, whose first line is `runs in the window starting <YYYY-MM-DD HH:MM local>` from `draft.targetWindowStartMs`: every effective term with the ones that differ from defaults marked; the one-night amendments as a separate block, with the sentence `amendments apply to tonight only; an unfinished night falls back to the standing terms`; `delete: NOT ALLOWED`; each confirmed item's id and title; each held item with its reason (first of `reasons`, else `not-confirmed`); the **allowlist** (`allowRules = buildAllowRules(effective, confirmedItems)`, one rule per line, with the sentence that Phase 2 will pass exactly these); then **both limits** beside it: (i) `Bash(git push:*)` is a prefix rule and also permits `+refspec`, `:branch`, `origin main --force` and `origin HEAD:master` pushes (the last is a push straight to master that skips merge-gate; the deny list stops only the exact forms `git push origin HEAD:master` and `HEAD:main`, not other spellings), which only the deny list's `--force`/`-f` prefixes and exact-form rules (for the forms they match) and the Safety Net hook may stop, and force-push is barred by the terms, not by this list; (ii) there are no Edit/Write/test rules in this list, so work and plan items cannot edit files unattended unless Phase 2 adds them and will go yellow; then the deny list (`buildDenyRules(effective)`, `protect` and `run` printed as two labelled groups); and, if `readApproved` verifies a record, `replaces approval <nightId> (window start <local time>)`; (7) `readLine("Type exactly: <phrase>")`, compared after trim; (8) `writeApproved(buildRecord({...}))` with `standingTerms = live.terms`, `amendments = draft.amendments`, `items` = confirmed items only (`{id, project, kind, artifact, title, source}`), `held` = the rest, `allowRules` = the list printed in (6), `nightId = draft.draftId`; (9) `readApproved` must verify what was just written, else `verify-failed` (and the pointer-missing case is repaired by running `approve` again: it always rewrites both files).
+- Produces: `expectedPhrase(termsSha256): string` = `APPROVE ` + first 8 hex of the EFFECTIVE terms' hash (so approving a stale printed summary after the terms changed fails); `approveNight({aetherDir, homeDir, repoRoots?, probes, nowMs, isTty, readLine, print}): Promise<{ok:true; record} | {ok:false; code:'not-tty'|'no-draft'|'stale-draft'|'terms-invalid'|'no-confirmed-items'|'recheck-failed'|'phrase-mismatch'|'state-changed'|'verify-failed'; message}>`.
+- Order (each early return writes nothing): (1) `!isTty` -> `not-tty`, `print` and `readLine` never called; (2) a draft exists; (3) `live = readLiveTerms()`; a non-empty `live.warnings` -> `terms-invalid` (a corrupt or invalid terms file reads as the permissive defaults, which is not something to approve; the message gives the warning and says `terms set` rewrites a valid file); effective terms = `applyAmendments(live.terms, draft.amendments)`, invalid -> `terms-invalid`; (4) at least one confirmed item (else `no-confirmed-items`, checked BEFORE `stale-draft`), and `isNightCurrent(nowMs, draft.targetWindowStartMs)` else `stale-draft` (a draft compiled for a window that is already more than 12h past would produce a record Phase 2 resolves to `none`; the message names that window start in local time and says to re-run `compile`, then `confirm`); (5) `recheckItem` on EVERY confirmed item with `{homeDir, repoRoots, probes}`; any failure -> `recheck-failed`, the message lists each failing id, title and reason, and says to re-run `compile` and `confirm`; (6) `print` the summary, whose first line is `runs in the window starting <YYYY-MM-DD HH:MM local>` from `draft.targetWindowStartMs`: every effective term with the ones that differ from defaults marked; the one-night amendments as a separate block, with the sentence `amendments apply to tonight only; an unfinished night falls back to the standing terms`; `delete: NOT ALLOWED`; each confirmed item's id and title; each held item with its reason (first of `reasons`, else `not-confirmed`); the **allowlist** (`allowRules = buildAllowRules(effective, confirmedItems)`, one rule per line, with the sentence that Phase 2 will pass exactly these); then **both limits** beside it: (i) `Bash(git push:*)` is a prefix rule and also permits `+refspec`, `:branch`, `origin main --force` and `origin HEAD:master` pushes (the last is a push straight to master that skips merge-gate; the deny list stops only the exact forms `git push origin HEAD:master` and `HEAD:main`, not other spellings), which only the deny list's `--force`/`-f` prefixes and exact-form rules (for the forms they match) and the Safety Net hook may stop, and force-push is barred by the terms, not by this list; (ii) there are no Edit/Write/test rules in this list, so work and plan items cannot edit files unattended unless Phase 2 adds them and will go yellow; then the deny list (`buildDenyRules(effective)`, `protect` and `run` printed as two labelled groups); and, if `readApproved` verifies a record, `replaces approval <nightId> (window start <local time>)`; (7) `readLine("Type exactly: <phrase>")`, compared after trim (`phrase-mismatch` is reported first); then (7b) the live terms and the draft are re-read and compared with what was printed (the whole draft by canonical JSON, the live terms, and the effective-terms hash): any difference returns `state-changed`, writes nothing, and says to run `approve` again, because the prompt can stay open while another terminal edits either; (8) `writeApproved(buildRecord({...}))` with `standingTerms = live.terms`, `amendments = draft.amendments`, `items` = confirmed items only (`{id, project, kind, artifact, title, source}`), `held` = the rest, `allowRules` = the list printed in (6), `nightId = draft.draftId`; (9) `readApproved` must verify what was just written, else `verify-failed` (and the pointer-missing case is repaired by running `approve` again: it always rewrites both files).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1444,6 +1452,27 @@ describe('approveNight record', () => {
     const d = setup(); await run(d).p;
     const second = run(d); expect((await second.p).ok).toBe(true);
     expect(second.text()).toMatch(/replaces approval n\d{8}T\d{6}/);
+  });
+});
+describe('approveNight state changed during the prompt', () => {
+  const nothing = (d: string) => { expect(existsSync(approvedPath(d))).toBe(false); expect(existsSync(pointerPath(d))).toBe(false); };
+  it('live terms changed while the prompt is open: the old phrase is refused as state-changed', async () => {
+    const d = setup();
+    const r = await run(d, { readLine: async () => { writeLiveTerms(d, { ...DEFAULT_TERMS, push: false }); return phrase(); } }).p;
+    expect(r).toMatchObject({ ok: false, code: 'state-changed' }); nothing(d);
+  });
+  it('draft recompiled while the prompt is open: state-changed', async () => {
+    const d = setup();
+    const r = await run(d, { readLine: async () => { draftWith(d, [mkItem(A, 'Run npm test')]); return phrase(); } }).p;
+    expect(r).toMatchObject({ ok: false, code: 'state-changed' }); nothing(d);
+  });
+  it('another confirmation made while the prompt is open: state-changed', async () => {
+    const d = setup([mkItem(A, 'Run npm test'), mkItem(B, 'Run lint')], [A]);
+    const r = await run(d, { readLine: async () => { confirmItems(d, [B], ctxFor(HOME), NOW); return phrase(); } }).p;
+    expect(r).toMatchObject({ ok: false, code: 'state-changed' }); nothing(d);
+  });
+  it('control: nothing changes during the prompt and the approval succeeds', async () => {
+    expect((await run(setup()).p).ok).toBe(true);
   });
 });
 describe('approveNight re-check', () => {
@@ -1849,7 +1878,17 @@ Carry (build review): (1) `confirm`'s unfinished-night allowlist preview must sk
 scripts/afk/afkBoundary.test.ts
 ```
 
-**Carry (build review):** add a `strip` test: `const r = 'Edit(~/.aether-os/afk/**)'; /* c */ writeFileSync(p)` must still leave `writeFileSync(p)` visible so the WRITE pattern matches (a `/*` inside a string literal must not swallow the code after it).
+**Carry (build review):** add a `strip` test: `const r = 'Edit(~/.aether-os/afk/**)'; /* c */ writeFileSync(p)` must still leave `writeFileSync(p)` visible so the WRITE pattern matches (a `/*` inside a string literal must not swallow the code after it). That input alone does not bite: with the string-literal guard removed, the lazy comment match still ends at the later `*/`. As built, the test (in `afkBoundary.test.ts`) also asserts an input that does bite, an unclosed `/*` in a string followed by a real comment:
+
+```ts
+  it('strip keeps code after a /* inside a string literal visible', () => {
+    const out = strip("const r = 'Edit(~/.aether-os/afk/**)'; /* c */ writeFileSync(p)");
+    expect(out).toContain('writeFileSync(p)');
+    expect(out).toMatch(WRITE);
+    // The input above survives even an unguarded strip; this one (an unclosed /* in a string, then a real comment) does not.
+    expect(strip("const g = '/*'; writeFileSync(p) /* c */")).toMatch(WRITE);
+  });
+```
 
 **Interfaces:** a test only, in the style of `electron/aetherChoice/aetherChoiceBoundary.test.ts` and `electron/voice/voiceBoundary.test.ts`: it pins design rules mechanically so a later edit cannot quietly break them. Source files are the non-test `.mjs` in `scripts/afk/`, comments stripped (a simple `//` and `/* */` strip is enough; strings still count; a `/*` opens a comment only at line start or after whitespace, so the quoted rule `'Edit(~/.aether-os/afk/**)'` in `denyRules.mjs` cannot open a fake comment and blind the scan).
 
@@ -1984,7 +2023,7 @@ describe('template location', () => {
     const copy = join(res, 'scripts', 'afk', 'installSkill.mjs');
     copyFileSync(fileURLToPath(new URL('./installSkill.mjs', import.meta.url)), copy);
     copyFileSync(templatePath, join(res, 'skills', 'afk-preflight', 'SKILL.md'));
-    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(copy).href)}).then((m) => console.log(m.defaultTemplatePath()))`], { encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(copy).href)}).then((m) => console.log(m.defaultTemplatePath()))`], { encoding: 'utf8', cwd: tmpdir() });
     expect(r.status, r.stderr).toBe(0);
     expect(readFileSync(r.stdout.trim(), 'utf8')).toBe(template);
   });
@@ -1992,7 +2031,7 @@ describe('template location', () => {
 
 describe('SKILL.md template', () => {
   it('has the frontmatter name and the overnight phrases', () => {
-    expect(template).toMatch(/^---\nname: afk-preflight\n/);
+    expect(template).toMatch(/^---\r?\nname: afk-preflight\r?\n/);
     for (const p of ['going to bed', 'heading to bed', 'off to bed', 'going afk']) expect(template).toContain(p);
   });
   it('every `afk.mjs <verb>` it tells the agent to run is a real verb', () => {
@@ -2011,6 +2050,16 @@ describe('SKILL.md template', () => {
     expect(VERBS).not.toContain('resolve');   // Phase 1 has no state transition from question to ready (Open item 11)
   });
   it('never mentions bypassPermissions', () => { expect(template).not.toMatch(/bypassPermissions/i); });
+  it('sends Matt to a plain PowerShell window and never suggests the ! escape', () => {
+    expect(template).toContain('plain PowerShell window');
+    expect(template).not.toMatch(/`!|\s!\s|the !|! escape/);
+  });
+  it('step 8 reports a resolve-failed reason as an error, and what unfinished and none mean', () => {
+    expect(template).toContain('resolve failed:');
+    expect(template).toMatch(/resolve failed:[^.]*error/i);
+    expect(template).toMatch(/unfinished[^.]*no items[^.]*nothing will run/i);
+    expect(template).toMatch(/none[^.]*no night is approved/i);
+  });
 });
 ```
 
@@ -2026,12 +2075,14 @@ describe('SKILL.md template', () => {
 
   Only `SKILL.md` is listed, so nothing else under `skills/` ships. This is a packaging config line, not Electron code; nothing in `electron/`, `src/` or the build scripts changes. The first test in `describe('template location')` fails if the entry is removed.
 
+  As built: `install-skill` is not TTY-gated (it is not in `TTY_VERBS`; it writes one file under the home and asks nothing). When the template is missing it prints `install-skill: template not found at <path>. Nothing was written.` and exits 4. The test file needs the `cwd: tmpdir()` in the `spawnSync` call (so a cwd-based `defaultTemplatePath` fails there) and the CRLF-tolerant frontmatter regex shown above: the LF-only form went RED on the Windows CI runner (CRLF checkout).
+
 ---
 
 ### Task 20: Documentation
 
 **Files:**
-- Modify: `docs/privacy-and-data.md` (add `## 19. AFK standing terms and night state`), `docs/packaging.md` (one sentence in section 1: `extraResources` also copies `skills/afk-preflight/SKILL.md` to `resources/skills/afk-preflight/` so `install-skill` works from an installed build), `CLAUDE.md` (one line in the architecture map for `scripts/afk/` and `skills/afk-preflight/`), `PROGRESS.md` (a "Shipped plans" entry, written when the branch merges, in the style of the entries at `PROGRESS.md:60-70`)
+- Modify: `docs/privacy-and-data.md` (add `## 20. AFK standing terms and night state`; `## 19.` is already taken by the terminal board, PR #183), `docs/packaging.md` (a few lines, not one sentence, in section 1: `extraResources` also copies `skills/afk-preflight/SKILL.md` to `resources/skills/afk-preflight/`, and `install-skill` is meant to work from an installed build; UNVERIFIED until T21 M3), `CLAUDE.md` (one line in the architecture map for `scripts/afk/` and `skills/afk-preflight/`), `PROGRESS.md` (a "Shipped plans" entry, written when the branch merges, in the style of the entries at `PROGRESS.md:60-70`)
 
 ```owned T20
 docs/privacy-and-data.md
@@ -2040,9 +2091,9 @@ CLAUDE.md
 PROGRESS.md
 ```
 
-No new test. Content requirements for §19: what is persisted and where (`~/.aether-os/afk/`: `terms.json`, the one `draft.json` with titles of at most 140 characters, the one `approved.json` with its items, held items, allowlist, standing and effective terms and its own hash, and the `last-approved.json` pointer; no handoff bodies, no absolute paths, no secrets); that the feasibility probe reads key names and a keystore path's existence but never prints or stores a value; that the CLI makes no network call and no model call; that the write verbs need a TTY and why that is a drift guard and not a sandbox; the deny rules in two groups: the four `protect` path rules Matt installs globally (list them), and the `run` rules that belong only in Phase 2's per-run disallow list (list them, and say they are not installed globally because they would block ordinary delete and worktree-cleanup work); say plainly that both are UNVERIFIED as enforcement until T21 M2 has been run and its result recorded (do not describe them as protection before that), and that every rule is a `Bash(...)` rule whose coverage of the PowerShell tool is also unverified until M2, so Phase 2 may need mirrored PowerShell rules, and the allowlist stored in the approval record (data only; how a headless run treats it is UNVERIFIED until T21 M5); the install-skill write to `~/.claude/skills`; and that retention is "until Matt deletes the `afk` directory" (nothing in Phase 1 purges; the agent cannot, by design), and that the record's hashes detect accidental or partial edits only.
+No new test. Content requirements for §20: what is persisted and where (`~/.aether-os/afk/`: `terms.json`, the one `draft.json` with titles of at most 140 characters, the one `approved.json` with its items, held items, allowlist, standing and effective terms and its own hash, and the `last-approved.json` pointer; no handoff bodies, no absolute paths, no secrets); that the feasibility probe reads key names and a keystore path's existence but never prints or stores a value; that the CLI makes no network call and no model call; that the write verbs need a TTY and why that is a drift guard and not a sandbox; the deny rules in two groups: the four `protect` path rules Matt installs globally (list them), and the `run` rules that belong only in Phase 2's per-run disallow list (list them, and say they are not installed globally because they would block ordinary delete and worktree-cleanup work); say plainly that both are UNVERIFIED as enforcement until T21 M2 has been run and its result recorded (do not describe them as protection before that), and that every rule is a `Bash(...)` rule whose coverage of the PowerShell tool is also unverified until M2, so Phase 2 may need mirrored PowerShell rules, and the allowlist stored in the approval record (data only; how a headless run treats it is UNVERIFIED until T21 M5); the install-skill write to `~/.claude/skills`; and that retention is "until Matt deletes the `afk` directory" (nothing in Phase 1 purges; the agent cannot, by design), and that the record's hashes detect accidental or partial edits only. Also say that titles are unmasked copies of source lines (they can hold paths and secrets). Statements about CLI output were deliberately left out of the doc after review (they kept being false).
 
-- [ ] **Steps 1-3:** make the four edits; run `npx vitest run src/shared/noApiCalls.test.ts scripts/afk` (expect PASS), `grep -n "^## 19\." docs/privacy-and-data.md` (expect one line) and `grep -n "skills/afk-preflight" docs/packaging.md` (expect one line); commit: `git add -- docs/privacy-and-data.md docs/packaging.md CLAUDE.md PROGRESS.md && git commit -m "docs(afk): privacy section 19, packaging note, architecture map and progress entry for Phase 1" -- docs/privacy-and-data.md docs/packaging.md CLAUDE.md PROGRESS.md`.
+- [ ] **Steps 1-3:** make the four edits; run `npx vitest run src/shared/noApiCalls.test.ts scripts/afk` (expect PASS), `grep -n "^## 20\." docs/privacy-and-data.md` (expect one line; `grep -n "^## 19\."` must still be one line, the terminal board) and `grep -n "skills/afk-preflight" docs/packaging.md` (expect one line); commit: `git add -- docs/privacy-and-data.md docs/packaging.md CLAUDE.md PROGRESS.md && git commit -m "docs(afk): privacy section 20, packaging note, architecture map and progress entry for Phase 1" -- docs/privacy-and-data.md docs/packaging.md CLAUDE.md PROGRESS.md`.
 
 ---
 
