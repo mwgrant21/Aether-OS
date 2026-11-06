@@ -31,7 +31,7 @@ describe('terminalHub', () => {
     const hub = createTerminalHub();
     const ids = ['claude', 'terminal2', 'codex'] as const;
     expect(new Set(ids.map((id) => hub.slot(id))).size).toBe(3);
-    expect(hub.slot('terminal2').info()).toEqual({ s: 'terminal2', label: 'Terminal 2', state: 'not-started', cols: 0, rows: 0, q: 0 });
+    expect(hub.slot('terminal2').info()).toEqual({ s: 'terminal2', label: 'Terminal Beta', state: 'not-started', cols: 0, rows: 0, q: 0 });
   });
 
   it('start -> running with the given size; invalid size falls back to 100x30', () => {
@@ -214,7 +214,7 @@ describe('terminalHub read port', () => {
     start({ cols: 90, rows: 20 });
     const list = port.list();
     expect(list.map((i) => i.s)).toEqual(['claude', 'terminal2', 'codex']);
-    expect(list[0]).toEqual({ s: 'claude', label: 'Terminal', state: 'running', cols: 90, rows: 20, q: 1 });
+    expect(list[0]).toEqual({ s: 'claude', label: 'Terminal Alpha', state: 'running', cols: 90, rows: 20, q: 1 });
     expect(list[1]).toMatchObject({ state: 'not-started', cols: 0, rows: 0, q: 0 });
   });
 

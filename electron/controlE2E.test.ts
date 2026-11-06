@@ -187,8 +187,8 @@ describe('phone control end to end (real ws)', () => {
     await waitFor(() => ctl.msgs.length === 1);
     const welcome = ctl.msgs[0];
     expect(welcome).toMatchObject({ t: 'welcome', v: 1, sessions: [
-      { s: 'claude', label: 'Terminal', state: 'not-started', cols: 0, rows: 0, q: 0 },
-      { s: 'terminal2', label: 'Terminal 2', state: 'not-started', cols: 0, rows: 0, q: 0 },
+      { s: 'claude', label: 'Terminal Alpha', state: 'not-started', cols: 0, rows: 0, q: 0 },
+      { s: 'terminal2', label: 'Terminal Beta', state: 'not-started', cols: 0, rows: 0, q: 0 },
       { s: 'codex', label: 'Codex', state: 'not-started', cols: 0, rows: 0, q: 0 },
     ], applied: {}, prompts: [] });
     expect(welcome.proof).toBe(expectedProof(token, NONCE));

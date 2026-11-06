@@ -212,7 +212,7 @@ it('focuses a validated current launch without writing or starting the terminal'
   view(); fireEvent.click(screen.getByRole('button', { name: 'Cross-check with Codex' }));
   fireEvent.click(screen.getByRole('button', { name: 'Focus connected terminal' }));
   await waitFor(() => expect(terminal.focus).toHaveBeenCalledOnce());
-  expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
+  expect(screen.getByTestId('active-tab').textContent).toBe('Terminal Alpha');
   expect(api.write).not.toHaveBeenCalled(); expect(api.start).not.toHaveBeenCalled();
 });
 

@@ -13,9 +13,9 @@ export function Terminal2View() {
       <div style={terminalCardStyle(colors)}>
         <div style={headerStyle(colors)}>
           <span style={liveDotStyle(colors)} />
-          <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>operator@claude-2</span>
+          <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.accentCyanSoft }}>operator@claude-beta</span>
           <span style={{ font: `400 13px/1 ${fonts.mono}`, color: colors.textDim }}>:~$ session active</span>
-          <span style={{ marginLeft: 'auto', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL 2 · UNMONITORED</span>
+          <span style={{ marginLeft: 'auto', font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL BETA · UNMONITORED</span>
         </div>
         <div style={termHostStyle}>
           <PtyTerminal2 />

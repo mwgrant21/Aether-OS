@@ -52,7 +52,7 @@ describe('OpenTerminalButton', () => {
     vi.stubGlobal('aetherElectron', {});
     renderButton();
     fireEvent.click(button());
-    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
+    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal Alpha');
     expect(screen.queryByText(DESKTOP_APP_REASON)).toBeNull();
   });
 
@@ -80,7 +80,7 @@ describe('OpenTerminalButton', () => {
     expect(btn.style.color).toBe(cssColor(colors.accentCyan));
     expect(btn.style.boxShadow).toBe('');
     fireEvent.click(btn);
-    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal');
+    expect(screen.getByTestId('active-tab').textContent).toBe('Terminal Alpha');
   });
 
   it('secondary shares the desktop-app check: aria-disabled, the reason beneath, no navigation', () => {

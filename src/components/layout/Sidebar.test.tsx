@@ -46,7 +46,7 @@ function renderSidebar(actions: Array<{ type: string; [k: string]: unknown }> = 
 describe('Sidebar idle indicator', () => {
   it('does not show an idle pulse on Terminal or Codex by default (neither idle)', () => {
     renderSidebar();
-    expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
+    expect(screen.getByText('Terminal Alpha').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
     expect(screen.getByText('Codex').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 
@@ -56,16 +56,16 @@ describe('Sidebar idle indicator', () => {
       { type: 'SET_TERMINAL_ALIVE', alive: true },
       { type: 'SET_TERMINAL_IDLE', idle: true },
     ]);
-    expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).not.toBeNull();
+    expect(screen.getByText('Terminal Alpha').closest('button')?.querySelector('[data-idle-pulse="true"]')).not.toBeNull();
   });
 
   it('does not show an idle pulse on Terminal when it IS the active tab, even if idle', () => {
     renderSidebar([
-      { type: 'SET_ACTIVE_TAB', tab: 'Terminal' },
+      { type: 'SET_ACTIVE_TAB', tab: 'Terminal Alpha' },
       { type: 'SET_TERMINAL_ALIVE', alive: true },
       { type: 'SET_TERMINAL_IDLE', idle: true },
     ]);
-    expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
+    expect(screen.getByText('Terminal Alpha').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 
   it('shows an idle pulse on Codex independently of Terminal\'s idle state', () => {
@@ -75,7 +75,7 @@ describe('Sidebar idle indicator', () => {
       { type: 'SET_CODEX_TERMINAL_IDLE', idle: true },
     ]);
     expect(screen.getByText('Codex').closest('button')?.querySelector('[data-idle-pulse="true"]')).not.toBeNull();
-    expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
+    expect(screen.getByText('Terminal Alpha').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 
   it('never shows an idle pulse on a sidebar item outside the Terminal/Codex scope', () => {
@@ -90,7 +90,7 @@ describe('Sidebar idle indicator', () => {
       { type: 'SET_TERMINAL_IDLE', idle: true },
       { type: 'SET_TERMINAL_ALIVE', alive: false },
     ]);
-    expect(screen.getByText('Terminal').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
+    expect(screen.getByText('Terminal Alpha').closest('button')?.querySelector('[data-idle-pulse="true"]')).toBeNull();
   });
 
   it('does not show an idle pulse on Codex when idle=true but the pty is dead (codexTerminalAlive=false)', () => {
@@ -135,11 +135,11 @@ describe('Sidebar reactor legend aria-live scoping', () => {
 
 describe('Sidebar active item exposure', () => {
   it('marks only the active nav item with aria-current="page"', () => {
-    renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Terminal' }]);
+    renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Terminal Alpha' }]);
     const current = screen.getByTestId('sidebar-nav').querySelectorAll('[aria-current]');
     expect(current).toHaveLength(1);
     expect(current[0].getAttribute('aria-current')).toBe('page');
-    expect(current[0].textContent).toContain('Terminal');
+    expect(current[0].textContent).toContain('Terminal Alpha');
   });
 });
 
@@ -161,7 +161,7 @@ describe('Sidebar phone marker', () => {
     renderSidebar();
     await act(async () => {});
     expect(badges()).toEqual(['phone-badge-terminal2']);
-    expect(screen.getByText('Terminal 2').closest('button')?.querySelector('[aria-label="Phone attached"]')).not.toBeNull();
+    expect(screen.getByText('Terminal Beta').closest('button')?.querySelector('[aria-label="Phone attached"]')).not.toBeNull();
   });
   it('marks two attached slots', async () => {
     installControl(mkStatus({ phoneSlots: ['claude', 'codex'] }));
@@ -186,13 +186,13 @@ describe('Sidebar phone marker', () => {
   });
   it('phone attach never moves the PC active tab; a later empty push removes the marker', async () => {
     const push = installControl(mkStatus({ phoneSlots: [] }));
-    renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Terminal' }]);
+    renderSidebar([{ type: 'SET_ACTIVE_TAB', tab: 'Terminal Alpha' }]);
     await act(async () => {});
     push(mkStatus({ phoneSlots: ['terminal2'] }));
     const current = screen.getByTestId('sidebar-nav').querySelectorAll('[aria-current="page"]');
     expect(current).toHaveLength(1);
-    expect(current[0].textContent).toContain('Terminal');
-    expect(current[0].textContent).not.toContain('Terminal 2');
+    expect(current[0].textContent).toContain('Terminal Alpha');
+    expect(current[0].textContent).not.toContain('Terminal Beta');
     expect(badges()).toEqual(['phone-badge-terminal2']);
     push(mkStatus({ phoneSlots: [] }));
     expect(badges()).toEqual([]);

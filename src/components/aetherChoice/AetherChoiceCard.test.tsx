@@ -52,11 +52,13 @@ describe('AetherChoiceCard', () => {
     const states = [...container.querySelectorAll('[data-state]')].map(e => e.getAttribute('data-state'));
     expect(states).toEqual(['notApplied', 'queued']);
     expect(screen.getByText('halted here')).toBeTruthy();
+    expect(screen.getByText('TERMINAL ALPHA')).toBeTruthy();
+    expect(screen.getByText('TERMINAL BETA')).toBeTruthy();
     cleanup();
     bridge({}, mk(slot(), null));
     const again = await mount();
     expect(again.container.querySelectorAll('[data-state]').length).toBe(1);
-    expect(screen.queryByText('TERMINAL 2')).toBeNull();
+    expect(screen.queryByText('TERMINAL BETA')).toBeNull();
   });
 
   it('offers CLEAR HALT only for notApplied and clears then re-pulls', async () => {
