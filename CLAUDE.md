@@ -129,6 +129,8 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
   controlSettings.ts    owner of ~/.aether-os/control-settings.json (two persisted booleans: `reenableAtLaunch` and `phoneTyping`).
   terminalHub.ts        BUILT (V2): owns the three pty slots; main hands control only readPort() (list/attach/onState/retain). Mirror + 256 KB ring exist only while control is retained; cleared on release, quit, slot exit. Importers of the pty managers are guarded by controlBoundary rule 6.
   terminalBoard.ts      BUILT (S3): terminal board files for Alpha/Beta (privacy §19) - read snapshot, empty-entry reset on slot start/exit via `TerminalSlot.observe`; schema/validation/staleness in `src/shared/terminalBoard.ts`.
+  scripts/aether-board.mjs  BUILT (S4): agent-facing CLI for the terminal board (whoami/status/task/claim/release/blocked/clear); writes only its own file from AETHER_TERMINAL.
+                        Cannot import the TS module, so it carries a parity copy of the validator and 4 h window, pinned by scripts/aether-board.parity.test.ts.
   terminalMirror.ts     BUILT (V2): headless xterm screen model + bounded snapshot (the only @xterm/headless importer).
   permissionBroker.ts   BUILT (slice 1, observe-only): in-memory registry of pending permission prompts; main.ts open()s on the prompt path and close()s on desktop answer. Exposes only a read-only PromptReadPort to control; it never resolves a prompt.
   preload.ts            contextBridge → window.aetherElectron.* (frozen; matches
