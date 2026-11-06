@@ -53,9 +53,10 @@ export type BoardResetResult = { ok: true } | { ok: false; code: string };
 // write cannot land last. Each tail never rejects.
 const resetTails = new Map<string, Promise<void>>();
 
-/** Writes an empty entry for `terminal`. Never rejects; the failure result carries only an
- *  error code (no path, no message). Resets of the same file run one after another in call order. */
-export function resetTerminalBoardEntry(
+/** Writes an empty entry for `terminal`. I/O failures never reject; the failure result carries
+ *  only an error code (no path, no message). `async` so a type-violating `dir` rejects instead
+ *  of throwing synchronously. Resets of the same file run one after another in call order. */
+export async function resetTerminalBoardEntry(
   dir: string,
   terminal: BoardTerminal,
   nowMs: number,

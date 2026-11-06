@@ -205,6 +205,12 @@ describe('resetTerminalBoardEntry serialization', () => {
     gate.resolve();
     expect(await a).toEqual({ ok: true });
   });
+
+  it('rejects a non-string dir instead of throwing synchronously', async () => {
+    let p: Promise<unknown> | undefined;
+    expect(() => { p = resetTerminalBoardEntry(undefined as unknown as string, 'alpha', NOW); }).not.toThrow();
+    await expect(p).rejects.toBeInstanceOf(TypeError);
+  });
 });
 
 function fakePty() {
