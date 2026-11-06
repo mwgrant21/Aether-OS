@@ -12,10 +12,16 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { writeFileAtomically } from './atomicWrite';
 import { attachTerminalBoardReset, readTerminalBoardSnapshot, resetTerminalBoardEntry, terminalBoardFile } from './terminalBoard';
 import { createTerminalHub } from './terminalHub';
 import type { PtyLike } from './ptyLifecycle';
 import { TERMINAL_BOARD_STALE_MS, parseBoardEntry } from '../src/shared/terminalBoard';
+
+vi.mock('./atomicWrite', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./atomicWrite')>();
+  return { ...actual, writeFileAtomically: vi.fn(actual.writeFileAtomically) };
+});
 
 const NOW = 1_700_000_000_000;
 const tmp = () => mkdtempSync(join(tmpdir(), 'aether-tboard-'));
@@ -128,6 +134,82 @@ describe('terminal board files', () => {
     const v = (await readTerminalBoardSnapshot(dir, NOW)).terminals.alpha;
     expect(v.source).toBe('file');
     expect(v.stale).toBe(true);
+  });
+});
+
+function deferred() {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+describe('resetTerminalBoardEntry serialization', () => {
+  type Write = typeof writeFileAtomically;
+  const realWrite = async (...args: Parameters<Write>) =>
+    (await vi.importActual<typeof import('./atomicWrite')>('./atomicWrite')).writeFileAtomically(...args);
+
+  it('runs overlapping resets of one file in call order', async () => {
+    const dir = tmp();
+    const log: string[] = [];
+    const gate = deferred();
+    const entered = deferred();
+    vi.mocked(writeFileAtomically).mockImplementationOnce(async (...args) => {
+      log.push('start:A');
+      entered.resolve();
+      await gate.promise;
+      await realWrite(...args);
+      log.push('end:A');
+    });
+    vi.mocked(writeFileAtomically).mockImplementationOnce(async (...args) => {
+      log.push('start:B');
+      await realWrite(...args);
+      log.push('end:B');
+    });
+    const a = resetTerminalBoardEntry(dir, 'alpha', NOW);
+    await entered.promise;
+    const b = resetTerminalBoardEntry(dir, 'alpha', NOW + 1000);
+    await readTerminalBoardSnapshot(dir, NOW);
+    for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+    gate.resolve();
+    await Promise.all([a, b]);
+    expect(log).toEqual(['start:A', 'end:A', 'start:B', 'end:B']);
+    const parsed = parseBoardEntry(JSON.parse(readFileSync(terminalBoardFile(dir, 'alpha'), 'utf8')), 'alpha');
+    expect(parsed.ok && parsed.entry.updatedAt).toBe(new Date(NOW + 1000).toISOString());
+  });
+
+  it('a failed reset does not block the next one on the same file', async () => {
+    const dir = tmp();
+    vi.mocked(writeFileAtomically).mockImplementationOnce(async () => {
+      throw Object.assign(new Error('x'), { code: 'ENOSPC' });
+    });
+    const results = await Promise.all([
+      resetTerminalBoardEntry(dir, 'alpha', NOW),
+      resetTerminalBoardEntry(dir, 'alpha', NOW + 1000),
+    ]);
+    expect(results).toEqual([{ ok: false, code: 'ENOSPC' }, { ok: true }]);
+    expect(parseBoardEntry(JSON.parse(readFileSync(terminalBoardFile(dir, 'alpha'), 'utf8')), 'alpha').ok).toBe(true);
+  });
+
+  it('does not serialize across different files', async () => {
+    const dir = tmp();
+    const gate = deferred();
+    const entered = deferred();
+    vi.mocked(writeFileAtomically).mockImplementationOnce(async (...args) => {
+      entered.resolve();
+      await gate.promise;
+      await realWrite(...args);
+    });
+    const a = resetTerminalBoardEntry(dir, 'alpha', NOW);
+    await entered.promise;
+    expect(await resetTerminalBoardEntry(dir, 'beta', NOW)).toEqual({ ok: true });
+    gate.resolve();
+    expect(await a).toEqual({ ok: true });
+  });
+
+  it('rejects a non-string dir instead of throwing synchronously', async () => {
+    let p: Promise<unknown> | undefined;
+    expect(() => { p = resetTerminalBoardEntry(undefined as unknown as string, 'alpha', NOW); }).not.toThrow();
+    await expect(p).rejects.toBeInstanceOf(TypeError);
   });
 });
 

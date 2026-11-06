@@ -46,6 +46,7 @@ export type BoardParse = { ok: true; entry: TerminalBoardEntry } | { ok: false; 
 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 const ABSOLUTE_REF = /^(?:[A-Za-z]:|[\\/]|~)/;
+const FILE_URL_REF = /^file:/i;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -58,8 +59,13 @@ function isText(v: unknown, max: number, allowEmpty: boolean): v is string {
   if (v.length > max || CONTROL_CHARS.test(v)) return false;
   return allowEmpty || v.trim().length > 0;
 }
+function hasParentSegment(s: string): boolean {
+  return s.split(/[\\/]/).some((seg) => seg.trim() === '..');
+}
 function isRef(v: unknown): v is string {
-  return isText(v, BOARD_LIMITS.ref, false) && !ABSOLUTE_REF.test(v.trimStart());
+  if (!isText(v, BOARD_LIMITS.ref, false)) return false;
+  const s = v.trimStart();
+  return !ABSOLUTE_REF.test(s) && !FILE_URL_REF.test(s) && !hasParentSegment(s);
 }
 function oneOf<T extends string>(list: readonly T[], v: unknown): v is T {
   return typeof v === 'string' && (list as readonly string[]).includes(v);
