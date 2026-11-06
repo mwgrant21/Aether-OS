@@ -153,6 +153,12 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     await launch.cleanup();
     expect(await readdir(options.root)).toEqual([]);
   }, 40_000);
+  it('sets AETHER_TERMINAL=alpha for the connected Claude, overriding an inherited value', async () => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { PATH: process.env.PATH, AETHER_TERMINAL: 'beta' } }, dependencies);
+    expect(launch.env.AETHER_TERMINAL).toBe('alpha');
+    await launch.cleanup();
+  }, 40_000);
   it('fails without secrets when directory protection fails', async () => {
     const { options, dependencies } = await fixture();
     dependencies.protect = async () => { throw new Error('denied'); };

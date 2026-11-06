@@ -22,6 +22,9 @@ const API_KEY_ENV_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPI
 export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...source };
   for (const key of API_KEY_ENV_VARS) delete env[key];
+  // Drop a stale identity inherited from Aether's own parent shell; the real one
+  // comes from terminalIdentityEnv (explicit identity wins over inherited env).
+  delete env.AETHER_TERMINAL;
   // The renderer is xterm.js, which handles 24-bit color; advertise it so TUIs emit truecolor.
   env.COLORTERM = 'truecolor';
   return env;
@@ -63,6 +66,12 @@ export interface BridgePtyLaunch { scriptPath: string; env: NodeJS.ProcessEnv }
 // Marks a terminal's claude as unmonitored for scripts/aether-statusline.mjs,
 // which then renders its line but never writes the shared statusline.json.
 export const UNMONITORED_TERMINAL_ENV: NodeJS.ProcessEnv = { AETHER_STATUSLINE_NO_PERSIST: '1' };
+
+// Tells a CLI/skill running inside an Aether terminal which one it is. Spread
+// after buildPtyEnv (which strips any inherited value), so it always wins.
+export function terminalIdentityEnv(slot: 'claude' | 'terminal2'): NodeJS.ProcessEnv {
+  return { AETHER_TERMINAL: slot === 'claude' ? 'alpha' : 'beta' };
+}
 
 export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string) {
   if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
