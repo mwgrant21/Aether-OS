@@ -8,7 +8,7 @@ description: "Use inside an Aether terminal (Alpha or Beta, where AETHER_TERMINA
 Aether keeps one small board file per terminal (Alpha, Beta). You read and write it only through a CLI. The board is advisory: nothing blocks your tools, so following it is on you. Follow the steps in order.
 
 1. Run `echo "$AETHER_TERMINAL"`. Only `alpha` or `beta` means you are in an Aether terminal. Empty means you are not: stop here, do not use the board, and never write board files by hand. The Codex terminal has no board.
-2. Find the CLI and remember the path for the session. Test each candidate with `ls` and use the first that exists (forward slashes, always quoted):
+2. Find the CLI and remember the path for the session. First run `echo "$AETHER_BOARD_CLI"`. If it is non-empty and `ls "$AETHER_BOARD_CLI"` succeeds, `BOARD` is that value and you skip the list below (the variable carries a path only, never content; older Aether builds do not set it). Otherwise test each candidate with `ls` and use the first that exists (forward slashes, always quoted):
    - `<git toplevel>/scripts/aether-board.mjs` when the current directory is inside an aether-os checkout (`git rev-parse --show-toplevel`).
    - `"$LOCALAPPDATA/Programs/Aether OS/resources/scripts/aether-board.mjs"` (installed build default).
    - Neither exists: tell Matt "aether-board CLI not found", carry on without the board, and do not create files under `~/.aether-os/terminal-board`.
