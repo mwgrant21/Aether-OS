@@ -85,7 +85,7 @@ test.describe('Renderer CSP (built app over file://)', () => {
         await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
         await window.waitForTimeout(200);
       }
-      await sidebarNav.getByRole('button', { name: 'Terminal', exact: true }).click();
+      await sidebarNav.getByRole('button', { name: 'Terminal Alpha', exact: true }).click();
       await window.locator('.xterm-screen').first().waitFor({ state: 'visible', timeout: 10000 });
       await window.waitForTimeout(500);
       expect(await violations(window)).toEqual([]);

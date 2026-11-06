@@ -93,10 +93,10 @@ class ShellModelTest {
         assertFalse(closed.onBack().open)
     }
 
-    @Test fun claudeTitleIsOverriddenOthersKeepServerLabel() {
-        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("terminal2", "Terminal 2", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
-        assertEquals("CLAUDE", titleFor(tabs, "claude"))
-        assertEquals("Terminal 2", titleFor(tabs, "terminal2"))
+    @Test fun alphaBetaTitlesOthersKeepServerLabel() {
+        val tabs = listOf(Tab("claude", "Terminal Alpha", SlotState.RUNNING), Tab("terminal2", "Terminal Beta", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
+        assertEquals("ALPHA", titleFor(tabs, "claude"))
+        assertEquals("BETA", titleFor(tabs, "terminal2"))
         assertEquals("Codex", titleFor(tabs, "codex"))
         assertEquals("", titleFor(tabs, "zz"))
     }
@@ -127,13 +127,13 @@ class ShellModelTest {
         }
     }
 
-    @Test fun menuRowLabelForClaudeIsTitleCase() {
-        val rows = slotRows(listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING)), "claude")
-        assertEquals(listOf("Claude", "Codex"), rows.map { it.label })
+    @Test fun menuRowLabelsAreAlphaBetaTitleCase() {
+        val rows = slotRows(listOf(Tab("claude", "Terminal Alpha", SlotState.RUNNING), Tab("terminal2", "Terminal Beta", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING)), "claude")
+        assertEquals(listOf("Alpha", "Beta", "Codex"), rows.map { it.label })
     }
 
     @Test fun slotRowsKeepOrderingAndSelectionWithCaps() {
-        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("terminal2", "Terminal 2", SlotState.EXITED), Tab("codex", "Codex", SlotState.NOT_STARTED))
+        val tabs = listOf(Tab("claude", "Terminal Alpha", SlotState.RUNNING), Tab("terminal2", "Terminal Beta", SlotState.EXITED), Tab("codex", "Codex", SlotState.NOT_STARTED))
         val rows = slotRows(tabs, "terminal2")
         assertEquals(listOf("claude", "terminal2", "codex"), rows.map { it.s })
         assertEquals(listOf(false, true, false), rows.map { it.selected })
@@ -154,10 +154,10 @@ class ShellModelTest {
     }
 
     @Test fun ledgerTitleAndUnchangedSlotTitle() {
-        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
+        val tabs = listOf(Tab("claude", "Terminal Alpha", SlotState.RUNNING), Tab("codex", "Codex", SlotState.RUNNING))
         assertEquals("LEDGER", titleFor(tabs, "claude", AppView.LEDGER))
-        assertEquals("CLAUDE", titleFor(tabs, "claude"))
-        assertEquals("CLAUDE", titleFor(tabs, "claude", AppView.TERMINAL))
+        assertEquals("ALPHA", titleFor(tabs, "claude"))
+        assertEquals("ALPHA", titleFor(tabs, "claude", AppView.TERMINAL))
         assertEquals("Codex", titleFor(tabs, "codex"))
     }
 
@@ -191,7 +191,7 @@ class ShellModelTest {
     }
 
     @Test fun everyPaneHasItsOwnUpperCaseTitle() {
-        val tabs = listOf(Tab("claude", "Terminal", SlotState.RUNNING))
+        val tabs = listOf(Tab("claude", "Terminal Alpha", SlotState.RUNNING))
         val titles = AppView.values().filter { it.isPane }.map { titleFor(tabs, "claude", it) }
         assertEquals(listOf("PROJECTS", "MEMORY", "DASHBOARD", "ANALYTICS", "AGENTS", "COMMS"), titles)
     }

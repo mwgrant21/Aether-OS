@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { AetherStoreProvider } from '../../state/store';
 import { PtyTerminal2 } from './PtyTerminal2';
+import { Terminal2View } from './Terminal2View';
 const mocks = vi.hoisted(() => ({ write: vi.fn(), reset: vi.fn(), data: undefined as ((input: string) => void) | undefined, paste: vi.fn(), hasSelection: vi.fn(() => false), getSelection: vi.fn(() => ''), key: undefined as ((ev: KeyboardEvent) => boolean) | undefined, modes: { mouseTrackingMode: 'none' } }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options = {}; write = mocks.write; reset = mocks.reset;
@@ -170,4 +171,10 @@ it('enables marker colors from cfg.terminalMarkerColors and follows the toggle',
   expect(markers.setEnabled).toHaveBeenLastCalledWith(true);
   fireEvent.click(getByText('flip'));
   expect(markers.setEnabled).toHaveBeenLastCalledWith(false);
+});
+
+it('labels the second terminal Terminal Beta in its banner and its no-Electron fallback', () => {
+  const { getByText } = render(<AetherStoreProvider><Terminal2View /></AetherStoreProvider>);
+  expect(getByText('TERMINAL BETA · UNMONITORED')).toBeTruthy();
+  expect(getByText(/^Terminal Beta requires the Electron app/)).toBeTruthy();
 });

@@ -71,7 +71,7 @@ test.describe('Aether OS smoke', () => {
     // The native PTY and production IPC are real; launchApp places harmless CLIs on PATH.
     const { app, window } = await launchApp();
     try {
-      await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal', exact: true }).click();
+      await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Terminal Alpha', exact: true }).click();
       await window.locator('.xterm-screen').waitFor({ state: 'visible', timeout: 10000 });
 
       // Assert on .xterm-rows, NOT .xterm-screen. xterm's DOM renderer injects its own

@@ -84,7 +84,7 @@ test('built composer: both entry points, isolated copy/focus, and native PTY pas
 
     // Pending native input is independently observed by the fixture. Copy and
     // focus add no user input and focus lands on xterm's real helper textarea.
-    await sidebar(window, 'Terminal');
+    await sidebar(window, 'Terminal Alpha');
     const terminal = window.locator('.xterm-helper-textarea');
     await terminal.focus();
     await startRecorder(app, root, command);

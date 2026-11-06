@@ -38,8 +38,8 @@ describe('control protocol matches protocol/mobile-protocol.json', () => {
 
 describe('terminal frames match the goldens byte for byte', () => {
   const sessions: TerminalInfo[] = [
-    { s: 'claude', label: 'Terminal', state: 'running', cols: 100, rows: 30, q: 12 },
-    { s: 'terminal2', label: 'Terminal 2', state: 'not-started', cols: 0, rows: 0, q: 0 },
+    { s: 'claude', label: 'Terminal Alpha', state: 'running', cols: 100, rows: 30, q: 12 },
+    { s: 'terminal2', label: 'Terminal Beta', state: 'not-started', cols: 0, rows: 0, q: 0 },
     { s: 'codex', label: 'Codex', state: 'exited', cols: 80, rows: 24, q: 5 },
   ];
   it('welcomeSessions', () => {

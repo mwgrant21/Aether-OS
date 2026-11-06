@@ -31,7 +31,7 @@ export function OpenTerminalButton({ live = false, variant = 'primary' }: { live
   return (
     <div style={secondary ? secondaryWrapStyle : primaryWrapStyle}>
       <Button
-        onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal' })}
+        onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: 'Terminal Alpha' })}
         aria-disabled={desktop ? undefined : true}
         aria-describedby={desktop ? undefined : reasonId}
         style={style}

@@ -59,8 +59,8 @@ object ControlProtocol {
     data class Slot(val s: String, val label: String)
 
     val SLOTS: List<Slot> = listOf(
-        Slot("claude", "Terminal"),
-        Slot("terminal2", "Terminal 2"),
+        Slot("claude", "Terminal Alpha"),
+        Slot("terminal2", "Terminal Beta"),
         Slot("codex", "Codex"),
     )
 

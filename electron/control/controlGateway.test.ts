@@ -213,8 +213,8 @@ function fakePort(info: TerminalInfo[] = []) {
   return { port, attaches, stateCbs, calls, unsubs: () => unsubs, failDetach: () => { failDetach = true; } };
 }
 const INFO: TerminalInfo[] = [
-  { s: 'claude', label: 'Terminal', state: 'running', cols: 100, rows: 30, q: 12 },
-  { s: 'terminal2', label: 'Terminal 2', state: 'not-started', cols: 0, rows: 0, q: 0 },
+  { s: 'claude', label: 'Terminal Alpha', state: 'running', cols: 100, rows: 30, q: 12 },
+  { s: 'terminal2', label: 'Terminal Beta', state: 'not-started', cols: 0, rows: 0, q: 0 },
   { s: 'codex', label: 'Codex', state: 'exited', cols: 80, rows: 24, q: 5 },
 ];
 const attachFrame = (s: string, q?: number): string => JSON.stringify(q === undefined ? { t: 'attach', s } : { t: 'attach', s, q });

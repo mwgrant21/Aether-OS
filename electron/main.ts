@@ -1779,7 +1779,7 @@ registerControlIpc(ipcMain, controlHubForIpc, event => !!mainWindow
     type: 'warning',
     title: 'Allow phone control?',
     message: 'Let a paired Android app type into your terminals and approve permission prompts?',
-    detail: 'This is equivalent to your keyboard on this PC: a paired app can type into Terminal, Terminal 2 and Codex and answer their permission prompts.\n\n'
+    detail: 'This is equivalent to your keyboard on this PC: a paired app can type into Terminal Alpha, Terminal Beta and Codex and answer their permission prompts.\n\n'
       + 'It works over Tailscale only, and pairing needs a code AND a confirm on this PC.\n\n'
       + (controlHub.status().reenableAtLaunch
         ? 'Re-enable at launch is on, so phone control comes back when Aether restarts.'

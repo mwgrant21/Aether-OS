@@ -31,7 +31,7 @@ export function TerminalView() {
             border: `1px solid ${colors.panelBorder}`, color: colors.accentCyanSoft, font: `400 11px/1 ${fonts.mono}` }}>
             Cross-check with Codex
           </Button>
-          <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL · zsh</span>
+          <span style={{ font: `400 11px/1 ${fonts.mono}`, color: colors.textDim }}>TERMINAL ALPHA · zsh</span>
         </div>
 
         <CommunicationClientStatus inTerminal />

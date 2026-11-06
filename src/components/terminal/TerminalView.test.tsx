@@ -32,6 +32,7 @@ describe('TerminalView header', () => {
     renderView();
     expect(screen.getByTestId('terminal-session-status').textContent).toBe(':~$ standby');
     expect(screen.getByTestId('terminal-session-dot').style.boxShadow).toBe('');
+    expect(screen.getByText('TERMINAL ALPHA · zsh')).toBeTruthy();
   });
 
   it('reads "session active" with a lit dot once a session is live', () => {
