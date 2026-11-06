@@ -160,3 +160,18 @@ describe('resolveNightPlan: unfinished', () => {
     expect(resolve(tmp('afk-resolve'), NOW)).toMatchObject({ kind: 'none', allowRules: [] });
   });
 });
+describe('resolveNightPlan: the catch-all reason', () => {
+  it('a draft that makes the code throw yields "resolve failed:" with the error name only, never its message', () => {
+    const d = tmp('afk-resolve'); draftWith(d, two()); writeFileSync(draftPath(d), JSON.stringify({ items: [null] }));
+    const r = resolve(d, NOW);
+    expect(r).toMatchObject({ kind: 'none', items: [] });
+    expect(r.reason).toMatch(/^resolve failed: TypeError$/); expect(r.reason).not.toMatch(/Cannot read|null|undefined/);
+  });
+  it('an fs-error-shaped throw keeps its code but leaves the absolute path out', async () => {
+    const d = tmp('afk-resolve'); await approvedYesterday(d);
+    const err = Object.assign(new Error("EACCES: permission denied, open 'C:\\Users\\secret\\afk\\approved.json'"), { code: 'EACCES' });
+    const r = resolveNightPlan({ aetherDir: d, homeDir: HOME, probes: okProbes, nowMs: { valueOf() { throw err; } } as any });
+    expect(r.kind).toBe('none'); expect(r.reason).toBe('resolve failed: Error EACCES');
+    expect(r.reason).not.toContain('secret');
+  });
+});

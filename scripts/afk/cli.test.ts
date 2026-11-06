@@ -232,6 +232,30 @@ describe('main() additions beyond the plan test (in process)', () => {
     expect(await main(['terms', 'set', 'opusEscalation', 'true'], deps(home, out))).toBe(0);
     expect(out.join(' ')).not.toMatch(/WARNING/);
   });
+  it('amend on an invalid terms file warns by reason and exits 0; a valid file prints no warning', async () => {
+    const home = tmpHome(); putHandoff(home, T0);
+    await main(['compile', '--project', 'p'], deps(home));
+    writeFileSync(termsPath(aether(home)), JSON.stringify({ ...DEFAULT_TERMS, push: false, extra: 1 }));
+    const out: string[] = [];
+    expect(await main(['amend', 'opusEscalation', 'true'], deps(home, out))).toBe(0);
+    const text = out.join('\n');
+    expect(text).toMatch(/WARNING live terms/); expect(text.indexOf('WARNING live terms')).toBeLessThan(text.indexOf('draft amended'));
+    const ok = tmpHome(); putHandoff(ok, T0); await main(['compile', '--project', 'p'], deps(ok));
+    const out2: string[] = [];
+    expect(await main(['amend', 'opusEscalation', 'true'], deps(ok, out2))).toBe(0);
+    expect(out2.join(' ')).not.toMatch(/WARNING/);
+  });
+  it('install-skill with an apostrophe in the CLI path exits 4 naming the problem, and writes nothing', async () => {
+    const out: string[] = []; const home = tmpHome();
+    expect(await main(['install-skill'], deps(home, out, T0, { cliPath: "C:/Users/O'Brien/afk.mjs" }))).toBe(4);
+    expect(out.join('\n')).toMatch(/quote, newline or backtick/); expect(out.join('\n')).not.toContain("O'Brien");
+    expect(existsSync(join(home, '.claude'))).toBe(false);
+  });
+  it('install-skill with a missing template exits 4, names the path and writes nothing', async () => {
+    const out: string[] = []; const home = tmpHome(); const missing = join(home, 'nope', 'SKILL.md');
+    expect(await main(['install-skill'], deps(home, out, T0, { templatePath: missing }))).toBe(4);
+    expect(out.join('\n')).toContain(missing); expect(existsSync(join(home, '.claude'))).toBe(false);
+  });
   it('cli.mjs reads no clock', () => {
     expect(readFileSync(fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'utf8')).not.toContain('Date.now');
   });

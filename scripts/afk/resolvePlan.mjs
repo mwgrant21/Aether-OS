@@ -58,6 +58,8 @@ export function resolveNightPlan({ aetherDir, homeDir, repoRoots, probes, nowMs 
     }
     return none('no current approved night and nothing confirmed');
   } catch (e) {
-    return none(`resolve failed: ${e instanceof Error ? e.message : String(e)}`);
+    // Name and code only: an fs error's message can carry an absolute path, and `plan` prints this reason.
+    const code = typeof e?.code === 'string' ? ` ${e.code}` : '';
+    return none(`resolve failed: ${typeof e?.name === 'string' ? e.name : 'Error'}${code}`);
   }
 }
