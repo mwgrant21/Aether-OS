@@ -363,11 +363,10 @@ function loadOwn(me, nowMs) {
   return emptyEntry(me, nowMs);
 }
 
+/** Writes an entry that already went through assertValid (the validated copy it returned). */
 function persist(me, entry, nowMs) {
   entry.updatedAt = new Date(nowMs).toISOString();
-  const check = parseBoardEntry(JSON.parse(JSON.stringify(entry)), me);
-  if (!check.ok) throw new CliError(1, `aether-board: refusing to write an invalid entry (${check.reason})`);
-  const text = JSON.stringify(check.entry, null, 2) + '\n';
+  const text = JSON.stringify(entry, null, 2) + '\n';
   try {
     mkdirSync(boardDir(), { recursive: true, mode: 0o700 });
     writeFileAtomically(boardFile(me), text);
@@ -417,7 +416,7 @@ function cmdStatus(flags) {
 function cmdClear(me) {
   const nowMs = Date.now();
   loadOwn(me, nowMs); // surfaces the invalid-file warning; the result is replaced anyway
-  persist(me, emptyEntry(me, nowMs), nowMs);
+  persist(me, assertValid(me, emptyEntry(me, nowMs)), nowMs);
 }
 
 // Comparison key only; the STORED ref is exactly as given. "155", "#155" and "PR 155" collide.
@@ -432,7 +431,10 @@ function refKey(ref) {
 
 const OTHER = { alpha: 'beta', beta: 'alpha' };
 
-/** Runs the assembled entry through the carried validator before anything is written. */
+/**
+ * Runs the assembled entry through the carried validator before anything is written, once per
+ * write verb. Returns the validated, rebuilt copy, which is what persist() must be given.
+ */
 function assertValid(me, entry) {
   const check = parseBoardEntry(JSON.parse(JSON.stringify(entry)), me);
   if (!check.ok) {
@@ -441,6 +443,13 @@ function assertValid(me, entry) {
       `aether-board: invalid input (${check.reason}); check length limits, control characters, and that refs are relative with no ".." segment. Nothing written.`,
     );
   }
+  return check.entry;
+}
+
+// POSIX single-quote a string for the conflict hint. Literal for ", $, ` and \ in bash and
+// PowerShell; an embedded ' uses the bash-only '\'' form (rare, accepted).
+function shQuote(s) {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function cmdTask(me, flags, positionals) {
@@ -453,8 +462,7 @@ function cmdTask(me, flags, positionals) {
   const nowMs = Date.now();
   const entry = loadOwn(me, nowMs);
   entry.task = { title: positionals[0], project: flags.project === undefined ? '' : flags.project, status };
-  assertValid(me, entry);
-  persist(me, entry, nowMs);
+  persist(me, assertValid(me, entry), nowMs);
   process.stdout.write(`task set: ${status} "${positionals[0]}"\n`);
 }
 
@@ -475,7 +483,7 @@ function cmdClaim(me, flags, positionals) {
     if (flags.note !== undefined) claim.note = flags.note;
     entry.claims.push(claim);
   }
-  assertValid(me, entry);
+  const valid = assertValid(me, entry);
 
   const other = OTHER[me];
   const view = readView(other, nowMs);
@@ -485,11 +493,11 @@ function cmdClaim(me, flags, positionals) {
     const note = theirs.note ? `, "${theirs.note}"` : '';
     throw new CliError(
       3,
-      `CONFLICT: ${theirs.ref} is claimed by ${other} (${theirs.kind}, since ${theirs.since}${note}). Do not edit it and do not wait. Run: aether-board blocked "${theirs.ref}" and continue with other work.`,
+      `CONFLICT: ${theirs.ref} is claimed by ${other} (${theirs.kind}, since ${theirs.since}${note}). Do not edit it and do not wait. Run: aether-board blocked ${shQuote(theirs.ref)} and continue with other work.`,
     );
   }
   if (theirs && view.stale) notice = `note: ${other}'s board is stale; its claim on ${theirs.ref} was ignored\n`;
-  persist(me, entry, nowMs);
+  persist(me, valid, nowMs);
   process.stdout.write(notice + `claimed ${kind} ${ref}\n`);
 }
 
@@ -506,7 +514,7 @@ function cmdRelease(me, positionals) {
   }
   entry.claims = claims;
   entry.blockedBy = blockedBy;
-  persist(me, entry, nowMs);
+  persist(me, assertValid(me, entry), nowMs);
   process.stdout.write(`released ${positionals[0]}\n`);
 }
 
@@ -521,8 +529,7 @@ function cmdBlocked(me, positionals) {
   const entry = loadOwn(me, nowMs);
   entry.blockedBy = entry.blockedBy.filter((b) => !(b.owner === other && refKey(b.ref) === key));
   entry.blockedBy.push({ ref: theirs.ref, owner: other });
-  assertValid(me, entry);
-  persist(me, entry, nowMs);
+  persist(me, assertValid(me, entry), nowMs);
   process.stdout.write(`blocked by ${other} on ${theirs.ref}\n`);
 }
 
