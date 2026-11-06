@@ -402,3 +402,36 @@ describe('aether-board privacy and limit matrix', () => {
     expect(bytes(home, 'alpha').equals(before)).toBe(true);
   });
 });
+
+describe('aether-board relative-path aliases', () => {
+  it.each(['./src/x.ts', 'src//x.ts', 'src/x.ts/', 'src/./x.ts', 'SRC\\x.ts'])(
+    'beta claiming alias %j of alpha\'s src/x.ts exits 3 naming alpha',
+    (alias) => {
+      const home = newHome();
+      expect(run(home, 'alpha', 'claim', 'file', 'src/x.ts').status).toBe(0);
+      const r = run(home, 'beta', 'claim', 'file', alias);
+      expect(r.status).toBe(3);
+      expect(r.stderr).toContain('claimed by alpha');
+      expect(existsSync(fileOf(home, 'beta'))).toBe(false);
+    },
+  );
+
+  it('blocked and release match the alias, and the conflict hint is copy-pasteable', () => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'pr', 'PR 155').status).toBe(0);
+    expect(run(home, 'alpha', 'claim', 'file', 'src/x.ts').status).toBe(0);
+    const c = run(home, 'beta', 'claim', 'pr', '#155');
+    expect(c.stderr).toContain('aether-board blocked "PR 155" and');
+    expect(run(home, 'beta', 'blocked', './src/x.ts').status).toBe(0);
+    expect(readEntry(home, 'beta').blockedBy).toEqual([{ ref: 'src/x.ts', owner: 'alpha' }]);
+    expect(run(home, 'beta', 'release', './src/x.ts').status).toBe(0);
+    expect(readEntry(home, 'beta').blockedBy).toEqual([]);
+  });
+
+  it('a ref that reduces to nothing does not collide with an unrelated ref', () => {
+    const home = newHome();
+    expect(run(home, 'alpha', 'claim', 'file', '.').status).toBe(0);
+    expect(run(home, 'beta', 'claim', 'file', 'src').status).toBe(0);
+    expect(run(home, 'beta', 'claim', 'file', './').status).toBe(3);
+  });
+});

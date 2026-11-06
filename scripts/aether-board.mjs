@@ -424,7 +424,10 @@ function cmdClear(me) {
 function refKey(ref) {
   const s = ref.toLowerCase().replace(/\\/g, '/');
   const m = /^(?:pr\s*)?#?(\d+)$/i.exec(s);
-  return m ? `#${m[1]}` : s;
+  if (m) return `#${m[1]}`;
+  // Relative-path aliases: drop "." segments, repeated and trailing separators. A ref that
+  // reduces to nothing (".", "./") keys as "." so it only equals other spellings of itself.
+  return s.split('/').filter((seg) => seg !== '' && seg !== '.').join('/') || '.';
 }
 
 const OTHER = { alpha: 'beta', beta: 'alpha' };
@@ -482,7 +485,7 @@ function cmdClaim(me, flags, positionals) {
     const note = theirs.note ? `, "${theirs.note}"` : '';
     throw new CliError(
       3,
-      `CONFLICT: ${theirs.ref} is claimed by ${other} (${theirs.kind}, since ${theirs.since}${note}). Do not edit it and do not wait. Run: aether-board blocked ${ref} and continue with other work.`,
+      `CONFLICT: ${theirs.ref} is claimed by ${other} (${theirs.kind}, since ${theirs.since}${note}). Do not edit it and do not wait. Run: aether-board blocked "${theirs.ref}" and continue with other work.`,
     );
   }
   if (theirs && view.stale) notice = `note: ${other}'s board is stale; its claim on ${theirs.ref} was ignored\n`;
