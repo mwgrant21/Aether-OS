@@ -15,7 +15,7 @@ import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 import {
   cellAt, cellWordBounds, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
-  caretInCell, extendFromWord, splitSelection, liveSpan, joinSelectionText,
+  caretInCell, extendFromWord, dragHandle, splitSelection, liveSpan, joinSelectionText,
 } from './selection.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
@@ -69,6 +69,10 @@ function slotFor(id) {
   term.loadAddon(fit);
   term.open(livex);
   slot = { id, el, hist, livex, term, fit, sized: false, dirty: false, histKey: null, histTimer: 0 };
+  // Handles ride the text, so they re-place when either scroller moves.
+  const replace = () => { if (sel && sel.slot === slot) placeHandles(); };
+  el.addEventListener('scroll', replace, { passive: true });
+  livex.addEventListener('scroll', replace, { passive: true });
   // Input only while stdin is on, and never mouse/focus reports (inputFilter). Resize is
   // reported only while the page is fitting itself (V0 demo); titan owns the size otherwise.
   term.onData((d) => {
@@ -396,6 +400,123 @@ function render() {
   const span = liveSpan(parts.live, sel.cols);
   if (span) sel.slot.term.select(span.col, sel.base + span.row, span.len);
   else sel.slot.term.clearSelection();
+  placeHandles();
+}
+
+// ---- Selection handles (touch only): two draggable carets in an overlay OUTSIDE #term, so a touch
+// on one never reaches the root listeners (tap-to-clear, long-press, alt scroll). Geometry is
+// DEVICE-UNVERIFIED: history uses one-character Range rects with fallbacks, live uses cell math.
+const HANDLE_LIFT_PX = 20; // the probe sits above the finger so the caret stays visible
+const HANDLE_BOX_PX = 44;
+let handlesArmed = false; // a touch long-press created the current selection
+let heldHandle = null; // 'start' | 'end' while a handle is being dragged
+let handleEls = null; // { box, start, end }
+
+function ensureHandles() {
+  if (handleEls) return handleEls;
+  const box = document.createElement('div');
+  box.id = 'selhandles';
+  box.style.display = 'none';
+  const make = (which) => {
+    const el = document.createElement('div');
+    el.className = `selhandle ${which}`;
+    el.style.display = 'none';
+    const dot = document.createElement('div');
+    dot.className = 'selhandle-dot';
+    el.appendChild(dot);
+    el.addEventListener('touchstart', (ev) => {
+      if (!sel || ev.touches.length !== 1) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      heldHandle = which;
+    }, { passive: false });
+    el.addEventListener('touchmove', (ev) => {
+      if (!heldHandle || !sel) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const t = ev.touches[0];
+      if (!t) return;
+      const pt = pointAt(sel, t.clientX, t.clientY - HANDLE_LIFT_PX);
+      if (!pt) return;
+      const r = dragHandle({ s: sel.s, e: sel.e }, heldHandle, pt);
+      sel.s = r.s;
+      sel.e = r.e;
+      heldHandle = r.which;
+      render();
+    }, { passive: false });
+    const release = () => { heldHandle = null; };
+    el.addEventListener('touchend', release);
+    el.addEventListener('touchcancel', release);
+    box.appendChild(el);
+    return el;
+  };
+  const start = make('start');
+  const end = make('end');
+  document.body.appendChild(box);
+  handleEls = { box, start, end };
+  return handleEls;
+}
+
+// Screen anchor { x, y } (caret x, row bottom) of a selection point, or null when it is off-screen.
+function handleAnchor(pt, which) {
+  const slot = sel.slot;
+  const sr = slot.el.getBoundingClientRect();
+  let a = null;
+  if (pt.line < sel.histCount) {
+    const row = sel.rows[pt.line];
+    const text = sel.lines[pt.line];
+    const off = clamp(pt.off, 0, text.length);
+    // One-character range beside the caret: start prefers the char after it (its left edge), end the
+    // char before it (its right edge); the other side and then the row box are the fallbacks.
+    const edge = (from, to, useLast) => {
+      if (from < 0 || to > text.length || from >= to) return null;
+      const range = document.createRange();
+      range.setStart(...domPos(row, from));
+      range.setEnd(...domPos(row, to));
+      const rects = range.getClientRects();
+      if (!rects.length) return null;
+      const rc = useLast ? rects[rects.length - 1] : rects[0];
+      return { x: useLast ? rc.right : rc.left, y: rc.bottom };
+    };
+    const after = () => edge(off, off + 1, false);
+    const before = () => edge(off - 1, off, true);
+    a = (which === 'start' ? after() || before() : before() || after());
+    if (!a) {
+      const rc = row.getBoundingClientRect(); // blank row, or a Range with no rects
+      a = { x: rc.left, y: rc.bottom };
+    }
+  } else {
+    const screen = sel.slot.term.element && sel.slot.term.element.querySelector('.xterm-screen');
+    if (!screen) return null;
+    const buf = sel.slot.term.buffer.active;
+    const vr = sel.base + (pt.line - sel.histCount) - buf.viewportY;
+    const rows = sel.slot.term.rows;
+    if (vr < 0 || vr >= rows || !sel.cols) return null;
+    const r = screen.getBoundingClientRect();
+    a = { x: r.left + (clamp(pt.off, 0, sel.cols) * r.width) / sel.cols, y: r.top + ((vr + 1) * r.height) / rows };
+  }
+  if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || !inRect(sr, a.x, a.y)) return null;
+  return a;
+}
+
+function placeHandles() {
+  const show = sel && handlesArmed && !selDragging;
+  if (!show && !handleEls) return;
+  const h = ensureHandles();
+  h.box.style.display = show ? 'block' : 'none';
+  if (!show) return;
+  for (const [which, pt] of [['start', sel.s], ['end', sel.e]]) {
+    const el = h[which];
+    const a = handleAnchor(pt, which);
+    if (!a) {
+      el.style.display = 'none';
+      continue;
+    }
+    el.style.display = 'block';
+    // start sits left of its caret and end right of it, so neither covers the selected text.
+    el.style.left = `${which === 'start' ? a.x - HANDLE_BOX_PX + 8 : a.x - 8}px`;
+    el.style.top = `${a.y}px`;
+  }
 }
 
 function extendSel(x, y) {
@@ -421,6 +542,9 @@ function clearSel() {
   const cur = sel;
   sel = null;
   selDragging = false;
+  handlesArmed = false;
+  heldHandle = null;
+  placeHandles();
   cur.slot.term.clearSelection();
   if (histApi()) CSS.highlights.delete('aether-sel');
   send({ t: 'sel', s: cur.slot.id, on: false });
@@ -435,7 +559,10 @@ const lpTouch = createLongPress({
   slopPx: TOUCH_SLOP_PX,
   onFire: (x, y) => {
     tapTouch = null;
-    if (beginSel(x, y)) selDragging = true;
+    if (beginSel(x, y)) {
+      selDragging = true;
+      handlesArmed = true; // shown once the finger lifts
+    }
   },
 });
 const lpMouse = createLongPress({
@@ -530,12 +657,14 @@ root.addEventListener('touchend', () => {
   if (tapTouch && Date.now() - tapTouch.at < TAP_MAX_MS) clearSel(); // a tap leaves selection mode
   tapTouch = null;
   altEnd(true);
+  placeHandles();
 });
 root.addEventListener('touchcancel', () => {
   lpTouch.end();
   selDragging = false;
   tapTouch = null;
   altEnd();
+  placeHandles();
 });
 
 // Mouse (Phone Link etc.): Pointer Events drag + wheel. Touch pointers are left to the touch

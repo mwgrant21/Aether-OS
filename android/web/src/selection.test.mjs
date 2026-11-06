@@ -324,7 +324,7 @@ describe('main.js wiring', () => {
 
   it('imports the combined-selection helpers the selection engine calls', () => {
     const src = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
-    for (const name of ['splitSelection', 'extendFromWord', 'joinSelectionText']) {
+    for (const name of ['splitSelection', 'extendFromWord', 'joinSelectionText', 'dragHandle']) {
       expect(src).toMatch(new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from '\\./selection\\.js'`));
     }
   });
