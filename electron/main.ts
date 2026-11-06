@@ -14,6 +14,8 @@ import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { createTerminalHub } from './terminalHub';
+import { attachTerminalBoardReset, resetTerminalBoardEntry } from './terminalBoard';
+import { TERMINAL_BOARD_DIR_NAME } from '../src/shared/terminalBoard';
 import { createAetherChoiceRuntime } from './aetherChoice/runtime';
 import { loadPicks, savePicks, defaultPicksDir } from './aetherChoice/pickStore';
 import { scanAllProjects } from './historyScanner';
@@ -1387,6 +1389,13 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const terminalHub = createTerminalHub();
+// Empty the Alpha/Beta board entry whenever that slot's PTY starts or exits (privacy section 19).
+attachTerminalBoardReset(
+  { claude: terminalHub.slot('claude'), terminal2: terminalHub.slot('terminal2') },
+  (terminal) => resetTerminalBoardEntry(join(aetherOsDir, TERMINAL_BOARD_DIR_NAME), terminal, Date.now()).then((r) => {
+    if (!r.ok) diagLog.write(`[diag] terminal-board reset failed terminal=${terminal} code=${r.code} at=${new Date().toISOString()}`);
+  }),
+);
 // AETHER_CHOICE_HOST=1 switch: null when unset, so every call site below is a no-op.
 // writePort is the ENGINE port; the user-input wrapper is only for the phone path.
 const aetherChoice = createAetherChoiceRuntime({

@@ -939,3 +939,21 @@ If a revoke cannot be saved, it still takes effect in memory at once and the sta
 - Treat it as R3-class: a pairing code or a paired phone is a password to a model that can act on this PC.
 
 **Guarded by.** `electron/voice/voiceBoundary.test.ts` (one `listen(` call after `assertBindableHost`, `noServer` WebSockets, one `claude` launch with the pinned flags, no disk writes, no pty or Electron value imports, no wildcard literal, no `process.env` spread, closed client message set), alongside `electron/remote/noWildcardListener.test.ts` (which keeps every wildcard bind out of `electron/` and `scripts/`) and `src/shared/noApiCalls.test.ts` (which allow-lists `voiceSession.ts` as a `claude` launch site).
+
+---
+
+## 19. Terminal board (Alpha/Beta coordination file) - local files only, no listener
+
+Added with S3 of the terminal identity work (2026-11-05). It lets the agents in Terminal Alpha and Terminal Beta see what the other is working on so they do not collide. It is two small local files and nothing else: no listener, no IPC channel, nothing sent over the tailnet, nothing in the phone view. Code: `src/shared/terminalBoard.ts` (schema, validation, staleness) and `electron/terminalBoard.ts` (read and reset).
+
+**What is stored.** `~/.aether-os/terminal-board/alpha.json` and `beta.json`, one per terminal. Each holds a schema version, the terminal name, an `updatedAt` heartbeat, a `task` (title, project, status: working, idle, blocked or waiting-on-user) or null, a list of claims (kind: pr, branch, worktree or file; a ref; a `since` time; an optional note) and a list of `blockedBy` (a ref and which terminal owns it).
+
+**Signal, not payload.** The limits are enforced when a file is read: title up to 120 characters, project up to 80, ref up to 200, note up to 200, at most 50 claims and 50 blockedBy entries. A ref is a PR number, a branch name or a project-relative path, never an absolute path (a ref that starts with a drive letter, `/`, `\` or `~` is rejected). No prompts, no command text, no tool output. Strings with control characters (so no newlines) are rejected, and a file that breaks any rule is treated as invalid rather than trimmed.
+
+**Who writes.** Aether's main process writes only an EMPTY entry (no task, no claims), when a terminal's PTY starts and again when it exits. The Codex terminal has no board. The agent-side command that would fill an entry is planned for a later slice and does not exist yet, so today the files only ever hold empty entries.
+
+**Who reads.** Any local process running as you. The file is readable by any process running as the user; there is no access control beyond the folder's. Aether itself has a read function (`readTerminalBoardSnapshot`) but no screen or IPC uses it yet.
+
+**At rest.** Inside `~/.aether-os`, so the user-only protections described in section 7 apply. Writes go through the same atomic-replace helper as other Aether files.
+
+**Retention and staleness.** An entry whose `updatedAt` is more than 4 hours old is treated as stale and its claims do not block. The files are reset on every PTY start and exit and are otherwise kept; Settings → Purge does not delete them. The board is advisory: nothing enforces it.
