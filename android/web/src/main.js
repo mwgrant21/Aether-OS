@@ -15,6 +15,7 @@ import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 import {
   cellAt, cellWordBounds, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
+  caretInCell, extendFromWord, splitSelection, liveSpan, joinSelectionText,
 } from './selection.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
@@ -36,7 +37,7 @@ let altTouchAt = -Infinity; // last intercepted alt-screen drag; follow() stays 
 const ALT_FOLLOW_QUIET_MS = 600;
 // Long-press selection (see the Selection block below). While it exists the settled region is not
 // rebuilt (the DOM Range would die) and follow() stays quiet; both catch up when it clears.
-let sel = null; // { kind: 'live'|'hist', slot, ... }
+let sel = null; // { slot, base, cols, histCount, rows, lines, word, s, e }: one span over hist + live
 let selDragging = false; // a touch long-press fired and the finger is still down
 
 function slotFor(id) {
@@ -266,13 +267,13 @@ bridge.onmessage = (ev) => {
   }
 };
 
-// ---- Selection: long-press (touch, or held mouse) then drag, inside the region it started in.
-// LIVE grid: cell hit-test + term.select. SETTLED history: caretRangeFromPoint + the CSS Custom
-// Highlight API (no native DOM selection, so no WebView handles). Reporting is only sel on/off.
+// ---- Selection: long-press (touch, or held mouse) then drag; one span that may cross from settled
+// history into the live grid. LIVE grid: cell hit-test + term.select. SETTLED history:
+// caretRangeFromPoint + the CSS Custom Highlight API (no native DOM selection, so no WebView
+// handles). Reporting is only sel on/off.
 const inRect = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const histApi = () => typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function';
-const cmpPt = (a, b) => (a.line - b.line) || (a.off - b.off);
 
 function liveCell(slot, x, y) {
   const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
@@ -289,7 +290,11 @@ function histLines(slot) {
 
 function histPoint(slot, rows, x, y) {
   const hr = slot.hist.getBoundingClientRect();
-  const r = document.caretRangeFromPoint(clamp(x, hr.left + 1, hr.right - 1), clamp(y, hr.top + 1, hr.bottom - 1));
+  // caretRangeFromPoint returns null outside the window, so clamp to hist rect and window both.
+  const r = document.caretRangeFromPoint(
+    clamp(x, Math.max(hr.left, 0) + 1, Math.min(hr.right, window.innerWidth) - 1),
+    clamp(y, Math.max(hr.top, 0) + 1, Math.min(hr.bottom, window.innerHeight) - 1),
+  );
   if (!r) return null;
   const line = rows.findIndex((row) => row.contains(r.startContainer));
   if (line < 0) return null;
@@ -311,73 +316,104 @@ function domPos(row, off) {
   return last ? [last, last.length] : [row, 0];
 }
 
+// Which region (x,y) is in: the live grid when y is at or below its top (or history is unavailable,
+// histCount 0), else settled history. null when neither exists.
+function regionOf(ctx, x, y) {
+  const screen = ctx.slot.term.element && ctx.slot.term.element.querySelector('.xterm-screen');
+  if (screen && (ctx.histCount === 0 || y >= screen.getBoundingClientRect().top)) return 'live';
+  return ctx.histCount > 0 ? 'hist' : null;
+}
+
+// Combined point under (x,y): history logical line + UTF-16 caret, or histCount + live row (relative
+// to ctx.base) + cell-column caret. null when nothing usable is there.
+function pointAt(ctx, x, y) {
+  const region = regionOf(ctx, x, y);
+  if (region === 'hist') return histPoint(ctx.slot, ctx.rows, x, y);
+  if (region !== 'live') return null;
+  const c = liveCell(ctx.slot, x, y);
+  if (!c) return null;
+  const screen = ctx.slot.term.element.querySelector('.xterm-screen');
+  const r = screen.getBoundingClientRect();
+  const off = caretInCell({ x, left: r.left, width: r.width, cols: ctx.cols });
+  if (off === null) return null;
+  const abs = Math.max(ctx.base, ctx.slot.term.buffer.active.viewportY + c.row);
+  return { line: ctx.histCount + abs - ctx.base, off };
+}
+
 function beginSel(x, y) {
   const slot = slots.get(visible);
   if (!slot || slot.el.hidden) return false;
   clearSel();
   altEnd(); // no wheel bytes while selecting
-  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
-  if (screen && inRect(screen.getBoundingClientRect(), x, y) && inRect(slot.livex.getBoundingClientRect(), x, y)) {
+  const { rows, lines } = histApi() && !slot.hist.hidden ? histLines(slot) : { rows: [], lines: [] };
+  const buf = slot.term.buffer.active;
+  const ctx = { slot, base: buf.baseY, cols: slot.term.cols, histCount: rows.length, rows, lines };
+  const region = regionOf(ctx, x, y);
+  let word;
+  if (region === 'live') {
+    const p = pointAt(ctx, x, y);
     const c = liveCell(slot, x, y);
-    if (!c) return false;
-    const { cols } = slot.term;
-    const buf = slot.term.buffer.active;
-    const row = buf.viewportY + c.row;
-    const line = buf.getLine(row);
+    if (!p || !c) return false;
+    const line = buf.getLine(Math.max(ctx.base, buf.viewportY + c.row));
     const cells = [];
-    for (let x = 0; line && x < cols; x++) {
-      const cell = line.getCell(x);
+    for (let i = 0; line && i < ctx.cols; i++) {
+      const cell = line.getCell(i);
       if (!cell) break;
       cells.push({ chars: cell.getChars(), width: cell.getWidth() });
     }
     const w = cellWordBounds(cells, c.col);
-    sel = { kind: 'live', slot, cols, a: row * cols + w.start, e: row * cols + w.end - 1 };
-    applyLive(x, y);
-  } else if (histApi() && !slot.hist.hidden && inRect(slot.hist.getBoundingClientRect(), x, y)) {
-    const { rows, lines } = histLines(slot);
-    const p = histPoint(slot, rows, x, y);
+    word = { s: { line: p.line, off: w.start }, e: { line: p.line, off: w.end } };
+  } else if (region === 'hist') {
+    const p = pointAt(ctx, x, y);
     if (!p) return false;
     const w = wordBounds(lines[p.line], p.off);
-    sel = { kind: 'hist', slot, rows, lines, a: { line: p.line, off: w.start }, e: { line: p.line, off: w.end } };
-    applyHist(x, y);
+    word = { s: { line: p.line, off: w.start }, e: { line: p.line, off: w.end } };
   } else {
     return false;
   }
+  sel = { ...ctx, word, s: word.s, e: word.e };
+  render();
   window.getSelection().removeAllRanges(); // the WebView's own long-press selection must not show
   send({ t: 'sel', s: slot.id, on: true });
   return true;
 }
 
-function applyLive(x, y) {
-  const c = liveCell(sel.slot, x, y);
-  if (!c) return;
-  const f = (sel.slot.term.buffer.active.viewportY + c.row) * sel.cols + c.col;
-  const start = f >= sel.a ? sel.a : f;
-  const end = f >= sel.a ? Math.max(f, sel.e) : sel.e;
-  sel.slot.term.select(start % sel.cols, Math.floor(start / sel.cols), end - start + 1);
-}
-
-function applyHist(x, y) {
-  const f = histPoint(sel.slot, sel.rows, x, y);
-  if (!f) return;
-  const [s, e] = cmpPt(f, sel.a) >= 0 ? [sel.a, cmpPt(f, sel.e) > 0 ? f : sel.e] : [f, sel.e];
-  const range = document.createRange();
-  range.setStart(...domPos(sel.rows[s.line], s.off));
-  range.setEnd(...domPos(sel.rows[e.line], e.off));
-  CSS.highlights.set('aether-sel', new Highlight(range));
-  sel.s = s;
-  sel.f = e;
+// Paint sel.s..sel.e: the history part as a DOM Range under the Custom Highlight, the live part
+// through term.select. A part the span does not cover is cleared.
+function render() {
+  const parts = splitSelection(sel.s, sel.e, sel.histCount);
+  if (histApi()) {
+    if (parts.hist) {
+      const at = (p) => domPos(sel.rows[p.line], Math.min(p.off, sel.lines[p.line].length));
+      const range = document.createRange();
+      range.setStart(...at(parts.hist.s));
+      range.setEnd(...at(parts.hist.e));
+      CSS.highlights.set('aether-sel', new Highlight(range));
+    } else {
+      CSS.highlights.delete('aether-sel');
+    }
+  }
+  const span = liveSpan(parts.live, sel.cols);
+  if (span) sel.slot.term.select(span.col, sel.base + span.row, span.len);
+  else sel.slot.term.clearSelection();
 }
 
 function extendSel(x, y) {
   if (!sel) return;
-  if (sel.kind === 'live') applyLive(x, y);
-  else applyHist(x, y);
+  const pt = pointAt(sel, x, y);
+  if (!pt) return;
+  const { s, e } = extendFromWord(sel.word, pt);
+  sel.s = s;
+  sel.e = e;
+  render();
 }
 
 function selectedText() {
-  if (sel.kind === 'live') return sel.slot.term.getSelection();
-  return sliceLines(sel.lines, sel.s || sel.a, sel.f || sel.e);
+  const parts = splitSelection(sel.s, sel.e, sel.histCount);
+  const histText = parts.hist ? sliceLines(sel.lines, parts.hist.s, parts.hist.e) : '';
+  const liveText = liveSpan(parts.live, sel.cols) ? sel.slot.term.getSelection() : '';
+  const wrapped = sel.slot.term.buffer.active.getLine(sel.base)?.isWrapped === true;
+  return joinSelectionText(histText, liveText, wrapped);
 }
 
 function clearSel() {
@@ -385,8 +421,8 @@ function clearSel() {
   const cur = sel;
   sel = null;
   selDragging = false;
-  if (cur.kind === 'live') cur.slot.term.clearSelection();
-  else if (histApi()) CSS.highlights.delete('aether-sel');
+  cur.slot.term.clearSelection();
+  if (histApi()) CSS.highlights.delete('aether-sel');
   send({ t: 'sel', s: cur.slot.id, on: false });
   for (const slot of slots.values()) scheduleHist(slot);
   follow(cur.slot);

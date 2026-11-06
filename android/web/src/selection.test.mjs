@@ -321,4 +321,11 @@ describe('main.js wiring', () => {
     const src = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
     expect(src).toMatch(/import \{[^}]*\bwheelBytes\b[^}]*\} from '\.\/altScroll\.js'/);
   });
+
+  it('imports the combined-selection helpers the selection engine calls', () => {
+    const src = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+    for (const name of ['splitSelection', 'extendFromWord', 'joinSelectionText']) {
+      expect(src).toMatch(new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from '\\./selection\\.js'`));
+    }
+  });
 });
