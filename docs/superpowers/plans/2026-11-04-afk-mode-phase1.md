@@ -1684,6 +1684,8 @@ describe('resolveNightPlan: unfinished', () => {
 });
 ```
 
+As built (checked against `resolvePlan.mjs` and `skills/afk-preflight/SKILL.md` step 8): the catch-all in `resolveNightPlan` turns any thrown error into `kind: 'none'` with a `reason` that starts with `resolve failed:`. Consumers (the skill, any later runner) must show that prefix as an error, because it means a code defect and not an ordinary empty night. An `unfinished` result with `items: []` means nothing will run.
+
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/resolvePlan.test.ts` (expect FAIL: cannot resolve the module). Implement `resolvePlan.mjs`. Rerun (expect PASS). Commit: `git add -- scripts/afk/resolvePlan.mjs scripts/afk/resolvePlan.test.ts && git commit -m "feat(afk): resolveNightPlan, the approved/unfinished/none entry point" -- scripts/afk/resolvePlan.mjs scripts/afk/resolvePlan.test.ts`.
 
 ---
@@ -1866,6 +1868,8 @@ describe('main() with a TTY (in process)', () => {
 ```
 
 Carry (build review): (1) `confirm`'s unfinished-night allowlist preview must skip itself, or say so, when `draft.createdAtMs <= record.approvedAtMs` (the last approval is newer than the draft, so it is not an unfinished night for this draft). Add a cli test: compile at T0, then `confirm` and `amend` at T0 + 2*DAY must exit 4 with the stale-draft text. (2) Every `writeLiveTerms` call (T3) is wrapped: an EPERM or other fs error becomes a clean nonzero exit with a message that carries no file content.
+
+As built (checked against `cli.mjs`, `afk.mjs` and `cli.test.ts` after merge): `afk.mjs` sets `process.exitCode` instead of calling `process.exit`, so piped output is not truncated. An unknown or non-amendable key in `terms set` or `amend` exits 4 (not 2). `confirm --all-ready` with nothing ready prints `nothing is ready to confirm` and exits 0 (no test pins that exit). `approve` prints the refusal `message` and exits 4 for ANY `approveNight` refusal, including `state-changed` and any code the CLI does not know. `terms set` on an invalid terms file prints `WARNING live terms: <warning>` for each warning and a line saying the file was rewritten from the defaults plus the one change, before the success line, and exits 0.
 
 - [ ] **Steps 2-5:** run `npx vitest run scripts/afk/cli.test.ts` (expect FAIL: cannot resolve the module). Implement `cli.mjs` and `afk.mjs`. Dispatch table keyed by verb; a verb in `TTY_VERBS` checks `deps.isTty` BEFORE reading anything or creating any directory. The in-process tests that confirm or approve inject no `probes` (their items are plain `work` items, so no probe runs), except the two allowlist tests, which inject `okProbes` because their items are build items. `cli.mjs` imports `unfinishedSelection` from `resolvePlan.mjs`; it must not recompute an allowlist. Rerun (expect PASS). Commit: `git add -- scripts/afk/cli.mjs scripts/afk/afk.mjs scripts/afk/cli.test.ts && git commit -m "feat(afk): afk CLI with TTY-gated write verbs" -- scripts/afk/cli.mjs scripts/afk/afk.mjs scripts/afk/cli.test.ts`.
 
