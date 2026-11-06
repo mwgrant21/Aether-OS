@@ -49,13 +49,29 @@ export async function readTerminalBoardSnapshot(dir: string, nowMs: number): Pro
 
 export type BoardResetResult = { ok: true } | { ok: false; code: string };
 
+// A start-reset and an exit-reset of one slot can overlap; chain them per file so the older
+// write cannot land last. Each tail never rejects.
+const resetTails = new Map<string, Promise<void>>();
+
 /** Writes an empty entry for `terminal`. Never rejects; the failure result carries only an
- *  error code (no path, no message). */
-export async function resetTerminalBoardEntry(
+ *  error code (no path, no message). Resets of the same file run one after another in call order. */
+export function resetTerminalBoardEntry(
   dir: string,
   terminal: BoardTerminal,
   nowMs: number,
 ): Promise<BoardResetResult> {
+  const file = terminalBoardFile(dir, terminal);
+  const prev = resetTails.get(file) ?? Promise.resolve();
+  const run = prev.then(() => doReset(dir, terminal, nowMs));
+  const tail = run.then(() => undefined, () => undefined);
+  resetTails.set(file, tail);
+  void tail.then(() => {
+    if (resetTails.get(file) === tail) resetTails.delete(file);
+  });
+  return run;
+}
+
+async function doReset(dir: string, terminal: BoardTerminal, nowMs: number): Promise<BoardResetResult> {
   try {
     await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
     await writeFileAtomically(
