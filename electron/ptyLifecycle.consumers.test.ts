@@ -21,14 +21,14 @@ function callbackFor(channel: string, method = 'handle'): string {
   if (!statement || !ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) throw new Error(`Missing ${channel} consumer`);
   return statement.expression.arguments[1].getText(ast);
 }
-function connectedCallback(): string {
+function connectedCallback(option = 'spawn'): string {
   const statement = ast.statements.find(node => ts.isVariableStatement(node)
     && node.declarationList.declarations.some(d => d.name.getText(ast) === 'communicationSessions'));
   if (!statement || !ts.isVariableStatement(statement)) throw new Error('Missing connected consumer');
   const init = statement.declarationList.declarations[0].initializer;
   if (!init || !ts.isNewExpression(init) || !init.arguments || !ts.isObjectLiteralExpression(init.arguments[0])) throw new Error('Missing connected options');
-  const spawn = init.arguments[0].properties.find(p => p.name?.getText(ast) === 'spawn');
-  if (!spawn || !ts.isPropertyAssignment(spawn)) throw new Error('Missing connected spawn');
+  const spawn = init.arguments[0].properties.find(p => p.name?.getText(ast) === option);
+  if (!spawn || !ts.isPropertyAssignment(spawn)) throw new Error(`Missing connected ${option}`);
   return spawn.initializer.getText(ast);
 }
 function fakePty() {
@@ -149,6 +149,15 @@ describe('production pinned-session id wiring', () => {
     f.terminal2(f.event, { cols: 80, rows: 24 });
     expect(f.spawnPty.mock.calls[0][4]).not.toHaveProperty('AETHER_BOARD_CLI');
     expect(f.spawnPty.mock.calls[1][4]).not.toHaveProperty('AETHER_BOARD_CLI');
+  });
+
+  it('passes the resolved board CLI path into the connected-Claude bridge launch', () => {
+    const prepareBridgeLaunch = vi.fn();
+    const prepare = runInNewContext(ts.transpileModule(`(${connectedCallback('prepare')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    }).outputText, { prepareBridgeLaunch, launchRuntime: {}, launchRoot: 'root', connectedExecutable: 'claude', crypto: { randomUUID: () => 'pinned-id' }, boardCliPath: BOARD_CLI }) as (manifest: unknown) => void;
+    prepare({ id: 'm' });
+    expect(prepareBridgeLaunch).toHaveBeenCalledWith(expect.objectContaining({ boardCliPath: BOARD_CLI }));
   });
 
   it('gives the Codex slot no env argument, so it never carries an Alpha/Beta identity', () => {
