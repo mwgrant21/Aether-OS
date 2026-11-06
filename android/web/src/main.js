@@ -13,6 +13,7 @@ import { THEME } from './theme.js';
 import { chainDrag, toNotches, flushAlt, finishAlt, shouldIntercept, wheelBytes } from './altScroll.js';
 import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
+import { createAutoScroll } from './edgeScroll.js';
 import {
   cellAt, cellWordBounds, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
   caretInCell, extendFromWord, dragHandle, splitSelection, liveSpan, joinSelectionText,
@@ -429,6 +430,8 @@ function ensureHandles() {
       ev.preventDefault();
       ev.stopPropagation();
       heldHandle = which;
+      const t = ev.touches[0];
+      dragTo(t.clientX, t.clientY - HANDLE_LIFT_PX, false);
     }, { passive: false });
     el.addEventListener('touchmove', (ev) => {
       if (!heldHandle || !sel) return;
@@ -436,15 +439,12 @@ function ensureHandles() {
       ev.stopPropagation();
       const t = ev.touches[0];
       if (!t) return;
-      const pt = pointAt(sel, t.clientX, t.clientY - HANDLE_LIFT_PX);
-      if (!pt) return;
-      const r = dragHandle({ s: sel.s, e: sel.e }, heldHandle, pt);
-      sel.s = r.s;
-      sel.e = r.e;
-      heldHandle = r.which;
-      render();
+      dragTo(t.clientX, t.clientY - HANDLE_LIFT_PX);
     }, { passive: false });
-    const release = () => { heldHandle = null; };
+    const release = () => {
+      heldHandle = null;
+      stopDrag();
+    };
     el.addEventListener('touchend', release);
     el.addEventListener('touchcancel', release);
     box.appendChild(el);
@@ -529,6 +529,51 @@ function extendSel(x, y) {
   render();
 }
 
+// ---- Edge auto-scroll: one timer, shared by a held handle, the long-press finger and a mouse drag.
+// `drag` is the last probe point (handle lift already applied); the timer re-applies it after each
+// scroll so the selection follows even when the finger is still. Every gesture end calls stopDrag().
+let drag = null; // { x, y }
+const autoScroll = createAutoScroll({
+  getPoint: () => (sel && drag ? drag : null),
+  getBounds: () => sel.slot.el.getBoundingClientRect(),
+  scrollBy: (dy) => {
+    const el = sel.slot.el;
+    const before = el.scrollTop;
+    el.scrollTop += dy;
+    if (el.scrollTop === before) return false;
+    applyDrag();
+    return true;
+  },
+});
+
+function applyDrag() {
+  if (!sel || !drag) return;
+  if (heldHandle) {
+    const pt = pointAt(sel, drag.x, drag.y);
+    if (!pt) return;
+    const r = dragHandle({ s: sel.s, e: sel.e }, heldHandle, pt);
+    sel.s = r.s;
+    sel.e = r.e;
+    heldHandle = r.which;
+    render();
+  } else {
+    extendSel(drag.x, drag.y);
+  }
+}
+
+// Record the probe point, apply it (unless the caller just did the work), and keep the timer armed.
+function dragTo(x, y, apply = true) {
+  if (!sel) return;
+  drag = { x, y };
+  if (apply) applyDrag();
+  autoScroll.start();
+}
+
+function stopDrag() {
+  autoScroll.stop();
+  drag = null;
+}
+
 function selectedText() {
   const parts = splitSelection(sel.s, sel.e, sel.histCount);
   const histText = parts.hist ? sliceLines(sel.lines, parts.hist.s, parts.hist.e) : '';
@@ -538,6 +583,7 @@ function selectedText() {
 }
 
 function clearSel() {
+  stopDrag();
   if (!sel) return;
   const cur = sel;
   sel = null;
@@ -562,13 +608,17 @@ const lpTouch = createLongPress({
     if (beginSel(x, y)) {
       selDragging = true;
       handlesArmed = true; // shown once the finger lifts
+      dragTo(x, y, false);
     }
   },
 });
 const lpMouse = createLongPress({
   slopPx: MOUSE_SLOP_PX,
   onFire: (x, y) => {
-    if (mouse && beginSel(x, y)) mouse.sel = true;
+    if (mouse && beginSel(x, y)) {
+      mouse.sel = true;
+      dragTo(x, y, false);
+    }
   },
 });
 
@@ -595,6 +645,7 @@ root.addEventListener('touchstart', (ev) => {
   altEnd();
   lpTouch.end();
   selDragging = false;
+  stopDrag();
   tapTouch = null;
   if (ev.touches.length !== 1) return;
   const slot = slots.get(visible);
@@ -609,13 +660,14 @@ root.addEventListener('touchmove', (ev) => {
   if (ev.touches.length !== 1) {
     lpTouch.end();
     selDragging = false;
+    stopDrag();
   } else {
     const p = ev.touches[0];
     lpTouch.move(p.clientX, p.clientY);
     if (tapTouch && Math.max(Math.abs(p.clientX - tapTouch.x), Math.abs(p.clientY - tapTouch.y)) >= TOUCH_SLOP_PX) tapTouch = null;
     if (selDragging) {
       ev.preventDefault();
-      extendSel(p.clientX, p.clientY);
+      dragTo(p.clientX, p.clientY);
       return;
     }
   }
@@ -654,6 +706,7 @@ root.addEventListener('touchmove', (ev) => {
 root.addEventListener('touchend', () => {
   lpTouch.end();
   selDragging = false;
+  stopDrag();
   if (tapTouch && Date.now() - tapTouch.at < TAP_MAX_MS) clearSel(); // a tap leaves selection mode
   tapTouch = null;
   altEnd(true);
@@ -662,6 +715,7 @@ root.addEventListener('touchend', () => {
 root.addEventListener('touchcancel', () => {
   lpTouch.end();
   selDragging = false;
+  stopDrag();
   tapTouch = null;
   altEnd();
   placeHandles();
@@ -684,6 +738,7 @@ function cellSize(slot) {
 
 function mouseEnd(commit = false) {
   if (!mouse) return; // never touch the touch gesture's alt state
+  stopDrag();
   lpMouse.end();
   mouse = null;
   altEnd(commit);
@@ -710,7 +765,7 @@ root.addEventListener('pointermove', (ev) => {
   const slot = mouse.slot;
   if (mouse.sel) {
     ev.preventDefault();
-    extendSel(ev.clientX, ev.clientY);
+    dragTo(ev.clientX, ev.clientY);
     return;
   }
   lpMouse.move(ev.clientX, ev.clientY);
