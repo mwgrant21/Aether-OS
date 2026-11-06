@@ -950,7 +950,7 @@ Added with S3 of the terminal identity work (2026-11-05). It lets the agents in 
 
 **Signal, not payload.** The limits are enforced when a file is read: title up to 120 characters, project up to 80, ref up to 200, note up to 200, at most 50 claims and 50 blockedBy entries. A ref is a PR number, a branch name or a project-relative path, never an absolute path (a ref that starts with a drive letter, `/`, `\` or `~` is rejected; so is a `file:` URL, or a ref with a `..` path segment). No prompts, no command text, no tool output. Strings with control characters (so no newlines) are rejected, and a file that breaks any rule is treated as invalid rather than trimmed.
 
-**Who writes.** Aether's main process writes only an EMPTY entry (no task, no claims), when a terminal's PTY starts and again when it exits. The Codex terminal has no board. The agent-side command that would fill an entry is planned for a later slice and does not exist yet, so today the files only ever hold empty entries.
+**Who writes.** Aether's main process writes only an EMPTY entry (no task, no claims), when a terminal's PTY starts and again when it exits. The Codex terminal has no board. The `aether-board` command (`scripts/aether-board.mjs`, shipped with the app) can fill an entry; it writes only the caller's own file (chosen from `AETHER_TERMINAL`), applies the same limits and path rules as the reader, and nothing in Aether tells an agent to use it yet.
 
 **Who reads.** Any local process running as you. The file is readable by any process running as the user; there is no access control beyond the folder's. Aether itself has a read function (`readTerminalBoardSnapshot`) but no screen or IPC uses it yet.
 
