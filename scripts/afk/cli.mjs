@@ -98,6 +98,11 @@ function termsShow(ctx) {
   return 0;
 }
 
+/** Warnings carry reasons and key names only, so they are safe to print. */
+function printLiveWarnings(ctx, live) {
+  for (const w of live.warnings) ctx.print(`WARNING live terms: ${w}`);
+}
+
 function termsSet(ctx, args) {
   if (args.length !== 2) { ctx.printErr('usage: terms set <key> <value>'); return 2; }
   const s = parseSetting(args[0], args[1]);
@@ -114,7 +119,7 @@ function termsSet(ctx, args) {
   }
   if (!r.ok) { ctx.printErr(`refused: ${r.errors.join('; ')}`); return 4; }
   if (live.warnings.length) {
-    for (const w of live.warnings) ctx.print(`WARNING live terms: ${w}`);
+    printLiveWarnings(ctx, live);
     ctx.print('the live terms file was invalid, so it was rewritten from the defaults plus this one change; run terms show and re-set anything else you want');
   }
   ctx.print(`terms updated: ${args[0]} = ${args[1]}`);
@@ -231,9 +236,11 @@ function amend(ctx, args) {
   const s = parseSetting(args[0], args[1]);
   if (s.refuse) { ctx.printErr(s.refuse); return 4; }
   const patch = {};
-  if (s.key === 'window') patch.window = { ...windowFromDraftOrLive(ctx.aetherDir, readLiveTerms(ctx.aetherDir)), [s.part]: s.value }; else patch[s.key] = s.value;
+  const live = readLiveTerms(ctx.aetherDir);
+  if (s.key === 'window') patch.window = { ...windowFromDraftOrLive(ctx.aetherDir, live), [s.part]: s.value }; else patch[s.key] = s.value;
   const r = amendDraft(ctx.aetherDir, patch, ctx.nowMs);
   if (!r.ok) { ctx.printErr(`refused: ${r.errors.join('; ')}${r.errors.includes('stale-draft') ? ' (the draft window is over: run compile again)' : ''}`); return 4; }
+  printLiveWarnings(ctx, live);
   ctx.print(`draft amended: ${args[0]} = ${args[1]} (this night only)`);
   approvedNote(ctx);
   return 0;
@@ -274,14 +281,23 @@ function denyRules(ctx) {
 }
 
 function installSkillVerb(ctx) {
-  const templatePath = defaultTemplatePath();
+  // deps.templatePath / deps.cliPath are test seams; production passes neither.
+  const templatePath = ctx.deps.templatePath ?? defaultTemplatePath();
   if (!existsSync(templatePath)) { ctx.printErr(`install-skill: template not found at ${templatePath}. Nothing was written.`); return 4; }
-  const cliPath = fileURLToPath(new URL('./afk.mjs', import.meta.url)).replace(/\\/g, '/');
-  ctx.print(`installed ${installSkill({ homeDir: ctx.homeDir, templatePath, cliPath })}`);
+  const cliPath = ctx.deps.cliPath ?? fileURLToPath(new URL('./afk.mjs', import.meta.url)).replace(/\\/g, '/');
+  let dest;
+  try {
+    dest = installSkill({ homeDir: ctx.homeDir, templatePath, cliPath });
+  } catch (e) {
+    // renderSkill's messages name the problem, never the template text or the path.
+    if (/cliPath|AFK_CLI/.test(String(e?.message))) { ctx.printErr(`install-skill: ${e.message}. Nothing was written.`); return 4; }
+    throw e;
+  }
+  ctx.print(`installed ${dest}`);
   return 0;
 }
 
-const errCode =(e) => (e && typeof e.code === 'string' ? e.code : 'internal error');
+const errCode = (e) => (e && typeof e.code === 'string' ? e.code : 'internal error');
 
 function verbOf(argv) {
   if (argv[0] === 'terms') return { verb: `terms ${argv[1] ?? ''}`.trim(), args: argv.slice(2) };
