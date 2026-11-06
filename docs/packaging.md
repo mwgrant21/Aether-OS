@@ -37,8 +37,9 @@ no asar and `app.getAppPath()` is the project root, where `scripts/` already sit
 
 The skill template rides along: `extraResources` also copies
 `skills/afk-preflight/SKILL.md` to `resources/skills/afk-preflight/`, so
-`afk install-skill` works from an installed build (AFK Phase 1; `scripts/afk/*.mjs`
-ships under `resources/scripts/afk/`).
+`afk install-skill` is meant to work from an installed build (UNVERIFIED until
+T21 M3, which runs the packaged build; AFK Phase 1; `scripts/afk/*.mjs` is copied
+to `resources/scripts/afk/`).
 
 ### 2. `node-pty` must be unpacked, but must NOT be rebuilt
 
