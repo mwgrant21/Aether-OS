@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { describe, it, expect, vi } from 'vitest';
 import type { PtyLike } from './ptyLifecycle';
 import { createTerminalHub } from './terminalHub';
+import { terminalIdentityEnv } from './ptyManager';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import capture from './__fixtures__/trust-prompt-capture.json';
 
@@ -51,6 +52,7 @@ function fixture(opts?: { aetherChoice?: unknown }) {
   }) };
   const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
   const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
+    terminalIdentityEnv,
     UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
     planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() },
@@ -110,7 +112,7 @@ describe('production pinned-session id wiring', () => {
     const f = fixture();
     f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
     f.ordinary(f.event, { cols: 80, rows: 24 });
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id');
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id', { AETHER_TERMINAL: 'alpha' });
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'pinned-id');
     f.connected({ sessionId: 'connected-id' }, vi.fn());
     expect(f.liveAgentTracker.notifyPtySpawned).toHaveBeenLastCalledWith(expect.any(Number), 'connected-id');
@@ -120,8 +122,30 @@ describe('production pinned-session id wiring', () => {
     const f = fixture();
     f.spawnPty.mockReturnValueOnce(fakePty());
     f.terminal2(f.event, { cols: 80, rows: 24 });
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' });
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta' });
     expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
+  });
+
+  it('launches Alpha with the alpha identity as the only extra env, no launch command', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty.mock.calls[0][4]).toEqual({ AETHER_TERMINAL: 'alpha' });
+    expect(f.spawnPty.mock.calls[0]).toHaveLength(5);
+  });
+
+  it('launches Beta with the unmonitored tag merged with the beta identity, not replaced by it', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(f.spawnPty.mock.calls[0][4]).toEqual({ AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta' });
+  });
+
+  it('gives the Codex slot no env argument, so it never carries an Alpha/Beta identity', () => {
+    const f = fixture();
+    f.spawnCodexPty.mockReturnValueOnce(fakePty());
+    f.codex(f.event, { cols: 100, rows: 30 });
+    expect(f.spawnCodexPty).toHaveBeenLastCalledWith(100, 30);
   });
 
   it('restarts an exited Terminal 2 through the real handler on a bare Enter, at its last size, still unmonitored', () => {
@@ -131,7 +155,7 @@ describe('production pinned-session id wiring', () => {
     pty1.fireExit();
     f.terminal2PtyLifecycle.write('\r');
     expect(f.spawnPty).toHaveBeenCalledTimes(2);
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' });
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta' });
     expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
     pty2.fireData('fresh');
     expect(f.send.mock.calls).toEqual([['terminal2Pty:data', 'fresh']]);
@@ -345,12 +369,12 @@ function fakeRuntime(command: string | undefined) {
 }
 
 describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => {
-  it('keeps the exact legacy spawn arity with no runtime', () => {
+  it('keeps spawn arity with no runtime: 5 args each, no launch command', () => {
     const f = fixture();
     f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
     f.ordinary(f.event, { cols: 80, rows: 24 });
     f.terminal2(f.event, { cols: 80, rows: 24 });
-    expect(f.spawnPty.mock.calls[0]).toHaveLength(4);
+    expect(f.spawnPty.mock.calls[0]).toHaveLength(5);
     expect(f.spawnPty.mock.calls[1]).toHaveLength(5);
   });
 
@@ -360,7 +384,7 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
     f.ordinary(f.event, { cols: 80, rows: 24 });
     expect(rt.launchCommandFor).toHaveBeenCalledOnce();
     expect(rt.launchCommandFor).toHaveBeenCalledWith('claude', { sessionId: 'pinned-id' });
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id', undefined, 'CMD\r');
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, 'pinned-id', { AETHER_TERMINAL: 'alpha' }, 'CMD\r');
     expect(rt.onForeignLaunch).not.toHaveBeenCalled();
   });
 
@@ -380,22 +404,22 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
     f.spawnPty.mockReturnValueOnce(pty1).mockReturnValueOnce(pty2);
     f.terminal2(f.event, { cols: 80, rows: 24 });
     expect(rt.launchCommandFor).toHaveBeenLastCalledWith('terminal2');
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' }, 'CMD\r');
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta' }, 'CMD\r');
     rt.launchCommandFor.mockReturnValueOnce('CMD2\r');
     pty1.fireExit();
     f.terminal2PtyLifecycle.write('\r');
     expect(rt.launchCommandFor).toHaveBeenCalledTimes(2);
-    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' }, 'CMD2\r');
+    expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta' }, 'CMD2\r');
   });
 
   it('marks a refused launch foreign and keeps the exact legacy args on both slots', () => {
     const rt = fakeRuntime(undefined), f = fixture({ aetherChoice: rt });
     f.spawnPty.mockReturnValueOnce(fakePty()).mockReturnValueOnce(fakePty());
     f.ordinary(f.event, { cols: 80, rows: 24 });
-    expect(f.spawnPty.mock.calls[0]).toEqual([80, 24, undefined, 'pinned-id']);
+    expect(f.spawnPty.mock.calls[0]).toEqual([80, 24, undefined, 'pinned-id', { AETHER_TERMINAL: 'alpha' }]);
     expect(rt.onForeignLaunch).toHaveBeenLastCalledWith('claude');
     f.terminal2(f.event, { cols: 80, rows: 24 });
-    expect(f.spawnPty.mock.calls[1]).toEqual([80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1' }]);
+    expect(f.spawnPty.mock.calls[1]).toEqual([80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta' }]);
     expect(rt.onForeignLaunch).toHaveBeenLastCalledWith('terminal2');
   });
 
