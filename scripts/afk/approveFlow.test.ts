@@ -114,6 +114,27 @@ describe('approveNight record', () => {
     expect(second.text()).toMatch(/replaces approval n\d{8}T\d{6}/);
   });
 });
+describe('approveNight state changed during the prompt', () => {
+  const nothing = (d: string) => { expect(existsSync(approvedPath(d))).toBe(false); expect(existsSync(pointerPath(d))).toBe(false); };
+  it('live terms changed while the prompt is open: the old phrase is refused as state-changed', async () => {
+    const d = setup();
+    const r = await run(d, { readLine: async () => { writeLiveTerms(d, { ...DEFAULT_TERMS, push: false }); return phrase(); } }).p;
+    expect(r).toMatchObject({ ok: false, code: 'state-changed' }); nothing(d);
+  });
+  it('draft recompiled while the prompt is open: state-changed', async () => {
+    const d = setup();
+    const r = await run(d, { readLine: async () => { draftWith(d, [mkItem(A, 'Run npm test')]); return phrase(); } }).p;
+    expect(r).toMatchObject({ ok: false, code: 'state-changed' }); nothing(d);
+  });
+  it('another confirmation made while the prompt is open: state-changed', async () => {
+    const d = setup([mkItem(A, 'Run npm test'), mkItem(B, 'Run lint')], [A]);
+    const r = await run(d, { readLine: async () => { confirmItems(d, [B], ctxFor(HOME), NOW); return phrase(); } }).p;
+    expect(r).toMatchObject({ ok: false, code: 'state-changed' }); nothing(d);
+  });
+  it('control: nothing changes during the prompt and the approval succeeds', async () => {
+    expect((await run(setup()).p).ok).toBe(true);
+  });
+});
 describe('approveNight re-check', () => {
   it('(h) a confirmed item whose spec went back to draft is refused, and the earlier approval is untouched', async () => {
     const home = tmp('afk-home'); const plan = putPlan(home, 'approved');

@@ -2,7 +2,7 @@
 // Every early return writes nothing; `not-tty` and `terms-invalid` also print and ask nothing.
 // No clock reads: everything takes nowMs. isTty, readLine and print are injected.
 // All file access goes through fsJson via approval.mjs, termsStore.mjs and draft.mjs.
-import { applyAmendments, DEFAULT_TERMS, termsSha256 } from './terms.mjs';
+import { applyAmendments, canonicalJson, DEFAULT_TERMS, termsSha256 } from './terms.mjs';
 import { readLiveTerms } from './termsStore.mjs';
 import { isNightCurrent } from './nightWindow.mjs';
 import { buildAllowRules, buildDenyRules } from './denyRules.mjs';
@@ -90,10 +90,22 @@ export async function approveNight({ aetherDir, homeDir, repoRoots, probes, nowM
     .map((i) => ({ id: i.id, title: i.title, verdict: i.verdict, reason: (i.reasons && i.reasons[0]) || 'not-confirmed' }));
   const allowRules = buildAllowRules(effective, recItems);
 
+  const draftSnapshot = canonicalJson(draft);
   print(summary({ draft, effective, confirmed: recItems, held, allowRules, prior: readApproved(aetherDir) }));
   const phrase = expectedPhrase(termsSha256(effective));
   const typed = await readLine(`Type exactly: ${phrase}`);
   if (typeof typed !== 'string' || typed.trim() !== phrase) return fail('phrase-mismatch', 'the phrase did not match; nothing was written');
+
+  // The prompt can stay open while another terminal edits the terms or the draft: re-read both and compare to what was printed.
+  const nowLive = readLiveTerms(aetherDir);
+  const nowDraft = readDraft(aetherDir);
+  const nowEff = nowDraft ? applyAmendments(nowLive.terms, nowDraft.amendments ?? {}) : null;
+  if (nowLive.warnings.length || !nowDraft || !nowEff.ok
+    || canonicalJson(nowLive.terms) !== canonicalJson(live.terms)
+    || termsSha256(nowEff.terms) !== termsSha256(effective)
+    || canonicalJson(nowDraft) !== draftSnapshot) {
+    return fail('state-changed', 'the terms or the draft changed while the prompt was open; nothing was written. Run approve again.');
+  }
 
   const record = buildRecord({
     nightId: draft.draftId, approvedAtMs: nowMs, targetWindowStartMs: draft.targetWindowStartMs,
