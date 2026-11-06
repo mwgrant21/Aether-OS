@@ -75,6 +75,14 @@ describe('amendDraft', () => {
     expect(amendDraft(d, { window: { start: '22:00', end: '06:00' } }, NOW).ok).toBe(true);
     expect(readDraft(d)!.targetWindowStartMs).toBe(new Date(2026, 10, 4, 22).getTime());   // NOW (23:00) is inside it
   });
+  it('a later unrelated amendment does not recompute the target window', () => {
+    const d = tmp(); draftWith(d, []);
+    amendDraft(d, { window: { start: '22:00', end: '06:00' } }, NOW);
+    const target = new Date(2026, 10, 4, 22).getTime();
+    expect(readDraft(d)!.targetWindowStartMs).toBe(target);
+    expect(amendDraft(d, { push: false }, new Date(2026, 10, 5, 7).getTime()).ok).toBe(true);   // inside the 12h grace
+    expect(readDraft(d)).toMatchObject({ amendments: { push: false }, targetWindowStartMs: target });
+  });
   it('rejects delete and an incoherent merge, keeping the stored amendments', () => {
     const d = tmp(); draftWith(d, []);
     expect(amendDraft(d, { delete: true }, NOW).ok).toBe(false);

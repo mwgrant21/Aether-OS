@@ -68,7 +68,8 @@ export function confirmItems(aetherDir, ids, ctx, nowMs) {
   return { confirmed, refused };
 }
 
-/** The stale check runs before the patch is applied, so a `window` patch cannot revive a stale draft. */
+/** The stale check runs before the patch is applied, so a `window` patch cannot revive a stale draft.
+ * The target window is recomputed only when the incoming `patch` sets `window`, never for a later unrelated amendment. */
 export function amendDraft(aetherDir, patch, nowMs) {
   const draft = readDraft(aetherDir);
   if (!draft) return { ok: false, errors: ['no draft'] };
@@ -77,7 +78,7 @@ export function amendDraft(aetherDir, patch, nowMs) {
   const r = applyAmendments(readLiveTerms(aetherDir).terms, merged);
   if (!r.ok) return { ok: false, errors: r.errors };
   draft.amendments = merged;
-  if (Object.hasOwn(merged, 'window')) draft.targetWindowStartMs = windowFor(nowMs, r.terms.window).startMs;
+  if (Object.hasOwn(patch, 'window')) draft.targetWindowStartMs = windowFor(nowMs, r.terms.window).startMs;
   writeJsonAtomic(draftPath(aetherDir), draft);
   return { ok: true, errors: [] };
 }
