@@ -23,11 +23,16 @@ files:
 # and hook scripts are spawned by Claude Code -- a separate process with no asar
 # support -- from paths written into ~/.claude/settings.json. electron/main.ts
 # resolves them from process.resourcesPath when app.isPackaged.
+# The AFK skill template rides along (skills/afk-preflight/SKILL.md) so install-skill works from an installed build.
 extraResources:
   - from: scripts
     to: scripts
     filter:
       - '**/*.mjs'
+  - from: skills/afk-preflight
+    to: skills/afk-preflight
+    filter:
+      - SKILL.md
 
 asar: true
 
