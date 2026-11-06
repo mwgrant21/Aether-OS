@@ -52,7 +52,7 @@ describe('template location', () => {
 
 describe('SKILL.md template', () => {
   it('has the frontmatter name and the overnight phrases', () => {
-    expect(template).toMatch(/^---\nname: afk-preflight\n/);
+    expect(template).toMatch(/^---\r?\nname: afk-preflight\r?\n/);
     for (const p of ['going to bed', 'heading to bed', 'off to bed', 'going afk']) expect(template).toContain(p);
   });
   it('every `afk.mjs <verb>` it tells the agent to run is a real verb', () => {
