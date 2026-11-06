@@ -239,8 +239,8 @@ class ControlProtocolTest {
         val w = ControlProtocol.parseWelcome(frames.getString("welcomeSessions"))!!
         assertEquals(
             listOf(
-                ControlProtocol.SessionInfo("claude", "Terminal", ControlProtocol.SlotState.RUNNING, 100, 30, 12),
-                ControlProtocol.SessionInfo("terminal2", "Terminal 2", ControlProtocol.SlotState.NOT_STARTED, 0, 0, 0),
+                ControlProtocol.SessionInfo("claude", "Terminal Alpha", ControlProtocol.SlotState.RUNNING, 100, 30, 12),
+                ControlProtocol.SessionInfo("terminal2", "Terminal Beta", ControlProtocol.SlotState.NOT_STARTED, 0, 0, 0),
                 ControlProtocol.SessionInfo("codex", "Codex", ControlProtocol.SlotState.EXITED, 80, 24, 5),
             ),
             w.sessions,

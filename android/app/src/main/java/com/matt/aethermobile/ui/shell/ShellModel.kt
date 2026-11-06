@@ -63,10 +63,17 @@ private fun capsFor(s: String, state: SlotState): SlotCaps = if (hasThread(s)) {
     }
 }
 
+/** The phone shows slot 1 as Alpha and slot 2 as Beta (title case); any other slot keeps its server label. */
+fun phoneSlotName(s: String, serverLabel: String): String = when (s) {
+    "claude" -> "Alpha"
+    "terminal2" -> "Beta"
+    else -> serverLabel
+}
+
 fun slotRows(tabs: List<TerminalHost.Tab>, selected: String): List<SlotRow> = tabs.map {
     SlotRow(
         s = it.s,
-        label = if (hasThread(it.s)) "Claude" else it.label,
+        label = phoneSlotName(it.s, it.label),
         dot = dotStyleFor(it.state),
         text = when (it.state) {
             SlotState.RUNNING -> SlotText.Running
@@ -110,9 +117,12 @@ data class ViewRow(val view: AppView, val selected: Boolean, val enabled: Boolea
 fun viewRows(app: AppView, panes: List<AppView> = emptyList(), supported: (AppView) -> Boolean = { true }): List<ViewRow> =
     listOf(ViewRow(AppView.LEDGER, app == AppView.LEDGER)) + panes.map { ViewRow(it, app == it, supported(it)) }
 
-/** Header title: the selected slot's label, except Claude shows as CLAUDE on the phone. */
+/** Header title: ALPHA / BETA for the two terminal slots, the server label for any other slot. */
 fun titleFor(tabs: List<TerminalHost.Tab>, selected: String): String =
-    if (selected == "claude") "CLAUDE" else tabs.firstOrNull { it.s == selected }?.label.orEmpty()
+    when (selected) {
+        "claude", "terminal2" -> phoneSlotName(selected, "").uppercase()
+        else -> tabs.firstOrNull { it.s == selected }?.label.orEmpty()
+    }
 
 fun titleFor(tabs: List<TerminalHost.Tab>, selected: String, app: AppView): String = when (app) {
     AppView.TERMINAL -> titleFor(tabs, selected)

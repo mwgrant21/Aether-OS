@@ -36,8 +36,8 @@
     <string name="compose_hint">Compose a message</string>
     <string name="compose_send">Send</string>
     <string name="compose_send_desc">Send to terminal</string>
-    <string name="action_restart">Restart Terminal 2</string>
-    <string name="action_restart_desc">Restart Terminal 2 (sends Enter)</string>
+    <string name="action_restart">Restart Beta</string>
+    <string name="action_restart_desc">Restart Beta (sends Enter)</string>
 
     <string name="share_row_label">Screen share mode</string>
     <string name="share_row_hint">Allows screenshots and Phone Link while on</string>
