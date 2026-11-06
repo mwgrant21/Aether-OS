@@ -95,6 +95,25 @@ describe('parseBoardEntry', () => {
     }
   });
 
+  it('rejects file: URL refs', () => {
+    for (const ref of ['file:///C:/x', 'FILE://x', 'File:/x', 'file:x', ' file:///x']) {
+      expect(reasonOf(claimWith(ref)), ref).toBe('claim');
+      expect(reasonOf(entry({ blockedBy: [{ ref, owner: 'beta' }] })), ref).toBe('blocked-by');
+    }
+  });
+
+  it('rejects refs with a parent segment and keeps look-alikes', () => {
+    const bad = ['../x', 'a/../b', String.raw`a\..\b`, '..', 'a/..', ' ../x'];
+    for (const ref of bad) {
+      expect(reasonOf(claimWith(ref)), ref).toBe('claim');
+      expect(reasonOf(entry({ blockedBy: [{ ref, owner: 'beta' }] })), ref).toBe('blocked-by');
+    }
+    for (const ref of ['..foo', 'a..b', '.worktrees/x', 'a/.../b']) {
+      expect(reasonOf(claimWith(ref)), ref).toBe('ok');
+      expect(reasonOf(entry({ blockedBy: [{ ref, owner: 'beta' }] })), ref).toBe('ok');
+    }
+  });
+
   it('rejects control characters in title, ref and note', () => {
     expect(reasonOf(entry({ task: { title: 'a\nb', project: 'p', status: 'idle' } }))).toBe('task');
     expect(reasonOf(entry({ task: { title: 'a\u0000b', project: 'p', status: 'idle' } }))).toBe('task');
