@@ -50,6 +50,15 @@ describe('aether-terminal-board skill', () => {
     expect(/never[^.\n]*absolute/i.test(text)).toBe(true);
   });
 
+  it('prefers AETHER_BOARD_CLI and keeps both lookup fallbacks after it', () => {
+    const env = text.indexOf('AETHER_BOARD_CLI');
+    expect(env).toBeGreaterThanOrEqual(0);
+    expect(text).toContain('git rev-parse --show-toplevel');
+    expect(text).toContain('$LOCALAPPDATA/Programs/Aether OS/resources/scripts/aether-board.mjs');
+    expect(env).toBeLessThan(text.indexOf('LOCALAPPDATA'));
+    expect(env).toBeLessThan(text.indexOf('git rev-parse --show-toplevel'));
+  });
+
   it('has no machine-specific path and only the one LOCALAPPDATA path', () => {
     expect(/[A-Za-z]:[\\/]/.test(text)).toBe(false);
     expect(/\/Users\//.test(text)).toBe(false);

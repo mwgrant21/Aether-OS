@@ -38,6 +38,12 @@ describe('buildCodexPtyEnv', () => {
     expect(env.PATH).toBe('/usr/bin');
   });
 
+  it('drops an inherited AETHER_BOARD_CLI', () => {
+    const env = buildCodexPtyEnv({ AETHER_BOARD_CLI: '/x/aether-board.mjs', PATH: '/usr/bin' }, 'C:/fake/codex-home');
+    expect(env.AETHER_BOARD_CLI).toBeUndefined();
+    expect(env.PATH).toBe('/usr/bin');
+  });
+
   it('sets COLORTERM=truecolor, overwriting any existing value', () => {
     expect(buildCodexPtyEnv({ PATH: '/usr/bin' }, 'C:/fake/codex-home').COLORTERM).toBe('truecolor');
     expect(buildCodexPtyEnv({ COLORTERM: '24bit' }, 'C:/fake/codex-home').COLORTERM).toBe('truecolor');

@@ -159,6 +159,19 @@ describe.runIf(process.platform === 'win32')('private Windows launch', () => {
     expect(launch.env.AETHER_TERMINAL).toBe('alpha');
     await launch.cleanup();
   }, 40_000);
+  it('sets AETHER_BOARD_CLI for the connected Claude from boardCliPath, overriding an inherited value', async () => {
+    const { options, dependencies } = await fixture();
+    const boardCliPath = join('fake', 'scripts', 'aether-board.mjs');
+    const launch = await prepareBridgeLaunch({ ...options, boardCliPath, sourceEnv: { PATH: process.env.PATH, AETHER_BOARD_CLI: 'stale' } }, dependencies);
+    expect(launch.env.AETHER_BOARD_CLI).toBe(boardCliPath);
+    await launch.cleanup();
+  }, 40_000);
+  it('leaves AETHER_BOARD_CLI unset for the connected Claude without boardCliPath, dropping an inherited value', async () => {
+    const { options, dependencies } = await fixture();
+    const launch = await prepareBridgeLaunch({ ...options, sourceEnv: { PATH: process.env.PATH, AETHER_BOARD_CLI: 'stale' } }, dependencies);
+    expect(launch.env.AETHER_BOARD_CLI).toBeUndefined();
+    await launch.cleanup();
+  }, 40_000);
   it('fails without secrets when directory protection fails', async () => {
     const { options, dependencies } = await fixture();
     dependencies.protect = async () => { throw new Error('denied'); };
