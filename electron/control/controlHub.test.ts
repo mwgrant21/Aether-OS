@@ -79,11 +79,12 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
   const typing = { stored: over.typing?.stored ?? true, readTyping: vi.fn(() => typing.stored), persistTyping: vi.fn((on: boolean) => { const rb = over.typing?.persist ? over.typing.persist(on) : on; typing.stored = rb; return rb; }) };
   const emitted: ControlStatus[] = [];
   const store = fakeStore();
-  const confirmPair = vi.fn(over.confirm ?? (async () => true));
+  const alertStore = fakeStore();
+  const confirmPair =vi.fn(over.confirm ?? (async () => true));
   const logs: string[] = [];
   const writes: string[] = [];
   const hub = createControlHub({
-    listener, store, settings: over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings, confirmPair,
+    listener, store, alertStore, settings: over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings, confirmPair,
     onStatus: s => { emitted.push(s); },
     terminals: terms.port,
     threads: over.threads,
@@ -96,7 +97,7 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
   });
-  return { hub, listener, settings, store, confirmPair, timers, logs, writes, terms: terms.t, typing, emitted };
+  return { hub, listener, settings, store, alertStore, confirmPair, timers, logs, writes, terms: terms.t, typing, emitted };
 }
 
 async function pairOne(hub: ReturnType<typeof setup>['hub']) {
@@ -1012,5 +1013,126 @@ describe('control hub view wiring', () => {
     expect(JSON.parse(s.sent[0]).views).toEqual([]);
     s.feed(JSON.stringify({ t: 'view.attach', v: 'projects' }));
     expect(s.closes).toEqual([1008]);
+  });
+});
+
+describe('control hub alert credential', () => {
+  type Rig = ReturnType<typeof setup>;
+  async function pairBoth(rig: Rig) {
+    const r = await pairOne(rig.hub) as { token: string; alertToken?: string; alertExpiresAtMs?: number };
+    return { main: r.token, alert: r.alertToken!, alertExpiresAtMs: r.alertExpiresAtMs };
+  }
+  const bearer = (t: string) => `Bearer ${t}`;
+  const bye = (reason: string) => JSON.stringify({ t: 'bye', reason });
+
+  it('pairing returns distinct main and alert tokens that authenticate only with their own scope', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    expect(typeof t.alert).toBe('string');
+    expect(typeof t.alertExpiresAtMs).toBe('number');
+    expect(t.alert).not.toBe(t.main);
+    expect(rig.hub.port.authenticate(bearer(t.main), PEER)?.scope).toBe('main');
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)?.scope).toBe('alert');
+    const reasons: string[] = [];
+    const swap = { onReject: (r: string) => { reasons.push(r); } };
+    // a well-formed token that neither credential issued is unknown to both
+    expect(rig.hub.port.authenticate(bearer((t.main[0] === 'a' ? 'b' : 'a') + t.main.slice(1)), PEER, swap)).toBeNull();
+    expect(reasons).toEqual(['unknown']);
+  });
+
+  it('an alert token from a different peer is rejected as peer-mismatch', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const reasons: string[] = [];
+    expect(rig.hub.port.authenticate(bearer(t.alert), '100.1.2.3', { onReject: r => { reasons.push(r); } })).toBeNull();
+    expect(reasons).toEqual(['peer-mismatch']);
+  });
+
+  it('pairing a second phone replaces both tokens of the first', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const first = await pairBoth(rig);
+    const second = await pairBoth(rig);
+    expect(rig.hub.port.authenticate(bearer(first.main), PEER)).toBeNull();
+    expect(rig.hub.port.authenticate(bearer(first.alert), PEER)).toBeNull();
+    expect(rig.hub.port.authenticate(bearer(second.main), PEER)?.scope).toBe('main');
+    expect(rig.hub.port.authenticate(bearer(second.alert), PEER)?.scope).toBe('alert');
+  });
+
+  it('revokeAll revokes the alert token and closes an open alert session with revoked', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const s = fakeSocket();
+    rig.hub.port.open(s, rig.hub.port.authenticate(bearer(t.alert), PEER)!);
+    await rig.hub.revokeAll();
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)).toBeNull();
+    expect(s.sent.at(-1)).toBe(bye('revoked'));
+  });
+
+  it('revokeOne of the main ref revokes the alert token too; a non-matching ref leaves it valid', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const s = fakeSocket();
+    rig.hub.port.open(s, rig.hub.port.authenticate(bearer(t.alert), PEER)!);
+    await rig.hub.revokeOne('000000000000');
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)?.scope).toBe('alert');
+    expect(s.sent.at(-1)).not.toBe(bye('revoked'));
+    await rig.hub.revokeOne(rig.hub.status().devices[0].ref);
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)).toBeNull();
+    expect(s.sent.at(-1)).toBe(bye('revoked'));
+  });
+
+  it('disabling closes an open alert session with disabled; the token still authenticates after re-enable', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const s = fakeSocket();
+    rig.hub.port.open(s, rig.hub.port.authenticate(bearer(t.alert), PEER)!);
+    await rig.hub.setEnabled(false);
+    expect(s.sent.at(-1)).toBe(bye('disabled'));
+    await rig.hub.setEnabled(true);
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)?.scope).toBe('alert');
+    expect(rig.hub.status().connected).toBe(0);
+  });
+
+  it('connected counts main sockets only and the alert credential is not listed as a device', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    expect(rig.hub.status().devices.length).toBe(1);
+    const a = fakeSocket();
+    rig.hub.port.open(a, rig.hub.port.authenticate(bearer(t.alert), PEER)!);
+    expect(rig.hub.status().connected).toBe(0);
+    const m = fakeSocket();
+    rig.hub.port.open(m, rig.hub.port.authenticate(bearer(t.main), PEER)!);
+    expect(rig.hub.status().connected).toBe(1);
+    const a2 = fakeSocket();
+    rig.hub.port.open(a2, rig.hub.port.authenticate(bearer(t.alert), PEER)!);
+    expect(a.sent.at(-1)).toBe(bye('superseded'));
+    expect(rig.hub.status().connected).toBe(1);
+  });
+
+  it('the alert store holds only hash, timestamps and peer, and no token text reaches a log line or a saved payload', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    rig.hub.port.authenticate(bearer(t.alert), PEER, { touch: true });
+    await rig.hub.revokeAll();
+    expect(rig.alertStore.saved.length).toBeGreaterThan(0);
+    const allowed = new Set(['hash', 'createdAtMs', 'lastSeenMs', 'expiresAtMs', 'peer']);
+    for (const list of rig.alertStore.saved) for (const e of list) for (const k of Object.keys(e)) expect(allowed.has(k)).toBe(true);
+    const blob = rig.logs.join('\n') + JSON.stringify(rig.alertStore.saved) + JSON.stringify(rig.store.saved);
+    expect(blob).not.toContain(t.alert);
+    expect(blob).not.toContain(t.main);
+  });
+
+  it('while off, pair answers 401 and mints no alert token', async () => {
+    const rig = setup();
+    const r = await rig.hub.port.pair('123456', PEER);
+    expect(r).toEqual({ status: 401 });
   });
 });
