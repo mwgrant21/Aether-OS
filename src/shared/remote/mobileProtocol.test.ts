@@ -38,15 +38,18 @@ describe('mobile-protocol.json matches the TypeScript constants', () => {
       inputMaxBytesPerSec: T.CONTROL_INPUT_MAX_BYTES_PER_SEC,
       inputMaxFramesPerSec: T.CONTROL_INPUT_MAX_FRAMES_PER_SEC,
       ackCoalesceMs: T.CONTROL_ACK_COALESCE_MS,
+      maxAlertSockets: T.CONTROL_MAX_ALERT_SOCKETS,
     })
   })
   it('messages, bye reasons, pair status codes', () => {
     expect(spec.messages.phoneToTitan).toEqual([...T.CONTROL_MESSAGE_TYPES.phoneToTitan])
     expect(spec.messages.titanToPhone).toEqual([...T.CONTROL_MESSAGE_TYPES.titanToPhone])
     expect(spec.messages.byeReasons).toEqual([...T.CONTROL_BYE_REASONS])
-    const { successBody, ...codes } = spec.pairResponses
+    const { successBody, optionalBody, ...codes } = spec.pairResponses
     expect(codes).toEqual(T.CONTROL_PAIR_STATUS)
     expect(successBody).toEqual(['token', 'expiresAtMs'])
+    expect(optionalBody).toEqual(['alertToken', 'alertExpiresAtMs'])
+    expect(spec.messages.alertKinds).toEqual([...T.ALERT_KINDS])
   })
 })
 
@@ -114,7 +117,7 @@ describe('terminal frame goldens', () => {
   })
   it('messages lists are exactly the declared verbs, in order', () => {
     expect(spec.messages.phoneToTitan).toEqual(['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'])
-    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'])
+    expect(spec.messages.titanToPhone).toEqual(['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap', 'alert'])
   })
   it('nakReasons match CONTROL_NAK_REASONS', () => {
     expect(spec.messages.nakReasons).toEqual([...T.CONTROL_NAK_REASONS])

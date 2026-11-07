@@ -32,6 +32,7 @@ object ControlProtocol {
 
     const val HELLO_TIMEOUT_MS = 5_000L
     const val MAX_CONTROL_SOCKETS = 2
+    const val MAX_ALERT_SOCKETS = 2
     const val CTL_MAX_PAYLOAD_BYTES = 65_536
     const val RECHECK_MS = 10_000L
 
@@ -233,6 +234,20 @@ object ControlProtocol {
         val proof = o.opt("proof") as? String ?: return null
         if (proof.isEmpty()) return null
         return Welcome(proof, o.optLong("expiresAtMs", 0L), o.optLong("serverTimeMs", 0L), parseSessions(o.optJSONArray("sessions")), parseApplied(o.optJSONObject("applied")), parseViews(o.opt("views")))
+    }
+
+    enum class AlertKind(val wire: String) { FINISHED("finished"), QUESTION("question"), INPUT("input") }
+
+    /** A kind label only; any other key in the frame is ignored, never carried. */
+    data class AlertFrame(val s: String, val kind: AlertKind)
+
+    /** Null unless the frame is `alert` for the claude slot with a known kind. */
+    fun parseAlertFrame(text: String): AlertFrame? {
+        val o = parseObject(text) ?: return null
+        if (o.optString("t") != "alert" || o.optString("s") != "claude") return null
+        val kind = o.optString("kind")
+        val k = AlertKind.values().firstOrNull { it.wire == kind } ?: return null
+        return AlertFrame("claude", k)
     }
 
     /** Null unless the frame is a `bye` with a known reason. */

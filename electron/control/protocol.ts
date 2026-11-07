@@ -4,12 +4,12 @@
 // bye, snap, out, size, state, ack, nak, thread.snap, thread.ev, thread.state, prompt, prompt.closed, ledger.snap and view.snap. There is no start verb and no answer-a-prompt verb yet. controlBoundary.test.ts reads MESSAGE_TYPES
 // below statically and requires the gateway to handle exactly phoneToTitan, so a new verb is a reviewed edit to both
 // files. protocol/mobile-protocol.json pins these values from the outside (protocol.test.ts).
-import { CONTROL_BYE_REASONS, CONTROL_INPUT_MAX_BYTES, LEDGER_TIERS, TERMINAL_SLOTS, VIEW_IDS, VIEW_PARAMS_MAX_BYTES, VIEW_PARAM_IDS } from '../../src/shared/remote/types';
-import type { LedgerWire, NakReason, PromptCloseReason, PromptInfo, TerminalInfo, TerminalSlotId, TerminalSlotState, ThreadEvent, ThreadSlotId, ViewId } from '../../src/shared/remote/types';
+import { ALERT_KINDS, ALERT_SLOT, CONTROL_BYE_REASONS, CONTROL_INPUT_MAX_BYTES, LEDGER_TIERS, TERMINAL_SLOTS, VIEW_IDS, VIEW_PARAMS_MAX_BYTES, VIEW_PARAM_IDS } from '../../src/shared/remote/types';
+import type { AlertKind, LedgerWire, NakReason, PromptCloseReason, PromptInfo, TerminalInfo, TerminalSlotId, TerminalSlotState, ThreadEvent, ThreadSlotId, ViewId } from '../../src/shared/remote/types';
 
 export const MESSAGE_TYPES = {
   phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap', 'alert'],
 } as const;
 
 export const PROTOCOL_VERSION = 1;
@@ -175,6 +175,11 @@ export function encodeNak(o: { s: TerminalSlotId; c: number; reason: NakReason }
 
 export function encodeBye(reason: ByeReason): string {
   return JSON.stringify({ t: 'bye', reason });
+}
+
+export function encodeAlert(kind: AlertKind): string {
+  if (!ALERT_KINDS.includes(kind)) throw new RangeError('unknown alert kind');
+  return JSON.stringify({ t: 'alert', s: ALERT_SLOT, kind });
 }
 
 export function encodeSnap(o: { s: TerminalSlotId; q: number; cols: number; rows: number; d: string }): string {

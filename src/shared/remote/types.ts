@@ -54,8 +54,13 @@ export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
   phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap', 'alert'],
 } as const;
+export const ALERT_KINDS = ['finished', 'question', 'input'] as const;
+export type AlertKind = (typeof ALERT_KINDS)[number];
+export const ALERT_SLOT = 'claude' as const;
+export type ControlScope = 'main' | 'alert';
+export const CONTROL_MAX_ALERT_SOCKETS = 2;
 export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
 export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
 export const CONTROL_BYE_REASONS = [
@@ -79,10 +84,11 @@ export interface ControlSocket {
 export interface ControlIdentity {
   ref: string; // first 12 hex of the stored hash
   expiresAtMs: number;
+  scope?: ControlScope; // absent = main
   proofFor(nonce: string): string;
 }
 export type ControlPairResult =
-  | { status: 200; token: string; expiresAtMs: number }
+  | { status: 200; token: string; expiresAtMs: number; alertToken?: string; alertExpiresAtMs?: number }
   | { status: 400 | 401 | 403 | 429 | 409 };
 export type AuthRejectReason = 'no-device' | 'no-bearer' | 'unknown' | 'expired' | 'peer-mismatch' | 'error';
 export interface ControlPort {
