@@ -251,4 +251,24 @@ class PairingTest {
         val s = PairResult.Paired(token, 99L, alertToken, 100L).toString()
         assertTrue(s, !s.contains(token) && !s.contains(alertToken))
     }
+
+    @Test fun alertTokenWithoutExpiryIsDropped() {
+        server.enqueue(MockResponse().setResponseCode(200)
+            .setBody("""{"token":"$token","expiresAtMs":1234567,"alertToken":"$alertToken"}"""))
+        val r = client().pair("ABCD2345") as PairResult.Paired
+        assertEquals(token, r.token)
+        assertNull(r.alertToken)
+        assertNull(r.alertExpiresAtMs)
+    }
+
+    @Test fun nonPositiveAlertExpiryDropsBothAlertFields() {
+        for (bad in listOf("0", "-5")) {
+            server.enqueue(MockResponse().setResponseCode(200)
+                .setBody("""{"token":"$token","expiresAtMs":1234567,"alertToken":"$alertToken","alertExpiresAtMs":$bad}"""))
+            val r = client().pair("ABCD2345") as PairResult.Paired
+            assertEquals(token, r.token)
+            assertNull(bad, r.alertToken)
+            assertNull(bad, r.alertExpiresAtMs)
+        }
+    }
 }
