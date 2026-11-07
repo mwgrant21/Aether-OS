@@ -42,7 +42,7 @@ interface Facts { sinks: number; handled: string[] | null; declared: string[] | 
 interface Analysis { violations: Violation[]; facts: Facts }
 
 // The production files the design names plus viewWire (generic view encoders, D3); another is a reviewed edit to this list.
-const OWN_FILES = ['protocol', 'controlGateway', 'inputRouter', 'controlHub', 'controlIpc', 'viewWire'] as const;
+const OWN_FILES = ['protocol', 'controlGateway', 'inputRouter', 'controlHub', 'controlIpc', 'viewWire', 'alertClassifier', 'alertWatcher'] as const;
 const ALLOWED_NAMES: ReadonlySet<string> = new Set([
   ...OWN_FILES.flatMap((f) => [`${f}.ts`, `${f}.test.ts`]),
   'controlBoundary.test.ts',
