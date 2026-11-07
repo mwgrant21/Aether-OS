@@ -578,7 +578,7 @@ function selectedText() {
   const histText = parts.hist ? sliceLines(sel.lines, parts.hist.s, parts.hist.e) : '';
   const liveText = liveSpan(parts.live, sel.cols) ? sel.slot.term.getSelection() : '';
   const wrapped = sel.slot.term.buffer.active.getLine(sel.base)?.isWrapped === true;
-  return joinSelectionText(histText, liveText, wrapped);
+  return joinSelectionText(histText, liveText, wrapped, !!(parts.hist && parts.live));
 }
 
 function clearSel() {

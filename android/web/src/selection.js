@@ -164,10 +164,10 @@ export function liveSpan(live, cols) {
 }
 
 // History and live text joined with \n, or directly when the logical line wraps across the seam.
-// An empty part contributes nothing.
-export function joinSelectionText(histText, liveText, wrapped) {
-  if (!histText) return liveText;
-  if (!liveText) return histText;
+// A span that crosses the seam keeps the break even when one part is empty (a blank last history line);
+// otherwise only one part is present and it is returned as is.
+export function joinSelectionText(histText, liveText, wrapped, crossing = false) {
+  if (!crossing) return histText || liveText;
   return histText + (wrapped ? '' : '\n') + liveText;
 }
 

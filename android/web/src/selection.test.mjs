@@ -329,13 +329,18 @@ describe('liveSpan', () => {
 
 describe('joinSelectionText', () => {
   it('joins both parts with a newline, or with nothing when the line wraps across the seam', () => {
-    expect(joinSelectionText('abc', 'def', false)).toBe('abc\ndef');
-    expect(joinSelectionText('abc', 'def', true)).toBe('abcdef');
+    expect(joinSelectionText('abc', 'def', false, true)).toBe('abc\ndef');
+    expect(joinSelectionText('abc', 'def', true, true)).toBe('abcdef');
   });
-  it('skips an empty part so no stray newline appears', () => {
+  it('returns the single present part when the span does not cross the seam', () => {
     expect(joinSelectionText('', 'def', false)).toBe('def');
     expect(joinSelectionText('abc', '', false)).toBe('abc');
     expect(joinSelectionText('', '', true)).toBe('');
+  });
+  it('keeps the newline at the seam when a crossing span has an empty part', () => {
+    expect(joinSelectionText('', 'abc', false, true)).toBe('\nabc');
+    expect(joinSelectionText('abc', '', false, true)).toBe('abc\n');
+    expect(joinSelectionText('', 'abc', true, true)).toBe('abc');
   });
 });
 
