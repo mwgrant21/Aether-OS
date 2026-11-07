@@ -522,6 +522,85 @@ describe('device auth scope', () => {
     expect(auth.list()).toHaveLength(1);
   });
 
+  describe('issue (no pairing code)', () => {
+    const OTHER = '100.64.0.9';
+
+    it('mints a token that authenticates from the same peer only', () => {
+      const { auth } = dev({ maxSessions: 1 });
+      const r = auth.issue(PEER);
+      if (!r) throw new Error('issue returned null');
+      const id = auth.authenticate(bearer(r.token), PEER);
+      expect(id).not.toBeNull();
+      expect(id?.ref).toBe(createHash('sha256').update(r.token).digest('hex').slice(0, 12));
+      const reasons: string[] = [];
+      expect(auth.authenticate(bearer(r.token), OTHER, { onReject: (x) => reasons.push(x) })).toBeNull();
+      expect(reasons).toEqual(['peer-mismatch']);
+    });
+
+    it('refuses a missing or non-IPv4 peer and adds no session', () => {
+      const { auth } = dev({ maxSessions: 1 });
+      expect(auth.issue(undefined)).toBeNull();
+      expect(auth.issue('::1')).toBeNull();
+      expect(auth.list()).toHaveLength(0);
+    });
+
+    it('binds a mapped IPv4 as the plain address', () => {
+      const { auth } = dev({ maxSessions: 1 });
+      const r = auth.issue('::ffff:100.64.0.7');
+      if (!r) throw new Error('issue returned null');
+      expect(auth.list()[0].peer).toBe('100.64.0.7');
+      expect(auth.authenticate(bearer(r.token), '100.64.0.7')).not.toBeNull();
+    });
+
+    it('expires a sliding window after now and a second issue evicts the first', () => {
+      const { auth } = dev({ maxSessions: 1, slidingMs: 5 * MIN });
+      const a = auth.issue(PEER);
+      const b = auth.issue(PEER);
+      if (!a || !b) throw new Error('issue returned null');
+      expect(b.expiresAtMs).toBe(1_000_000 + 5 * MIN);
+      expect(auth.list()).toHaveLength(1);
+      const reasons: string[] = [];
+      expect(auth.authenticate(bearer(a.token), PEER, { onReject: (x) => reasons.push(x) })).toBeNull();
+      expect(reasons).toEqual(['unknown']);
+      expect(auth.authenticate(bearer(b.token), PEER)).not.toBeNull();
+    });
+
+    it('persists only the hash, three timestamps and the peer, never the token', async () => {
+      const { auth, store } = dev({ maxSessions: 1 });
+      const r = auth.issue(PEER);
+      if (!r) throw new Error('issue returned null');
+      await auth.flush();
+      const saved = store.saves[store.saves.length - 1];
+      expect(saved).toHaveLength(1);
+      expect(Object.keys(saved[0]).sort()).toEqual(['createdAtMs', 'expiresAtMs', 'hash', 'lastSeenMs', 'peer']);
+      expect(JSON.stringify(saved)).not.toContain(r.token);
+    });
+
+    it('does not touch the pairing code', async () => {
+      const { auth } = dev({ maxSessions: 1 });
+      const { code } = auth.createPairing();
+      expect(auth.issue(PEER)).not.toBeNull();
+      expect(auth.counts().pairingActive).toBe(true);
+      expect((await auth.redeemDevice(code, PEER, async () => true)).ok).toBe(true);
+    });
+
+    it('revokeAll invalidates an issued token', () => {
+      const { auth } = dev({ maxSessions: 1 });
+      const r = auth.issue(PEER);
+      if (!r) throw new Error('issue returned null');
+      auth.revokeAll();
+      const reasons: string[] = [];
+      expect(auth.authenticate(bearer(r.token), PEER, { onReject: (x) => reasons.push(x) })).toBeNull();
+      expect(reasons).toEqual(['unknown']);
+    });
+
+    it('returns null on the viewer profile', () => {
+      const viewer = createRemoteAuth() as unknown as import('./remoteAuth').DeviceAuth;
+      expect(viewer.issue(PEER)).toBeNull();
+      expect(viewer.list()).toHaveLength(0);
+    });
+  });
+
   it('parses the bearer header strictly', async () => {
     const { auth } = dev();
     const { token } = await pairDev(auth);
