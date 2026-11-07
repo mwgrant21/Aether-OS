@@ -66,6 +66,19 @@ export function cellWordBounds(cells, col) {
   return { start: cellOf[w.start], end: last + Math.max(1, cells[last].width) };
 }
 
+// Pin a handle anchor {x,y} into the slot rect {left,right,top,bottom}: x clamps to the left/right
+// edges, so a caret past the visible width (a whole-row word on a grid wider than the slot) keeps a
+// reachable handle; y outside the rect gives null (the row is scrolled out, so there is no handle).
+// `inset` keeps x that many px inside each edge, so a handle dot drawn up to `inset` px to either
+// side of the anchor still lands on screen.
+export function clampAnchor(a, r, inset = 0) {
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return null;
+  if (a.y < r.top || a.y > r.bottom) return null;
+  const lo = r.left + inset;
+  const hi = r.right - inset;
+  return { x: hi < lo ? (r.left + r.right) / 2 : Math.min(hi, Math.max(lo, a.x)), y: a.y };
+}
+
 // Longest prefix of text that fits maxBytes of UTF-8, cut on a code-point boundary.
 export function clampText(text, maxBytes) {
   let bytes = 0;
@@ -93,6 +106,69 @@ export function sliceLines(lines, a, b) {
   for (let i = sl + 1; i < el; i++) parts.push(lines[i]);
   parts.push(lines[el].slice(0, e.off));
   return parts.join('\n');
+}
+
+// Combined-selection points. A point is {line, off}: line < histCount is a history logical line
+// (off = UTF-16 caret offset), line >= histCount is live row line - histCount (off = cell column
+// caret 0..cols). Carets are boundaries, so a span's end is exclusive.
+export function cmpPoint(a, b) {
+  return a.line - b.line || a.off - b.off;
+}
+
+export function orderPoints(a, b) {
+  return cmpPoint(a, b) <= 0 ? [a, b] : [b, a];
+}
+
+// Caret boundary 0..cols nearest to x on a grid starting at left; null on unusable input.
+export function caretInCell({ x, left, width, cols }) {
+  for (const v of [x, left, width, cols]) if (!Number.isFinite(v)) return null;
+  if (width <= 0 || cols < 1) return null;
+  const c = Math.round(((x - left) / width) * cols);
+  return Math.min(cols, Math.max(0, c));
+}
+
+// Selection grown from a long-pressed word {s,e} toward a dragged point: at or after the word start
+// the word start stays and the end follows the point; before it the start follows the point.
+export function extendFromWord(word, pt) {
+  if (cmpPoint(pt, word.s) >= 0) return { s: word.s, e: cmpPoint(pt, word.e) > 0 ? pt : word.e };
+  return { s: pt, e: word.e };
+}
+
+// Move the held handle ('start' | 'end') of {s,e} to pt. Crossing the other handle swaps the two and
+// flips `which`, so the held finger now owns the other end. s is never after e.
+export function dragHandle({ s, e }, which, pt) {
+  if (which === 'start') {
+    return cmpPoint(pt, e) > 0 ? { s: e, e: pt, which: 'end' } : { s: pt, e, which: 'start' };
+  }
+  return cmpPoint(pt, s) < 0 ? { s: pt, e: s, which: 'start' } : { s, e: pt, which: 'end' };
+}
+
+// Split an ordered span at the history/live boundary. hist keeps {line,off} points; live gets
+// {row,col}. A crossing span ends hist at the last history line (off Infinity, for sliceLines to
+// clamp) and starts live at the top-left cell.
+export function splitSelection(s, e, histCount) {
+  const toLive = (p) => ({ row: p.line - histCount, col: p.off });
+  if (e.line < histCount) return { hist: { s, e }, live: null };
+  if (s.line >= histCount) return { hist: null, live: { s: toLive(s), e: toLive(e) } };
+  return {
+    hist: { s, e: { line: histCount - 1, off: Infinity } },
+    live: { s: { row: 0, col: 0 }, e: toLive(e) },
+  };
+}
+
+// Arguments for xterm's select(col, row, length) from a live part; null when empty or absent.
+export function liveSpan(live, cols) {
+  if (!live) return null;
+  const len = live.e.row * cols + live.e.col - (live.s.row * cols + live.s.col);
+  return len > 0 ? { col: live.s.col, row: live.s.row, len } : null;
+}
+
+// History and live text joined with \n, or directly when the logical line wraps across the seam.
+// A span that crosses the seam keeps the break even when one part is empty (a blank last history line);
+// otherwise only one part is present and it is returned as is.
+export function joinSelectionText(histText, liveText, wrapped, crossing = false) {
+  if (!crossing) return histText || liveText;
+  return histText + (wrapped ? '' : '\n') + liveText;
 }
 
 // One-shot long-press timer. start() arms it (re-arming replaces); move() cancels it when the finger

@@ -13,8 +13,10 @@ import { THEME } from './theme.js';
 import { chainDrag, toNotches, flushAlt, finishAlt, shouldIntercept, wheelBytes } from './altScroll.js';
 import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
+import { createAutoScroll } from './edgeScroll.js';
 import {
-  cellAt, cellWordBounds, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
+  cellAt, cellWordBounds, wordBounds, clampText, clampAnchor, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
+  caretInCell, extendFromWord, dragHandle, splitSelection, liveSpan, joinSelectionText,
 } from './selection.js';
 
 const DEFAULT_SLOT = 'claude'; // the V0 demo source sends `out` for this slot with no snap/size
@@ -36,7 +38,7 @@ let altTouchAt = -Infinity; // last intercepted alt-screen drag; follow() stays 
 const ALT_FOLLOW_QUIET_MS = 600;
 // Long-press selection (see the Selection block below). While it exists the settled region is not
 // rebuilt (the DOM Range would die) and follow() stays quiet; both catch up when it clears.
-let sel = null; // { kind: 'live'|'hist', slot, ... }
+let sel = null; // { slot, base, cols, histCount, rows, lines, word, s, e }: one span over hist + live
 let selDragging = false; // a touch long-press fired and the finger is still down
 
 function slotFor(id) {
@@ -68,6 +70,10 @@ function slotFor(id) {
   term.loadAddon(fit);
   term.open(livex);
   slot = { id, el, hist, livex, term, fit, sized: false, dirty: false, histKey: null, histTimer: 0 };
+  // Handles ride the text, so they re-place when either scroller moves.
+  const replace = () => { if (sel && sel.slot === slot) placeHandles(); };
+  el.addEventListener('scroll', replace, { passive: true });
+  livex.addEventListener('scroll', replace, { passive: true });
   // Input only while stdin is on, and never mouse/focus reports (inputFilter). Resize is
   // reported only while the page is fitting itself (V0 demo); titan owns the size otherwise.
   term.onData((d) => {
@@ -266,13 +272,12 @@ bridge.onmessage = (ev) => {
   }
 };
 
-// ---- Selection: long-press (touch, or held mouse) then drag, inside the region it started in.
-// LIVE grid: cell hit-test + term.select. SETTLED history: caretRangeFromPoint + the CSS Custom
-// Highlight API (no native DOM selection, so no WebView handles). Reporting is only sel on/off.
-const inRect = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+// ---- Selection: long-press (touch, or held mouse) then drag; one span that may cross from settled
+// history into the live grid. LIVE grid: cell hit-test + term.select. SETTLED history:
+// caretRangeFromPoint + the CSS Custom Highlight API (no native DOM selection, so no WebView
+// handles). Reporting is only sel on/off.
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const histApi = () => typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function';
-const cmpPt = (a, b) => (a.line - b.line) || (a.off - b.off);
 
 function liveCell(slot, x, y) {
   const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
@@ -289,7 +294,11 @@ function histLines(slot) {
 
 function histPoint(slot, rows, x, y) {
   const hr = slot.hist.getBoundingClientRect();
-  const r = document.caretRangeFromPoint(clamp(x, hr.left + 1, hr.right - 1), clamp(y, hr.top + 1, hr.bottom - 1));
+  // caretRangeFromPoint returns null outside the window, so clamp to hist rect and window both.
+  const r = document.caretRangeFromPoint(
+    clamp(x, Math.max(hr.left, 0) + 1, Math.min(hr.right, window.innerWidth) - 1),
+    clamp(y, Math.max(hr.top, 0) + 1, Math.min(hr.bottom, window.innerHeight) - 1),
+  );
   if (!r) return null;
   const line = rows.findIndex((row) => row.contains(r.startContainer));
   if (line < 0) return null;
@@ -311,82 +320,278 @@ function domPos(row, off) {
   return last ? [last, last.length] : [row, 0];
 }
 
+// Which region (x,y) is in: the live grid when y is at or below its top (or history is unavailable,
+// histCount 0), else settled history. null when neither exists.
+function regionOf(ctx, x, y) {
+  const screen = ctx.slot.term.element && ctx.slot.term.element.querySelector('.xterm-screen');
+  if (screen && (ctx.histCount === 0 || y >= screen.getBoundingClientRect().top)) return 'live';
+  return ctx.histCount > 0 ? 'hist' : null;
+}
+
+// Combined point under (x,y): history logical line + UTF-16 caret, or histCount + live row (relative
+// to ctx.base) + cell-column caret. null when nothing usable is there.
+function pointAt(ctx, x, y) {
+  const region = regionOf(ctx, x, y);
+  if (region === 'hist') return histPoint(ctx.slot, ctx.rows, x, y);
+  if (region !== 'live') return null;
+  const c = liveCell(ctx.slot, x, y);
+  if (!c) return null;
+  const screen = ctx.slot.term.element.querySelector('.xterm-screen');
+  const r = screen.getBoundingClientRect();
+  const off = caretInCell({ x, left: r.left, width: r.width, cols: ctx.cols });
+  if (off === null) return null;
+  const abs = Math.max(ctx.base, ctx.slot.term.buffer.active.viewportY + c.row);
+  return { line: ctx.histCount + abs - ctx.base, off };
+}
+
 function beginSel(x, y) {
   const slot = slots.get(visible);
   if (!slot || slot.el.hidden) return false;
   clearSel();
   altEnd(); // no wheel bytes while selecting
-  const screen = slot.term.element && slot.term.element.querySelector('.xterm-screen');
-  if (screen && inRect(screen.getBoundingClientRect(), x, y) && inRect(slot.livex.getBoundingClientRect(), x, y)) {
+  const { rows, lines } = histApi() && !slot.hist.hidden ? histLines(slot) : { rows: [], lines: [] };
+  const buf = slot.term.buffer.active;
+  const ctx = { slot, base: buf.baseY, cols: slot.term.cols, histCount: rows.length, rows, lines };
+  const region = regionOf(ctx, x, y);
+  let word;
+  if (region === 'live') {
+    const p = pointAt(ctx, x, y);
     const c = liveCell(slot, x, y);
-    if (!c) return false;
-    const { cols } = slot.term;
-    const buf = slot.term.buffer.active;
-    const row = buf.viewportY + c.row;
-    const line = buf.getLine(row);
+    if (!p || !c) return false;
+    const line = buf.getLine(Math.max(ctx.base, buf.viewportY + c.row));
     const cells = [];
-    for (let x = 0; line && x < cols; x++) {
-      const cell = line.getCell(x);
+    for (let i = 0; line && i < ctx.cols; i++) {
+      const cell = line.getCell(i);
       if (!cell) break;
       cells.push({ chars: cell.getChars(), width: cell.getWidth() });
     }
     const w = cellWordBounds(cells, c.col);
-    sel = { kind: 'live', slot, cols, a: row * cols + w.start, e: row * cols + w.end - 1 };
-    applyLive(x, y);
-  } else if (histApi() && !slot.hist.hidden && inRect(slot.hist.getBoundingClientRect(), x, y)) {
-    const { rows, lines } = histLines(slot);
-    const p = histPoint(slot, rows, x, y);
+    word = { s: { line: p.line, off: w.start }, e: { line: p.line, off: w.end } };
+  } else if (region === 'hist') {
+    const p = pointAt(ctx, x, y);
     if (!p) return false;
     const w = wordBounds(lines[p.line], p.off);
-    sel = { kind: 'hist', slot, rows, lines, a: { line: p.line, off: w.start }, e: { line: p.line, off: w.end } };
-    applyHist(x, y);
+    word = { s: { line: p.line, off: w.start }, e: { line: p.line, off: w.end } };
   } else {
     return false;
   }
+  sel = { ...ctx, word, s: word.s, e: word.e };
+  render();
   window.getSelection().removeAllRanges(); // the WebView's own long-press selection must not show
   send({ t: 'sel', s: slot.id, on: true });
   return true;
 }
 
-function applyLive(x, y) {
-  const c = liveCell(sel.slot, x, y);
-  if (!c) return;
-  const f = (sel.slot.term.buffer.active.viewportY + c.row) * sel.cols + c.col;
-  const start = f >= sel.a ? sel.a : f;
-  const end = f >= sel.a ? Math.max(f, sel.e) : sel.e;
-  sel.slot.term.select(start % sel.cols, Math.floor(start / sel.cols), end - start + 1);
+// Paint sel.s..sel.e: the history part as a DOM Range under the Custom Highlight, the live part
+// through term.select. A part the span does not cover is cleared.
+function render() {
+  const parts = splitSelection(sel.s, sel.e, sel.histCount);
+  if (histApi()) {
+    if (parts.hist) {
+      const at = (p) => domPos(sel.rows[p.line], Math.min(p.off, sel.lines[p.line].length));
+      const range = document.createRange();
+      range.setStart(...at(parts.hist.s));
+      range.setEnd(...at(parts.hist.e));
+      CSS.highlights.set('aether-sel', new Highlight(range));
+    } else {
+      CSS.highlights.delete('aether-sel');
+    }
+  }
+  const span = liveSpan(parts.live, sel.cols);
+  if (span) sel.slot.term.select(span.col, sel.base + span.row, span.len);
+  else sel.slot.term.clearSelection();
+  placeHandles();
 }
 
-function applyHist(x, y) {
-  const f = histPoint(sel.slot, sel.rows, x, y);
-  if (!f) return;
-  const [s, e] = cmpPt(f, sel.a) >= 0 ? [sel.a, cmpPt(f, sel.e) > 0 ? f : sel.e] : [f, sel.e];
-  const range = document.createRange();
-  range.setStart(...domPos(sel.rows[s.line], s.off));
-  range.setEnd(...domPos(sel.rows[e.line], e.off));
-  CSS.highlights.set('aether-sel', new Highlight(range));
-  sel.s = s;
-  sel.f = e;
+// ---- Selection handles (touch only): two draggable carets in an overlay OUTSIDE #term, so a touch
+// on one never reaches the root listeners (tap-to-clear, long-press, alt scroll). Geometry is
+// DEVICE-UNVERIFIED: history uses one-character Range rects with fallbacks, live uses cell math.
+const HANDLE_LIFT_PX = 20; // the probe sits above the finger so the caret stays visible
+const HANDLE_BOX_PX = 44;
+const HANDLE_DOT_PX = 22; // .selhandle-dot width (app.css); anchors stay this far inside the slot
+let handlesArmed = false; // a touch long-press created the current selection
+let heldHandle = null; // 'start' | 'end' while a handle is being dragged
+let handleEls = null; // { box, start, end }
+
+function ensureHandles() {
+  if (handleEls) return handleEls;
+  const box = document.createElement('div');
+  box.id = 'selhandles';
+  box.style.display = 'none';
+  const make = (which) => {
+    const el = document.createElement('div');
+    el.className = `selhandle ${which}`;
+    el.style.display = 'none';
+    const dot = document.createElement('div');
+    dot.className = 'selhandle-dot';
+    el.appendChild(dot);
+    el.addEventListener('touchstart', (ev) => {
+      if (!sel || ev.touches.length !== 1) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      heldHandle = which;
+      const t = ev.touches[0];
+      dragTo(t.clientX, t.clientY - HANDLE_LIFT_PX, false);
+    }, { passive: false });
+    el.addEventListener('touchmove', (ev) => {
+      if (!heldHandle || !sel) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const t = ev.touches[0];
+      if (!t) return;
+      dragTo(t.clientX, t.clientY - HANDLE_LIFT_PX);
+    }, { passive: false });
+    const release = () => {
+      heldHandle = null;
+      stopDrag();
+    };
+    el.addEventListener('touchend', release);
+    el.addEventListener('touchcancel', release);
+    box.appendChild(el);
+    return el;
+  };
+  const start = make('start');
+  const end = make('end');
+  document.body.appendChild(box);
+  handleEls = { box, start, end };
+  return handleEls;
+}
+
+// Screen anchor { x, y } (caret x, row bottom) of a selection point, or null when it is off-screen.
+function handleAnchor(pt, which) {
+  const slot = sel.slot;
+  const sr = slot.el.getBoundingClientRect();
+  let a = null;
+  if (pt.line < sel.histCount) {
+    const row = sel.rows[pt.line];
+    const text = sel.lines[pt.line];
+    const off = clamp(pt.off, 0, text.length);
+    // One-character range beside the caret: start prefers the char after it (its left edge), end the
+    // char before it (its right edge); the other side and then the row box are the fallbacks.
+    const edge = (from, to, useLast) => {
+      if (from < 0 || to > text.length || from >= to) return null;
+      const range = document.createRange();
+      range.setStart(...domPos(row, from));
+      range.setEnd(...domPos(row, to));
+      const rects = range.getClientRects();
+      if (!rects.length) return null;
+      const rc = useLast ? rects[rects.length - 1] : rects[0];
+      return { x: useLast ? rc.right : rc.left, y: rc.bottom };
+    };
+    const after = () => edge(off, off + 1, false);
+    const before = () => edge(off - 1, off, true);
+    a = (which === 'start' ? after() || before() : before() || after());
+    if (!a) {
+      const rc = row.getBoundingClientRect(); // blank row, or a Range with no rects
+      a = { x: rc.left, y: rc.bottom };
+    }
+  } else {
+    const screen = sel.slot.term.element && sel.slot.term.element.querySelector('.xterm-screen');
+    if (!screen) return null;
+    const buf = sel.slot.term.buffer.active;
+    const vr = sel.base + (pt.line - sel.histCount) - buf.viewportY;
+    const rows = sel.slot.term.rows;
+    if (vr < 0 || vr >= rows || !sel.cols) return null;
+    const r = screen.getBoundingClientRect();
+    a = { x: r.left + (clamp(pt.off, 0, sel.cols) * r.width) / sel.cols, y: r.top + ((vr + 1) * r.height) / rows };
+  }
+  return clampAnchor(a, sr, HANDLE_DOT_PX);
+}
+
+function placeHandles() {
+  const show = sel && handlesArmed && !selDragging;
+  if (!show && !handleEls) return;
+  const h = ensureHandles();
+  h.box.style.display = show ? 'block' : 'none';
+  if (!show) return;
+  for (const [which, pt] of [['start', sel.s], ['end', sel.e]]) {
+    const el = h[which];
+    const a = handleAnchor(pt, which);
+    if (!a) {
+      el.style.display = 'none';
+      continue;
+    }
+    el.style.display = 'block';
+    // start sits left of its caret and end right of it, so neither covers the selected text.
+    el.style.left = `${which === 'start' ? a.x - HANDLE_BOX_PX + 8 : a.x - 8}px`;
+    el.style.top = `${a.y}px`;
+  }
 }
 
 function extendSel(x, y) {
   if (!sel) return;
-  if (sel.kind === 'live') applyLive(x, y);
-  else applyHist(x, y);
+  const pt = pointAt(sel, x, y);
+  if (!pt) return;
+  const { s, e } = extendFromWord(sel.word, pt);
+  sel.s = s;
+  sel.e = e;
+  render();
+}
+
+// ---- Edge auto-scroll: one timer, shared by a held handle, the long-press finger and a mouse drag.
+// `drag` is the last probe point (handle lift already applied); the timer re-applies it after each
+// scroll so the selection follows even when the finger is still. Every gesture end calls stopDrag().
+let drag = null; // { x, y }
+const autoScroll = createAutoScroll({
+  getPoint: () => (sel && drag ? drag : null),
+  getBounds: () => sel.slot.el.getBoundingClientRect(),
+  scrollBy: (dy) => {
+    const el = sel.slot.el;
+    const before = el.scrollTop;
+    el.scrollTop += dy;
+    if (el.scrollTop === before) return false;
+    applyDrag();
+    return true;
+  },
+});
+
+function applyDrag() {
+  if (!sel || !drag) return;
+  if (heldHandle) {
+    const pt = pointAt(sel, drag.x, drag.y);
+    if (!pt) return;
+    const r = dragHandle({ s: sel.s, e: sel.e }, heldHandle, pt);
+    sel.s = r.s;
+    sel.e = r.e;
+    heldHandle = r.which;
+    render();
+  } else {
+    extendSel(drag.x, drag.y);
+  }
+}
+
+// Record the probe point, apply it (unless the caller just did the work), and keep the timer armed.
+function dragTo(x, y, apply = true) {
+  if (!sel) return;
+  drag = { x, y };
+  if (apply) applyDrag();
+  autoScroll.start();
+}
+
+function stopDrag() {
+  autoScroll.stop();
+  drag = null;
 }
 
 function selectedText() {
-  if (sel.kind === 'live') return sel.slot.term.getSelection();
-  return sliceLines(sel.lines, sel.s || sel.a, sel.f || sel.e);
+  const parts = splitSelection(sel.s, sel.e, sel.histCount);
+  const histText = parts.hist ? sliceLines(sel.lines, parts.hist.s, parts.hist.e) : '';
+  const liveText = liveSpan(parts.live, sel.cols) ? sel.slot.term.getSelection() : '';
+  const wrapped = sel.slot.term.buffer.active.getLine(sel.base)?.isWrapped === true;
+  return joinSelectionText(histText, liveText, wrapped, !!(parts.hist && parts.live));
 }
 
 function clearSel() {
+  stopDrag();
   if (!sel) return;
   const cur = sel;
   sel = null;
   selDragging = false;
-  if (cur.kind === 'live') cur.slot.term.clearSelection();
-  else if (histApi()) CSS.highlights.delete('aether-sel');
+  handlesArmed = false;
+  heldHandle = null;
+  placeHandles();
+  cur.slot.term.clearSelection();
+  if (histApi()) CSS.highlights.delete('aether-sel');
   send({ t: 'sel', s: cur.slot.id, on: false });
   for (const slot of slots.values()) scheduleHist(slot);
   follow(cur.slot);
@@ -399,13 +604,20 @@ const lpTouch = createLongPress({
   slopPx: TOUCH_SLOP_PX,
   onFire: (x, y) => {
     tapTouch = null;
-    if (beginSel(x, y)) selDragging = true;
+    if (beginSel(x, y)) {
+      selDragging = true;
+      handlesArmed = true; // shown once the finger lifts
+      dragTo(x, y, false);
+    }
   },
 });
 const lpMouse = createLongPress({
   slopPx: MOUSE_SLOP_PX,
   onFire: (x, y) => {
-    if (mouse && beginSel(x, y)) mouse.sel = true;
+    if (mouse && beginSel(x, y)) {
+      mouse.sel = true;
+      dragTo(x, y, false);
+    }
   },
 });
 
@@ -432,6 +644,7 @@ root.addEventListener('touchstart', (ev) => {
   altEnd();
   lpTouch.end();
   selDragging = false;
+  stopDrag();
   tapTouch = null;
   if (ev.touches.length !== 1) return;
   const slot = slots.get(visible);
@@ -446,13 +659,14 @@ root.addEventListener('touchmove', (ev) => {
   if (ev.touches.length !== 1) {
     lpTouch.end();
     selDragging = false;
+    stopDrag();
   } else {
     const p = ev.touches[0];
     lpTouch.move(p.clientX, p.clientY);
     if (tapTouch && Math.max(Math.abs(p.clientX - tapTouch.x), Math.abs(p.clientY - tapTouch.y)) >= TOUCH_SLOP_PX) tapTouch = null;
     if (selDragging) {
       ev.preventDefault();
-      extendSel(p.clientX, p.clientY);
+      dragTo(p.clientX, p.clientY);
       return;
     }
   }
@@ -491,15 +705,19 @@ root.addEventListener('touchmove', (ev) => {
 root.addEventListener('touchend', () => {
   lpTouch.end();
   selDragging = false;
+  stopDrag();
   if (tapTouch && Date.now() - tapTouch.at < TAP_MAX_MS) clearSel(); // a tap leaves selection mode
   tapTouch = null;
   altEnd(true);
+  placeHandles();
 });
 root.addEventListener('touchcancel', () => {
   lpTouch.end();
   selDragging = false;
+  stopDrag();
   tapTouch = null;
   altEnd();
+  placeHandles();
 });
 
 // Mouse (Phone Link etc.): Pointer Events drag + wheel. Touch pointers are left to the touch
@@ -519,6 +737,7 @@ function cellSize(slot) {
 
 function mouseEnd(commit = false) {
   if (!mouse) return; // never touch the touch gesture's alt state
+  stopDrag();
   lpMouse.end();
   mouse = null;
   altEnd(commit);
@@ -545,7 +764,7 @@ root.addEventListener('pointermove', (ev) => {
   const slot = mouse.slot;
   if (mouse.sel) {
     ev.preventDefault();
-    extendSel(ev.clientX, ev.clientY);
+    dragTo(ev.clientX, ev.clientY);
     return;
   }
   lpMouse.move(ev.clientX, ev.clientY);

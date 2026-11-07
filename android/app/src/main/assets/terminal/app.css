@@ -13,3 +13,9 @@ html, body { margin: 0; height: 100%; background: #020A10; overflow: hidden; }
    selectable; the settled history is highlighted with the CSS Custom Highlight API. */
 .livex { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 ::highlight(aether-sel) { background: #1f6f8b; color: #fff; }
+/* Selection handles (main.js): overlay outside #term; 44px touch box, 22px teardrop. */
+#selhandles { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+.selhandle { position: absolute; width: 44px; height: 44px; pointer-events: auto; touch-action: none; }
+.selhandle-dot { position: absolute; top: 2px; width: 22px; height: 22px; background: #35b6e0; border: 2px solid #fff; box-sizing: border-box; border-radius: 50%; }
+.selhandle.start .selhandle-dot { right: 8px; border-top-right-radius: 0; }
+.selhandle.end .selhandle-dot { left: 8px; border-top-left-radius: 0; }
