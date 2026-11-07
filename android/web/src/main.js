@@ -408,6 +408,7 @@ function render() {
 // DEVICE-UNVERIFIED: history uses one-character Range rects with fallbacks, live uses cell math.
 const HANDLE_LIFT_PX = 20; // the probe sits above the finger so the caret stays visible
 const HANDLE_BOX_PX = 44;
+const HANDLE_DOT_PX = 22; // .selhandle-dot width (app.css); anchors stay this far inside the slot
 let handlesArmed = false; // a touch long-press created the current selection
 let heldHandle = null; // 'start' | 'end' while a handle is being dragged
 let handleEls = null; // { box, start, end }
@@ -494,7 +495,7 @@ function handleAnchor(pt, which) {
     const r = screen.getBoundingClientRect();
     a = { x: r.left + (clamp(pt.off, 0, sel.cols) * r.width) / sel.cols, y: r.top + ((vr + 1) * r.height) / rows };
   }
-  return clampAnchor(a, sr);
+  return clampAnchor(a, sr, HANDLE_DOT_PX);
 }
 
 function placeHandles() {

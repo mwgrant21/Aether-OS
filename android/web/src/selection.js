@@ -69,10 +69,14 @@ export function cellWordBounds(cells, col) {
 // Pin a handle anchor {x,y} into the slot rect {left,right,top,bottom}: x clamps to the left/right
 // edges, so a caret past the visible width (a whole-row word on a grid wider than the slot) keeps a
 // reachable handle; y outside the rect gives null (the row is scrolled out, so there is no handle).
-export function clampAnchor(a, r) {
+// `inset` keeps x that many px inside each edge, so a handle dot drawn up to `inset` px to either
+// side of the anchor still lands on screen.
+export function clampAnchor(a, r, inset = 0) {
   if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return null;
   if (a.y < r.top || a.y > r.bottom) return null;
-  return { x: Math.min(r.right, Math.max(r.left, a.x)), y: a.y };
+  const lo = r.left + inset;
+  const hi = r.right - inset;
+  return { x: hi < lo ? (r.left + r.right) / 2 : Math.min(hi, Math.max(lo, a.x)), y: a.y };
 }
 
 // Longest prefix of text that fits maxBytes of UTF-8, cut on a code-point boundary.

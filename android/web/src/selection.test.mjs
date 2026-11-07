@@ -228,6 +228,12 @@ describe('clampAnchor', () => {
     expect(clampAnchor({ x: 966, y: 99 }, slot)).toEqual({ x: 384, y: 99 });
     expect(clampAnchor({ x: -20, y: 99 }, slot)).toEqual({ x: 0, y: 99 });
   });
+  it('keeps the anchor `inset` px inside each edge so a dot beside it stays on screen', () => {
+    expect(clampAnchor({ x: 966, y: 99 }, slot, 22)).toEqual({ x: 362, y: 99 });
+    expect(clampAnchor({ x: -20, y: 99 }, slot, 22)).toEqual({ x: 22, y: 99 });
+    expect(clampAnchor({ x: 100, y: 99 }, slot, 22)).toEqual({ x: 100, y: 99 });
+    expect(clampAnchor({ x: 966, y: 99 }, { ...slot, right: 30 }, 22)).toEqual({ x: 15, y: 99 });
+  });
   it('gives null when the row is outside the slot vertically or the anchor is unusable', () => {
     expect(clampAnchor({ x: 10, y: 500 }, slot)).toBeNull();
     expect(clampAnchor({ x: 10, y: -1 }, slot)).toBeNull();
