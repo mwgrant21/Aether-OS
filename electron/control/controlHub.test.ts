@@ -80,7 +80,7 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
   const emitted: ControlStatus[] = [];
   const store = fakeStore();
   const alertStore = fakeStore();
-  const confirmPair =vi.fn(over.confirm ?? (async () => true));
+  const confirmPair = vi.fn(over.confirm ?? (async () => true));
   const logs: string[] = [];
   const writes: string[] = [];
   const hub = createControlHub({
@@ -1128,6 +1128,57 @@ describe('control hub alert credential', () => {
     const blob = rig.logs.join('\n') + JSON.stringify(rig.alertStore.saved) + JSON.stringify(rig.store.saved);
     expect(blob).not.toContain(t.alert);
     expect(blob).not.toContain(t.main);
+  });
+
+  it('a main token from a different peer reports the main reason peer-mismatch, not the alert auth unknown', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const reasons: string[] = [];
+    expect(rig.hub.port.authenticate(bearer(t.main), '100.1.2.3', { onReject: r => { reasons.push(r); } })).toBeNull();
+    expect(reasons).toEqual(['peer-mismatch']);
+  });
+
+  it('a failed alert store save raises the notice and a retry timer; retrySave clears it once the store works', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    rig.alertStore.failSave = true;
+    await pairBoth(rig);
+    expect(rig.hub.status().notice).toBe(CONTROL_REVOKE_UNSAVED_NOTICE);
+    expect(rig.timers.some(t => t.ms === 1000)).toBe(true);
+    rig.alertStore.failSave = false;
+    const s = await rig.hub.retrySave();
+    expect(s.notice).toBeNull();
+  });
+
+  it('stop waits for a pending alert store save', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    rig.alertStore.failSave = true;
+    await pairBoth(rig); // leaves the alert store dirty
+    rig.alertStore.failSave = false;
+    let finished = false;
+    rig.alertStore.save = async () => { await new Promise<void>(r => setTimeout(r, 30)); finished = true; };
+    await rig.hub.stop();
+    expect(finished).toBe(true);
+  });
+
+  it('a disable and re-enable between approval and mint revokes the previous phone alert token too', async () => {
+    const answers: Array<(ok: boolean) => void> = [];
+    let calls = 0;
+    const rig = setup({ confirm: () => (++calls === 1 ? Promise.resolve(true) : new Promise<boolean>(r => { answers.push(r); })) });
+    await rig.hub.setEnabled(true);
+    const first = await pairBoth(rig);
+    const made = await rig.hub.createPairing();
+    if (!made.ok) throw new Error('no pairing');
+    const pending = rig.hub.port.pair(made.code, PEER);
+    await tick();
+    answers[0](true);
+    const disabling = rig.hub.setEnabled(false);
+    expect(await pending).toEqual({ status: 403 });
+    await disabling;
+    await rig.hub.setEnabled(true);
+    expect(rig.hub.port.authenticate(bearer(first.alert), PEER)).toBeNull();
   });
 
   it('while off, pair answers 401 and mints no alert token', async () => {
