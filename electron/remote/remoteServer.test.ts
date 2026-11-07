@@ -556,6 +556,14 @@ describe('POST /api/device/pair', () => {
     expect(ctl.pairs).toEqual([{ code: 'ABCD2345', peer: '127.0.0.1' }])
   })
 
+  it('adds alertToken and alertExpiresAtMs only when the port result carries them', async () => {
+    const { h, ctl } = await bootCtl()
+    ctl.pairResult = { status: 200, token: 't', expiresAtMs: 1, alertToken: 'a', alertExpiresAtMs: 2 }
+    expect(JSON.parse((await postPair(h)).body)).toEqual({ token: 't', expiresAtMs: 1, alertToken: 'a', alertExpiresAtMs: 2 })
+    ctl.pairResult = { status: 200, token: 't', expiresAtMs: 1 }
+    expect(Object.keys(JSON.parse((await postPair(h)).body)).sort()).toEqual(['expiresAtMs', 'token'])
+  })
+
   it('maps a refusal to a bare status and never echoes a token', async () => {
     const { h, ctl } = await bootCtl()
     for (const status of [401, 403, 409, 429] as const) {
@@ -651,6 +659,33 @@ describe('/ctl upgrade', () => {
     await Promise.all([a.opened, b.opened])
     expect(await upgradeStatus(h, '/ctl', { Authorization: BEARER })).toBe(503)
     expect(h.controlClients()).toBe(2)
+  })
+
+  it('counts sockets per scope: main and alert budgets are separate, and a close frees only its own scope', async () => {
+    const ALERT = 'Bearer alert'
+    const ctl = fakeControl(2)
+    const base = ctl.authenticate.bind(ctl)
+    ctl.authenticate = (authorization, peer, o) => {
+      if (authorization !== ALERT) return base(authorization, peer, o)
+      return { ref: 'alert0123456', expiresAtMs: 1, proofFor: () => 'proof', scope: 'alert' }
+    }
+    const { h } = await bootCtl({}, ctl)
+    const a1 = ctlOpen(h)
+    const a2 = ctlOpen(h)
+    await Promise.all([a1.opened, a2.opened])
+    expect(await upgradeStatus(h, '/ctl', { Authorization: BEARER })).toBe(503)
+    const b1 = ctlOpen(h, { Authorization: ALERT })
+    const b2 = ctlOpen(h, { Authorization: ALERT })
+    await Promise.all([b1.opened, b2.opened])
+    expect(await upgradeStatus(h, '/ctl', { Authorization: ALERT })).toBe(503)
+    expect(h.controlClients()).toBe(4)
+    a1.ws.close()
+    await a1.closed
+    await until(() => h.controlClients() === 3)
+    expect(await upgradeStatus(h, '/ctl', { Authorization: ALERT })).toBe(503)
+    const a3 = ctlOpen(h)
+    await a3.opened
+    expect(h.controlClients()).toBe(4)
   })
 
   it('does not count control sockets against the viewer cap, nor viewers against the control cap', async () => {
