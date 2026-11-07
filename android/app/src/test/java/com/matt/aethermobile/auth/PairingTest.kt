@@ -223,4 +223,32 @@ class PairingTest {
         val ok = QrResult.Ok(host, 47821, "ABCD2345").toString()
         assertTrue(ok, !ok.contains("ABCD2345"))
     }
+
+    private val alertToken = "B".repeat(43)
+
+    @Test fun alertTokenAndExpiryRideOnPaired() {
+        server.enqueue(MockResponse().setResponseCode(200)
+            .setBody("""{"token":"$token","expiresAtMs":1234567,"alertToken":"$alertToken","alertExpiresAtMs":7654321}"""))
+        assertEquals(PairResult.Paired(token, 1234567L, alertToken, 7654321L), client().pair("ABCD2345"))
+    }
+
+    @Test fun olderDesktopWithoutAlertFieldsHasNullAlertToken() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"token":"$token","expiresAtMs":1234567}"""))
+        val r = client().pair("ABCD2345") as PairResult.Paired
+        assertNull(r.alertToken)
+        assertNull(r.alertExpiresAtMs)
+    }
+
+    @Test fun malformedAlertTokenDoesNotFailMainPairing() {
+        server.enqueue(MockResponse().setResponseCode(200)
+            .setBody("""{"token":"$token","expiresAtMs":1234567,"alertToken":"short","alertExpiresAtMs":7654321}"""))
+        val r = client().pair("ABCD2345") as PairResult.Paired
+        assertEquals(token, r.token)
+        assertNull(r.alertToken)
+    }
+
+    @Test fun pairedToStringRedactsBothTokens() {
+        val s = PairResult.Paired(token, 99L, alertToken, 100L).toString()
+        assertTrue(s, !s.contains(token) && !s.contains(alertToken))
+    }
 }

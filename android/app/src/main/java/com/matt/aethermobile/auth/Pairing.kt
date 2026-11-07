@@ -25,8 +25,14 @@ sealed class QrResult {
 
 /** Outcome of the pairing call. Never carries the code. */
 sealed class PairResult {
-    data class Paired(val token: String, val expiresAtMs: Long) : PairResult() {
-        override fun toString() = "Paired(token=<redacted>, expiresAtMs=$expiresAtMs)"
+    data class Paired(
+        val token: String,
+        val expiresAtMs: Long,
+        val alertToken: String? = null,
+        val alertExpiresAtMs: Long? = null,
+    ) : PairResult() {
+        override fun toString() =
+            "Paired(token=<redacted>, expiresAtMs=$expiresAtMs, alertToken=<redacted>, alertExpiresAtMs=$alertExpiresAtMs)"
     }
     object BadCode : PairResult()
     object Declined : PairResult()
@@ -145,7 +151,14 @@ class PairingClient internal constructor(
         val token = o.opt("token") as? String ?: return PairResult.Error(ControlProtocol.PAIR_OK)
         val expires = (o.opt("expiresAtMs") as? Number)?.toLong() ?: return PairResult.Error(ControlProtocol.PAIR_OK)
         if (!Pairing.isWellFormedToken(token) || expires <= 0L) return PairResult.Error(ControlProtocol.PAIR_OK)
-        return PairResult.Paired(token, expires)
+        // The alert credential is optional (older desktops omit it); a bad one is dropped, never an error.
+        val alertToken = (o.opt("alertToken") as? String)?.takeIf { Pairing.isWellFormedToken(it) }
+        val alertExpires = (o.opt("alertExpiresAtMs") as? Number)?.toLong()?.takeIf { it > 0L }
+        return if (alertToken != null && alertExpires != null) {
+            PairResult.Paired(token, expires, alertToken, alertExpires)
+        } else {
+            PairResult.Paired(token, expires)
+        }
     }
 
     private companion object {

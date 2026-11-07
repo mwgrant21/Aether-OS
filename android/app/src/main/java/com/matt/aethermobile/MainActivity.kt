@@ -41,6 +41,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
+import com.matt.aethermobile.alerts.AlertController
+import com.matt.aethermobile.auth.AlertVault
 import com.matt.aethermobile.auth.BiometricCallback
 import com.matt.aethermobile.auth.BiometricGate
 import com.matt.aethermobile.auth.BiometricFailure
@@ -472,6 +474,15 @@ class MainActivity : AppCompatActivity() {
             is PairResult.Error -> PairKind.Other
         }
         dispatch(FlowEvent.PairResult(kind))
+        // Best effort, after the main save flow has started: alerts never block or fail pairing.
+        if (result is PairResult.Paired && result.alertToken != null) {
+            try {
+                AlertVault(this).save(result.alertToken)
+                AlertController.onPaired(this)
+            } catch (t: Throwable) {
+                if (t is VirtualMachineError) throw t
+            }
+        }
     }
 
     // ---- save / unlock -------------------------------------------------------------------
