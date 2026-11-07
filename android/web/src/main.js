@@ -15,7 +15,7 @@ import { diagMessage, throttle } from './pageDiag.js';
 import { isPrimaryMouse, wheelPx, dragPan, MOUSE_SLOP_PX } from './mouseScroll.js';
 import { createAutoScroll } from './edgeScroll.js';
 import {
-  cellAt, cellWordBounds, wordBounds, clampText, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
+  cellAt, cellWordBounds, wordBounds, clampText, clampAnchor, sliceLines, createLongPress, MAX_COPY_BYTES, TOUCH_SLOP_PX,
   caretInCell, extendFromWord, dragHandle, splitSelection, liveSpan, joinSelectionText,
 } from './selection.js';
 
@@ -276,7 +276,6 @@ bridge.onmessage = (ev) => {
 // history into the live grid. LIVE grid: cell hit-test + term.select. SETTLED history:
 // caretRangeFromPoint + the CSS Custom Highlight API (no native DOM selection, so no WebView
 // handles). Reporting is only sel on/off.
-const inRect = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const histApi = () => typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function';
 
@@ -495,8 +494,7 @@ function handleAnchor(pt, which) {
     const r = screen.getBoundingClientRect();
     a = { x: r.left + (clamp(pt.off, 0, sel.cols) * r.width) / sel.cols, y: r.top + ((vr + 1) * r.height) / rows };
   }
-  if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || !inRect(sr, a.x, a.y)) return null;
-  return a;
+  return clampAnchor(a, sr);
 }
 
 function placeHandles() {

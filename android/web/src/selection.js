@@ -66,6 +66,15 @@ export function cellWordBounds(cells, col) {
   return { start: cellOf[w.start], end: last + Math.max(1, cells[last].width) };
 }
 
+// Pin a handle anchor {x,y} into the slot rect {left,right,top,bottom}: x clamps to the left/right
+// edges, so a caret past the visible width (a whole-row word on a grid wider than the slot) keeps a
+// reachable handle; y outside the rect gives null (the row is scrolled out, so there is no handle).
+export function clampAnchor(a, r) {
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return null;
+  if (a.y < r.top || a.y > r.bottom) return null;
+  return { x: Math.min(r.right, Math.max(r.left, a.x)), y: a.y };
+}
+
 // Longest prefix of text that fits maxBytes of UTF-8, cut on a code-point boundary.
 export function clampText(text, maxBytes) {
   let bytes = 0;

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   cellAt, orderRange, wordBounds, cellWordBounds, clampText, sliceLines, createLongPress,
   cmpPoint, orderPoints, caretInCell, extendFromWord, dragHandle, splitSelection, liveSpan,
-  joinSelectionText,
+  joinSelectionText, clampAnchor,
 } from './selection.js';
 
 const grid = { left: 10, top: 20, width: 100, height: 50, cols: 10, rows: 5 };
@@ -216,6 +216,23 @@ describe('cmpPoint / orderPoints', () => {
     expect(orderPoints(b, a)).toEqual([a, b]);
     expect(orderPoints(a, b)).toEqual([a, b]);
     expect(orderPoints(a, { ...a })).toEqual([a, a]);
+  });
+});
+
+describe('clampAnchor', () => {
+  const slot = { left: 0, right: 384, top: 0, bottom: 466 };
+  it('keeps an anchor already inside the slot', () => {
+    expect(clampAnchor({ x: 100, y: 99 }, slot)).toEqual({ x: 100, y: 99 });
+  });
+  it('pins a caret past the right edge (whole-row word on a 966 px grid) to the edge', () => {
+    expect(clampAnchor({ x: 966, y: 99 }, slot)).toEqual({ x: 384, y: 99 });
+    expect(clampAnchor({ x: -20, y: 99 }, slot)).toEqual({ x: 0, y: 99 });
+  });
+  it('gives null when the row is outside the slot vertically or the anchor is unusable', () => {
+    expect(clampAnchor({ x: 10, y: 500 }, slot)).toBeNull();
+    expect(clampAnchor({ x: 10, y: -1 }, slot)).toBeNull();
+    expect(clampAnchor({ x: NaN, y: 10 }, slot)).toBeNull();
+    expect(clampAnchor(null, slot)).toBeNull();
   });
 });
 
