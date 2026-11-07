@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { createControlGateway } from './controlGateway';
-import { MESSAGE_TYPES, encodeLedgerSnap } from './protocol';
+import { MESSAGE_TYPES, encodeAlert, encodeLedgerSnap } from './protocol';
 import type { ControlIdentity, ControlSocket, InputPort, InputResult, TerminalInfo, TerminalReadPort, TerminalSlotId, TerminalSlotState, TerminalTap, ThreadEvent, ThreadReadPort, ThreadTap, PromptInfo, PromptReadPort, PromptTap, LedgerReadPort, LedgerTap, LedgerWire, ViewReadPort, ViewTap } from '../../src/shared/remote/types';
 
 const spec = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8'));
@@ -1154,5 +1154,114 @@ describe('control gateway view verbs', () => {
     cyc.self = cyc;
     expect(() => fv.taps[0].snap(cyc)).not.toThrow();
     expect(s.sent[s.sent.length - 1]).toBe('{"t":"view.snap","v":"memory","d":null}');
+  });
+});
+
+describe('control gateway alert scope', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const alertIdentity: ControlIdentity = { ...identity, scope: 'alert' };
+
+  // Every port is a spy so a test can assert the alert socket touched none of them.
+  function spies() {
+    const fp = fakePort(INFO);
+    const calls: string[] = [];
+    const rec = (n: string) => () => { calls.push(n); return { detach: () => {} }; };
+    const opens: string[] = [];
+    const input: InputPort = {
+      open: (ref, epoch) => {
+        opens.push(`${ref}|${epoch}`);
+        return { input: () => { calls.push('input'); return { kind: 'applied', ack: 1 } as InputResult; }, applied: () => ({}), close: () => {} };
+      },
+    };
+    const opts = {
+      now: () => 1790000000000,
+      terminals: fp.port,
+      input,
+      threads: { attach: rec('threads.attach') } as unknown as ThreadReadPort,
+      prompts: { attach: rec('prompts.attach') } as unknown as PromptReadPort,
+      ledger: { attach: rec('ledger.attach') } as unknown as LedgerReadPort,
+      views: { projects: { attach: rec('views.attach') } as unknown as ViewReadPort },
+    };
+    return { opts, fp, calls, opens };
+  }
+  const frames: Record<string, string> = {
+    attach: attachFrame('claude'),
+    detach: detachFrame('claude'),
+    in: inFrame('claude', 1),
+    'thread.attach': JSON.stringify({ t: 'thread.attach', s: 'claude' }),
+    'thread.detach': JSON.stringify({ t: 'thread.detach', s: 'claude' }),
+    'ledger.attach': JSON.stringify({ t: 'ledger.attach' }),
+    'ledger.detach': JSON.stringify({ t: 'ledger.detach' }),
+    'view.attach': JSON.stringify({ t: 'view.attach', v: 'projects' }),
+    'view.detach': JSON.stringify({ t: 'view.detach', v: 'projects' }),
+  };
+
+  it('hello on an alert socket gets a bare welcome and opens no terminal subscription or input session', () => {
+    const sp = spies();
+    const s = fakeSocket();
+    createControlGateway(sp.opts).attach(s, alertIdentity);
+    s.feed(helloFrame);
+    expect(s.sent).toHaveLength(1);
+    const w = JSON.parse(s.sent[0]);
+    expect(w.t).toBe('welcome');
+    expect(w.proof).toBe(vec.proof);
+    expect(w.sessions).toEqual([]);
+    expect(w.views).toEqual([]);
+    expect(sp.fp.calls).toEqual([]);
+    expect(sp.opens).toEqual([]);
+    expect(s.closes).toEqual([]);
+  });
+
+  it.each(MESSAGE_TYPES.phoneToTitan.filter((t) => t !== 'hello'))('verb %s on an alert socket is bye policy and reaches no port', (verb) => {
+    const sp = spies();
+    const s = fakeSocket();
+    const logs: string[] = [];
+    createControlGateway({ ...sp.opts, log: (m) => { logs.push(m); } }).attach(s, alertIdentity);
+    s.feed(helloFrame);
+    s.sent.length = 0;
+    expect(frames[verb], `no well-formed frame for verb ${verb}`).toBeDefined();
+    s.feed(frames[verb]);
+    expect(s.sent).toEqual(['{"t":"bye","reason":"policy"}']);
+    expect(s.closes).toEqual([1008]);
+    expect(logs).toContain('control: alert scope verb');
+    expect(sp.fp.calls).toEqual([]);
+    expect(sp.calls).toEqual([]);
+    expect(sp.opens).toEqual([]);
+  });
+
+  it('alert() sends the exact frame after hello and returns true; false before hello and after close', () => {
+    const s = fakeSocket();
+    const session = createControlGateway({ now: () => 1790000000000 }).attach(s, alertIdentity);
+    expect(session.alert('finished')).toBe(false);
+    expect(s.sent).toEqual([]);
+    s.feed(helloFrame);
+    s.sent.length = 0;
+    expect(session.alert('finished')).toBe(true);
+    expect(s.sent).toEqual([encodeAlert('finished')]);
+    session.close('disabled');
+    s.sent.length = 0;
+    expect(session.alert('finished')).toBe(false);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a main-scope session never sends alerts, with scope absent or main', () => {
+    for (const id of [identity, { ...identity, scope: 'main' as const }]) {
+      const s = fakeSocket();
+      const session = createControlGateway({ now: () => 1790000000000 }).attach(s, id);
+      s.feed(helloFrame);
+      s.sent.length = 0;
+      expect(session.alert('input')).toBe(false);
+      expect(s.sent.filter((x) => JSON.parse(x).t === 'alert')).toEqual([]);
+    }
+  });
+
+  it('the hello deadline still applies to an alert socket', () => {
+    const s = fakeSocket();
+    createControlGateway({ now: () => 1790000000000 }).attach(s, alertIdentity);
+    vi.advanceTimersByTime(5000);
+    expect(s.sent).toEqual(['{"t":"bye","reason":"policy"}']);
+    expect(s.closes).toEqual([1008]);
   });
 });
