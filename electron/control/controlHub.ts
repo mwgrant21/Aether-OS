@@ -35,6 +35,7 @@ import type {
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
+import { createAlertWatcher } from './alertWatcher';
 import { createControlGateway } from './controlGateway';
 import type { ControlSession } from './controlGateway';
 import { createInputRouter } from './inputRouter';
@@ -53,6 +54,10 @@ export interface ControlSettingsPort {
   readTyping?(): boolean;
   /** Persists the switch and returns the READBACK. */
   persistTyping?(on: boolean): boolean;
+  /** Phone-alerts switch (default OFF). Optional so existing ports keep working. */
+  readAlerts?(): boolean;
+  /** Persists the switch and returns the READBACK. */
+  persistAlerts?(on: boolean): boolean;
 }
 
 export interface ControlHubDeps {
@@ -91,6 +96,7 @@ export interface ControlHub {
   setEnabled(on: boolean): Promise<ControlStatus>;
   setReenableAtLaunch(on: boolean): Promise<ControlStatus>;
   setPhoneTyping(on: boolean): Promise<ControlStatus>;
+  setPhoneAlerts(on: boolean): Promise<ControlStatus>;
   createPairing(): Promise<ControlPairingResult>;
   revokeAll(): Promise<ControlStatus>;
   revokeOne(ref: string): Promise<ControlStatus>;
@@ -115,6 +121,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   let address: string | null = null;
   let reenable = false;
   let typing = true;
+  let alertsOn = false; // the alerts switch (default off)
+  let controlOn = false; // true from a successful acquire until teardown begins; the watcher's only "control is on" gate
   let unsaved = false;
   let saveTimer: unknown = null;
   let saveRetries = 0;
@@ -155,6 +163,31 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
+  // Label-only delivery: the watcher hands over a three-value kind and nothing else. An alert with no connected
+  // alert session is dropped (never queued or replayed); only the kind is logged, and only when a socket got it.
+  const watcher = deps.threads
+    ? createAlertWatcher({
+      threads: deps.threads,
+      prompts: deps.prompts,
+      setTimeoutFn: deps.setTimeoutFn,
+      clearTimeoutFn: deps.clearTimeoutFn,
+      onAlert: kind => {
+        let delivered = 0;
+        for (const s of [...alertSessions.values()]) {
+          try { if (s.alert(kind)) delivered++; } catch { /* one failing socket must not stop the others */ }
+        }
+        if (delivered > 0) log(`control: alert sent kind=${kind}`);
+      },
+    })
+    : null;
+
+  // The watcher runs iff control is on, the hub is not stopped, the switch is on and a thread port exists.
+  function syncAlerts(): void {
+    if (!watcher) return;
+    if (controlOn && state === 'on' && !stopped && alertsOn) watcher.start();
+    else watcher.stop();
+  }
+
   function status(): ControlStatus {
     const counts = auth?.counts() ?? { sessions: 0, pairingActive: false };
     return {
@@ -166,6 +199,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       pairingActive: counts.pairingActive,
       reenableAtLaunch: reenable,
       phoneTyping: typing,
+      phoneAlerts: alertsOn,
       notice: unsaved ? CONTROL_REVOKE_UNSAVED_NOTICE : null,
       phoneSlots: state === 'on' ? unionSlots() : [],
     };
@@ -193,6 +227,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     });
     reenable = deps.settings.read() === true;
     typing = deps.settings.readTyping ? deps.settings.readTyping() !== false : true;
+    alertsOn = deps.settings.readAlerts ? deps.settings.readAlerts() === true : false;
   }
 
   function clearSaveTimer(): void {
@@ -261,6 +296,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
 
   async function teardown(): Promise<void> {
     generation++;
+    controlOn = false; // cleared before anything else: the alert watcher must be down before sockets close and the listener goes
+    syncAlerts();
     cancelAuto();
     clearSaveTimer();
     auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
@@ -303,6 +340,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     if (releaseTerminals === null) {
       try { releaseTerminals = deps.terminals.retain(); } catch { log('control: terminals unavailable'); }
     }
+    controlOn = true;
+    syncAlerts();
     log('control: enabled');
     return null;
   }
@@ -478,6 +517,13 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       emit();
       return status();
     },
+    async setPhoneAlerts(on) {
+      init();
+      alertsOn = deps.settings.persistAlerts ? deps.settings.persistAlerts(on) === true : on; // report the readback, never the requested value
+      syncAlerts();
+      emit();
+      return status();
+    },
     async createPairing() {
       init();
       if (state !== 'on' || !address) return { ok: false, reason: 'not-enabled' };
@@ -513,6 +559,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
         await teardown();
         state = 'off';
         reason = null;
+        syncAlerts();
         await Promise.all([auth!.flush(), alertAuth!.flush()]); // no settings write here: the flag survives a quit
       });
     },

@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { createControlHub, PEER_BINDING_ENFORCED, AUTO_ENABLE_MAX_RETRIES, AUTO_ENABLE_RETRY_MS, CONTROL_REVOKE_UNSAVED_NOTICE } from './controlHub';
+import { ALERT_DEBOUNCE_MS } from './alertWatcher';
+import { encodeAlert } from './protocol';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { StoredSession } from '../remote/types';
 import { CONTROL_ACK_COALESCE_MS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS } from '../../src/shared/remote/types';
-import type { ControlSocket, ControlStatus, ListenerPort, PromptReadPort, RemoteUnavailableReason, ThreadReadPort, TerminalReadPort, TerminalSlotId, ViewId, ViewReadPort } from '../../src/shared/remote/types';
+import type { ControlSocket, ControlStatus, ListenerPort, PromptReadPort, RemoteUnavailableReason, ThreadReadPort, ThreadTap, TerminalReadPort, TerminalSlotId, ViewId, ViewReadPort } from '../../src/shared/remote/types';
 
 const helloFrame: string = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../protocol/mobile-protocol.json'), 'utf8')).frames.hello;
 const PEER = '100.94.15.125';
@@ -63,7 +65,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort; views?: Partial<Record<ViewId, ViewReadPort>> } = {}) {
+function setup(over: { alerts?: { stored: boolean; persist?: (on: boolean) => boolean }; typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort; views?: Partial<Record<ViewId, ViewReadPort>> } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -77,6 +79,7 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
   };
   const settings = { flag: over.flag ?? false, read: vi.fn(() => settings.flag), persist: vi.fn((on: boolean) => { settings.flag = on; return settings.flag; }) };
   const typing = { stored: over.typing?.stored ?? true, readTyping: vi.fn(() => typing.stored), persistTyping: vi.fn((on: boolean) => { const rb = over.typing?.persist ? over.typing.persist(on) : on; typing.stored = rb; return rb; }) };
+  const alerts = { stored: over.alerts?.stored ?? false, readAlerts: vi.fn(() => alerts.stored), persistAlerts: vi.fn((on: boolean) => { const rb = over.alerts?.persist ? over.alerts.persist(on) : on; alerts.stored = rb; return rb; }) };
   const emitted: ControlStatus[] = [];
   const store = fakeStore();
   const alertStore = fakeStore();
@@ -84,7 +87,7 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
   const logs: string[] = [];
   const writes: string[] = [];
   const hub = createControlHub({
-    listener, store, alertStore, settings: over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings, confirmPair,
+    listener, store, alertStore, settings: { ...(over.typing ? { ...settings, readTyping: typing.readTyping, persistTyping: typing.persistTyping } : settings), readAlerts: alerts.readAlerts, persistAlerts: alerts.persistAlerts }, confirmPair,
     onStatus: s => { emitted.push(s); },
     terminals: terms.port,
     threads: over.threads,
@@ -97,7 +100,7 @@ function setup(over: { typing?: { stored: boolean; persist?: (on: boolean) => bo
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
   });
-  return { hub, listener, settings, store, alertStore, confirmPair, timers, logs, writes, terms: terms.t, typing, emitted };
+  return { hub, listener, settings, store, alertStore, confirmPair, timers, logs, writes, terms: terms.t, typing, alerts, emitted };
 }
 
 async function pairOne(hub: ReturnType<typeof setup>['hub']) {
@@ -1185,5 +1188,177 @@ describe('control hub alert credential', () => {
     const rig = setup();
     const r = await rig.hub.port.pair('123456', PEER);
     expect(r).toEqual({ status: 401 });
+  });
+});
+
+describe('control hub alerts switch and watcher lifecycle', () => {
+  /** Thread/prompt ports that expose their taps and whether the thread feed is still being followed (polling). */
+  function fakeFeeds() {
+    const f = {
+      attaches: 0,
+      detaches: 0,
+      polling: false,
+      releasesAtDetach: [] as number[],
+      tap: null as ThreadTap | null,
+      promptAttaches: 0,
+      promptDetaches: 0,
+      onDetach: (() => {}) as () => void,
+    };
+    const threads: ThreadReadPort = {
+      attach: (_s, tap) => {
+        f.attaches += 1;
+        f.polling = true;
+        f.tap = tap;
+        return { detach: () => { f.detaches += 1; f.polling = false; f.onDetach(); } };
+      },
+    };
+    const prompts: PromptReadPort = {
+      attach: () => { f.promptAttaches += 1; return { detach: () => { f.promptDetaches += 1; } }; },
+    };
+    return { f, threads, prompts };
+  }
+  const bearer = (t: string) => `Bearer ${t}`;
+  const debounce = (rig: ReturnType<typeof setup>) => rig.timers.filter(t => t.ms === ALERT_DEBOUNCE_MS);
+  /** busy -> idle on the watcher's thread tap, then the debounce timer fires. */
+  function finishTurn(rig: ReturnType<typeof setup>, f: ReturnType<typeof fakeFeeds>['f']) {
+    f.tap!.turn!({ mark: 'busy', interrupted: false });
+    f.tap!.turn!({ mark: 'idle', interrupted: false });
+    const t = debounce(rig).at(0)!;
+    rig.timers.splice(rig.timers.indexOf(t), 1);
+    t.fn();
+  }
+  async function openAlertSocket(rig: ReturnType<typeof setup>) {
+    const r = await pairOne(rig.hub) as { token: string; alertToken: string };
+    const a = fakeSocket();
+    rig.hub.port.open(a, rig.hub.port.authenticate(bearer(r.alertToken), PEER)!);
+    a.feed(helloFrame);
+    const m = fakeSocket();
+    rig.hub.port.open(m, rig.hub.port.authenticate(bearer(r.token), PEER)!);
+    m.feed(helloFrame);
+    return { a, m };
+  }
+
+  it('control on with alerts off never attaches; turning alerts on attaches once and status reports it; off detaches', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts });
+    await rig.hub.setEnabled(true);
+    expect(f.attaches).toBe(0);
+    expect(rig.hub.status().phoneAlerts).toBe(false);
+    const on = await rig.hub.setPhoneAlerts(true);
+    expect(on.phoneAlerts).toBe(true);
+    expect(f.attaches).toBe(1);
+    expect(f.promptAttaches).toBe(1);
+    await rig.hub.setPhoneAlerts(true);
+    expect(f.attaches).toBe(1);
+    const off = await rig.hub.setPhoneAlerts(false);
+    expect(off.phoneAlerts).toBe(false);
+    expect(f.detaches).toBe(1);
+    expect(f.promptDetaches).toBe(1);
+    expect(rig.alerts.persistAlerts).toHaveBeenLastCalledWith(false);
+  });
+
+  it('with control off the watcher stays down; enabling attaches; disabling detaches BEFORE the listener release; stop detaches', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts, alerts: { stored: true } });
+    rig.hub.init();
+    expect(rig.hub.status().phoneAlerts).toBe(true);
+    await rig.hub.setPhoneAlerts(true);
+    expect(f.attaches).toBe(0);
+    await rig.hub.setEnabled(true);
+    expect(f.attaches).toBe(1);
+    f.onDetach = () => { f.releasesAtDetach.push(rig.listener.release.mock.calls.length); };
+    await rig.hub.setEnabled(false);
+    expect(f.detaches).toBe(1);
+    expect(f.releasesAtDetach).toEqual([0]);
+    await rig.hub.setEnabled(true);
+    expect(f.attaches).toBe(2);
+    await rig.hub.stop();
+    expect(f.detaches).toBe(2);
+    expect(f.polling).toBe(false);
+  });
+
+  it('a user disable stops the watcher and its thread polling, not just detaches, and drops its pending debounce', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts, alerts: { stored: true } });
+    await rig.hub.setEnabled(true);
+    expect(f.polling).toBe(true);
+    f.tap!.turn!({ mark: 'busy', interrupted: false });
+    f.tap!.turn!({ mark: 'idle', interrupted: false });
+    expect(debounce(rig)).toHaveLength(1);
+    await rig.hub.setEnabled(false);
+    expect(f.polling).toBe(false);
+    expect(debounce(rig)).toHaveLength(0);
+    expect(rig.hub.status().state).toBe('off');
+    await rig.hub.setPhoneAlerts(true); // still off: nothing restarts
+    expect(f.polling).toBe(false);
+    expect(f.attaches).toBe(1);
+  });
+
+  it('autoEnable attaches when the re-enable flag and alerts are on, and never when the flag is off', async () => {
+    const on = fakeFeeds();
+    const a = setup({ threads: on.threads, prompts: on.prompts, flag: true, alerts: { stored: true } });
+    await a.hub.autoEnable();
+    expect(on.f.attaches).toBe(1);
+    const off = fakeFeeds();
+    const b = setup({ threads: off.threads, prompts: off.prompts, flag: false, alerts: { stored: true } });
+    await b.hub.autoEnable();
+    expect(off.f.attaches).toBe(0);
+  });
+
+  it('a finished turn sends encodeAlert(kind) to the open alert session only and logs exactly one fixed line', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts, alerts: { stored: true } });
+    await rig.hub.setEnabled(true);
+    const { a, m } = await openAlertSocket(rig);
+    const mainBefore = m.sent.length;
+    f.tap!.events({ q: 1, events: [{ k: 'claude', id: 'c1', at: 1, text: 'All done.', truncated: false }] });
+    finishTurn(rig, f);
+    expect(a.sent.at(-1)).toBe(encodeAlert('finished'));
+    expect(m.sent).toHaveLength(mainBefore);
+    expect(rig.logs.filter(l => l.startsWith('control: alert'))).toEqual(['control: alert sent kind=finished']);
+  });
+
+  it('an alert with no connected alert session is dropped silently: no log line, and a later connect receives nothing', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts, alerts: { stored: true } });
+    await rig.hub.setEnabled(true);
+    finishTurn(rig, f);
+    expect(rig.logs.filter(l => l.includes('alert sent'))).toEqual([]);
+    const { a } = await openAlertSocket(rig);
+    expect(a.sent.some(t => t.includes('"t":"alert"'))).toBe(false);
+    expect(rig.logs.filter(l => l.includes('alert sent'))).toEqual([]);
+  });
+
+  it('log lines never carry transcript or thread text', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts, alerts: { stored: true } });
+    await rig.hub.setEnabled(true);
+    await openAlertSocket(rig);
+    f.tap!.events({ q: 1, events: [{ k: 'claude', id: 'c1', at: 1, text: 'SECRET-TRANSCRIPT-TEXT ghp_ZZZZ?', truncated: false }] });
+    finishTurn(rig, f);
+    const dump = rig.logs.join('\n');
+    expect(dump).toContain('control: alert sent kind=question');
+    expect(dump).not.toContain('SECRET');
+    expect(dump).not.toContain('ghp_');
+  });
+
+  it('status reports the persistAlerts readback; a failing persist keeps the old value and the watcher state', async () => {
+    const { f, threads, prompts } = fakeFeeds();
+    const rig = setup({ threads, prompts, alerts: { stored: false, persist: () => false } });
+    await rig.hub.setEnabled(true);
+    const s = await rig.hub.setPhoneAlerts(true);
+    expect(s.phoneAlerts).toBe(false);
+    expect(f.attaches).toBe(0);
+    const kept = setup({ threads, prompts, alerts: { stored: true, persist: () => true } });
+    await kept.hub.setEnabled(true);
+    expect(f.attaches).toBe(1); // only `kept` attached (stored true); the failing rig never did
+    expect((await kept.hub.setPhoneAlerts(false)).phoneAlerts).toBe(true); // persist reports on: not turned off
+    expect(f.detaches).toBe(0);
+  });
+
+  it('without a thread port the switch still persists and nothing throws', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    expect((await rig.hub.setPhoneAlerts(true)).phoneAlerts).toBe(true);
   });
 });

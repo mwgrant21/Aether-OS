@@ -118,6 +118,8 @@ export interface ControlStatus {
   pairingActive: boolean;
   reenableAtLaunch: boolean;
   phoneTyping: boolean;
+  /** The alerts switch (default off). Optional so existing literals stay valid. */
+  phoneAlerts?: boolean;
   notice: string | null;
   /** Terminal slots the connected phone is attached to, in TERMINAL_SLOTS order. Absent or empty = none. Optional so existing literals stay valid. */
   phoneSlots?: readonly TerminalSlotId[];

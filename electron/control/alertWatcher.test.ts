@@ -174,6 +174,38 @@ describe('alertWatcher', () => {
     expect(dump).not.toContain('ghp_');
   });
 
+  it('busy, idle, idle then the debounce yields exactly one alert', () => {
+    const r = rig();
+    r.watcher.start();
+    r.turn('busy'); r.turn('idle'); r.turn('idle');
+    expect(r.timers.size).toBe(1);
+    r.advance(D);
+    expect(r.onAlert).toHaveBeenCalledTimes(1);
+    r.advance(D * 4);
+    expect(r.onAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('a state frame before any turn mark never arms an alert, and the first real busy/idle still fires', () => {
+    const r = rig();
+    r.watcher.start();
+    r.thread().state({ q: 1, working: true, workingSinceMs: 1 });
+    r.thread().state({ q: 2, working: false, workingSinceMs: null });
+    expect(r.timers.size).toBe(0);
+    r.advance(D * 2);
+    expect(r.onAlert).not.toHaveBeenCalled();
+    r.turn('busy'); r.turn('idle'); r.advance(D);
+    expect(r.onAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('a snap clears the remembered claude text, so a stop after it classifies as input', () => {
+    const r = rig();
+    r.watcher.start();
+    events(r, claude('Which file?'));
+    snap(r);
+    r.turn('busy'); r.turn('idle'); r.advance(D);
+    expect(r.onAlert).toHaveBeenLastCalledWith('input');
+  });
+
   it('stop() cancels timers, detaches both taps once, running() is false; start() twice attaches once', () => {
     const r = rig();
     r.watcher.start();

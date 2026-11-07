@@ -7,7 +7,7 @@ const STATUS: ControlStatus = { state: 'off', reason: null, address: null, conne
 
 function setup(opts: { trusted?: boolean; confirmEnable?: boolean; confirmReenable?: boolean } = {}) {
   const hub = {
-    init: vi.fn(), status: vi.fn(() => STATUS), setEnabled: vi.fn(async () => STATUS), setReenableAtLaunch: vi.fn(async () => STATUS), setPhoneTyping: vi.fn(async () => STATUS),
+    init: vi.fn(), status: vi.fn(() => STATUS), setEnabled: vi.fn(async () => STATUS), setReenableAtLaunch: vi.fn(async () => STATUS), setPhoneTyping: vi.fn(async () => STATUS), setPhoneAlerts: vi.fn(async () => STATUS),
     createPairing: vi.fn(async () => ({ ok: false as const, reason: 'not-enabled' as const })),
     revokeAll: vi.fn(async () => STATUS), revokeOne: vi.fn(async () => STATUS),
   };
@@ -20,16 +20,16 @@ function setup(opts: { trusted?: boolean; confirmEnable?: boolean; confirmReenab
 }
 
 describe('registerControlIpc', () => {
-  it('registers exactly the seven control channels', () => {
+  it('registers exactly the eight control channels', () => {
     expect([...setup().handlers.keys()].sort()).toEqual([
-      'control:createPairing', 'control:revokeAll', 'control:revokeOne', 'control:setEnabled', 'control:setPhoneTyping', 'control:setReenableAtLaunch', 'control:status',
+      'control:createPairing', 'control:revokeAll', 'control:revokeOne', 'control:setEnabled', 'control:setPhoneAlerts', 'control:setPhoneTyping', 'control:setReenableAtLaunch', 'control:status',
     ]);
   });
 
   it('rejects an untrusted sender on every channel without touching the hub or either dialog', async () => {
     const { hub, call, confirmEnable, confirmReenable, handlers } = setup({ trusted: false });
     for (const ch of handlers.keys()) {
-      const args = ch === 'control:revokeOne' ? ['a'.repeat(12)] : ch.endsWith('Enabled') || ch.endsWith('Launch') || ch.endsWith('Typing') ? [true] : [];
+      const args = ch === 'control:revokeOne' ? ['a'.repeat(12)] : ch.endsWith('Enabled') || ch.endsWith('Launch') || ch.endsWith('Typing') || ch.endsWith('Alerts') ? [true] : [];
       await expect(call(ch, ...args)).rejects.toThrow('NOT_AUTHORIZED');
     }
     expect(Object.values(hub).every(f => f.mock.calls.length === 0)).toBe(true);
@@ -52,6 +52,7 @@ describe('registerControlIpc', () => {
     expect(hub.setEnabled).not.toHaveBeenCalled();
     expect(hub.setReenableAtLaunch).not.toHaveBeenCalled();
     expect(hub.setPhoneTyping).not.toHaveBeenCalled();
+    expect(hub.setPhoneAlerts).not.toHaveBeenCalled();
     expect(hub.revokeOne).not.toHaveBeenCalled();
   });
 
@@ -98,6 +99,20 @@ describe('registerControlIpc', () => {
     expect(hub.setPhoneTyping).toHaveBeenCalledTimes(2);
     expect(hub.setPhoneTyping).toHaveBeenNthCalledWith(1, false);
     expect(hub.setPhoneTyping).toHaveBeenNthCalledWith(2, true);
+    expect(confirmEnable).not.toHaveBeenCalled();
+    expect(confirmReenable).not.toHaveBeenCalled();
+  });
+
+  it('setPhoneAlerts takes one boolean, passes it straight to the hub and asks no confirmation', async () => {
+    const { hub, call, confirmEnable, confirmReenable } = setup();
+    for (const bad of ['yes', 1, null, undefined]) await expect(call('control:setPhoneAlerts', bad)).rejects.toThrow('INVALID_INPUT');
+    await expect(call('control:setPhoneAlerts')).rejects.toThrow('INVALID_INPUT');
+    await expect(call('control:setPhoneAlerts', true, false)).rejects.toThrow('INVALID_INPUT');
+    expect(hub.setPhoneAlerts).not.toHaveBeenCalled();
+    await expect(call('control:setPhoneAlerts', true)).resolves.toBe(STATUS);
+    await expect(call('control:setPhoneAlerts', false)).resolves.toBe(STATUS);
+    expect(hub.setPhoneAlerts).toHaveBeenNthCalledWith(1, true);
+    expect(hub.setPhoneAlerts).toHaveBeenNthCalledWith(2, false);
     expect(confirmEnable).not.toHaveBeenCalled();
     expect(confirmReenable).not.toHaveBeenCalled();
   });
