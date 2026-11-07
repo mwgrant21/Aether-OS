@@ -496,5 +496,49 @@ describe('live-only turn marks', () => {
     appendFileSync(file, a('done', 'end_turn', T0 + 1000));
     await pump(() => r.frames.some((f) => f.f === 'events'));
     expect(r.frames.filter((f) => f.f === 'events')).toHaveLength(1);
+    appendFileSync(file, u('more', T0 + 2000));
+    await pump(() => r.frames.filter((f) => f.f === 'events').length >= 2);
+    expect(r.frames.filter((f) => f.f === 'events')).toHaveLength(2);
+  });
+
+  it('several mark lines in one chunk are delivered in file order, one turn each, after the events frame', async () => {
+    write(u('seed'));
+    const { feed } = make();
+    const r = turnRecorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.snapCount() >= 2);
+    appendFileSync(file, u('go', T0 + 1000) + tl('Bash', T0 + 2000) + a('done', 'end_turn', T0 + 3000));
+    clock += 3000;
+    await pump(() => r.turns.length >= 3);
+    await settle();
+    expect(r.turns.map((t) => t.mark)).toEqual(['busy', 'busy', 'idle']);
+    expect(r.order).toEqual(['events', 'turn:busy', 'turn:busy', 'turn:idle']);
+  });
+
+  it('truncate then a rewrite ending in end_turn re-seeds with no turn', async () => {
+    write(u('first'.repeat(40)) + u('second'.repeat(40)));
+    const { feed } = make();
+    const r = turnRecorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.snapCount() >= 2);
+    truncateSync(file, 0);
+    appendFileSync(file, u('x') + a('done', 'end_turn', T0 + 1000));
+    await pump(() => r.snapCount() >= 3);
+    await settle();
+    expect(r.turns).toEqual([]);
+  });
+
+  it('a session-id change to a file ending in end_turn re-seeds with no turn', async () => {
+    write(u('old'));
+    const { feed } = make();
+    const r = turnRecorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.snapCount() >= 2);
+    sid = 's2';
+    file = join(dir, 'b.jsonl');
+    write(u('new') + a('done', 'end_turn', T0 + 1000));
+    await pump(() => r.snapCount() >= 3);
+    await settle();
+    expect(r.turns).toEqual([]);
   });
 });
