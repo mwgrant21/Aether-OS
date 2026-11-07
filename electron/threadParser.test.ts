@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseThreadLine, turnMark } from './threadParser';
+import { INTERRUPT_RE, parseThreadLine, turnMark } from './threadParser';
 import { THREAD_TARGET_CAP, THREAD_TEXT_CAP } from '../src/shared/remote/types';
 
 const TS = '2026-10-28T10:00:00.000Z';
@@ -129,6 +129,17 @@ describe('turnMark', () => {
     expect(turnMark(asst([{ type: 'text', text: 'done' }], {}, 'end_turn'))?.mark).toBe('idle');
     expect(turnMark(asst([{ type: 'text', text: 'done' }]))?.mark).toBe('idle');
     expect(turnMark(user([{ type: 'text', text: '[Request interrupted by user]' }]))?.mark).toBe('idle');
+  });
+
+  it('flags interrupted only on the user-interrupt idle line', () => {
+    expect(turnMark(user([{ type: 'text', text: '[Request interrupted by user]' }]))).toEqual({ mark: 'idle', at: AT, interrupted: true });
+    expect(turnMark(asst([{ type: 'text', text: 'done' }], {}, 'end_turn'))?.interrupted).toBeFalsy();
+    expect(turnMark(user('go'))?.interrupted).toBeFalsy();
+  });
+
+  it('exports INTERRUPT_RE for the alert watcher', () => {
+    expect(INTERRUPT_RE.test('[Request interrupted by user]')).toBe(true);
+    expect(INTERRUPT_RE.test('hello')).toBe(false);
   });
 
   it('tool_result, sidechain, thinking-only (no stop) and non-prompt lines say nothing', () => {

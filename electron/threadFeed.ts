@@ -3,7 +3,7 @@
 // timer and drops the ring. Only fs.promises.open/stat/read touch the file; nothing is written,
 // and neither the file path nor any transcript text appears in a log line.
 import { promises as fsp } from 'node:fs';
-import { parseThreadLine, turnMark } from './threadParser';
+import { parseThreadLine, turnMark, type TurnMark } from './threadParser';
 import {
   THREAD_SNAPSHOT_MAX_BYTES,
   THREAD_SNAPSHOT_MAX_EVENTS,
@@ -155,7 +155,7 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
   }
 
   // Splits chunk (starting at absolute byte chunkStart) into complete lines; parses each.
-  function consume(chunk: Buffer, chunkStart: number): ThreadEvent[] {
+  function consume(chunk: Buffer, chunkStart: number, marks: TurnMark[]): ThreadEvent[] {
     const out: ThreadEvent[] = [];
     const data = pending.length ? Buffer.concat([pending, chunk]) : chunk;
     const dataStart = chunkStart - pending.length;
@@ -177,6 +177,7 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
           for (const e of parseThreadLine(text, dataStart + pos)) out.push(Object.freeze(e));
           const m = turnMark(text);
           if (m) {
+            marks.push(m);
             if (m.mark === 'busy') {
               if (!busy) streakAt = m.at > 0 ? m.at : deps.now();
               busy = true;
@@ -234,7 +235,7 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
     attached = s !== null;
     discarding = seedStart > 0;
     lastGrowthMs = mtime;
-    pushRing(consume(seed, seedStart));
+    pushRing(consume(seed, seedStart, [])); // seed marks are discarded: no turn for history
     emitSnap();
   }
 
@@ -274,12 +275,17 @@ export function createThreadFeed(deps: ThreadFeedDeps): ThreadReadPort {
       discarding = true;
     }
     lastGrowthMs = deps.now();
-    const evs = consume(chunk, start);
+    const marks: TurnMark[] = [];
+    const evs = consume(chunk, start, marks);
     if (evs.length > 0) {
       pushRing(evs);
       q++;
       const f = { q, events: evs };
       broadcast((t) => t.events(f));
+    }
+    for (const m of marks) {
+      const e = { mark: m.mark, interrupted: m.interrupted === true };
+      broadcast((t) => t.turn?.(e));
     }
   }
 

@@ -389,3 +389,112 @@ describe('throwing taps', () => {
     await pump(() => cleared.length === 1);
   });
 });
+
+describe('live-only turn marks', () => {
+  type Turn = { mark: 'busy' | 'idle'; interrupted: boolean };
+  const intr = (at = T0): string =>
+    JSON.stringify({ type: 'user', timestamp: iso(at), message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } }) + '\n';
+  function turnRecorder(): { tap: ThreadTap; order: string[]; turns: Turn[]; snapCount: () => number } {
+    const order: string[] = [];
+    const turns: Turn[] = [];
+    let snapN = 0;
+    return {
+      order,
+      turns,
+      snapCount: () => snapN,
+      tap: {
+        snap: () => void snapN++,
+        events: () => void order.push('events'),
+        state: () => {},
+        turn: (e) => {
+          turns.push(e);
+          order.push(`turn:${e.mark}`);
+        },
+      },
+    };
+  }
+
+  it('a seed read ending in end_turn delivers snap and no turn', async () => {
+    write(u('hi') + a('done', 'end_turn', T0 + 1000));
+    const { feed } = make();
+    const r = turnRecorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.snapCount() >= 2);
+    await settle();
+    expect(r.turns).toEqual([]);
+  });
+
+  it('live prompt, tool_use, end_turn in separate polls give busy, busy, idle, each after its events frame', async () => {
+    write(u('seed'));
+    const { feed } = make();
+    const r = turnRecorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.snapCount() >= 2);
+    appendFileSync(file, u('go', T0 + 1000));
+    clock += 1000;
+    await pump(() => r.turns.length >= 1);
+    appendFileSync(file, tl('Bash', T0 + 2000));
+    clock += 1000;
+    await pump(() => r.turns.length >= 2);
+    appendFileSync(file, a('done', 'end_turn', T0 + 3000));
+    clock += 1000;
+    await pump(() => r.turns.length >= 3);
+    expect(r.turns.map((t) => t.mark)).toEqual(['busy', 'busy', 'idle']);
+    expect(r.order).toEqual(['events', 'turn:busy', 'events', 'turn:busy', 'events', 'turn:idle']);
+  });
+
+  it('an interrupt line delivers idle with interrupted true', async () => {
+    write(u('seed'));
+    const { feed } = make();
+    const r = turnRecorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => r.snapCount() >= 2);
+    appendFileSync(file, intr(T0 + 1000));
+    clock += 1000;
+    await pump(() => r.turns.length >= 1);
+    expect(r.turns).toEqual([{ mark: 'idle', interrupted: true }]);
+  });
+
+  it('the 120 s stale expiry flips working off without a turn', async () => {
+    write(u('seed'));
+    const { feed } = make();
+    const r = recorder();
+    const t = turnRecorder();
+    feed.attach('claude', r.tap);
+    feed.attach('claude', t.tap);
+    await waitFor(() => snaps(r.frames).length >= 2);
+    appendFileSync(file, u('go', T0 + 1000));
+    clock += 1000;
+    await pump(() => t.turns.length >= 1);
+    clock += THREAD_WORKING_STALE_MS + 1000;
+    await pump(() => r.frames.some((f) => f.f === 'state' && !f.working));
+    expect(t.turns).toHaveLength(1);
+  });
+
+  it('a replaced file re-seeds with no turn even when it ends in end_turn', async () => {
+    write(u('first') + u('second'));
+    const { feed } = make();
+    const r = recorder();
+    const t = turnRecorder();
+    feed.attach('claude', r.tap);
+    feed.attach('claude', t.tap);
+    await waitFor(() => snaps(r.frames).length >= 2);
+    const other = join(dir, 'other.jsonl');
+    writeFileSync(other, u('swapped') + a('finished', 'end_turn', T0 + 1000));
+    renameSync(other, file);
+    await pump(() => snaps(r.frames).length >= 3);
+    await settle();
+    expect(t.turns).toEqual([]);
+  });
+
+  it('a tap without turn keeps working', async () => {
+    write(u('seed'));
+    const { feed } = make();
+    const r = recorder();
+    feed.attach('claude', r.tap);
+    await waitFor(() => snaps(r.frames).length >= 2);
+    appendFileSync(file, a('done', 'end_turn', T0 + 1000));
+    await pump(() => r.frames.some((f) => f.f === 'events'));
+    expect(r.frames.filter((f) => f.f === 'events')).toHaveLength(1);
+  });
+});

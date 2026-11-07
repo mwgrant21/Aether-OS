@@ -180,6 +180,8 @@ export interface ThreadTap {                                 // callbacks are de
   snap(e: { q: number; attached: boolean; working: boolean; workingSinceMs: number | null; events: readonly ThreadEvent[] }): void;
   events(e: { q: number; events: readonly ThreadEvent[] }): void;
   state(e: { q: number; working: boolean; workingSinceMs: number | null }): void;
+  /** One call per turn-mark line found in lines appended while following, after that chunk's `events`; never for a seed read or the stale expiry. */
+  turn?(e: { mark: 'busy' | 'idle'; interrupted: boolean }): void;
 }
 /** attach() delivers `snap` synchronously, before it returns. */
 export interface ThreadReadPort { attach(s: ThreadSlotId, tap: ThreadTap): { detach(): void } }
