@@ -110,7 +110,7 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     remotePages.ts / pairingQr.ts   phone HTML/JS/CSS (textContent only) and the pairing QR.
     remoteIpc.ts / types.ts   trusted IPC for Settings; shared wire types.
     noWildcardListener.test.ts   AST guard, parses with the TypeScript compiler API (no wildcard bind, no pty, no stray fs write).
-  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 pairing + authenticated /ctl handshake; V2 read path: attach/detach, snap/out/size/state frames, welcome.sessions (read-only, no input). V3 Type adds phone typing: `in`/`ack`/`nak` verbs and a desktop typing switch. Slice 1 (phone thread, privacy §17) adds the read-only Claude thread (`thread.attach`/`thread.detach` verbs; `thread.snap`/`thread.ev`/`thread.state`, `prompt`, `prompt.closed` frames) over injected thread/prompt ports; no approve verbs.
+  control/              opt-in phone CONTROL over Tailscale (privacy §17). V1 pairing + authenticated /ctl handshake; V2 read path: attach/detach, snap/out/size/state frames, welcome.sessions (read-only, no input). V3 Type adds phone typing: `in`/`ack`/`nak` verbs and a desktop typing switch. Slice 1 (phone thread, privacy §17) adds the read-only Claude thread (`thread.attach`/`thread.detach` verbs; `thread.snap`/`thread.ev`/`thread.state`, `prompt`, `prompt.closed` frames) over injected thread/prompt ports; no approve verbs. Phone alerts (planned in `feat/phone-alerts`, not built yet): `alertClassifier.ts` / `alertWatcher.ts` here, with the alert credentials in `~/.aether-os/alert-devices.json`.
     protocol.ts           closed message set and the hello/welcome proof.
     controlGateway.ts     hello/welcome, 5 s hello deadline; attach/detach drive a TerminalReadPort (never a write path).
     controlHub.ts         enable/disable, pairing, device auth, revoke, persisted re-enable.
@@ -126,7 +126,7 @@ electron/        Electron main process (Node). IPC handlers, pty, file/OS access
     voiceServer.ts        the ONE listener: tailnet IPv4 only, ws noServer, host and Origin checks, pairing POST.
     voiceHub.ts / voiceIpc.ts   enable/disable, pairing, revoke, status; trusted IPC for the Settings card.
     voiceBoundary.test.ts   AST guard for this directory: one listener, one child launch, no writes, no pty, no `process.env` spread.
-  controlSettings.ts    owner of ~/.aether-os/control-settings.json (two persisted booleans: `reenableAtLaunch` and `phoneTyping`).
+  controlSettings.ts    owner of ~/.aether-os/control-settings.json (persisted booleans: `reenableAtLaunch` and `phoneTyping`, plus `phoneAlerts` (default off) once phone alerts land).
   terminalHub.ts        BUILT (V2): owns the three pty slots; main hands control only readPort() (list/attach/onState/retain). Mirror + 256 KB ring exist only while control is retained; cleared on release, quit, slot exit. Importers of the pty managers are guarded by controlBoundary rule 6.
   terminalBoard.ts      BUILT (S3): terminal board files for Alpha/Beta (privacy §19) - read snapshot, empty-entry reset on slot start/exit via `TerminalSlot.observe`; schema/validation/staleness in `src/shared/terminalBoard.ts`.
   terminalMirror.ts     BUILT (V2): headless xterm screen model + bounded snapshot (the only @xterm/headless importer).
@@ -281,7 +281,7 @@ before designing anything that persists or transmits data. The short version:
   `remoteHub` guards it; never add a pty/write path under `electron/remote/`.
   **Separate second opt-in: phone control** (privacy §17): V1 is built (pairing + an authenticated `/ctl` handshake from a paired Android app over the same tailnet-only
   listener) and V2 adds read-only terminal output (attach/detach, snapshot + live frames); V3 Type adds phone typing (privacy §17); permission answers are still planned. It lives only in `electron/control/` and reaches terminals only through `terminalHub` (never a pty manager directly); `controlBoundary.test.ts` guards it. It may be set
-  to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Treat as R3.
+  to re-enable at launch (its own opt-in setting, default off); the read-only viewer stays off at every launch. Phone alerts (privacy §17, planned) add an alert-only credential and a desktop watcher that runs while control and the alerts switch are on; only a three-value label crosses the wire. Treat as R3.
   **Third deliberate, opt-in exception: the voice gateway** (`electron/voice/`, privacy §18). Its own listener on port 47822, separate from the 47821 viewer/control listener, tailnet IPv4 only via `assertBindableHost`, off at every launch with a native confirm, a pairing code plus a hashed 30-day cookie, and it rejects any request that carries an `Origin` header. Treat as R3. The only reviewed tailnet binds are `remoteServer.ts` and `voiceServer.ts`; `noWildcardListener.test.ts` and `voiceBoundary.test.ts` guard them. Never add another bind.
 - **Store the signal, not the payload.** Derive what the detectors need at ingest and discard the
   raw: **no source code, no command strings, no tool outputs, no prompts** in the store. Every
