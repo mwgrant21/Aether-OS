@@ -52,6 +52,12 @@ const RESERVED_DIRS: ReadonlySet<string> = new Set(['node_modules', '.worktrees'
 /** Import allow-list, keyed by repo-relative path without extension. typeOnly: only `import type` forms are permitted. */
 function allowedImports(file: string): Map<string, { typeOnly: boolean }> {
   const m = new Map<string, { typeOnly: boolean }>();
+  // The alert files are pure: the classifier reaches only shared types, the watcher only the classifier and shared types.
+  if (file === 'alertClassifier.ts' || file === 'alertWatcher.ts') {
+    m.set('src/shared/remote/types', { typeOnly: true });
+    if (file === 'alertWatcher.ts') m.set(`${CONTROL_REL}/alertClassifier`, { typeOnly: false });
+    return m;
+  }
   for (const f of OWN_FILES) m.set(`${CONTROL_REL}/${f}`, { typeOnly: false });
   m.set('electron/permissionBroker', { typeOnly: true });
   m.set('electron/terminalHub', { typeOnly: true });
@@ -342,6 +348,7 @@ const CLEAN: Row[] = [
   { id: 'router-direct', file: 'inputRouter.ts', src: "import { validateInput } from './protocol';\nexport const route = (terminals: { write(s: number, d: string): void }, raw: unknown): void => { terminals.write(1, validateInput(raw)); };" },
   { id: 'hub', file: 'controlHub.ts', src: "import { RemoteAuth } from '../remote/remoteAuth';\nimport { loadSessions } from '../remote/sessionStore';\nexport const hub = (a: RemoteAuth): void => { void loadSessions; void a; };" },
   { id: 'ipc', file: 'controlIpc.ts', src: "import type { IpcMain } from 'electron';\nimport type { ControlStatus } from '../../src/shared/remote/types';\nimport { type TerminalHub } from '../terminalHub';\nexport const wire = (ipc: IpcMain, s: ControlStatus, h: TerminalHub): void => { void ipc; void s; void h; };" },
+  { id: 'alert-watcher', file: 'alertWatcher.ts', src: "import type { AlertKind } from '../../src/shared/remote/types';\nimport { classifyStop } from './alertClassifier';\nexport const f = (t: string | null): AlertKind => classifyStop(t);" },
   { id: 'comments-and-strings', file: 'controlGateway.ts', src: "// import fs from 'fs'; eval(x); terminals.write(1, raw);\nexport const note = \"child_process require('fs') 0.0.0.0\";" },
 ];
 const BAD: Bad[] = [
@@ -381,6 +388,8 @@ const BAD: Bad[] = [
   { id: 'ts-extension', file: 'controlGateway.ts', src: "import { a } from './protocol.ts';\nvoid a;", rule: 'module', has: 'allow-list' },
   { id: 'sibling-unknown', file: 'controlGateway.ts', src: "import { a } from './extra';\nvoid a;", rule: 'module', has: 'allow-list' },
   { id: 'escape-dir', file: 'controlGateway.ts', src: "import { a } from '../control/../main';\nvoid a;", rule: 'module', has: 'allow-list' },
+  { id: 'watcher-imports-gateway', file: 'alertWatcher.ts', src: "import { handle } from './controlGateway';\nvoid handle;", rule: 'module', has: 'allow-list' },
+  { id: 'classifier-imports-protocol', file: 'alertClassifier.ts', src: "import { validateInput } from './protocol';\nvoid validateInput;", rule: 'module', has: 'allow-list' },
   // rule 2: the one input sink
   { id: 'write-in-gateway', file: 'controlGateway.ts', src: "export const f = (pty: { write(s: string): void }) => { pty.write('x'); };", rule: 'write', has: 'outside inputRouter.ts' },
   { id: 'write-in-hub', file: 'controlHub.ts', src: "export const f = (terminals: { write(s: string): void }) => { terminals.write('x'); };", rule: 'write', has: 'outside inputRouter.ts' },
