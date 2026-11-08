@@ -60,15 +60,16 @@ async function mountSnap(withOnSnap = true) {
   mocks.write.mockClear(); mocks.reset.mockClear(); mocks.resize.mockClear(); mocks.fitTo = undefined;
   let snap: ((s: { cols: number; rows: number; d: string }) => void) | undefined;
   const resize = vi.fn();
+  let data: ((d: string) => void) | undefined;
   const order: string[] = [];
   const start = vi.fn(() => { order.push('start'); return Promise.resolve(); });
-  const pty = { start, onData: () => () => {}, write() {}, resize, ...(withOnSnap ? { onSnap: (cb: typeof snap) => { order.push('onSnap'); snap = cb; return () => {}; } } : {}) };
+  const pty = { start, onData: (cb: typeof data) => { data = cb; return () => {}; }, write() {}, resize, ...(withOnSnap ? { onSnap: (cb: typeof snap) => { order.push('onSnap'); snap = cb; return () => {}; } } : {}) };
   Object.defineProperty(window, 'aetherElectron', { configurable: true, value: { pty } });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   const { AetherStoreProvider: Provider } = await import('../../state/store');
   const { PtyTerminal: Fresh } = await import('./PtyTerminal');
   render(<Provider><Fresh /></Provider>);
-  return { snap: snap!, resize, order };
+  return { snap: snap!, resize, order, data: data! };
 }
 
 it('repaints from a snap: reset, resize to the mirror, write, then refit and tell main the real size', async () => {
@@ -76,11 +77,13 @@ it('repaints from a snap: reset, resize to the mirror, write, then refit and tel
   expect(order).toEqual(['onSnap', 'start']);
   mocks.fitTo = { cols: 120, rows: 40 };
   snap({ cols: 100, rows: 30, d: 'screen' });
+  expect(mocks.reset).not.toHaveBeenCalled();
+  mocks.write.mock.calls[0][1](); // the barrier drained
   expect(mocks.reset).toHaveBeenCalledOnce();
   expect(mocks.resize).toHaveBeenCalledWith(100, 30);
-  expect(mocks.write.mock.calls[0][0]).toBe('screen');
+  expect(mocks.write.mock.calls[1][0]).toBe('screen');
   expect(resize).not.toHaveBeenCalled();
-  mocks.write.mock.calls[0][1]();
+  mocks.write.mock.calls[1][1]();
   expect(resize).toHaveBeenCalledWith(120, 40);
 });
 
@@ -88,9 +91,11 @@ it('does not resend the size when the fitted size equals the snap size, and skip
   const { snap, resize } = await mountSnap();
   snap({ cols: 100, rows: 30, d: 'screen' });
   mocks.write.mock.calls[0][1]();
+  mocks.write.mock.calls[1][1]();
   expect(resize).not.toHaveBeenCalled();
   mocks.resize.mockClear();
   snap({ cols: 0, rows: 1.5, d: 'again' });
+  mocks.write.mock.calls[2][1]();
   expect(mocks.resize).not.toHaveBeenCalled();
 });
 
@@ -104,4 +109,18 @@ it('ignores an empty snap', async () => {
 it('mounts and starts without throwing when the preload has no onSnap', async () => {
   const { order } = await mountSnap(false);
   expect(order).toEqual(['start']);
+});
+
+it('applies a snap behind a write barrier: earlier chunks drain first, chunks that arrive meanwhile follow the snapshot', async () => {
+  const { snap, data } = await mountSnap();
+  data('before');
+  snap({ cols: 100, rows: 30, d: 'screen' });
+  data('meanwhile');
+  expect(mocks.write.mock.calls.map(c => c[0])).toEqual(['before', '']);
+  expect(mocks.reset).not.toHaveBeenCalled();
+  mocks.write.mock.calls[1][1](); // barrier: 'before' has been parsed
+  expect(mocks.write.mock.calls.map(c => c[0])).toEqual(['before', '', 'screen', 'meanwhile']);
+  expect(mocks.reset.mock.invocationCallOrder[0]).toBeLessThan(mocks.write.mock.invocationCallOrder[2]);
+  data('after');
+  expect(mocks.write).toHaveBeenLastCalledWith('after');
 });
