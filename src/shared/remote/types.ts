@@ -114,7 +114,8 @@ export interface ControlStatus {
   reason: RemoteUnavailableReason | null;
   address: string | null;
   connected: number;
-  devices: RemoteSessionInfo[];
+  /** alertOnly marks an alert credential listed alone (its main session expired); revoke-one by ref still works. */
+  devices: Array<RemoteSessionInfo & { alertOnly?: true }>;
   pairingActive: boolean;
   reenableAtLaunch: boolean;
   phoneTyping: boolean;

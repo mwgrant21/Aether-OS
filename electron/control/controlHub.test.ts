@@ -65,7 +65,7 @@ function fakeTerminals(opts: { throwOnRetain?: boolean; throwOnRelease?: boolean
   return { port, t };
 }
 
-function setup(over: { alerts?: { stored: boolean; persist?: (on: boolean) => boolean }; typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort; views?: Partial<Record<ViewId, ViewReadPort>> } = {}) {
+function setup(over: { alerts?: { stored: boolean; persist?: (on: boolean) => boolean }; typing?: { stored: boolean; persist?: (on: boolean) => boolean }; acquire?: ListenerPort['acquire']; flag?: boolean; now?: () => number; confirm?: (peer: string | null, replaces: boolean) => Promise<boolean>; terminals?: ReturnType<typeof fakeTerminals>; threads?: ThreadReadPort; prompts?: PromptReadPort; views?: Partial<Record<ViewId, ViewReadPort>> } = {}) {
   const terms = over.terminals ?? fakeTerminals();
   const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
@@ -99,6 +99,7 @@ function setup(over: { alerts?: { stored: boolean; persist?: (on: boolean) => bo
     setTimeoutFn: (fn, ms) => { const id = nextId++; timers.push({ id, fn, ms }); return id; },
     clearTimeoutFn: h => { const i = timers.findIndex(t => t.id === h); if (i >= 0) timers.splice(i, 1); },
     retryMs: 1000,
+    now: over.now,
   });
   return { hub, listener, settings, store, alertStore, confirmPair, timers, logs, writes, terms: terms.t, typing, alerts, emitted };
 }
@@ -1087,6 +1088,51 @@ describe('control hub alert credential', () => {
     await rig.hub.revokeOne(rig.hub.status().devices[0].ref);
     expect(rig.hub.port.authenticate(bearer(t.alert), PEER)).toBeNull();
     expect(s.sent.at(-1)).toBe(bye('revoked'));
+  });
+
+  // Slides the alert token alone, then lets the main session expire (30 d sliding): an alert-only credential.
+  async function aloneAlert() {
+    let clock = 1_000_000_000_000;
+    const rig = setup({ now: () => clock });
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    clock += 20 * 86_400_000;
+    rig.hub.port.authenticate(bearer(t.alert), PEER, { touch: true });
+    clock += 11 * 86_400_000;
+    expect(rig.hub.port.authenticate(bearer(t.main), PEER)).toBeNull(); // main expired and pruned
+    return { rig, t };
+  }
+
+  it('an alert token whose main session expired is listed as alertOnly and revokeOne(its ref) revokes it and closes its socket', async () => {
+    const { rig, t } = await aloneAlert();
+    const id = rig.hub.port.authenticate(bearer(t.alert), PEER)!;
+    expect(id.scope).toBe('alert');
+    const s = fakeSocket();
+    rig.hub.port.open(s, id);
+    expect(rig.hub.status().devices).toMatchObject([{ ref: id.ref, alertOnly: true }]);
+    const after = await rig.hub.revokeOne(id.ref);
+    expect(after.devices).toEqual([]);
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)).toBeNull();
+    expect(s.sent.at(-1)).toBe(bye('revoked'));
+  });
+
+  it('revokeOne with the main ref still revokes both, and the paired device is not marked alertOnly', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const devices = rig.hub.status().devices;
+    expect(devices).toHaveLength(1);
+    expect(devices[0].alertOnly).toBeUndefined();
+    await rig.hub.revokeOne(devices[0].ref);
+    expect(rig.hub.port.authenticate(bearer(t.main), PEER)).toBeNull();
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)).toBeNull();
+  });
+
+  it('revokeOne of an unknown ref with an alert-only token leaves it valid', async () => {
+    const { rig, t } = await aloneAlert();
+    const s = await rig.hub.revokeOne('000000000000');
+    expect(s.devices).toHaveLength(1);
+    expect(rig.hub.port.authenticate(bearer(t.alert), PEER)?.scope).toBe('alert');
   });
 
   it('an alert connection logs the real peer, not unknown', async () => {
