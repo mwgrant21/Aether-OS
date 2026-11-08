@@ -26,11 +26,14 @@ sim pieces exist only where noted, and `PROGRESS.md` tracks exactly which is whi
 known issues and genuinely-blocked items, not just wins.
 
 **The screenshots below use synthetic demo data** (generated fixture transcripts for made-up
-projects), so the dollar and token figures in them are illustrative, not my real usage.
+projects, run through a collector against a throwaway home), so the dollar and token figures in
+them are illustrative, not my real usage. The "active" shots were captured under a synthetic burst
+load, which is why some numbers look extreme (budget left 0.0%, +915% vs last week).
 
-![Aether OS Dashboard: reactor core, month and today usage, projects list and a weekly token chart](docs/screenshots/01-dashboard.png)
-*Dashboard at version 0.7.4: the reactor core, usage tiles, a project list and a weekly token chart,
-all drawn from fixture data.*
+![Aether OS Dashboard under live load: reactor core, two active agents, projects by cost, recent dispatch alerts, collector running](docs/screenshots/11-dashboard-active.png)
+*Dashboard at version 0.7.4 under a synthetic burst load: the reactor running hot, two active
+agents, projects by cost, recent dispatch alerts, and the collector shown as running. Fixture
+data; the extreme figures come from the burst generator.*
 
 ![Aether OS Optimize view listing four cost findings with an estimated weekly saving](docs/screenshots/02-optimize.png)
 *Optimize on the same fixture data: four findings (including "Cost of thrash"), each priced, with an
@@ -158,6 +161,15 @@ rather than only visual.
 ---
 
 ## What's built
+
+![Aether OS Dashboard at idle: reactor core, usage tiles, projects list and a weekly token chart](docs/screenshots/01-dashboard.png)
+*The Dashboard at idle (fixture data), for contrast with the burst-load shot above.*
+
+![Aether OS Orchestration Grid: the main session linked to two active subagents](docs/screenshots/13-grid.png)
+*Orchestration Grid: the main session linked to two active subagents (synthetic).*
+
+![Aether OS Traffic view: dispatch and hand-back feed per project](docs/screenshots/15-traffic.png)
+*Traffic view: the dispatch and hand-back feed per project (synthetic).*
 
 ![Aether OS Ledger: observed total at API rate, cache impact, rollups and pricing basis footer](docs/screenshots/04-ledger.png)
 *Ledger on fixture data: an observed total at API rate, cache impact, rollups and the pricing basis.*
