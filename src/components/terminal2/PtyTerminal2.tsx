@@ -70,8 +70,33 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
 
     const terminal2Pty = window.aetherElectron!.terminal2Pty;
     // Subscribe before starting so the session's first output is not lost.
-    terminal2Pty.onData((data) => sharedTerm!.write(data));
-    terminal2Pty.onExit(() => sharedTerm!.write('\r\n[process exited - press Enter to restart]\r\n'));
+    // xterm's write() is async and reset() does not clear its queue, so a snap is applied behind a write barrier:
+    // earlier live chunks (already inside the snapshot) drain first, and live data arriving meanwhile waits for it.
+    let snapsPending = 0;
+    let liveHeld: string[] = [];
+    const writeLive = (data: string) => { if (snapsPending > 0) liveHeld.push(data); else sharedTerm!.write(data); };
+    terminal2Pty.onData(writeLive);
+    // Main's screen mirror, sent when this window re-attaches to a running session (reload; no alive message
+    // is sent then, so this resets by itself). Optional call because older preloads/tests do not provide it.
+    terminal2Pty.onSnap?.(({ cols, rows, d }) => {
+      if (d === '') return;
+      snapsPending++;
+      sharedTerm!.write('', () => {
+        try {
+          sharedTerm!.reset();
+          if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0) sharedTerm!.resize(cols, rows);
+          // Refit only after the snap is parsed at the mirror's size; a reloaded xterm fires no onResize for an
+          // unchanged size, so tell main the real size explicitly to make the TUI repaint.
+          sharedTerm!.write(d, () => {
+            sharedFit!.fit();
+            if (sharedTerm!.cols !== cols || sharedTerm!.rows !== rows) terminal2Pty.resize(sharedTerm!.cols, sharedTerm!.rows);
+          });
+        } finally {
+          if (--snapsPending === 0) { const out = liveHeld; liveHeld = []; for (const x of out) sharedTerm!.write(x); }
+        }
+      });
+    });
+    terminal2Pty.onExit(() => writeLive('\r\n[process exited - press Enter to restart]\r\n')); // ordered behind a pending snap
     // Main restarts an exited session on a bare Enter (desktop or phone) and drops other input meanwhile;
     // it then reports alive. The slot ignores resize while exited, so re-send the current size here.
     terminal2Pty.onAlive(() => { sharedTerm!.reset(); terminal2Pty.resize(sharedTerm!.cols, sharedTerm!.rows); });

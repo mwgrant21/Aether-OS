@@ -37,8 +37,33 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
     sharedMarkers = attachTerminalMarkers(sharedTerm);
 
     const codexPty = window.aetherElectron!.codexPty;
+    // Main's screen mirror, sent when this window re-attaches to a running session (reload). Subscribed before
+    // start; optional call because older preloads do not provide it.
+    // xterm's write() is async and reset() does not clear its queue, so a snap is applied behind a write barrier:
+    // earlier live chunks (already inside the snapshot) drain first, and live data arriving meanwhile waits for it.
+    let snapsPending = 0;
+    let liveHeld: string[] = [];
+    const writeLive = (data: string) => { if (snapsPending > 0) liveHeld.push(data); else sharedTerm!.write(data); };
+    codexPty.onSnap?.(({ cols, rows, d }) => {
+      if (d === '') return;
+      snapsPending++;
+      sharedTerm!.write('', () => {
+        try {
+          sharedTerm!.reset();
+          if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0) sharedTerm!.resize(cols, rows);
+          // Refit only after the snap is parsed at the mirror's size; a reloaded xterm fires no onResize for an
+          // unchanged size, so tell main the real size explicitly to make the TUI repaint.
+          sharedTerm!.write(d, () => {
+            sharedFit!.fit();
+            if (sharedTerm!.cols !== cols || sharedTerm!.rows !== rows) codexPty.resize(sharedTerm!.cols, sharedTerm!.rows);
+          });
+        } finally {
+          if (--snapsPending === 0) { const out = liveHeld; liveHeld = []; for (const x of out) sharedTerm!.write(x); }
+        }
+      });
+    });
     codexPty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once per app lifetime
-    codexPty.onData((data) => sharedTerm!.write(data));
+    codexPty.onData(writeLive);
     sharedTerm.onData((input) => codexPty.write(input));
     sharedTerm.onResize(({ cols, rows }) => codexPty.resize(cols, rows));
   }

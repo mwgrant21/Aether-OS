@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { describe, it, expect, vi } from 'vitest';
 import type { PtyLike } from './ptyLifecycle';
 import { createTerminalHub } from './terminalHub';
+import { createDesktopFeed } from './desktopFeed';
 import { terminalIdentityEnv } from './ptyManager';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import capture from './__fixtures__/trust-prompt-capture.json';
@@ -45,6 +46,12 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
   const hub = createTerminalHub(), ptyLifecycle = hub.slot('claude'), codexPtyLifecycle = hub.slot('codex'), terminal2PtyLifecycle = hub.slot('terminal2');
   const spawnPty = vi.fn(), spawnCodexPty = vi.fn(), send = vi.fn(), sendToWindow = vi.fn();
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
+  // Real feeds (un-gated data goes straight to sendToWindow); reattach is a spy so no hub attach or timer starts.
+  const feedFor = (slot: 'claude' | 'codex' | 'terminal2', prefix: string) => {
+    const feed = createDesktopFeed({ port: hub.readPort(), slot, send: sendToWindow, channels: { data: prefix + ':data', snap: prefix + ':snap', exit: prefix + ':exit' } });
+    return { data: feed.data, exit: feed.exit, reattach: vi.fn() };
+  };
+  const ptyFeed = feedFor('claude', 'pty'), codexFeed = feedFor('codex', 'codexPty'), terminal2Feed = feedFor('terminal2', 'terminal2Pty');
   let launchId: string | undefined = 'launch-1';
   let prompt = 'unknown';
   const communicationBridge = { currentLaunchId: () => launchId, observePrompt: vi.fn((id: string, value: string) => {
@@ -52,7 +59,7 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
     prompt = value; return true;
   }) };
   const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
-  const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
+  const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow, ptyFeed, codexFeed, terminal2Feed,
     terminalIdentityEnv, boardCliPath: opts && 'boardCliPath' in opts ? opts.boardCliPath : BOARD_CLI,
     UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
@@ -81,8 +88,8 @@ describe('production terminal consumer ownership (deterministic callbacks)', () 
     f.connected({}, thirdExit);
     second.fireData('late connected'); second.fireExit();
     third.fireData('current'); third.fireExit(); third.fireData('after exit');
-    expect(f.send.mock.calls).toEqual([['pty:data', 'ordinary']]);
-    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'pty:data')).toEqual([['pty:data', 'connected'], ['pty:data', 'current']]);
+    expect(f.send).not.toHaveBeenCalled();
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'pty:data')).toEqual([['pty:data', 'ordinary'], ['pty:data', 'connected'], ['pty:data', 'current']]);
     expect(f.planUsageScraper.ingest.mock.calls).toEqual([['ordinary'], ['connected'], ['current']]);
     expect(f.planUsageScraper.reset).toHaveBeenCalledTimes(1);
     expect(secondExit).not.toHaveBeenCalled(); expect(thirdExit).toHaveBeenCalledTimes(1);
@@ -90,21 +97,79 @@ describe('production terminal consumer ownership (deterministic callbacks)', () 
     expect(f.ptyLifecycle.current).toBeNull();
   });
 
-  it('repeated Codex start replaces directly and suppresses superseded data and exit', () => {
+  it('a repeated Codex start while live attaches (alive only) instead of killing; a start after exit respawns', () => {
     const f = fixture(), first = fakePty(), second = fakePty();
     f.spawnCodexPty.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const alive = () => f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:alive').length;
     f.codex(f.event, { cols: 80, rows: 24 }); first.fireData('first');
+    expect(alive()).toBe(1);
     f.codex(f.event, { cols: 100, rows: 30 });
-    expect(first.kill).toHaveBeenCalledTimes(1);
+    expect(f.spawnCodexPty).toHaveBeenCalledOnce();
+    expect(first.kill).not.toHaveBeenCalled();
+    expect(f.codexPtyLifecycle.current).toBe(first);
+    expect(alive()).toBe(2);
+    expect(f.codexFeed.reattach).toHaveBeenCalledOnce();
+    first.fireData('still first'); first.fireExit();
+    expect(f.codexPtyLifecycle.current).toBeNull();
+    f.codex(f.event, { cols: 100, rows: 30 });
+    expect(f.spawnCodexPty).toHaveBeenCalledTimes(2);
     expect(f.codexPtyLifecycle.current).toBe(second);
-    first.fireData('late'); first.fireExit();
-    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:exit')).toHaveLength(0);
     second.fireData('second'); second.fireExit(); second.fireData('after exit');
-    expect(f.send.mock.calls).toEqual([['codexPty:data', 'first'], ['codexPty:data', 'second']]);
-    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:alive')).toHaveLength(2);
-    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:exit')).toHaveLength(1);
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:data')).toEqual([['codexPty:data', 'first'], ['codexPty:data', 'still first'], ['codexPty:data', 'second']]);
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'codexPty:exit')).toHaveLength(2);
     expect(f.planUsageScraper.ingest).not.toHaveBeenCalled();
-    expect(f.ptyLifecycle.current).toBeNull(); expect(f.codexPtyLifecycle.current).toBeNull();
+    expect(f.send).not.toHaveBeenCalled();
+  });
+
+  it('a repeated Terminal 2 start while live attaches without spawn, kill or alive; the restarter still respawns after exit', () => {
+    const rt = fakeRuntime('CMD\r'), f = fixture({ aetherChoice: rt }), first = fakePty(), second = fakePty();
+    f.spawnPty.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const alive = () => f.sendToWindow.mock.calls.filter(([channel]) => channel === 'terminal2Pty:alive').length;
+    f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(alive()).toBe(1);
+    rt.launchCommandFor.mockClear();
+    f.terminal2(f.event, { cols: 100, rows: 30 });
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(first.kill).not.toHaveBeenCalled();
+    expect(alive()).toBe(1);
+    expect(rt.launchCommandFor).not.toHaveBeenCalled();
+    expect(rt.onForeignLaunch).not.toHaveBeenCalled();
+    expect(f.terminal2Feed.reattach).toHaveBeenCalledOnce();
+    first.fireExit();
+    f.terminal2PtyLifecycle.write('\r');
+    expect(f.spawnPty).toHaveBeenCalledTimes(2);
+    expect(f.terminal2PtyLifecycle.current).toBe(second);
+  });
+
+  it('a Claude start while live attaches (alive + reattach, no spawn); a first start never reattaches', () => {
+    const f = fixture(), first = fakePty();
+    f.spawnPty.mockReturnValueOnce(first);
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(f.ptyFeed.reattach).not.toHaveBeenCalled();
+    f.ordinary(f.event, { cols: 100, rows: 30 });
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'pty:alive')).toHaveLength(2);
+    expect(f.ptyFeed.reattach).toHaveBeenCalledOnce();
+  });
+
+  it('a first Codex and Terminal 2 start does not reattach', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.spawnCodexPty.mockReturnValueOnce(fakePty());
+    f.codex(f.event, { cols: 80, rows: 24 }); f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(f.codexFeed.reattach).not.toHaveBeenCalled();
+    expect(f.terminal2Feed.reattach).not.toHaveBeenCalled();
+  });
+
+  it('routes pty, codexPty and terminal2Pty data through sendToWindow, never the start event sender', () => {
+    const f = fixture(), claude = fakePty(), codex = fakePty(), term2 = fakePty();
+    f.spawnPty.mockReturnValueOnce(claude).mockReturnValueOnce(term2);
+    f.spawnCodexPty.mockReturnValueOnce(codex);
+    f.ordinary(f.event, { cols: 80, rows: 24 }); f.codex(f.event, { cols: 80, rows: 24 }); f.terminal2(f.event, { cols: 80, rows: 24 });
+    claude.fireData('c'); codex.fireData('x'); term2.fireData('t');
+    expect(f.send).not.toHaveBeenCalled();
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => String(channel).endsWith(':data')))
+      .toEqual([['pty:data', 'c'], ['codexPty:data', 'x'], ['terminal2Pty:data', 't']]);
   });
 });
 
@@ -177,7 +242,8 @@ describe('production pinned-session id wiring', () => {
     expect(f.spawnPty).toHaveBeenLastCalledWith(80, 24, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta', AETHER_BOARD_CLI: BOARD_CLI });
     expect(f.liveAgentTracker.notifyPtySpawned).not.toHaveBeenCalled();
     pty2.fireData('fresh');
-    expect(f.send.mock.calls).toEqual([['terminal2Pty:data', 'fresh']]);
+    expect(f.send).not.toHaveBeenCalled();
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'terminal2Pty:data')).toEqual([['terminal2Pty:data', 'fresh']]);
     expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'terminal2Pty:alive')).toHaveLength(2);
     expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'terminal2Pty:exit')).toHaveLength(1);
   });

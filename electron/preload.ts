@@ -96,6 +96,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       ipcRenderer.on('pty:data', listener);
       return () => ipcRenderer.removeListener('pty:data', listener);
     },
+    onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snap: { cols: number; rows: number; d: string }) => callback(snap);
+      ipcRenderer.on('pty:snap', listener);
+      return () => ipcRenderer.removeListener('pty:snap', listener);
+    },
     onAlive: (callback: () => void) => {
       const listener = () => callback();
       ipcRenderer.on('pty:alive', listener);
@@ -119,6 +124,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
       ipcRenderer.on('codexPty:data', listener);
       return () => ipcRenderer.removeListener('codexPty:data', listener);
+    },
+    onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snap: { cols: number; rows: number; d: string }) => callback(snap);
+      ipcRenderer.on('codexPty:snap', listener);
+      return () => ipcRenderer.removeListener('codexPty:snap', listener);
     },
     onAlive: (callback: () => void) => {
       const listener = () => callback();
@@ -144,6 +154,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = () => callback();
       ipcRenderer.on('terminal2Pty:exit', listener);
       return () => ipcRenderer.removeListener('terminal2Pty:exit', listener);
+    },
+    onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snap: { cols: number; rows: number; d: string }) => callback(snap);
+      ipcRenderer.on('terminal2Pty:snap', listener);
+      return () => ipcRenderer.removeListener('terminal2Pty:snap', listener);
     },
     onAlive: (callback: () => void) => {
       const listener = () => callback();

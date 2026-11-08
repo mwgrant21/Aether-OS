@@ -85,6 +85,7 @@ declare global {
         write: (input: string) => void;
         resize: (cols: number, rows: number) => void;
         onData: (callback: (data: string) => void) => () => void;
+        onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => () => void;
         onAlive: (callback: () => void) => () => void;
         onExit: (callback: () => void) => () => void;
       };
@@ -97,6 +98,7 @@ declare global {
         resize: (cols: number, rows: number) => void;
         launchInfo: () => Promise<CodexLaunchInfo>;
         onData: (callback: (data: string) => void) => () => void;
+        onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => () => void;
         onAlive: (callback: () => void) => () => void;
         onExit: (callback: () => void) => () => void;
       };
@@ -105,6 +107,7 @@ declare global {
         write: (input: string) => void;
         resize: (cols: number, rows: number) => void;
         onData: (callback: (data: string) => void) => () => void;
+        onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => () => void;
         onExit: (callback: () => void) => () => void;
         onAlive: (callback: () => void) => () => void;
       };
