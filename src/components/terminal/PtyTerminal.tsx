@@ -47,6 +47,19 @@ function getOrCreateHost(ensureStart = true): { hostEl: HTMLDivElement; fit: Fit
     // guard confirms it exists.
     const pty = window.aetherElectron!.pty;
     pty.onData((data) => sharedTerm!.write(data));
+    // Main's screen mirror, sent when this window re-attaches to a running session (reload). It replaces
+    // whatever was written so far; optional call because older preloads/tests do not provide it.
+    pty.onSnap?.(({ cols, rows, d }) => {
+      if (d === '') return;
+      sharedTerm!.reset();
+      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0) sharedTerm!.resize(cols, rows);
+      // Refit only after the snap is parsed at the mirror's size; a reloaded xterm fires no onResize for an
+      // unchanged size, so tell main the real size explicitly to make the TUI repaint.
+      sharedTerm!.write(d, () => {
+        sharedFit!.fit();
+        if (sharedTerm!.cols !== cols || sharedTerm!.rows !== rows) pty.resize(sharedTerm!.cols, sharedTerm!.rows);
+      });
+    });
     sharedTerm.onData((input) => pty.write(input));
     sharedTerm.onResize(({ cols, rows }) => pty.resize(cols, rows));
     // Subscribe before main ensures the session exists: startup output can
