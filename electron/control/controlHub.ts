@@ -196,7 +196,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       reason: state === 'unavailable' ? reason : null,
       address: state === 'on' ? address : null,
       connected: state === 'on' ? sessions.size : 0,
-      devices: auth ? auth.list() : [],
+      // an alert token whose main session expired or was pruned is listed on its own, so it can still be revoked
+      devices: auth && auth.list().length > 0 ? auth.list() : (alertAuth ? alertAuth.list().map(d => ({ ...d, alertOnly: true as const })) : []),
       pairingActive: counts.pairingActive,
       reenableAtLaunch: reenable,
       phoneTyping: typing,
@@ -536,7 +537,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       return { ok: true, uri, code: made.code, qrSvg: deps.renderQr(uri), expiresAtMs: made.expiresAtMs };
     },
     revokeAll: () => revoke('control: revoke all', () => { auth!.revokeAll(); alertAuth!.revokeAll(); }),
-    revokeOne: ref => revoke(`control: revoke one ref=${ref}`, () => { if (auth!.revokeOne(ref)) alertAuth!.revokeAll(); }), // the alert credential belongs to the one paired phone
+    revokeOne: ref => revoke(`control: revoke one ref=${ref}`, () => { if (auth!.revokeOne(ref)) alertAuth!.revokeAll(); else alertAuth!.revokeOne(ref); }), // the alert credential belongs to the one paired phone
     async retrySave() {
       init();
       await settle(true);
