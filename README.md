@@ -5,12 +5,16 @@ spend*. Aether OS answers a harder question: **is the agent actually working, or
 thrashing** — and it tells you on an ambient reactor display you notice from across the room,
 before you think to look.
 
-It runs as an Electron desktop app: a real `claude` CLI session, live tracking of your actual
-Claude Code usage and subagent dispatches, behavioral anomaly detection over that stream, and a
-Comms deck where the mission-control intelligence (AETHER) and every agent reply through a local,
-deterministic responder — no SDK or HTTP model call, no API key, no direct paid API call path
-(Stage 13.5; see `docs/roadmap.md` §3.5). The one opt-in exception, collector memory extraction
-through the Claude CLI, is off by default; see `docs/privacy-and-data.md` §14.
+It runs as a single-user, local-first Electron desktop app (version 0.7.4): real Claude Code and
+Codex CLI sessions in three terminal slots, live tracking of your actual Claude Code usage and
+subagent dispatches, behavioral anomaly detection over that stream, and a Comms deck where the
+mission-control intelligence (AETHER) and every agent reply through a local, deterministic
+responder — no SDK or HTTP model call, no API key, no direct paid API call path (Stage 13.5; see
+`docs/roadmap.md` §3.5). That is not the same as "never bills": Claude CLI sessions you run, and
+the opt-in paths named below, use your own Claude Code configuration, which can bill API usage if
+you set it up that way. There is also an Android companion app (see Phone, below). The opt-in
+exceptions and the two opt-in tailnet listeners are spelled out in the privacy section below and
+in `docs/privacy-and-data.md`.
 
 One honest line up front: **this started as a simulation and has been migrated to live data.**
 The original build ran on fictitious information by design — a deterministic tick fed synthetic
@@ -21,21 +25,23 @@ reactor's pulse is your real token burn rate and dispatch concurrency; the termi
 sim pieces exist only where noted, and `PROGRESS.md` tracks exactly which is which — including
 known issues and genuinely-blocked items, not just wins.
 
+<!-- TODO screenshots: refresh pending -->
 ![Aether OS Optimize view showing a live cost-of-thrash finding](docs/portfolio-optimize-cost-of-thrash.png)
-*Optimize surfacing a genuine "cost of thrash" finding — 428 redundant read/write calls detected
-live across real session transcripts, priced at ~$0.64/wk, with a one-click fix. Not mocked data.*
+*Optimize surfacing a "cost of thrash" finding from one captured session — 428 redundant read/write
+calls detected across real session transcripts, priced at ~$0.64/wk, with a one-click fix. Real
+data, but a single example, not a benchmark.*
 
+<!-- TODO screenshots: refresh pending -->
 ![Optimize catching a real re-read loop and pricing it](docs/portfolio-cost-of-thrash-live.gif)
-*The thesis, live: a file re-read three times without a cache hit gets caught, named
-(`CLAUDE.md (3x)`), and priced (~$0.27/wk) in real time — the same detector that once only
+*The thesis, from one captured session: a file re-read three times without a cache hit gets caught, named
+(`CLAUDE.md (3x)`), and priced (~$0.27/wk) — the same detector that once only
 existed as `anomalyDetectors.ts` unit tests, now visibly catching a real one.*
 
 ---
 
 ## What makes this different
 
-Four things here you won't find in the other Claude Code dashboards. They're the reason this
-repo exists.
+Four things this project is built around. They're the reason this repo exists.
 
 ### Behavioral anomaly detection, not just cost accounting
 
@@ -48,8 +54,8 @@ repo exists.
 | `detectZeroEditBurn` | High burn with zero edits to show for it |
 | `detectStalledPermission` | A tool call open far past the point it should have closed |
 
-Every usage dashboard in this space tells you what you spent. Almost none tell you the agent is
-stuck in a loop *right now*. Detected anomalies raise a dashed warning ring around the offending
+Most usage dashboards I have seen tell you what you spent. This one also tells you when the agent
+looks stuck in a loop *right now*. Detected anomalies raise a dashed warning ring around the offending
 node in the Orchestration Grid and drive an amber reactor flicker, independent of the
 budget-driven alarm tiers.
 
@@ -58,6 +64,17 @@ can false-positive on legitimately slow tools. The fix is planned — see
 `docs/diagnostic-thesis-plan.md`.
 
 ### No SDK or HTTP model call site, enforced by a test — with named, opt-in exceptions
+
+Short version of the privacy stance (`docs/privacy-and-data.md` §1 is the full one): single-user,
+local-first, no cloud sync. Nothing listens on the network unless you turn it on. Two opt-in
+listeners exist, both off at every launch unless you separately choose otherwise for phone control,
+both bound to the Tailscale interface address only (never a wildcard or LAN address), both gated by
+a pairing code and a desktop-side confirm: phone control and the read-only chat view share port
+47821 (§16, §17), and the voice gateway has its own port, 47822 (§18, desktop side only; see
+below). Phone control is **equivalent to your keyboard on the PC**: a paired, unlocked phone can
+type into the terminal slots and so run commands as you. It is separate from the read-only viewer,
+has its own toggle, tokens and revoke, keeps its token behind the phone's fingerprint gate, and the
+ACLs on your tailnet are your responsibility. Other named exceptions follow.
 
 As of Stage 13.5 (2026-08-05), Aether OS contains no SDK or HTTP model call site for its own
 features (the one Claude-CLI path, the opt-in collector memory extraction described below, was
@@ -129,8 +146,8 @@ concurrency turbulence, anomaly state. Backed by a synthesized alert-sound layer
 chirp on elevated burn, looping red-alert klaxon at the ceiling, soft chime on a new anomaly — all
 generated at runtime from Web Audio oscillators, with no external audio assets.
 
-Sound is the correct channel for something you aren't looking at, and as far as I can find, no
-other tool in this category has any sound design at all.
+Sound is the right channel for something you aren't looking at, which is why the alarm is audible
+rather than only visual.
 
 ---
 
@@ -139,13 +156,26 @@ other tool in this category has any sound design at all.
 - **Projects** — real projects derived from transcript events' `cwd` values, with cost per project,
   worktrees nested under their parent repo, and an `unscoped` bucket for work in directories
   without a git context.
-- **Terminal Alpha** (and a second Claude slot, **Terminal Beta**; the phone shows them as Alpha and Beta) — a real Claude Code CLI session on node-pty + xterm, replacing the original
-  scripted simulation. The reactor core lives in the sidebar with a live TOK/MIN readout, its
+- **Terminals** — three real CLI slots on node-pty + xterm, replacing the original scripted
+  simulation: **Terminal Alpha** and **Terminal Beta** (two Claude Code sessions; the phone shows
+  them as Alpha and Beta) and **Codex** (the Codex terminal described above, off by default). Each
+  Claude slot gets an `AETHER_TERMINAL` identity (`alpha` / `beta`) and an advisory local "terminal
+  board" so the two sessions can see what the other is working on; nothing enforces it, and it uses
+  local files only (`docs/privacy-and-data.md` §19). Marker lines such as `[STOP]` / `[WARN]` can
+  be colored in all three terminals (a setting, default on). Terminal sessions survive a renderer
+  reload (PR #201): the main process keeps the shells and a 256 KB output mirror so a reloaded
+  window repaints; a full app quit still ends them. The reactor core lives in the sidebar with a live TOK/MIN readout, its
   pulse and overload glow driven by real burn rate and real dispatch concurrency.
 - **Dashboard** — session tokens, budget remaining, and depletion ETA computed from your actual
   Claude Code usage, rescanned periodically; alerts and systems cells on a single view registry.
 - **Agents / Grid / Analytics** — real currently-open `Agent`-tool subagent dispatches, tracked
   live and rendered as the roster, the radial hub-and-spoke map, and the analytics views.
+- **Traffic** (PR #121) — a read-only feed of agent-to-agent messages: dispatches, `SendMessage`
+  posts and hand-backs, read from Claude transcripts. Secrets are masked in the main process, but
+  masking is pattern-based, not DLP.
+- **Boards** — saved-SQL chart boards over the collector database, plus an operator-registered
+  `aether-data` MCP server (`docs/privacy-and-data.md` §15).
+- **Optimize** — the cost-of-thrash view from the screenshots above; detectors are described earlier.
 - **Memory** — a real Layer 2 agent-memory store (`collector/src/memoryStore.ts`): substantive
   closed dispatches are extracted into typed judgment rows (never self-reported by the agent that
   made the call), shared decisions inject unconditionally into every agent, private per-agent
@@ -183,27 +213,37 @@ other tool in this category has any sound design at all.
 - **Alert Sounds** — the budget alarm and anomaly detector are audible: a synthesized (no external
   audio asset) yellow-alert chirp on elevated burn, a looping red-alert klaxon at the burn ceiling,
   and a soft chime on a new anomaly, all toggleable in Settings with a TEST SOUND preview.
-- **Full light/dark theming** — every view, including the terminal's own xterm.js color theme,
-  re-themes live via the Settings toggle. Grid and the reactor's WebGL/canvas rendering are the one
-  deliberate exception (visual signal, not theme surface).
-- Every remaining nav tab (Projects, Files/attachments, Uplinks, Settings, and friends) is a built
-  view — no "coming soon" panels left.
+- **Dark-only theme** — there is one palette; the earlier light mode was removed on 2026-09-18.
+- **Seventeen views**, all built — no "coming soon" panels: Dashboard, Terminal Alpha, Terminal
+  Beta, Codex, Comms, Traffic, Agents, Grid, Projects, Memory, Analytics, Ledger, Boards,
+  Attachments, Optimize, Uplinks, Settings (`src/viewRegistry.ts`).
 - **Agent Memory Layer 2** — durable memory split by fact type rather than by agent: shared
   standing decisions every agent reads, private per-agent history, and a hard-delete-plus-tombstone
   invalidation path instead of decay-based forgetting, so a reversed preference can never be cited
   back at you with the authority of a current one. Shipped as roadmap Stage 13 (Phases A–D);
-  retires the old `MemoryStub`. Phase E (weight tuning) is parked — needs real extraction traffic
+  retires the old `MemoryStub`. (Same store as the **Memory** entry above, described from the
+  design side.) Phase E (weight tuning) is parked — needs real extraction traffic
   that doesn't exist yet. Spec in
   [`docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md`](docs/superpowers/specs/AETHER_MEMORY_LAYER_2.md).
 
-## In flight
+## Phone (Android)
+
+An Android companion app lives in `android/` (Kotlin). It pairs over Tailscale (opt-in, see the
+privacy section) and gives a paired phone: the three terminal slots with typing, copy/paste and
+selection handles (PRs #148, #196), a read-only thread view of the Claude slot, a read-only Ledger
+screen, and phone alerts (PR #198) — label-only notifications ("finished", "question", "needs
+input") from a foreground service. Honest status: results are owner-reported on a single Galaxy
+S25; the alert delivery-latency matrix has not been run, and the permission-prompt alert needs a
+hand-installed hook with no shipped install path. The app is built for one tailnet address fixed
+at build time, so it is not a distributable app.
+
+## Shipped since the diagnostic work began
 
 - **Closed-loop cost optimization**, ported from [TokenMonitor](https://github.com/mwgrant21/TokenMonitor):
-  detect waste → price it by counterfactual → grade the setup → apply the fix → **verify the fix
-  held, and re-flag it if it recurs.**
-- **The diagnostic thesis** — a per-dispatch timeline with anomaly bands and real file-touch
-  tracking, cost-of-thrash attribution, and closing the loop from detection to intervention.
-  Planned in `docs/diagnostic-thesis-plan.md`; the competitive research behind it is in
+  detect waste → price it by counterfactual → grade the setup → apply the fix → verify the fix
+  held (roadmap Stages 5 and 6, both marked shipped).
+- **The diagnostic thesis** — per-dispatch anomaly detection, cost-of-thrash attribution, and
+  closing the loop from detection to intervention; see `docs/diagnostic-thesis-plan.md` and
   `docs/competitive-gap-analysis-2026-07.md`.
 - **Agent Personality Layer** — a two-pass work/narration split so each fleet agent's voice
   renders runtime-computed severity instead of self-reported tone, with a shared 0–4 severity
@@ -217,9 +257,20 @@ other tool in this category has any sound design at all.
   production. Spec in
   [`docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md`](docs/superpowers/specs/AGENT_PERSONALITY_LAYER_1.md).
 
-Packaging, installers, and a team fleet view are deliberately out of scope: this is a personal
-cockpit, not a distributed product. Its team-facing sibling is
-[TokenMonitor](https://github.com/mwgrant21/TokenMonitor), which this project evolves.
+## In flight / not done
+
+- **Not shipped, preparation only:** an AFK / overnight mode. Phase 1 only prepares a night list
+  and records approved terms; nothing runs unattended. Live checks have not been run.
+- **Desktop side only, no client:** a voice gateway (opt-in, port 47822). There is no speech-to-text,
+  text-to-speech or Android client yet, so it is not a usable feature.
+- **Not merged or shipped:** visible Claude–Codex communication lives on an unmerged branch.
+- **Open:** phone-alert latency testing and a shipped hook installer, phone layout edge cases,
+  the project-scope switch across Ledger / Optimize / Analytics, and Memory Layer 2 Phase E.
+  `PROGRESS.md` has the running list.
+- **Packaging:** there is a local Windows installer (`npm run dist`, electron-builder + NSIS),
+  but it is unsigned, x64 only, with no auto-update or release channel; see `docs/packaging.md`.
+  A team fleet view is out of scope; the team-facing sibling is
+  [TokenMonitor](https://github.com/mwgrant21/TokenMonitor), which this project evolves.
 
 ---
 
@@ -229,6 +280,7 @@ cockpit, not a distributed product. Its team-facing sibling is
 npm install
 npm run electron:dev   # the real thing: desktop app, live terminal, real session tracking
 npm run dev            # browser-only mode at http://localhost:5173 (no PTY / live tracking)
+npm run dist           # local unsigned Windows installer (NSIS, x64); no auto-update
 ```
 
 Comms (formerly Chat) answers every message through a local, deterministic responder — no API key,
