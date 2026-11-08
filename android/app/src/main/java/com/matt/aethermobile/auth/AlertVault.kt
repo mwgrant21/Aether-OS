@@ -13,6 +13,21 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
+ * Run [op]; if it fails with a non-Error throwable that [classify] marks as Wipe, call
+ * [wipe] once and run [op] one more time (its failure propagates). Anything else
+ * propagates immediately with no wipe and no retry.
+ */
+internal fun <T> attemptWithWipeRetry(op: () -> T, wipe: () -> Unit): T {
+    try {
+        return op()
+    } catch (t: Throwable) {
+        if (t is Error || classify(t) != Outcome.Wipe) throw t
+    }
+    wipe()
+    return op()
+}
+
+/**
  * Stores the alert-only token, encrypted under its own Android Keystore AES-GCM key.
  * Unlike [TokenVault] the key needs no user authentication, so alerts can be
  * delivered while the app is locked. The alert token can only ever receive the
@@ -43,10 +58,15 @@ class AlertVault(context: Context) {
     fun save(token: String): Boolean {
         val plain = token.toByteArray(Charsets.UTF_8)
         return try {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, existingKey() ?: generateKey())
-            val ct = cipher.doFinal(plain)
-            VaultFormat.writeAtomically(file, VaultFormat.encode(cipher.iv, ct))
+            attemptWithWipeRetry(
+                op = {
+                    val cipher = Cipher.getInstance(TRANSFORMATION)
+                    cipher.init(Cipher.ENCRYPT_MODE, existingKey() ?: generateKey())
+                    val ct = cipher.doFinal(plain)
+                    VaultFormat.writeAtomically(file, VaultFormat.encode(cipher.iv, ct))
+                },
+                wipe = { clear() },
+            )
             true
         } catch (t: Throwable) {
             if (t is Error) throw t
