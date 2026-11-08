@@ -19,6 +19,7 @@ import type {
   ControlPairResult,
   ControlPairingResult,
   ControlPort,
+  ControlScope,
   ControlSocket,
   ControlStatus,
   ListenerPort,
@@ -395,8 +396,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     return status();
   }
 
-  function peerOf(ref: string): string | null {
-    const d: RemoteSessionInfo | undefined = auth?.list().find(x => x.ref === ref);
+  function peerOf(ref: string, scope: ControlScope | undefined): string | null {
+    const d: RemoteSessionInfo | undefined = (scope === 'alert' ? alertAuth : auth)?.list().find(x => x.ref === ref);
     return d?.peer ?? null;
   }
 
@@ -463,7 +464,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     }
     const session = gateway.attach(socket, identity);
     map.set(identity.ref, session);
-    log(`control: connect ref=${identity.ref} peer=${peerOf(identity.ref) ?? 'unknown'}`);
+    log(`control: connect ref=${identity.ref} peer=${peerOf(identity.ref, identity.scope) ?? 'unknown'}`);
     socket.onClose(() => {
       if (map.get(identity.ref) === session) map.delete(identity.ref);
       log(`control: disconnect ref=${identity.ref}`);
