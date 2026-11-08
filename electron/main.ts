@@ -1466,14 +1466,13 @@ const communicationGrants = new CommunicationGrantControl(communicationBridge, a
 
 const planUsageScraper = createPlanUsageScraper();
 
-ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
+ipcMain.handle('pty:start', (_event, { cols, rows }: { cols: number; rows: number }) => {
   // Settings can already have launched a connected session. Mounting Terminal
   // only attaches to that shell; it must never silently replace it.
   if (communicationSessions.busy || ptyLifecycle.current) {
     if (ptyLifecycle.current) sendToWindow('pty:alive', undefined);
     return;
   }
-  const sender = event.sender;
   // Pinned by id, not by newest transcript: Terminal 2 (and any other claude
   // started in ~) writes to the same project dir and could otherwise win.
   const sessionId = crypto.randomUUID();
@@ -1482,7 +1481,7 @@ ipcMain.handle('pty:start', (event, { cols, rows }: { cols: number; rows: number
   try {
     ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath)) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath), launchCommand), {
       onData: (data) => {
-        if (!sender.isDestroyed()) sender.send('pty:data', data);
+        sendToWindow('pty:data', data);
         planUsageScraper.ingest(data);
       },
       // Lets the renderer's Uplinks view show real terminal liveness instead of
@@ -1535,11 +1534,15 @@ ipcMain.handle('plan:sync', async () => {
 // instance, separate channels, never shares state.
 const codexPtyLifecycle = terminalHub.slot('codex');
 
-ipcMain.handle('codexPty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
-  const sender = event.sender;
+ipcMain.handle('codexPty:start', (_event, { cols, rows }: { cols: number; rows: number }) => {
+  // A reloaded renderer calls start again: attach to the live pty, never replace it.
+  if (codexPtyLifecycle.current) {
+    sendToWindow('codexPty:alive', undefined);
+    return;
+  }
   codexPtyLifecycle.start(() => spawnCodexPty(cols, rows), {
     onData: (data) => {
-      if (!sender.isDestroyed()) sender.send('codexPty:data', data);
+      sendToWindow('codexPty:data', data);
     },
     onAlive: () => sendToWindow('codexPty:alive', undefined),
     onExit: () => sendToWindow('codexPty:exit', undefined),
@@ -1560,15 +1563,14 @@ ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: num
 // communication bridge, which all stay bound to the pinned pty above.
 const terminal2PtyLifecycle = terminalHub.slot('terminal2');
 
-ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; rows: number }) => {
-  const sender = event.sender;
+ipcMain.handle('terminal2Pty:start', (_event, { cols, rows }: { cols: number; rows: number }) => {
   const spawn = (size: { cols: number; rows: number }) => {
     const launchCommand = aetherChoice?.launchCommandFor('terminal2');
     if (launchCommand === undefined) aetherChoice?.onForeignLaunch('terminal2'); // not an Aether launch (flag off: no-op)
     try {
       terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }, launchCommand), {
         onData: (data) => {
-          if (!sender.isDestroyed()) sender.send('terminal2Pty:data', data);
+          sendToWindow('terminal2Pty:data', data);
         },
         // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
         // can reset its xterm after a restart (also fires on the first start).
@@ -1587,6 +1589,10 @@ ipcMain.handle('terminal2Pty:start', (event, { cols, rows }: { cols: number; row
     const { cols: lastCols, rows: lastRows } = terminal2PtyLifecycle.info();
     spawn({ cols: lastCols, rows: lastRows });
   });
+  // A reloaded renderer calls start again: a live pty is attached to, not replaced.
+  // Checked before spawn() so no launch plan is stashed, and no alive is sent (the
+  // renderer's onAlive resets its xterm).
+  if (terminal2PtyLifecycle.current) return;
   spawn({ cols, rows });
 });
 
