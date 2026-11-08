@@ -11,6 +11,8 @@ import android.content.pm.ApplicationInfo
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.pm.PackageManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -254,7 +256,7 @@ class MainActivity : AppCompatActivity() {
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             // Delivered when currentState is already RESUMED / back to STARTED (not inside onResume).
             when (event) {
-                Lifecycle.Event.ON_RESUME -> applyEffects(controller.onResume())
+                Lifecycle.Event.ON_RESUME -> { applyEffects(controller.onResume()); maybeAskNotifPermission() }
                 Lifecycle.Event.ON_PAUSE -> controller.onPause()
                 else -> Unit
             }
@@ -325,6 +327,7 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         applyEffects(controller.onStart(configured = host.isNotEmpty()) { vaultHasToken() })
+        AlertController.ensureRunning(applicationContext)
     }
 
     override fun onStop() {
@@ -475,14 +478,51 @@ class MainActivity : AppCompatActivity() {
         }
         dispatch(FlowEvent.PairResult(kind))
         // Best effort, after the main save flow has started: alerts never block or fail pairing.
-        if (result is PairResult.Paired && result.alertToken != null) {
+        // Keystore work stays on io (serialised with every other alert-vault write), never the UI thread.
+        if (result is PairResult.Paired) {
+            val alertToken = result.alertToken
+            val appCtx = applicationContext
             try {
-                AlertVault(this).save(result.alertToken)
-                AlertController.onPaired(this)
-            } catch (t: Throwable) {
-                if (t is VirtualMachineError) throw t
-            }
+                io.execute {
+                    if (alertToken == null) {
+                        try { AlertVault(appCtx).clear() } catch (t: Throwable) { if (t is VirtualMachineError) throw t }
+                        return@execute
+                    }
+                    val ok = try { AlertVault(appCtx).save(alertToken) } catch (t: Throwable) { if (t is VirtualMachineError) throw t; false }
+                    if (!ok) return@execute
+                    AlertController.onPaired(appCtx)
+                    try {
+                        runOnUiThread {
+                            if (!isDestroyed) {
+                                askNotifPermission = true
+                                maybeAskNotifPermission()
+                            }
+                        }
+                    } catch (_: RuntimeException) { }
+                }
+            } catch (_: RuntimeException) { }
         }
+    }
+
+    // One-shot, UI thread only, process memory only: set after a successful alert save, cleared when asked.
+    private var askNotifPermission = false
+
+    private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (!isDestroyed) renderTabs()
+        AlertController.ensureRunning(applicationContext)
+    }
+
+    // Asks once, and only when no biometric prompt can be up. Re-checked from renderTabs() and ON_RESUME.
+    private fun maybeAskNotifPermission() {
+        if (!askNotifPermission || Build.VERSION.SDK_INT < 33) return
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            askNotifPermission = false
+            return
+        }
+        if (flow !is FlowState.Connected || pending != null || sharePending) return
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        askNotifPermission = false
+        try { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) } catch (_: RuntimeException) { }
     }
 
     // ---- save / unlock -------------------------------------------------------------------
@@ -978,6 +1018,7 @@ class MainActivity : AppCompatActivity() {
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
+        maybeAskNotifPermission()
     }
 
     // ---- rendering -----------------------------------------------------------------------
