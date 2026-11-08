@@ -7,9 +7,11 @@ import {
   CONTROL_SETTINGS_FILE,
   controlSettingsPath,
   readControlSettings,
+  readPhoneAlerts,
   readPhoneTyping,
   readReenable,
   writeControlSettings,
+  writePhoneAlerts,
   writePhoneTyping,
   writeReenable,
 } from './controlSettings';
@@ -32,7 +34,7 @@ describe('controlSettings', () => {
   it('round-trips and writes exactly {v:1,reenableAtLaunch,phoneTyping}', () => {
     expect(readReenable(controlSettingsPath(dir))).toBe(false);
     expect(writeReenable(dir, true)).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, CONTROL_SETTINGS_FILE), 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true });
+    expect(JSON.parse(readFileSync(join(dir, CONTROL_SETTINGS_FILE), 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true, phoneAlerts: false });
     expect(writeReenable(dir, false)).toBe(false);
     expect(readReenable(controlSettingsPath(dir))).toBe(false);
     expect(readdirSync(dir)).toEqual([CONTROL_SETTINGS_FILE]); // no tmp file left behind
@@ -95,12 +97,13 @@ describe('controlSettings', () => {
 
   it('round-trips both flags through writeControlSettings and returns the readback', () => {
     const p = controlSettingsPath(dir);
-    expect(readControlSettings(p)).toEqual({ reenableAtLaunch: false, phoneTyping: true });
+    expect(readControlSettings(p)).toEqual({ reenableAtLaunch: false, phoneTyping: true, phoneAlerts: false });
     expect(writeControlSettings(dir, { reenableAtLaunch: true, phoneTyping: false })).toEqual({
       reenableAtLaunch: true,
       phoneTyping: false,
+      phoneAlerts: false,
     });
-    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: false });
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: false, phoneAlerts: false });
     expect(readReenable(p)).toBe(true);
     expect(readPhoneTyping(p)).toBe(false);
   });
@@ -115,7 +118,7 @@ describe('controlSettings', () => {
     expect(writeReenable(dir, true)).toBe(true);
     expect(writePhoneTyping(dir, true)).toBe(true);
     expect(readReenable(p)).toBe(true);
-    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true });
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true, phoneAlerts: false });
   });
 
   it('an old file without phoneTyping reads typing ON and the next write adds both fields', () => {
@@ -123,7 +126,7 @@ describe('controlSettings', () => {
     writeFileSync(p, JSON.stringify({ v: 1, reenableAtLaunch: true }));
     expect(readPhoneTyping(p)).toBe(true);
     expect(writeReenable(dir, false)).toBe(false);
-    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: true });
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: true, phoneAlerts: false });
   });
 
   it('phoneTyping is OFF only for exactly false; corrupt, array and odd values leave it ON', () => {
@@ -132,7 +135,7 @@ describe('controlSettings', () => {
     expect(readPhoneTyping(p)).toBe(false);
     for (const text of ['not json', '[]', 'null', '', '{}', '{"phoneTyping":"false"}', '{"phoneTyping":0}', '{"phoneTyping":null}']) {
       writeFileSync(p, text);
-      expect(readControlSettings(p)).toEqual({ reenableAtLaunch: false, phoneTyping: true });
+      expect(readControlSettings(p)).toEqual({ reenableAtLaunch: false, phoneTyping: true, phoneAlerts: false });
     }
     expect(readPhoneTyping(join(dir, 'absent.json'))).toBe(true);
   });
@@ -141,7 +144,7 @@ describe('controlSettings', () => {
     const p = controlSettingsPath(dir);
     writeFileSync(p, '[1,2');
     expect(writePhoneTyping(dir, false)).toBe(false);
-    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: false });
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: false, phoneAlerts: false });
   });
 
   it('a failed phoneTyping write returns the readback, not the request', () => {
@@ -153,13 +156,14 @@ describe('controlSettings', () => {
     mkdirSync(p);
     expect(writePhoneTyping(dir, false)).toBe(true);
     rmSync(p, { recursive: true });
-    expect(writeControlSettings(dir, { phoneTyping: false })).toEqual({ reenableAtLaunch: false, phoneTyping: false });
+    expect(writeControlSettings(dir, { phoneTyping: false })).toEqual({ reenableAtLaunch: false, phoneTyping: false, phoneAlerts: false });
     // unwritable parent: nothing there, so the readback is the defaults whatever was requested
     const blocker = join(dir, 'blocker');
     writeFileSync(blocker, 'x');
     expect(writeControlSettings(join(blocker, 'sub'), { phoneTyping: false, reenableAtLaunch: true })).toEqual({
       reenableAtLaunch: false,
       phoneTyping: true,
+      phoneAlerts: false,
     });
   });
 
@@ -183,12 +187,37 @@ describe('controlSettings', () => {
     expect(readFileSync(p, 'utf8')).toBe(stored);
   });
 
+  it('phoneAlerts is ON only for exactly true; missing, corrupt and "yes" read OFF', () => {
+    const p = controlSettingsPath(dir);
+    expect(readPhoneAlerts(join(dir, 'absent.json'))).toBe(false);
+    for (const text of ['not json', '[]', 'null', '', '{}', '{"phoneAlerts":"yes"}', '{"phoneAlerts":1}', '{"phoneAlerts":null}']) {
+      writeFileSync(p, text);
+      expect(readPhoneAlerts(p)).toBe(false);
+    }
+    writeFileSync(p, '{"phoneAlerts":true}');
+    expect(readPhoneAlerts(p)).toBe(true);
+  });
+
+  it('writePhoneAlerts returns the readback, keeps the other two flags, and no other write resets it', () => {
+    const p = controlSettingsPath(dir);
+    expect(writeReenable(dir, true)).toBe(true);
+    expect(writePhoneTyping(dir, false)).toBe(false);
+    expect(writePhoneAlerts(dir, true)).toBe(true);
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: false, phoneAlerts: true });
+    expect(writeReenable(dir, false)).toBe(false);
+    expect(writePhoneTyping(dir, true)).toBe(true);
+    expect(readPhoneAlerts(p)).toBe(true);
+    expect(Object.keys(JSON.parse(readFileSync(p, 'utf8')) as object).sort()).toEqual(['phoneAlerts', 'phoneTyping', 'reenableAtLaunch', 'v']);
+    expect(writePhoneAlerts(dir, false)).toBe(false);
+    expect(readReenable(p)).toBe(false);
+  });
+
   it('a missing file and a non-object file still write (defaults merge)', () => {
     const p = controlSettingsPath(dir);
     expect(writePhoneTyping(dir, false)).toBe(false);
-    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: false });
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: false, phoneTyping: false, phoneAlerts: false });
     writeFileSync(p, '[]');
     expect(writeReenable(dir, true)).toBe(true);
-    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true });
+    expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ v: 1, reenableAtLaunch: true, phoneTyping: true, phoneAlerts: false });
   });
 });

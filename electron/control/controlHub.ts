@@ -14,6 +14,7 @@ import {
   TERMINAL_SLOTS,
 } from '../../src/shared/remote/types';
 import type {
+  AuthRejectReason,
   ControlIdentity,
   ControlPairResult,
   ControlPairingResult,
@@ -34,6 +35,7 @@ import type {
 } from '../../src/shared/remote/types';
 import { createDeviceAuth } from '../remote/remoteAuth';
 import type { DeviceAuth, RemoteAuthOptions } from '../remote/remoteAuth';
+import { createAlertWatcher } from './alertWatcher';
 import { createControlGateway } from './controlGateway';
 import type { ControlSession } from './controlGateway';
 import { createInputRouter } from './inputRouter';
@@ -52,11 +54,17 @@ export interface ControlSettingsPort {
   readTyping?(): boolean;
   /** Persists the switch and returns the READBACK. */
   persistTyping?(on: boolean): boolean;
+  /** Phone-alerts switch (default OFF). Optional so existing ports keep working. */
+  readAlerts?(): boolean;
+  /** Persists the switch and returns the READBACK. */
+  persistAlerts?(on: boolean): boolean;
 }
 
 export interface ControlHubDeps {
   listener: ListenerPort;
   store: RemoteAuthOptions['store'];
+  /** Store for the alert-only credential (hash, timestamps, peer; never token text). Optional: without it the credential lives in memory only. */
+  alertStore?: RemoteAuthOptions['store'];
   settings: ControlSettingsPort;
   /** Read-only terminal port (never the hub itself). retain() is held exactly while control is on. */
   terminals: TerminalReadPort;
@@ -88,6 +96,7 @@ export interface ControlHub {
   setEnabled(on: boolean): Promise<ControlStatus>;
   setReenableAtLaunch(on: boolean): Promise<ControlStatus>;
   setPhoneTyping(on: boolean): Promise<ControlStatus>;
+  setPhoneAlerts(on: boolean): Promise<ControlStatus>;
   createPairing(): Promise<ControlPairingResult>;
   revokeAll(): Promise<ControlStatus>;
   revokeOne(ref: string): Promise<ControlStatus>;
@@ -106,11 +115,14 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   const clearT = deps.clearTimeoutFn ?? ((h: unknown): void => clearTimeout(h as ReturnType<typeof setTimeout>));
 
   let auth: DeviceAuth | null = null;
+  let alertAuth: DeviceAuth | null = null; // the alert-only credential: issued beside the main token, revoked and flushed with it
   let state: ControlStatus['state'] = 'off';
   let reason: RemoteUnavailableReason | null = null;
   let address: string | null = null;
   let reenable = false;
   let typing = true;
+  let alertsOn = false; // the alerts switch (default off)
+  let controlOn = false; // true from a successful acquire until teardown begins; the watcher's only "control is on" gate
   let unsaved = false;
   let saveTimer: unknown = null;
   let saveRetries = 0;
@@ -121,6 +133,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   let generation = 0; // bumped by teardown(): a confirm opened before a disable or quit can never mint a token
   let confirmPending = false;
   const sessions = new Map<string, ControlSession>();
+  const alertSessions = new Map<string, ControlSession>(); // alert-scope sockets: kept apart so status().connected counts main sockets only
   let releaseTerminals: (() => void) | null = null; // non-null exactly while this hub holds a terminals.retain()
 
   const attachedByRef = new Map<string, readonly TerminalSlotId[]>(); // a ref's entry is deleted when its gateway reports []
@@ -150,6 +163,31 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     log: (m, r) => { log(`${m} ref=${r}`); },
   });
 
+  // Label-only delivery: the watcher hands over a three-value kind and nothing else. An alert with no connected
+  // alert session is dropped (never queued or replayed); only the kind is logged, and only when a socket got it.
+  const watcher = deps.threads
+    ? createAlertWatcher({
+      threads: deps.threads,
+      prompts: deps.prompts,
+      setTimeoutFn: deps.setTimeoutFn,
+      clearTimeoutFn: deps.clearTimeoutFn,
+      onAlert: kind => {
+        let delivered = 0;
+        for (const s of [...alertSessions.values()]) {
+          try { if (s.alert(kind)) delivered++; } catch { /* one failing socket must not stop the others */ }
+        }
+        if (delivered > 0) log(`control: alert sent kind=${kind}`);
+      },
+    })
+    : null;
+
+  // The watcher runs iff control is on, the hub is not stopped, the switch is on and a thread port exists.
+  function syncAlerts(): void {
+    if (!watcher) return;
+    if (controlOn && state === 'on' && !stopped && alertsOn) watcher.start();
+    else watcher.stop();
+  }
+
   function status(): ControlStatus {
     const counts = auth?.counts() ?? { sessions: 0, pairingActive: false };
     return {
@@ -161,6 +199,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       pairingActive: counts.pairingActive,
       reenableAtLaunch: reenable,
       phoneTyping: typing,
+      phoneAlerts: alertsOn,
       notice: unsaved ? CONTROL_REVOKE_UNSAVED_NOTICE : null,
       phoneSlots: state === 'on' ? unionSlots() : [],
     };
@@ -180,8 +219,15 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       maxSessions: CONTROL_MAX_DEVICES,
       peerBinding: PEER_BINDING_ENFORCED,
     });
+    alertAuth = createDeviceAuth({
+      store: deps.alertStore,
+      now: deps.now,
+      maxSessions: CONTROL_MAX_DEVICES,
+      peerBinding: PEER_BINDING_ENFORCED,
+    });
     reenable = deps.settings.read() === true;
     typing = deps.settings.readTyping ? deps.settings.readTyping() !== false : true;
+    alertsOn = deps.settings.readAlerts ? deps.settings.readAlerts() === true : false;
   }
 
   function clearSaveTimer(): void {
@@ -196,7 +242,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
 
   // Flushes the store; a false result keeps the notice up and schedules a bounded retry.
   async function settle(allowRetry: boolean): Promise<void> {
-    const ok = await auth!.flush();
+    const [mainOk, alertOk] = await Promise.all([auth!.flush(), alertAuth!.flush()]);
+    const ok = mainOk && alertOk;
     if (ok) {
       clearSaveTimer();
       saveRetries = 0;
@@ -215,8 +262,9 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   }
 
   function closeSessions(reasonText: 'revoked' | 'disabled' | 'superseded'): void {
-    const open = [...sessions.values()];
+    const open = [...sessions.values(), ...alertSessions.values()];
     sessions.clear();
+    alertSessions.clear();
     for (const s of open) {
       try { s.close(reasonText); } catch { /* one socket that fails to close must not keep the others, or the teardown, from finishing */ }
     }
@@ -226,12 +274,16 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
   // arrives: between ws.close() and that event the gateway would still route `in` frames to the router. So the hub
   // closes the gateway session of every ref that is no longer a paired device, before the listener recheck.
   function dropRevokedSessions(): void {
-    const live = new Set((auth?.list() ?? []).map(d => d.ref));
-    for (const [ref, s] of [...sessions]) {
-      if (live.has(ref)) continue;
-      sessions.delete(ref);
-      try { s.close('revoked'); } catch { /* the listener recheck still closes the socket */ }
-    }
+    const drop = (map: Map<string, ControlSession>, a: DeviceAuth | null): void => {
+      const live = new Set((a?.list() ?? []).map(d => d.ref));
+      for (const [ref, s] of [...map]) {
+        if (live.has(ref)) continue;
+        map.delete(ref);
+        try { s.close('revoked'); } catch { /* the listener recheck still closes the socket */ }
+      }
+    };
+    drop(sessions, auth);
+    drop(alertSessions, alertAuth);
   }
 
   // Drops the terminals retain exactly once per acquisition: the slot is cleared before the call, so a throwing
@@ -244,6 +296,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
 
   async function teardown(): Promise<void> {
     generation++;
+    controlOn = false; // cleared before anything else: the alert watcher must be down before sockets close and the listener goes
+    syncAlerts();
     cancelAuto();
     clearSaveTimer();
     auth?.clearPairing(); // a pairing code never outlives the listener it was issued for
@@ -286,6 +340,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     if (releaseTerminals === null) {
       try { releaseTerminals = deps.terminals.retain(); } catch { log('control: terminals unavailable'); }
     }
+    controlOn = true;
+    syncAlerts();
     log('control: enabled');
     return null;
   }
@@ -379,6 +435,7 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     if (opened !== generation || state !== 'on' || stopped) {
       // a disable or quit landed between the approval and the mint: nothing may stay paired (cap 1, so this is the one device)
       auth!.revokeAll();
+      alertAuth!.revokeAll();
       log('control: revoke after-approval-race');
       dropRevokedSessions();
       deps.listener.recheckControl();
@@ -386,25 +443,29 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       emit();
       return { status: 403 };
     }
+    const alert = alertAuth!.issue(peer); // the cap of 1 replaces the previous phone's alert token
     log('control: paired');
     dropRevokedSessions();
     deps.listener.recheckControl(); // a superseded device's live sockets stop authenticating
     await settle(true);
     emit();
-    return { status: 200, token: r.token, expiresAtMs: r.expiresAtMs };
+    return alert
+      ? { status: 200, token: r.token, expiresAtMs: r.expiresAtMs, alertToken: alert.token, alertExpiresAtMs: alert.expiresAtMs }
+      : { status: 200, token: r.token, expiresAtMs: r.expiresAtMs };
   }
 
   function open(socket: ControlSocket, identity: ControlIdentity): void {
-    const older = sessions.get(identity.ref);
+    const map = identity.scope === 'alert' ? alertSessions : sessions;
+    const older = map.get(identity.ref);
     if (older) {
-      sessions.delete(identity.ref);
+      map.delete(identity.ref);
       older.close('superseded');
     }
     const session = gateway.attach(socket, identity);
-    sessions.set(identity.ref, session);
+    map.set(identity.ref, session);
     log(`control: connect ref=${identity.ref} peer=${peerOf(identity.ref) ?? 'unknown'}`);
     socket.onClose(() => {
-      if (sessions.get(identity.ref) === session) sessions.delete(identity.ref);
+      if (map.get(identity.ref) === session) map.delete(identity.ref);
       log(`control: disconnect ref=${identity.ref}`);
       emit();
     });
@@ -415,7 +476,17 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
     maxSockets: CONTROL_MAX_SOCKETS,
     authenticate: (authorization, peer, o) => {
       init();
-      return auth!.authenticate(authorization, peer, o);
+      let mainReason: AuthRejectReason | null = null;
+      const viaMain = auth!.authenticate(authorization, peer, { touch: o?.touch, onReject: r => { mainReason = r; } });
+      if (viaMain) return { ...viaMain, scope: 'main' };
+      let alertReason: AuthRejectReason | null = null;
+      const viaAlert = alertAuth!.authenticate(authorization, peer, { touch: o?.touch, onReject: r => { alertReason = r; } });
+      if (viaAlert) return { ...viaAlert, scope: 'alert' };
+      const why = mainReason === 'unknown' ? (alertReason ?? mainReason) : (mainReason ?? alertReason);
+      if (why) {
+        try { o?.onReject?.(why); } catch { /* a diagnostic hook never changes the result */ }
+      }
+      return null;
     },
     pair: redeem,
     open,
@@ -446,6 +517,13 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       emit();
       return status();
     },
+    async setPhoneAlerts(on) {
+      init();
+      alertsOn = deps.settings.persistAlerts ? deps.settings.persistAlerts(on) === true : on; // report the readback, never the requested value
+      syncAlerts();
+      emit();
+      return status();
+    },
     async createPairing() {
       init();
       if (state !== 'on' || !address) return { ok: false, reason: 'not-enabled' };
@@ -456,8 +534,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
       const uri = `aethermobile://pair?host=${host}&port=${portText}&code=${made.code}`;
       return { ok: true, uri, code: made.code, qrSvg: deps.renderQr(uri), expiresAtMs: made.expiresAtMs };
     },
-    revokeAll: () => revoke('control: revoke all', () => { auth!.revokeAll(); }),
-    revokeOne: ref => revoke(`control: revoke one ref=${ref}`, () => { auth!.revokeOne(ref); }),
+    revokeAll: () => revoke('control: revoke all', () => { auth!.revokeAll(); alertAuth!.revokeAll(); }),
+    revokeOne: ref => revoke(`control: revoke one ref=${ref}`, () => { if (auth!.revokeOne(ref)) alertAuth!.revokeAll(); }), // the alert credential belongs to the one paired phone
     async retrySave() {
       init();
       await settle(true);
@@ -481,7 +559,8 @@ export function createControlHub(deps: ControlHubDeps): ControlHub {
         await teardown();
         state = 'off';
         reason = null;
-        await auth!.flush(); // no settings write here: the flag survives a quit
+        syncAlerts();
+        await Promise.all([auth!.flush(), alertAuth!.flush()]); // no settings write here: the flag survives a quit
       });
     },
   };

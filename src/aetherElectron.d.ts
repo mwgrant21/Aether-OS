@@ -62,6 +62,7 @@ declare global {
         setEnabled: (on: boolean) => Promise<ControlStatus>;
         setReenableAtLaunch: (on: boolean) => Promise<ControlStatus>;
         setPhoneTyping: (on: boolean) => Promise<ControlStatus>;
+        setPhoneAlerts: (on: boolean) => Promise<ControlStatus>;
         createPairing: () => Promise<ControlPairingResult>;
         revokeAll: () => Promise<ControlStatus>;
         revokeOne: (ref: string) => Promise<ControlStatus>;

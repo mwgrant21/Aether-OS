@@ -17,6 +17,7 @@ interface Opts {
   setEnabled?: ControlStatus;
   setReenableAtLaunch?: ControlStatus;
   setPhoneTyping?: ControlStatus;
+  setPhoneAlerts?: ControlStatus;
   pairing?: ControlPairingResult;
 }
 function install(o: Opts = {}) {
@@ -26,6 +27,7 @@ function install(o: Opts = {}) {
     setEnabled: vi.fn().mockResolvedValue(o.setEnabled ?? mkStatus()),
     setReenableAtLaunch: vi.fn().mockResolvedValue(o.setReenableAtLaunch ?? mkStatus()),
     setPhoneTyping: vi.fn().mockResolvedValue(o.setPhoneTyping ?? mkStatus()),
+    setPhoneAlerts: vi.fn().mockResolvedValue(o.setPhoneAlerts ?? mkStatus()),
     createPairing: vi.fn().mockResolvedValue(o.pairing ?? okPairing()),
     revokeAll: vi.fn().mockResolvedValue(mkStatus()),
     revokeOne: vi.fn().mockResolvedValue(mkStatus()),
@@ -146,6 +148,38 @@ describe('ControlAccessCard', () => {
     render(<ControlAccessCard />);
     await settle();
     expect((screen.getByLabelText('ALLOW PHONE TYPING') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('alerts checkbox shows its label and helper text and is unchecked when phoneAlerts is false or absent', async () => {
+    install({ status: mkStatus({ phoneTyping: true, phoneAlerts: false }) });
+    render(<ControlAccessCard />);
+    await settle();
+    expect((screen.getByLabelText('Phone alerts') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText('Notify the phone when Terminal Alpha finishes, asks a question or needs input. Only a fixed label leaves this PC. Needs phone control on.')).toBeTruthy();
+    cleanup();
+    install({ status: mkStatus({ phoneTyping: true }) });
+    render(<ControlAccessCard />);
+    await settle();
+    expect((screen.getByLabelText('Phone alerts') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('alerts checkbox calls setPhoneAlerts(true) once, adopts the result, and ignores a second click while pending', async () => {
+    const h = install({ status: mkStatus({ phoneTyping: false, phoneAlerts: false }) });
+    let resolve: (s: ControlStatus) => void = () => {};
+    h.control.setPhoneAlerts.mockReturnValue(new Promise<ControlStatus>(r => { resolve = r; }));
+    render(<ControlAccessCard />);
+    await settle();
+    fireEvent.click(screen.getByLabelText('Phone alerts'));
+    await settle();
+    fireEvent.click(screen.getByLabelText('Phone alerts'));
+    await settle();
+    expect(h.control.setPhoneAlerts).toHaveBeenCalledTimes(1);
+    expect(h.control.setPhoneAlerts).toHaveBeenCalledWith(true);
+    expect(h.control.setPhoneTyping).not.toHaveBeenCalled();
+    await act(async () => { resolve(mkStatus({ phoneTyping: false, phoneAlerts: true })); });
+    const box = screen.getByLabelText('Phone alerts') as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(false);
   });
 
   it('a rejected setPhoneTyping shows an error message and keeps the old state', async () => {

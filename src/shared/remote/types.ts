@@ -54,8 +54,13 @@ export const CONTROL_PROOF_LABEL = 'server';
 export const CONTROL_PROOF_SUFFIX = '/ctl';
 export const CONTROL_MESSAGE_TYPES = {
   phoneToTitan: ['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach'],
-  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap'],
+  titanToPhone: ['welcome', 'bye', 'snap', 'out', 'size', 'state', 'ack', 'nak', 'thread.snap', 'thread.ev', 'thread.state', 'prompt', 'prompt.closed', 'ledger.snap', 'view.snap', 'alert'],
 } as const;
+export const ALERT_KINDS = ['finished', 'question', 'input'] as const;
+export type AlertKind = (typeof ALERT_KINDS)[number];
+export const ALERT_SLOT = 'claude' as const;
+export type ControlScope = 'main' | 'alert';
+export const CONTROL_MAX_ALERT_SOCKETS = 2;
 export const CONTROL_NAK_REASONS = ['not-running', 'typing-off'] as const;
 export type NakReason = (typeof CONTROL_NAK_REASONS)[number];
 export const CONTROL_BYE_REASONS = [
@@ -79,10 +84,11 @@ export interface ControlSocket {
 export interface ControlIdentity {
   ref: string; // first 12 hex of the stored hash
   expiresAtMs: number;
+  scope?: ControlScope; // absent = main
   proofFor(nonce: string): string;
 }
 export type ControlPairResult =
-  | { status: 200; token: string; expiresAtMs: number }
+  | { status: 200; token: string; expiresAtMs: number; alertToken?: string; alertExpiresAtMs?: number }
   | { status: 400 | 401 | 403 | 429 | 409 };
 export type AuthRejectReason = 'no-device' | 'no-bearer' | 'unknown' | 'expired' | 'peer-mismatch' | 'error';
 export interface ControlPort {
@@ -112,6 +118,8 @@ export interface ControlStatus {
   pairingActive: boolean;
   reenableAtLaunch: boolean;
   phoneTyping: boolean;
+  /** The alerts switch (default off). Optional so existing literals stay valid. */
+  phoneAlerts?: boolean;
   notice: string | null;
   /** Terminal slots the connected phone is attached to, in TERMINAL_SLOTS order. Absent or empty = none. Optional so existing literals stay valid. */
   phoneSlots?: readonly TerminalSlotId[];
@@ -174,6 +182,8 @@ export interface ThreadTap {                                 // callbacks are de
   snap(e: { q: number; attached: boolean; working: boolean; workingSinceMs: number | null; events: readonly ThreadEvent[] }): void;
   events(e: { q: number; events: readonly ThreadEvent[] }): void;
   state(e: { q: number; working: boolean; workingSinceMs: number | null }): void;
+  /** One call per turn-mark line found in lines appended while following, after that chunk's `events`; never for a seed read or the stale expiry. */
+  turn?(e: { mark: 'busy' | 'idle'; interrupted: boolean }): void;
 }
 /** attach() delivers `snap` synchronously, before it returns. */
 export interface ThreadReadPort { attach(s: ThreadSlotId, tap: ThreadTap): { detach(): void } }

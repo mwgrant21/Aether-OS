@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeViewSnap, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
+import { MESSAGE_TYPES, PROTOCOL_VERSION, encodeAck, encodeAlert, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeViewSnap, encodeWelcome, parsePhoneMessage, validateInput } from './protocol';
 import { CONTROL_BYE_REASONS, CONTROL_MESSAGE_TYPES, CONTROL_PROMPT_CLOSE_REASONS, PROMPT_SUMMARY_CAP, THREAD_SNAPSHOT_MAX_BYTES, THREAD_SNAPSHOT_MAX_EVENTS, THREAD_TARGET_CAP, THREAD_TEXT_CAP, THREAD_WORKING_STALE_MS } from '../../src/shared/remote/types';
 import { LEDGER_TIERS, VIEW_IDS } from '../../src/shared/remote/types';
 import type { LedgerWire, TerminalInfo, ThreadEvent } from '../../src/shared/remote/types';
@@ -304,5 +304,21 @@ describe('view frames', () => {
   });
   it('VIEW_IDS is the closed list', () => {
     expect([...VIEW_IDS]).toEqual(['projects', 'memory', 'dash', 'analytics', 'agents', 'comms', 'comms.thread', 'comms.exchange']);
+  });
+});
+
+describe('alert frame', () => {
+  it('encodeAlert emits the kind label only, in key order t,s,kind', () => {
+    for (const kind of ['finished', 'question', 'input'] as const) {
+      expect(encodeAlert(kind)).toBe(`{"t":"alert","s":"claude","kind":"${kind}"}`);
+    }
+  });
+  it('encodeAlert refuses anything that is not a kind label', () => {
+    expect(() => encodeAlert('C:\\secret' as never)).toThrow(RangeError);
+  });
+  it('alert is a titan-to-phone type and adds no phone verb', () => {
+    expect(MESSAGE_TYPES.titanToPhone).toContain('alert');
+    expect(MESSAGE_TYPES.titanToPhone).toEqual(CONTROL_MESSAGE_TYPES.titanToPhone);
+    expect([...MESSAGE_TYPES.phoneToTitan]).toEqual(['hello', 'attach', 'detach', 'in', 'thread.attach', 'thread.detach', 'ledger.attach', 'ledger.detach', 'view.attach', 'view.detach']);
   });
 });

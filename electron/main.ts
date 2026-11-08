@@ -121,7 +121,7 @@ import type { VoicePairingResult, VoiceStatus } from '../src/shared/voice/types'
 import { createControlHub } from './control/controlHub';
 import { createMinInterval } from './minInterval';
 import { registerControlIpc } from './control/controlIpc';
-import { controlSettingsPath, readPhoneTyping, readReenable, writePhoneTyping, writeReenable } from './controlSettings';
+import { controlSettingsPath, readPhoneAlerts, readPhoneTyping, readReenable, writePhoneAlerts, writePhoneTyping, writeReenable } from './controlSettings';
 import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
@@ -1667,11 +1667,14 @@ const controlHub = createControlHub({
   views: { projects: projectsFeed.port, memory: memoryFeed.port, dash: createCacheViewFeed(phoneViewCache, 'dash', encodeDashView), analytics: createCacheViewFeed(phoneViewCache, 'analytics', encodeAnalyticsView), agents: agentsDiagFeed.port }, // projects: derived cost numbers and basenames, no paths or text; memory: masked, capped memory text; dash: renderer-derived enums, numbers and counts only; analytics: counts plus masked, capped dispatch descriptions and first words of typed commands; agents: masked, capped dispatch descriptions, headlines, narration and prompt text, plus fleet process and project names and timeline tool names with file basenames from the collector (no paths, no session ids)
   prompts: permissionBroker.readPort(), // read-only pending prompts; the phone cannot answer
   store: createSessionStore(join(aetherOsDir, 'remote-devices.json'), { peer: true }),
+  alertStore: createSessionStore(join(aetherOsDir, 'alert-devices.json'), { peer: true }),
   settings: {
     read: () => readReenable(controlSettingsPath(aetherOsDir)),
     persist: on => writeReenable(aetherOsDir, on, l => diagLog.write(l)),
     readTyping: () => readPhoneTyping(controlSettingsPath(aetherOsDir)),
     persistTyping: on => writePhoneTyping(aetherOsDir, on, l => diagLog.write(l)),
+    readAlerts: () => readPhoneAlerts(controlSettingsPath(aetherOsDir)),
+    persistAlerts: on => writePhoneAlerts(aetherOsDir, on, l => diagLog.write(l)),
   },
   confirmPair: (peer, replacesExisting) => confirmControlPair(peer, replacesExisting),
   renderQr: renderQrSvg,
@@ -1765,6 +1768,7 @@ const controlHubForIpc = {
   setEnabled: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setEnabled(on); },
   setReenableAtLaunch: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setReenableAtLaunch(on); },
   setPhoneTyping: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setPhoneTyping(on); },
+  setPhoneAlerts: async (on: boolean) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.setPhoneAlerts(on); },
   createPairing: async (): Promise<ControlPairingResult> => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? { ok: false, reason: 'not-enabled' } : controlHub.createPairing(); },
   revokeAll: async () => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeAll(); },
   revokeOne: async (ref: string) => { await remotePrivateDir; return remoteQuitting || !remoteDirReady ? controlStatusOrUnavailable() : controlHub.revokeOne(ref); },

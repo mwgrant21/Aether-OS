@@ -2,16 +2,17 @@ import { mkdirSync, writeFileSync, renameSync, readFileSync, rmSync } from 'node
 import { join } from 'node:path';
 import { uniqueSiblingPath } from './atomicWrite';
 
-// Owner of ~/.aether-os/control-settings.json: {"v":1,"reenableAtLaunch":boolean,"phoneTyping":boolean} and nothing
-// else. reenableAtLaunch is the phone-control opt-in "turn the listener back on at launch" flag (privacy section 17);
-// phoneTyping is the "phone may type" switch. main.ts reads and writes it only after the user-only ACL on
-// ~/.aether-os has been applied. Every write rewrites BOTH fields (read, merge the patch, write), so neither write
-// path can reset the other flag.
+// Owner of ~/.aether-os/control-settings.json: {"v":1,"reenableAtLaunch":boolean,"phoneTyping":boolean,
+// "phoneAlerts":boolean} and nothing else. reenableAtLaunch is the phone-control opt-in "turn the listener back on at
+// launch" flag (privacy section 17); phoneTyping is the "phone may type" switch; phoneAlerts is the "watch for alerts"
+// switch (default off). main.ts reads and writes it only after the user-only ACL on ~/.aether-os has been applied.
+// Every write rewrites ALL three fields (read, merge the patch, write), so no write path can reset another flag.
 export const CONTROL_SETTINGS_FILE = 'control-settings.json';
 
 export interface ControlSettings {
   reenableAtLaunch: boolean;
   phoneTyping: boolean;
+  phoneAlerts: boolean;
 }
 
 export function controlSettingsPath(aetherDir: string): string {
@@ -20,7 +21,8 @@ export function controlSettingsPath(aetherDir: string): string {
 
 /**
  * Never throws. reenableAtLaunch is true ONLY when the stored value === true (fails closed); phoneTyping is false
- * ONLY when the stored value === false (a missing, corrupt or odd file leaves typing ON, the shipped behavior).
+ * ONLY when the stored value === false (a missing, corrupt or odd file leaves typing ON, the shipped behavior);
+ * phoneAlerts is true ONLY when the stored value === true (fails closed).
  */
 export function readControlSettings(filePath: string): ControlSettings {
   try {
@@ -30,7 +32,7 @@ export function readControlSettings(filePath: string): ControlSettings {
   }
 }
 
-const DEFAULT_SETTINGS: ControlSettings = { reenableAtLaunch: false, phoneTyping: true };
+const DEFAULT_SETTINGS: ControlSettings = { reenableAtLaunch: false, phoneTyping: true, phoneAlerts: false };
 
 /** Unparseable text or anything but a plain object reads as defaults. Never throws. */
 function parseControlSettings(text: string): ControlSettings {
@@ -38,7 +40,7 @@ function parseControlSettings(text: string): ControlSettings {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ...DEFAULT_SETTINGS };
     const rec = parsed as Record<string, unknown>;
-    return { reenableAtLaunch: rec.reenableAtLaunch === true, phoneTyping: rec.phoneTyping !== false };
+    return { reenableAtLaunch: rec.reenableAtLaunch === true, phoneTyping: rec.phoneTyping !== false, phoneAlerts: rec.phoneAlerts === true };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -74,7 +76,7 @@ export function writeControlSettings(
     mkdirSync(aetherDir, { recursive: true });
     writeFileSync(
       tmpPath,
-      JSON.stringify({ v: 1, reenableAtLaunch: next.reenableAtLaunch, phoneTyping: next.phoneTyping }),
+      JSON.stringify({ v: 1, reenableAtLaunch: next.reenableAtLaunch, phoneTyping: next.phoneTyping, phoneAlerts: next.phoneAlerts }),
       'utf8',
     );
     renameSync(tmpPath, targetPath);
@@ -114,4 +116,14 @@ export function readPhoneTyping(filePath: string): boolean {
 /** Writes phoneTyping only (reenableAtLaunch is preserved); returns the READBACK. Never throws. */
 export function writePhoneTyping(aetherDir: string, on: boolean, log?: (line: string) => void): boolean {
   return writeControlSettings(aetherDir, { phoneTyping: on }, log).phoneTyping;
+}
+
+/** True ONLY when the stored phoneAlerts === true; anything else is OFF. Never throws. */
+export function readPhoneAlerts(filePath: string): boolean {
+  return readControlSettings(filePath).phoneAlerts;
+}
+
+/** Writes phoneAlerts only (the other flags are preserved); returns the READBACK. Never throws. */
+export function writePhoneAlerts(aetherDir: string, on: boolean, log?: (line: string) => void): boolean {
+  return writeControlSettings(aetherDir, { phoneAlerts: on }, log).phoneAlerts;
 }

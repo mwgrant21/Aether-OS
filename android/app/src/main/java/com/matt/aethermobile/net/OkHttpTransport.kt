@@ -50,5 +50,14 @@ class OkHttpTransport(
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
+
+        /** Alert-only socket: same shape as [defaultClient] with a 30 s ping. */
+        fun defaultAlertClient(): OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(30, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
     }
 }

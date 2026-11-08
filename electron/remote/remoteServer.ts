@@ -2,6 +2,7 @@ import http from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import {
+  CONTROL_MAX_ALERT_SOCKETS,
   CONTROL_PAIR_BODY_CAP,
   CONTROL_PAIR_PATH,
   CONTROL_PATH,
@@ -9,6 +10,7 @@ import {
   REMOTE_MAX_CLIENTS,
   type ControlIdentity,
   type ControlPort,
+  type ControlScope,
   type ControlSocket,
 } from '../../src/shared/remote/types'
 import type { ChatFeed, RemoteAssets, RemoteAuthGate, ServerMessage } from './types'
@@ -69,6 +71,7 @@ interface CtlClient {
   ws: WebSocket
   authorization: string | undefined
   peer: string | undefined
+  scope: ControlScope
   lastPong: number
   pingWindowStart: number
   pingCount: number
@@ -160,7 +163,15 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
       ctl.pair(code, req.socket.remoteAddress).then(
         (r) => {
           if (r.status !== 200) return bare(res, r.status)
-          const buf = Buffer.from(JSON.stringify({ token: r.token, expiresAtMs: r.expiresAtMs }), 'utf8')
+          const buf = Buffer.from(JSON.stringify({
+              token: r.token,
+              expiresAtMs: r.expiresAtMs,
+              ...(r.alertToken !== undefined && r.alertExpiresAtMs !== undefined
+                ? { alertToken: r.alertToken, alertExpiresAtMs: r.alertExpiresAtMs }
+                : {}),
+            }),
+            'utf8',
+          )
           res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': String(buf.length) })
           res.end(buf)
         },
@@ -261,7 +272,12 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
       identity = null
     }
     if (!identity) return reject(socket, 401, 'Unauthorized')
-    if (ctlClients.size >= control.maxSockets) return reject(socket, 503, 'Service Unavailable')
+    // Each scope has its own socket budget; the other scope's count never blocks this one.
+    const scope: ControlScope = identity.scope ?? 'main'
+    let sameScope = 0
+    for (const c of ctlClients) if (c.scope === scope) sameScope++
+    const cap = scope === 'alert' ? CONTROL_MAX_ALERT_SOCKETS : control.maxSockets
+    if (sameScope >= cap) return reject(socket, 503, 'Service Unavailable')
     const who = identity
     ctlWss.handleUpgrade(req, socket, head, (ws) => attachControl(control, ws, authorization, peer, who))
   }
@@ -362,6 +378,7 @@ export async function startRemoteServer(opts: RemoteServerOptions): Promise<Remo
       ws,
       authorization,
       peer,
+      scope: identity.scope ?? 'main',
       lastPong: Date.now(),
       pingWindowStart: 0,
       pingCount: 0,

@@ -14,6 +14,7 @@ export interface ControlHubLike {
   setEnabled(on: boolean): Promise<ControlStatus>;
   setReenableAtLaunch(on: boolean): Promise<ControlStatus>;
   setPhoneTyping(on: boolean): Promise<ControlStatus>;
+  setPhoneAlerts(on: boolean): Promise<ControlStatus>;
   createPairing(): Promise<ControlPairingResult>;
   revokeAll(): Promise<ControlStatus>;
   revokeOne(ref: string): Promise<ControlStatus>;
@@ -48,6 +49,7 @@ export function registerControlIpc(
     return hub.setReenableAtLaunch(value as boolean);
   });
   handle('setPhoneTyping', oneBool, value => hub.setPhoneTyping(value as boolean));
+  handle('setPhoneAlerts', oneBool, value => hub.setPhoneAlerts(value as boolean));
   handle('createPairing', none, () => hub.createPairing());
   handle('revokeAll', none, () => hub.revokeAll());
   handle('revokeOne', args => args.length === 1 && typeof args[0] === 'string' && REF_RE.test(args[0]), ref => hub.revokeOne(ref as string));

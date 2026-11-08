@@ -11,15 +11,17 @@
 // the gateway only schedules the coalesced ack the port's result calls for, and answers a rejected frame with a nak
 // after flushing any pending ack for that slot (so the nak is never followed by an older ack). Without a terminal port every attach is
 // a policy violation and welcome.sessions is empty; without an input port every `in` is a policy violation. The nonce, proof, credentials and terminal content are never logged; log lines are
-// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached. ledger.attach/ledger.detach route to the injected read-only LedgerReadPort: one ledger attachment per socket, ledger.snap goes only to a socket that has ledger-attached, and the snapshot is never logged. view.attach/view.detach route to injected read-only ViewReadPorts keyed by view id: one attachment per (socket, view), a repeated view.attach replaces it (this is how a params view changes p), view.snap goes only to a socket attached to that view, welcome.views lists the ids with a port, and view payloads and p are never logged.
+// fixed strings plus the slot id and the identity ref. thread.attach/thread.detach (Claude slot only) route to the injected read-only ThreadReadPort and PromptReadPort: one thread attachment per socket, and prompt frames go only to a socket that has thread-attached. ledger.attach/ledger.detach route to the injected read-only LedgerReadPort: one ledger attachment per socket, ledger.snap goes only to a socket that has ledger-attached, and the snapshot is never logged. view.attach/view.detach route to injected read-only ViewReadPorts keyed by view id: one attachment per (socket, view), a repeated view.attach replaces it (this is how a params view changes p), view.snap goes only to a socket attached to that view, welcome.views lists the ids with a port, and view payloads and p are never logged. An alert-scope identity (identity.scope === 'alert') gets a bare welcome (no sessions, views or input session, no state subscription), every verb after hello is a policy violation, and ControlSession.alert() is the only way anything is sent to it; on a main-scope socket alert() sends nothing.
 import { CONTROL_ACK_COALESCE_MS, TERMINAL_SLOTS, CONTROL_CTL_MAX_PAYLOAD, CONTROL_HELLO_TIMEOUT_MS, VIEW_IDS } from '../../src/shared/remote/types';
-import type { ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort, LedgerReadPort, ViewId, ViewReadPort } from '../../src/shared/remote/types';
-import { encodeAck, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeViewSnap, encodeWelcome, parsePhoneMessage } from './protocol';
+import type { AlertKind, ControlIdentity, ControlSocket, InputPort, InputResult, InputSession, TerminalAttachment, TerminalReadPort, TerminalSlotId, TerminalTap, ThreadReadPort, PromptReadPort, LedgerReadPort, ViewId, ViewReadPort } from '../../src/shared/remote/types';
+import { encodeAck, encodeAlert, encodeBye, encodeLedgerSnap, encodeNak, encodeOut, encodePrompt, encodePromptClosed, encodeSize, encodeSnap, encodeState, encodeThreadEv, encodeThreadSnap, encodeThreadState, encodeViewSnap, encodeWelcome, parsePhoneMessage } from './protocol';
 import type { ByeReason } from './protocol';
 
 export interface ControlSession {
   ref: string;
   close(reason: ByeReason): void;
+  /** Sends one alert frame; true only on an alert-scope socket that has said hello and is not closed. */
+  alert(kind: AlertKind): boolean;
 }
 
 export interface ControlGatewayOptions {
@@ -70,6 +72,7 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
   const viewIds = VIEW_IDS.filter((id) => viewPorts.has(id));
 
   function attach(socket: ControlSocket, identity: ControlIdentity): ControlSession {
+    const alertScope = identity.scope === 'alert';
     let closed = false;
     let helloSeen = false;
     let deadline: unknown = null;
@@ -366,11 +369,17 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       if (text.length > CONTROL_CTL_MAX_PAYLOAD) return violation('control: oversize frame');
       const msg = parsePhoneMessage(text);
       if (msg === null) return violation('control: invalid frame');
+      if (alertScope && msg.t !== 'hello') return violation('control: alert scope verb');
       switch (msg.t) {
         case 'hello': {
           if (helloSeen) return violation('control: repeated hello');
           helloSeen = true;
           cancelDeadline();
+          if (alertScope) {
+            socket.send(encodeWelcome({ proof: identity.proofFor(msg.nonce), serverTimeMs: opts.now(), expiresAtMs: identity.expiresAtMs }));
+            log?.('control: hello accepted', identity.ref);
+            return;
+          }
           inputSession = input ? input.open(identity.ref, msg.epoch) : null;
           socket.send(
             encodeWelcome({
@@ -473,7 +482,13 @@ export function createControlGateway(opts: ControlGatewayOptions): ControlGatewa
       }
     });
 
-    return { ref: identity.ref, close };
+    const alert = (kind: AlertKind): boolean => {
+      if (!alertScope || !helloSeen || closed) return false;
+      socket.send(encodeAlert(kind));
+      return true;
+    };
+
+    return { ref: identity.ref, close, alert };
   }
 
   return { attach };

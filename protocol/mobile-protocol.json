@@ -31,7 +31,8 @@
     "inputMaxBytes": 8192,
     "inputMaxBytesPerSec": 262144,
     "inputMaxFramesPerSec": 100,
-    "ackCoalesceMs": 30
+    "ackCoalesceMs": 30,
+    "maxAlertSockets": 2
   },
   "messages": {
     "phoneToTitan": [
@@ -61,8 +62,10 @@
       "prompt",
       "prompt.closed",
       "ledger.snap",
-      "view.snap"
+      "view.snap",
+      "alert"
     ],
+    "alertKinds": ["finished", "question", "input"],
     "nakReasons": [
       "not-running",
       "typing-off"
@@ -87,7 +90,8 @@
     "successBody": [
       "token",
       "expiresAtMs"
-    ]
+    ],
+    "optionalBody": ["alertToken", "alertExpiresAtMs"]
   },
   "proof": {
     "label": "server",

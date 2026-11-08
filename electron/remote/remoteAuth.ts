@@ -71,6 +71,8 @@ export interface DeviceAuth extends RemoteAuth {
     peer: string | undefined,
     approve: () => Promise<boolean>,
   ): Promise<{ ok: true; token: string; expiresAtMs: number } | { ok: false; status: 401 | 403 | 429 }>;
+  /** Mints a peer-bound token with no pairing code and leaves the code and its counters alone. Null when `peer` is not an IPv4. */
+  issue(peer: string | undefined): { token: string; expiresAtMs: number } | null;
 }
 
 /** HMAC-SHA256 keyed by the raw digest bytes of the token; the phone checks it to know titan holds the token. */
@@ -279,6 +281,14 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
     changed();
   }
 
+  function mintDevice(bound: string): { token: string; expiresAtMs: number } {
+    const token = rand(32).toString('base64url');
+    const t = now();
+    const expiresAtMs = t + slidingMs;
+    addSession({ hash: sha256Hex(token), createdAtMs: t, expiresAtMs, lastSeenMs: t, peer: bound });
+    return { token, expiresAtMs };
+  }
+
   const self: DeviceAuth = {
     createPairing() {
       let out = '';
@@ -428,14 +438,13 @@ export function createRemoteAuth(opts: RemoteAuthOptions = {}): RemoteAuth {
       let approved = false;
       try { approved = (await approve()) === true; } catch { approved = false; }
       if (!approved) return { ok: false, status: 403 };
-      const token = rand(32).toString('base64url');
-      const t = now();
-      const expiresAtMs = t + slidingMs;
-      addSession({
-        hash: sha256Hex(token), createdAtMs: t, expiresAtMs, lastSeenMs: t,
-        ...(bound !== undefined ? { peer: bound } : {}),
-      });
-      return { ok: true, token, expiresAtMs };
+      return { ok: true, ...mintDevice(bound) };
+    },
+
+    issue(peer) {
+      if (!device) return null;
+      if (typeof peer !== 'string' || !IPV4_RE.test(normalisePeer(peer))) return null;
+      return mintDevice(normalisePeer(peer));
     },
   };
   return self;

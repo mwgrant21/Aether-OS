@@ -698,4 +698,44 @@ class ControlClientTest {
         assertTrue(c.ledgerDetach())
         assertEquals(listOf(golden.getString("ledgerAttach"), golden.getString("ledgerDetach")), transport.sent.drop(before))
     }
+
+    private val alertFrames = mutableListOf<ControlProtocol.AlertFrame>()
+
+    private fun alertClient(t: FakeTransport) = ControlClient(
+        HOST, "0.2.0-v1", t, onAlertFrame = { alertFrames += it }, nonceSource = { NONCE }, epochSource = { EPOCH },
+    )
+
+    @Test fun alertFrameAfterWelcomeReachesOnAlertFrame() {
+        val t = FakeTransport()
+        val c = alertClient(t)
+        c.connect(TOKEN)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
+        t.listener!!.onMessage("""{"t":"alert","s":"claude","kind":"finished"}""")
+        assertTrue(c.state is ControlState.Connected)
+        assertEquals(listOf(ControlProtocol.AlertFrame("claude", ControlProtocol.AlertKind.FINISHED)), alertFrames)
+    }
+
+    @Test fun alertFrameBeforeWelcomeIsAProtocolFailure() {
+        val t = FakeTransport()
+        val c = alertClient(t)
+        c.connect(TOKEN)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage("""{"t":"alert","s":"claude","kind":"finished"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), t.closes)
+        assertTrue(alertFrames.isEmpty())
+    }
+
+    @Test fun alertFrameWithUnknownKindIsAProtocolFailure() {
+        val t = FakeTransport()
+        val c = alertClient(t)
+        c.connect(TOKEN)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage(welcome(ControlProtocol.serverProof(TOKEN, NONCE)))
+        t.listener!!.onMessage("""{"t":"alert","s":"claude","kind":"nope"}""")
+        assertEquals(ControlState.Failed(Failure.Protocol), c.state)
+        assertEquals(listOf(1008), t.closes)
+        assertTrue(alertFrames.isEmpty())
+    }
 }

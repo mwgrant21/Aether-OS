@@ -7,7 +7,7 @@ import { NON_PROMPT_RE } from './board/boardFeed';
 import { THREAD_TARGET_CAP, THREAD_TEXT_CAP, type ThreadEvent } from '../src/shared/remote/types';
 
 const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const INTERRUPT_RE = /^\s*\[Request interrupted by user/;
+export const INTERRUPT_RE = /^\s*\[Request interrupted by user/;
 
 function cap(t: string, max: number): { text: string; truncated: boolean } {
   return t.length > max ? { text: t.slice(0, max), truncated: true } : { text: t, truncated: false };
@@ -127,6 +127,8 @@ export interface TurnMark {
   /** busy: a turn is in progress after this line. idle: the turn ended. */
   mark: 'busy' | 'idle';
   at: number;
+  /** true only for the user-interrupt idle line. */
+  interrupted?: boolean;
 }
 
 /**
@@ -144,7 +146,8 @@ export function turnMark(line: string): TurnMark | null {
   const at = atOf(ev.timestamp);
   if (ev.kind === 'user') {
     if (!isHumanPromptLine(ev, raw) || NON_PROMPT_RE.test(ev.humanText as string)) return null;
-    return { mark: INTERRUPT_RE.test(ev.humanText as string) ? 'idle' : 'busy', at };
+    if (INTERRUPT_RE.test(ev.humanText as string)) return { mark: 'idle', at, interrupted: true };
+    return { mark: 'busy', at };
   }
   const content: any[] = Array.isArray(raw.message?.content) ? raw.message.content : [];
   const stop = raw.message?.stop_reason;

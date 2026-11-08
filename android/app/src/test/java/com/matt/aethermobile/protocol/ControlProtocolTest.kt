@@ -135,6 +135,30 @@ class ControlProtocolTest {
         assertNull(ControlProtocol.parseBye("{"))
     }
 
+    @Test fun alertConstantsEqualTheSharedJson() {
+        assertEquals(spec.getJSONObject("limits").getInt("maxAlertSockets"), ControlProtocol.MAX_ALERT_SOCKETS)
+        assertEquals(strings(spec.getJSONObject("messages").getJSONArray("alertKinds")), ControlProtocol.AlertKind.values().map { it.wire })
+    }
+
+    @Test fun alertFrameParsesTheKindLabelOnly() {
+        assertEquals(
+            ControlProtocol.AlertFrame("claude", ControlProtocol.AlertKind.QUESTION),
+            ControlProtocol.parseAlertFrame("""{"t":"alert","s":"claude","kind":"question"}"""),
+        )
+        assertEquals(
+            ControlProtocol.AlertFrame("claude", ControlProtocol.AlertKind.QUESTION),
+            ControlProtocol.parseAlertFrame("""{"t":"alert","s":"claude","kind":"question","text":"C:\\secret"}"""),
+        )
+    }
+
+    @Test fun malformedAlertFramesAreNull() {
+        assertNull(ControlProtocol.parseAlertFrame("""{"t":"alert","s":"claude","kind":"boom"}"""))
+        assertNull(ControlProtocol.parseAlertFrame("""{"t":"alert","s":"terminal2","kind":"input"}"""))
+        assertNull(ControlProtocol.parseAlertFrame("""{"t":"alert","s":"claude"}"""))
+        assertNull(ControlProtocol.parseAlertFrame("""{"t":"bye","s":"claude","kind":"input"}"""))
+        assertNull(ControlProtocol.parseAlertFrame("not json"))
+    }
+
     @Test fun terminalConstantsEqualTheSharedJson() {
         val term = spec.getJSONObject("terminals")
         assertEquals(term.getInt("chunkMaxBytes"), ControlProtocol.CHUNK_MAX_BYTES)
@@ -151,7 +175,7 @@ class ControlProtocolTest {
         }
         val msgs = spec.getJSONObject("messages")
         assertEquals(listOf("hello", "attach", "detach", "in", "thread.attach", "thread.detach", "ledger.attach", "ledger.detach", "view.attach", "view.detach"), strings(msgs.getJSONArray("phoneToTitan")))
-        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed", "ledger.snap", "view.snap"), strings(msgs.getJSONArray("titanToPhone")))
+        assertEquals(listOf("welcome", "bye", "snap", "out", "size", "state", "ack", "nak", "thread.snap", "thread.ev", "thread.state", "prompt", "prompt.closed", "ledger.snap", "view.snap", "alert"), strings(msgs.getJSONArray("titanToPhone")))
     }
 
     // Byte equality with the golden, not key-set equality: this is the TS/Kotlin agreement proof.

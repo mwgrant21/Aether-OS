@@ -43,6 +43,8 @@ export function ControlAccessCard() {
   const [pairingBusy, setPairingBusy] = useState(false);
   // True while a setPhoneTyping call is in flight: a second click could resolve first and leave the older value showing.
   const [typingBusy, setTypingBusy] = useState(false);
+  // Same guard for setPhoneAlerts.
+  const [alertsBusy, setAlertsBusy] = useState(false);
 
   const control = window.aetherElectron?.control;
   const adopt = (s: ControlStatus) => setLocal({ base: hookStatus, status: s });
@@ -109,6 +111,18 @@ export function ControlAccessCard() {
       setMessage('Could not change the typing setting.');
     } finally {
       setTypingBusy(false);
+    }
+  };
+  const setAlerts = async (value: boolean) => {
+    if (alertsBusy) return;
+    setMessage(null);
+    setAlertsBusy(true);
+    try {
+      adopt(await control.setPhoneAlerts(value));
+    } catch {
+      setMessage('Could not change the alerts setting.');
+    } finally {
+      setAlertsBusy(false);
     }
   };
   const pair = async () => {
@@ -181,6 +195,18 @@ export function ControlAccessCard() {
           When off, a connected phone can still watch terminals but anything it types is refused and nothing reaches the terminal.
         </p>
       )}
+      <label style={{ ...hintStyle(colors), display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          type="checkbox"
+          checked={status.phoneAlerts === true}
+          disabled={alertsBusy}
+          onChange={e => void setAlerts(e.target.checked)}
+        />
+        Phone alerts
+      </label>
+      <p style={{ ...hintStyle(colors), marginTop: 4 }}>
+        Notify the phone when Terminal Alpha finishes, asks a question or needs input. Only a fixed label leaves this PC. Needs phone control on.
+      </p>
 
       {on && (
         <div style={{ marginTop: 10 }}>

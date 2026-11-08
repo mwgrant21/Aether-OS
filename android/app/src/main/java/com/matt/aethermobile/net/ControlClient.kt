@@ -89,6 +89,7 @@ class ControlClient(
     private val onThreadFrame: (ControlProtocol.ThreadFrame) -> Unit = {},
     private val onLedgerFrame: (ControlProtocol.LedgerFrame) -> Unit = {},
     private val onViewFrame: (ControlProtocol.ViewFrame) -> Unit = {},
+    private val onAlertFrame: (ControlProtocol.AlertFrame) -> Unit = {},
     private val nonceSource: () -> String = { ControlProtocol.newNonce() },
     private val epochSource: () -> String = { ControlProtocol.newEpoch() },
     /** Runs the task once after the delay; returns a function that cancels it. Injectable so tests need no sleeps. */
@@ -246,6 +247,7 @@ class ControlClient(
             var deliverThread: ControlProtocol.ThreadFrame? = null
             var deliverLedger: ControlProtocol.LedgerFrame? = null
             var deliverView: ControlProtocol.ViewFrame? = null
+            var deliverAlert: ControlProtocol.AlertFrame? = null
             synchronized(this@ControlClient) {
                 if (done) return
                 if (!helloSent) {
@@ -288,6 +290,14 @@ class ControlClient(
                             deliverView = frame
                         }
                     }
+                    "alert" -> {
+                        val frame = if (welcomed) ControlProtocol.parseAlertFrame(text) else null
+                        if (frame == null) {
+                            finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
+                        } else {
+                            deliverAlert = frame
+                        }
+                    }
                     else -> finish(ControlState.Failed(Failure.Protocol), closeCode = 1008)
                 }
             }
@@ -297,6 +307,7 @@ class ControlClient(
             deliverThread?.let(onThreadFrame)
             deliverLedger?.let(onLedgerFrame)
             deliverView?.let(onViewFrame)
+            deliverAlert?.let(onAlertFrame)
         }
 
         private fun onBye(text: String) {
