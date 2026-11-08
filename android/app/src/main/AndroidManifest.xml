@@ -32,6 +32,23 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".alerts.AlertService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="owner-only desktop alert socket" />
+        </service>
+
+        <receiver
+            android:name=".alerts.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>
