@@ -25,17 +25,21 @@ reactor's pulse is your real token burn rate and dispatch concurrency; the termi
 sim pieces exist only where noted, and `PROGRESS.md` tracks exactly which is which — including
 known issues and genuinely-blocked items, not just wins.
 
-<!-- TODO screenshots: refresh pending -->
-![Aether OS Optimize view showing a live cost-of-thrash finding](docs/portfolio-optimize-cost-of-thrash.png)
-*Optimize surfacing a "cost of thrash" finding from one captured session — 428 redundant read/write
-calls detected across real session transcripts, priced at ~$0.64/wk, with a one-click fix. Real
-data, but a single example, not a benchmark.*
+**The screenshots below use synthetic demo data** (generated fixture transcripts for made-up
+projects), so the dollar and token figures in them are illustrative, not my real usage.
 
-<!-- TODO screenshots: refresh pending -->
-![Optimize catching a real re-read loop and pricing it](docs/portfolio-cost-of-thrash-live.gif)
-*The thesis, from one captured session: a file re-read three times without a cache hit gets caught, named
-(`CLAUDE.md (3x)`), and priced (~$0.27/wk) — the same detector that once only
-existed as `anomalyDetectors.ts` unit tests, now visibly catching a real one.*
+![Aether OS Dashboard: reactor core, month and today usage, projects list and a weekly token chart](docs/screenshots/01-dashboard.png)
+*Dashboard at version 0.7.4: the reactor core, usage tiles, a project list and a weekly token chart,
+all drawn from fixture data.*
+
+![Aether OS Optimize view listing four cost findings with an estimated weekly saving](docs/screenshots/02-optimize.png)
+*Optimize on the same fixture data: four findings (including "Cost of thrash"), each priced, with an
+estimated weekly saving.*
+
+Separately, on my real machine in one captured session, the same cost-of-thrash detector flagged
+428 redundant read/write calls, priced at about $0.64/wk, and in another a file re-read three times
+without a cache hit (`CLAUDE.md (3x)`, about $0.27/wk). Those are single examples from real use, not
+benchmarks, and the images above do not show them.
 
 ---
 
@@ -66,15 +70,17 @@ can false-positive on legitimately slow tools. The fix is planned — see
 ### No SDK or HTTP model call site, enforced by a test — with named, opt-in exceptions
 
 Short version of the privacy stance (`docs/privacy-and-data.md` §1 is the full one): single-user,
-local-first, no cloud sync. Nothing listens on the network unless you turn it on. Two opt-in
+local-first, no cloud sync. Nothing is network-reachable unless you turn it on (the only other server is a loopback-only
+permission-broker HTTP server on 127.0.0.1, reachable from this machine alone). Two opt-in
 listeners exist, both off at every launch unless you separately choose otherwise for phone control,
 both bound to the Tailscale interface address only (never a wildcard or LAN address), both gated by
 a pairing code and a desktop-side confirm: phone control and the read-only chat view share port
 47821 (§16, §17), and the voice gateway has its own port, 47822 (§18, desktop side only; see
 below). Phone control is **equivalent to your keyboard on the PC**: a paired, unlocked phone can
 type into the terminal slots and so run commands as you. It is separate from the read-only viewer,
-has its own toggle, tokens and revoke, keeps its token behind the phone's fingerprint gate, and the
-ACLs on your tailnet are your responsibility. Other named exceptions follow.
+has its own toggle, tokens and revoke, keeps its control token behind the phone's fingerprint
+gate (the alert-only token deliberately does not, since it can only deliver three-word alerts), and
+the ACLs on your tailnet are your responsibility. Other named exceptions follow.
 
 As of Stage 13.5 (2026-08-05), Aether OS contains no SDK or HTTP model call site for its own
 features (the one Claude-CLI path, the opt-in collector memory extraction described below, was
@@ -153,6 +159,12 @@ rather than only visual.
 
 ## What's built
 
+![Aether OS Ledger: observed total at API rate, cache impact, rollups and pricing basis footer](docs/screenshots/04-ledger.png)
+*Ledger on fixture data: an observed total at API rate, cache impact, rollups and the pricing basis.*
+
+![Aether OS Projects view: project roster with per-project cost and a detail pane](docs/screenshots/05-projects.png)
+*Projects on fixture data: roster with per-project cost, and a detail pane.*
+
 - **Projects** — real projects derived from transcript events' `cwd` values, with cost per project,
   worktrees nested under their parent repo, and an `unscoped` bucket for work in directories
   without a git context.
@@ -164,8 +176,8 @@ rather than only visual.
   local files only (`docs/privacy-and-data.md` §19). Marker lines such as `[STOP]` / `[WARN]` can
   be colored in all three terminals (a setting, default on). Terminal sessions survive a renderer
   reload (PR #201): the main process keeps the shells and a 256 KB output mirror so a reloaded
-  window repaints; a full app quit still ends them. The reactor core lives in the sidebar with a live TOK/MIN readout, its
-  pulse and overload glow driven by real burn rate and real dispatch concurrency.
+  window repaints; a full app quit still ends them. The reactor core lives in the sidebar with a
+  live TOK/MIN readout, its pulse and overload glow driven by real burn rate and real dispatch concurrency.
 - **Dashboard** — session tokens, budget remaining, and depletion ETA computed from your actual
   Claude Code usage, rescanned periodically; alerts and systems cells on a single view registry.
 - **Agents / Grid / Analytics** — real currently-open `Agent`-tool subagent dispatches, tracked
