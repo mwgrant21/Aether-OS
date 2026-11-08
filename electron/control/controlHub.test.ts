@@ -1089,6 +1089,16 @@ describe('control hub alert credential', () => {
     expect(s.sent.at(-1)).toBe(bye('revoked'));
   });
 
+  it('an alert connection logs the real peer, not unknown', async () => {
+    const rig = setup();
+    await rig.hub.setEnabled(true);
+    const t = await pairBoth(rig);
+    const id = rig.hub.port.authenticate(bearer(t.alert), PEER)!;
+    rig.hub.port.open(fakeSocket(), id);
+    expect(rig.logs.some(l => l === `control: connect ref=${id.ref} peer=${PEER}`)).toBe(true);
+    expect(rig.logs.some(l => l.includes('peer=unknown'))).toBe(false);
+  });
+
   it('disabling closes an open alert session with disabled; the token still authenticates after re-enable', async () => {
     const rig = setup();
     await rig.hub.setEnabled(true);
