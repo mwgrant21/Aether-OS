@@ -7,6 +7,8 @@ export interface DesktopFeed {
   data(d: string): void;
   /** Deliver a fresh hub snapshot, then the data that arrived meanwhile. A second call supersedes the first. */
   reattach(): void;
+  /** The session ended: sent now, or after the pending snapshot and held data so the exit text lands last. */
+  exit(): void;
   dispose(): void;
 }
 
@@ -19,13 +21,14 @@ export function createDesktopFeed(o: {
   port: TerminalReadPort;
   slot: TerminalSlotId;
   send: (channel: string, payload: unknown) => void;
-  channels: { data: string; snap: string };
+  channels: { data: string; snap: string; exit: string };
   setTimer?: (fn: () => void, ms: number) => () => void;
 }): DesktopFeed {
   const setTimer = o.setTimer ?? ((fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); });
   let gen = 0;
   let gated = false;
   let held: string[] = [];
+  let exitPending = false;
   let attachment: TerminalAttachment | null = null;
   let cancelTimer: (() => void) | null = null;
 
@@ -39,12 +42,17 @@ export function createDesktopFeed(o: {
     cancelTimer?.(); cancelTimer = null;
     const out = held; held = [];
     for (const d of out) o.send(o.channels.data, d);
+    if (exitPending) { exitPending = false; o.send(o.channels.exit, undefined); }
   }
 
   return {
     data(d) {
       if (gated) held.push(d);
       else o.send(o.channels.data, d);
+    },
+    exit() {
+      if (gated) exitPending = true;
+      else o.send(o.channels.exit, undefined);
     },
     reattach() {
       teardown();

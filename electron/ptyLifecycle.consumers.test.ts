@@ -48,8 +48,8 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
   // Real feeds (un-gated data goes straight to sendToWindow); reattach is a spy so no hub attach or timer starts.
   const feedFor = (slot: 'claude' | 'codex' | 'terminal2', prefix: string) => {
-    const feed = createDesktopFeed({ port: hub.readPort(), slot, send: sendToWindow, channels: { data: prefix + ':data', snap: prefix + ':snap' } });
-    return { data: feed.data, reattach: vi.fn() };
+    const feed = createDesktopFeed({ port: hub.readPort(), slot, send: sendToWindow, channels: { data: prefix + ':data', snap: prefix + ':snap', exit: prefix + ':exit' } });
+    return { data: feed.data, exit: feed.exit, reattach: vi.fn() };
   };
   const ptyFeed = feedFor('claude', 'pty'), codexFeed = feedFor('codex', 'codexPty'), terminal2Feed = feedFor('terminal2', 'terminal2Pty');
   let launchId: string | undefined = 'launch-1';

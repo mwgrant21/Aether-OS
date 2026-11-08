@@ -1405,7 +1405,7 @@ const desktopRetain = terminalHub.readPort().retain();
 // Per-slot gate that orders a re-attached window's stream: snapshot, then data that arrived meanwhile.
 const desktopFeedFor = (slot: 'claude' | 'codex' | 'terminal2', prefix: string) => createDesktopFeed({
   port: terminalHub.readPort(), slot, send: (channel, payload) => sendToWindow(channel, payload),
-  channels: { data: prefix + ':data', snap: prefix + ':snap' },
+  channels: { data: prefix + ':data', snap: prefix + ':snap', exit: prefix + ':exit' },
 });
 const ptyFeed = desktopFeedFor('claude', 'pty');
 const codexFeed = desktopFeedFor('codex', 'codexPty');
@@ -1462,7 +1462,7 @@ const communicationSessions = new CommunicationSessionControl({
     connectedPromptObserver.start(launchId, dimensions, () => spawnPty(dimensions.cols, dimensions.rows, bundle), {
       onData: data => { ptyFeed.data(data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
-      onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
+      onExit: () => { pinnedPtyExited = true; onExit(); ptyFeed.exit(); planUsageScraper.reset(); },
     });
     pinnedPtyExited = false;
     pinnedLaunchSessionId = bundle.sessionId ?? null;
@@ -1505,7 +1505,7 @@ ipcMain.handle('pty:start', (_event, { cols, rows }: { cols: number; rows: numbe
       onAlive: () => sendToWindow('pty:alive', undefined),
       onExit: () => {
         pinnedPtyExited = true;
-        sendToWindow('pty:exit', undefined);
+        ptyFeed.exit();
         planUsageScraper.reset(); // a new pty means a fresh /usage read next time
       },
     }, { cols, rows });
@@ -1559,7 +1559,7 @@ ipcMain.handle('codexPty:start', (_event, { cols, rows }: { cols: number; rows: 
       codexFeed.data(data);
     },
     onAlive: () => sendToWindow('codexPty:alive', undefined),
-    onExit: () => sendToWindow('codexPty:exit', undefined),
+    onExit: () => codexFeed.exit(),
   }, { cols, rows });
 });
 
@@ -1591,7 +1591,7 @@ ipcMain.handle('terminal2Pty:start', (_event, { cols, rows }: { cols: number; ro
         onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
         // Tell the renderer so it can offer an Enter-to-restart; still not wired
         // into pinnedPtyExited, the usage scraper or the tracker.
-        onExit: () => sendToWindow('terminal2Pty:exit', undefined),
+        onExit: () => terminal2Feed.exit(),
       }, size);
     } catch (error) {
       aetherChoice?.onForeignLaunch('terminal2'); // no start event follows a failed spawn: drop the stashed plan

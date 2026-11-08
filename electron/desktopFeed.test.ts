@@ -37,7 +37,7 @@ function fakeMirrors() {
 }
 const handlers = () => ({ onData: vi.fn(), onAlive: vi.fn(), onExit: vi.fn() });
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-const CH = { data: 'term:data', snap: 'term:snap' };
+const CH = { data: 'term:data', snap: 'term:snap', exit: 'term:exit' };
 
 function setup(o: { real?: boolean; retain?: boolean } = {}) {
   const fm = fakeMirrors();
@@ -81,6 +81,20 @@ describe('desktopFeed', () => {
       [CH.snap, { cols: 40, rows: 5, d: 'a' }],
       [CH.data, 'b'], [CH.data, 'c'], [CH.data, 'd'],
     ]);
+  });
+
+  it('an exit while the snapshot is pending is sent after the snapshot and held data; an exit with no snapshot pending is sent at once', async () => {
+    const { fm, feed, sent, emit } = setup();
+    feed.exit();
+    expect(sent).toEqual([[CH.exit, undefined]]);
+    sent.length = 0;
+    feed.reattach();
+    emit('b');
+    feed.exit();
+    expect(sent).toEqual([]);
+    fm.resolvers[0]();
+    await flush();
+    expect(sent).toEqual([[CH.snap, { cols: 40, rows: 5, d: '' }], [CH.data, 'b'], [CH.exit, undefined]]);
   });
 
   it('when the hub is not retained the snap is empty and live data still flows', () => {
