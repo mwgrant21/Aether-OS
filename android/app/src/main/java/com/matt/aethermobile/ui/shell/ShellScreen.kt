@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.matt.aethermobile.FlowState
 import com.matt.aethermobile.R
+import com.matt.aethermobile.alerts.AlertText
 import com.matt.aethermobile.auth.ShareMessage
 import com.matt.aethermobile.auth.ShareUi
 import com.matt.aethermobile.term.TerminalHost
@@ -90,6 +91,7 @@ import com.matt.aethermobile.thread.ThreadUi
 import com.matt.aethermobile.thread.ViewMode
 import com.matt.aethermobile.ui.StormCore
 import com.matt.aethermobile.ui.StormMode
+import com.matt.aethermobile.ui.components.AeNoticeBox
 import com.matt.aethermobile.ui.components.AeSecondaryButton
 import com.matt.aethermobile.ui.components.DotStyle
 import com.matt.aethermobile.ui.components.StatusDot
@@ -131,6 +133,8 @@ data class ShellUiState(
     val viewCtl: ViewCtlUi = ViewCtlUi(),
     /** The page reports an active text selection in the SELECTED slot. */
     val selection: Boolean = false,
+    /** Alerts are paired but Android notifications are denied; shows the amber notice under the header. */
+    val alertsOff: Boolean = false,
 )
 
 class ShellActions(
@@ -210,6 +214,10 @@ fun ShellScreen(state: ShellUiState, actions: ShellActions, terminalHolder: View
                     onSetView = actions.onSetView,
                     keyboard = kb,
                 )
+                // In the Column, not an overlay: the terminal area shrinks by the notice height.
+                if (state.alertsOff) {
+                    AeNoticeBox(AlertText.PERMISSION_OFF, amber = true, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                }
             }
             Column(Modifier.weight(1f).fillMaxWidth().then(if (menuOpen) Modifier.blur(2.dp) else Modifier)) {
                 if (rawBody && plan.zoomRow) ZoomRow(actions)

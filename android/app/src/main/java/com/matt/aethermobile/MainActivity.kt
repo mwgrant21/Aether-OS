@@ -44,6 +44,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.matt.aethermobile.alerts.AlertController
+import com.matt.aethermobile.alerts.AlertsStatus
 import com.matt.aethermobile.auth.AlertVault
 import com.matt.aethermobile.auth.BiometricCallback
 import com.matt.aethermobile.auth.BiometricGate
@@ -222,6 +223,7 @@ class MainActivity : AppCompatActivity() {
         val viewCtl: ViewCtlUi = ViewCtlUi(),
         val titanClockOffsetMs: Long = 0L,
         val selection: Boolean = false,
+        val alertsOff: Boolean = false,
     )
 
     private var ui by mutableStateOf(UiSnapshot(FlowState.NotConfigured, emptyList(), "claude"))
@@ -256,11 +258,12 @@ class MainActivity : AppCompatActivity() {
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             // Delivered when currentState is already RESUMED / back to STARTED (not inside onResume).
             when (event) {
-                Lifecycle.Event.ON_RESUME -> { applyEffects(controller.onResume()); maybeAskNotifPermission() }
+                Lifecycle.Event.ON_RESUME -> { refreshAlertsOff(); applyEffects(controller.onResume()); maybeAskNotifPermission(); renderTabs() }
                 Lifecycle.Event.ON_PAUSE -> controller.onPause()
                 else -> Unit
             }
         })
+        refreshAlertsOff()
         render()
     }
 
@@ -478,10 +481,12 @@ class MainActivity : AppCompatActivity() {
         }
         dispatch(FlowEvent.PairResult(kind))
         // Best effort, after the main save flow has started: alerts never block or fail pairing.
-        // Keystore work stays on io (serialised with every other alert-vault write), never the UI thread.
+        // Keystore work stays on io (off the UI thread).
         if (result is PairResult.Paired) {
             val alertToken = result.alertToken
             val appCtx = applicationContext
+            // A cancelled earlier pairing may have left the one-shot ask flag set; a vault-clearing re-pair must not raise the dialog.
+            if (alertToken == null) askNotifPermission = false
             try {
                 io.execute {
                     if (alertToken == null) {
@@ -494,6 +499,8 @@ class MainActivity : AppCompatActivity() {
                     try {
                         runOnUiThread {
                             if (!isDestroyed) {
+                                refreshAlertsOff()
+                                renderTabs()
                                 askNotifPermission = true
                                 maybeAskNotifPermission()
                             }
@@ -508,8 +515,15 @@ class MainActivity : AppCompatActivity() {
     private var askNotifPermission = false
 
     private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-        if (!isDestroyed) renderTabs()
+        if (!isDestroyed) { refreshAlertsOff(); renderTabs() }
         AlertController.ensureRunning(applicationContext)
+    }
+
+    // UI thread only. Plain field read by renderTabs(); status does a token-file and permission check, so it is never called there.
+    private var alertsOff = false
+
+    private fun refreshAlertsOff() {
+        alertsOff = AlertController.status(applicationContext) == AlertsStatus.PERMISSION_OFF
     }
 
     // Asks once, and only when no biometric prompt can be up. Re-checked from renderTabs() and ON_RESUME.
@@ -1015,6 +1029,7 @@ class MainActivity : AppCompatActivity() {
             viewCtl = ViewCtlUi(zoomPx, orientation),
             titanClockOffsetMs = client?.titanClockOffsetMs ?: 0L,
             selection = selActiveSlot != null && selActiveSlot == selected,
+            alertsOff = alertsOff,
         )
         handler.removeCallbacks(graceRerender)
         graceRerenderDelayMs(t, System.currentTimeMillis())?.let { handler.postDelayed(graceRerender, it) }
@@ -1038,7 +1053,7 @@ class MainActivity : AppCompatActivity() {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))) {
                 // Always composed so the holder is attached once and never torn down by a state change.
                 ShellScreen(
-                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, titanClockOffsetMs = snap.titanClockOffsetMs, nowMs = System.currentTimeMillis(), selection = snap.selection),
+                    state = ShellUiState(connected != null, snap.tabs, snap.selected, connected, snap.ctrlOn, snap.hostAccepts, clearsDraft(snap.flow), restartAvailable = snap.restartAvailable, view = snap.view, thread = snap.thread, share = snap.share, appView = snap.appView, ledger = snap.ledger, panes = snap.panes, supportedPanes = snap.supportedPanes, viewCtl = snap.viewCtl, titanClockOffsetMs = snap.titanClockOffsetMs, nowMs = System.currentTimeMillis(), selection = snap.selection, alertsOff = snap.alertsOff),
                     actions = ShellActions(
                         onSelectSlot = ::selectSlot,
                         onLockNow = { dispatch(FlowEvent.LockNow) },
