@@ -75,7 +75,7 @@ Bank these as removed from scope, permanently:
   **One deliberate, opt-in exception:** the read-only phone chat view (`electron/remote/`) listens on
   the Tailscale interface address only (never `0.0.0.0`, `::` or a LAN address), is off at every
   launch, needs a native confirmation to enable, and requires a pairing code and session cookie;
-  see §16, and phone control, §17 (planned). **A second deliberate, opt-in listener:** the voice
+  see §16, and phone control, §17 (built). **A second deliberate, opt-in listener:** the voice
   gateway (`electron/voice/`, port 47822) follows the same rules (tailnet address only, off at every
   launch, native confirm, pairing code and cookie, no request with an `Origin` header) and is also a
   model-launch boundary; see §18

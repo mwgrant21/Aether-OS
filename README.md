@@ -28,7 +28,8 @@ known issues and genuinely-blocked items, not just wins.
 **The screenshots below use synthetic demo data** (generated fixture transcripts for made-up
 projects, run through a collector against a throwaway home), so the dollar and token figures in
 them are illustrative, not my real usage. The "active" shots were captured under a synthetic burst
-load, which is why some numbers look extreme (budget left 0.0%, +915% vs last week).
+load, which is why some numbers look extreme (budget left 0.0%, growth percentages such as
++915% vs last week).
 
 ![Aether OS Dashboard under live load: reactor core, two active agents, projects by cost, recent dispatch alerts, collector running](docs/screenshots/11-dashboard-active.png)
 *Dashboard at version 0.7.4 under a synthetic burst load: the reactor running hot, two active
@@ -287,7 +288,9 @@ at build time, so it is not a distributable app.
   and records approved terms; nothing runs unattended. Live checks have not been run.
 - **Desktop side only, no client:** a voice gateway (opt-in, port 47822). There is no speech-to-text,
   text-to-speech or Android client yet, so it is not a usable feature.
-- **Not merged or shipped:** visible Claude–Codex communication lives on an unmerged branch.
+- **Built but not verified end to end:** visible Claude–Codex communication (PR #76) is in the tree
+  and opt-in, but the complete connected-launch workflow and a live provider run are not verified
+  (one qualified live exchange was observed). I do not call it shipped; see `docs/privacy-and-data.md` §13.
 - **Open:** phone-alert latency testing and a shipped hook installer, phone layout edge cases,
   the project-scope switch across Ledger / Optimize / Analytics, and Memory Layer 2 Phase E.
   `PROGRESS.md` has the running list.
