@@ -206,6 +206,27 @@ describe('alertWatcher', () => {
     expect(r.onAlert).toHaveBeenLastCalledWith('input');
   });
 
+  it('a snap during a pending debounce cancels it, so the old session never alerts for the new snapshot', () => {
+    const r = rig();
+    r.watcher.start();
+    r.turn('busy'); r.turn('idle');
+    expect(r.timers.size).toBe(1);
+    snap(r);
+    expect(r.timers.size).toBe(0);
+    r.advance(D * 2);
+    expect(r.onAlert).not.toHaveBeenCalled();
+  });
+
+  it('a snap after an alert resets the one-per-busy-period latch, so the new session first completion alerts', () => {
+    const r = rig();
+    r.watcher.start();
+    r.turn('busy'); r.turn('idle'); r.advance(D);
+    expect(r.onAlert).toHaveBeenCalledTimes(1);
+    snap(r);
+    r.turn('idle'); r.advance(D);
+    expect(r.onAlert).toHaveBeenCalledTimes(2);
+  });
+
   it('stop() cancels timers, detaches both taps once, running() is false; start() twice attaches once', () => {
     const r = rig();
     r.watcher.start();

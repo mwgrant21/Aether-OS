@@ -64,7 +64,7 @@ export function createAlertWatcher(deps: AlertWatcherDeps): AlertWatcher {
     lastTruncated = false;
     fired = false;
     threadHandle = deps.threads.attach('claude', {
-      snap(e) { lastClaudeText = null; lastTruncated = false; absorb(e.events); },
+      snap(e) { cancelTurnTimer(); fired = false; lastClaudeText = null; lastTruncated = false; absorb(e.events); },
       events(e) { absorb(e.events); },
       state() { /* never infers idle from state */ },
       turn(e) {
