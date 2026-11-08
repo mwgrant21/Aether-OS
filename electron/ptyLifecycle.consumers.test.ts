@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { describe, it, expect, vi } from 'vitest';
 import type { PtyLike } from './ptyLifecycle';
 import { createTerminalHub } from './terminalHub';
+import { createDesktopFeed } from './desktopFeed';
 import { terminalIdentityEnv } from './ptyManager';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import capture from './__fixtures__/trust-prompt-capture.json';
@@ -45,6 +46,12 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
   const hub = createTerminalHub(), ptyLifecycle = hub.slot('claude'), codexPtyLifecycle = hub.slot('codex'), terminal2PtyLifecycle = hub.slot('terminal2');
   const spawnPty = vi.fn(), spawnCodexPty = vi.fn(), send = vi.fn(), sendToWindow = vi.fn();
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
+  // Real feeds (un-gated data goes straight to sendToWindow); reattach is a spy so no hub attach or timer starts.
+  const feedFor = (slot: 'claude' | 'codex' | 'terminal2', prefix: string) => {
+    const feed = createDesktopFeed({ port: hub.readPort(), slot, send: sendToWindow, channels: { data: prefix + ':data', snap: prefix + ':snap' } });
+    return { data: feed.data, reattach: vi.fn() };
+  };
+  const ptyFeed = feedFor('claude', 'pty'), codexFeed = feedFor('codex', 'codexPty'), terminal2Feed = feedFor('terminal2', 'terminal2Pty');
   let launchId: string | undefined = 'launch-1';
   let prompt = 'unknown';
   const communicationBridge = { currentLaunchId: () => launchId, observePrompt: vi.fn((id: string, value: string) => {
@@ -52,7 +59,7 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
     prompt = value; return true;
   }) };
   const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, communicationBridge);
-  const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow,
+  const context = { communicationBridge, connectedPromptObserver, ptyLifecycle, codexPtyLifecycle, terminal2PtyLifecycle, spawnPty, spawnCodexPty, sendToWindow, ptyFeed, codexFeed, terminal2Feed,
     terminalIdentityEnv, boardCliPath: opts && 'boardCliPath' in opts ? opts.boardCliPath : BOARD_CLI,
     UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
@@ -101,6 +108,7 @@ describe('production terminal consumer ownership (deterministic callbacks)', () 
     expect(first.kill).not.toHaveBeenCalled();
     expect(f.codexPtyLifecycle.current).toBe(first);
     expect(alive()).toBe(2);
+    expect(f.codexFeed.reattach).toHaveBeenCalledOnce();
     first.fireData('still first'); first.fireExit();
     expect(f.codexPtyLifecycle.current).toBeNull();
     f.codex(f.event, { cols: 100, rows: 30 });
@@ -126,10 +134,31 @@ describe('production terminal consumer ownership (deterministic callbacks)', () 
     expect(alive()).toBe(1);
     expect(rt.launchCommandFor).not.toHaveBeenCalled();
     expect(rt.onForeignLaunch).not.toHaveBeenCalled();
+    expect(f.terminal2Feed.reattach).toHaveBeenCalledOnce();
     first.fireExit();
     f.terminal2PtyLifecycle.write('\r');
     expect(f.spawnPty).toHaveBeenCalledTimes(2);
     expect(f.terminal2PtyLifecycle.current).toBe(second);
+  });
+
+  it('a Claude start while live attaches (alive + reattach, no spawn); a first start never reattaches', () => {
+    const f = fixture(), first = fakePty();
+    f.spawnPty.mockReturnValueOnce(first);
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    expect(f.ptyFeed.reattach).not.toHaveBeenCalled();
+    f.ordinary(f.event, { cols: 100, rows: 30 });
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(f.sendToWindow.mock.calls.filter(([channel]) => channel === 'pty:alive')).toHaveLength(2);
+    expect(f.ptyFeed.reattach).toHaveBeenCalledOnce();
+  });
+
+  it('a first Codex and Terminal 2 start does not reattach', () => {
+    const f = fixture();
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.spawnCodexPty.mockReturnValueOnce(fakePty());
+    f.codex(f.event, { cols: 80, rows: 24 }); f.terminal2(f.event, { cols: 80, rows: 24 });
+    expect(f.codexFeed.reattach).not.toHaveBeenCalled();
+    expect(f.terminal2Feed.reattach).not.toHaveBeenCalled();
   });
 
   it('routes pty, codexPty and terminal2Pty data through sendToWindow, never the start event sender', () => {

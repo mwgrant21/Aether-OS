@@ -64,7 +64,7 @@ export function createDesktopFeed(o: {
       };
       attachment = o.port.attach(o.slot, null, tap);
       if (gated) {
-        cancelTimer = setTimer(() => { if (mine === gen && gated) release(); }, SNAP_TIMEOUT_MS);
+        cancelTimer = setTimer(() => { if (mine === gen && gated) { release(); teardown(); } }, SNAP_TIMEOUT_MS);
       }
     },
     dispose() {

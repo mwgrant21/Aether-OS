@@ -14,6 +14,7 @@ import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { createTerminalHub } from './terminalHub';
+import { createDesktopFeed } from './desktopFeed';
 import { attachTerminalBoardReset, resetTerminalBoardEntry } from './terminalBoard';
 import { TERMINAL_BOARD_DIR_NAME } from '../src/shared/terminalBoard';
 import { createAetherChoiceRuntime } from './aetherChoice/runtime';
@@ -1171,6 +1172,7 @@ app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
   if (!baselineQuitGate(event)) return;
   isQuitting = true;
+  desktopRetain();
   aetherChoice?.dispose();
   phoneViewCache.clear();
   agentsDiagFeed.clear();
@@ -1397,6 +1399,17 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const terminalHub = createTerminalHub();
+// Always-on retain: the hub keeps its in-memory headless mirror per running slot so a reloaded
+// window can be repainted (an unretained hub hands back an EMPTY snapshot). Released on quit.
+const desktopRetain = terminalHub.readPort().retain();
+// Per-slot gate that orders a re-attached window's stream: snapshot, then data that arrived meanwhile.
+const desktopFeedFor = (slot: 'claude' | 'codex' | 'terminal2', prefix: string) => createDesktopFeed({
+  port: terminalHub.readPort(), slot, send: (channel, payload) => sendToWindow(channel, payload),
+  channels: { data: prefix + ':data', snap: prefix + ':snap' },
+});
+const ptyFeed = desktopFeedFor('claude', 'pty');
+const codexFeed = desktopFeedFor('codex', 'codexPty');
+const terminal2Feed = desktopFeedFor('terminal2', 'terminal2Pty');
 // Empty the Alpha/Beta board entry whenever that slot's PTY starts or exits (privacy section 19).
 attachTerminalBoardReset(
   { claude: terminalHub.slot('claude'), terminal2: terminalHub.slot('terminal2') },
@@ -1447,7 +1460,7 @@ const communicationSessions = new CommunicationSessionControl({
     const dimensions = { ...claudeTerminalDimensions };
     aetherChoice?.onForeignLaunch('claude'); // not an Aether launch command
     connectedPromptObserver.start(launchId, dimensions, () => spawnPty(dimensions.cols, dimensions.rows, bundle), {
-      onData: data => { sendToWindow('pty:data', data); planUsageScraper.ingest(data); },
+      onData: data => { ptyFeed.data(data); planUsageScraper.ingest(data); },
       onAlive: () => sendToWindow('pty:alive', undefined),
       onExit: () => { pinnedPtyExited = true; onExit(); sendToWindow('pty:exit', undefined); planUsageScraper.reset(); },
     });
@@ -1470,7 +1483,7 @@ ipcMain.handle('pty:start', (_event, { cols, rows }: { cols: number; rows: numbe
   // Settings can already have launched a connected session. Mounting Terminal
   // only attaches to that shell; it must never silently replace it.
   if (communicationSessions.busy || ptyLifecycle.current) {
-    if (ptyLifecycle.current) sendToWindow('pty:alive', undefined);
+    if (ptyLifecycle.current) { sendToWindow('pty:alive', undefined); ptyFeed.reattach(); }
     return;
   }
   // Pinned by id, not by newest transcript: Terminal 2 (and any other claude
@@ -1481,7 +1494,7 @@ ipcMain.handle('pty:start', (_event, { cols, rows }: { cols: number; rows: numbe
   try {
     ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath)) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath), launchCommand), {
       onData: (data) => {
-        sendToWindow('pty:data', data);
+        ptyFeed.data(data);
         planUsageScraper.ingest(data);
       },
       // Lets the renderer's Uplinks view show real terminal liveness instead of
@@ -1538,11 +1551,12 @@ ipcMain.handle('codexPty:start', (_event, { cols, rows }: { cols: number; rows: 
   // A reloaded renderer calls start again: attach to the live pty, never replace it.
   if (codexPtyLifecycle.current) {
     sendToWindow('codexPty:alive', undefined);
+    codexFeed.reattach();
     return;
   }
   codexPtyLifecycle.start(() => spawnCodexPty(cols, rows), {
     onData: (data) => {
-      sendToWindow('codexPty:data', data);
+      codexFeed.data(data);
     },
     onAlive: () => sendToWindow('codexPty:alive', undefined),
     onExit: () => sendToWindow('codexPty:exit', undefined),
@@ -1570,7 +1584,7 @@ ipcMain.handle('terminal2Pty:start', (_event, { cols, rows }: { cols: number; ro
     try {
       terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }, launchCommand), {
         onData: (data) => {
-          sendToWindow('terminal2Pty:data', data);
+          terminal2Feed.data(data);
         },
         // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
         // can reset its xterm after a restart (also fires on the first start).
@@ -1592,7 +1606,7 @@ ipcMain.handle('terminal2Pty:start', (_event, { cols, rows }: { cols: number; ro
   // A reloaded renderer calls start again: a live pty is attached to, not replaced.
   // Checked before spawn() so no launch plan is stashed, and no alive is sent (the
   // renderer's onAlive resets its xterm).
-  if (terminal2PtyLifecycle.current) return;
+  if (terminal2PtyLifecycle.current) { terminal2Feed.reattach(); return; }
   spawn({ cols, rows });
 });
 

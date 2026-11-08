@@ -43,6 +43,12 @@ function setup(o: { real?: boolean; retain?: boolean } = {}) {
   const fm = fakeMirrors();
   const hub = createTerminalHub(o.real ? {} : { createMirror: fm.create });
   const port = hub.readPort();
+  const detaches: Array<ReturnType<typeof vi.fn>> = [];
+  const realAttach = port.attach.bind(port);
+  port.attach = (...a: Parameters<typeof port.attach>) => {
+    const att = realAttach(...a); const detach = vi.fn(() => att.detach()); detaches.push(detach);
+    return { ...att, detach };
+  };
   if (o.retain !== false) port.retain();
   const slot = hub.slot('claude');
   const pty = fakePty();
@@ -56,7 +62,7 @@ function setup(o: { real?: boolean; retain?: boolean } = {}) {
   });
   // main feeds the hub (via the pty) and the feed with the same chunk
   const emit = (d: string) => { pty.fireData(d); feed.data(d); };
-  return { fm, feed, pty, sent, timers, emit };
+  return { fm, feed, pty, sent, timers, emit, detaches };
 }
 
 describe('desktopFeed', () => {
@@ -101,6 +107,16 @@ describe('desktopFeed', () => {
     timers[0].fn(); // firing again does not re-flush
     emit('y');
     expect(sent).toEqual([[CH.data, 'x'], [CH.data, 'y']]);
+  });
+
+  it('the timeout path also detaches the hub tap, so it does not linger', async () => {
+    const { feed, pty, timers, detaches } = setup();
+    feed.reattach();
+    pty.fireExit();
+    await flush();
+    expect(detaches[0]).not.toHaveBeenCalled();
+    timers[0].fn();
+    expect(detaches[0]).toHaveBeenCalledOnce();
   });
 
   it('a second reattach supersedes the first: one snap, no duplicates', async () => {
