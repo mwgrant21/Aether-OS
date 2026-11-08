@@ -189,15 +189,16 @@ async function mountSnap(withOnSnap = true) {
   let snap: ((s: { cols: number; rows: number; d: string }) => void) | undefined;
   const resize = vi.fn();
   let data: ((d: string) => void) | undefined;
+  let exit: (() => void) | undefined;
   const order: string[] = [];
   const start = vi.fn(() => { order.push('start'); });
-  const terminal2Pty = { start, onData: (cb: typeof data) => { data = cb; return () => {}; }, onExit: () => () => {}, onAlive: () => () => {}, write() {}, resize, ...(withOnSnap ? { onSnap: (cb: typeof snap) => { order.push('onSnap'); snap = cb; return () => {}; } } : {}) };
+  const terminal2Pty = { start, onData: (cb: typeof data) => { data = cb; return () => {}; }, onExit: (cb: typeof exit) => { exit = cb; return () => {}; }, onAlive: () => () => {}, write() {}, resize, ...(withOnSnap ? { onSnap: (cb: typeof snap) => { order.push('onSnap'); snap = cb; return () => {}; } } : {}) };
   Object.defineProperty(window, 'aetherElectron', { configurable: true, value: { terminal2Pty } });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   const { AetherStoreProvider: Provider } = await import('../../state/store');
   const { PtyTerminal2: Fresh } = await import('./PtyTerminal2');
   render(<Provider><Fresh /></Provider>);
-  return { snap: snap!, resize, order, data: data! };
+  return { snap: snap!, resize, order, data: data!, exit: exit! };
 }
 
 it('repaints from a snap with no alive message: reset, resize to the mirror, write, then refit and tell main the real size', async () => {
@@ -244,4 +245,14 @@ it('applies a snap behind a write barrier: earlier chunks drain first, chunks th
   expect(mocks.reset.mock.invocationCallOrder[0]).toBeLessThan(mocks.write.mock.invocationCallOrder[2]);
   data('after');
   expect(mocks.write).toHaveBeenLastCalledWith('after');
+});
+
+it('orders the exit banner behind a pending snap so the snapshot cannot wipe it', async () => {
+  const { snap, data, exit } = await mountSnap();
+  data('x');
+  snap({ cols: 100, rows: 30, d: 'screen' });
+  exit();
+  expect(mocks.write.mock.calls.map(c => c[0])).toEqual(['x', '']);
+  mocks.write.mock.calls[1][1]();
+  expect(mocks.write.mock.calls.map(c => c[0])).toEqual(['x', '', 'screen', '\r\n[process exited - press Enter to restart]\r\n']);
 });

@@ -48,15 +48,18 @@ function getOrCreateHost(): { hostEl: HTMLDivElement; fit: FitAddon } {
       if (d === '') return;
       snapsPending++;
       sharedTerm!.write('', () => {
-        sharedTerm!.reset();
-        if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0) sharedTerm!.resize(cols, rows);
-        // Refit only after the snap is parsed at the mirror's size; a reloaded xterm fires no onResize for an
-        // unchanged size, so tell main the real size explicitly to make the TUI repaint.
-        sharedTerm!.write(d, () => {
-          sharedFit!.fit();
-          if (sharedTerm!.cols !== cols || sharedTerm!.rows !== rows) codexPty.resize(sharedTerm!.cols, sharedTerm!.rows);
-        });
-        if (--snapsPending === 0) { const out = liveHeld; liveHeld = []; for (const x of out) sharedTerm!.write(x); }
+        try {
+          sharedTerm!.reset();
+          if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0) sharedTerm!.resize(cols, rows);
+          // Refit only after the snap is parsed at the mirror's size; a reloaded xterm fires no onResize for an
+          // unchanged size, so tell main the real size explicitly to make the TUI repaint.
+          sharedTerm!.write(d, () => {
+            sharedFit!.fit();
+            if (sharedTerm!.cols !== cols || sharedTerm!.rows !== rows) codexPty.resize(sharedTerm!.cols, sharedTerm!.rows);
+          });
+        } finally {
+          if (--snapsPending === 0) { const out = liveHeld; liveHeld = []; for (const x of out) sharedTerm!.write(x); }
+        }
       });
     });
     codexPty.start({ cols: sharedTerm.cols, rows: sharedTerm.rows }); // only ever called once per app lifetime
