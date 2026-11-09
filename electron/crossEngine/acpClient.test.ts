@@ -318,3 +318,63 @@ describe('AcpClient.ensureChatGptAuthenticated', () => {
     expect(await client.ensureChatGptAuthenticated()).toBe(false);
   });
 });
+
+describe('AcpClient process lifecycle', () => {
+  it("child 'error' rejects pending calls instead of throwing", async () => {
+    const child = fakeChild();
+    const client = new AcpClient();
+    client.connect(child as never);
+    const p = client.initialize();
+
+    expect(() => (child as unknown as EventEmitter).emit('error', new Error('spawn ENOENT'))).not.toThrow();
+    await expect(p).rejects.toThrow('ACP adapter failed: spawn ENOENT');
+  });
+
+  it("stdin 'error' rejects pending calls instead of throwing", async () => {
+    const child = fakeChild();
+    const client = new AcpClient();
+    client.connect(child as never);
+    const p = client.initialize();
+
+    expect(() => child.stdin.emit('error', new Error('write EPIPE'))).not.toThrow();
+    await expect(p).rejects.toThrow('ACP adapter stdin failed: write EPIPE');
+  });
+
+  it("a call after a stdin 'error' does not throw and settles on its own timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild();
+      const client = new AcpClient();
+      client.connect(child as never);
+      const first = client.initialize();
+      first.catch(() => {});
+      child.stdin.emit('error', new Error('write EPIPE'));
+      await expect(first).rejects.toThrow('ACP adapter stdin failed');
+
+      const second = client.initialize();
+      const settled = expect(second).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(15_000);
+      await settled;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('decodes a multibyte character split across two stdout chunks', async () => {
+    const child = fakeChild();
+    const client = new AcpClient();
+    client.connect(child as never);
+    const p = client.initialize();
+    const buf = Buffer.from(
+      JSON.stringify({ jsonrpc: '2.0', id: 1, result: { authMethods: [{ id: 'a\u2014b' }] } }) + '\n',
+      'utf8',
+    );
+    const cut = buf.indexOf(Buffer.from('\u2014', 'utf8')) + 1;
+    child.stdout.write(buf.subarray(0, cut));
+    await new Promise((r) => setImmediate(r));
+    child.stdout.write(buf.subarray(cut));
+
+    expect(await p).toEqual([{ id: 'a\u2014b' }]);
+  });
+});
