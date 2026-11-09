@@ -259,4 +259,24 @@ describe('startCollector interval guards', () => {
       vi.useRealTimers();
     }
   });
+
+  it('a throw in the initial transcript scan is logged and startCollector still returns a stop handle', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(scanTranscriptsOnce).mockImplementationOnce(() => {
+      throw new Error('C:\\Users\\x\\secret.jsonl unreadable');
+    });
+    let stop: (() => void) | undefined;
+    try {
+      expect(() => {
+        stop = startWithTick('scan');
+      }).not.toThrow();
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('transcript scan failed');
+      expect(logged).not.toContain('secret.jsonl');
+      expect(typeof stop).toBe('function');
+    } finally {
+      stop?.();
+      errSpy.mockRestore();
+    }
+  });
 });
