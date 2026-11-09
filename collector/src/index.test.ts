@@ -1,9 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, mkdirSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { startCollector, pollAndUpsertFleet } from './index.js';
 import { openDatabase, migrate } from './schema.js';
+import { compact } from './retention.js';
+import { scanTranscriptsOnce } from './transcriptScan.js';
+
+// Pass-through spies: every test behaves as before unless it queues a one-off throw.
+vi.mock('./retention.js', async (orig) => {
+  const real = await orig<typeof import('./retention.js')>();
+  return { ...real, compact: vi.fn(real.compact) };
+});
+vi.mock('./transcriptScan.js', async (orig) => {
+  const real = await orig<typeof import('./transcriptScan.js')>();
+  return { ...real, scanTranscriptsOnce: vi.fn(real.scanTranscriptsOnce) };
+});
 
 describe('startCollector', () => {
   it('picks up a pre-existing spool file, ingests it, and the DB file exists on disk', async () => {
@@ -180,5 +192,71 @@ describe('startCollector -- pinned session reaches the stale-dispatch sweep', ()
 
   it('with no own-session.json the same dispatch is swept as fatal (behaviour unchanged)', () => {
     expect(runInitialScan(null)).toBe(1);
+  });
+});
+
+describe('startCollector interval guards', () => {
+  function startWithTick(which: 'compact' | 'scan') {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-guard-'));
+    return startCollector({
+      dbPath: join(dir, 'collector.db'),
+      spoolDir: join(dir, 'spool'),
+      tailIntervalMs: 1_000_000,
+      compactIntervalMs: which === 'compact' ? 1000 : 1_000_000,
+      projectsRoot: join(dir, 'projects'),
+      transcriptScanIntervalMs: which === 'scan' ? 1000 : 1_000_000,
+      ownSessionFilePath: join(dir, 'own-session.json'),
+      fleetPollIntervalMs: 1_000_000,
+      memoryDbPath: join(dir, 'memory.db'),
+      memoryExtractIntervalMs: 1_000_000,
+      collectorSettingsPath: join(dir, 'collector-settings.json'),
+    });
+  }
+
+  it('a compaction tick that throws is logged and does not escape the interval', () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const before = vi.mocked(compact).mock.calls.length;
+    const stop = startWithTick('compact');
+    try {
+      vi.mocked(compact).mockImplementationOnce(() => {
+        throw new Error('C:\\Users\\x\\secret.db locked');
+      });
+      expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('compaction failed');
+      expect(logged).not.toContain('secret.db');
+      vi.advanceTimersByTime(1000);
+      expect(vi.mocked(compact).mock.calls.length - before).toBe(2);
+    } finally {
+      stop();
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a transcript scan tick that throws is logged and does not escape the interval', () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const zero = { filesScanned: 0, eventsIngested: 0, toolCallsIngested: 0, anomaliesIngested: 0 };
+    vi.mocked(scanTranscriptsOnce)
+      .mockImplementationOnce(() => zero as ReturnType<typeof scanTranscriptsOnce>) // initial scan at startup
+      .mockImplementationOnce(() => {
+        throw new Error('C:\\Users\\x\\secret.jsonl unreadable');
+      });
+    const before = vi.mocked(scanTranscriptsOnce).mock.calls.length;
+    const stop = startWithTick('scan');
+    try {
+      expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('transcript scan failed');
+      expect(logged).not.toContain('secret.jsonl');
+      vi.advanceTimersByTime(1000);
+      expect(vi.mocked(scanTranscriptsOnce).mock.calls.length - before).toBe(3);
+    } finally {
+      stop();
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
