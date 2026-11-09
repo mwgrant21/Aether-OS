@@ -22,6 +22,12 @@ function callbackFor(channel: string, method = 'handle'): string {
   if (!statement || !ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) throw new Error(`Missing ${channel} consumer`);
   return statement.expression.arguments[1].getText(ast);
 }
+function constFor(name: string): string {
+  const statement = ast.statements.find(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(d => d.name.getText(ast) === name && d.initializer));
+  if (!statement || !ts.isVariableStatement(statement)) throw new Error(`Missing top-level const ${name}`);
+  return statement.declarationList.declarations.find(d => d.name.getText(ast) === name)!.initializer!.getText(ast);
+}
 function connectedCallback(option = 'spawn'): string {
   const statement = ast.statements.find(node => ts.isVariableStatement(node)
     && node.declarationList.declarations.some(d => d.name.getText(ast) === 'communicationSessions'));
@@ -68,6 +74,9 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context) as (...args: unknown[]) => void;
+  // The start handlers are module-level consts in main.ts; the vm reads these at call time.
+  for (const name of ['claudeStartHandlers', 'codexStartHandlers', 'terminal2StartHandlers'])
+    Object.assign(context, { [name]: compile(constFor(name)) });
   return { ...context, prompt: () => prompt, launch: (id: string | undefined) => { launchId = id; prompt = 'unknown'; },
     resize: compile(callbackFor('pty:resize', 'on')), event: { sender: { isDestroyed: () => false, send } }, send,
     ordinary: compile(callbackFor('pty:start')), connected: compile(connectedCallback()), codex: compile(callbackFor('codexPty:start')),
@@ -76,6 +85,10 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
 }
 
 describe('production terminal consumer ownership (deterministic callbacks)', () => {
+  it('declares the three start handler objects as top-level consts in main.ts', () => {
+    for (const name of ['claudeStartHandlers', 'codexStartHandlers', 'terminal2StartHandlers'])
+      for (const key of ['onData', 'onAlive', 'onExit']) expect(constFor(name)).toContain(`${key}:`);
+  });
   it('protects normal and connected Claude rendering and usage from replaced PTYs', () => {
     const f = fixture(), first = fakePty(), second = fakePty(), third = fakePty();
     const secondExit = vi.fn(), thirdExit = vi.fn();
