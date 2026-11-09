@@ -44,6 +44,13 @@ describe('installer.nsh customCheckAppRunning (structure)', () => {
     expect(ps).not.toContain('taskkill');
     expect(ps).not.toContain('/IM');
   });
+
+  it('delimits the sweep nsExec command with backticks, since the script holds single quotes', () => {
+    const line = /^ *nsExec::ExecToLog .*\$\{AETHER_SWEEP_PS\}.*$/m.exec(macro)?.[0] ?? '';
+    expect(line).toMatch(/ExecToLog \/TIMEOUT=\d+ `.*`\s*$/);
+    expect(line).not.toContain("'");
+    expect(/^!define AETHER_SWEEP_PS "(.*)"$/m.exec(nsh)?.[1]).not.toContain('`');
+  });
 });
 
 function sweepScript(): string {

@@ -111,7 +111,7 @@ Var pid
     System::Call 'kernel32::SetEnvironmentVariable(t "AETHER_SELF_PID", t "$0")'
     System::Call 'kernel32::SetEnvironmentVariable(t "AETHER_INSTDIR", t "$INSTDIR")'
     DetailPrint "Stopping any helper process left running from $INSTDIR"
-    nsExec::ExecToLog /TIMEOUT=60000 '"$PowerShellPath" -NoProfile -NonInteractive -C "${AETHER_SWEEP_PS}"'
+    nsExec::ExecToLog /TIMEOUT=60000 `"$PowerShellPath" -NoProfile -NonInteractive -C "${AETHER_SWEEP_PS}"`
     Pop $0
     ${if} $0 != 0
       DetailPrint "WARNING: could not stop every process under $INSTDIR (exit $0); continuing."
