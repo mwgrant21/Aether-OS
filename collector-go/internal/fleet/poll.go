@@ -5,11 +5,13 @@
 package fleet
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/mwgrant21/aether-os/collector-go/internal/canary"
 )
@@ -225,13 +227,40 @@ func logDrift(db *sql.DB, nowMs int64, detail string) {
 // same type as an optional parameter).
 type FleetExecFn func() (stdout string, err error)
 
-// defaultFleetExec mirrors fleetPoll.ts's defaultFleetExec.
-func defaultFleetExec() (string, error) {
-	out, err := exec.Command("claude", "agents", "--json").Output()
+// The fleet poll interval is 15 s (cmd/aether-collector/main.go), so the timeout
+// sits below it: a hung child costs at most one skipped tick and the fleet
+// heartbeat (stale after 45 s in electron/collectorStore.ts) stays fresh. A
+// healthy call measured ~0.23 s (native claude.exe), so 10 s is ~40x headroom.
+// WaitDelay is the Windows-safe part: CommandContext only terminates the direct
+// child, and a grandchild (e.g. node behind a claude.cmd shim) can keep stdout
+// open, so after the grace period Go force-closes the pipes and stops waiting.
+const (
+	fleetExecTimeout   = 10 * time.Second
+	fleetExecWaitDelay = 2 * time.Second
+)
+
+// runFleetExec runs name with args, killing it after timeout. A timeout is
+// reported as "timed out after <timeout>" (checked via ctx.Err(), since a kill
+// otherwise surfaces as an opaque exit/ErrWaitDelay error). Stdout is still
+// buffered unbounded by Output(), as before.
+func runFleetExec(timeout, waitDelay time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = waitDelay
+	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("timed out after %s", timeout)
+	}
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// defaultFleetExec mirrors fleetPoll.ts's defaultFleetExec, plus a timeout.
+func defaultFleetExec() (string, error) {
+	return runFleetExec(fleetExecTimeout, fleetExecWaitDelay, "claude", "agents", "--json")
 }
 
 // PollFleet mirrors fleetPoll.ts's pollFleet. execFn defaults to

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mwgrant21/aether-os/collector-go/internal/schema"
 )
@@ -406,5 +408,75 @@ func TestPollFleet_Drift_WritesLoudStderrLine(t *testing.T) {
 	const want = "[aether-collector] contract drift detected: claude agents --json failed to run: spawn claude ENOENT"
 	if !strings.Contains(out, want) {
 		t.Fatalf("expected stderr to contain %q, got %q", want, out)
+	}
+}
+
+// TestFleetExecHelperProcess is the re-exec target for the runFleetExec tests.
+// It is a no-op unless FLEET_EXEC_HELPER is set.
+func TestFleetExecHelperProcess(t *testing.T) {
+	switch os.Getenv("FLEET_EXEC_HELPER") {
+	case "":
+		return
+	case "echo":
+		os.Stdout.WriteString("[]")
+		os.Exit(0)
+	case "sleep":
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	case "grandchild":
+		// Inherits this process's stdout pipe but not go-test's stderr.
+		gc := exec.Command(os.Args[0], "-test.run=^TestFleetExecHelperProcess$")
+		gc.Env = append(os.Environ(), "FLEET_EXEC_HELPER=sleep")
+		gc.Stdout = os.Stdout
+		gc.Stderr = nil
+		if err := gc.Start(); err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	}
+}
+
+func runHelper(t *testing.T, mode string) (string, error, time.Duration) {
+	t.Helper()
+	t.Setenv("FLEET_EXEC_HELPER", mode)
+	start := time.Now()
+	out, err := runFleetExec(300*time.Millisecond, 300*time.Millisecond, os.Args[0], "-test.run=^TestFleetExecHelperProcess$")
+	return out, err, time.Since(start)
+}
+
+func TestRunFleetExec_ReturnsStdoutFromHealthyChild(t *testing.T) {
+	out, err, _ := runHelper(t, "echo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "[]" {
+		t.Errorf("stdout = %q, want %q", out, "[]")
+	}
+}
+
+func TestRunFleetExec_KillsHungChildAndReturnsTimeoutError(t *testing.T) {
+	_, err, elapsed := runHelper(t, "sleep")
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "timed out")
+	}
+	if strings.Contains(err.Error(), os.Args[0]) {
+		t.Errorf("error leaks the executable path: %q", err.Error())
+	}
+	if elapsed > 4*time.Second {
+		t.Errorf("returned after %s, want < 4s", elapsed)
+	}
+}
+
+func TestRunFleetExec_ReturnsWhenGrandchildKeepsStdoutOpen(t *testing.T) {
+	_, err, elapsed := runHelper(t, "grandchild")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if elapsed > 4*time.Second {
+		t.Errorf("returned after %s, want < 4s (WaitDelay should abandon the held pipe)", elapsed)
 	}
 }
