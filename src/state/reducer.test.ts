@@ -885,3 +885,34 @@ describe('sessionStartedAt (session clock)', () => {
     expect(reducer(dead, { type: 'SET_TERMINAL_ALIVE', alive: true }).sessionStartedAt).toBe(new Date(2026, 8, 30, 16, 0).toISOString());
   });
 });
+
+describe('SET_REAL_AGENTS age-out', () => {
+  const NOW = Date.parse('2026-11-09T12:00:00.000Z');
+  const stale: RealAgentDispatch = { toolUseId: 'tu_stale', subagentType: 'builder', description: 'Build T7 docs', startedAt: '2026-11-09T04:00:00.000Z', prompt: '', model: null };
+  const live: RealAgentDispatch = { ...stale, toolUseId: 'tu_live', description: 'Fresh refuter', startedAt: '2026-11-09T11:30:00.000Z' };
+
+  it('hides an abandoned dispatch without recording it as completed or opening a channel', () => {
+    const before = { ...initialState, realAgents: [stale, live], cfg: { ...initialState.cfg, autoCreateDispatchChannels: true } };
+    const next = reducer(before, { type: 'SET_REAL_AGENTS', agents: [stale, live], nowMs: NOW });
+    expect(next.realAgents.map((d) => d.toolUseId)).toEqual(['tu_live']);
+    expect(next.recentCompletedDispatches).toEqual(before.recentCompletedDispatches);
+    expect(next.dispatchChannels).toEqual(before.dispatchChannels);
+  });
+
+  it('does not log an already-aged-out dispatch as started on every snapshot', () => {
+    const before = { ...initialState, realAgents: [live] };
+    const next = reducer(before, { type: 'SET_REAL_AGENTS', agents: [stale, live], nowMs: NOW });
+    expect(next.logs).toEqual(before.logs);
+  });
+
+  it('still records a dispatch that finishes (leaves the snapshot) as completed', () => {
+    const before = { ...initialState, realAgents: [live] };
+    const next = reducer(before, { type: 'SET_REAL_AGENTS', agents: [], nowMs: NOW });
+    expect(next.recentCompletedDispatches.map((d) => d.toolUseId)).toEqual(['tu_live']);
+  });
+
+  it('applies no age-out when the action carries no nowMs', () => {
+    const next = reducer(initialState, { type: 'SET_REAL_AGENTS', agents: [stale] });
+    expect(next.realAgents).toEqual([stale]);
+  });
+});

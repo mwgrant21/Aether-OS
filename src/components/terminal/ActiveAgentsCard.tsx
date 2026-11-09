@@ -42,6 +42,10 @@ export function ActiveAgentsCard() {
 function cardStyle(colors: ColorPalette): CSSProperties {
   return {
     height: '100%',
+    // A flex item's min-height defaults to its content, so without these the card grows with the
+    // agent count, pushes the rail's other cards down and the inner list never scrolls.
+    minHeight: 0,
+    overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
     padding: 14,
