@@ -216,6 +216,23 @@ describe.runIf(process.platform === 'win32')('ownerClient (real createOwner over
     expect(c.ready).toBe(false);
   });
 
+  it('a reconnect that cannot read the discovery file logs the errno code, never the path', async () => {
+    const lines: string[] = [];
+    const r = await rig();
+    const px = await proxy(r.pipe);
+    const c = client({ reconnectMs: 300, log: (l: string) => { lines.push(l); } });
+    const file = discoveryFor(px.pipe, r.secret);
+    await c.connect(file);
+    fs.rmSync(file);
+    px.drop();
+    const lost = () => lines.filter((l) => l.startsWith('pty-owner connection lost'));
+    await vi.waitFor(() => expect(lost().length).toBeGreaterThan(0));
+    expect(lost()).toEqual(['pty-owner connection lost: discovery file ENOENT']);
+    expect(lines.join('\n')).not.toContain(path.dirname(file));
+    expect(lines.join('\n')).not.toContain(path.basename(file));
+    expect(c.ready).toBe(false);
+  });
+
   it('seq restarting after forget + spawn is not mistaken for duplicates', async () => {
     const r = await rig();
     const c = await connected(r);
@@ -380,6 +397,17 @@ describe.runIf(process.platform === 'win32')('ownerClient (real createOwner over
       expect(await settled).toMatch(/proto/);
       expect(c.ready).toBe(false);
       await expect(c.shutdown()).resolves.toBeUndefined(); // closed: a no-op
+    });
+
+    it('shutdown and release on a never-connected client resolve without rejecting and leave it connectable', async () => {
+      const r = await rig();
+      const c = client();
+      await within(c.shutdown(), 'idle shutdown');
+      await within(c.release(), 'idle release');
+      expect(c.ready).toBe(false);
+      await c.connect(r.discovery);
+      expect(c.ready).toBe(true);
+      expect(r.owner.hasOwner()).toBe(true); // nothing was sent to the helper by the idle calls
     });
 
     it('shutdown while ready resolves after the socket closed', async () => {

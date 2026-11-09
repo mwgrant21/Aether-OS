@@ -36,7 +36,9 @@ export class PtyLifecycle {
 
   /** A helper-backed pty (RemotePty) buffers data/exit until resume(); a fresh start resumes it once
    *  the callbacks are registered. `adopted` starts wrap a pty adoption resumes itself after its own setup.
-   *  In-process node-pty sessions have no resume() and are untouched. `size` is unused here; it keeps
+   *  A real node-pty session (1.1.0) also has resume() (it forwards to the socket's resume()), but its socket
+   *  is already flowing because node-pty's own data listener is attached at construction, so the call is a
+   *  no-op there. `PtyLike` omits resume, hence the cast below. `size` is unused here; it keeps
    *  the signature TerminalSlot overrides. */
   start(spawn: () => PtyLike, handlers: PtyLifecycleHandlers, _size?: { cols: number; rows: number }, opts?: { adopted?: boolean }): PtyLike {
     const pty = spawn();
