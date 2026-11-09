@@ -525,6 +525,7 @@ const PTY_IMPORTERS: readonly string[] = [
   'communicationBridge/connectedPromptObserver.ts', // ptyLifecycle (types)
   'communicationBridge/launchConfig.ts', // buildPtyEnv from ptyManager
   'main.ts',
+  'ptyOwner/ownerEntry.ts', // node-pty (the detached helper's only pty wiring)
   'terminalHub.ts',
 ];
 const SKIP_DIRS: ReadonlySet<string> = new Set([...RESERVED_DIRS, '__fixtures__']);

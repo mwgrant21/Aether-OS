@@ -10,6 +10,7 @@ export default defineConfig({
         main: resolve(__dirname, 'electron/main.ts'),
         'communication-mcp': resolve(__dirname, 'electron/communicationBridge/mcpEntry.ts'),
         'aether-data-mcp': resolve(__dirname, 'electron/dashboards/dataServerEntry.ts'),
+        'pty-owner': resolve(__dirname, 'electron/ptyOwner/ownerEntry.ts'),
       } },
     },
   },
