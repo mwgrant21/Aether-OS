@@ -240,7 +240,7 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
         }
       }
     } catch (e) {
-      if (state === 'closed') return; // closed intentionally while attaching
+      if (isClosed()) return; // closed intentionally while attaching
       if (session) { const s = session; session = null; s.socket.destroy(); }
       if (settlePending(null)) return;
       state = 'reconnecting';
@@ -274,6 +274,9 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
     attachChain = run.then(() => undefined, () => undefined);
     return run;
   }
+
+  // A function, so the compiler does not narrow `state` across awaits that closeIntentionally can interrupt.
+  const isClosed = (): boolean => state === 'closed';
 
   function sendAndEnd(s: Session, frame: ClientFrame): Promise<void> {
     state = 'closed';
@@ -323,7 +326,7 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
         state = 'ready';
         startPing();
       } catch (e) {
-        if (state !== 'closed' && !settlePending(null)) state = 'idle';
+        if (!isClosed() && !settlePending(null)) state = 'idle';
         throw e;
       } finally { cancel(); }
     },
