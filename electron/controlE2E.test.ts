@@ -598,4 +598,22 @@ describe('phone control end to end: thread and prompts', () => {
     expect(reqBody.indexOf('permissionBroker.open')).toBeGreaterThan(reqBody.indexOf("behavior: 'allow'"));
     expect(reqBody.indexOf('permissionBroker.open')).toBeLessThan(reqBody.indexOf("sendToWindow('permission:request'"));
   });
+
+  it('main.ts clears the renderer card even when no resolver is found, without resolving or closing the broker', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, 'main.ts'), 'utf8').replace(/\r\n/g, '\n');
+    const body = (chan: string, next: string) => {
+      const h = src.slice(src.indexOf(`ipcMain.handle('${chan}'`));
+      return h.slice(0, h.indexOf(next));
+    };
+    const perm = body('permission:respond', "ipcMain.handle('postToolFlag:respond'");
+    const flag = body('postToolFlag:respond', "ipcMain.handle('optimize:apply'");
+    for (const [h, chan] of [[perm, 'permission:request'], [flag, 'postToolFlag:request']] as const) {
+      // no bare early return on a missing resolver, and the clear is not nested inside the resolver branch
+      expect(h).not.toMatch(/if \(!resolve\) return/);
+      expect(h).toMatch(new RegExp(`\\n  sendToWindow\\('${chan}', null\\);`));
+    }
+    // resolve and broker close stay inside the found-resolver branch (indented), so an unknown id triggers neither
+    expect(perm).toMatch(/\n  if \(resolve\) \{\n[\s\S]*\n    resolve\(decision\);[\s\S]*\n    try \{ permissionBroker\.close[^\n]*\n  \}\n/);
+    expect(flag).toMatch(/\n  if \(resolve\) \{\n    pendingPostToolFlagResolvers\.delete\(requestId\);\n    resolve\(decision\);\n  \}\n/);
+  });
 });

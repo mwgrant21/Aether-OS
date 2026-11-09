@@ -1888,11 +1888,14 @@ ipcMain.handle('optimize:targets', async () => {
 
 ipcMain.handle('permission:respond', (_event, { requestId, decision }: { requestId: string; decision: PermissionDecision }) => {
   const resolve = pendingPermissionResolvers.get(requestId);
-  if (!resolve) return; // already timed out / resolved / duplicate response
-  pendingPermissionResolvers.delete(requestId);
-  resolve(decision);
-  // Observe-only, after the decision is resolved and before the renderer is told; a broker fault cannot skip either.
-  try { permissionBroker.close(requestId, 'answered-desktop'); } catch { /* observe-only */ }
+  if (resolve) {
+    pendingPermissionResolvers.delete(requestId);
+    resolve(decision);
+    // Observe-only, after the decision is resolved and before the renderer is told; a broker fault cannot skip either.
+    try { permissionBroker.close(requestId, 'answered-desktop'); } catch { /* observe-only */ }
+  }
+  // No resolver means it timed out / was already resolved / is a duplicate: nothing to resolve or close,
+  // but the renderer's card must still be cleared or it can never be dismissed.
   // The renderer only ever learns a request EXISTS from this channel, so it
   // also has to learn from it that the request is done -- otherwise
   // state.pendingPermissionRequest stays non-null forever and every surface
@@ -1903,9 +1906,11 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
 
 ipcMain.handle('postToolFlag:respond', (_event, { requestId, decision }: { requestId: string; decision: PostToolFlagDecision }) => {
   const resolve = pendingPostToolFlagResolvers.get(requestId);
-  if (!resolve) return; // already timed out / resolved / duplicate response
-  pendingPostToolFlagResolvers.delete(requestId);
-  resolve(decision);
+  if (resolve) {
+    pendingPostToolFlagResolvers.delete(requestId);
+    resolve(decision);
+  }
+  // Timed-out / duplicate response: nothing to resolve, but still clear the renderer's stuck card.
   // Same reasoning as permission:respond above -- clear the renderer's pending
   // flag so the queue/badge/tile actually empty out after a review.
   sendToWindow('postToolFlag:request', null);
