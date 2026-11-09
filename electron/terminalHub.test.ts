@@ -44,6 +44,15 @@ describe('terminalHub', () => {
     expect(slot.info()).toMatchObject({ cols: 100, rows: 30 });
   });
 
+  it('an adopted start emits adopted:true; a normal start carries no adopted field', () => {
+    const { slot, events } = setup();
+    slot.start(() => fakePty(), handlers(), { cols: 80, rows: 24 });
+    slot.start(() => fakePty(), handlers(), { cols: 80, rows: 24 }, { adopted: true });
+    const starts = events.filter((e) => e.kind === 'start');
+    expect(starts[0]).toStrictEqual({ kind: 'start', q: 1, cols: 80, rows: 24 });
+    expect(starts[1]).toStrictEqual({ kind: 'start', q: 2, cols: 80, rows: 24, adopted: true });
+  });
+
   it('exit -> exited; a superseded pty produces no events', () => {
     const { slot, events } = setup();
     const first = fakePty(), second = fakePty();
@@ -491,6 +500,17 @@ describe('terminalHub read port', () => {
     off();
     p2.fireExit();
     expect(seen).toHaveLength(3);
+  });
+
+  it('an adopted start mirrors like a normal start: snapshot after fed data equals the data', async () => {
+    const { hub, port, pty } = readSetup(true);
+    port.retain();
+    hub.slot('claude').start(() => pty, handlers(), { cols: 80, rows: 24 }, { adopted: true });
+    pty.fireData('hello adopted');
+    const snaps: string[] = [];
+    port.attach('claude', null, { snap: (e) => { snaps.push(e.d); }, out: () => undefined, size: () => undefined });
+    await vi.waitFor(() => expect(snaps).toHaveLength(1));
+    expect(snaps[0]).toBe('hello adopted');
   });
 
   it('honours the snapshot byte cap end to end with ESC-dense output', async () => {

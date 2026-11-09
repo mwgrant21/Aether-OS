@@ -78,6 +78,8 @@ const remoteByName = new Map(remoteFiles.map((f) => [nameOf(f), f]));
 const LISTEN_ALLOWLIST: ReadonlyMap<string, (args: readonly string[]) => boolean> = new Map([
   ['electron/permissionServer.ts', (a: readonly string[]) => a.length === 2 && a[0] === 'options.port' && a[1] === "'127.0.0.1'"],
   ['electron/communicationBridge/pipeServer.ts', (a: readonly string[]) => a.length >= 2 && a[0] === 'endpoint'],
+  // Detached pty-owner helper (Phase B): named pipe only, endpoint is a pipe path, never a TCP host/port.
+  ['electron/ptyOwner/ownerCore.ts', (a: readonly string[]) => a.length === 2 && a[0] === 'endpoint' && a[1] === 'onListening'],
   // Voice gateway (privacy §18): tailnet-only host, assertBindableHost runs first in startVoiceServer.
   ['electron/voice/voiceServer.ts', (a: readonly string[]) => a.length >= 2 && a[0] === 'opts.port' && a[1] === 'opts.host'],
   // RISKS in the mobile remote-access plan: isPortAvailable() binds all interfaces for an instant

@@ -11,7 +11,7 @@ export type SlotEvent =
   | { kind: 'out'; q: number; d: string }
   | { kind: 'size'; cols: number; rows: number }
   | { kind: 'state'; state: TerminalSlotState }
-  | { kind: 'start'; q: number; cols: number; rows: number };
+  | { kind: 'start'; q: number; cols: number; rows: number; adopted?: boolean };
 
 export type SlotListener = (event: SlotEvent) => void;
 
@@ -64,7 +64,14 @@ export class TerminalSlot extends PtyLifecycle {
     }
   }
 
-  start(spawn: () => PtyLike, handlers: PtyLifecycleHandlers, size?: { cols: number; rows: number }): PtyLike {
+  /** `opts.adopted` marks a start that wraps an already-running pty (not a fresh launch); it is only
+   *  carried on the emitted `start` event, and omitted from the event when not set. */
+  start(
+    spawn: () => PtyLike,
+    handlers: PtyLifecycleHandlers,
+    size?: { cols: number; rows: number },
+    opts?: { adopted?: boolean },
+  ): PtyLike {
     return super.start(spawn, {
       onData: (data) => {
         try {
@@ -86,7 +93,7 @@ export class TerminalSlot extends PtyLifecycle {
         this.q += 1;
         if (size && validDims(size.cols, size.rows)) { this.cols = size.cols; this.rows = size.rows; }
         else { this.cols = DEFAULT_COLS; this.rows = DEFAULT_ROWS; }
-        this.emit({ kind: 'start', q: this.q, cols: this.cols, rows: this.rows });
+        this.emit({ kind: 'start', q: this.q, cols: this.cols, rows: this.rows, ...(opts?.adopted ? { adopted: true } : {}) });
         if (alive) this.emit({ kind: 'state', state: 'running' });
         handlers.onAlive();
       },
@@ -95,7 +102,7 @@ export class TerminalSlot extends PtyLifecycle {
         this.emit({ kind: 'state', state: 'exited' });
         handlers.onExit();
       },
-    });
+    }, size, opts);
   }
 
   setRestarter(fn: () => void): void { this.restarter = fn; }

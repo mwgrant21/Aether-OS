@@ -8,12 +8,13 @@ import { join, dirname } from 'path';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { resolveBoardCliPath, spawnPty, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
+import { resolveBoardCliPath, spawnPty, buildPtyLaunchSpec, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
-import { spawnCodexPty, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
+import { spawnCodexPty, buildCodexLaunchSpec, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { createTerminalHub } from './terminalHub';
+import type { PtyLifecycleHandlers } from './ptyLifecycle';
 import { createDesktopFeed } from './desktopFeed';
 import { attachTerminalBoardReset, resetTerminalBoardEntry } from './terminalBoard';
 import { TERMINAL_BOARD_DIR_NAME } from '../src/shared/terminalBoard';
@@ -67,6 +68,12 @@ import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INT
 import { createTickCompletionHandler } from './liveTickCompletions';
 import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
 import { createFlushQuitGate } from './flushQuitGate';
+import { spawn as spawnChild } from 'node:child_process';
+import { createOwnerClient } from './ptyOwner/ownerClient';
+import { ensureOwner } from './ptyOwner/ownerLauncher';
+import { adoptOwned, type AdoptTarget } from './ptyOwner/adopt';
+import { createSpawnRouter } from './ptyOwner/spawnRoute';
+import { PROTO, discoveryFileName } from './ptyOwner/protocol';
 import { scheduleResolverCleanup } from './resolverCleanup';
 import { handleNotification } from './notificationHandler';
 import { isPinnedStatusline, startStatuslineWatcher } from './statuslineWatcher';
@@ -758,10 +765,14 @@ const handleTickCompletions = createTickCompletionHandler({
 // not finished when the bound elapses the quit proceeds and the timeout is logged instead.
 // remoteQuitting turns the hub's mutators into no-ops once the stop has begun (a stopped hub is single-use).
 let remoteQuitting = false;
+let quitting = false; // set in the quit flush before the owner shutdown/release frame; ensureOwner never launches after it
 let remoteStopped = false;
 const baselineQuitGate = createFlushQuitGate(async () => {
   remoteQuitting = true;
+  quitting = true; // before the owner frame: a client closed by shutdown() must never read as a stale helper to relaunch
   await Promise.allSettled([
+    // Owner helper first so its frame goes out before the slower stops; rides this gate's bound.
+    ownerClient ? (PTY_OWNER_ON_QUIT === 'shutdown' ? ownerClient.shutdown() : ownerClient.release()) : Promise.resolve(),
     narrationDurationBaseline.flush(),
     aetherChoice ? aetherChoice.flush() : Promise.resolve(),
     // The voice gateway stops its Claude child inside the same held quit; skipped unless the private dir is ready.
@@ -1004,6 +1015,7 @@ app.whenReady().then(async () => {
     if (privateDirOk && !remoteQuitting) controlHub.autoEnable().catch(() => { console.error('[control] launch re-enable failed'); });
   });
 
+  await adoptAtStartup(); // feature ON only; bounded by launcher (5 s) + adopt (3 s)
   Menu.setApplicationMenu(null);
   createWindow();
 
@@ -1399,6 +1411,17 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const terminalHub = createTerminalHub();
+// Quit ENDS terminals (settled). Feature is OFF unless AETHER_PTY_OWNER=1 on win32.
+const PTY_OWNER_ON_QUIT: 'shutdown' | 'release' = 'shutdown';
+const ptyOwnerEnabled = process.platform === 'win32' && process.env.AETHER_PTY_OWNER === '1';
+const ownerLog = (line: string) => diagLog.write(`[diag] ${line} at=${new Date().toISOString()}`);
+const ownerClient = ptyOwnerEnabled ? createOwnerClient({ log: ownerLog }) : null;
+ownerClient?.onLost(() => ownerLog('pty-owner: connection lost'));
+const spawnOwned = createSpawnRouter({ client: ownerClient, homedir: os.homedir(), log: ownerLog });
+// EPERM = alive but not signalable; calling that dead would double-launch a helper.
+const pidIsAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+};
 // Always-on retain: the hub keeps its in-memory headless mirror per running slot so a reloaded
 // window can be repainted (an unretained hub hands back an EMPTY snapshot). Released on quit.
 const desktopRetain = terminalHub.readPort().retain();
@@ -1479,6 +1502,61 @@ const communicationGrants = new CommunicationGrantControl(communicationBridge, a
 
 const planUsageScraper = createPlanUsageScraper();
 
+// Attach to shells a surviving helper still owns (feature ON only). Never fatal; runs before any renderer exists.
+async function adoptAtStartup(): Promise<void> {
+  if (!ownerClient) return;
+  try {
+    if (quitting) return;
+    const ok = await ensureOwner({
+      client: ownerClient, discoveryPath: join(aetherOsDir, discoveryFileName(app.getPath('userData'), PROTO)),
+      execPath: process.execPath, entryPath: join(__dirname, 'pty-owner.js'),
+      spawn: (file, args, options) => { if (quitting) throw new Error('quitting'); return spawnChild(file, args, options); },
+      fs: { existsSync, readFileSync, rmSync }, isAlive: pidIsAlive, env: process.env,
+      sleep: ms => new Promise<void>(resolve => setTimeout(resolve, ms)), now: Date.now, log: ownerLog,
+    });
+    if (!ok || quitting) return;
+    const target = (slot: typeof ptyLifecycle, handlers: PtyLifecycleHandlers, apply: AdoptTarget['apply'] = () => {}): AdoptTarget => ({
+      start: (pty, info) => slot.start(() => pty, handlers, { cols: info.cols, rows: info.rows }, { adopted: true }),
+      apply,
+    });
+    await adoptOwned({
+      client: ownerClient,
+      targets: {
+        claude: target(ptyLifecycle, claudeStartHandlers, ({ cols, rows, meta, startedAt }) => {
+          claudeTerminalDimensions = { cols, rows };
+          pinnedPtyExited = false;
+          pinnedLaunchSessionId = typeof meta.sessionId === 'string' ? meta.sessionId : null;
+          liveAgentTracker.notifyPtySpawned(typeof meta.startedAt === 'number' ? meta.startedAt : startedAt, pinnedLaunchSessionId);
+        }),
+        codex: target(codexPtyLifecycle, codexStartHandlers),
+        terminal2: target(terminal2PtyLifecycle, terminal2StartHandlers),
+      },
+      setTimer: (fn, ms) => { const h = setTimeout(fn, ms); h.unref(); return () => clearTimeout(h); },
+      log: ownerLog,
+    });
+  } catch {
+    ownerLog('pty-owner: adoption failed');
+  }
+}
+
+const claudeStartHandlers: PtyLifecycleHandlers = {
+  onData: (data) => {
+    ptyFeed.data(data);
+    planUsageScraper.ingest(data);
+  },
+  // Lets the renderer's Uplinks view show real terminal liveness instead of
+  // an always-on fake status -- see useTerminalAliveSync.ts. terminalAlive
+  // starts false (no pty is started until the Terminal tab is actually
+  // visited, and never at all outside Electron), so this is the event that
+  // turns it on; pty:exit turns it back off.
+  onAlive: () => sendToWindow('pty:alive', undefined),
+  onExit: () => {
+    pinnedPtyExited = true;
+    ptyFeed.exit();
+    planUsageScraper.reset(); // a new pty means a fresh /usage read next time
+  },
+};
+
 ipcMain.handle('pty:start', (_event, { cols, rows }: { cols: number; rows: number }) => {
   // Settings can already have launched a connected session. Mounting Terminal
   // only attaches to that shell; it must never silently replace it.
@@ -1492,23 +1570,7 @@ ipcMain.handle('pty:start', (_event, { cols, rows }: { cols: number; rows: numbe
   const launchCommand = aetherChoice?.launchCommandFor('claude', { sessionId });
   if (launchCommand === undefined) aetherChoice?.onForeignLaunch('claude'); // not an Aether launch (flag off: no-op)
   try {
-    ptyLifecycle.start(() => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath)) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath), launchCommand), {
-      onData: (data) => {
-        ptyFeed.data(data);
-        planUsageScraper.ingest(data);
-      },
-      // Lets the renderer's Uplinks view show real terminal liveness instead of
-      // an always-on fake status -- see useTerminalAliveSync.ts. terminalAlive
-      // starts false (no pty is started until the Terminal tab is actually
-      // visited, and never at all outside Electron), so this is the event that
-      // turns it on; pty:exit turns it back off.
-      onAlive: () => sendToWindow('pty:alive', undefined),
-      onExit: () => {
-        pinnedPtyExited = true;
-        ptyFeed.exit();
-        planUsageScraper.reset(); // a new pty means a fresh /usage read next time
-      },
-    }, { cols, rows });
+    ptyLifecycle.start(() => spawnOwned('claude', () => buildPtyLaunchSpec(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath), launchCommand), { kind: 'claude', sessionId, startedAt: Date.now() }, () => launchCommand === undefined ? spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath)) : spawnPty(cols, rows, undefined, sessionId, terminalIdentityEnv('claude', boardCliPath), launchCommand)), claudeStartHandlers, { cols, rows });
   } catch (error) {
     aetherChoice?.onForeignLaunch('claude'); // no start event follows a failed spawn: drop the stashed plan
     throw error;
@@ -1547,6 +1609,14 @@ ipcMain.handle('plan:sync', async () => {
 // instance, separate channels, never shares state.
 const codexPtyLifecycle = terminalHub.slot('codex');
 
+const codexStartHandlers: PtyLifecycleHandlers = {
+  onData: (data) => {
+    codexFeed.data(data);
+  },
+  onAlive: () => sendToWindow('codexPty:alive', undefined),
+  onExit: () => codexFeed.exit(),
+};
+
 ipcMain.handle('codexPty:start', (_event, { cols, rows }: { cols: number; rows: number }) => {
   // A reloaded renderer calls start again: attach to the live pty, never replace it.
   if (codexPtyLifecycle.current) {
@@ -1554,13 +1624,7 @@ ipcMain.handle('codexPty:start', (_event, { cols, rows }: { cols: number; rows: 
     codexFeed.reattach();
     return;
   }
-  codexPtyLifecycle.start(() => spawnCodexPty(cols, rows), {
-    onData: (data) => {
-      codexFeed.data(data);
-    },
-    onAlive: () => sendToWindow('codexPty:alive', undefined),
-    onExit: () => codexFeed.exit(),
-  }, { cols, rows });
+  codexPtyLifecycle.start(() => spawnOwned('codex', () => buildCodexLaunchSpec(cols, rows), { kind: 'codex', startedAt: Date.now() }, () => spawnCodexPty(cols, rows)), codexStartHandlers, { cols, rows });
 });
 
 ipcMain.on('codexPty:write', (_event, input: string) => {
@@ -1577,22 +1641,24 @@ ipcMain.on('codexPty:resize', (_event, { cols, rows }: { cols: number; rows: num
 // communication bridge, which all stay bound to the pinned pty above.
 const terminal2PtyLifecycle = terminalHub.slot('terminal2');
 
+const terminal2StartHandlers: PtyLifecycleHandlers = {
+  onData: (data) => {
+    terminal2Feed.data(data);
+  },
+  // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
+  // can reset its xterm after a restart (also fires on the first start).
+  onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
+  // Tell the renderer so it can offer an Enter-to-restart; still not wired
+  // into pinnedPtyExited, the usage scraper or the tracker.
+  onExit: () => terminal2Feed.exit(),
+};
+
 ipcMain.handle('terminal2Pty:start', (_event, { cols, rows }: { cols: number; rows: number }) => {
   const spawn = (size: { cols: number; rows: number }) => {
     const launchCommand = aetherChoice?.launchCommandFor('terminal2');
     if (launchCommand === undefined) aetherChoice?.onForeignLaunch('terminal2'); // not an Aether launch (flag off: no-op)
     try {
-      terminal2PtyLifecycle.start(() => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }, launchCommand), {
-        onData: (data) => {
-          terminal2Feed.data(data);
-        },
-        // No liveness/idle tracking for this tab (no sidebar dot); the renderer is told so it
-        // can reset its xterm after a restart (also fires on the first start).
-        onAlive: () => sendToWindow('terminal2Pty:alive', undefined),
-        // Tell the renderer so it can offer an Enter-to-restart; still not wired
-        // into pinnedPtyExited, the usage scraper or the tracker.
-        onExit: () => terminal2Feed.exit(),
-      }, size);
+      terminal2PtyLifecycle.start(() => spawnOwned('terminal2', () => buildPtyLaunchSpec(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }, launchCommand), { kind: 'terminal2', startedAt: Date.now() }, () => launchCommand === undefined ? spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }) : spawnPty(size.cols, size.rows, undefined, undefined, { ...UNMONITORED_TERMINAL_ENV, ...terminalIdentityEnv('terminal2', boardCliPath) }, launchCommand)), terminal2StartHandlers, size);
     } catch (error) {
       aetherChoice?.onForeignLaunch('terminal2'); // no start event follows a failed spawn: drop the stashed plan
       throw error;

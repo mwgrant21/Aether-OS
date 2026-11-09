@@ -7,6 +7,8 @@ import type { PtyLike } from './ptyLifecycle';
 import { createTerminalHub } from './terminalHub';
 import { createDesktopFeed } from './desktopFeed';
 import { terminalIdentityEnv } from './ptyManager';
+import { createSpawnRouter } from './ptyOwner/spawnRoute';
+import { RemotePty } from './ptyOwner/remotePty';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import capture from './__fixtures__/trust-prompt-capture.json';
 
@@ -21,6 +23,12 @@ function callbackFor(channel: string, method = 'handle'): string {
     && node.expression.arguments[0]?.getText(ast) === `'${channel}'`);
   if (!statement || !ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) throw new Error(`Missing ${channel} consumer`);
   return statement.expression.arguments[1].getText(ast);
+}
+function constFor(name: string): string {
+  const statement = ast.statements.find(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(d => d.name.getText(ast) === name && d.initializer));
+  if (!statement || !ts.isVariableStatement(statement)) throw new Error(`Missing top-level const ${name}`);
+  return statement.declarationList.declarations.find(d => d.name.getText(ast) === name)!.initializer!.getText(ast);
 }
 function connectedCallback(option = 'spawn'): string {
   const statement = ast.statements.find(node => ts.isVariableStatement(node)
@@ -42,7 +50,10 @@ function fakePty() {
   } satisfies PtyLike & { fireData(value: string): void; fireExit(): void };
 }
 const BOARD_CLI = '/fake/aether-board.mjs';
-function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
+const HOME = 'C:\\Users\\tester';
+const fakeSpec = () => ({ file: 'powershell.exe', args: [] as string[], cwd: HOME, env: { PATH: 'x' }, cols: 80, rows: 24, writes: [] as string[] });
+// `client` given (even null): the REAL spawn router over it; otherwise spawnOwned is a pass-through to the in-process thunk.
+function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string; client?: { ready: boolean; spawn: ReturnType<typeof vi.fn> } | null }) {
   const hub = createTerminalHub(), ptyLifecycle = hub.slot('claude'), codexPtyLifecycle = hub.slot('codex'), terminal2PtyLifecycle = hub.slot('terminal2');
   const spawnPty = vi.fn(), spawnCodexPty = vi.fn(), send = vi.fn(), sendToWindow = vi.fn();
   const planUsageScraper = { ingest: vi.fn(), reset: vi.fn() };
@@ -64,10 +75,17 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
     UNMONITORED_TERMINAL_ENV: { AETHER_STATUSLINE_NO_PERSIST: '1' },
     claudeTerminalDimensions: { cols: 100, rows: 30 }, crypto: { randomUUID: () => 'pinned-id' },
     planUsageScraper, communicationSessions: { busy: false }, liveAgentTracker: { notifyPtySpawned: vi.fn() },
-    aetherChoice: opts?.aetherChoice ?? null, diagLog: { write: vi.fn() } };
+    aetherChoice: opts?.aetherChoice ?? null, diagLog: { write: vi.fn() },
+    buildPtyLaunchSpec: vi.fn(fakeSpec), buildCodexLaunchSpec: vi.fn(fakeSpec),
+    spawnOwned: opts && 'client' in opts
+      ? createSpawnRouter({ client: opts.client ?? null, homedir: HOME, log: vi.fn() })
+      : vi.fn((_slot: string, _build: unknown, _meta: unknown, inProcess: () => unknown) => inProcess()) };
   const compile = (callback: string) => runInNewContext(ts.transpileModule(`(${callback})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText, context) as (...args: unknown[]) => void;
+  // The start handlers are module-level consts in main.ts; the vm reads these at call time.
+  for (const name of ['claudeStartHandlers', 'codexStartHandlers', 'terminal2StartHandlers'])
+    Object.assign(context, { [name]: compile(constFor(name)) });
   return { ...context, prompt: () => prompt, launch: (id: string | undefined) => { launchId = id; prompt = 'unknown'; },
     resize: compile(callbackFor('pty:resize', 'on')), event: { sender: { isDestroyed: () => false, send } }, send,
     ordinary: compile(callbackFor('pty:start')), connected: compile(connectedCallback()), codex: compile(callbackFor('codexPty:start')),
@@ -76,6 +94,10 @@ function fixture(opts?: { aetherChoice?: unknown; boardCliPath?: string }) {
 }
 
 describe('production terminal consumer ownership (deterministic callbacks)', () => {
+  it('declares the three start handler objects as top-level consts in main.ts', () => {
+    for (const name of ['claudeStartHandlers', 'codexStartHandlers', 'terminal2StartHandlers'])
+      for (const key of ['onData', 'onAlive', 'onExit']) expect(constFor(name)).toContain(`${key}:`);
+  });
   it('protects normal and connected Claude rendering and usage from replaced PTYs', () => {
     const f = fixture(), first = fakePty(), second = fakePty(), third = fakePty();
     const secondExit = vi.fn(), thirdExit = vi.fn();
@@ -567,4 +589,99 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
     visit(ast);
     expect(gate).toContain('aetherChoice ? aetherChoice.flush() : Promise.resolve()');
   });
+  it.each([['not ready', { ready: false, spawn: vi.fn() }], ['null client', null]])('%s: all three starts call the in-process spawners with today\'s arguments and build no spec', (_n, client) => {
+    const f = fixture({ client });
+    f.spawnPty.mockReturnValue(fakePty()); f.spawnCodexPty.mockReturnValue(fakePty());
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.codex(f.event, { cols: 90, rows: 25 });
+    f.terminal2(f.event, { cols: 70, rows: 20 });
+    expect(f.spawnPty.mock.calls).toEqual([
+      [80, 24, undefined, 'pinned-id', { AETHER_TERMINAL: 'alpha', AETHER_BOARD_CLI: BOARD_CLI }],
+      [70, 20, undefined, undefined, { AETHER_STATUSLINE_NO_PERSIST: '1', AETHER_TERMINAL: 'beta', AETHER_BOARD_CLI: BOARD_CLI }],
+    ]);
+    expect(f.spawnCodexPty.mock.calls).toEqual([[90, 25]]);
+    expect(f.buildPtyLaunchSpec).not.toHaveBeenCalled();
+    expect(f.buildCodexLaunchSpec).not.toHaveBeenCalled();
+    if (client) expect(client.spawn).not.toHaveBeenCalled();
+  });
+
+  it('ready client: all three starts go to the helper (slot + meta), wire the RemotePty into the lifecycle, and never spawn in-process', () => {
+    const remote = { claude: fakePty(), codex: fakePty(), terminal2: fakePty() };
+    const client = { ready: true, spawn: vi.fn((slot: 'claude' | 'codex' | 'terminal2', _spec?: unknown, _meta?: unknown) => remote[slot]) };
+    const f = fixture({ client });
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.codex(f.event, { cols: 90, rows: 25 });
+    f.terminal2(f.event, { cols: 70, rows: 20 });
+    expect(client.spawn.mock.calls.map(c => c[0])).toEqual(['claude', 'codex', 'terminal2']);
+    expect(client.spawn.mock.calls[0][2]).toMatchObject({ kind: 'claude', sessionId: 'pinned-id' });
+    expect(client.spawn.mock.calls[1][2]).toMatchObject({ kind: 'codex' });
+    expect(client.spawn.mock.calls[2][2]).toMatchObject({ kind: 'terminal2' });
+    expect(f.spawnPty).not.toHaveBeenCalled();
+    expect(f.spawnCodexPty).not.toHaveBeenCalled();
+    expect(f.ptyLifecycle.current).toBe(remote.claude);
+    expect(f.codexPtyLifecycle.current).toBe(remote.codex);
+    expect(f.terminal2PtyLifecycle.current).toBe(remote.terminal2);
+    remote.claude.fireData('from helper');
+    expect(f.sendToWindow).toHaveBeenCalledWith('pty:data', 'from helper');
+  });
+
+  it('ready client with the real RemotePty: fresh starts deliver helper output and exit to the renderer (resume after wiring)', () => {
+    const links: Record<string, { sent: unknown[] }> = {};
+    const remote: Record<string, RemotePty> = {};
+    const client = { ready: true, spawn: vi.fn((slot: 'claude' | 'codex' | 'terminal2') => {
+      links[slot] = { sent: [] };
+      return (remote[slot] = new RemotePty(slot, { send: f => { links[slot].sent.push(f); return true; }, dead: () => false }));
+    }) };
+    const f = fixture({ client });
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.codex(f.event, { cols: 90, rows: 25 });
+    f.terminal2(f.event, { cols: 70, rows: 20 });
+    for (const [slot, prefix] of [['claude', 'pty'], ['codex', 'codexPty'], ['terminal2', 'terminal2Pty']] as const) {
+      remote[slot].deliver(1, 'from ' + slot);
+      expect(f.sendToWindow).toHaveBeenCalledWith(prefix + ':data', 'from ' + slot);
+      remote[slot].deliverExit();
+      expect(f.sendToWindow).toHaveBeenCalledWith(prefix + ':exit', undefined);
+    }
+  });
+
+  it('ready client: the connected-session spawn stays in-process', () => {
+    const client = { ready: true, spawn: vi.fn() };
+    const f = fixture({ client });
+    f.spawnPty.mockReturnValueOnce(fakePty());
+    f.connected({}, vi.fn());
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(client.spawn).not.toHaveBeenCalled();
+  });
+
+  it('pins the quit policy: shutdown, owner frame first in the held-quit flush, quitting set before it', () => {
+    expect(constFor('PTY_OWNER_ON_QUIT')).toBe("'shutdown'");
+    let gate = '';
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.getText(ast) === 'createFlushQuitGate') gate = node.getText(ast);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    const flag = gate.indexOf('quitting = true'), frame = gate.indexOf('ownerClient.shutdown()');
+    expect(flag).toBeGreaterThan(-1);
+    expect(frame).toBeGreaterThan(flag);
+    expect(gate.indexOf('PTY_OWNER_ON_QUIT')).toBeGreaterThan(-1);
+    expect(frame).toBeLessThan(gate.indexOf('narrationDurationBaseline.flush()'));
+  });
+
+  it('guards the helper launch with quitting and the feature with AETHER_PTY_OWNER=1 on win32', () => {
+    const adopt = source.slice(source.indexOf('async function adoptAtStartup'), source.indexOf('const claudeStartHandlers'));
+    expect(adopt).toMatch(/if \(quitting\) return;\s+const ok = await ensureOwner/);
+    expect(adopt).toContain("if (quitting) throw new Error('quitting')");
+    expect(constFor('ptyOwnerEnabled')).toBe("process.platform === 'win32' && process.env.AETHER_PTY_OWNER === '1'");
+  });
+
+  it.each([[undefined, true], ['EPERM', true], ['ESRCH', false], ['EINVAL', false]])('pidIsAlive: kill error %s -> alive=%s', (code, alive) => {
+    const kill = vi.fn(() => { if (code) throw Object.assign(new Error('x'), { code }); return true; });
+    const isAlive = runInNewContext(ts.transpileModule(`(${constFor('pidIsAlive')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    }).outputText, { process: { kill } }) as (pid: number) => boolean;
+    expect(isAlive(42)).toBe(alive);
+    expect(kill).toHaveBeenCalledWith(42, 0);
+  });
+
 });

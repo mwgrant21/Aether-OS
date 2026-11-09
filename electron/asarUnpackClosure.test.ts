@@ -123,6 +123,14 @@ describe('asarUnpack covers the spawned entry points and their runtime closure',
     ).toEqual([]);
   });
 
+  it('the pty-owner helper entry is built and node-pty stays a covered unpack root', () => {
+    const cfg = readFileSync(join(process.cwd(), 'electron.vite.config.ts'), 'utf8');
+    expect(cfg).toMatch(/'pty-owner':\s*resolve\(__dirname,\s*'electron\/ptyOwner\/ownerEntry\.ts'\)/);
+    expect(MUST_BE_UNPACKED_ROOTS).toContain('node-pty');
+    const matchers = readAsarUnpackPatterns().map(globToRegExp);
+    expect(matchers.some((re) => re.test('node_modules/node-pty/package.json'))).toBe(true);
+  });
+
   it('the matcher itself distinguishes covered from uncovered paths', () => {
     // Without this, a matcher bug that matched everything would make the
     // assertion above vacuously true.

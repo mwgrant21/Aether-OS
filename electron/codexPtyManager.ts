@@ -186,18 +186,42 @@ export function buildUnsetCommand(platform: NodeJS.Platform, vars: readonly stri
   return `unset ${vars.join(' ')}\r`;
 }
 
-export function spawnCodexPty(cols = 100, rows = 30) {
-  const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
+// spawnCodexPty's shell, env, cwd and post-spawn writes as plain data (see
+// buildPtyLaunchSpec in ptyManager.ts). ELECTRON_RUN_AS_NODE is stripped from the
+// spec env only; buildCodexLaunchEnv stays as it was for the version readout.
+export interface CodexLaunchSpec {
+  file: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  cols: number;
+  rows: number;
+  writes: string[];
+}
+
+export function buildCodexLaunchSpec(cols = 100, rows = 30): CodexLaunchSpec {
   const env = buildCodexLaunchEnv();
-  const cwd = codexPtyCwd();
-  const ptyProcess = pty.spawn(shell, [], {
-    name: 'xterm-color',
+  delete env.ELECTRON_RUN_AS_NODE;
+  return {
+    file: process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash',
+    args: [],
+    cwd: codexPtyCwd(),
+    env,
     cols,
     rows,
-    cwd,
-    env,
+    writes: [buildUnsetCommand(process.platform, BILLING_AUTH_ENV_VARS), buildCodexLaunchCommand(process.platform)],
+  };
+}
+
+export function spawnCodexPty(cols = 100, rows = 30) {
+  const spec = buildCodexLaunchSpec(cols, rows);
+  const ptyProcess = pty.spawn(spec.file, spec.args, {
+    name: 'xterm-color',
+    cols: spec.cols,
+    rows: spec.rows,
+    cwd: spec.cwd,
+    env: spec.env,
   });
-  ptyProcess.write(buildUnsetCommand(process.platform, BILLING_AUTH_ENV_VARS));
-  ptyProcess.write(buildCodexLaunchCommand(process.platform));
+  for (const w of spec.writes) ptyProcess.write(w);
   return ptyProcess;
 }
