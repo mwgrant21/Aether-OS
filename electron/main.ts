@@ -1901,7 +1901,8 @@ ipcMain.handle('permission:respond', (_event, { requestId, decision }: { request
   // state.pendingPermissionRequest stays non-null forever and every surface
   // reading it (TopBar badge, Terminal `approvals`,
   // localResponder's pending count) sticks at >=1 for the rest of the session.
-  sendToWindow('permission:request', null);
+  // Clear by id: a duplicate response for an old request must not hide a newer pending card.
+  sendToWindow('permission:request', { requestId });
 });
 
 ipcMain.handle('postToolFlag:respond', (_event, { requestId, decision }: { requestId: string; decision: PostToolFlagDecision }) => {
@@ -1913,7 +1914,7 @@ ipcMain.handle('postToolFlag:respond', (_event, { requestId, decision }: { reque
   // Timed-out / duplicate response: nothing to resolve, but still clear the renderer's stuck card.
   // Same reasoning as permission:respond above -- clear the renderer's pending
   // flag so the queue/badge/tile actually empty out after a review.
-  sendToWindow('postToolFlag:request', null);
+  sendToWindow('postToolFlag:request', { requestId });
 });
 
 ipcMain.handle('optimize:apply', async (_event, { findingId, target }: { findingId: string; target: 'global' | 'project' }) => {

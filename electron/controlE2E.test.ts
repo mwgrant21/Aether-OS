@@ -585,7 +585,7 @@ describe('phone control end to end: thread and prompts', () => {
     const handler = h.slice(0, h.indexOf("ipcMain.handle('postToolFlag:respond'"));
     const iResolve = handler.indexOf('resolve(decision);');
     const iClose = handler.indexOf("permissionBroker.close(requestId, 'answered-desktop')");
-    const iSend = handler.indexOf("sendToWindow('permission:request', null)");
+    const iSend = handler.indexOf("sendToWindow('permission:request', { requestId })");
     expect(iResolve).toBeGreaterThan(-1);
     expect(iClose).toBeGreaterThan(iResolve);
     expect(iSend).toBeGreaterThan(iClose);
@@ -610,7 +610,7 @@ describe('phone control end to end: thread and prompts', () => {
     for (const [h, chan] of [[perm, 'permission:request'], [flag, 'postToolFlag:request']] as const) {
       // no bare early return on a missing resolver, and the clear is not nested inside the resolver branch
       expect(h).not.toMatch(/if \(!resolve\) return/);
-      expect(h).toMatch(new RegExp(`\\n  sendToWindow\\('${chan}', null\\);`));
+      expect(h).toMatch(new RegExp(`\\n  sendToWindow\\('${chan}', \\{ requestId \\}\\);`));
     }
     // resolve and broker close stay inside the found-resolver branch (indented), so an unknown id triggers neither
     expect(perm).toMatch(/\n  if \(resolve\) \{\n[\s\S]*\n    resolve\(decision\);[\s\S]*\n    try \{ permissionBroker\.close[^\n]*\n  \}\n/);
