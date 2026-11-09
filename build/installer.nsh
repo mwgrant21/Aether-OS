@@ -70,3 +70,53 @@
     statusline_ok:
   ${endIf}
 !macroend
+
+; Lone-helper sweep. The template's default app-running check (FIND_PROCESS in
+; allowOnlyOneInstallerInstance.nsh) tests
+; `(Get-CimInstance ... | ? {...}).Count -gt 0` under Windows PowerShell 5.1.
+; A single CimInstance has no .Count there, so FIND reports "not running" when
+; EXACTLY ONE process lives under $INSTDIR (with two or more it works). A lone
+; detached helper (the app's own exe run as node) then keeps node-pty and exe
+; files open through an update or uninstall.
+;
+; customCheckAppRunning replaces the template check wholesale, so it must run
+; the default check itself (prompt + kill + retry) and then sweep. The sweep
+; goes AFTER so a running app still gets the "close it?" prompt first; what is
+; left under $INSTDIR at that point is the lone-helper case or nothing. This
+; hook fires on install, update and uninstall (un.checkAppRunning).
+;
+; Defining the macro makes the template skip its own getProcessInfo include and
+; `Var pid`, which _CHECK_APP_RUNNING needs, so they are supplied here.
+;
+; Guards: only on the PowerShell path (the fallback already kills by image
+; name); only if the app exe exists in $INSTDIR (a user-picked dir such as a
+; profile root must not be swept); match on $INSTDIR plus a trailing backslash
+; (a bare prefix also matches a sibling "Aether OS Dev"); skip our own PID (an
+; uninstaller runs from inside $INSTDIR); pass the paths as environment
+; variables, not command-line text (a quote in the path breaks a literal).
+; Best effort: a failure only DetailPrints a warning. Every PowerShell `$` is
+; doubled because NSIS expands `$$` and makensis runs with -WX.
+!include "getProcessInfo.nsh"
+Var pid
+
+!define AETHER_SWEEP_PS "$$d = $$env:AETHER_INSTDIR.TrimEnd('\') + '\'; $$me = [int]$$env:AETHER_SELF_PID; $$bad = 0; foreach ($$p in @(Get-CimInstance -ClassName Win32_Process)) { if ($$p.Path -and $$p.ProcessId -ne $$me -and $$p.Path.StartsWith($$d, [StringComparison]::OrdinalIgnoreCase)) { try { Stop-Process -Id $$p.ProcessId -Force -ErrorAction Stop; Write-Output ('stopped ' + $$p.ProcessId + ' ' + $$p.Name) } catch { Write-Output ('could not stop ' + $$p.ProcessId + ': ' + $$_.Exception.Message); $$bad = 1 } } }; exit $$bad"
+
+!macro customCheckAppRunning
+  !insertmacro IS_POWERSHELL_AVAILABLE
+  !insertmacro _CHECK_APP_RUNNING
+  ${if} $IsPowerShellAvailable == 0
+  ${andIf} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+    Push $0
+    System::Call 'kernel32::GetCurrentProcessId() i.r0'
+    System::Call 'kernel32::SetEnvironmentVariable(t "AETHER_SELF_PID", t "$0")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "AETHER_INSTDIR", t "$INSTDIR")'
+    DetailPrint "Stopping any helper process left running from $INSTDIR"
+    nsExec::ExecToLog /TIMEOUT=60000 '"$PowerShellPath" -NoProfile -NonInteractive -C "${AETHER_SWEEP_PS}"'
+    Pop $0
+    ${if} $0 != 0
+      DetailPrint "WARNING: could not stop every process under $INSTDIR (exit $0); continuing."
+    ${endIf}
+    Sleep 500  ; let handles release before files are touched
+    Pop $0
+  ${endIf}
+!macroend
