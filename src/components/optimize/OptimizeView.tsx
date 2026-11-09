@@ -159,11 +159,11 @@ function FindingCard({
                   )}
                 </>
               )}
-              {status && <div style={statusLineStyle(colors)}>{status}</div>}
             </div>
           )}
         </div>
       </div>
+      {status && <div role="status" style={statusLineStyle(colors)}>{status}</div>}
     </div>
   );
 }
@@ -278,5 +278,5 @@ function targetOptionStyle(colors: ColorPalette): CSSProperties {
   };
 }
 function statusLineStyle(colors: ColorPalette): CSSProperties {
-  return { font: `600 11px/1.3 ${fonts.ui}`, color: colors.accentCyanSoft };
+  return { marginTop: 8, font: `600 11px/1.3 ${fonts.ui}`, color: colors.accentCyanSoft };
 }

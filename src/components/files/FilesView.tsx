@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fonts, type ColorPalette } from '../../styles/tokens';
 import { formatFileSize, isImageExtension, type AttachmentInfo } from './attachmentsMath';
 import { useColors } from '../shared/useColors';
@@ -10,6 +10,7 @@ export function FilesView() {
   const [files, setFiles] = useState<AttachmentInfo[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const requestedRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -27,13 +28,14 @@ export function FilesView() {
 
   useEffect(() => {
     files.forEach((f) => {
-      if (isImageExtension(f.name) && !(f.name in thumbnails)) {
+      if (isImageExtension(f.name) && !requestedRef.current.has(f.name)) {
+        requestedRef.current.add(f.name);
         window.aetherElectron?.attachments.thumbnail(f.name).then((dataUrl) => {
           if (dataUrl) setThumbnails((prev) => ({ ...prev, [f.name]: dataUrl }));
         });
       }
     });
-  }, [files, thumbnails]);
+  }, [files]);
 
   const addFile = async () => {
     await window.aetherElectron?.attachments.add();
