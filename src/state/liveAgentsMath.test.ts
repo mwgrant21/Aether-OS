@@ -5,6 +5,8 @@ import {
   applyLinesToOpenWork,
   detectCompletedDispatches,
   detectStartedDispatches,
+  dropExpiredDispatches,
+  OPEN_DISPATCH_MAX_AGE_MS,
   labelForToolUse,
   type RealAgentDispatch,
   type CompletedDispatchUsage,
@@ -439,5 +441,23 @@ describe('applyLinesToOpenDispatches -- outcomesOut', () => {
     applyLinesToOpenDispatches(open, [completionLine('tu_1', 'failed'), completionLineWithUsage('tu_2', 5, 2, 900, 'running')], [], outcomes);
     expect(outcomes.get('tu_1')).toEqual({ outcome: { status: 'failed' }, unknownStatusTag: null });
     expect(outcomes.get('tu_2')).toEqual({ outcome: { status: 'unknown', usage: { tokens: 5, toolUses: 2, durationMs: 900 } }, unknownStatusTag: 'running' });
+  });
+});
+
+describe('dropExpiredDispatches', () => {
+  const NOW = Date.parse('2026-11-09T12:00:00.000Z');
+  const at = (id: string, startedAt: string): RealAgentDispatch => ({ toolUseId: id, subagentType: 'builder', description: '', startedAt, prompt: '', model: null });
+
+  it('drops a dispatch open longer than the cap and keeps one inside it', () => {
+    const old = at('old', new Date(NOW - OPEN_DISPATCH_MAX_AGE_MS - 1).toISOString());
+    const edge = at('edge', new Date(NOW - OPEN_DISPATCH_MAX_AGE_MS).toISOString());
+    const fresh = at('fresh', new Date(NOW - 60_000).toISOString());
+    expect(dropExpiredDispatches([old, edge, fresh], NOW).map((d) => d.toolUseId)).toEqual(['edge', 'fresh']);
+  });
+
+  it('keeps a dispatch whose start time is missing (epoch fallback) or unparseable, since it cannot be aged', () => {
+    const noTime = at('epoch', new Date(0).toISOString());
+    const garbage = at('bad', 'not a date');
+    expect(dropExpiredDispatches([noTime, garbage], NOW)).toHaveLength(2);
   });
 });

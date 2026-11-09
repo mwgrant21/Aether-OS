@@ -249,6 +249,8 @@ export interface AetherState {
   realUsage: RealUsageSnapshot;
   rateHistory: RateSample[];
   realAgents: RealAgentDispatch[];
+  /** Dispatches still open in the tracker but older than OPEN_DISPATCH_MAX_AGE_MS: hidden from every list, kept so their completion is still recorded. */
+  hiddenAgents: RealAgentDispatch[];
   recentCompletedDispatches: RealAgentDispatch[];
   dispatchChannels: DispatchChannelStub[];
   dispatchUsage: Record<string, DispatchUsage>;

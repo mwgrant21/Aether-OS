@@ -5,7 +5,7 @@ import type { DiagnosticsSnapshot } from '../../electron/collectorStore';
 import type { LedgerSnapshot } from '../shared/ledgerMath';
 import type { ProjectsSnapshot } from '../shared/projectsSnapshot';
 import type { StatuslineSnapshot } from '../shared/statuslinePayload';
-import { detectCompletedDispatches, detectStartedDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
+import { detectCompletedDispatches, detectStartedDispatches, dropExpiredDispatches, type CompletedDispatchUsage, type RealAgentDispatch, type RealActiveWork } from './liveAgentsMath';
 import { runCommand } from '../components/terminal/commands';
 import { computeTick } from './tick';
 import { nowShort, nowLong, short, fmtElapsed } from '../utils/format';
@@ -41,7 +41,8 @@ export type Action =
   | { type: 'SET_CODEX_TERMINAL_IDLE'; idle: boolean }
   | { type: 'SET_OPERATOR_NAME'; name: string }
   | { type: 'SET_REAL_USAGE'; snapshot: RealUsageSnapshot }
-  | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[] }
+  // nowMs, when given, ages out abandoned dispatches (see OPEN_DISPATCH_MAX_AGE_MS).
+  | { type: 'SET_REAL_AGENTS'; agents: RealAgentDispatch[]; nowMs?: number }
   | { type: 'SELECT_REAL_AGENT'; toolUseId: string }
   | { type: 'SET_PLAN_USAGE_TIER'; snapshot: PlanUsageTier }
   | { type: 'CREATE_DISPATCH_CHANNEL'; toolUseId: string }
@@ -216,8 +217,16 @@ export function reducer(state: AetherState, action: Action): AetherState {
     }
 
     case 'SET_REAL_AGENTS': {
-      const completed = detectCompletedDispatches(state.realAgents, action.agents);
-      const started = detectStartedDispatches(state.realAgents, action.agents);
+      // An aged-out dispatch is hidden from realAgents but still open in the tracker. Completion is
+      // judged against everything we knew was open (shown or hidden) versus the raw snapshot, so a
+      // long-running agent that finally finishes is still recorded and gets its channel, and one that
+      // merely crosses the age cap is not mistaken for completed. started is judged on the shown
+      // list, so a hidden dispatch never logs as started either.
+      const kept = action.nowMs === undefined ? action.agents : dropExpiredDispatches(action.agents, action.nowMs);
+      const completed = detectCompletedDispatches([...state.realAgents, ...state.hiddenAgents], action.agents);
+      const started = detectStartedDispatches(state.realAgents, kept);
+      const keptIds = new Set(kept.map((d) => d.toolUseId));
+      const hiddenAgents = action.agents.filter((d) => !keptIds.has(d.toolUseId));
       let recentCompletedDispatches = state.recentCompletedDispatches;
       let dispatchChannels = state.dispatchChannels;
       let logs = state.logs;
@@ -245,7 +254,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
           logs = logs.concat({ t: nowLong(), m: `${dispatch.subagentType}: dispatch channel opened`, c: '#7fd8ef' }).slice(-14);
         }
       }
-      return { ...state, realAgents: action.agents, recentCompletedDispatches, dispatchChannels, logs };
+      return { ...state, realAgents: kept, hiddenAgents, recentCompletedDispatches, dispatchChannels, logs };
     }
 
     case 'SET_ACTIVE_WORK':

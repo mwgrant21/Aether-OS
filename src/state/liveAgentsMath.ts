@@ -82,6 +82,21 @@ export function applyLinesToOpenDispatches(
   return Array.from(open.values());
 }
 
+// A dispatch closes only when its task-notification lands in the transcript. One whose
+// notification never arrives (the session was cleared or compacted, the agent was stopped, the
+// transcript rolled over) would stay "open" for ever and pile up in every agents list, so a
+// dispatch older than this is treated as abandoned. Display only: nothing records it as completed.
+export const OPEN_DISPATCH_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+// Dispatches with no usable start time (isoOrEpoch's epoch fallback) cannot be aged, so they stay.
+export function dropExpiredDispatches(agents: RealAgentDispatch[], nowMs: number): RealAgentDispatch[] {
+  return agents.filter((a) => {
+    const startedMs = Date.parse(a.startedAt);
+    if (!Number.isFinite(startedMs) || startedMs <= 0) return true;
+    return nowMs - startedMs <= OPEN_DISPATCH_MAX_AGE_MS;
+  });
+}
+
 export function detectCompletedDispatches(oldAgents: RealAgentDispatch[], newAgents: RealAgentDispatch[]): RealAgentDispatch[] {
   const stillOpen = new Set(newAgents.map((a) => a.toolUseId));
   return oldAgents.filter((a) => !stillOpen.has(a.toolUseId));
