@@ -135,4 +135,32 @@ describe('buildProjectsSnapshot', () => {
     expect(s.roots[0].optimize).toBeDefined();
     expect(Array.isArray(s.roots[0].optimize.findings)).toBe(true);
   });
+
+  describe('optimize $/wk scale', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const WEEK = 7 * DAY;
+    const opts = { windowMs: WEEK, appliedState: {} };
+    const opus = (cwd: string, at: number): TranscriptEvent => ({
+      ...ev(cwd, 40), model: 'claude-opus-4-8', timestamp: new Date(NOW + at),
+      usage: { inputTokens: 50, outputTokens: 40, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+    });
+
+    it('a short-lived worktree inside a long history is not rated above its parent root', () => {
+      const wt = `${AETHER}\\.claude\\worktrees\\burst`;
+      const events: TranscriptEvent[] = [];
+      for (let d = 0; d < 90; d++) events.push(opus(AETHER, d * DAY));
+      for (let d = 88; d < 90; d++) for (let i = 0; i < 40; i++) events.push(opus(wt, d * DAY + i * 60000));
+      const root = buildProjectsSnapshot(events, probe, keyOf, 'UTC', NOW, opts).roots[0];
+      const burst = root.children.find((c) => c.worktree === 'burst')!;
+      expect(burst.optimize.summary.totalPerWeek).toBeGreaterThan(0);
+      expect(burst.optimize.summary.totalPerWeek).toBeLessThanOrEqual(root.optimize.summary.totalPerWeek);
+    });
+
+    it('a child holding all the events reports the same $/wk as its root', () => {
+      const events = [opus(AETHER, 0), opus(AETHER, 28 * DAY)];
+      const root = buildProjectsSnapshot(events, probe, keyOf, 'UTC', NOW, opts).roots[0];
+      expect(root.children).toHaveLength(1);
+      expect(root.children[0].optimize.summary.totalPerWeek).toBeCloseTo(root.optimize.summary.totalPerWeek, 12);
+    });
+  });
 });

@@ -270,7 +270,7 @@ describe('optimizeRules', () => {
       expect(v).toBeCloseTo(extraCost(e), 9);
     });
 
-    it('zero events produce no findings and a zero total', () => {
+    it('zero events produce no findings and a zero total (characterization test, not red-proofed)', () => {
       expect(evaluateOptimizeRules([], WEEK)).toEqual([]);
       expect(summarizeOptimize(evaluateOptimizeRules([], WEEK))).toEqual({ totalPerWeek: 0, grade: 'A' });
     });

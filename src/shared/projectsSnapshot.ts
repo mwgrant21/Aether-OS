@@ -2,7 +2,7 @@
 import type { TranscriptEvent } from '../../electron/transcriptParser';
 import { buildLedgerSnapshot, type LedgerSnapshot } from './ledgerMath';
 import { resolveProject, type GitProbe } from './projectIdentity';
-import { evaluateOptimizeRulesWithRecurrence, summarizeOptimize, type OptimizeFinding, type OptimizeSummary } from './optimizeRules';
+import { evaluateOptimizeRulesWithRecurrence, observedSpanMs, summarizeOptimize, type OptimizeFinding, type OptimizeSummary } from './optimizeRules';
 import { computeCacheHitRate } from './cacheHitRate';
 import { gradeBreakdown, type GradeRow } from './optimizeGrade';
 
@@ -61,7 +61,10 @@ export function buildProjectsSnapshot(
   nowMs: number,
   optimizeOptions?: { windowMs: number; appliedState: Record<string, number> },
 ): ProjectsSnapshot {
-  const windowMs = optimizeOptions?.windowMs ?? DEFAULT_OPTIMIZE_WINDOW_MS;
+  // Every bucket (root and children) is normalised over the span of ALL input
+  // events, not its own, so a short-lived worktree cannot show a higher $/wk
+  // than the global figure it belongs to. windowMs stays the floor.
+  const windowMs = Math.max(optimizeOptions?.windowMs ?? DEFAULT_OPTIMIZE_WINDOW_MS, observedSpanMs(events));
   const appliedState = optimizeOptions?.appliedState ?? {};
   // repoPath -> worktree name (or '' for the repo's own checkout) -> events
   const byRepo = new Map<string, Map<string, TranscriptEvent[]>>();

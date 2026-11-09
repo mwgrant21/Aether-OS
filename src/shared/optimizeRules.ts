@@ -25,7 +25,9 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 // Null / Invalid Date timestamps are skipped. Known limitation: this is not
 // first-event-to-now, so an idle tail before "now" is not counted, and one
 // corrupt timestamp (e.g. epoch 1970) stretches the span and drives $/wk toward 0.
-function observedSpanMs(events: TranscriptEvent[]): number {
+// Because of the one-week floor, a history shorter than a week understates the
+// true weekly rate.
+export function observedSpanMs(events: TranscriptEvent[]): number {
   let min = Infinity;
   let max = -Infinity;
   for (const e of events) {
