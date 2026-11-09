@@ -133,6 +133,26 @@ install), if the file cannot be parsed, or if this install's own script is
 missing -- that last one mirroring the `statusline:install` guard, since swapping
 one dead path for another is not a repair.
 
+#### A lone leftover helper under `$INSTDIR`
+
+The template's app-running check ends in `(Get-CimInstance ...).Count -gt 0`.
+Under Windows PowerShell 5.1 a single CimInstance has no `.Count`, so when
+EXACTLY ONE process lives under `$INSTDIR` the check says "not running" (two or
+more work). A lone detached helper would then keep node-pty and exe files open
+through an update or uninstall. `build/installer.nsh` defines
+`customCheckAppRunning`: it runs the template's default check first (so the
+"close Aether?" prompt is unchanged), then sweeps every process whose image is
+under `$INSTDIR\` with `Stop-Process -Id -Force`, no `.Count`. Guards: PowerShell
+path only, the app exe must exist in `$INSTDIR`, a trailing-backslash match
+(so a sibling `Aether OS Dev` is safe), the installer's own PID is skipped, and
+paths travel in environment variables so a quote in the path is harmless. It is
+best effort: a failure prints a warning and the install continues. It fires on
+install, update and uninstall. Covered by `electron/installerLoneHelper.test.ts`
+(drives real PowerShell 5.1). Caveat: the first update that carries this fix
+still runs the OLD installed uninstaller with its old check, and a plain
+uninstall of a pre-fix build has the old behaviour until a fixed build is
+installed.
+
 ### 6. The Codex entry points must be unpacked AND their resolved paths rewritten
 
 Two separate halves, and either one alone still fails to spawn.
