@@ -1010,7 +1010,7 @@ Off by default. It runs only when `AETHER_PTY_OWNER=1` is set in the environment
 
 **Helper environment.** The helper's own environment is a minimal allowlist (`minimalHelperEnv`, `ownerLauncher.ts`; never a `process.env` spread): the three `AETHER_PTY_OWNER_*` settings, `ELECTRON_RUN_AS_NODE` and a short list of system variables. The shells get the spawn spec's `env`, the same environment the in-process path builds (§11, §19); an env over 32 KiB (`ENV_MAX_BYTES`) is refused and that spawn runs in-process.
 
-**Diagnostics.** Helper-related lines in `diag.log` are fixed strings with two variable tails: `pty-owner error <code>` (helper-supplied, validated to `[a-z0-9_-]{1,64}` in `protocol.ts`) and `pty-owner connection lost: <reason>` (usually a fixed word, but the Node fs error text, which names the discovery file path including the account name, when that file cannot be read on reconnect; not redacted). Never terminal output, env, secrets or discovery contents.
+**Diagnostics.** Helper-related lines in `diag.log` are fixed strings with two variable tails: `pty-owner error <code>` (helper-supplied, validated to `[a-z0-9_-]{1,64}` in `protocol.ts`) and `pty-owner connection lost: <reason>` (a fixed word, or `discovery file <errno code>`, e.g. `ENOENT`, when the discovery file cannot be read on reconnect; the path and Node's error text are never logged). Never terminal output, env, secrets or discovery contents.
 
 **Accepted residual.** An old pty's in-flight frame can reach a re-spawned slot (a sub-millisecond race; fixing it needs a protocol generation field). The feature is OFF, so this is accepted for now.
 

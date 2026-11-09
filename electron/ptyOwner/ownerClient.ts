@@ -249,7 +249,9 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
       if (session) { const s = session; session = null; s.socket.destroy(); }
       if (settlePending(null)) return;
       state = 'reconnecting';
-      lose((e as Error).message || 'reconnect failed');
+      // An fs error's message names the discovery file path (account name included): keep only the errno code.
+      const err = e as NodeJS.ErrnoException;
+      lose(typeof err.code === 'string' && /^E[A-Z]+$/.test(err.code) ? `discovery file ${err.code}` : (err.message || 'reconnect failed'));
     } finally { cancel(); }
   }
 
