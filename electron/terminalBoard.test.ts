@@ -254,6 +254,17 @@ describe('attachTerminalBoardReset', () => {
     expect(calls).toEqual(['beta', 'beta']);
   });
 
+  it('does not reset on an adopted start, still resets on its exit and on a later normal start', () => {
+    const { hub, calls } = wired();
+    const adopted = fakePty();
+    hub.slot('claude').start(() => adopted, handlers(), undefined, { adopted: true });
+    expect(calls).toEqual([]);
+    adopted.fireExit();
+    expect(calls).toEqual(['alpha']);
+    hub.slot('claude').start(() => fakePty(), handlers());
+    expect(calls).toEqual(['alpha', 'alpha']);
+  });
+
   it('never resets for the codex slot', () => {
     const { hub, calls } = wired();
     const pty = fakePty();

@@ -88,7 +88,8 @@ async function doReset(dir: string, terminal: BoardTerminal, nowMs: number): Pro
 
 type ObservableSlot = { observe(listener: (event: SlotEvent) => void): () => void };
 
-/** Resets a terminal's board entry whenever its slot's PTY starts or exits. The Codex slot is
+/** Resets a terminal's board entry whenever its slot's PTY starts or exits (an adopted start does
+ *  not reset; its exit does). The Codex slot is
  *  deliberately not mapped. A failing or rejecting `reset` is swallowed. Returns detach-all. */
 export function attachTerminalBoardReset(
   slots: { claude: ObservableSlot; terminal2: ObservableSlot },
@@ -96,6 +97,7 @@ export function attachTerminalBoardReset(
 ): () => void {
   const wire = (slot: ObservableSlot, terminal: BoardTerminal) =>
     slot.observe((event) => {
+      if (event.kind === 'start' && event.adopted) return; // an adopted pty is not a new launch
       if (event.kind !== 'start' && !(event.kind === 'state' && event.state === 'exited')) return;
       try {
         Promise.resolve(reset(terminal)).catch(() => {});
