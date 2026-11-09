@@ -606,7 +606,7 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
 
   it('ready client: all three starts go to the helper (slot + meta), wire the RemotePty into the lifecycle, and never spawn in-process', () => {
     const remote = { claude: fakePty(), codex: fakePty(), terminal2: fakePty() };
-    const client = { ready: true, spawn: vi.fn((slot: 'claude' | 'codex' | 'terminal2') => remote[slot]) };
+    const client = { ready: true, spawn: vi.fn((slot: 'claude' | 'codex' | 'terminal2', _spec?: unknown, _meta?: unknown) => remote[slot]) };
     const f = fixture({ client });
     f.ordinary(f.event, { cols: 80, rows: 24 });
     f.codex(f.event, { cols: 90, rows: 25 });
