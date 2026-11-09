@@ -75,6 +75,7 @@ export const initialState: AetherState = {
   },
   rateHistory: [],
   realAgents: [],
+  hiddenAgents: [],
   activeWork: [],
   anomalies: [],
   cacheHitRatio: 0,

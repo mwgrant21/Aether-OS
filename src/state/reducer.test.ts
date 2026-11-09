@@ -911,6 +911,16 @@ describe('SET_REAL_AGENTS age-out', () => {
     expect(next.recentCompletedDispatches.map((d) => d.toolUseId)).toEqual(['tu_live']);
   });
 
+  it('keeps tracking a hidden dispatch, so it is recorded as completed with a channel when it finally finishes', () => {
+    const before = { ...initialState, cfg: { ...initialState.cfg, autoCreateDispatchChannels: true } };
+    const hidden = reducer(before, { type: 'SET_REAL_AGENTS', agents: [stale, live], nowMs: NOW });
+    expect(hidden.hiddenAgents.map((d) => d.toolUseId)).toEqual(['tu_stale']);
+    const finished = reducer(hidden, { type: 'SET_REAL_AGENTS', agents: [live], nowMs: NOW });
+    expect(finished.recentCompletedDispatches.map((d) => d.toolUseId)).toEqual(['tu_stale']);
+    expect(finished.dispatchChannels.map((d) => d.toolUseId)).toEqual(['tu_stale']);
+    expect(finished.hiddenAgents).toEqual([]);
+  });
+
   it('applies no age-out when the action carries no nowMs', () => {
     const next = reducer(initialState, { type: 'SET_REAL_AGENTS', agents: [stale] });
     expect(next.realAgents).toEqual([stale]);

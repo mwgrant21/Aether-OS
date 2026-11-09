@@ -217,12 +217,16 @@ export function reducer(state: AetherState, action: Action): AetherState {
     }
 
     case 'SET_REAL_AGENTS': {
-      // Completed is judged on the raw snapshot, so an aged-out dispatch (still open in the tracker)
-      // is never recorded as completed or given a dispatch channel; started is judged on the kept
-      // list, so it never logs as started either.
+      // An aged-out dispatch is hidden from realAgents but still open in the tracker. Completion is
+      // judged against everything we knew was open (shown or hidden) versus the raw snapshot, so a
+      // long-running agent that finally finishes is still recorded and gets its channel, and one that
+      // merely crosses the age cap is not mistaken for completed. started is judged on the shown
+      // list, so a hidden dispatch never logs as started either.
       const kept = action.nowMs === undefined ? action.agents : dropExpiredDispatches(action.agents, action.nowMs);
-      const completed = detectCompletedDispatches(state.realAgents, action.agents);
+      const completed = detectCompletedDispatches([...state.realAgents, ...state.hiddenAgents], action.agents);
       const started = detectStartedDispatches(state.realAgents, kept);
+      const keptIds = new Set(kept.map((d) => d.toolUseId));
+      const hiddenAgents = action.agents.filter((d) => !keptIds.has(d.toolUseId));
       let recentCompletedDispatches = state.recentCompletedDispatches;
       let dispatchChannels = state.dispatchChannels;
       let logs = state.logs;
@@ -250,7 +254,7 @@ export function reducer(state: AetherState, action: Action): AetherState {
           logs = logs.concat({ t: nowLong(), m: `${dispatch.subagentType}: dispatch channel opened`, c: '#7fd8ef' }).slice(-14);
         }
       }
-      return { ...state, realAgents: kept, recentCompletedDispatches, dispatchChannels, logs };
+      return { ...state, realAgents: kept, hiddenAgents, recentCompletedDispatches, dispatchChannels, logs };
     }
 
     case 'SET_ACTIVE_WORK':
