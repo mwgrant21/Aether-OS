@@ -282,6 +282,19 @@ describe.runIf(process.platform === 'win32')('ownerCore (named pipe; win32 only 
       expect(r.ptys[0].writes).toEqual(['one\r', 'two\r']);
     });
 
+    it('writes each spec.writes entry once, and only after the pty listeners are registered', async () => {
+      const seen: boolean[] = [];
+      const r = await rig({ spawn: () => {
+        const p = new FakePty();
+        p.write = (d: string) => { seen.push(p.dataCb !== null && p.exitCb !== null); p.writes.push(d); };
+        return p;
+      } });
+      const c = await owned(r.pipe, r.secret);
+      c.send({ t: 'spawn', slot: 'claude', spec: spec({ writes: ['one\r', 'two\r'] }), meta: {} });
+      await vi.waitFor(() => expect(seen).toHaveLength(2));
+      expect(seen).toEqual([true, true]);
+    });
+
     it('reports spawn-failed when the factory throws', async () => {
       const r = await rig({ spawn: () => { throw new Error('nope'); } });
       const c = await owned(r.pipe, r.secret);

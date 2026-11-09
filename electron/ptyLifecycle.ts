@@ -34,7 +34,11 @@ export class PtyLifecycle {
     return this.active;
   }
 
-  start(spawn: () => PtyLike, handlers: PtyLifecycleHandlers): PtyLike {
+  /** A helper-backed pty (RemotePty) buffers data/exit until resume(); a fresh start resumes it once
+   *  the callbacks are registered. `adopted` starts wrap a pty adoption resumes itself after its own setup.
+   *  In-process node-pty sessions have no resume() and are untouched. `size` is unused here; it keeps
+   *  the signature TerminalSlot overrides. */
+  start(spawn: () => PtyLike, handlers: PtyLifecycleHandlers, _size?: { cols: number; rows: number }, opts?: { adopted?: boolean }): PtyLike {
     const pty = spawn();
     try { this.active?.kill(); } catch (error) { pty.kill(); throw error; }
     this.active = pty;
@@ -48,6 +52,7 @@ export class PtyLifecycle {
       handlers.onExit();
     });
     handlers.onAlive();
+    if (!opts?.adopted) (pty as PtyLike & { resume?: () => void }).resume?.();
     return pty;
   }
 

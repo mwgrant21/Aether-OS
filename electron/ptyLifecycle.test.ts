@@ -26,6 +26,18 @@ function handlers() {
 }
 
 describe('PtyLifecycle', () => {
+  it('resumes a pty that has resume(), after its callbacks are registered; never for an adopted start', () => {
+    const order: string[] = [];
+    const mk = () => Object.assign(fakePty(), { resume: vi.fn(() => { order.push('resume'); }) });
+    const lifecycle = new PtyLifecycle(), fresh = mk();
+    const h = handlers(); h.onAlive.mockImplementation(() => { order.push('alive'); });
+    lifecycle.start(() => fresh, h);
+    expect(fresh.resume).toHaveBeenCalledOnce();
+    expect(order).toEqual(['alive', 'resume']);
+    const adopted = mk();
+    lifecycle.start(() => adopted, handlers(), undefined, { adopted: true });
+    expect(adopted.resume).not.toHaveBeenCalled();
+  });
   it('preserves the current terminal if replacement spawning fails', () => {
     const lifecycle = new PtyLifecycle(), first = fakePty();
     lifecycle.start(() => first, handlers());

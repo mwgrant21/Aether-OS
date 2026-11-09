@@ -102,7 +102,7 @@ export class TerminalSlot extends PtyLifecycle {
         this.emit({ kind: 'state', state: 'exited' });
         handlers.onExit();
       },
-    });
+    }, size, opts);
   }
 
   setRestarter(fn: () => void): void { this.restarter = fn; }

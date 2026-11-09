@@ -19,11 +19,8 @@ const discoveryPath = process.env.AETHER_PTY_OWNER_DISCOVERY || process.argv[2];
 if (!discoveryPath) process.exit(2);
 
 const owner = createOwner({
-  spawn: (spec) => {
-    const p = pty.spawn(spec.file, spec.args, { name: 'xterm-color', cols: spec.cols, rows: spec.rows, cwd: spec.cwd, env: spec.env });
-    for (const w of spec.writes) p.write(w);
-    return p;
-  },
+  // spec.writes are NOT run here: ownerCore doSpawn writes them once, after registering the listeners.
+  spawn: (spec) => pty.spawn(spec.file, spec.args, { name: 'xterm-color', cols: spec.cols, rows: spec.rows, cwd: spec.cwd, env: spec.env }),
   homedir: os.homedir(),
   discoveryPath,
   graceMs: posInt(process.env.AETHER_PTY_OWNER_GRACE_MS) ?? DEFAULT_GRACE_MS,

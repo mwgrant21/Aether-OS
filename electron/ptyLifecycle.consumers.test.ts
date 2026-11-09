@@ -8,6 +8,7 @@ import { createTerminalHub } from './terminalHub';
 import { createDesktopFeed } from './desktopFeed';
 import { terminalIdentityEnv } from './ptyManager';
 import { createSpawnRouter } from './ptyOwner/spawnRoute';
+import { RemotePty } from './ptyOwner/remotePty';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import capture from './__fixtures__/trust-prompt-capture.json';
 
@@ -622,6 +623,25 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
     expect(f.terminal2PtyLifecycle.current).toBe(remote.terminal2);
     remote.claude.fireData('from helper');
     expect(f.sendToWindow).toHaveBeenCalledWith('pty:data', 'from helper');
+  });
+
+  it('ready client with the real RemotePty: fresh starts deliver helper output and exit to the renderer (resume after wiring)', () => {
+    const links: Record<string, { sent: unknown[] }> = {};
+    const remote: Record<string, RemotePty> = {};
+    const client = { ready: true, spawn: vi.fn((slot: 'claude' | 'codex' | 'terminal2') => {
+      links[slot] = { sent: [] };
+      return (remote[slot] = new RemotePty(slot, { send: f => { links[slot].sent.push(f); return true; }, dead: () => false }));
+    }) };
+    const f = fixture({ client });
+    f.ordinary(f.event, { cols: 80, rows: 24 });
+    f.codex(f.event, { cols: 90, rows: 25 });
+    f.terminal2(f.event, { cols: 70, rows: 20 });
+    for (const [slot, prefix] of [['claude', 'pty'], ['codex', 'codexPty'], ['terminal2', 'terminal2Pty']] as const) {
+      remote[slot].deliver(1, 'from ' + slot);
+      expect(f.sendToWindow).toHaveBeenCalledWith(prefix + ':data', 'from ' + slot);
+      remote[slot].deliverExit();
+      expect(f.sendToWindow).toHaveBeenCalledWith(prefix + ':exit', undefined);
+    }
   });
 
   it('ready client: the connected-session spawn stays in-process', () => {
