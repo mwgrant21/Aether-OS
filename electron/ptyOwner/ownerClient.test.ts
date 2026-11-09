@@ -382,6 +382,17 @@ describe.runIf(process.platform === 'win32')('ownerClient (real createOwner over
       await expect(c.shutdown()).resolves.toBeUndefined(); // closed: a no-op
     });
 
+    it('shutdown and release on a never-connected client resolve without rejecting and leave it connectable', async () => {
+      const r = await rig();
+      const c = client();
+      await within(c.shutdown(), 'idle shutdown');
+      await within(c.release(), 'idle release');
+      expect(c.ready).toBe(false);
+      await c.connect(r.discovery);
+      expect(c.ready).toBe(true);
+      expect(r.owner.hasOwner()).toBe(true); // nothing was sent to the helper by the idle calls
+    });
+
     it('shutdown while ready resolves after the socket closed', async () => {
       const r = await rig();
       const c = await connected(r);
