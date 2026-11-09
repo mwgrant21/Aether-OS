@@ -2,8 +2,9 @@
 // ptyOwner/ that imports node-pty; everything else stays testable with a fake pty.
 // Launcher contract: stdio is ignored, so this writes nothing to the console. Config comes from
 // env (no secrets): AETHER_PTY_OWNER_DISCOVERY (or argv[2]), AETHER_PTY_OWNER_GRACE_MS (default
-// 15 min), AETHER_PTY_OWNER_IDLE_MS (optional). Exit 0 once the owner has closed; exit 1 if it
-// never started listening (`closed` does not settle in that case).
+// 15 min), AETHER_PTY_OWNER_IDLE_MS (optional). Exit 0 once `closed` settles after a successful listen; exit 1
+// when `listening` rejects. On that failure `closed` settles too (the discovery-failed teardown),
+// but no exit-0 handler is attached by then.
 import os from 'node:os';
 import * as pty from 'node-pty';
 import { createOwner } from './ownerCore';
