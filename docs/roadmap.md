@@ -411,8 +411,8 @@ disk fails.
 ## 4. Cross-cutting constraints — must be in Stage 2's scope, not discovered later
 
 > **Governing document:** `docs/privacy-and-data.md`. Aether OS is single-user and local-only;
-> nothing about your work leaves the machine except Chat's scoped snapshot to the Anthropic API,
-> which requires a key you supply. That constraint is binding on every stage below and already
+> the opt-in exceptions and listeners (Chat's API snapshot was removed in Stage 13.5) are listed in
+> the privacy document. That constraint is binding on every stage below and already
 > reversed one decision here (constraint #7).
 
 1. **Hook failure isolation is a safety requirement.** A hook command that hangs or blocks degrades
@@ -478,7 +478,7 @@ Schedule these as an explicit task at the end of Stage 5 rather than "when it's 
 
 - No git worktrees, diff review, or PR management. Anthropic, Cursor, Conductor and Emdash all ship
   these; building them makes this the 40th-best Conductor.
-- No packaging, installers, auto-update, or fleet/team view. Those are TokenMonitor's job.
+- No auto-update or fleet/team view. Those are TokenMonitor's job. (A local unsigned installer has since shipped; see `docs/packaging.md`.)
 - No MCP server management, plugin system, or marketplace.
 - No rewrite of the renderer, the reducer, the canvas layer, or the Electron shell.
-- No native mobile, no cloud sync, no multi-user.
+- No cloud sync, no multi-user. (Original scope; an Android companion app has since shipped in `android/`.)
