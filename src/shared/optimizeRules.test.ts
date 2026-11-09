@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateOptimizeRules, evaluateOptimizeRulesWithRecurrence, summarizeOptimize } from './optimizeRules';
 import { type TranscriptEvent } from '../../electron/transcriptParser';
+import { costForEvent } from './modelPricing';
 
 function opusTrivialEvent(i: number): TranscriptEvent {
   return {
@@ -241,6 +242,47 @@ describe('optimizeRules', () => {
     expect(thrash).toBeDefined();
     expect(thrash!.detail).toContain('foo.ts');
     expect(thrash!.estSavingsPerWeek).toBeGreaterThan(0);
+  });
+
+  describe('weekly rate denominator', () => {
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+    const DAY = 24 * 60 * 60 * 1000;
+    const extraCost = (e: TranscriptEvent) => costForEvent(e) - costForEvent({ ...e, model: 'claude-sonnet-4-6' });
+    const at = (i: number, ms: number): TranscriptEvent => ({ ...opusTrivialEvent(1), timestamp: new Date(Date.UTC(2026, 0, 1) + ms + i) });
+    const perWeek = (events: TranscriptEvent[]) => evaluateOptimizeRules(events, WEEK)[0].estSavingsPerWeek;
+
+    it('long history is averaged per week, not reported as an all-time total', () => {
+      const long = [at(0, 0), at(1, 7 * DAY), at(2, 14 * DAY)];
+      const short = [at(0, 0), at(1, 60000), at(2, 120000)];
+      expect(perWeek(long)).toBeCloseTo(perWeek(short) / 2, 9);
+    });
+
+    it('history shorter than a week is not extrapolated upward', () => {
+      const events = [opusTrivialEvent(1), opusTrivialEvent(2), opusTrivialEvent(3)];
+      expect(perWeek(events)).toBeCloseTo(events.reduce((s, e) => s + extraCost(e), 0), 9);
+    });
+
+    it('a single event (zero span) yields a finite non-zero figure', () => {
+      const e = opusTrivialEvent(1);
+      const v = perWeek([e]);
+      expect(Number.isFinite(v)).toBe(true);
+      expect(v).toBeGreaterThan(0);
+      expect(v).toBeCloseTo(extraCost(e), 9);
+    });
+
+    it('zero events produce no findings and a zero total (characterization test, not red-proofed)', () => {
+      expect(evaluateOptimizeRules([], WEEK)).toEqual([]);
+      expect(summarizeOptimize(evaluateOptimizeRules([], WEEK))).toEqual({ totalPerWeek: 0, grade: 'A' });
+    });
+
+    it('recurrence normalises over the post-fix span, not the all-time span', () => {
+      const e0 = at(0, 0);
+      const e1 = at(1, 28 * DAY);
+      const [f] = evaluateOptimizeRulesWithRecurrence([e0, e1], WEEK, { 'opus-on-trivial-turns': Date.UTC(2026, 0, 1) + 14 * DAY });
+      expect(f.recurring).toBe(true);
+      expect(f.estSavingsPerWeek).toBeCloseTo(perWeek([e1]), 9);
+      expect(f.estSavingsPerWeek).not.toBeCloseTo(perWeek([e0, e1]), 9);
+    });
   });
 
   it('findCostOfThrash returns no finding when no file is read/written 3+ times', () => {

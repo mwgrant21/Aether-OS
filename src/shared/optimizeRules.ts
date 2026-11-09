@@ -19,10 +19,35 @@ export interface OptimizeFinding {
   fixText: string;
 }
 
-function extrapolateToWeekly(value: number, windowMs: number): number {
-  if (!windowMs) return 0;
-  const weeklyFactor = (7 * 24 * 60 * 60 * 1000) / windowMs;
-  return value * weeklyFactor;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// First-to-last event span of the events a rule examined (0 for none/one).
+// Null / Invalid Date timestamps are skipped. Known limitation: this is not
+// first-event-to-now, so an idle tail before "now" is not counted, and one
+// corrupt timestamp (e.g. epoch 1970) stretches the span and drives $/wk toward 0.
+// Because of the one-week floor, a history shorter than a week understates the
+// true weekly rate.
+export function observedSpanMs(events: TranscriptEvent[]): number {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const e of events) {
+    const t = eventTimestampMs(e);
+    if (!Number.isFinite(t)) continue;
+    if (t < min) min = t;
+    if (t > max) max = t;
+  }
+  return max >= min ? max - min : 0;
+}
+
+// Scales `value` (waste found in `events`) to a per-week figure. The numerator
+// covers exactly `events`, so the denominator is derived from the same events:
+// max(windowMs, their span). windowMs is a FLOOR, so a history shorter than a
+// week is never extrapolated upward; a longer one is averaged per week rather
+// than reported as an all-time total.
+function extrapolateToWeekly(value: number, events: TranscriptEvent[], windowMs: number): number {
+  const spanMs = Math.max(windowMs, observedSpanMs(events));
+  if (!spanMs) return 0;
+  return value * (WEEK_MS / spanMs);
 }
 
 function stringField(input: unknown, field: string): string | undefined {
@@ -51,7 +76,7 @@ function findOpusOnTrivialTurns(events: TranscriptEvent[], windowMs: number): Op
     id: 'opus-on-trivial-turns',
     title: 'Opus on trivial turns',
     detail: `${trivialOpusEvents.length} turns used Opus for short (<${TRIVIAL_OUTPUT_TOKEN_THRESHOLD}-token) responses`,
-    estSavingsPerWeek: extrapolateToWeekly(extraCost, windowMs),
+    estSavingsPerWeek: extrapolateToWeekly(extraCost, events, windowMs),
     fixText: 'pin trivial/short turns to Sonnet in CLAUDE.md model guidance',
   };
 }
@@ -96,7 +121,7 @@ function findUnpinnedConfigRereads(events: TranscriptEvent[], windowMs: number):
     id: 'unpinned-config-re-reads',
     title: 'Unpinned config re-reads',
     detail: `${offendingFiles.length} file(s) re-read without a cache hit: ${fileList}`,
-    estSavingsPerWeek: extrapolateToWeekly(totalWastedCost, windowMs),
+    estSavingsPerWeek: extrapolateToWeekly(totalWastedCost, events, windowMs),
     fixText: `pin the most re-read files (${fixList}${moreCount > 0 ? ', ...' : ''}) into cached context instead of re-reading`,
   };
 }
@@ -133,7 +158,7 @@ function findUncappedBashOutput(events: TranscriptEvent[], windowMs: number): Op
     id: 'uncapped-bash-output',
     title: 'Uncapped bash output',
     detail: `${offendingCount} Bash calls returned over ${BASH_OUTPUT_SIZE_THRESHOLD} chars with no output limiting`,
-    estSavingsPerWeek: extrapolateToWeekly(estimatedCost, windowMs),
+    estSavingsPerWeek: extrapolateToWeekly(estimatedCost, events, windowMs),
     fixText: 'pipe large commands through head/tail or Select-Object -First',
   };
 }
@@ -194,7 +219,7 @@ function findCostOfThrash(events: TranscriptEvent[], windowMs: number): Optimize
     id: 'cost-of-thrash',
     title: 'Cost of thrash',
     detail: `${redundantCalls} redundant read/write calls across ${listed}${extra}`,
-    estSavingsPerWeek: extrapolateToWeekly(estimatedCost, windowMs),
+    estSavingsPerWeek: extrapolateToWeekly(estimatedCost, events, windowMs),
     fixText: 'cache file contents across turns instead of re-reading/re-writing the same file repeatedly',
   };
 }
