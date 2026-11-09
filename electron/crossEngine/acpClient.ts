@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { spawnAcpProcess } from './acpProcess';
 import { CHAT_GPT_AUTH_METHOD_ID, isAllowedAuthStatus, offersChatGptAuthMethod } from './codexSubscriptionPolicy';
 import type { CodexAuthStatus, VerifierStatus } from '../../src/shared/crossEngineTypes';
@@ -60,6 +61,8 @@ export class AcpClient {
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private buffer = '';
+  /** Incremental UTF-8 decode so a multibyte char split across stdout chunks is not corrupted. */
+  private decoder = new StringDecoder('utf8');
   /** Accumulates `agent_message_chunk` text per sessionId as `session/update`
    *  notifications stream in, so `prompt()` can read back the final message
    *  once the `session/prompt` response (stop reason) arrives. */
@@ -89,11 +92,27 @@ export class AcpClient {
     // it ever does) would otherwise let initialize() skip the real handshake
     // and reuse a dead connection's auth-method list.
     this.authMethods = null;
+    this.buffer = '';
+    this.decoder = new StringDecoder('utf8');
     child.stdout.on('data', (chunk: Buffer) => this.onData(chunk));
+    // An 'error' event with no listener is thrown by Node as an uncaught
+    // exception, which would kill Electron main. this.child is deliberately
+    // left set: dispose() must still end stdin and kill a child that may be alive.
+    child.on('error', (err: Error) => {
+      if (this.child === child) this.rejectPending('ACP adapter failed: ' + err.message);
+    });
+    child.stdin.on('error', (err: Error) => {
+      if (this.child === child) this.rejectPending('ACP adapter stdin failed: ' + err.message);
+    });
+  }
+
+  private rejectPending(message: string): void {
+    for (const [, p] of this.pending) p.reject(new Error(message));
+    this.pending.clear();
   }
 
   private onData(chunk: Buffer): void {
-    this.buffer += chunk.toString('utf8');
+    this.buffer += this.decoder.write(chunk);
     let idx: number;
     while ((idx = this.buffer.indexOf('\n')) !== -1) {
       const line = this.buffer.slice(0, idx);
