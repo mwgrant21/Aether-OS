@@ -53,6 +53,16 @@ describe('terminalHub', () => {
     expect(starts[1]).toStrictEqual({ kind: 'start', q: 2, cols: 80, rows: 24, adopted: true });
   });
 
+  it('start forwards opts to PtyLifecycle: a fresh pty is resumed once, an adopted one is not', () => {
+    const { slot } = setup();
+    const withResume = () => Object.assign(fakePty(), { resume: vi.fn() });
+    const fresh = withResume(), adopted = withResume();
+    slot.start(() => fresh, handlers(), { cols: 80, rows: 24 });
+    slot.start(() => adopted, handlers(), { cols: 80, rows: 24 }, { adopted: true });
+    expect(fresh.resume).toHaveBeenCalledOnce();
+    expect(adopted.resume).not.toHaveBeenCalled();
+  });
+
   it('exit -> exited; a superseded pty produces no events', () => {
     const { slot, events } = setup();
     const first = fakePty(), second = fakePty();

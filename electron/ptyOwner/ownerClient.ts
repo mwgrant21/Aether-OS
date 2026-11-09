@@ -49,6 +49,11 @@ export interface OwnerClient {
   forget(slot: TerminalSlotId): void;
   /** Resolve once the intentional close completed (socket closed), or at once when nothing was to be sent. Never rejects, no timeout of its own. */
   release(): Promise<void>;
+  /** Ask the helper to end every shell and exit, then close. Same contract as release(): resolves once the close
+   *  completed, never rejects. Sends nothing when there is no connection to send on (never connected, or connect
+   *  failed): a helper this client never claimed is NOT ended, and the client stays idle so a later connect()
+   *  still works. During a pending connect or reconnect the frame is held and sent once that attempt claims.
+   *  A caller that must not relaunch a helper after quit keeps its own flag (main.ts `quitting`). */
   shutdown(): Promise<void>;
   /** Fires once when the connection is lost for good (reconnect failed, or displaced). */
   onLost(cb: () => void): () => void;
@@ -244,7 +249,9 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
       if (session) { const s = session; session = null; s.socket.destroy(); }
       if (settlePending(null)) return;
       state = 'reconnecting';
-      lose((e as Error).message || 'reconnect failed');
+      // An fs error's message names the discovery file path (account name included): keep only the errno code.
+      const err = e as NodeJS.ErrnoException;
+      lose(typeof err.code === 'string' && /^E[A-Z]+$/.test(err.code) ? `discovery file ${err.code}` : (err.message || 'reconnect failed'));
     } finally { cancel(); }
   }
 
