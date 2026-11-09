@@ -421,7 +421,7 @@ func TestFleetExecHelperProcess(t *testing.T) {
 		os.Stdout.WriteString("[]")
 		os.Exit(0)
 	case "sleep":
-		time.Sleep(10 * time.Second)
+		sleepUntilStopped()
 		os.Exit(0)
 	case "grandchild":
 		// Inherits this process's stdout pipe but not go-test's stderr.
@@ -432,21 +432,43 @@ func TestFleetExecHelperProcess(t *testing.T) {
 		if err := gc.Start(); err != nil {
 			os.Exit(2)
 		}
-		time.Sleep(10 * time.Second)
+		sleepUntilStopped()
 		os.Exit(0)
 	}
 }
 
-func runHelper(t *testing.T, mode string) (string, error, time.Duration) {
+// sleepUntilStopped sleeps up to 10s but exits early once the sentinel file named
+// by FLEET_EXEC_STOP exists, so no orphan outlives the test binary (on Windows a
+// running orphan makes go test fail to delete fleet.test.exe).
+func sleepUntilStopped() {
+	stop := os.Getenv("FLEET_EXEC_STOP")
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if stop != "" {
+			if _, err := os.Stat(stop); err == nil {
+				return
+			}
+		}
+	}
+}
+
+func runHelper(t *testing.T, mode string, timeout time.Duration) (string, error, time.Duration) {
 	t.Helper()
 	t.Setenv("FLEET_EXEC_HELPER", mode)
+	// Registered after t.TempDir's own cleanup, so it runs first: create the sentinel
+	// and give any still-sleeping helper or grandchild time to see it and exit.
+	stop := filepath.Join(t.TempDir(), "stop")
+	t.Setenv("FLEET_EXEC_STOP", stop)
+	t.Cleanup(func() {
+		os.WriteFile(stop, nil, 0o600)
+		time.Sleep(300 * time.Millisecond)
+	})
 	start := time.Now()
-	out, err := runFleetExec(300*time.Millisecond, 300*time.Millisecond, os.Args[0], "-test.run=^TestFleetExecHelperProcess$")
+	out, err := runFleetExec(timeout, 300*time.Millisecond, os.Args[0], "-test.run=^TestFleetExecHelperProcess$")
 	return out, err, time.Since(start)
 }
 
 func TestRunFleetExec_ReturnsStdoutFromHealthyChild(t *testing.T) {
-	out, err, _ := runHelper(t, "echo")
+	out, err, _ := runHelper(t, "echo", 10*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -456,7 +478,7 @@ func TestRunFleetExec_ReturnsStdoutFromHealthyChild(t *testing.T) {
 }
 
 func TestRunFleetExec_KillsHungChildAndReturnsTimeoutError(t *testing.T) {
-	_, err, elapsed := runHelper(t, "sleep")
+	_, err, elapsed := runHelper(t, "sleep", 300*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected a timeout error, got nil")
 	}
@@ -472,7 +494,7 @@ func TestRunFleetExec_KillsHungChildAndReturnsTimeoutError(t *testing.T) {
 }
 
 func TestRunFleetExec_ReturnsWhenGrandchildKeepsStdoutOpen(t *testing.T) {
-	_, err, elapsed := runHelper(t, "grandchild")
+	_, err, elapsed := runHelper(t, "grandchild", 300*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
