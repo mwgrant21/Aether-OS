@@ -65,6 +65,26 @@ export async function memoryExtractionTick(
   }
 }
 
+// Reason shown in the log: an error code (fs ENOENT, ERR_SQLITE_ERROR) or the error class
+// name, never err.message or the stack -- those can carry absolute paths and SQL text.
+function tickErrorReason(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code)) return code;
+  return err instanceof Error ? err.name : 'non-error thrown';
+}
+
+// The two synchronous interval bodies have no .catch, so one throw would be an
+// uncaught exception and kill the daemon. Log a fixed line and keep ticking.
+function guardTick(label: string, fn: () => void): () => void {
+  return () => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`[aether-collector] ${label} failed: ${tickErrorReason(err)}`);
+    }
+  };
+}
+
 export function startCollector(options: {
   dbPath: string;
   spoolDir: string;
@@ -85,7 +105,12 @@ export function startCollector(options: {
   const extractQueue = createMemoryExtractQueue();
 
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
-  const compactTimer = setInterval(() => compact(db, Date.now()), options.compactIntervalMs);
+  const compactTimer = setInterval(
+    guardTick('compaction', () => {
+      compact(db, Date.now());
+    }),
+    options.compactIntervalMs
+  );
   const toolCallHistoryByFile = new Map<string, ToolCallHistory>();
   // Survives across ticks so a hand-back and its later notification still link.
   const handbackReports = createHandbackReportStore();
@@ -103,8 +128,11 @@ export function startCollector(options: {
       readOwnSessionId(options.ownSessionFilePath),
       handbackReports
     );
-  scan();
-  const transcriptScanTimer = setInterval(scan, options.transcriptScanIntervalMs);
+  const guardedScan = guardTick('transcript scan', () => {
+    scan();
+  });
+  guardedScan();
+  const transcriptScanTimer = setInterval(guardedScan, options.transcriptScanIntervalMs);
 
   pollAndUpsertFleet(db, options.ownSessionFilePath).catch((err) =>
     console.error('[aether-collector] fleet poll failed:', err)
