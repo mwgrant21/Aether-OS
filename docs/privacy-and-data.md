@@ -993,3 +993,27 @@ Added with AFK Phase 1 (2026-11-05). Phase 1 only prepares an overnight run and 
 **The skill install.** `afk install-skill`, run by Matt, writes one file, `~/.claude/skills/afk-preflight/SKILL.md`, rendered from `skills/afk-preflight/SKILL.md` with the absolute path of this machine's `afk.mjs` substituted in. An installed build is meant to ship the template in `resources/skills/` (`docs/packaging.md` section 1; UNVERIFIED until T21 M3).
 
 **Retention and removal.** The `afk` folder is kept until Matt deletes it. Settings -> Purge clears collected data and the diagnostic log (`electron/main.ts`, `retention:purge`) and names no AFK path.
+
+## 21. PTY owner helper - a detached local process that can outlive the app
+
+Off by default. It runs only when `AETHER_PTY_OWNER=1` is set in the environment on Windows (`ptyOwnerEnabled`, `electron/main.ts`); without it nothing in this section exists and the three terminals are in-process exactly as before.
+
+**What it is.** A second, detached process: `Aether OS.exe` started with `ELECTRON_RUN_AS_NODE=1` running `out/main/pty-owner.js` (`electron/ptyOwner/ownerEntry.ts`, `ownerCore.ts`). It owns the Claude, Terminal 2 and Codex shells so a main-process restart (dev reload, crash) does not kill them; the restarted main finds the helper and adopts the running slots (`electron/ptyOwner/adopt.ts`). Adoption at startup does not call `aetherChoice.onForeignLaunch`. A connected-session spawn stays in-process and is never helper-owned.
+
+**It can outlive the app, with the sessions it owns.** If the app dies without a deliberate quit (crash, `taskkill /F` of the main process), the helper and the shells it owns keep running for a grace window of 15 minutes (`AETHER_PTY_OWNER_GRACE_MS`, default set by `ownerLauncher.ts` and `ownerEntry.ts`), then tear down. A Task-Manager end-task of only the main `Aether OS.exe` leaves the helper's `Aether OS.exe` process in the list until the grace window ends. A deliberate Quit ENDS the terminals: `PTY_OWNER_ON_QUIT = 'shutdown'` (`electron/main.ts`) sends `shutdown` to the helper. Changing that constant to `'release'` would instead leave the sessions running for the grace window; it is not changed by any setting. Updates and uninstalls are meant to end the helper too (see `docs/packaging.md`; UNVERIFIED until the live T8 report exists). A Quit that begins while the helper is still launching can leave an empty helper (no shell) to its own grace timer; no shell leaks.
+
+**The listener is a local named pipe, not a network listener.** It is a `\\.\pipe\...` endpoint (the one reviewed entry in `electron/remote/noWildcardListener.test.ts`), reachable only on this machine, with no TCP port, no tailnet or LAN bind and no `0.0.0.0`. It is a different class from the reviewed tailnet binds (§16-18). Every verb except hello/auth needs a mutual HMAC proof (`electron/ptyOwner/protocol.ts`).
+
+**Discovery file.** `~/.aether-os/pty-owner-<8 hex of the userData hash>-p<proto>.json` holds three things: the pipe name, the helper pid and the secret. No terminal content, no paths of user content. Its protection is the user-only ACL on `~/.aether-os` (§7, `electron/privateDir.ts`); this section depends on that ACL. **The secret is equivalent to "run commands as the user":** the spawn spec's `writes` are typed into the shell, so anyone who can read the discovery file and speak the protocol can make the helper's shells execute arbitrary commands. Restricting the shell to `powershell.exe` does not narrow that.
+
+**The raw ring.** The helper keeps up to 256 KiB (`RING_MAX`, `protocol.ts`) of raw terminal output per slot in memory only, so an adopting main can repaint. It holds terminal output, so it is the same sensitivity as the §11 terminals and the hub ring. It is cleared when the slot exits or the helper exits, and is never written to disk, logged or sent anywhere except over the local pipe to the authenticated main.
+
+**Helper environment.** The helper's own environment is a minimal allowlist (`minimalHelperEnv`, `ownerLauncher.ts`; never a `process.env` spread): the three `AETHER_PTY_OWNER_*` settings, `ELECTRON_RUN_AS_NODE` and a short list of system variables. The shells get the spawn spec's `env`, the same environment the in-process path builds (§11, §19); an env over 32 KiB (`ENV_MAX_BYTES`) is refused and that spawn runs in-process.
+
+**Diagnostics.** Helper-related lines in `diag.log` are fixed strings (`pty-owner: ...`, `pty-owner error <code>`, `pty-owner connection lost: <reason>`): no output, no env, no discovery contents.
+
+**Accepted residual.** An old pty's in-flight frame can reach a re-spawned slot (a sub-millisecond race; fixing it needs a protocol generation field). The feature is OFF, so this is accepted for now.
+
+**UNVERIFIED / UNEXERCISED until the live T8 report exists:** the packaged launch of the built ESM file from the asar tree, helper survival across Quit via job breakaway, cold-start latency of the helper, whether the resize nudge repaints a full-screen TUI after adoption, and the typical Windows env size against the 32 KiB cap. The only measurements behind the design are the earlier spike results (a plain `node` helper: a hard-killed parent left a detached helper and its shell alive, and a hard-killed ConPTY creator took its shell down; Electron-as-node and the packaged route were not part of it).
+
+Cross-references: §7 (the ACL the discovery file relies on), §11 (the terminals' open-ended access), §17 (phone typing reaches the same shells through the hub), §19 (terminal board env).

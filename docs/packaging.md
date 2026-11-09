@@ -176,6 +176,14 @@ an `.asar` path under `npm run electron:dev`, so Connect Codex and Verify
 Dispatch work there and break in every packaged build -- installed and
 `win-unpacked` alike. Found by review on PR #75, not by testing.
 
+## The PTY owner helper (optional, off by default)
+
+With `AETHER_PTY_OWNER=1` on Windows, main launches a detached helper: the installed `Aether OS.exe` with `ELECTRON_RUN_AS_NODE=1`, running `out/main/pty-owner.js`. It is a second entry in `electron.vite.config.ts` (`'pty-owner'` -> `electron/ptyOwner/ownerEntry.ts`); `electron/asarUnpackClosure.test.ts` pins that entry. There is no `asarUnpack` change: `**/node_modules/**` is already unpacked (#2), which is where the helper's `node-pty` must resolve from.
+
+Update and uninstall: the helper is an `Aether OS.exe` process under `$INSTDIR`, so the install-directory kill/sweep in `build/installer.nsh` (`customCheckAppRunning`, the lone-helper sweep) is the mechanism meant to stop it before files are replaced. That it actually does so on a real update or uninstall is UNVERIFIED: no spike result covers the installer, and the live T8 report (item 4) does not exist yet. If it does not, the installer will report the app as running or a file as in use.
+
+UNVERIFIED / UNEXERCISED until the live T8 report: that a packaged `Aether OS.exe` with `ELECTRON_RUN_AS_NODE=1` loads the built ESM `app.asar/out/main/pty-owner.js` and resolves `node-pty` from the unpacked tree; that the helper survives a Quit-less main death when started from the packaged app (job breakaway, both the Start-menu and post-install launch routes); helper cold-start latency. See `docs/privacy-and-data.md` section 21.
+
 ## Versioning
 
 The version lives in one place, `package.json`, and everything else derives from
