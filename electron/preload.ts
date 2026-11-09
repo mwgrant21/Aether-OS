@@ -325,11 +325,11 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     uninstall: (): Promise<{ ok: boolean; backupPath?: string | null; error?: string }> => ipcRenderer.invoke('statusline:uninstall'),
   },
   permission: {
-    // `null` is a real payload on this channel, not an absence: main sends it
-    // from the permission:respond handler to tell the renderer the pending
-    // request has been answered and should be cleared.
-    onRequest: (callback: (request: PermissionRequestUI | null) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, request: PermissionRequestUI | null) => callback(request);
+    // A bare `{ requestId }` (no toolName) is a real payload on this channel: main sends it
+    // from the permission:respond handler to tell the renderer that request has been
+    // answered; the renderer clears the pending card only if the id still matches.
+    onRequest: (callback: (request: PermissionRequestUI | { requestId: string } | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: PermissionRequestUI | { requestId: string } | null) => callback(request);
       ipcRenderer.on('permission:request', listener);
       return () => ipcRenderer.removeListener('permission:request', listener);
     },
@@ -337,9 +337,9 @@ contextBridge.exposeInMainWorld('aetherElectron', {
     setAutoAllow: (level: PermissionAutoAllowLevel) => ipcRenderer.send('permission:setAutoAllow', level),
   },
   postToolFlag: {
-    // `null` clears the pending flag -- see permission.onRequest above.
-    onRequest: (callback: (request: PostToolFlagRequestUI | null) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, request: PostToolFlagRequestUI | null) => callback(request);
+    // A bare `{ requestId }` clears the pending flag if the id matches -- see permission.onRequest above.
+    onRequest: (callback: (request: PostToolFlagRequestUI | { requestId: string } | null) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: PostToolFlagRequestUI | { requestId: string } | null) => callback(request);
       ipcRenderer.on('postToolFlag:request', listener);
       return () => ipcRenderer.removeListener('postToolFlag:request', listener);
     },

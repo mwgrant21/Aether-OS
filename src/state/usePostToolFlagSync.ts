@@ -8,6 +8,10 @@ export function usePostToolFlagSync() {
     const postToolFlag = window.aetherElectron?.postToolFlag;
     if (!postToolFlag) return;
     return postToolFlag.onRequest((request) => {
+      if (request && !('toolName' in request)) {
+        dispatch({ type: 'CLEAR_PENDING_POST_TOOL_FLAG', requestId: request.requestId });
+        return;
+      }
       dispatch({ type: 'SET_PENDING_POST_TOOL_FLAG', request });
     });
   }, [dispatch]);
