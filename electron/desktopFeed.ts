@@ -7,7 +7,7 @@ export interface DesktopFeed {
   data(d: string): void;
   /** Deliver a fresh hub snapshot, then the data that arrived meanwhile. A second call supersedes the first. */
   reattach(): void;
-  /** The session ended: sent now, or after the pending snapshot and held data so the exit text lands last. */
+  /** The session ended: sent now, or after the pending snapshot and held data so the exit text lands last. Dropped if the slot restarts before the snapshot releases. */
   exit(): void;
   dispose(): void;
 }
@@ -29,6 +29,8 @@ export function createDesktopFeed(o: {
   let gated = false;
   let held: string[] = [];
   let exitPending = false;
+  let exitQ: number | undefined;
+  const slotQ = () => o.port.list().find((i) => i.s === o.slot)?.q;
   let attachment: TerminalAttachment | null = null;
   let cancelTimer: (() => void) | null = null;
 
@@ -42,7 +44,11 @@ export function createDesktopFeed(o: {
     cancelTimer?.(); cancelTimer = null;
     const out = held; held = [];
     for (const d of out) o.send(o.channels.data, d);
-    if (exitPending) { exitPending = false; o.send(o.channels.exit, undefined); }
+    if (exitPending) {
+      exitPending = false;
+      // The slot restarted since the exit (its q moved on): that exit belongs to the old session, drop it.
+      if (slotQ() === exitQ) o.send(o.channels.exit, undefined);
+    }
   }
 
   return {
@@ -51,7 +57,7 @@ export function createDesktopFeed(o: {
       else o.send(o.channels.data, d);
     },
     exit() {
-      if (gated) exitPending = true;
+      if (gated) { exitPending = true; exitQ = slotQ(); }
       else o.send(o.channels.exit, undefined);
     },
     reattach() {

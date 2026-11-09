@@ -7,7 +7,7 @@ subordinate to this document.
 
 ## 1. The stance
 
-**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14), and, as a model-launch boundary, the opt-in voice gateway, which starts a `claude -p` session, launched with hooks disabled, under the owner's login (§18). The deliberate inbound exceptions are, first, the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16), and, separately, the opt-in tailnet-only phone control path (§17), which unlike the viewer may be set to re-enable at launch (built: pairing, device auth, the `/ctl` handshake, terminal output and typing into a running slot; approvals, starting a slot and fit-to-phone are planned, not built; phone alerts, an alert-only credential and a desktop watcher that sends a three-value label, are also planned, not built; see §17). Third is the opt-in, off-at-every-launch, tailnet-only voice gateway on its own listener (port 47822), through which a paired phone can talk to a Claude session on this PC (§18).**
+**Aether OS is single-user and local-first. The explicit outbound exceptions are Codex verification (§9), opted-in Claude–Codex communication (§13), operator-driven terminals (§11), and the opt-in, default-off background memory extraction through the Claude CLI (§14), and, as a model-launch boundary, the opt-in voice gateway, which starts a `claude -p` session, launched with hooks disabled, under the owner's login (§18). The deliberate inbound exceptions are, first, the opt-in, off-at-every-launch, tailnet-only read-only chat view for a paired phone (§16), and, separately, the opt-in tailnet-only phone control path (§17), which unlike the viewer may be set to re-enable at launch (built: pairing, device auth, the `/ctl` handshake, terminal output and typing into a running slot; approvals, starting a slot and fit-to-phone are planned, not built; phone alerts, an alert-only credential and a desktop watcher that sends a three-value label, are built, PR #198, with the permission-prompt hook installed by hand; see §17). Third is the opt-in, off-at-every-launch, tailnet-only voice gateway on its own listener (port 47822), through which a paired phone can talk to a Claude session on this PC (§18).**
 
 That is a stronger claim than TokenMonitor's, and deliberately so — the two products have different
 audiences. TokenMonitor is a fleet tool: it writes per-seat daily reports to a shared network folder
@@ -75,7 +75,7 @@ Bank these as removed from scope, permanently:
   **One deliberate, opt-in exception:** the read-only phone chat view (`electron/remote/`) listens on
   the Tailscale interface address only (never `0.0.0.0`, `::` or a LAN address), is off at every
   launch, needs a native confirmation to enable, and requires a pairing code and session cookie;
-  see §16, and phone control, §17 (planned). **A second deliberate, opt-in listener:** the voice
+  see §16, and phone control, §17 (built). **A second deliberate, opt-in listener:** the voice
   gateway (`electron/voice/`, port 47822) follows the same rules (tailnet address only, off at every
   launch, native confirm, pairing code and cookie, no request with an `Origin` header) and is also a
   model-launch boundary; see §18

@@ -62,7 +62,7 @@ function setup(o: { real?: boolean; retain?: boolean } = {}) {
   });
   // main feeds the hub (via the pty) and the feed with the same chunk
   const emit = (d: string) => { pty.fireData(d); feed.data(d); };
-  return { fm, feed, pty, sent, timers, emit, detaches };
+  return { fm, feed, pty, sent, timers, emit, detaches, slot };
 }
 
 describe('desktopFeed', () => {
@@ -95,6 +95,17 @@ describe('desktopFeed', () => {
     fm.resolvers[0]();
     await flush();
     expect(sent).toEqual([[CH.snap, { cols: 40, rows: 5, d: '' }], [CH.data, 'b'], [CH.exit, undefined]]);
+  });
+
+  it('an exit held behind the snapshot is dropped when the slot restarts before release; held data still flushes', () => {
+    const { feed, pty, sent, slot, emit } = setup();
+    feed.reattach();
+    emit('x');
+    pty.fireExit(); feed.exit();
+    slot.start(() => fakePty(), handlers(), { cols: 40, rows: 5 });
+    expect(sent).toEqual([[CH.snap, { cols: 40, rows: 5, d: '' }], [CH.data, 'x']]);
+    feed.exit();
+    expect(sent[sent.length - 1]).toEqual([CH.exit, undefined]);
   });
 
   it('when the hub is not retained the snap is empty and live data still flows', () => {
