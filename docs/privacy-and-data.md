@@ -487,7 +487,7 @@ MCP client and has no session, turn, cancellation or approval semantics.)
 
 ## 13. Visible Claude–Codex communication — separate opt-in boundary
 
-Implemented on `feat/visible-communication-u1` through U8; U9 component-path verification has passed; complete connected-launch verification remains in
+Implemented through U8 and merged to master in #76 (2026-09-15); U9 component-path verification has passed; complete connected-launch verification remains in
 progress. This section describes implementation and controls, not a passed production-path or
 live-provider test. Consult the U9 results for those verdicts. One qualified live consultation was observed on 2026-09-14 (a single exchange through the
 connected bridge with real tools, on the interactive client's default model; recorded in the
