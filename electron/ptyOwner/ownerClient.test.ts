@@ -64,19 +64,27 @@ function collect(p: RemotePty): { data: string[]; exits: number } {
 const sync = (c: OwnerClient): Promise<unknown> => c.list();
 
 /** Forwards a pipe to the real owner so a test can cut the connection without touching the owner. */
-async function proxy(target: string): Promise<{ pipe: string; drop(): void }> {
+async function proxy(target: string):
+  Promise<{ pipe: string; drop(): void; hold(): void; held(): number; release(): void }> {
   const socks = new Set<net.Socket>();
+  const heldConns: Array<() => void> = [];
+  let holding = false;
   const pipe = pipeName();
   const server = net.createServer((s) => {
     const up = net.connect(target);
     socks.add(s); socks.add(up);
     s.on('error', () => up.destroy()); up.on('error', () => s.destroy());
     s.on('close', () => up.destroy()); up.on('close', () => s.destroy());
-    s.pipe(up); up.pipe(s);
+    const go = (): void => { s.pipe(up); up.pipe(s); };
+    if (holding) heldConns.push(go); else go();
   });
   await new Promise<void>((res) => server.listen(pipe, res));
   live.closers.push(() => { for (const s of socks) s.destroy(); server.close(); });
-  return { pipe, drop: () => { for (const s of socks) s.destroy(); socks.clear(); } };
+  return {
+    pipe, drop: () => { for (const s of socks) s.destroy(); socks.clear(); },
+    hold: () => { holding = true; }, held: () => heldConns.length,
+    release: () => { holding = false; for (const go of heldConns.splice(0)) go(); },
+  };
 }
 function discoveryFor(pipe: string, secret: string): string {
   const f = path.join(tmp(), 'proxy.json');
@@ -315,5 +323,104 @@ describe.runIf(process.platform === 'win32')('ownerClient (real createOwner over
     ptys[0].emit('still alive');
     await vi.waitFor(() => expect(gok.data).toEqual(['still alive']));
     expect(gok.exits).toBe(0);
+  });
+
+  describe('release and shutdown in every connection state', () => {
+    const within = (p: Promise<unknown>, what: string): Promise<unknown> =>
+      Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`timed out: ${what}`)), 3000))]);
+
+    it('shutdown while connect is pending reaches the helper and the client never becomes ready', async () => {
+      const r = await rig();
+      const c = client();
+      const connecting = c.connect(r.discovery);
+      const settled = connecting.catch((e: Error) => e.message);
+      const done = c.shutdown();
+      expect(c.ready).toBe(false);
+      expect(await settled).toBe('closed');
+      await within(done, 'shutdown promise');
+      await within(r.owner.closed, 'helper closed');
+      expect(c.ready).toBe(false);
+    });
+
+    it('shutdown while reconnecting reaches the helper', async () => {
+      const r = await rig();
+      const px = await proxy(r.pipe);
+      const c = client();
+      await c.connect(discoveryFor(px.pipe, r.secret));
+      px.hold(); // the reconnect's handshake stalls in the proxy, so it stays in flight
+      px.drop();
+      await vi.waitFor(() => expect(px.held()).toBe(1));
+      expect(c.ready).toBe(false);
+      const done = c.shutdown();
+      px.release();
+      await within(done, 'shutdown promise');
+      await within(r.owner.closed, 'helper closed');
+      expect(c.ready).toBe(false);
+    });
+
+    it('release while connect is pending keeps the helper and frees the claim', async () => {
+      const r = await rig();
+      const c = client();
+      const settled = c.connect(r.discovery).catch((e: Error) => e.message);
+      const done = c.release();
+      expect(await settled).toBe('closed');
+      await within(done, 'release promise');
+      await vi.waitFor(() => expect(r.owner.hasOwner()).toBe(false));
+      const again = await connected(r); // claim is free and the helper is still up
+      expect(again.ready).toBe(true);
+    });
+
+    it('a connect that fails after shutdown was asked ends closed without throwing from shutdown', async () => {
+      const mute = await fakeServer((f, reply) => {
+        if (f.t === 'hello') reply({ t: 'error', code: 'proto' });
+      });
+      const c = client();
+      const settled = c.connect(mute.discovery).catch((e: Error) => e.message);
+      await expect(c.shutdown()).resolves.toBeUndefined();
+      expect(await settled).toMatch(/proto/);
+      expect(c.ready).toBe(false);
+      await expect(c.shutdown()).resolves.toBeUndefined(); // closed: a no-op
+    });
+
+    it('shutdown while ready resolves after the socket closed', async () => {
+      const r = await rig();
+      const c = await connected(r);
+      c.spawn('claude', spec(), {});
+      await sync(c);
+      await within(c.shutdown(), 'shutdown promise');
+      expect(c.ready).toBe(false);
+      await within(r.owner.closed, 'helper closed');
+    });
+
+    it('release while ready resolves and keeps the sessions', async () => {
+      const r = await rig();
+      const c = await connected(r);
+      c.spawn('claude', spec(), {});
+      await sync(c);
+      await within(c.release(), 'release promise');
+      await vi.waitFor(() => expect(r.owner.hasOwner()).toBe(false));
+      const second = await connected(r);
+      expect((await second.list()).map((x) => x.slot)).toEqual(['claude']);
+    });
+  });
+
+  it('a list that dies with the connection does not make a spawn-failed exit a healthy slot', async () => {
+    const secret = newSecret();
+    const nonceS = newNonce();
+    let srv!: Awaited<ReturnType<typeof fakeServer>>;
+    srv = await fakeServer((f, reply) => {
+      if (f.t === 'hello') reply({ t: 'challenge', nonceS, proofS: signProof(secret, 'server', f.nonceC) });
+      else if (f.t === 'auth') reply({ t: 'ready', slots: [] });
+      else if (f.t === 'claim') reply({ t: 'slots', slots: [] });
+      else if (f.t === 'spawn') reply({ t: 'error', code: 'spawn-failed' });
+      else if (f.t === 'list') { for (const s of srv.sockets) s.destroy(); } // dies before it can answer
+    }, secret);
+    const c = client();
+    await c.connect(srv.discovery);
+    const pty = c.spawn('claude', spec(), {});
+    const got = collect(pty); pty.resume();
+    await vi.waitFor(() => expect(srv.seen.map((x) => x.t)).toContain('list'));
+    await new Promise((res) => setTimeout(res, 150));
+    expect(got.exits).toBe(0);
   });
 });

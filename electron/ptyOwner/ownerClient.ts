@@ -47,8 +47,9 @@ export interface OwnerClient {
   list(): Promise<SlotInfo[]>;
   attach(slot: TerminalSlotId): Promise<AttachResult>;
   forget(slot: TerminalSlotId): void;
-  release(): void;
-  shutdown(): void;
+  /** Resolve once the intentional close completed (socket closed), or at once when nothing was to be sent. Never rejects, no timeout of its own. */
+  release(): Promise<void>;
+  shutdown(): Promise<void>;
   /** Fires once when the connection is lost for good (reconnect failed, or displaced). */
   onLost(cb: () => void): () => void;
 }
@@ -76,7 +77,11 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
   let displaced = false;
   const remotes = new Map<TerminalSlotId, RemotePty>();
   const unconfirmed = new Set<TerminalSlotId>(); // spawned, no data/exit seen yet
-  const listWaiters: Array<(slots: SlotInfo[]) => void> = [];
+  // null: the connection closed before the reply arrived.
+  const listWaiters: Array<(slots: SlotInfo[] | null) => void> = [];
+  // A release/shutdown asked for while a connect or reconnect is in flight: sent once that attempt claims.
+  let pending: { frame: ClientFrame; done: Promise<void>; resolve: () => void } | null = null;
+  let closing: Promise<void> | null = null;
   let attachWaiter: AttachWaiter | null = null;
   let attachChain: Promise<unknown> = Promise.resolve();
   const lostCbs = new Set<() => void>();
@@ -171,6 +176,7 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
       const snapshot = [...unconfirmed];
       unconfirmed.clear();
       listWaiters.push((slots) => {
+        if (!slots) return; // closed: says nothing about which slots the helper has
         const present = new Set(slots.map((s) => s.slot));
         for (const slot of snapshot) if (!present.has(slot)) remotes.get(slot)?.deliverExit();
       });
@@ -185,7 +191,7 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
     session = null;
     cancelPing();
     attachWaiter?.reject('closed');
-    for (const w of listWaiters.splice(0)) w([]);
+    for (const w of listWaiters.splice(0)) w(null);
     if (state === 'closed') return;
     if (state === 'reconnecting') return; // the in-flight attempt observes the rejection
     if (displaced) { lose('displaced'); return; }
@@ -223,6 +229,7 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
       opening = open(readDiscovery(), onFrame, onClose);
       session = await opening.done;
       if (timedOut) throw new Error('timeout');
+      if (settlePending(session)) return;
       displaced = false;
       state = 'ready';
       startPing();
@@ -233,7 +240,9 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
         }
       }
     } catch (e) {
+      if (isClosed()) return; // closed intentionally while attaching
       if (session) { const s = session; session = null; s.socket.destroy(); }
+      if (settlePending(null)) return;
       state = 'reconnecting';
       lose((e as Error).message || 'reconnect failed');
     } finally { cancel(); }
@@ -266,14 +275,41 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
     return run;
   }
 
-  function closeIntentionally(frame: ClientFrame): void {
-    if (state !== 'ready') { state = 'closed'; return; }
-    link.send(frame);
+  // A function, so the compiler does not narrow `state` across awaits that closeIntentionally can interrupt.
+  const isClosed = (): boolean => state === 'closed';
+
+  function sendAndEnd(s: Session, frame: ClientFrame): Promise<void> {
     state = 'closed';
     cancelPing();
-    const s = session;
+    closing = new Promise<void>((res) => {
+      if (s.socket.destroyed) { res(); return; }
+      s.socket.once('close', () => res());
+      try { s.socket.write(encodeFrame(frame)); s.socket.end(); } catch { s.socket.destroy(); }
+    });
+    return closing;
+  }
+
+  /** An attempt finished: send the remembered close frame on `sess` (null: the attempt failed, nothing to send). */
+  function settlePending(sess: Session | null): boolean {
+    const p = pending;
+    if (!p) return false;
+    pending = null;
+    if (!sess) { state = 'closed'; cancelPing(); p.resolve(); return true; }
     session = null;
-    s?.socket.end();
+    void sendAndEnd(sess, p.frame).then(p.resolve);
+    return true;
+  }
+
+  function closeIntentionally(frame: ClientFrame): Promise<void> {
+    if (state === 'ready' && session) { const s = session; session = null; return sendAndEnd(s, frame); }
+    if (state === 'connecting' || state === 'reconnecting') {
+      if (pending) { if (frame.t === 'shutdown') pending.frame = frame; return pending.done; }
+      let resolve!: () => void;
+      const done = new Promise<void>((res) => { resolve = res; });
+      pending = { frame, done, resolve };
+      return done;
+    }
+    return closing ?? Promise.resolve();
   }
 
   return {
@@ -286,10 +322,11 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
       try {
         opening = open(readDiscovery(), onFrame, onClose);
         session = await opening.done;
+        if (settlePending(session)) throw new Error('closed');
         state = 'ready';
         startPing();
       } catch (e) {
-        state = 'idle';
+        if (!isClosed() && !settlePending(null)) state = 'idle';
         throw e;
       } finally { cancel(); }
     },
@@ -304,7 +341,7 @@ export function createOwnerClient(opts: OwnerClientOptions = {}): OwnerClient {
     list(): Promise<SlotInfo[]> {
       return new Promise((resolve, reject) => {
         if (state !== 'ready') { reject(new Error('not connected')); return; }
-        listWaiters.push(resolve);
+        listWaiters.push((slots) => { if (slots) resolve(slots); else reject(new Error('not connected')); });
         if (!link.send({ t: 'list' })) { listWaiters.pop(); reject(new Error('not connected')); }
       });
     },
