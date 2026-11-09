@@ -66,6 +66,19 @@ describe('usePermissionRequestSync', () => {
     expect(result.current.notifs[0].m.toLowerCase()).toContain('resolved');
   });
 
+  it('clears on a matching { requestId } payload but ignores a stale id', () => {
+    let emit: ((request: PermissionRequestUI | { requestId: string } | null) => void) | undefined;
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      permission: { onRequest: (cb: typeof emit) => { emit = cb; return () => { emit = undefined; }; } },
+    };
+    const { result } = renderHook(() => { usePermissionRequestSync(); return useAetherStore().state; }, { wrapper });
+    act(() => emit?.(permissionRequest));
+    act(() => emit?.({ requestId: 'stale' }));
+    expect(result.current.pendingPermissionRequest).toEqual(permissionRequest);
+    act(() => emit?.({ requestId: 'r1' }));
+    expect(result.current.pendingPermissionRequest).toBeNull();
+  });
+
   it('does nothing when window.aetherElectron.permission is absent', () => {
     (window as unknown as { aetherElectron: unknown }).aetherElectron = {};
     const { result } = renderHook(
@@ -108,6 +121,19 @@ describe('usePostToolFlagSync', () => {
     act(() => emit?.(null));
     expect(result.current.pendingPostToolFlag).toBeNull();
     expect(result.current.notifs[0].m.toLowerCase()).toContain('resolved');
+  });
+
+  it('clears on a matching { requestId } payload but ignores a stale id', () => {
+    let emit: ((request: PostToolFlagRequestUI | { requestId: string } | null) => void) | undefined;
+    (window as unknown as { aetherElectron: unknown }).aetherElectron = {
+      postToolFlag: { onRequest: (cb: typeof emit) => { emit = cb; return () => { emit = undefined; }; } },
+    };
+    const { result } = renderHook(() => { usePostToolFlagSync(); return useAetherStore().state; }, { wrapper });
+    act(() => emit?.(flagRequest));
+    act(() => emit?.({ requestId: 'stale' }));
+    expect(result.current.pendingPostToolFlag).toEqual(flagRequest);
+    act(() => emit?.({ requestId: 'f1' }));
+    expect(result.current.pendingPostToolFlag).toBeNull();
   });
 
   it('does nothing when window.aetherElectron.postToolFlag is absent', () => {

@@ -185,14 +185,14 @@ declare global {
         uninstall: () => Promise<{ ok: boolean; backupPath?: string | null; error?: string }>;
       };
       permission: {
-        // `null` means "the pending request was answered, clear it" -- main
+        // A bare `{ requestId }` means "that request was answered, clear it if still pending" -- main
         // pushes it from the permission:respond handler.
-        onRequest: (callback: (request: PermissionRequestUI | null) => void) => () => void;
+        onRequest: (callback: (request: PermissionRequestUI | { requestId: string } | null) => void) => () => void;
         respond: (requestId: string, decision: PermissionDecision) => Promise<void>;
         setAutoAllow: (level: PermissionAutoAllowLevel) => void;
       };
       postToolFlag: {
-        onRequest: (callback: (request: PostToolFlagRequestUI | null) => void) => () => void;
+        onRequest: (callback: (request: PostToolFlagRequestUI | { requestId: string } | null) => void) => () => void;
         respond: (requestId: string, decision: PostToolFlagDecision) => Promise<void>;
       };
       presence: {

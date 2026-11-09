@@ -57,6 +57,8 @@ export type Action =
   | { type: 'SET_PROJECTS_SNAPSHOT'; snapshot: ProjectsSnapshot | null }
   | { type: 'SET_PENDING_PERMISSION_REQUEST'; request: PermissionRequestUI | null }
   | { type: 'SET_PENDING_POST_TOOL_FLAG'; request: PostToolFlagRequestUI | null }
+  | { type: 'CLEAR_PENDING_PERMISSION_REQUEST'; requestId: string }
+  | { type: 'CLEAR_PENDING_POST_TOOL_FLAG'; requestId: string }
   | { type: 'SET_OPTIMIZE_FINDINGS'; findings: OptimizeFinding[] }
   | { type: 'SET_OPTIMIZE_SUMMARY'; summary: OptimizeSummary }
   | { type: 'SET_OPTIMIZE_BREAKDOWN'; rows: GradeRow[] }
@@ -322,6 +324,17 @@ export function reducer(state: AetherState, action: Action): AetherState {
       }
       return { ...state, pendingPermissionRequest: action.request, narrationMessages, narrationBudgets, notifs, unread };
     }
+
+    // Clear only if the answered request is still the current one; a stale duplicate must not hide a newer card.
+    case 'CLEAR_PENDING_PERMISSION_REQUEST':
+      return state.pendingPermissionRequest?.requestId === action.requestId
+        ? reducer(state, { type: 'SET_PENDING_PERMISSION_REQUEST', request: null })
+        : state;
+
+    case 'CLEAR_PENDING_POST_TOOL_FLAG':
+      return state.pendingPostToolFlag?.requestId === action.requestId
+        ? reducer(state, { type: 'SET_PENDING_POST_TOOL_FLAG', request: null })
+        : state;
 
     case 'SET_PENDING_POST_TOOL_FLAG': {
       let narrationMessages = state.narrationMessages;
