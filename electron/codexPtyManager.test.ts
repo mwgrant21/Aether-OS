@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { buildCodexPtyEnv, buildUnsetCommand, buildCodexLaunchCommand, buildCodexResolveScript } from './codexPtyManager';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import os from 'node:os';
+import { buildCodexPtyEnv, buildUnsetCommand, buildCodexLaunchCommand, buildCodexResolveScript, buildCodexLaunchSpec } from './codexPtyManager';
 
 // Mirrors ptyManager.test.ts's guard, for the Codex terminal's own launch path.
 // Mirrors acpProcess.test.ts's BLOCKED list -- the verifier already enumerates
@@ -187,5 +188,30 @@ describe('buildCodexLaunchCommand / buildCodexResolveScript', () => {
 
   it('the POSIX resolve script uses command -v, then prints path and --version, exit 3 if none', () => {
     expect(buildCodexResolveScript('linux')).toBe('p=$(command -v codex) || exit 3; printf \'%s\\n\' "$p"; "$p" --version');
+  });
+});
+
+describe('buildCodexLaunchSpec', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('builds the shell, home cwd, unset-then-launch writes, CODEX_HOME and no billing vars', () => {
+    for (const key of BLOCKED) vi.stubEnv(key, 'leaked-value');
+    const spec = buildCodexLaunchSpec(110, 35);
+    expect(spec.file).toBe(process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash');
+    expect(spec.args).toEqual([]);
+    expect(spec.cwd).toBe(os.homedir());
+    expect([spec.cols, spec.rows]).toEqual([110, 35]);
+    expect(spec.writes).toHaveLength(2);
+    for (const key of ['OPENAI_API_KEY', 'CODEX_API_KEY']) expect(spec.writes[0]).toContain(key);
+    expect(spec.writes[1]).toBe(buildCodexLaunchCommand(process.platform));
+    for (const key of BLOCKED) expect(spec.env[key]).toBeUndefined();
+    expect(spec.env.CODEX_HOME).toBeTruthy();
+    expect(spec.env.CODEX_HOME).not.toBe('leaked-value');
+    expect(spec.env.COLORTERM).toBe('truecolor');
+  });
+
+  it('strips ELECTRON_RUN_AS_NODE from the env', () => {
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', '1');
+    expect(buildCodexLaunchSpec().env.ELECTRON_RUN_AS_NODE).toBeUndefined();
   });
 });

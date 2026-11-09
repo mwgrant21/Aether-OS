@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import os from 'node:os';
 import { join } from 'node:path';
-import { buildClaudeLaunchCommand, buildPtyEnv, buildUnsetCommand, launchLine, resolveBoardCliPath, terminalIdentityEnv } from './ptyManager';
+import { buildClaudeLaunchCommand, buildPtyEnv, buildPtyLaunchSpec, buildUnsetCommand, launchLine, resolveBoardCliPath, terminalIdentityEnv } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -118,5 +119,56 @@ describe('launchLine', () => {
   it('does not alter or append to an override (embedded text, no trailing CR)', () => {
     const odd = 'claude --x "a  b"; echo \n  end';
     expect(launchLine(id, odd)).toBe(odd);
+  });
+});
+
+describe('buildPtyLaunchSpec', () => {
+  const id = '11111111-2222-3333-4444-555555555555';
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  it('plain Claude: shell, empty args, home cwd, unset then launch writes, sanitized env, identity env', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-secret');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'token-secret');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://example.invalid');
+    const spec = buildPtyLaunchSpec(120, 40, undefined, id, terminalIdentityEnv('claude', '/x/aether-board.mjs'));
+    expect(spec.file).toBe(process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash');
+    expect(spec.args).toEqual([]);
+    expect(spec.cwd).toBe(os.homedir());
+    expect([spec.cols, spec.rows]).toEqual([120, 40]);
+    expect(spec.writes).toEqual([
+      buildUnsetCommand(process.platform, ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']),
+      `claude --session-id ${id}\r`,
+    ]);
+    expect(spec.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(spec.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(spec.env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(spec.env.COLORTERM).toBe('truecolor');
+    expect(spec.env.AETHER_TERMINAL).toBe('alpha');
+    expect(spec.env.AETHER_BOARD_CLI).toBe('/x/aether-board.mjs');
+  });
+
+  it('writes a launch command override verbatim as the second write', () => {
+    const cmd = 'claude --model sonnet --effort medium\r';
+    expect(buildPtyLaunchSpec(100, 30, undefined, id, undefined, cmd).writes[1]).toBe(cmd);
+  });
+
+  it.runIf(process.platform === 'win32')('bridge launch: -NoExit -File args, no writes, the bridge env', () => {
+    const spec = buildPtyLaunchSpec(100, 30, { scriptPath: 'C:/b/launch.ps1', env: { AETHER_BRIDGE_PIPE: 'p' } });
+    expect(spec.file).toBe('powershell.exe');
+    expect(spec.args).toEqual(['-NoExit', '-File', 'C:/b/launch.ps1']);
+    expect(spec.writes).toEqual([]);
+    expect(spec.env).toEqual({ AETHER_BRIDGE_PIPE: 'p' });
+  });
+
+  it('strips ELECTRON_RUN_AS_NODE from the env, including a bridge env, without mutating it', () => {
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', '1');
+    expect(buildPtyLaunchSpec().env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(buildPtyLaunchSpec(100, 30, undefined, undefined, { ELECTRON_RUN_AS_NODE: '1' }).env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    if (process.platform === 'win32') {
+      const bridgeEnv = { ELECTRON_RUN_AS_NODE: '1', X: 'y' };
+      const spec = buildPtyLaunchSpec(100, 30, { scriptPath: 's.ps1', env: bridgeEnv });
+      expect(spec.env).toEqual({ X: 'y' });
+      expect(bridgeEnv.ELECTRON_RUN_AS_NODE).toBe('1');
+    }
   });
 });

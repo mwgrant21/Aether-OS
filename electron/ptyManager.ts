@@ -95,19 +95,45 @@ export function resolveBoardCliPath(
   return exists(p) ? p : undefined;
 }
 
-export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string) {
+// Everything spawnPty hands to node-pty plus the two post-spawn writes, as plain
+// data. Main sends this to the pty-owner helper, which never reads Aether's env
+// builders. ELECTRON_RUN_AS_NODE is stripped so a shell never passes it on to
+// electron-based tools it runs.
+export interface PtyLaunchSpec {
+  file: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  cols: number;
+  rows: number;
+  writes: string[];
+}
+
+export function buildPtyLaunchSpec(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string): PtyLaunchSpec {
   if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
-  const ptyProcess = pty.spawn(shell, bridge ? ['-NoExit', '-File', bridge.scriptPath] : [], {
-    name: 'xterm-color',
+  const env = bridge ? { ...bridge.env } : { ...buildPtyEnv(), ...extraEnv };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return {
+    file: shell,
+    args: bridge ? ['-NoExit', '-File', bridge.scriptPath] : [],
+    cwd: os.homedir(),
+    env,
     cols,
     rows,
-    cwd: os.homedir(),
-    env: bridge ? bridge.env : { ...buildPtyEnv(), ...extraEnv },
+    writes: bridge ? [] : [buildUnsetCommand(process.platform, API_KEY_ENV_VARS), launchLine(sessionId, launchCommand)],
+  };
+}
+
+export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string) {
+  const spec = buildPtyLaunchSpec(cols, rows, bridge, sessionId, extraEnv, launchCommand);
+  const ptyProcess = pty.spawn(spec.file, spec.args, {
+    name: 'xterm-color',
+    cols: spec.cols,
+    rows: spec.rows,
+    cwd: spec.cwd,
+    env: spec.env,
   });
-  if (!bridge) {
-    ptyProcess.write(buildUnsetCommand(process.platform, API_KEY_ENV_VARS));
-    ptyProcess.write(launchLine(sessionId, launchCommand));
-  }
+  for (const w of spec.writes) ptyProcess.write(w);
   return ptyProcess;
 }
