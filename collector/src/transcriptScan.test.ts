@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, statSync, utimes
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate } from './schema.js';
-import { scanTranscriptsOnce } from './transcriptScan.js';
+import { createRequire } from 'node:module';
+import { scanTranscriptsOnce, inTransaction } from './transcriptScan.js';
 import { createMemoryExtractQueue } from './memoryExtractQueue.js';
 import { createHandbackReportStore, HANDBACK_REPORT_MAX_CHARS, HANDBACK_STORE_MAX_ENTRIES } from './dispatchResultText.js';
 
@@ -1412,5 +1413,29 @@ describe('scanTranscriptsOnce -- idle files with an open Agent entry skip the tr
     scanTranscriptsOnce(db, projectsRoot, t0 + 40_000, history, undefined, 's1');
     expect(db.prepare('SELECT COUNT(*) AS c FROM dispatches').get()).toEqual({ c: 0 });
     db.close();
+  });
+});
+
+describe('inTransaction', () => {
+  it('takes the write lock up front: a second handle cannot write inside it, and can after commit', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-txn-'));
+    const path = join(dir, 'test.db');
+    const dbA = openDatabase(path);
+    migrate(dbA);
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+    const dbB = new DatabaseSync(path);
+    dbB.exec('PRAGMA busy_timeout = 0');
+    try {
+      expect((dbA.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
+      const write = () => dbB.exec("INSERT INTO schema_meta (key, value) VALUES ('txn_probe', '1')");
+      inTransaction(dbA, () => {
+        dbA.prepare('SELECT count(*) AS n FROM schema_meta').get();
+        expect(write).toThrow(/database is locked/);
+      });
+      expect(write).not.toThrow();
+    } finally {
+      dbB.close();
+      dbA.close();
+    }
   });
 });
