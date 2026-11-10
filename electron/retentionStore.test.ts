@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, statSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
@@ -355,6 +355,31 @@ describe('purgeCollectedData', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
     expect(result.error).toMatch(/file.*not.*database|corrupt|malformed/i);
+  });
+
+  // In WAL mode VACUUM lands in collector.db-wal and the main file stays large until
+  // a checkpoint. A second connection stays open the whole time (the running collector),
+  // so nothing but the purge's own checkpoint can truncate the -wal or shrink the file.
+  it('truncates the -wal and shrinks the main file after purging a WAL-mode database', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-retention-purge-'));
+    const { dbPath, db: collector } = seedCollectorDb(dir);
+    collector.exec('PRAGMA journal_mode=WAL');
+    const insert = collector.prepare('INSERT INTO drift_log (detected_at_ms, detail) VALUES (?, ?)');
+    collector.exec('BEGIN');
+    for (let i = 0; i < 2000; i++) insert.run(i, 'x'.repeat(1000));
+    collector.exec('COMMIT');
+    collector.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    const sizeBefore = statSync(dbPath).size;
+    expect(sizeBefore).toBeGreaterThan(1_000_000);
+
+    const result = purgeCollectedData(dbPath);
+    expect(result.ok).toBe(true);
+
+    expect(collector.prepare('SELECT COUNT(*) AS n FROM drift_log').get()).toEqual({ n: 0 });
+    const walPath = dbPath + '-wal';
+    expect(existsSync(walPath) ? statSync(walPath).size : 0).toBe(0);
+    expect(statSync(dbPath).size).toBeLessThan(sizeBefore);
+    collector.close();
   });
 });
 

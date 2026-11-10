@@ -136,9 +136,10 @@ const FLEET_HEARTBEAT_STALE_MS = 45000;
 // transcript-scan interval.
 const DIAGNOSTICS_HEARTBEAT_STALE_MS = 45000;
 
-// The collector writes collector.db in journal_mode=delete; a reader without a
-// busy timeout fails immediately with "database is locked" during a large
-// write (seen during backfill, 2026-10-11). These readers run synchronously on
+// collector.db is in journal_mode=delete or wal (the collectors switch it to WAL
+// best-effort); these readers open it readOnly and work in both modes. A reader
+// without a busy timeout fails immediately with "database is locked" during a
+// large write (seen during backfill, 2026-10-11). These readers run synchronously on
 // Electron's main thread, so this value is a trade-off: long enough to ride out
 // an ordinary collector commit, short enough not to freeze the window. Boards
 // queries run in child processes and keep their own 5000 ms timeout
