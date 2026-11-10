@@ -25,8 +25,28 @@ export function openDatabase(dbPath: string): DatabaseSync {
   //
   // memoryStore.ts already did this for memory.db; collector.db was the
   // remaining gap, so the two stores behaved differently under contention.
+  // The file is also switched to WAL (see enableWalBestEffort below).
   db.exec('PRAGMA busy_timeout = 5000');
+  enableWalBestEffort(db, dbPath);
   return db;
+}
+
+// collector.db is WAL-capable: the journal mode is persistent in the file
+// (set once, every later connection reports it), readers elsewhere open it
+// readOnly, and a writer no longer blocks them. The switch is best-effort:
+// it throws "database is locked" when another connection holds a read
+// transaction, and WAL is unsafe on a network share, so any failure or a
+// UNC / in-memory path degrades to the current journal mode. The log line is
+// fixed text plus an error code, never err.message (it can carry paths).
+function enableWalBestEffort(db: DatabaseSync, dbPath: string): void {
+  if (dbPath === ':memory:' || dbPath.startsWith('\\') || dbPath.startsWith('//')) return;
+  try {
+    db.prepare('PRAGMA journal_mode = WAL').get();
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    const reason = typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code) ? code : 'unknown';
+    console.error('[aether-collector] could not enable WAL, continuing in rollback-journal mode: ' + reason);
+  }
 }
 
 /**

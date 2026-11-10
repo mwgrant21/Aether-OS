@@ -74,9 +74,11 @@ function clearsExtractionBar(durationMs: number, toolUses: number): boolean {
 // usage_events (no unique key). Kept per file, with the transcript read done
 // before it opens: collector.db has a second writable handle
 // (electron/retentionStore.ts) with a 5s busy_timeout, which a pass-wide
-// transaction over a cold scan would outlast.
-function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
-  db.exec('BEGIN');
+// transaction over a cold scan would outlast. IMMEDIATE because under WAL a
+// deferred read-then-write fails instantly if another process committed in
+// between.
+export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
   try {
     const result = fn();
     db.exec('COMMIT');

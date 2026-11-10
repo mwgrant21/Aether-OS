@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, copyFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'node:module';
@@ -452,11 +452,51 @@ describe('readDiagnostics tool call source (schema v6)', () => {
   });
 });
 
+describe('readUsageEventsSince on a live WAL database', () => {
+  // E5: committed rows can live only in the -wal while the collector holds the file
+  // open. The reader must see them; a copy of the main file alone would not. This pins
+  // behaviour that already holds, so it has no product-code mutation to red-proof.
+  it('returns rows committed to the -wal but not yet checkpointed', () => {
+    const dbPath = tempDbWithUsageEvents([]);
+    const writer = new DatabaseSync(dbPath);
+    writer.exec('PRAGMA journal_mode=WAL');
+    writer.exec('PRAGMA wal_autocheckpoint=0');
+    writer.prepare(
+      'INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(1000, 'm', 7, 3, 0, 0);
+
+    const mainOnly = join(mkdtempSync(join(tmpdir(), 'aether-collectorstore-')), 'copy.db');
+    copyFileSync(dbPath, mainOnly);
+    expect(readUsageEventsSince(mainOnly, 0)).toEqual([]);
+
+    const events = readUsageEventsSince(dbPath, 0);
+    expect(events).not.toBeNull();
+    expect(events!.length).toBe(1);
+    expect(events![0].usage.inputTokens).toBe(7);
+    writer.close();
+  });
+});
+
 describe('openReadOnly', () => {
   it('sets a 5s busy timeout so reads wait out a collector write instead of failing', () => {
     const db = openReadOnly(tempDbWithUsageEvents([]));
     expect(db).not.toBeNull();
     expect(db!.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: READ_BUSY_TIMEOUT_MS });
+    db!.close();
+  });
+
+  // E4: a WAL database whose -wal/-shm do not exist (cleanly closed collector, or files
+  // deleted) must still open readOnly. Pins behaviour that already holds.
+  it('opens a WAL-mode database whose -wal and -shm files do not exist', () => {
+    const dbPath = tempDbWithUsageEvents([]);
+    const writer = new DatabaseSync(dbPath);
+    writer.exec('PRAGMA journal_mode=WAL');
+    writer.close();
+    expect(existsSync(dbPath + '-wal')).toBe(false);
+    expect(existsSync(dbPath + '-shm')).toBe(false);
+    const db = openReadOnly(dbPath);
+    expect(db).not.toBeNull();
+    expect(db!.prepare('SELECT COUNT(*) AS n FROM usage_events').get()).toEqual({ n: 0 });
     db!.close();
   });
 });
