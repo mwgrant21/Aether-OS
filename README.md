@@ -5,7 +5,7 @@ spend*. Aether OS answers a harder question: **is the agent actually working, or
 thrashing** — and it tells you on an ambient reactor display you notice from across the room,
 before you think to look.
 
-It runs as a single-user, local-first Electron desktop app (version 0.7.4): real Claude Code and
+It runs as a single-user, local-first Electron desktop app (version 0.7.5): real Claude Code and
 Codex CLI sessions in three terminal slots, live tracking of your actual Claude Code usage and
 subagent dispatches, behavioral anomaly detection over that stream, and a Comms deck where the
 mission-control intelligence (AETHER) and every agent reply through a local, deterministic
