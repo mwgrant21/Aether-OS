@@ -9,12 +9,14 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
 
 // SchemaVersion mirrors schema.ts's SCHEMA_VERSION. Both collectors write
@@ -173,7 +175,44 @@ func OpenDatabase(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	enableWAL(db, dbPath)
 	return db, nil
+}
+
+// isWALSkipped reports targets where WAL is unsafe or meaningless: UNC paths
+// (WAL needs shared memory, which does not work over a network share) and
+// in-memory databases.
+func isWALSkipped(dbPath string) bool {
+	if strings.HasPrefix(dbPath, `\\`) || strings.HasPrefix(dbPath, "//") {
+		return true
+	}
+	return strings.Contains(dbPath, ":memory:") || strings.Contains(dbPath, "mode=memory")
+}
+
+// enableWAL switches the database to WAL, best-effort and never fatal. It MUST
+// be an explicit statement after open, not a DSN `_pragma=journal_mode(WAL)`:
+// with the DSN form a switch that cannot proceed (another connection holding a
+// read transaction) makes the connection's first query fail with SQLITE_BUSY,
+// which would stop the collector starting. The mode is persistent in the file,
+// so only the first opener actually switches. The wait is bounded by
+// busy_timeout. A failure logs a fixed line with the SQLite error code only
+// (never the path or message) and the database stays in its current mode.
+func enableWAL(db *sql.DB, dbPath string) {
+	if isWALSkipped(dbPath) {
+		log.Printf("[aether-collector] skipping WAL for a network or in-memory database, using rollback-journal mode")
+		return
+	}
+	var mode string
+	err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode)
+	if err == nil && strings.EqualFold(mode, "wal") {
+		return
+	}
+	code := "unknown"
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		code = strconv.Itoa(se.Code())
+	}
+	log.Printf("[aether-collector] could not enable WAL, continuing in rollback-journal mode: %s", code)
 }
 
 // Migrate creates all 11 tables (if not already present), the anomaly-dedup
