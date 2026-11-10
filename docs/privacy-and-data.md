@@ -266,6 +266,9 @@ designed as such:
 - The SQLite store is **not** encrypted, and the README should say so plainly rather than implying
   otherwise. Given §4, its contents are paths, names, timestamps and integers — the honest position
   is "here is exactly what is in it," not a security claim the implementation does not back.
+- `collector.db` may have `collector.db-wal` and `collector.db-shm` siblings holding the same kinds of
+  data until they are checkpointed. Settings → Purge checkpoints and truncates them after the purge;
+  deleting `collector.db` by hand should also delete both siblings.
 - `.env` stays gitignored. Stage 13.5 removed key loading and the `chat:hasKey`/chat API
   handlers; there is no Aether API-key input path. Subscription adapter credentials remain
   subject to their explicit provider boundaries below.
@@ -662,7 +665,7 @@ section names that tension and does not resolve it.
 
 **Backfill.** Scan offsets persist in `collector.db` (`transcript_files.last_offset`) and only
 advance when a scan runs. Dispatches the collector scans while the setting is off are not
-extracted later unless `collector.db` is deleted. Qualifying dispatches it has not yet scanned
+extracted later unless `collector.db` (and its `-wal`/`-shm` files) is deleted. Qualifying dispatches it has not yet scanned
 are sent the next time it scans with the setting ON. That covers dispatches that started and
 completed while the collector was not running, and every past dispatch when `collector.db` is fresh or deleted (the rescan starts at offset 0).
 

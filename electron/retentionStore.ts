@@ -229,6 +229,16 @@ export function purgeCollectedData(dbPath: string): PurgeResult {
       // VACUUM failure after successful COMMIT is not purge failure.
     }
 
+    // In WAL mode the VACUUMed pages sit in collector.db-wal and the main file stays
+    // large until a checkpoint runs. Truncate so the deleted data is gone from disk.
+    // Best-effort like VACUUM: a busy or failed checkpoint is not purge failure, and
+    // on a rollback-journal database the pragma is a no-op.
+    try {
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      // Checkpoint failure after successful COMMIT is not purge failure.
+    }
+
     return { ok: true };
   } catch (err) {
     // Catch connection-open, PRAGMA setup, or any other pre-COMMIT failures.
