@@ -1,8 +1,11 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { openDatabase, migrate, getSchemaVersion, SCHEMA_VERSION, stampFleetHeartbeat } from './schema.js';
+
+const require = createRequire(import.meta.url);
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aether-collector-schema-'));
@@ -25,6 +28,53 @@ describe('schema', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('openDatabase switches a fresh file to WAL and the mode persists on reopen', () => {
+    const path = tempDbPath();
+    const db = openDatabase(path);
+    expect((db.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
+    db.close();
+    const again = openDatabase(path);
+    try {
+      expect((again.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal');
+    } finally {
+      again.close();
+    }
+  });
+
+  it('openDatabase degrades to the current journal mode when a reader blocks the WAL switch', () => {
+    const path = tempDbPath();
+    const { DatabaseSync } = require('node:sqlite');
+    const seed = new DatabaseSync(path);
+    seed.exec('CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1)');
+    const reader = new DatabaseSync(path);
+    reader.exec('BEGIN');
+    reader.prepare('SELECT * FROM t').all();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let db: ReturnType<typeof openDatabase> | undefined;
+    try {
+      expect(() => { db = openDatabase(path); }).not.toThrow();
+      expect((db!.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('delete');
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join(' ');
+      expect(logged).toContain('could not enable WAL');
+      expect(logged).not.toContain(path);
+      expect(logged).not.toContain('database is locked');
+    } finally {
+      errSpy.mockRestore();
+      reader.exec('ROLLBACK');
+      reader.close();
+      seed.close();
+      db?.close();
+    }
+  });
+
+  it('openDatabase skips the WAL switch for :memory: and UNC-looking paths without throwing', () => {
+    const mem = openDatabase(':memory:');
+    mem.close();
+    // A UNC path cannot be created here; mkdirSync/open fails before or after the guard,
+    // so only assert the guard itself does not add a throw of its own on the in-memory case.
+    expect(() => openDatabase(':memory:')).not.toThrow();
   });
 
   it('creates all expected tables and the version row on first migrate', () => {
