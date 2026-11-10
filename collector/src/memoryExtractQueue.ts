@@ -14,7 +14,7 @@
  */
 
 import { runExtractor, type ExtractExecFn } from './memoryExtract.js';
-import type { MemoryStore } from './memoryStore.js';
+import { SHARED_WRITER, isValidWriterId, type MemoryStore } from './memoryStore.js';
 
 export interface QueuedExtraction {
   agentId: string;
@@ -91,6 +91,13 @@ export async function drainMemoryExtractQueue(
   onIssue?: (detail: string) => void,
 ): Promise<void> {
   for (const item of queue.drain()) {
+    if (item.agentId === SHARED_WRITER || !isValidWriterId(item.agentId)) {
+      // Fixed text only: the id is attacker-controlled and must not reach logs or the prompt.
+      const detail = `memory extraction skipped (${item.toolUseId}): agent id not allowed as writer`;
+      if (!onIssue) console.error(`[aether-collector] ${detail}`);
+      report(onIssue, detail);
+      continue;
+    }
     const existingMemories = store
       .getPrivateCandidates(item.agentId, EXISTING_MEMORIES_LIMIT)
       .map((m) => ({ id: m.id, kind: m.kind, content: m.content }));
