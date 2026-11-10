@@ -156,6 +156,11 @@ jobs:
   # Nothing ever ran these specs in CI (npm run test:e2e was only a local script),
   # so the CI-only `--disable-gpu` branch in electronHelpers.ts was dead code.
   #
+  # Only the hard-fail subset (8 tests: 5 CSP + 3 app smoke) is proven to run on
+  # windows-latest. Three app.spec.ts tests (real pty output, Codex terminal, dashboard
+  # real-usage metrics) are informational because they need a real claude/codex
+  # install, a real PTY fixture or local usage data that hosted runners lack.
+  #
   # Deliberately a SEPARATE job, not a step in windows-build: windows-build is a
   # required check and must stay deterministic. This job is not required (see
   # branch protection); promote it only after it has been green across several runs.
@@ -170,13 +175,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run electron:build
-      # Group A: launchApp-only specs (app smoke + CSP). Hard-fail step.
-      - name: E2E smoke (app + CSP)
-        run: npx playwright test e2e/app.spec.ts e2e/csp.spec.ts
-      # Group B: native UI-Automation / csc.exe / clipboard / two-instance specs.
-      # Behaviour on a hosted runner was unknown when this job was added, so this
-      # step is informational (continue-on-error) until a few runs show whether
-      # it is stable; then drop continue-on-error or delete the specs it cannot run.
+      # Hard-fail set: the 8 app + CSP tests proven to run on windows-latest.
+      # Three app.spec.ts tests are excluded here (see header): they need local state.
+      - name: E2E smoke (app + CSP, runner-proven)
+        run: npx playwright test e2e/app.spec.ts e2e/csp.spec.ts --grep-invert "embedded terminal spawns a real pty|Codex terminal delivers real output|dashboard metrics row renders real-usage"
+      # Informational: the 3 app.spec.ts tests above. They need a real claude/codex
+      # install, a real PTY fixture or local usage data that hosted runners lack.
+      - name: E2E needs-local-state specs (informational)
+        continue-on-error: true
+        run: npx playwright test e2e/app.spec.ts --grep "embedded terminal spawns a real pty|Codex terminal delivers real output|dashboard metrics row renders real-usage"
+      # Informational: native UI-Automation / csc.exe / clipboard / two-instance specs.
+      # Behaviour on a hosted runner is unproven, so this step is continue-on-error
+      # until a few runs show whether it is stable; then drop continue-on-error or
+      # delete the specs it cannot run.
       - name: E2E native specs (informational)
         continue-on-error: true
         run: npx playwright test --grep-invert "Aether OS smoke|Renderer CSP"
