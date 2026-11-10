@@ -67,6 +67,12 @@ export const REVISION_CAUSES: readonly RevisionCause[] = ['new_evidence', 'reaso
 /** The one identity permitted to write shared scope (Layer 1 §10). */
 export const SHARED_WRITER = 'STEWARD';
 
+/** Shape of any writer identity: an agent type name. Anchored; `$` without the m flag does not match before a trailing newline. */
+const WRITER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+export function isValidWriterId(id: unknown): id is string {
+  return typeof id === 'string' && WRITER_ID_RE.test(id);
+}
+
 export interface MemoryRow {
   id: number;
   scope: MemoryScope;
