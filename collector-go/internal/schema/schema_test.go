@@ -1,9 +1,13 @@
 package schema
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -266,5 +270,133 @@ func TestOpenDatabaseAppliesBusyTimeoutToEveryPooledConnection(t *testing.T) {
 			t.Errorf("conn %d: busy_timeout = %d, want %d "+
 				"(a post-open PRAGMA protects only the connection that ran it)", i, got, want)
 		}
+	}
+}
+
+func journalMode(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var mode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	return mode
+}
+
+// WAL is switched on after open and is persistent in the file, so a second
+// open of the same file also reports it.
+func TestOpenDatabaseEnablesWALAndItPersists(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "wal.db")
+	db, err := OpenDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDatabase: %v", err)
+	}
+	if got := journalMode(t, db); got != "wal" {
+		t.Errorf("first open: journal_mode = %q, want wal", got)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	db2, err := OpenDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("second OpenDatabase: %v", err)
+	}
+	defer db2.Close()
+	if got := journalMode(t, db2); got != "wal" {
+		t.Errorf("second open: journal_mode = %q, want wal", got)
+	}
+}
+
+// A WAL switch that cannot proceed (another connection holds a read
+// transaction) must degrade to the current journal mode, not fail the open.
+// This takes up to busy_timeout (5 s). A DSN `_pragma=journal_mode(WAL)` makes
+// the first query fail instead, which is why the switch is an explicit
+// statement.
+func TestOpenDatabaseDegradesWhenWALSwitchIsBlocked(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "blocked.db")
+
+	reader, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close()
+	if _, err := reader.Exec("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if got := journalMode(t, reader); got != "delete" {
+		t.Fatalf("precondition: journal_mode = %q, want delete", got)
+	}
+	tx, err := reader.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM t").Scan(&n); err != nil {
+		t.Fatalf("read inside tx: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	db, err := OpenDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDatabase must not fail when WAL is blocked: %v", err)
+	}
+	if db == nil {
+		t.Fatal("OpenDatabase returned nil db")
+	}
+	if got := journalMode(t, db); got != "delete" {
+		t.Errorf("blocked: journal_mode = %q, want delete", got)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "could not enable WAL") {
+		t.Errorf("expected a degrade log line, got %q", logged)
+	}
+	if strings.Contains(logged, dbPath) || strings.Contains(logged, "blocked.db") {
+		t.Errorf("log line must not contain the path: %q", logged)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("release reader: %v", err)
+	}
+	db2, err := OpenDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDatabase after release: %v", err)
+	}
+	defer db2.Close()
+	if got := journalMode(t, db2); got != "wal" {
+		t.Errorf("after release: journal_mode = %q, want wal", got)
+	}
+}
+
+func TestIsWALSkipped(t *testing.T) {
+	cases := map[string]bool{
+		`\\host\share\collector.db`: true,
+		`//host/share/collector.db`: true,
+		`file::memory:`:             true,
+		`:memory:`:                  true,
+		`C:\Users\x\collector.db`:   false,
+		`/home/x/collector.db`:      false,
+	}
+	for p, want := range cases {
+		if got := isWALSkipped(p); got != want {
+			t.Errorf("isWALSkipped(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+func TestOpenDatabaseInMemoryDoesNotFail(t *testing.T) {
+	db, err := OpenDatabase("file::memory:")
+	if err != nil {
+		t.Fatalf("OpenDatabase: %v", err)
+	}
+	defer db.Close()
+	if got := journalMode(t, db); got == "wal" {
+		t.Errorf("in-memory db reported wal")
 	}
 }
