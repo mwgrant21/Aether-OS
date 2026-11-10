@@ -195,6 +195,8 @@ another 44. The ritual, when a batch of PRs is worth a number:
 
 ```
 npm version 0.5.0 --no-git-tag-version   # bumps package.json + package-lock.json together
+# in the same commit: update CHANGELOG.md (move the Unreleased entries under a new
+# `## [0.5.0] - YYYY-MM-DD` heading, add its compare link at the bottom), before tagging
 # commit on a branch and open a PR: master requires CI, and admins are included
 # after the squash merge, tag the SQUASH commit on master, not the PR branch's commit:
 git fetch origin && git tag -a v0.5.0 -m "v0.5.0: <one line of what changed>" origin/master
