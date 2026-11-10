@@ -148,3 +148,43 @@ jobs:
         working-directory: collector
       - run: npm test
         working-directory: collector
+
+  # Playwright e2e (e2e/*.spec.ts) drives the BUILT Electron app (out/main/main.js,
+  # via _electron.launch in e2e/electronHelpers.ts), so it needs the electron-vite
+  # build, the Electron binary and a desktop session. electronHelpers.launchApp
+  # throws on non-win32, so this is Windows-only; there is no xvfb/Linux path.
+  # Nothing ever ran these specs in CI (npm run test:e2e was only a local script),
+  # so the CI-only `--disable-gpu` branch in electronHelpers.ts was dead code.
+  #
+  # Deliberately a SEPARATE job, not a step in windows-build: windows-build is a
+  # required check and must stay deterministic. This job is not required (see
+  # branch protection); promote it only after it has been green across several runs.
+  e2e-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - run: npm ci
+      - run: npm run electron:build
+      # Group A: launchApp-only specs (app smoke + CSP). Hard-fail step.
+      - name: E2E smoke (app + CSP)
+        run: npx playwright test e2e/app.spec.ts e2e/csp.spec.ts
+      # Group B: native UI-Automation / csc.exe / clipboard / two-instance specs.
+      # Behaviour on a hosted runner was unknown when this job was added, so this
+      # step is informational (continue-on-error) until a few runs show whether
+      # it is stable; then drop continue-on-error or delete the specs it cannot run.
+      - name: E2E native specs (informational)
+        continue-on-error: true
+        run: npx playwright test --grep-invert "Aether OS smoke|Renderer CSP"
+      - name: Upload e2e output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
