@@ -675,6 +675,104 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
     expect(constFor('ptyOwnerEnabled')).toBe("process.platform === 'win32' && process.env.AETHER_PTY_OWNER === '1'");
   });
 
+  describe('adoptAtStartup (executed)', () => {
+    function functionFor(name: string): string {
+      const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.getText(ast) === name);
+      if (!fn) throw new Error(`Missing top-level function ${name}`);
+      return fn.getText(ast);
+    }
+    // Hand-built sandbox for every free identifier adoptAtStartup reads; `quitting` and the claude apply targets live on it.
+    function adoptFixture(opts: { quitting?: boolean; policy?: 'shutdown' | 'release'; ok?: boolean; quitDuringWait?: boolean } = {}) {
+      const ownerClient = { shutdown: vi.fn(async () => {}), release: vi.fn(async () => {}) };
+      const lifecycle = () => ({ start: vi.fn() });
+      const sandbox: Record<string, unknown> = {
+        ownerClient, quitting: opts.quitting ?? false, PTY_OWNER_ON_QUIT: opts.policy ?? 'shutdown',
+        ensureOwner: vi.fn(async () => { if (opts.quitDuringWait) sandbox.quitting = true; return opts.ok ?? true; }),
+        adoptOwned: vi.fn(async () => {}), ownerLog: vi.fn(),
+        join: (...p: string[]) => p.join('/'), aetherOsDir: 'aos', discoveryFileName: () => 'd.json', PROTO: 1,
+        app: { getPath: () => 'ud' }, __dirname: 'dir', existsSync: vi.fn(), readFileSync: vi.fn(), rmSync: vi.fn(),
+        spawnChild: vi.fn(), pidIsAlive: vi.fn(), process: { execPath: 'node', env: {} },
+        ptyLifecycle: lifecycle(), codexPtyLifecycle: lifecycle(), terminal2PtyLifecycle: lifecycle(),
+        claudeStartHandlers: {}, codexStartHandlers: {}, terminal2StartHandlers: {},
+        claudeTerminalDimensions: null, pinnedPtyExited: true, pinnedLaunchSessionId: undefined,
+        liveAgentTracker: { notifyPtySpawned: vi.fn() },
+      };
+      const run = runInNewContext(ts.transpileModule(`(${functionFor('adoptAtStartup')})`, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+      }).outputText, sandbox) as () => Promise<void>;
+      const adopted = () => (sandbox.adoptOwned as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+        targets: Record<'claude' | 'codex' | 'terminal2', { start(pty: unknown, info: { cols: number; rows: number }): void; apply(info: unknown): void }>;
+      };
+      return { sandbox, ownerClient, run, adopted };
+    }
+    const claudeInfo = (meta: Record<string, unknown>) => ({ cols: 90, rows: 33, meta, startedAt: 999 });
+
+    it('quit during the launch wait with policy shutdown shuts the helper down and adopts nothing', async () => {
+      const f = adoptFixture({ quitDuringWait: true });
+      await f.run();
+      expect(f.ownerClient.shutdown).toHaveBeenCalledOnce();
+      expect(f.ownerClient.release).not.toHaveBeenCalled();
+      expect(f.sandbox.adoptOwned).not.toHaveBeenCalled();
+      expect(f.sandbox.ownerLog).not.toHaveBeenCalledWith('pty-owner: adoption failed');
+    });
+
+    it('quit during the launch wait with policy release releases instead, so live shells survive', async () => {
+      const f = adoptFixture({ quitDuringWait: true, policy: 'release' });
+      await f.run();
+      expect(f.ownerClient.release).toHaveBeenCalledOnce();
+      expect(f.ownerClient.shutdown).not.toHaveBeenCalled();
+      expect(f.sandbox.adoptOwned).not.toHaveBeenCalled();
+      expect(f.sandbox.ownerLog).not.toHaveBeenCalledWith('pty-owner: adoption failed');
+    });
+
+    it('does nothing to the helper when ensureOwner holds no connected client, even while quitting', async () => {
+      const f = adoptFixture({ quitDuringWait: true, ok: false });
+      await f.run();
+      expect(f.ownerClient.shutdown).not.toHaveBeenCalled();
+      expect(f.ownerClient.release).not.toHaveBeenCalled();
+      expect(f.sandbox.adoptOwned).not.toHaveBeenCalled();
+      expect(f.sandbox.ownerLog).not.toHaveBeenCalledWith('pty-owner: adoption failed');
+    });
+
+    it('adopts with claude/codex/terminal2 targets and the claude apply sets dimensions, pin state and tracker', async () => {
+      const f = adoptFixture();
+      await f.run();
+      expect(f.sandbox.adoptOwned).toHaveBeenCalledOnce();
+      expect(f.sandbox.ownerLog).not.toHaveBeenCalledWith('pty-owner: adoption failed');
+      expect(f.ownerClient.shutdown).not.toHaveBeenCalled();
+      expect(Object.keys(f.adopted().targets).sort()).toEqual(['claude', 'codex', 'terminal2']);
+      f.adopted().targets.claude.apply(claudeInfo({ sessionId: 'sid', startedAt: 555 }));
+      expect(f.sandbox.claudeTerminalDimensions).toEqual({ cols: 90, rows: 33 });
+      expect(f.sandbox.pinnedPtyExited).toBe(false);
+      expect(f.sandbox.pinnedLaunchSessionId).toBe('sid');
+      expect((f.sandbox.liveAgentTracker as { notifyPtySpawned: ReturnType<typeof vi.fn> }).notifyPtySpawned).toHaveBeenCalledWith(555, 'sid');
+    });
+
+    it('claude apply without a session id or numeric startedAt pins null and falls back to the adopted startedAt', async () => {
+      const f = adoptFixture();
+      await f.run();
+      f.adopted().targets.claude.apply(claudeInfo({ startedAt: '555' }));
+      expect(f.sandbox.pinnedLaunchSessionId).toBeNull();
+      expect((f.sandbox.liveAgentTracker as { notifyPtySpawned: ReturnType<typeof vi.fn> }).notifyPtySpawned).toHaveBeenCalledWith(999, null);
+    });
+
+    it('target start forwards cols/rows with { adopted: true }; codex and terminal2 apply is a no-op', async () => {
+      const f = adoptFixture();
+      await f.run();
+      const pty = fakePty();
+      f.adopted().targets.claude.start(pty, { cols: 90, rows: 33 });
+      const start = (f.sandbox.ptyLifecycle as { start: ReturnType<typeof vi.fn> }).start;
+      expect(start).toHaveBeenCalledOnce();
+      expect(start.mock.calls[0][0]()).toBe(pty);
+      expect(start.mock.calls[0][2]).toEqual({ cols: 90, rows: 33 });
+      expect(start.mock.calls[0][3]).toEqual({ adopted: true });
+      f.adopted().targets.codex.apply(claudeInfo({ sessionId: 'sid', startedAt: 555 }));
+      f.adopted().targets.terminal2.apply(claudeInfo({ sessionId: 'sid', startedAt: 555 }));
+      expect((f.sandbox.liveAgentTracker as { notifyPtySpawned: ReturnType<typeof vi.fn> }).notifyPtySpawned).not.toHaveBeenCalled();
+      expect(f.sandbox.pinnedPtyExited).toBe(true);
+    });
+  });
+
   it.each([[undefined, true], ['EPERM', true], ['ESRCH', false], ['EINVAL', false]])('pidIsAlive: kill error %s -> alive=%s', (code, alive) => {
     const kill = vi.fn(() => { if (code) throw Object.assign(new Error('x'), { code }); return true; });
     const isAlive = runInNewContext(ts.transpileModule(`(${constFor('pidIsAlive')})`, {

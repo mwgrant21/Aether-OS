@@ -1514,7 +1514,9 @@ async function adoptAtStartup(): Promise<void> {
       fs: { existsSync, readFileSync, rmSync }, isAlive: pidIsAlive, env: process.env,
       sleep: ms => new Promise<void>(resolve => setTimeout(resolve, ms)), now: Date.now, log: ownerLog,
     });
-    if (!ok || quitting) return;
+    if (!ok) return;
+    // Quit began during the launch wait: shutdown() was a no-op on the idle client, so end the new helper here (same policy as the quit gate).
+    if (quitting) { await (PTY_OWNER_ON_QUIT === 'shutdown' ? ownerClient.shutdown() : ownerClient.release()); return; }
     const target = (slot: typeof ptyLifecycle, handlers: PtyLifecycleHandlers, apply: AdoptTarget['apply'] = () => {}): AdoptTarget => ({
       start: (pty, info) => slot.start(() => pty, handlers, { cols: info.cols, rows: info.rows }, { adopted: true }),
       apply,
