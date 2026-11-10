@@ -14,7 +14,7 @@
  */
 
 import { fence } from './promptSafety.js';
-import { KINDS, STATUSES, SHARED_KINDS, PRIVATE_KINDS } from './memoryStore.js';
+import { KINDS, STATUSES, SHARED_KINDS, PRIVATE_KINDS, isValidWriterId } from './memoryStore.js';
 
 export interface ExtractorPromptInput {
   /** SHARED_WRITER for a shared-scope proposal, or the agent's own id. */
@@ -55,6 +55,8 @@ function formatExistingMemories(memories: ExtractorPromptInput['existingMemories
 }
 
 export function buildExtractorPrompt(input: ExtractorPromptInput): string {
+  // The writer line below is not fenced, so it must be a plain identity (message never carries the writer).
+  if (!isValidWriterId(input.writer)) throw new Error('invalid_writer_identity');
   const existingBlock = fence('existing_memories', formatExistingMemories(input.existingMemories));
   const summaryBlock = fence('run_summary', input.runSummary);
 
