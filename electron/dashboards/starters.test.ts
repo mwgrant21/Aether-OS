@@ -37,6 +37,17 @@ describe('starter boards', () => {
     expect(r.rows.map((row) => row.kind)).not.toContain('expired');
   });
 
+  itWithAuthorizer('cache-hit-rate counts cache creation in the denominator', async () => {
+    const now = Date.now();
+    const dbPath = createFixtureCollectorDb(now);
+    const panel = STARTER_BOARDS.flatMap((b) => b.panels).find((p) => p.id === 'cache-hit-rate')!;
+    const r = await evaluatePanel(panel, { dbPath, nowMs: now, rowCap: 1000, rangeOverride: 'all' });
+    expect(r.error).toBeNull();
+    // The two now-1h fixture rows share a day bucket: 3000 / (1010 + 200 + 3000). Old formula gave 0.7481.
+    const rates = r.rows.map((row) => Number(row.hit_rate));
+    expect(rates.some((v) => Math.abs(v - 0.7126) < 0.0005)).toBe(true);
+  });
+
   itWithAuthorizer('every panel evaluates without error against a collector-shaped db', async () => {
     const now = Date.now();
     const dbPath = createFixtureCollectorDb(now);
