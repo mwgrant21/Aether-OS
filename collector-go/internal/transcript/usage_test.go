@@ -117,6 +117,46 @@ func TestIngestUsageEvent_InsertsForAssistantWithUsage(t *testing.T) {
 	}
 }
 
+func keyed(key *string) func(*Event) {
+	return func(e *Event) { e.MessageKey = key }
+}
+
+func TestIngestUsageEvent_SameMessageKeyInsertsOnce(t *testing.T) {
+	db := freshUsageDB(t)
+	if err := schema.Migrate(db); err != nil { // idempotent second Migrate
+		t.Fatalf("second Migrate: %v", err)
+	}
+	k := "msg_1:req_1"
+	first, err := IngestUsageEvent(db, assistantUsageEvent(keyed(&k)), "p/s.jsonl")
+	if err != nil || !first {
+		t.Fatalf("first = %v, %v; want true, nil", first, err)
+	}
+	second, err := IngestUsageEvent(db, assistantUsageEvent(keyed(&k)), "p/s.jsonl")
+	if err != nil || second {
+		t.Fatalf("second = %v, %v; want false, nil", second, err)
+	}
+	assertCount(t, db, "usage_events", 1)
+}
+
+func TestIngestUsageEvent_DifferentRequestIdInsertsBoth(t *testing.T) {
+	db := freshUsageDB(t)
+	a, b := "msg_1:req_1", "msg_1:req_2"
+	IngestUsageEvent(db, assistantUsageEvent(keyed(&a)), "p/s.jsonl")
+	IngestUsageEvent(db, assistantUsageEvent(keyed(&b)), "p/s.jsonl")
+	assertCount(t, db, "usage_events", 2)
+}
+
+func TestIngestUsageEvent_NilMessageKeyNotDeduped(t *testing.T) {
+	db := freshUsageDB(t)
+	for i := 0; i < 2; i++ {
+		ok, err := IngestUsageEvent(db, assistantUsageEvent(nil), "p/s.jsonl")
+		if err != nil || !ok {
+			t.Fatalf("insert %d = %v, %v", i, ok, err)
+		}
+	}
+	assertCount(t, db, "usage_events", 2)
+}
+
 func TestIngestUsageEvent_SkipsUserKind(t *testing.T) {
 	db := freshUsageDB(t)
 	inserted, err := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Kind = "user" }), "my-project/sess-1.jsonl")
