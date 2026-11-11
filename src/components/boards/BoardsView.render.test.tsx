@@ -43,18 +43,41 @@ describe('BoardsView', () => {
     expect(api.refresh).toHaveBeenCalledWith('spend-cache', undefined);
   });
 
-  it('notes a board range override on panels whose own range differs, and only then', async () => {
+  it('shows no range note until a board range is chosen', async () => {
     mockApi();
     render(<BoardsView />);
     const today = await screen.findByLabelText('Spend today');
     const disp = screen.getByLabelText('Dispatch spend');
     expect(within(today).queryByText(/range:/)).toBeNull();
+    expect(within(disp).queryByText(/range:/)).toBeNull();
+  });
+
+  it('notes a board range override on every panel whose own range differs', async () => {
+    mockApi();
+    render(<BoardsView />);
+    const today = await screen.findByLabelText('Spend today');
+    const disp = screen.getByLabelText('Dispatch spend');
     fireEvent.click(screen.getByText('30d'));
     expect(within(today).getByText(/range: 30d \(panel default 24h\)/)).toBeTruthy();
     expect(within(disp).getByText(/range: 30d \(panel default 7d\)/)).toBeTruthy();
+  });
+
+  it('omits the note on a panel whose default equals the override', async () => {
+    mockApi();
+    render(<BoardsView />);
+    const today = await screen.findByLabelText('Spend today');
+    const disp = screen.getByLabelText('Dispatch spend');
     fireEvent.click(screen.getByText('24h'));
     expect(within(today).queryByText(/range:/)).toBeNull();
     expect(within(disp).getByText(/range: 24h \(panel default 7d\)/)).toBeTruthy();
+  });
+
+  it('clears the note when Panel default is chosen again', async () => {
+    mockApi();
+    render(<BoardsView />);
+    const disp = await screen.findByLabelText('Dispatch spend');
+    fireEvent.click(screen.getByText('30d'));
+    expect(within(disp).getByText(/range: 30d/)).toBeTruthy();
     fireEvent.click(screen.getByText('Panel default'));
     expect(within(disp).queryByText(/range:/)).toBeNull();
   });
