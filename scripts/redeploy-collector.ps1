@@ -65,6 +65,12 @@ function Get-RunKeyValue {
     'conhost.exe --headless "{0}" "{1}"' -f $NodeExe, $IndexJs
 }
 
+function Get-RunKeyKind {
+    # Registry value kind name of the Run value ('String', 'ExpandString', ...), or $null when absent.
+    # A function so tests can mock it instead of reading the real registry.
+    try { (Get-Item -Path $RunKeyPath).GetValueKind($RunKeyName).ToString() } catch { $null }
+}
+
 function Get-IndexJsFromRunValue {
     param([string]$RunValue)
     if ($RunValue -match '"?([^"\s][^"]*index\.js)"?\s*$') {
@@ -255,7 +261,13 @@ function Invoke-Redeploy {
         else { $before = Get-RowCount $DbPath; Write-Output "baseline usage_events rows: $before" }
 
         Write-Output '===== Step 6: repoint Run key ====='
-        Invoke-Step "set $RunKeyPath\$RunKeyName = $runValue" { Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value $runValue } $Dry
+        Invoke-Step "set $RunKeyPath\$RunKeyName = $runValue" {
+            Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value $runValue -Type String
+            $readBack = (Get-ItemProperty -Path $RunKeyPath -Name $RunKeyName).$RunKeyName
+            if (-not ($readBack -is [string]) -or -not ($readBack -ceq $runValue)) {
+                throw "Run key read-back mismatch: wrote <$runValue>, read <$readBack>"
+            }
+        } $Dry
 
         Write-Output '===== Step 7: start ====='
         Invoke-Step "Start-Process conhost.exe --headless `"$nodeExe`" `"$indexJs`" (cwd $stage)" {
@@ -287,7 +299,7 @@ function Invoke-Redeploy {
         Write-Output "ERROR: $($_.Exception.Message)"
         Write-Output "Backup path: $bak"
         if ($stopRan) {
-            if ($oldRun) {
+            if ($null -ne $oldRun) {
                 Write-Output "RECOVERY: old Run value was <$oldRun>; restore with Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value '$oldRun'; backup at $bak"
             } else {
                 Write-Output "RECOVERY: no old Run value existed; backup at $bak"

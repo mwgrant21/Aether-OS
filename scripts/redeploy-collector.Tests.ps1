@@ -3,6 +3,12 @@
 # Start-Process / registry / Copy-Item are mocked, and a -DryRun child checks the output.
 $script = Join-Path $PSScriptRoot 'redeploy-collector.ps1'
 . $script
+$global:RedeployTempPaths = @()
+
+# -Type is a registry-provider dynamic parameter; Pester 3.x cannot mock it on the cmdlet itself
+# ("parameter cannot be found"). A shadowing stub with a declared $Type makes it mockable and
+# fails loudly if a test forgets to mock it (so nothing here can write the real Run key).
+function Set-ItemProperty { param([string]$Path, [string]$Name, $Value, [string]$Type) throw 'Set-ItemProperty must be mocked in tests' }
 
 function New-Proc($id, $name, $cmd) { [pscustomobject]@{ ProcessId = $id; Name = $name; CommandLine = $cmd } }
 
@@ -91,8 +97,11 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     $db = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-db-' + [guid]::NewGuid().ToString('N') + '.db')
     Set-Content -Path $db -Value 'x'
     $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
-    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $oldValue } }
-    Mock Set-ItemProperty {}
+    $global:RedeployTempPaths += @($db)
+    $global:RedeployRunValue = $oldValue
+    Mock Get-RunKeyKind { 'String' }
+    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
+    Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
     Mock Start-Process {}
     Mock Start-Sleep {}
     Mock Copy-Item {}
@@ -114,6 +123,7 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
         Assert-MockCalled Get-RowCount -Times 1
     }
     It 'treats alive-but-no-rows as success (idle machine)' {
+        $global:RedeployRunValue = $oldValue
         Mock Test-CollectorAlive { $true }
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'new collector started; no events in 1 s'
@@ -123,6 +133,29 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     It 'does not copy the -shm file' {
         Assert-MockCalled Copy-Item -ParameterFilter { $Path -like '*-shm' } -Times 0
     }
+    It 'writes the Run value as REG_SZ' {
+        $global:RedeployRunValue = $oldValue
+        Mock Test-CollectorAlive { $true }
+        Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-Null
+        Assert-MockCalled Set-ItemProperty -ParameterFilter { $Type -eq 'String' } -Times 1
+    }
+    It 'fails step 6 when the read-back differs from what was written' {
+        $global:RedeployRunValue = $oldValue
+        Mock Set-ItemProperty {}
+        Mock Test-CollectorAlive { $true }
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'read-back mismatch'
+        $out | Should Not Match 'Done\.'
+        $out | Should Not Match 'Step 7'
+    }
+    It 'treats an empty old Run value as present, not absent' {
+        $global:RedeployRunValue = ''
+        Mock Test-CollectorAlive { $false }
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'RECOVERY: old Run value was <>'
+        $out | Should Not Match 'no old Run value existed'
+    }
+    # Last in this Describe: its Mock Get-FreeBytes persists for the Its after it.
     It 'fails before stopping anything when free space is short' {
         Mock Get-FreeBytes { [int64]0 }
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
@@ -135,9 +168,12 @@ Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
     $db = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-db-' + [guid]::NewGuid().ToString('N') + '.db')
     Set-Content -Path $db -Value 'x'
     $root = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-root-' + [guid]::NewGuid().ToString('N'))
+    $global:RedeployTempPaths += @($db, $root)
     $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
-    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $oldValue } }
-    Mock Set-ItemProperty {}
+    $global:RedeployRunValue = $oldValue
+    Mock Get-RunKeyKind { 'String' }
+    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
+    Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
     Mock Start-Process {}
     Mock Start-Sleep {}
     Mock Copy-Item {}
@@ -160,7 +196,7 @@ Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
         Test-Path (Join-Path $stage 'keep.txt') | Should Be $true
     }
     It 'refuses a stage that is the directory the current Run value points at' {
-        Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = ('conhost.exe --headless "C:\n\node.exe" "' + $root + '\8.8.8\collector\dist\index.js"') } }
+        $global:RedeployRunValue = 'conhost.exe --headless "C:\n\node.exe" "' + $root + '\8.8.8\collector\dist\index.js"'
         $out = Invoke-Redeploy -Version '8.8.8' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'is not empty \(or is the current deployment\)'
         Assert-MockCalled Stop-OldCollector -Times 0
@@ -192,7 +228,7 @@ Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
     }
     It 'treats an unquoted hand-made Run value as no old index instead of throwing' {
         Get-IndexJsFromRunValue 'node C:\x\dist\index.js' | Should BeNullOrEmpty
-        Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = 'node C:\x\dist\index.js' } }
+        $global:RedeployRunValue = 'node C:\x\dist\index.js'
         $out = Invoke-Redeploy -Version '9.9.5' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Not Match 'format|not supported'
         $out | Should Match 'Old Run value: node C:\\x\\dist\\index.js'
@@ -202,11 +238,20 @@ Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
         $dir = Split-Path -Parent $db
         $rel = 'rel-' + [guid]::NewGuid().ToString('N') + '.db'
         Set-Content -Path (Join-Path $dir $rel) -Value 'x'
+        $global:RedeployTempPaths += @((Join-Path $dir $rel))
         Push-Location $dir
         try { $out = Invoke-Redeploy -Version '9.9.4' -StageRoot $root -DbPath $rel -ExpectedDbPath (Join-Path $dir $rel) -Dry $false -VerifySeconds 1 | Out-String }
         finally { Pop-Location }
         $out | Should Not Match 'not the database the collector opens'
         $out | Should Match 'Done\.'
+    }
+}
+foreach ($p in @($global:RedeployTempPaths)) { if ($p) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $p } }
+
+Describe 'temp cleanup' {
+    It 'leaves none of the temp db / stage-root paths the suite created' {
+        @($global:RedeployTempPaths).Count | Should BeGreaterThan 0
+        @($global:RedeployTempPaths | Where-Object { $_ -and (Test-Path $_) }).Count | Should Be 0
     }
 }
 
