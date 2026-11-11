@@ -3,6 +3,7 @@ import { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
 import { scanAllProjects } from './historyScanner';
+import { computeWeeklyTokens } from '../src/components/dashboard/realUsageMath';
 
 function assistantLine(sessionId: string, outputTokens: number): string {
   return JSON.stringify({
@@ -109,5 +110,129 @@ describe('scanAllProjects', () => {
     await fsp.writeFile(path.join(sessionDir, 'subagents'), 'not a directory');
 
     await expect(scanAllProjects(root)).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
+});
+
+// Claude Code streams one API message as several transcript lines that repeat
+// the same usage. Each key (message.id + requestId) must count once, but every
+// line stays in the stream because each carries a different content block.
+function streamedLine(opts: {
+  outputTokens: number;
+  messageId?: string;
+  requestId?: string;
+  toolUse?: boolean;
+}): string {
+  return JSON.stringify({
+    type: 'assistant',
+    sessionId: 'session-1',
+    timestamp: '2026-08-01T12:00:00.000Z',
+    requestId: opts.requestId,
+    message: {
+      id: opts.messageId,
+      model: 'claude-sonnet-4-5',
+      usage: { input_tokens: 10, output_tokens: opts.outputTokens, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      content: opts.toolUse ? [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }] : [],
+    },
+  });
+}
+
+describe('scanAllProjects streamed-message dedupe', () => {
+  async function projectWith(files: Record<string, string[]>): Promise<string> {
+    const root = await makeTmpProjectsRoot();
+    const projectDir = path.join(root, 'my-project');
+    for (const [rel, lines] of Object.entries(files)) {
+      const target = path.join(projectDir, rel);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, lines.join('\n') + '\n');
+    }
+    return root;
+  }
+
+  it('counts usage once for repeated lines with the same message.id and requestId', async () => {
+    const line = streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' });
+    const root = await projectWith({ 'session-1.jsonl': [line, line, line] });
+
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(3);
+    expect(events.filter((e) => e.usage !== null)).toHaveLength(1);
+    expect(events.reduce((sum, e) => sum + (e.usage?.outputTokens ?? 0), 0)).toBe(100);
+  });
+
+  it('counts a key once across a top-level file and a subagents file', async () => {
+    const line = streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' });
+    const root = await projectWith({
+      'session-1.jsonl': [line],
+      'session-1/subagents/agent-x.jsonl': [line],
+    });
+
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events.reduce((sum, e) => sum + (e.usage?.outputTokens ?? 0), 0)).toBe(100);
+  });
+
+  it('keeps toolUses on a repeat line whose usage is nulled', async () => {
+    const root = await projectWith({
+      'session-1.jsonl': [
+        streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' }),
+        streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1', toolUse: true }),
+      ],
+    });
+
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events[1].usage).toBeNull();
+    expect(events[1].toolUses).toHaveLength(1);
+  });
+
+  it('does not dedupe a different requestId or lines with no message.id', async () => {
+    const root = await projectWith({
+      'session-1.jsonl': [
+        streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' }),
+        streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_2' }),
+        streamedLine({ outputTokens: 100 }),
+        streamedLine({ outputTokens: 100 }),
+      ],
+    });
+
+    const events = await scanAllProjects(root);
+    expect(events.filter((e) => e.usage !== null)).toHaveLength(4);
+  });
+
+  it('does not let a usage-less line reserve the key of a later line with usage', async () => {
+    const noUsage = JSON.stringify({
+      type: 'assistant',
+      sessionId: 'session-1',
+      timestamp: '2026-08-01T12:00:00.000Z',
+      requestId: 'req_1',
+      message: { id: 'msg_1', model: 'claude-sonnet-4-5', content: [] },
+    });
+    const withUsage = JSON.stringify({
+      type: 'assistant',
+      sessionId: 'session-1',
+      timestamp: '2026-08-01T12:00:00.000Z',
+      requestId: 'req_1',
+      message: {
+        id: 'msg_1',
+        model: 'claude-sonnet-4-5',
+        usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        content: [],
+      },
+    });
+    const root = await projectWith({ 'session-1.jsonl': [noUsage, withUsage] });
+
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events.reduce((sum, e) => sum + (e.usage?.inputTokens ?? 0), 0)).toBe(100);
+    expect(events.reduce((sum, e) => sum + (e.usage?.outputTokens ?? 0), 0)).toBe(50);
+  });
+
+  it('feeds computeWeeklyTokens the single-count value', async () => {
+    const line = streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' });
+    const root = await projectWith({ 'session-1.jsonl': [line, line, line] });
+
+    const events = await scanAllProjects(root);
+    const buckets = computeWeeklyTokens(events, new Date('2026-08-01T13:00:00.000Z'));
+    // input 10 + output 100, once (previously 330).
+    expect(buckets.reduce((a, b) => a + b, 0)).toBe(110);
   });
 });

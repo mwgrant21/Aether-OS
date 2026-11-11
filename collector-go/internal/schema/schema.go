@@ -403,6 +403,19 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
+	// usage_events dedupe key, mirroring schema.ts. Column-driven, not
+	// version-gated, and no SchemaVersion bump: a database stamped 9 by either
+	// collector heals. Existing rows keep NULL (distinct under the unique
+	// index); there is no backfill.
+	if err := addColumnIfMissing(db, "usage_events", "message_key", "message_key TEXT"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_message_key ON usage_events (message_key)`,
+	); err != nil {
+		return err
+	}
+
 	// NEVER lower the recorded version. This collector shares its database
 	// with collector/ (Node), which has been ahead before. Stamping
 	// unconditionally rewrote a newer database's version downwards, after

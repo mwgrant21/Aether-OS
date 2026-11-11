@@ -27,6 +27,10 @@ const FALLBACK_LINE = 'Aether OS';
 const MAX_LINE_LENGTH = 60;
 const MIDDLE_DOT = '·';
 const CHAIN_TIMEOUT_MS = 5000;
+// Proposal: live context size (input + cache_creation + cache_read) at which the
+// statusline appends a handoff warning. Above a 200K window this never fires; it is
+// intended for 1M-context sessions.
+const CONTEXT_WARN_TOKENS = 300_000;
 
 /** Reads all of stdin synchronously. Returns '' on any failure (closed stdin, no
  *  input piped, read error) rather than throwing. */
@@ -103,6 +107,28 @@ function buildStatusLine(payload) {
     return line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) : line;
   } catch {
     return FALLBACK_LINE;
+  }
+}
+
+/** Returns a warning such as `WARN ctx 312K - handoff, then /clear` when the live
+ *  context (input + cache_creation + cache_read of `context_window.current_usage`,
+ *  output excluded) reaches CONTEXT_WARN_TOKENS, else ''. Non-number fields count as
+ *  0; null/missing current_usage yields ''. Never throws. */
+function contextWarning(payload) {
+  try {
+    const cw = payload && typeof payload.context_window === 'object' ? payload.context_window : null;
+    const usage = cw && typeof cw.current_usage === 'object' ? cw.current_usage : null;
+    if (usage === null) {
+      return '';
+    }
+    const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    const total = n(usage.input_tokens) + n(usage.cache_creation_input_tokens) + n(usage.cache_read_input_tokens);
+    if (total < CONTEXT_WARN_TOKENS) {
+      return '';
+    }
+    return `WARN ctx ${Math.round(total / 1000)}K - handoff, then /clear`;
+  } catch {
+    return '';
   }
 }
 
@@ -189,7 +215,8 @@ function main() {
       // Print the chained tool's own line verbatim -- Aether's payload
       // capture above already happened as a side effect, invisible to what
       // the user sees in their terminal.
-      process.stdout.write(`${chainedLine}\n`);
+      const chainedWarning = contextWarning(payload);
+      process.stdout.write(`${chainedLine}${chainedWarning ? ` ${MIDDLE_DOT} ${chainedWarning}` : ''}\n`);
       return;
     }
     // Chained command failed, timed out, or printed nothing -- fall through
@@ -197,7 +224,9 @@ function main() {
   }
 
   const line = buildStatusLine(payload);
-  process.stdout.write(`${line}\n`);
+  // Appended after buildStatusLine's truncation so the warning is never cut off.
+  const warning = contextWarning(payload);
+  process.stdout.write(`${line}${warning ? ` ${MIDDLE_DOT} ${warning}` : ''}\n`);
 }
 
 try {

@@ -21,9 +21,13 @@ func IngestUsageEvent(db *sql.DB, event *Event, sourceFileRel string) (bool, err
 		return false, nil
 	}
 
-	_, err := db.Exec(
-		`INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_file_rel)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	// INSERT OR IGNORE against the unique idx_usage_events_message_key: a
+	// repeat of an already-stored message key is dropped, and RowsAffected
+	// reports whether a row was really written. A nil key stores NULL, which
+	// SQLite treats as distinct, so lines without message.id are never deduped.
+	res, err := db.Exec(
+		`INSERT OR IGNORE INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_file_rel, message_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.Timestamp.UnixMilli(),
 		event.Model,
 		event.Usage.InputTokens,
@@ -31,11 +35,16 @@ func IngestUsageEvent(db *sql.DB, event *Event, sourceFileRel string) (bool, err
 		event.Usage.CacheCreationInputTokens,
 		event.Usage.CacheReadInputTokens,
 		sourceFileRel,
+		event.MessageKey,
 	)
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 var (

@@ -32,6 +32,11 @@ export interface TranscriptEvent {
   // line -- parseTranscriptLine otherwise fully replaces JSON.parse for
   // callers that only need tool_use/tool_result/usage/text data.
   originKind: string | null;
+  // `<message.id>:<requestId or ''>` for assistant lines whose message.id is a
+  // non-empty string. Claude Code streams one API message as several lines that
+  // repeat the same usage; scanAllProjects uses this key to count it once.
+  // Optional so existing TranscriptEvent literals keep typechecking.
+  messageKey?: string | null;
 }
 
 export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
@@ -75,6 +80,8 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       isHumanPrompt: false,
       humanText: null,
       originKind: null,
+      messageKey:
+        typeof msg.id === 'string' && msg.id ? `${msg.id}:${json.requestId || ''}` : null,
     };
   }
 
