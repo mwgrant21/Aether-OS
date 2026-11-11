@@ -13,6 +13,15 @@ const scriptPath = resolve(fileURLToPath(import.meta.url), '..', '..', '..', 'sc
 async function main() {
   const command = process.argv[2];
 
+  // Handled before the settings.json guard below: that guard only protects
+  // settings.json, and this command never touches it. Returning here means a
+  // bad backfill-usage argument cannot fall through to the install commands.
+  if (command === 'backfill-usage') {
+    const { runUsageBackfill } = await import('./usageBackfillRunner.js');
+    process.exitCode = runUsageBackfill(process.argv.slice(3));
+    return;
+  }
+
   if (!existsSync(scriptPath)) {
     console.error(`aether-hook-emit.mjs not found at ${scriptPath} -- refusing to modify settings.json`);
     process.exitCode = 1;
@@ -67,7 +76,10 @@ async function main() {
     return;
   }
 
-  console.error('usage: node dist/cli.js <status|install-hooks|uninstall-hooks|install-autostart|uninstall-autostart>');
+  console.error(
+    'usage: node dist/cli.js <status|install-hooks|uninstall-hooks|install-autostart|uninstall-autostart|backfill-usage [--apply]>\n' +
+      '  backfill-usage --help  explains the usage-row repair, its backup and rollback'
+  );
   process.exitCode = 1;
 }
 
