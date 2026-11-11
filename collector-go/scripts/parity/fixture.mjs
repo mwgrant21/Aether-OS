@@ -58,13 +58,15 @@ export const OWN_SESSION_ID = 'own-session-aaa';
 // Row 1 is the collector's own session (must be filtered out by
 // own-session.json), rows 2-3 are real fleet sessions (row 3 has no pid ->
 // NULL), row 4 is missing `status` and `startedAt` and must produce exactly
-// one drift_log row naming both fields in REQUIRED_STRING_FIELDS order, and
-// row 5 is the transient session that vanishes from every later poll.
+// one drift_log row naming both fields in REQUIRED_STRING_FIELDS order, row 5
+// is a background-kind row (`state` instead of `status`, no pid; kept with
+// status 'blocked', no drift), and row 6 is the transient session that vanishes from every later poll.
 export const FLEET_JSON = JSON.stringify([
   { sessionId: OWN_SESSION_ID, cwd: ALPHA_CWD, kind: 'main', name: 'Aether', status: 'active', startedAt: 1700000000000, pid: 4242 },
   { sessionId: 'fleet-session-bbb', cwd: BETA_CWD, kind: 'main', name: 'TokenMonitor', status: 'idle', startedAt: 1700000001000, pid: 5150 },
   { sessionId: 'fleet-session-ccc', cwd: 'C:\\projects\\nmm-toolkit', kind: 'subagent', name: 'Toolkit', status: 'active', startedAt: 1700000002000 },
   { sessionId: 'bad-row-ddd', cwd: 'C:\\projects\\x', kind: 'main', name: 'X' },
+  { id: 'ddd00001', sessionId: 'fleet-session-bg-fff', cwd: 'C:\\Users\\Matt\\.local\\bin', kind: 'background', name: 'Background', state: 'blocked', startedAt: 1700000004000 },
   { sessionId: 'fleet-session-eee', cwd: 'C:\\projects\\gone', kind: 'subagent', name: 'Transient', status: 'active', startedAt: 1700000003000, pid: 6060 },
 ]);
 
@@ -82,6 +84,7 @@ export const FLEET_JSON_LATER = JSON.stringify([
   { sessionId: OWN_SESSION_ID, cwd: ALPHA_CWD, kind: 'main', name: 'Aether', status: 'active', startedAt: 1700000000000, pid: 4242 },
   { sessionId: 'fleet-session-bbb', cwd: BETA_CWD, kind: 'main', name: 'TokenMonitor', status: 'active', startedAt: 1700000001000, pid: 5150 },
   { sessionId: 'fleet-session-ccc', cwd: 'C:\\projects\\nmm-toolkit', kind: 'subagent', name: 'Toolkit', status: 'active', startedAt: 1700000002000 },
+  { id: 'ddd00001', sessionId: 'fleet-session-bg-fff', cwd: 'C:\\Users\\Matt\\.local\\bin', kind: 'background', name: 'Background', state: 'blocked', startedAt: 1700000004000 },
 ]);
 
 // The `claude` stub records how many times it has been invoked here, per
