@@ -3,6 +3,7 @@ import { Button } from '../shared/Button';
 import { useColors } from '../shared/useColors';
 import { fonts } from '../../styles/tokens';
 import type { PanelSummary } from '../../shared/dashboards/types';
+import type { Range } from '../../shared/dashboards/spec';
 import type { ShownPanel } from './boardsState';
 import { NO_DATA } from './formatValue';
 import { LinePanel } from './LinePanel';
@@ -10,7 +11,7 @@ import { BarPanel } from './BarPanel';
 import { StatPanel } from './StatPanel';
 import { TablePanel } from './TablePanel';
 
-export function BoardPanel({ panel, result, refreshing }: { panel: PanelSummary; result: ShownPanel | undefined; refreshing: boolean }) {
+export function BoardPanel({ panel, result, refreshing, rangeOverride }: { panel: PanelSummary; result: ShownPanel | undefined; refreshing: boolean; rangeOverride?: Range | null }) {
   const colors = useColors();
   const [showSql, setShowSql] = useState(false);
   const notes: string[] = [];
@@ -19,6 +20,7 @@ export function BoardPanel({ panel, result, refreshing }: { panel: PanelSummary;
   if (result && result.unpricedRows > 0) notes.push(`${result.unpricedRows} rows unpriced (no model)`);
   if (panel.costBasis === 'estimated') notes.push('est. (blended tier rate)');
   if (panel.costBasis === 'exact') notes.push('API rate (not paid)');
+  if (rangeOverride && rangeOverride !== panel.range) notes.push(`range: ${rangeOverride} (panel default ${panel.range})`);
 
   let body: ReactElement;
   if (!result) body = <div style={{ color: colors.textMuted }}>{refreshing ? 'Loading…' : 'Not refreshed yet.'}</div>;

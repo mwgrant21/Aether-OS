@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BoardsView } from './BoardsView';
 import type { BoardsListing, RefreshResponse } from '../../shared/dashboards/types';
 
@@ -41,6 +41,22 @@ describe('BoardsView', () => {
     expect(screen.getByText(/2 rows unpriced/)).toBeTruthy();
     expect(screen.getByText('~$1.50')).toBeTruthy();
     expect(api.refresh).toHaveBeenCalledWith('spend-cache', undefined);
+  });
+
+  it('notes a board range override on panels whose own range differs, and only then', async () => {
+    mockApi();
+    render(<BoardsView />);
+    const today = await screen.findByLabelText('Spend today');
+    const disp = screen.getByLabelText('Dispatch spend');
+    expect(within(today).queryByText(/range:/)).toBeNull();
+    fireEvent.click(screen.getByText('30d'));
+    expect(within(today).getByText(/range: 30d \(panel default 24h\)/)).toBeTruthy();
+    expect(within(disp).getByText(/range: 30d \(panel default 7d\)/)).toBeTruthy();
+    fireEvent.click(screen.getByText('24h'));
+    expect(within(today).queryByText(/range:/)).toBeNull();
+    expect(within(disp).getByText(/range: 24h \(panel default 7d\)/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Panel default'));
+    expect(within(disp).queryByText(/range:/)).toBeNull();
   });
 
   it('an invalid board shows its error', async () => {

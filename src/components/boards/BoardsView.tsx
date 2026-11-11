@@ -149,7 +149,7 @@ export function BoardsView() {
           </div>
           {boardError && <div role="alert" style={{ color: colors.danger }}>{boardError}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-            {board.panels.map((p) => <BoardPanel key={p.id} panel={p} result={results[p.id]} refreshing={refreshing} />)}
+            {board.panels.map((p) => <BoardPanel key={p.id} panel={p} result={results[p.id]} refreshing={refreshing} rangeOverride={range} />)}
           </div>
         </>
       )}
