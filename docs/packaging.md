@@ -184,6 +184,10 @@ Update and uninstall: the helper is an `Aether OS.exe` process under `$INSTDIR`,
 
 UNVERIFIED / UNEXERCISED until the live T8 report: that a packaged `Aether OS.exe` with `ELECTRON_RUN_AS_NODE=1` loads the built ESM `app.asar/out/main/pty-owner.js` and resolves `node-pty` from the unpacked tree; that the helper survives a Quit-less main death when started from the packaged app (job breakaway, both the Start-menu and post-install launch routes); helper cold-start latency. See `docs/privacy-and-data.md` section 21.
 
+## Redeploying the collector (Windows)
+
+`scripts/redeploy-collector.ps1` replaces the by-hand redeploy: from a clean checkout it runs `npm ci` and `npm run build` in `collector/`, stages the full `dist` tree (minus `*.test.js`) plus `package.json` at `D:\AetherBuilds\<version>\collector`, checks free disk space, stops the old collector (only `node.exe` and `conhost.exe` processes whose command line matches the staged `index.js` or the `index.js` in the old Run value, node first, then it fails if any collector `node.exe` survives), backs up `~/.aether-os/collector.db` and its `-wal`, reads the `usage_events` baseline, repoints the HKCU Run key `AetherCollector`, starts the collector headless via `conhost.exe`, and checks that the new collector is alive and `usage_events` grows (alive with no new rows in the window is a success, a dead collector is a failure). If it fails after the stop, it prints the backup path and the old Run value to restore. `-DryRun` (alias `-WhatIf`) prints every step and changes nothing; `-Version` defaults to `package.json`. Tests: `Invoke-Pester scripts\redeploy-collector.Tests.ps1`.
+
 ## Versioning
 
 The version lives in one place, `package.json`, and everything else derives from
