@@ -17,7 +17,41 @@ const REAL_ROW = {
   status: 'busy',
 };
 
+// Captured from `claude agents --json` (CLI 2.1.322): background-kind rows carry
+// `state` instead of `status`, and have no pid.
+const BACKGROUND_ROW = {
+  id: '2c6f5a02',
+  cwd: 'C:\\Users\\Matt\\.local\\bin',
+  kind: 'background',
+  startedAt: 1779693438903,
+  sessionId: '2c6f5a02-d627-4035-9e69-b52ddc6cc740',
+  name: 'agent definition builder',
+  state: 'blocked',
+};
+
 describe('parseFleetJson', () => {
+  it('accepts a background row carrying `state` instead of `status` without drift', () => {
+    const result = parseFleetJson(JSON.stringify([REAL_ROW, BACKGROUND_ROW]));
+    expect(result!.driftDetails).toEqual([]);
+    expect(result!.sessions).toHaveLength(2);
+    expect(result!.sessions[1]).toEqual({
+      sessionId: '2c6f5a02-d627-4035-9e69-b52ddc6cc740',
+      pid: null,
+      projectName: 'bin',
+      kind: 'background',
+      status: 'blocked',
+      name: 'agent definition builder',
+      startedAtMs: 1779693438903,
+    });
+  });
+
+  it('still reports status as missing when a row has neither status nor state', () => {
+    const { status, ...noStatus } = REAL_ROW;
+    const result = parseFleetJson(JSON.stringify([noStatus]));
+    expect(result!.sessions).toEqual([]);
+    expect(result!.driftDetails).toEqual(['claude agents --json row missing/invalid field(s): status']);
+  });
+
   it('parses a real captured row, deriving projectName from cwd via win32 basename', () => {
     const result = parseFleetJson(JSON.stringify([REAL_ROW]));
     expect(result).not.toBeNull();

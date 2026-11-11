@@ -16,7 +16,7 @@ export interface FleetSession {
   startedAtMs: number;
 }
 
-const REQUIRED_STRING_FIELDS = ['sessionId', 'cwd', 'kind', 'name', 'status'] as const;
+const REQUIRED_STRING_FIELDS = ['sessionId', 'cwd', 'kind', 'name'] as const;
 
 function missingFieldsOf(row: unknown): string[] {
   if (typeof row !== 'object' || row === null || Array.isArray(row)) return ['row is not an object'];
@@ -25,6 +25,8 @@ function missingFieldsOf(row: unknown): string[] {
   for (const field of REQUIRED_STRING_FIELDS) {
     if (typeof obj[field] !== 'string') missing.push(field);
   }
+  // Interactive rows carry `status`; background-kind rows carry `state` instead.
+  if (typeof obj.status !== 'string' && typeof obj.state !== 'string') missing.push('status');
   if (typeof obj.startedAt !== 'number') missing.push('startedAt');
   return missing;
 }
@@ -40,7 +42,7 @@ function toFleetSession(row: Record<string, unknown>): FleetSession {
     pid: typeof row.pid === 'number' ? row.pid : null,
     projectName: win32.basename(row.cwd as string),
     kind: row.kind as string,
-    status: row.status as string,
+    status: (typeof row.status === 'string' ? row.status : row.state) as string,
     name: row.name as string,
     startedAtMs: row.startedAt as number,
   };
