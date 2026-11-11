@@ -31,6 +31,7 @@ const CHAIN_TIMEOUT_MS = 5000;
 // statusline appends a handoff warning. Above a 200K window this never fires; it is
 // intended for 1M-context sessions.
 const CONTEXT_WARN_TOKENS = 300_000;
+const MAX_WARN_DISPLAY_K = 9999;
 
 /** Reads all of stdin synchronously. Returns '' on any failure (closed stdin, no
  *  input piped, read error) rather than throwing. */
@@ -112,8 +113,8 @@ function buildStatusLine(payload) {
 
 /** Returns a warning such as `WARN ctx 312K - handoff, then /clear` when the live
  *  context (input + cache_creation + cache_read of `context_window.current_usage`,
- *  output excluded) reaches CONTEXT_WARN_TOKENS, else ''. Non-number fields count as
- *  0; null/missing current_usage yields ''. Never throws. */
+ *  output excluded) reaches CONTEXT_WARN_TOKENS, else ''. Non-number and negative fields count
+ *  as 0; null/missing current_usage yields ''. Never throws. */
 function contextWarning(payload) {
   try {
     const cw = payload && typeof payload.context_window === 'object' ? payload.context_window : null;
@@ -121,12 +122,14 @@ function contextWarning(payload) {
     if (usage === null) {
       return '';
     }
-    const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    // Negatives clamp to 0 so a bogus field cannot cancel out the real ones.
+    const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : 0);
     const total = n(usage.input_tokens) + n(usage.cache_creation_input_tokens) + n(usage.cache_read_input_tokens);
     if (total < CONTEXT_WARN_TOKENS) {
       return '';
     }
-    return `WARN ctx ${Math.round(total / 1000)}K - handoff, then /clear`;
+    // Display is capped so an absurd value cannot bloat the line.
+    return `WARN ctx ${Math.min(Math.round(total / 1000), MAX_WARN_DISPLAY_K)}K - handoff, then /clear`;
   } catch {
     return '';
   }
