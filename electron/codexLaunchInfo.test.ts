@@ -79,8 +79,17 @@ async function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
   return pred();
 }
 
+// windows-build once hit the 30s bound on the first test below, on a cold
+// hosted runner. The suspected cause is Windows PowerShell building its module
+// analysis cache on first use. PowerShell only persists that cache from a
+// process that lives past ~10s (the write is queued on a delay), so the
+// beforeAll warm-up below keeps its process alive long enough to write the
+// file at this temp path. Only a windows-build CI run confirms this fixes the
+// cold-runner case; local runs are always warm and cannot reproduce it.
 function rawEnv(...dirs: string[]): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: [...dirs, BASE_PATH].join(delimiter) };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: [...dirs, BASE_PATH].join(delimiter) };
+  if (win32) env.PSModuleAnalysisCachePath = path.join(root, 'ps-analysis-cache');
+  return env;
 }
 
 // The launch env the real terminal gets: built from a PATH carrying the npm
@@ -97,13 +106,24 @@ function launchInfo(env: NodeJS.ProcessEnv, timeoutMs = 30_000) {
   return getCodexLaunchInfo(env, platform, root, RESOLVE, timeoutMs, false);
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-codex-launch-'));
   projectBin = path.join(root, 'proj', 'node_modules', '.bin');
   globalBin = path.join(root, 'global');
   writeShim(projectBin, '0.153.2');
   writeShim(globalBin, '0.154.0');
-});
+  if (win32) {
+    // Warm the cache in a process that outlives the ~10s delayed cache write;
+    // outcome is irrelevant, the generous bound is not the production one.
+    await runBoundedCommand(
+      'powershell.exe',
+      ['-NonInteractive', '-NoProfile', '-Command', 'Get-Command aether-cache-warm-nonexistent -ErrorAction SilentlyContinue | Out-Null; Start-Sleep -Seconds 15'],
+      rawEnv(projectBin, globalBin),
+      root,
+      110_000,
+    ).catch(() => undefined);
+  }
+}, 120_000);
 
 afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
@@ -130,7 +150,7 @@ describe('getCodexLaunchInfo', () => {
   }, 30_000);
 
   it('reports a not-found error instead of throwing when the shell finds no codex', async () => {
-    const info = await launchInfo({ ...process.env, PATH: [path.join(root, 'empty'), BASE_PATH].join(delimiter) });
+    const info = await launchInfo(rawEnv(path.join(root, 'empty')));
     expect(info.executable).toBeNull();
     expect(info.version).toBeNull();
     expect(info.error).toMatch(/not found/i);

@@ -76,6 +76,62 @@ func TestParseFleetJSON_ParsesRealRow_DerivingProjectNameFromCwdViaWinBasename(t
 	}
 }
 
+// backgroundRowJSON is captured from `claude agents --json` (CLI 2.1.322):
+// background-kind rows carry "state" instead of "status" and have no pid.
+const backgroundRowJSON = `{
+	"id": "2c6f5a02",
+	"cwd": "C:\\Users\\Matt\\.local\\bin",
+	"kind": "background",
+	"startedAt": 1779693438903,
+	"sessionId": "2c6f5a02-d627-4035-9e69-b52ddc6cc740",
+	"name": "agent definition builder",
+	"state": "blocked"
+}`
+
+func TestParseFleetJSON_BackgroundRowWithStateInsteadOfStatus_NoDrift(t *testing.T) {
+	result := ParseFleetJSON("[" + realRowJSON + "," + backgroundRowJSON + "]")
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(result.DriftDetails) != 0 {
+		t.Fatalf("expected no drift details, got %v", result.DriftDetails)
+	}
+	want := []FleetSession{wantRealSession(nil), {
+		SessionID:   "2c6f5a02-d627-4035-9e69-b52ddc6cc740",
+		PID:         nil,
+		ProjectName: "bin",
+		Kind:        "background",
+		Status:      "blocked",
+		Name:        "agent definition builder",
+		StartedAtMs: 1779693438903,
+	}}
+	if !reflect.DeepEqual(result.Sessions, want) {
+		t.Fatalf("sessions mismatch:\n got  %+v\n want %+v", result.Sessions, want)
+	}
+}
+
+func TestParseFleetJSON_NeitherStatusNorState_ReportsStatusMissing(t *testing.T) {
+	raw := `[{
+		"pid": 6824,
+		"cwd": "C:\\Users\\IT",
+		"kind": "interactive",
+		"startedAt": 1785255815376,
+		"sessionId": "x",
+		"name": "it-68"
+	}]`
+	result := ParseFleetJSON(raw)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(result.Sessions) != 0 {
+		t.Fatalf("expected 0 sessions, got %d", len(result.Sessions))
+	}
+	want := []string{"claude agents --json row missing/invalid field(s): status"}
+	if !reflect.DeepEqual(result.DriftDetails, want) {
+		t.Fatalf("drift mismatch: got %v want %v", result.DriftDetails, want)
+	}
+}
+
 func TestParseFleetJSON_EmptyArray_ZeroSessionsZeroDrift(t *testing.T) {
 	result := ParseFleetJSON("[]")
 	if result == nil {

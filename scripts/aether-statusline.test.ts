@@ -51,6 +51,8 @@ describe('aether-statusline.mjs context warning', () => {
     homes.push(home);
     return runScript(home, { AETHER_STATUSLINE_NO_PERSIST: '1' }, payload, args);
   };
+  // The chained command must read stdin to its end: runChainedCommand pipes the payload in, and a
+  // chain that exits without reading it can lose the line to EPIPE on Linux/macOS.
   const chain = ['--chain', Buffer.from(`node -e "process.stdin.resume();process.stdin.on('end',()=>console.log('CHAINED'))"`).toString('base64')];
 
   it('warns at or over the threshold', () => {
@@ -62,6 +64,16 @@ describe('aether-statusline.mjs context warning', () => {
 
   it('does not warn just under the threshold, and ignores output tokens', () => {
     expect(run(usage(1, 99_998, 200_000)).stdout).not.toContain('WARN');
+  });
+
+  it('clamps negative fields to 0 instead of letting them cancel real usage', () => {
+    const r = run(usage(-100_000, 0, 350_000));
+    expect(r.stdout).toContain('WARN ctx 350K - handoff, then /clear');
+  });
+
+  it('caps an absurd context size in the displayed warning', () => {
+    const r = run(usage(1, 1, 1e15));
+    expect(r.stdout).toContain('WARN ctx 9999K - handoff, then /clear');
   });
 
   it('does not warn or fail when current_usage is null or malformed', () => {

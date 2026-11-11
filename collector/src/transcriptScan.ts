@@ -71,7 +71,8 @@ function clearsExtractionBar(durationMs: number, toolUses: number): boolean {
 // Runs fn in one transaction, so a file's usage rows, tool calls, dispatch
 // rows and offset land together or not at all: a failure never leaves the
 // offset past rows that were not written, and a retry never double-counts
-// usage_events (no unique key). Kept per file, with the transcript read done
+// keyless usage_events (rows with a message_key are deduped by the unique
+// index; rows without one are not). Kept per file, with the transcript read done
 // before it opens: collector.db has a second writable handle
 // (electron/retentionStore.ts) with a 5s busy_timeout, which a pass-wide
 // transaction over a cold scan would outlast. IMMEDIATE because under WAL a

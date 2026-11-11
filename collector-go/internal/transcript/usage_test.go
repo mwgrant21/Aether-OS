@@ -141,8 +141,12 @@ func TestIngestUsageEvent_SameMessageKeyInsertsOnce(t *testing.T) {
 func TestIngestUsageEvent_DifferentRequestIdInsertsBoth(t *testing.T) {
 	db := freshUsageDB(t)
 	a, b := "msg_1:req_1", "msg_1:req_2"
-	IngestUsageEvent(db, assistantUsageEvent(keyed(&a)), "p/s.jsonl")
-	IngestUsageEvent(db, assistantUsageEvent(keyed(&b)), "p/s.jsonl")
+	if _, err := IngestUsageEvent(db, assistantUsageEvent(keyed(&a)), "p/s.jsonl"); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if _, err := IngestUsageEvent(db, assistantUsageEvent(keyed(&b)), "p/s.jsonl"); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
 	assertCount(t, db, "usage_events", 2)
 }
 
@@ -168,7 +172,10 @@ func TestIngestUsageEvent_SkipsUserKind(t *testing.T) {
 
 func TestIngestUsageEvent_SkipsNilUsage(t *testing.T) {
 	db := freshUsageDB(t)
-	inserted, _ := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Usage = nil }), "my-project/sess-1.jsonl")
+	inserted, err := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Usage = nil }), "my-project/sess-1.jsonl")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if inserted {
 		t.Fatalf("expected inserted=false")
 	}
@@ -176,7 +183,10 @@ func TestIngestUsageEvent_SkipsNilUsage(t *testing.T) {
 
 func TestIngestUsageEvent_SkipsNilTimestamp(t *testing.T) {
 	db := freshUsageDB(t)
-	inserted, _ := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Timestamp = nil }), "my-project/sess-1.jsonl")
+	inserted, err := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Timestamp = nil }), "my-project/sess-1.jsonl")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if inserted {
 		t.Fatalf("expected inserted=false")
 	}
@@ -184,7 +194,9 @@ func TestIngestUsageEvent_SkipsNilTimestamp(t *testing.T) {
 
 func TestIngestUsageEvent_NilModelStoredAsSQLNull(t *testing.T) {
 	db := freshUsageDB(t)
-	IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Model = nil }), "my-project/sess-1.jsonl")
+	if _, err := IngestUsageEvent(db, assistantUsageEvent(func(e *Event) { e.Model = nil }), "my-project/sess-1.jsonl"); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
 	var model sql.NullString
 	if err := db.QueryRow("SELECT model FROM usage_events").Scan(&model); err != nil {
 		t.Fatalf("query: %v", err)
@@ -230,7 +242,10 @@ func TestIngestDispatchEvent_RecordsExactTagValues(t *testing.T) {
 func TestIngestDispatchEvent_NoMatchingOpenDispatch(t *testing.T) {
 	db := freshUsageDB(t)
 	history := openDispatch("tu_1", 1000, "")
-	ingested, _ := IngestDispatchEvent(db, history, completionEvent("tu_other", 13000, 1, 1, 1))
+	ingested, err := IngestDispatchEvent(db, history, completionEvent("tu_other", 13000, 1, 1, 1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ingested {
 		t.Fatalf("expected ingested=false")
 	}
@@ -243,7 +258,10 @@ func TestIngestDispatchEvent_NoToolUseIDTag(t *testing.T) {
 	text := "subagent finished"
 	event := completionEvent("tu_1", 13000, 1, 1, 1)
 	event.HumanText = &text
-	ingested, _ := IngestDispatchEvent(db, history, event)
+	ingested, err := IngestDispatchEvent(db, history, event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ingested {
 		t.Fatalf("expected ingested=false")
 	}
@@ -256,13 +274,13 @@ func TestIngestDispatchEvent_NonUserOrNonTaskNotification(t *testing.T) {
 
 	asAssistant := completionEvent("tu_1", 13000, 1, 1, 1)
 	asAssistant.Kind = "assistant"
-	if ingested, _ := IngestDispatchEvent(db, history, asAssistant); ingested {
+	if ingested, err := IngestDispatchEvent(db, history, asAssistant); err != nil || ingested {
 		t.Fatalf("expected ingested=false for non-user event")
 	}
 
 	wrongOrigin := completionEvent("tu_1", 13000, 1, 1, 1)
 	wrongOrigin.OriginKind = nil
-	if ingested, _ := IngestDispatchEvent(db, history, wrongOrigin); ingested {
+	if ingested, err := IngestDispatchEvent(db, history, wrongOrigin); err != nil || ingested {
 		t.Fatalf("expected ingested=false for wrong origin")
 	}
 	assertCount(t, db, "dispatches", 0)
@@ -271,7 +289,10 @@ func TestIngestDispatchEvent_NonUserOrNonTaskNotification(t *testing.T) {
 func TestIngestDispatchEvent_NotAgentToolName(t *testing.T) {
 	db := freshUsageDB(t)
 	history := openDispatch("tu_1", 1000, "Bash")
-	ingested, _ := IngestDispatchEvent(db, history, completionEvent("tu_1", 13000, 1, 1, 1))
+	ingested, err := IngestDispatchEvent(db, history, completionEvent("tu_1", 13000, 1, 1, 1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ingested {
 		t.Fatalf("expected ingested=false for non-Agent open tool call")
 	}
@@ -282,7 +303,10 @@ func TestIngestDispatchEvent_NoTimestamp(t *testing.T) {
 	history := openDispatch("tu_1", 1000, "")
 	event := completionEvent("tu_1", 13000, 1, 1, 1)
 	event.Timestamp = nil
-	ingested, _ := IngestDispatchEvent(db, history, event)
+	ingested, err := IngestDispatchEvent(db, history, event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ingested {
 		t.Fatalf("expected ingested=false when timestamp is nil")
 	}
@@ -299,7 +323,9 @@ func TestIngestDispatchEvent_DefaultsMissingNumericTagsToZero(t *testing.T) {
 		t.Fatalf("expected ingested=true, err=nil, got ingested=%v err=%v", ingested, err)
 	}
 	var tokens, toolUses, durationMs int
-	db.QueryRow("SELECT tokens, tool_uses, duration_ms FROM dispatches WHERE tool_use_id = ?", "tu_1").Scan(&tokens, &toolUses, &durationMs)
+	if err := db.QueryRow("SELECT tokens, tool_uses, duration_ms FROM dispatches WHERE tool_use_id = ?", "tu_1").Scan(&tokens, &toolUses, &durationMs); err != nil {
+		t.Fatalf("query: %v", err)
+	}
 	if tokens != 0 || toolUses != 0 || durationMs != 0 {
 		t.Fatalf("expected zero defaults, got tokens=%d toolUses=%d durationMs=%d", tokens, toolUses, durationMs)
 	}
@@ -325,7 +351,9 @@ func TestIngestDispatchEvent_ClosesOnlyTaggedDispatch(t *testing.T) {
 	assertCount(t, db, "dispatches", 1)
 	var toolUseID string
 	var tokens int
-	db.QueryRow("SELECT tool_use_id, tokens FROM dispatches").Scan(&toolUseID, &tokens)
+	if err := db.QueryRow("SELECT tool_use_id, tokens FROM dispatches").Scan(&toolUseID, &tokens); err != nil {
+		t.Fatalf("query: %v", err)
+	}
 	if toolUseID != "tu_a" || tokens != 500 {
 		t.Fatalf("unexpected row: toolUseID=%s tokens=%d", toolUseID, tokens)
 	}
@@ -334,12 +362,18 @@ func TestIngestDispatchEvent_ClosesOnlyTaggedDispatch(t *testing.T) {
 func TestIngestDispatchEvent_UpsertsOnRepeatedCompletion(t *testing.T) {
 	db := freshUsageDB(t)
 	history := openDispatch("tu_1", 1000, "")
-	IngestDispatchEvent(db, history, completionEvent("tu_1", 13000, 100, 1, 1))
-	IngestDispatchEvent(db, history, completionEvent("tu_1", 14000, 250, 1, 1))
+	if _, err := IngestDispatchEvent(db, history, completionEvent("tu_1", 13000, 100, 1, 1)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if _, err := IngestDispatchEvent(db, history, completionEvent("tu_1", 14000, 250, 1, 1)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
 	assertCount(t, db, "dispatches", 1)
 	var tokens int
 	var endedAt int64
-	db.QueryRow("SELECT tokens, ended_at_ms FROM dispatches").Scan(&tokens, &endedAt)
+	if err := db.QueryRow("SELECT tokens, ended_at_ms FROM dispatches").Scan(&tokens, &endedAt); err != nil {
+		t.Fatalf("query: %v", err)
+	}
 	if tokens != 250 || endedAt != 14000 {
 		t.Fatalf("unexpected row: tokens=%d endedAt=%d", tokens, endedAt)
 	}
@@ -348,7 +382,9 @@ func TestIngestDispatchEvent_UpsertsOnRepeatedCompletion(t *testing.T) {
 func TestIngestDispatchEvent_NeverPersistsRawText(t *testing.T) {
 	db := freshUsageDB(t)
 	history := openDispatch("tu_1", 1000, "")
-	IngestDispatchEvent(db, history, completionEvent("tu_1", 13000, 1, 1, 1))
+	if _, err := IngestDispatchEvent(db, history, completionEvent("tu_1", 13000, 1, 1, 1)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
 	rows, err := db.Query("SELECT * FROM dispatches WHERE tool_use_id = ?", "tu_1")
 	if err != nil {
 		t.Fatalf("query: %v", err)

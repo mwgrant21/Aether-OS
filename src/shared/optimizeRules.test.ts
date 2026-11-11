@@ -84,6 +84,12 @@ describe('optimizeRules', () => {
     expect(finding!.detail).toMatch(/CLAUDE\.md/);
   });
 
+  it('labels the re-read savings estimate as a lower bound', () => {
+    const events = [repeatedReadEvent(1), repeatedReadEvent(2), repeatedReadEvent(3)];
+    const finding = evaluateOptimizeRules(events, 60 * 60 * 1000).find((f) => f.id === 'unpinned-config-re-reads');
+    expect(finding!.detail).toMatch(/lower bound/);
+  });
+
   it('aggregates ALL offending files into one finding, not just the first', () => {
     const events = [
       repeatedReadEvent(1, 'CLAUDE.md'),
