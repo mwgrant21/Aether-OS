@@ -184,6 +184,30 @@ Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
         (Get-PreflightError @args260 -RunValue ('a' * 260)) | Should BeNullOrEmpty
         (Get-PreflightError @args260 -RunValue ('a' * 261)) | Should Match 'Run-key command is 261'
     }
+    It 'turns an unparseable -DbPath into a guard message instead of throwing' {
+        foreach ($bad in '', ' ', 'C:\a|b') {
+            $out = Invoke-Redeploy -Version '9.9.6' -StageRoot $root -DbPath $bad -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+            $out | Should Match 'ERROR: -DbPath'
+        }
+    }
+    It 'treats an unquoted hand-made Run value as no old index instead of throwing' {
+        Get-IndexJsFromRunValue 'node C:\x\dist\index.js' | Should BeNullOrEmpty
+        Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = 'node C:\x\dist\index.js' } }
+        $out = Invoke-Redeploy -Version '9.9.5' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Not Match 'format|not supported'
+        $out | Should Match 'Old Run value: node C:\\x\\dist\\index.js'
+        $out | Should Match 'Done\.'
+    }
+    It 'resolves a relative -DbPath against the PowerShell location' {
+        $dir = Split-Path -Parent $db
+        $rel = 'rel-' + [guid]::NewGuid().ToString('N') + '.db'
+        Set-Content -Path (Join-Path $dir $rel) -Value 'x'
+        Push-Location $dir
+        try { $out = Invoke-Redeploy -Version '9.9.4' -StageRoot $root -DbPath $rel -ExpectedDbPath (Join-Path $dir $rel) -Dry $false -VerifySeconds 1 | Out-String }
+        finally { Pop-Location }
+        $out | Should Not Match 'not the database the collector opens'
+        $out | Should Match 'Done\.'
+    }
 }
 
 Describe 'dry run' {

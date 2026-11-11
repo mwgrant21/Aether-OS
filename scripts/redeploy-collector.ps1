@@ -67,7 +67,12 @@ function Get-RunKeyValue {
 
 function Get-IndexJsFromRunValue {
     param([string]$RunValue)
-    if ($RunValue -match '"?([^"\s][^"]*index\.js)"?\s*$') { return $Matches[1] }
+    if ($RunValue -match '"?([^"\s][^"]*index\.js)"?\s*$') {
+        $p = $Matches[1]
+        # An unquoted hand-made value (node C:\x\index.js) parses to a non-path: treat as no index.
+        try { [void][IO.Path]::GetFullPath($p) } catch { return $null }
+        return $p
+    }
     return $null
 }
 
@@ -75,17 +80,23 @@ function Get-PreflightError {
     # Read-only guards, run before anything is built, stopped, backed up or repointed.
     # Returns the first problem as a message, or $null when it is safe to proceed.
     param([string]$Stage, [string]$OldIndex, [string]$DbPath, [string]$ExpectedDbPath, [string]$RunValue)
-    $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
     $inUse = $false
-    if ($OldIndex) {
-        $oldFull = [IO.Path]::GetFullPath($OldIndex)
-        $inUse = $oldFull.StartsWith($stageFull + '\', [StringComparison]::OrdinalIgnoreCase)
+    try {
+        $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
+        if ($OldIndex) {
+            $oldFull = [IO.Path]::GetFullPath($OldIndex)
+            $inUse = $oldFull.StartsWith($stageFull + '\', [StringComparison]::OrdinalIgnoreCase)
+        }
+    } catch {
+        return "cannot resolve stage path '$Stage': $($_.Exception.Message). Nothing was changed."
     }
     $nonEmpty = (Test-Path -LiteralPath $stageFull) -and (@(Get-ChildItem -LiteralPath $stageFull -Force -ErrorAction SilentlyContinue).Count -gt 0)
     if ($inUse -or $nonEmpty) {
         return "stage directory already exists and is not empty (or is the current deployment): $stageFull. Pass a different -Version or -StageRoot. Nothing was changed."
     }
-    if ([IO.Path]::GetFullPath($DbPath) -ne [IO.Path]::GetFullPath($ExpectedDbPath)) {
+    try { $dbFull = [IO.Path]::GetFullPath($DbPath); $expFull = [IO.Path]::GetFullPath($ExpectedDbPath) }
+    catch { return "-DbPath '$DbPath' is not a valid path ($($_.Exception.Message)). Omit -DbPath. Nothing was changed." }
+    if ($dbFull -ne $expFull) {
         return "-DbPath '$DbPath' is not the database the collector opens ($ExpectedDbPath, fixed in collector/src/index.ts). Omit -DbPath. Nothing was changed."
     }
     if ($RunValue.Length -gt $MaxRunCommandLength) {
@@ -197,6 +208,8 @@ function Invoke-Redeploy {
     Write-Output "Old Run value: $oldRun"
 
     $runValue = Get-RunKeyValue -IndexJs $indexJs -NodeExe $nodeExe
+    # Resolve a relative -DbPath against the PowerShell location (not the .NET cwd) so the guard and later copies agree.
+    try { if ($DbPath -and -not [IO.Path]::IsPathRooted($DbPath)) { $DbPath = Join-Path (Get-Location).Path $DbPath } } catch { }
     $preflight = Get-PreflightError -Stage $stage -OldIndex $oldIndex -DbPath $DbPath -ExpectedDbPath $ExpectedDbPath -RunValue $runValue
     if ($preflight) {
         Write-Output "ERROR: $preflight"
