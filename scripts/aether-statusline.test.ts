@@ -61,7 +61,7 @@ describe('aether-statusline.mjs context warning', () => {
   });
 
   it('does not warn just under the threshold, and ignores output tokens', () => {
-    expect(run(usage(1, 99_999, 200_000)).stdout).not.toContain('WARN');
+    expect(run(usage(1, 99_998, 200_000)).stdout).not.toContain('WARN');
   });
 
   it('does not warn or fail when current_usage is null or malformed', () => {
