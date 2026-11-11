@@ -79,8 +79,15 @@ async function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
   return pred();
 }
 
+// Windows PowerShell on a cold hosted runner spends 20-70s on its first cmdlet
+// rebuilding the module analysis cache under LOCALAPPDATA (windows-build once
+// hit the 30s bound on the first test below). Pointing the cache at a temp
+// file and warming it once in beforeAll keeps that one-off cost out of the
+// bounded probes, so they exercise resolution, not PowerShell cold start.
 function rawEnv(...dirs: string[]): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: [...dirs, BASE_PATH].join(delimiter) };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: [...dirs, BASE_PATH].join(delimiter) };
+  if (win32) env.PSModuleAnalysisCachePath = path.join(root, 'ps-analysis-cache');
+  return env;
 }
 
 // The launch env the real terminal gets: built from a PATH carrying the npm
@@ -97,13 +104,18 @@ function launchInfo(env: NodeJS.ProcessEnv, timeoutMs = 30_000) {
   return getCodexLaunchInfo(env, platform, root, RESOLVE, timeoutMs, false);
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-codex-launch-'));
   projectBin = path.join(root, 'proj', 'node_modules', '.bin');
   globalBin = path.join(root, 'global');
   writeShim(projectBin, '0.153.2');
   writeShim(globalBin, '0.154.0');
-});
+  if (win32) {
+    // Warm the cache; outcome is irrelevant, the generous bound is not the production one.
+    const [file, args] = shellInvocation(platform, {}, RESOLVE, false);
+    await runBoundedCommand(file, args, rawEnv(projectBin, globalBin), root, 110_000).catch(() => undefined);
+  }
+}, 120_000);
 
 afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
@@ -130,7 +142,7 @@ describe('getCodexLaunchInfo', () => {
   }, 30_000);
 
   it('reports a not-found error instead of throwing when the shell finds no codex', async () => {
-    const info = await launchInfo({ ...process.env, PATH: [path.join(root, 'empty'), BASE_PATH].join(delimiter) });
+    const info = await launchInfo(rawEnv(path.join(root, 'empty')));
     expect(info.executable).toBeNull();
     expect(info.version).toBeNull();
     expect(info.error).toMatch(/not found/i);
