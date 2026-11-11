@@ -23,7 +23,10 @@
 .NOTES
     Exit codes: 0 success (or dry run, or new collector alive but no events yet),
     1 failure (build/stage/backup/stop/start/verify), 2 bad input
-    (package.json or collector\ missing, bad version).
+    (package.json or collector\ missing, bad version, or a preflight guard: stage
+    dir already non-empty or in use by the current Run value, -DbPath other than
+    ~\.aether-os\collector.db, Run command over 260 characters; all checked before
+    anything is changed).
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
@@ -41,6 +44,7 @@ $ErrorActionPreference = 'Stop'
 $RunKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $RunKeyName = 'AetherCollector'
 $CollectorNames = @('node.exe', 'conhost.exe')
+$MaxRunCommandLength = 260   # same limit as MAX_RUN_COMMAND_LENGTH in collector/src/autostart.ts
 
 function Get-CollectorProcessMatch {
     # Pure filter so tests can feed fake Win32_Process rows. Name must be node.exe
@@ -64,6 +68,29 @@ function Get-RunKeyValue {
 function Get-IndexJsFromRunValue {
     param([string]$RunValue)
     if ($RunValue -match '"?([^"\s][^"]*index\.js)"?\s*$') { return $Matches[1] }
+    return $null
+}
+
+function Get-PreflightError {
+    # Read-only guards, run before anything is built, stopped, backed up or repointed.
+    # Returns the first problem as a message, or $null when it is safe to proceed.
+    param([string]$Stage, [string]$OldIndex, [string]$DbPath, [string]$ExpectedDbPath, [string]$RunValue)
+    $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
+    $inUse = $false
+    if ($OldIndex) {
+        $oldFull = [IO.Path]::GetFullPath($OldIndex)
+        $inUse = $oldFull.StartsWith($stageFull + '\', [StringComparison]::OrdinalIgnoreCase)
+    }
+    $nonEmpty = (Test-Path -LiteralPath $stageFull) -and (@(Get-ChildItem -LiteralPath $stageFull -Force -ErrorAction SilentlyContinue).Count -gt 0)
+    if ($inUse -or $nonEmpty) {
+        return "stage directory already exists and is not empty (or is the current deployment): $stageFull. Pass a different -Version or -StageRoot. Nothing was changed."
+    }
+    if ([IO.Path]::GetFullPath($DbPath) -ne [IO.Path]::GetFullPath($ExpectedDbPath)) {
+        return "-DbPath '$DbPath' is not the database the collector opens ($ExpectedDbPath, fixed in collector/src/index.ts). Omit -DbPath. Nothing was changed."
+    }
+    if ($RunValue.Length -gt $MaxRunCommandLength) {
+        return "Run-key command is $($RunValue.Length) characters; Windows ignores commands over $MaxRunCommandLength at logon. Use a shorter -StageRoot. Nothing was changed."
+    }
     return $null
 }
 
@@ -140,7 +167,8 @@ function Test-CollectorAlive {
 }
 
 function Invoke-Redeploy {
-    param([string]$Version, [string]$StageRoot, [string]$DbPath, [bool]$Dry, [int]$VerifySeconds)
+    param([string]$Version, [string]$StageRoot, [string]$DbPath, [bool]$Dry, [int]$VerifySeconds,
+          [string]$ExpectedDbPath = (Join-Path $env:USERPROFILE '.aether-os\collector.db'))
 
     $repo = Split-Path -Parent $PSScriptRoot
     $pkgPath = Join-Path $repo 'package.json'
@@ -167,6 +195,13 @@ function Invoke-Redeploy {
     if ($prop) { $oldRun = $prop.$RunKeyName }
     $oldIndex = Get-IndexJsFromRunValue $oldRun
     Write-Output "Old Run value: $oldRun"
+
+    $runValue = Get-RunKeyValue -IndexJs $indexJs -NodeExe $nodeExe
+    $preflight = Get-PreflightError -Stage $stage -OldIndex $oldIndex -DbPath $DbPath -ExpectedDbPath $ExpectedDbPath -RunValue $runValue
+    if ($preflight) {
+        Write-Output "ERROR: $preflight"
+        $script:RC = 2; return
+    }
 
     $stopRan = $false
     $bak = "$DbPath.pre-$Version-$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
@@ -207,7 +242,6 @@ function Invoke-Redeploy {
         else { $before = Get-RowCount $DbPath; Write-Output "baseline usage_events rows: $before" }
 
         Write-Output '===== Step 6: repoint Run key ====='
-        $runValue = Get-RunKeyValue -IndexJs $indexJs -NodeExe $nodeExe
         Invoke-Step "set $RunKeyPath\$RunKeyName = $runValue" { Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value $runValue } $Dry
 
         Write-Output '===== Step 7: start ====='

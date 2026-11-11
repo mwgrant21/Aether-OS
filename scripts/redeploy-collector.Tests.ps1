@@ -104,7 +104,7 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
 
     It 'reads the baseline after the stop, then reports a crashed new collector as failure with recovery text' {
         Mock Test-CollectorAlive { $false }
-        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -Dry $false -VerifySeconds 3 | Out-String
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 3 | Out-String
         $out | Should Match 'new collector is not running'
         $out | Should Match 'RECOVERY: old Run value was <conhost.exe --headless'
         $out | Should Match 'Backup path: '
@@ -115,7 +115,7 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     }
     It 'treats alive-but-no-rows as success (idle machine)' {
         Mock Test-CollectorAlive { $true }
-        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'new collector started; no events in 1 s'
         $out | Should Match 'Done\.'
         $out | Should Not Match 'ERROR'
@@ -125,16 +125,71 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     }
     It 'fails before stopping anything when free space is short' {
         Mock Get-FreeBytes { [int64]0 }
-        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'not enough free space'
         $out | Should Not Match 'RECOVERY'
+    }
+}
+
+Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
+    $db = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-db-' + [guid]::NewGuid().ToString('N') + '.db')
+    Set-Content -Path $db -Value 'x'
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-root-' + [guid]::NewGuid().ToString('N'))
+    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $oldValue } }
+    Mock Set-ItemProperty {}
+    Mock Start-Process {}
+    Mock Start-Sleep {}
+    Mock Copy-Item {}
+    Mock Invoke-BuildAndStage {}
+    Mock Get-FreeBytes { [int64]1GB }
+    Mock Stop-OldCollector {}
+    Mock Get-RowCount { [int64]100 }
+    Mock Test-CollectorAlive { $true }
+
+    It 'refuses a non-empty stage directory before stopping or staging anything' {
+        $stage = Join-Path $root '9.9.9\collector'
+        New-Item -ItemType Directory -Force -Path $stage | Out-Null
+        Set-Content -Path (Join-Path $stage 'keep.txt') -Value 'x'
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'already exists and is not empty'
+        $out | Should Match 'different -Version or -StageRoot'
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Set-ItemProperty -Times 0
+        Test-Path (Join-Path $stage 'keep.txt') | Should Be $true
+    }
+    It 'refuses a stage that is the directory the current Run value points at' {
+        Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = ('conhost.exe --headless "C:\n\node.exe" "' + $root + '\8.8.8\collector\dist\index.js"') } }
+        $out = Invoke-Redeploy -Version '8.8.8' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'is not empty \(or is the current deployment\)'
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+    }
+    It 'rejects a -DbPath that is not the collector default, case-insensitively accepting the default' {
+        $other = Join-Path ([IO.Path]::GetTempPath()) 'other.db'
+        $out = Invoke-Redeploy -Version '9.9.8' -StageRoot $root -DbPath $other -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'is not the database the collector opens'
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        (Get-PreflightError -Stage (Join-Path $root 'z\collector') -OldIndex $null -DbPath $db.ToUpper() -ExpectedDbPath $db -RunValue 'x') | Should BeNullOrEmpty
+    }
+    It 'rejects a Run command over 260 characters but allows exactly 260' {
+        $longRoot = Join-Path $root ('p' * 250)
+        $out = Invoke-Redeploy -Version '9.9.7' -StageRoot $longRoot -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'Run-key command is \d+ characters'
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Set-ItemProperty -Times 0
+        $args260 = @{ Stage = (Join-Path $root 'y\collector'); OldIndex = $null; DbPath = $db; ExpectedDbPath = $db }
+        (Get-PreflightError @args260 -RunValue ('a' * 260)) | Should BeNullOrEmpty
+        (Get-PreflightError @args260 -RunValue ('a' * 261)) | Should Match 'Run-key command is 261'
     }
 }
 
 Describe 'dry run' {
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-test-' + [guid]::NewGuid().ToString('N'))
-    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $script -DryRun -Version 9.9.9 -StageRoot $tmp -DbPath (Join-Path $tmp 'c.db') 2>&1 | Out-String
+    $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $script -DryRun -Version 9.9.9 -StageRoot $tmp 2>&1 | Out-String
     $rc = $LASTEXITCODE
     It 'exits 0 and lists every step' {
         $rc | Should Be 0
