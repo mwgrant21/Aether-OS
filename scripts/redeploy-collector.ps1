@@ -2,22 +2,28 @@
 .SYNOPSIS
     Build the collector from this checkout, stage it, and repoint the HKCU Run key.
 .DESCRIPTION
-    Order: build -> stage -> back up db -> stop old collector -> repoint Run key
-    -> start -> verify a usage_events row count grows.
+    Order: build -> stage -> free-space check -> stop old collector -> back up db
+    (db + -wal, after the stop so the copy is consistent) -> baseline row count
+    -> repoint Run key -> start -> verify the new collector is alive and rows grow.
     Build uses `npm ci` + `npm run build` in collector\, so run it from a CLEAN
     checkout (not a dirty working copy). Stage dir is <StageRoot>\<Version>\collector
     with the FULL dist tree (robocopy /E /XF *.test.js) plus package.json
     (type=module). The collector has no runtime deps (node:sqlite): no node_modules.
-    Only processes whose CommandLine matches '*<StageRoot>\*collector*index.js*'
-    are stopped (conhost wrapper and node), never by name alone, never this script.
+    Stopped: node.exe / conhost.exe processes whose CommandLine matches
+    '*<StageRoot>\*collector*index.js*' or the index.js path in the current Run
+    value; node first, then conhost; never by name alone, never this script.
+    After the stop, any node.exe still running a collector index.js fails the run.
+    On failure it prints the backup path and, if the stop already ran, how to
+    restore the old Run value.
     -DryRun (alias -WhatIf) prints every action and changes nothing.
 .PARAMETER Version
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
     Defaults to D:\AetherBuilds.
 .NOTES
-    Exit codes: 0 success (or dry run), 1 failure (build/stage/backup/start/verify),
-    2 bad input (package.json or collector\ missing, bad version).
+    Exit codes: 0 success (or dry run, or new collector alive but no events yet),
+    1 failure (build/stage/backup/stop/start/verify), 2 bad input
+    (package.json or collector\ missing, bad version).
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
@@ -34,19 +40,31 @@ param(
 $ErrorActionPreference = 'Stop'
 $RunKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $RunKeyName = 'AetherCollector'
+$CollectorNames = @('node.exe', 'conhost.exe')
 
 function Get-CollectorProcessMatch {
-    # Pure filter so tests can feed fake Win32_Process rows. Never matches by name alone.
-    param([object[]]$Processes, [string]$StageRoot, [int]$ExcludePid = 0)
-    $pattern = '*' + $StageRoot.TrimEnd('\') + '\*collector*index.js*'
+    # Pure filter so tests can feed fake Win32_Process rows. Name must be node.exe
+    # or conhost.exe AND the command line must match; $ExtraIndexJs adds one more
+    # exact index.js path (parsed from the current Run value).
+    param([object[]]$Processes, [string]$StageRoot, [int]$ExcludePid = 0, [string]$ExtraIndexJs)
+    $pattern = '*' + [WildcardPattern]::Escape($StageRoot.TrimEnd('\')) + '\*collector*index.js*'
+    $extra = $null
+    if ($ExtraIndexJs) { $extra = '*' + [WildcardPattern]::Escape($ExtraIndexJs) + '*' }
     @($Processes | Where-Object {
-        $_.CommandLine -and ($_.CommandLine -like $pattern) -and ([int]$_.ProcessId -ne $ExcludePid)
+        $_.CommandLine -and ($CollectorNames -contains $_.Name) -and ([int]$_.ProcessId -ne $ExcludePid) -and
+        (($_.CommandLine -like $pattern) -or ($extra -and ($_.CommandLine -like $extra)))
     })
 }
 
 function Get-RunKeyValue {
     param([string]$IndexJs, [string]$NodeExe)
     'conhost.exe --headless "{0}" "{1}"' -f $NodeExe, $IndexJs
+}
+
+function Get-IndexJsFromRunValue {
+    param([string]$RunValue)
+    if ($RunValue -match '"?([^"\s][^"]*index\.js)"?\s*$') { return $Matches[1] }
+    return $null
 }
 
 function Invoke-Step {
@@ -63,6 +81,62 @@ function Get-RowCount {
     $out = & node -e $js $Db
     if ($LASTEXITCODE -ne 0) { throw 'row count query failed' }
     [int64]($out | Select-Object -Last 1)
+}
+
+function Get-FreeBytes {
+    param([string]$Path)
+    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path))
+    (New-Object IO.DriveInfo($root)).AvailableFreeSpace
+}
+
+function Get-DbBackupBytes {
+    param([string]$Db)
+    $n = 0
+    foreach ($f in $Db, "$Db-wal") { if (Test-Path $f) { $n += (Get-Item $f).Length } }
+    $n
+}
+
+function Invoke-BuildAndStage {
+    param([string]$CollectorDir, [string]$Stage, [string]$IndexJs)
+    foreach ($cmd in 'ci', 'run build') {
+        Push-Location $CollectorDir
+        try { & npm $cmd.Split(' '); if ($LASTEXITCODE -ne 0) { throw "npm $cmd failed" } } finally { Pop-Location }
+    }
+    New-Item -ItemType Directory -Force -Path (Join-Path $Stage 'dist') | Out-Null
+    & robocopy (Join-Path $CollectorDir 'dist') (Join-Path $Stage 'dist') /E /XF '*.test.js' /NFL /NDL /NJH /NJS | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
+    Copy-Item (Join-Path $CollectorDir 'package.json') (Join-Path $Stage 'package.json') -Force
+    if (-not (Test-Path $IndexJs)) { throw "staged index.js missing: $IndexJs" }
+}
+
+function Stop-OldCollector {
+    # Stops matching node.exe first, then conhost.exe; tolerates already-exited PIDs;
+    # throws if any node.exe running a collector index.js survives.
+    param([string]$StageRoot, [string]$ExtraIndexJs, [bool]$Dry)
+    $procs = Get-CollectorProcessMatch -Processes (Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID -ExtraIndexJs $ExtraIndexJs
+    if ($procs.Count -eq 0) { Write-Output 'No running collector matched.' }
+    $ordered = @($procs | Where-Object { $_.Name -eq 'node.exe' }) + @($procs | Where-Object { $_.Name -ne 'node.exe' })
+    foreach ($p in $ordered) {
+        $procId = [int]$p.ProcessId
+        if ($Dry) { Write-Output "[DRY-RUN] stop PID $procId ($($p.Name)): $($p.CommandLine)"; continue }
+        if (-not (Get-Process -Id $procId -ErrorAction SilentlyContinue)) { Write-Output "PID $procId already exited."; continue }
+        Write-Output "[RUN] stop PID $procId ($($p.Name)): $($p.CommandLine)"
+        Stop-Process -Id $procId -Force
+    }
+    if ($Dry) { return }
+    Start-Sleep -Seconds 1
+    $left = @((Get-WmiObject Win32_Process) | Where-Object {
+        $_.Name -eq 'node.exe' -and $_.CommandLine -and ([int]$_.ProcessId -ne $PID) -and ($_.CommandLine -like '*collector*index.js*')
+    })
+    if ($left.Count -gt 0) {
+        throw ("collector still running after stop: PID " + (($left | ForEach-Object { $_.ProcessId }) -join ',') + " - " + $left[0].CommandLine)
+    }
+}
+
+function Test-CollectorAlive {
+    param([string]$IndexJs)
+    $pat = '*' + [WildcardPattern]::Escape($IndexJs) + '*'
+    @((Get-WmiObject Win32_Process) | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like $pat }).Count -gt 0
 }
 
 function Invoke-Redeploy {
@@ -88,52 +162,66 @@ function Invoke-Redeploy {
     Write-Output "Db:      $DbPath"
     if ($Dry) { Write-Output 'DRY-RUN: nothing will be changed.' }
 
+    $oldRun = $null
+    $prop = Get-ItemProperty -Path $RunKeyPath -Name $RunKeyName -ErrorAction SilentlyContinue
+    if ($prop) { $oldRun = $prop.$RunKeyName }
+    $oldIndex = Get-IndexJsFromRunValue $oldRun
+    Write-Output "Old Run value: $oldRun"
+
+    $stopRan = $false
+    $bak = "$DbPath.pre-$Version-$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
     try {
-        Write-Output '===== Step 1: build ====='
-        Invoke-Step 'npm ci (collector)' { Push-Location $collectorDir; try { & npm ci; if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' } } finally { Pop-Location } } $Dry
-        Invoke-Step 'npm run build (collector)' { Push-Location $collectorDir; try { & npm run build; if ($LASTEXITCODE -ne 0) { throw 'npm run build failed' } } finally { Pop-Location } } $Dry
-
-        Write-Output '===== Step 2: stage ====='
-        Invoke-Step "robocopy collector\dist -> $stage\dist /E /XF *.test.js" {
-            New-Item -ItemType Directory -Force -Path (Join-Path $stage 'dist') | Out-Null
-            & robocopy (Join-Path $collectorDir 'dist') (Join-Path $stage 'dist') /E /XF '*.test.js' /NFL /NDL /NJH /NJS | Out-Null
-            if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
-            Copy-Item (Join-Path $collectorDir 'package.json') (Join-Path $stage 'package.json') -Force
-            if (-not (Test-Path $indexJs)) { throw "staged index.js missing: $indexJs" }
-        } $Dry
-
-        Write-Output '===== Step 3: back up db ====='
-        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $bak = "$DbPath.pre-$Version-$stamp.bak"
-        Invoke-Step "copy $DbPath (+ -wal/-shm if present) -> $bak" {
-            if (-not (Test-Path $DbPath)) { throw "db not found: $DbPath" }
-            Copy-Item $DbPath $bak
-            foreach ($sfx in '-wal', '-shm') { if (Test-Path "$DbPath$sfx") { Copy-Item "$DbPath$sfx" "$bak$sfx" } }
-        } $Dry
-        $before = $null
-        if (-not $Dry) { $before = Get-RowCount $DbPath; Write-Output "usage_events rows before: $before" }
-
-        Write-Output '===== Step 4: stop old collector ====='
-        $procs = Get-CollectorProcessMatch -Processes (Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID
-        if ($procs.Count -eq 0) { Write-Output 'No running collector matched.' }
-        foreach ($p in $procs) {
-            $procId = $p.ProcessId
-            Invoke-Step "stop PID $procId ($($p.Name)): $($p.CommandLine)" { Stop-Process -Id $procId -Force } $Dry
+        Write-Output '===== Step 1: build + stage ====='
+        if ($Dry) {
+            Write-Output '[DRY-RUN] npm ci; npm run build (collector)'
+            Write-Output "[DRY-RUN] robocopy collector\dist -> $stage\dist /E /XF *.test.js; copy package.json"
+        } else {
+            Write-Output "[RUN] build collector and stage at $stage"
+            Invoke-BuildAndStage -CollectorDir $collectorDir -Stage $stage -IndexJs $indexJs
         }
 
-        Write-Output '===== Step 5: repoint Run key ====='
+        Write-Output '===== Step 2: free-space check ====='
+        if ($Dry) {
+            Write-Output "[DRY-RUN] require free space on the db drive >= 2x (db + -wal)"
+        } else {
+            if (-not (Test-Path $DbPath)) { throw "db not found: $DbPath" }
+            $need = 2 * (Get-DbBackupBytes $DbPath)
+            $free = Get-FreeBytes $DbPath
+            if ($free -lt $need) { throw "not enough free space for backup: need $need bytes, have $free" }
+            Write-Output "ok: need $need bytes, free $free"
+        }
+
+        Write-Output '===== Step 3: stop old collector ====='
+        $stopRan = $true
+        Stop-OldCollector -StageRoot $StageRoot -ExtraIndexJs $oldIndex -Dry $Dry
+
+        Write-Output '===== Step 4: back up db (after stop; db + -wal, not -shm) ====='
+        Invoke-Step "copy $DbPath (+ -wal if present) -> $bak" {
+            Copy-Item $DbPath $bak
+            if (Test-Path "$DbPath-wal") { Copy-Item "$DbPath-wal" "$bak-wal" }
+        } $Dry
+
+        Write-Output '===== Step 5: baseline row count ====='
+        $before = $null
+        if ($Dry) { Write-Output '[DRY-RUN] read usage_events row count (baseline, collector stopped)' }
+        else { $before = Get-RowCount $DbPath; Write-Output "baseline usage_events rows: $before" }
+
+        Write-Output '===== Step 6: repoint Run key ====='
         $runValue = Get-RunKeyValue -IndexJs $indexJs -NodeExe $nodeExe
         Invoke-Step "set $RunKeyPath\$RunKeyName = $runValue" { Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value $runValue } $Dry
 
-        Write-Output '===== Step 6: start ====='
+        Write-Output '===== Step 7: start ====='
         Invoke-Step "Start-Process conhost.exe --headless `"$nodeExe`" `"$indexJs`" (cwd $stage)" {
             Start-Process conhost.exe -ArgumentList '--headless', "`"$nodeExe`"", "`"$indexJs`"" -WorkingDirectory $stage
         } $Dry
 
-        Write-Output '===== Step 7: verify ====='
+        Write-Output '===== Step 8: verify ====='
         if ($Dry) {
-            Write-Output "[DRY-RUN] poll usage_events row count for up to $VerifySeconds s; expect growth over the pre-start count"
+            Write-Output '[DRY-RUN] sleep 2 s, confirm a node.exe with the staged index.js is alive'
+            Write-Output "[DRY-RUN] poll usage_events for up to $VerifySeconds s; growth over baseline = success; alive but no rows = exit 0 (idle); not alive = exit 1"
         } else {
+            Start-Sleep -Seconds 2
+            if (-not (Test-CollectorAlive $indexJs)) { throw 'new collector is not running 2 s after start (crashed?); run: node dist\index.js in the stage dir to see the error' }
             $deadline = (Get-Date).AddSeconds($VerifySeconds)
             $grew = $false
             while ((Get-Date) -lt $deadline) {
@@ -141,12 +229,24 @@ function Invoke-Redeploy {
                 $now = Get-RowCount $DbPath
                 if ($now -gt $before) { Write-Output "rows grew $before -> $now"; $grew = $true; break }
             }
-            if (-not $grew) { throw "row count did not grow in $VerifySeconds s (still $before); idle machine or failed start" }
+            if (-not $grew) {
+                if (-not (Test-CollectorAlive $indexJs)) { throw 'new collector died while waiting for events' }
+                Write-Output "new collector started; no events in $VerifySeconds s (idle machine?)"
+            }
         }
         Write-Output 'Done.'
         $script:RC = 0; return
     } catch {
         Write-Output "ERROR: $($_.Exception.Message)"
+        Write-Output "Backup path: $bak"
+        if ($stopRan) {
+            if ($oldRun) {
+                Write-Output "RECOVERY: old Run value was <$oldRun>; restore with Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value '$oldRun'; backup at $bak"
+            } else {
+                Write-Output "RECOVERY: no old Run value existed; backup at $bak"
+            }
+            Write-Output 'RECOVERY: the old collector was stopped; start the previous version by hand if needed.'
+        }
         $script:RC = 1; return
     }
 }
