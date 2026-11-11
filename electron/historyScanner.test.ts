@@ -226,6 +226,43 @@ describe('scanAllProjects streamed-message dedupe', () => {
     expect(events.reduce((sum, e) => sum + (e.usage?.outputTokens ?? 0), 0)).toBe(50);
   });
 
+  const keyedLine = (usage: unknown, toolUse = false) => JSON.stringify({
+    type: 'assistant',
+    sessionId: 'session-1',
+    timestamp: '2026-08-01T12:00:00.000Z',
+    requestId: 'req_1',
+    message: {
+      id: 'msg_1',
+      model: 'claude-sonnet-4-5',
+      ...(usage === undefined ? {} : { usage }),
+      content: toolUse ? [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }] : [],
+    },
+  });
+  const full = { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+
+  it('counts a usage line once when a usage-less line of the same message follows it', async () => {
+    const root = await projectWith({ 'session-1.jsonl': [keyedLine(full), keyedLine(undefined)] });
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events.reduce((sum, e) => sum + (e.usage?.inputTokens ?? 0), 0)).toBe(100);
+  });
+
+  it('counts the later usage line when the earlier usage-less line carries a tool_use', async () => {
+    const root = await projectWith({ 'session-1.jsonl': [keyedLine(undefined, true), keyedLine(full)] });
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events[0].toolUses).toHaveLength(1);
+    expect(events.reduce((sum, e) => sum + (e.usage?.inputTokens ?? 0), 0)).toBe(100);
+  });
+
+  it('lets an empty usage object reserve its key, so a later full usage line is not double counted', async () => {
+    const root = await projectWith({ 'session-1.jsonl': [keyedLine({}), keyedLine(full)] });
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events[1].usage).toBeNull();
+    expect(events.reduce((sum, e) => sum + (e.usage?.inputTokens ?? 0), 0)).toBe(0);
+  });
+
   it('feeds computeWeeklyTokens the single-count value', async () => {
     const line = streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' });
     const root = await projectWith({ 'session-1.jsonl': [line, line, line] });
