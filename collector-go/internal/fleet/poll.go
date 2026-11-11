@@ -28,7 +28,7 @@ type FleetSession struct {
 }
 
 // requiredStringFields mirrors fleetPoll.ts's REQUIRED_STRING_FIELDS.
-var requiredStringFields = []string{"sessionId", "cwd", "kind", "name", "status"}
+var requiredStringFields = []string{"sessionId", "cwd", "kind", "name"}
 
 // missingFieldsOf mirrors fleetPoll.ts's missingFieldsOf. row is one element
 // decoded from a `claude agents --json` JSON array; JSON objects decode to
@@ -51,6 +51,12 @@ func missingFieldsOf(row interface{}) []string {
 		if _, isString := v.(string); !isString {
 			missing = append(missing, field)
 		}
+	}
+	// Interactive rows carry "status"; background-kind rows carry "state" instead.
+	_, statusIsString := obj["status"].(string)
+	_, stateIsString := obj["state"].(string)
+	if !statusIsString && !stateIsString {
+		missing = append(missing, "status")
 	}
 	if v, exists := obj["startedAt"]; !exists {
 		missing = append(missing, "startedAt")
@@ -102,12 +108,16 @@ func toFleetSession(obj map[string]interface{}) FleetSession {
 	}
 	cwd, _ := obj["cwd"].(string)
 	startedAt, _ := obj["startedAt"].(float64)
+	status, ok := obj["status"].(string)
+	if !ok {
+		status, _ = obj["state"].(string)
+	}
 	return FleetSession{
 		SessionID:   obj["sessionId"].(string),
 		PID:         pid,
 		ProjectName: winBasename(cwd),
 		Kind:        obj["kind"].(string),
-		Status:      obj["status"].(string),
+		Status:      status,
 		Name:        obj["name"].(string),
 		StartedAtMs: int64(startedAt),
 	}

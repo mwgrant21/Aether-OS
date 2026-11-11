@@ -102,6 +102,9 @@ function findUnpinnedConfigRereads(events: TranscriptEvent[], windowMs: number):
   for (const [filePath, reads] of readsByFile.entries()) {
     if (reads.length < REPEATED_READ_THRESHOLD) continue;
     offendingFiles.push({ filePath, count: reads.length });
+    // Lower bound: costForEvent prices only the line that carries usage, and a
+    // multi-block message's usage is reserved by its first line, so a re-read
+    // on a later usage-less line adds $0 here.
     totalWastedCost += reads.slice(1).reduce((sum, e) => sum + costForEvent(e), 0);
   }
   if (offendingFiles.length === 0) return null;
@@ -120,7 +123,7 @@ function findUnpinnedConfigRereads(events: TranscriptEvent[], windowMs: number):
   return {
     id: 'unpinned-config-re-reads',
     title: 'Unpinned config re-reads',
-    detail: `${offendingFiles.length} file(s) re-read without a cache hit: ${fileList}`,
+    detail: `${offendingFiles.length} file(s) re-read without a cache hit: ${fileList} (savings are a lower bound)`,
     estSavingsPerWeek: extrapolateToWeekly(totalWastedCost, events, windowMs),
     fixText: `pin the most re-read files (${fixList}${moreCount > 0 ? ', ...' : ''}) into cached context instead of re-reading`,
   };

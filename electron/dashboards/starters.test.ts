@@ -43,9 +43,11 @@ describe('starter boards', () => {
     const panel = STARTER_BOARDS.flatMap((b) => b.panels).find((p) => p.id === 'cache-hit-rate')!;
     const r = await evaluatePanel(panel, { dbPath, nowMs: now, rowCap: 1000, rangeOverride: 'all' });
     expect(r.error).toBeNull();
-    // The two now-1h fixture rows share a day bucket: 3000 / (1010 + 200 + 3000). Old formula gave 0.7481.
-    const rates = r.rows.map((row) => Number(row.hit_rate));
-    expect(rates.some((v) => Math.abs(v - 0.7126) < 0.0005)).toBe(true);
+    // Days with usage: now-1h is 3000 / (1010 + 200 + 3000), old formula 0.7481; now-2d is 1000 / 3000.
+    const rates = r.rows.filter((row) => row.hit_rate !== null).map((row) => Number(row.hit_rate)).sort((a, b) => a - b);
+    expect(rates).toHaveLength(2);
+    expect(rates[0]).toBeCloseTo(1 / 3, 3);
+    expect(rates[1]).toBeCloseTo(0.7126, 3);
   });
 
   itWithAuthorizer('every panel evaluates without error against a collector-shaped db', async () => {

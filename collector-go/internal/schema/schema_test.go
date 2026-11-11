@@ -400,3 +400,55 @@ func TestOpenDatabaseInMemoryDoesNotFail(t *testing.T) {
 		t.Errorf("in-memory db reported wal")
 	}
 }
+
+// A database whose usage_events predates message_key (and source_file_rel)
+// must heal on Migrate: the column and unique index appear, existing rows are
+// kept with a NULL key, and several NULL keys coexist under the unique index.
+func TestMigrateAddsMessageKeyToLegacyUsageEvents(t *testing.T) {
+	db, err := OpenDatabase(filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatalf("OpenDatabase: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE usage_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		occurred_at_ms INTEGER NOT NULL,
+		model TEXT,
+		input_tokens INTEGER NOT NULL,
+		output_tokens INTEGER NOT NULL,
+		cache_creation_input_tokens INTEGER NOT NULL,
+		cache_read_input_tokens INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := db.Exec(`INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens) VALUES (1000, 'm', 1, 2, 3, 4)`); err != nil {
+			t.Fatalf("insert legacy row: %v", err)
+		}
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate on legacy usage_events: %v", err)
+	}
+
+	var hasColumn, indexCount, rowCount, nullKeys int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('usage_events') WHERE name = 'message_key'`).Scan(&hasColumn); err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	if hasColumn != 1 {
+		t.Errorf("expected message_key column after Migrate, got %d", hasColumn)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_usage_events_message_key'`).Scan(&indexCount); err != nil {
+		t.Fatalf("index count: %v", err)
+	}
+	if indexCount != 1 {
+		t.Errorf("expected 1 message_key index, got %d", indexCount)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*), COUNT(*) - COUNT(message_key) FROM usage_events`).Scan(&rowCount, &nullKeys); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if rowCount != 2 || nullKeys != 2 {
+		t.Errorf("expected 2 legacy rows with NULL keys, got rows=%d nullKeys=%d", rowCount, nullKeys)
+	}
+}
