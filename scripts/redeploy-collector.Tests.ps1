@@ -246,6 +246,139 @@ Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
         $out | Should Match 'Done\.'
     }
 }
+function New-TestJournal($oldRun) {
+    [ordered]@{
+        schema = 1; version = '9.9.9'; startedUtc = [DateTime]::UtcNow.ToString('o'); phase = 'stopping'
+        phaseUtc = [DateTime]::UtcNow.ToString('o'); stage = 'D:\AetherBuilds\9.9.9\collector'; stageCreated = $true
+        indexJs = 'D:\AetherBuilds\9.9.9\collector\dist\index.js'; nodeExe = 'C:\n\node.exe'
+        newRunValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\9.9.9\collector\dist\index.js"'
+        oldRun = $oldRun; oldIndex = $null; oldWasRunning = $true; db = 'C:\x\collector.db'; bak = $null
+    }
+}
+
+Describe 'journal primitives (temp dir only, never the real journal)' {
+    $jdir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-jt-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $jdir | Out-Null
+    $global:RedeployTempPaths += @($jdir)
+    $jp = Get-JournalPath -ExpectedDbPath (Join-Path $jdir 'collector.db')
+
+    It 'puts the journal next to the expected db' {
+        (Split-Path $jp -Parent) | Should Be $jdir
+        (Split-Path $jp -Leaf) | Should Be 'redeploy-journal.json'
+    }
+    It 'round-trips every field (null / empty / quoted oldRun, string timestamps) and leaves no .tmp' {
+        $quoted = 'conhost.exe --headless "C:\n\node.exe" "D:\it''s\index.js" say "hi"'
+        foreach ($case in @($null, '', $quoted)) {
+            $j = New-TestJournal $case
+            $j.bak = 'C:\x\collector.db.pre-9.9.9.bak'
+            Write-Journal -Path $jp -Journal $j
+            Write-Journal -Path $jp -Journal $j   # second write takes the Replace branch
+            $r = Read-Journal -Path $jp
+            foreach ($k in $j.Keys) {
+                if ($null -eq $j[$k]) { ($null -eq $r.$k) | Should Be $true }
+                else { ($r.$k -ceq $j[$k]) | Should Be $true }
+            }
+            ($r.startedUtc -is [string]) | Should Be $true
+            ($r.phaseUtc -is [string]) | Should Be $true
+            if ($case -eq '') { ($r.oldRun -is [string]) | Should Be $true }
+            Test-Path "$jp.tmp" | Should Be $false
+        }
+        $j = New-TestJournal $null
+        $j.startedUtc = [DateTime]::UtcNow
+        Write-Journal -Path $jp -Journal $j
+        ((Read-Journal -Path $jp).startedUtc -is [string]) | Should Be $true
+        Remove-Journal -Path $jp
+        Test-Path $jp | Should Be $false
+    }
+    It 'returns $null for a missing journal and throws journal unreadable for garbage or an empty file' {
+        Read-Journal -Path $jp | Should BeNullOrEmpty
+        foreach ($bad in 'not json {', '', '5') {
+            [IO.File]::WriteAllText($jp, $bad)
+            $msg = $null
+            try { Read-Journal -Path $jp | Out-Null } catch { $msg = $_.Exception.Message }
+            $msg | Should Match 'journal unreadable'
+        }
+        Remove-Journal -Path $jp
+    }
+}
+
+Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySeconds)' {
+    $gdir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-gt-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $gdir | Out-Null
+    $global:RedeployTempPaths += @($gdir)
+    $db = Join-Path $gdir 'collector.db'
+    Set-Content -Path $db -Value 'x'
+    $jp = Get-JournalPath -ExpectedDbPath $db
+    $root = Join-Path $gdir 'root'
+    $global:RedeployRunValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    Mock Get-RunKeyKind { 'String' }
+    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
+    Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
+    Mock Start-Process {}
+    Mock Start-Sleep {}
+    Mock Copy-Item {}
+    Mock Invoke-BuildAndStage {}
+    Mock Get-FreeBytes { [int64]1GB }
+    Mock Stop-OldCollector {}
+    Mock Get-RowCount { [int64]100 }
+    Mock Test-CollectorAlive { $true }
+    $base = @{ Stage = (Join-Path $root 'z\collector'); OldIndex = $null; DbPath = $db; ExpectedDbPath = $db; RunValue = 'x' }
+
+    It 'refuses an open journal, in dry-run too, before anything is stopped, staged or written' {
+        $j = New-TestJournal $null
+        $j.phase = 'repointed'
+        Write-Journal -Path $jp -Journal $j
+        $before = [IO.File]::ReadAllText($jp)
+        foreach ($dry in $false, $true) {
+            $script:RC = 99
+            $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $dry -VerifySeconds 1 | Out-String
+            $out | Should Match 'unfinished redeploy journal exists'
+            $out | Should Match 'phase repointed, version 9\.9\.9'
+            $out | Should Match '-Rollback'
+            $out | Should Match 'Nothing was changed'
+            $script:RC | Should Be 2
+        }
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Set-ItemProperty -Times 0
+        Test-Path $root | Should Be $false
+        [IO.File]::ReadAllText($jp) | Should Be $before
+        Remove-Journal -Path $jp
+    }
+    It 'also refuses an unparseable journal' {
+        [IO.File]::WriteAllText($jp, 'garbage {')
+        $script:RC = 99
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $out | Should Match 'journal unreadable'
+        $script:RC | Should Be 2
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Set-ItemProperty -Times 0
+        Remove-Journal -Path $jp
+    }
+    It 'refuses a non-REG_SZ Run value but accepts an absent one' {
+        (Get-PreflightError @base -RunKind 'ExpandString') | Should Match 'is ExpandString, not REG_SZ'
+        (Get-PreflightError @base -RunKind $null) | Should BeNullOrEmpty
+        (Get-PreflightError @base -RunKind 'String') | Should BeNullOrEmpty
+        Mock Get-RunKeyKind { 'ExpandString' }
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $true -VerifySeconds 1 | Out-String
+        $out | Should Match 'not REG_SZ'
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Set-ItemProperty -Times 0
+    }
+    # Last: this Mock Get-RunKeyKind persists for any It after it.
+    It 'refuses -VerifySeconds outside 1..60 and accepts 1 and 60' {
+        Mock Get-RunKeyKind { 'String' }
+        (Get-PreflightError @base -VerifySeconds 0) | Should Match '-VerifySeconds 0 is outside 1\.\.60'
+        (Get-PreflightError @base -VerifySeconds 61) | Should Match '-VerifySeconds 61 is outside 1\.\.60'
+        (Get-PreflightError @base -VerifySeconds 1) | Should BeNullOrEmpty
+        (Get-PreflightError @base -VerifySeconds 60) | Should BeNullOrEmpty
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 61 | Out-String
+        $out | Should Match 'outside 1\.\.60'
+        Assert-MockCalled Stop-OldCollector -Times 0
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+    }
+}
 foreach ($p in @($global:RedeployTempPaths)) { if ($p) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $p } }
 
 Describe 'temp cleanup' {

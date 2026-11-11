@@ -25,7 +25,9 @@
     1 failure (build/stage/backup/stop/start/verify), 2 bad input
     (package.json or collector\ missing, bad version, or a preflight guard: stage
     dir already non-empty or in use by the current Run value, -DbPath other than
-    ~\.aether-os\collector.db, Run command over 260 characters; all checked before
+    ~\.aether-os\collector.db, Run command over 260 characters, an existing
+    ~\.aether-os\redeploy-journal.json, a non-REG_SZ Run value, -VerifySeconds
+    outside 1..60; all checked before
     anything is changed).
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
@@ -82,10 +84,53 @@ function Get-IndexJsFromRunValue {
     return $null
 }
 
+function Get-JournalPath {
+    # The journal lives next to the collector db (~\.aether-os), never under StageRoot.
+    # Derived from $ExpectedDbPath so every test that passes a temp db gets a temp journal.
+    param([string]$ExpectedDbPath)
+    Join-Path (Split-Path $ExpectedDbPath) 'redeploy-journal.json'
+}
+
+function Write-Journal {
+    # Atomic write: <path>.tmp, then Replace (target exists) or Move. UTF-8 without BOM.
+    # Timestamps are stored as ISO strings: PS 5.1 ConvertTo-Json renders a DateTime as \/Date(ms)\/.
+    param([string]$Path, $Journal)
+    foreach ($k in 'startedUtc', 'phaseUtc') {
+        if ($Journal.$k -is [DateTime]) { $Journal.$k = $Journal.$k.ToUniversalTime().ToString('o') }
+    }
+    $dir = Split-Path $Path
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $tmp = "$Path.tmp"
+    $text = $Journal | ConvertTo-Json -Depth 3
+    [IO.File]::WriteAllText($tmp, $text, (New-Object System.Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($tmp, $Path, [NullString]::Value) } else { [IO.File]::Move($tmp, $Path) }
+}
+
+function Read-Journal {
+    # $null when there is no journal; throws 'journal unreadable' when the file is not a JSON object.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $j = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+        if ($null -eq $j -or $j.GetType().Name -ne 'PSCustomObject') { throw 'not a JSON object' }
+    } catch {
+        throw "journal unreadable: $Path ($($_.Exception.Message))"
+    }
+    return $j
+}
+
+function Remove-Journal {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+}
+
 function Get-PreflightError {
     # Read-only guards, run before anything is built, stopped, backed up or repointed.
     # Returns the first problem as a message, or $null when it is safe to proceed.
-    param([string]$Stage, [string]$OldIndex, [string]$DbPath, [string]$ExpectedDbPath, [string]$RunValue)
+    # JournalPath / RunKind / VerifySeconds are optional so older named-arg callers keep working
+    # (empty JournalPath skips the journal guard; empty RunKind = Run value absent).
+    param([string]$Stage, [string]$OldIndex, [string]$DbPath, [string]$ExpectedDbPath, [string]$RunValue,
+          [string]$JournalPath, [string]$RunKind, [int]$VerifySeconds = 30)
     $inUse = $false
     try {
         $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
@@ -107,6 +152,20 @@ function Get-PreflightError {
     }
     if ($RunValue.Length -gt $MaxRunCommandLength) {
         return "Run-key command is $($RunValue.Length) characters; Windows ignores commands over $MaxRunCommandLength at logon. Use a shorter -StageRoot. Nothing was changed."
+    }
+    if ($JournalPath -and (Test-Path -LiteralPath $JournalPath)) {
+        try {
+            $j = Read-Journal -Path $JournalPath
+            return "an unfinished redeploy journal exists: $JournalPath (phase $($j.phase), version $($j.version)). Run scripts\redeploy-collector.ps1 -Rollback to restore the previous state, or delete the file by hand only after checking the HKCU Run value. Nothing was changed."
+        } catch {
+            return "$($_.Exception.Message). Check the HKCU Run value, then delete the file by hand. Nothing was changed."
+        }
+    }
+    if ($RunKind -and $RunKind -ne 'String') {
+        return "the Run value $RunKeyName is $RunKind, not REG_SZ; this script only round-trips REG_SZ. Recreate it as REG_SZ by hand first. Nothing was changed."
+    }
+    if ($VerifySeconds -lt 1 -or $VerifySeconds -gt 60) {
+        return "-VerifySeconds $VerifySeconds is outside 1..60; everything after the build is budgeted at 120 seconds. Nothing was changed."
     }
     return $null
 }
@@ -216,7 +275,8 @@ function Invoke-Redeploy {
     $runValue = Get-RunKeyValue -IndexJs $indexJs -NodeExe $nodeExe
     # Resolve a relative -DbPath against the PowerShell location (not the .NET cwd) so the guard and later copies agree.
     try { if ($DbPath -and -not [IO.Path]::IsPathRooted($DbPath)) { $DbPath = Join-Path (Get-Location).Path $DbPath } } catch { }
-    $preflight = Get-PreflightError -Stage $stage -OldIndex $oldIndex -DbPath $DbPath -ExpectedDbPath $ExpectedDbPath -RunValue $runValue
+    $preflight = Get-PreflightError -Stage $stage -OldIndex $oldIndex -DbPath $DbPath -ExpectedDbPath $ExpectedDbPath -RunValue $runValue `
+        -JournalPath (Get-JournalPath -ExpectedDbPath $ExpectedDbPath) -RunKind (Get-RunKeyKind) -VerifySeconds $VerifySeconds
     if ($preflight) {
         Write-Output "ERROR: $preflight"
         $script:RC = 2; return
