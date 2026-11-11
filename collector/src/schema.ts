@@ -278,6 +278,13 @@ export function migrate(db: DatabaseSync): void {
   // parsing). Column-driven, like the rebuild, so a stamped-9 database heals.
   addColumnIfMissing(db, 'dispatches', 'dispatch_status', 'dispatch_status TEXT');
 
+  // Streamed-usage dedupe key, shared with the Go collector (same DB, same
+  // names). Column-driven, not version-gated, so a stamped-9 database heals.
+  // Existing rows keep NULL keys (no backfill); NULLs are distinct in a unique
+  // index, so the index builds over them.
+  addColumnIfMissing(db, 'usage_events', 'message_key', 'message_key TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_message_key ON usage_events (message_key)');
+
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`

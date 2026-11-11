@@ -44,6 +44,7 @@
       "cache_read_input_tokens",
       "id",
       "input_tokens",
+      "message_key",
       "model",
       "occurred_at_ms",
       "output_tokens",
