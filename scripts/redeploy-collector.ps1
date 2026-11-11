@@ -261,6 +261,160 @@ function Set-JournalPhase {
     Write-Journal -Path $Path -Journal $Journal
 }
 
+$StopNewWaitSeconds = 1   # pause between the rollback stop and the survivor check
+$VersionPattern = '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$'   # same rule Invoke-Redeploy applies to -Version
+
+function Get-ExactIndexProcessMatch {
+    # Pure filter. node.exe / conhost.exe whose command line holds the exact full index.js path as a whole
+    # token (so index.js.bak and sibling version dirs do not match). Misses 8.3, forward-slash and
+    # relative spellings: Stop-NewCollector's broad survivor check covers those.
+    param([object[]]$Processes, [string]$IndexJs, [int]$ExcludePid = 0)
+    if (-not $IndexJs) { return @() }
+    $re = '(?i)(^|[\s"])' + [regex]::Escape($IndexJs) + '("|\s|$)'
+    @($Processes | Where-Object {
+        $_.CommandLine -and ($CollectorNames -contains $_.Name) -and ([int]$_.ProcessId -ne $ExcludePid) -and ($_.CommandLine -match $re)
+    })
+}
+
+function Stop-NewCollector {
+    # Rollback stop: exact matches for $IndexJs only (never the StageRoot wildcard, which would also hit the
+    # old collector rollback relaunches). A row that exactly matches $ExemptIndexJs (the old index, which may
+    # already be running) is never stopped and never counts as a survivor. Node first, then conhost; then a
+    # BROAD survivor check (any other node.exe with a collector index.js) throws.
+    param([string]$IndexJs, [string]$ExemptIndexJs, [bool]$Dry)
+    $all = @(Get-WmiObject Win32_Process)
+    $exemptIds = @(Get-ExactIndexProcessMatch -Processes $all -IndexJs $ExemptIndexJs -ExcludePid $PID | ForEach-Object { [int]$_.ProcessId })
+    $procs = @(Get-ExactIndexProcessMatch -Processes $all -IndexJs $IndexJs -ExcludePid $PID | Where-Object { $exemptIds -notcontains [int]$_.ProcessId })
+    if ($procs.Count -eq 0) { Write-Output 'No running new collector matched.' }
+    $ordered = @($procs | Where-Object { $_.Name -eq 'node.exe' }) + @($procs | Where-Object { $_.Name -ne 'node.exe' })
+    foreach ($p in $ordered) {
+        $procId = [int]$p.ProcessId
+        if ($Dry) { Write-Output "[DRY-RUN] stop PID $procId ($($p.Name)): $($p.CommandLine)"; continue }
+        if (-not (Get-Process -Id $procId -ErrorAction SilentlyContinue)) { Write-Output "PID $procId already exited."; continue }
+        Write-Output "[RUN] stop PID $procId ($($p.Name)): $($p.CommandLine)"
+        Stop-Process -Id $procId -Force
+    }
+    if ($Dry) { return }
+    Start-Sleep -Seconds $StopNewWaitSeconds
+    $now = @(Get-WmiObject Win32_Process)
+    $exemptNow = @(Get-ExactIndexProcessMatch -Processes $now -IndexJs $ExemptIndexJs -ExcludePid $PID | ForEach-Object { [int]$_.ProcessId })
+    $left = @($now | Where-Object {
+        $_.Name -eq 'node.exe' -and $_.CommandLine -and ([int]$_.ProcessId -ne $PID) -and ($_.CommandLine -like '*collector*index.js*') -and
+        ($exemptNow -notcontains [int]$_.ProcessId)
+    })
+    if ($left.Count -gt 0) {
+        throw ("collector still running after rollback stop: PID " + (($left | ForEach-Object { $_.ProcessId }) -join ',') + " - " + $left[0].CommandLine)
+    }
+}
+
+function Get-NodeExeFromRunValue {
+    # node.exe path from the full form conhost.exe --headless "<node>" "<index.js>", else $null.
+    param([string]$RunValue)
+    if ($RunValue -match '^conhost\.exe --headless "([^"]+)" "[^"]+index\.js"$') { return $Matches[1] }
+    return $null
+}
+
+function Get-JournalField {
+    # Works on the parsed-JSON object and on the in-memory ordered hashtable alike.
+    param($Journal, [string]$Name)
+    if ($Journal -is [System.Collections.IDictionary]) { return $Journal[$Name] }
+    return $Journal.$Name
+}
+
+function Test-JournalHasField {
+    param($Journal, [string]$Name)
+    if ($Journal -is [System.Collections.IDictionary]) { return $Journal.Contains($Name) }
+    return [bool]($Journal.PSObject.Properties[$Name])
+}
+
+function Get-JournalOldIndexes {
+    # The old index.js as the journal states it and as re-parsed from the raw old Run value.
+    param($Journal)
+    $oldRun = Get-JournalField $Journal 'oldRun'
+    $list = @(Get-JournalField $Journal 'oldIndex')
+    if ($oldRun -is [string]) { $list += @(Get-IndexJsFromRunValue $oldRun) }
+    @($list | Where-Object { $_ -is [string] -and $_ })
+}
+
+function Test-JournalShape {
+    # $null when the journal has every field with the right type, else a reason.
+    param($Journal)
+    $strings = 'version', 'phase', 'stage', 'indexJs', 'nodeExe', 'newRunValue', 'db'
+    $required = $strings + @('schema', 'startedUtc', 'phaseUtc', 'stageCreated', 'oldRun', 'oldIndex', 'oldWasRunning', 'bak')
+    foreach ($f in $required) {
+        if (-not (Test-JournalHasField $Journal $f)) { return "journal field '$f' is missing" }
+    }
+    if ((Get-JournalField $Journal 'schema') -ne 1) { return 'journal schema is not 1' }
+    foreach ($f in $strings) {
+        if (-not ((Get-JournalField $Journal $f) -is [string])) { return "journal field '$f' is not a string" }
+    }
+    foreach ($f in 'startedUtc', 'phaseUtc') {
+        if (-not ((Get-JournalField $Journal $f) -is [string])) { return "journal field '$f' is not a string timestamp" }
+    }
+    foreach ($f in 'stageCreated', 'oldWasRunning') {
+        if (-not ((Get-JournalField $Journal $f) -is [bool])) { return "journal field '$f' is not a boolean" }
+    }
+    foreach ($f in 'oldRun', 'oldIndex', 'bak') {
+        $v = Get-JournalField $Journal $f
+        if ($null -ne $v -and -not ($v -is [string])) { return "journal field '$f' is neither null nor a string" }
+    }
+    if ((Get-JournalField $Journal 'version') -notmatch $VersionPattern) { return 'journal version is not a valid version' }
+    return $null
+}
+
+function Test-JournalKillable {
+    # Gates the rollback kill: $null when indexJs is a normalised collector path inside this version's stage
+    # and is not the old index; else a reason.
+    param($Journal)
+    $ix = [string](Get-JournalField $Journal 'indexJs')
+    $stage = [string](Get-JournalField $Journal 'stage')
+    $ver = [string](Get-JournalField $Journal 'version')
+    if ($ver -notmatch $VersionPattern) { return 'journal version is not a valid version' }
+    if (-not [IO.Path]::IsPathRooted($ix)) { return "indexJs is not an absolute path: $ix" }
+    try { $full = [IO.Path]::GetFullPath($ix) } catch { return "indexJs is not a valid path: $ix" }
+    if (-not ($full -ceq $ix)) { return "indexJs is not a normalised path (.., forward slashes or relative parts): $ix" }
+    if (-not $ix.EndsWith('\collector\dist\index.js', [StringComparison]::OrdinalIgnoreCase)) { return "indexJs does not end in \collector\dist\index.js: $ix" }
+    if (-not $ix.Equals($stage + '\dist\index.js', [StringComparison]::OrdinalIgnoreCase)) { return "indexJs is not stage + \dist\index.js (stage $stage): $ix" }
+    if (-not $stage.EndsWith("\$ver\collector", [StringComparison]::OrdinalIgnoreCase)) { return "stage does not end in \$ver\collector: $stage" }
+    foreach ($old in @(Get-JournalOldIndexes $Journal)) {
+        try { $oldFull = [IO.Path]::GetFullPath($old) } catch { continue }
+        if ($oldFull.Equals($full, [StringComparison]::OrdinalIgnoreCase)) { return "indexJs is the old collector's index.js: $ix" }
+    }
+    return $null
+}
+
+function Test-JournalRestorable {
+    # Gates the Run-value restore (the write itself is the ordinal compare-and-swap in the engine).
+    param($Journal)
+    $new = Get-JournalField $Journal 'newRunValue'
+    if (-not ($new -is [string]) -or $new.Length -eq 0) { return 'newRunValue is not a non-empty string' }
+    $old = Get-JournalField $Journal 'oldRun'
+    if ($null -ne $old -and -not ($old -is [string])) { return 'oldRun is neither null nor a string' }
+    return $null
+}
+
+function Test-JournalRenamable {
+    # Gates the best-effort stage rename: $null when this run created the stage, its shape is
+    # <...>\<version>\collector, the old index is not under it and it is a real (non-reparse) directory.
+    param($Journal)
+    if ((Get-JournalField $Journal 'stageCreated') -ne $true) { return 'this run did not create the stage dir' }
+    $stage = [string](Get-JournalField $Journal 'stage')
+    $ver = [string](Get-JournalField $Journal 'version')
+    $trim = $stage.TrimEnd('\')
+    if (-not $trim) { return 'stage is empty' }
+    if (-not ([IO.Path]::GetFileName($trim)).Equals('collector', [StringComparison]::OrdinalIgnoreCase)) { return "stage leaf is not 'collector': $stage" }
+    $parent = Split-Path $trim
+    if (-not $parent -or -not ([IO.Path]::GetFileName($parent)).Equals($ver, [StringComparison]::OrdinalIgnoreCase)) { return "stage parent is not the version dir '$ver': $stage" }
+    foreach ($old in @(Get-JournalOldIndexes $Journal)) {
+        try { $oldFull = [IO.Path]::GetFullPath($old) } catch { continue }
+        if ($oldFull.StartsWith($trim + '\', [StringComparison]::OrdinalIgnoreCase)) { return "the old index.js is under the stage dir: $old" }
+    }
+    $item = Get-Item -LiteralPath $trim -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or -not $item.PSIsContainer) { return "stage dir does not exist: $stage" }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return "stage dir is a reparse point (junction or symlink), not renamed: $stage" }
+    return $null
+}
+
 function Invoke-Redeploy {
     param([string]$Version, [string]$StageRoot, [string]$DbPath, [bool]$Dry, [int]$VerifySeconds,
           [string]$ExpectedDbPath = (Join-Path $env:USERPROFILE '.aether-os\collector.db'))

@@ -574,6 +574,202 @@ Describe 'Invoke-Redeploy journal contents and verify-loop tolerance (real journ
     }
 }
 
+Describe 'Get-ExactIndexProcessMatch' {
+    $ix = 'D:\AetherBuilds\0.7.6\collector\dist\index.js'
+    $rows = @(
+        (New-Proc 10 'node.exe' ('"C:\Program Files\nodejs\node.exe" "' + $ix + '"')),
+        (New-Proc 11 'conhost.exe' ('conhost.exe --headless "node.exe" "' + $ix + '"')),
+        (New-Proc 12 'node.exe' ('node.exe "' + $ix + '.bak"')),
+        (New-Proc 13 'node.exe' 'node.exe "D:\AetherBuilds\0.7.5\collector\dist\index.js"'),
+        (New-Proc 14 'node.exe' $null),
+        (New-Proc 15 'notepad.exe' ('notepad.exe ' + $ix)),
+        (New-Proc 16 'node.exe' ('node.exe ' + $ix))
+    )
+    It 'returns an empty array for zero rows' {
+        @(Get-ExactIndexProcessMatch -Processes @() -IndexJs $ix).Count | Should Be 0
+    }
+    It 'returns the one matching node row' {
+        $m = @(Get-ExactIndexProcessMatch -Processes @($rows[0]) -IndexJs $ix)
+        $m.Count | Should Be 1
+        $m[0].ProcessId | Should Be 10
+    }
+    It 'returns node and conhost, not index.js.bak, a sibling version, a null command line or another image' {
+        $m = Get-ExactIndexProcessMatch -Processes $rows -IndexJs $ix -ExcludePid 16
+        ($m | ForEach-Object { $_.ProcessId }) -join ',' | Should Be '10,11'
+    }
+    It 'includes the own-PID row when ExcludePid is not given' {
+        (@(Get-ExactIndexProcessMatch -Processes $rows -IndexJs $ix | ForEach-Object { $_.ProcessId }) -join ',') | Should Be '10,11,16'
+    }
+}
+
+Describe 'Stop-NewCollector order and the exempt old collector' {
+    $new = 'D:\AetherBuilds\0.7.6\collector\dist\index.js'
+    $old = 'D:\AetherBuilds\0.7.5\collector\dist\index.js'
+    $global:NcRows = @(
+        (New-Proc 11 'conhost.exe' ('conhost.exe --headless "node.exe" "' + $new + '"')),
+        (New-Proc 10 'node.exe' ('node.exe "' + $new + '"')),
+        (New-Proc 12 'node.exe' ('node.exe "' + $old + '"')),
+        (New-Proc 13 'conhost.exe' ('conhost.exe --headless "node.exe" "' + $old + '"')),
+        (New-Proc 14 'node.exe' ('node.exe "' + $old + '" "' + $new + '"'))
+    )
+    $global:NcStopped = @()
+    $global:NcImmortal = @()
+    Mock Start-Sleep {}
+    Mock Get-Process { [pscustomobject]@{ Id = $Id } }
+    Mock Stop-Process { $global:NcStopped += [string]$Id }
+    Mock Get-WmiObject { @($global:NcRows | Where-Object { ($global:NcStopped -notcontains [string]$_.ProcessId) -or ($global:NcImmortal -contains [string]$_.ProcessId) }) }
+    It 'stops node before conhost, and never a row that exactly matches the exempt old collector (PID 14 matches both)' {
+        $global:NcStopped = @()
+        $null = Stop-NewCollector -IndexJs $new -ExemptIndexJs $old -Dry $false
+        ($global:NcStopped -join ',') | Should Be '10,11'
+    }
+    It 'does not count the running exempt old collector as a survivor' {
+        $global:NcStopped = @()
+        $threw = $false
+        try { $null = Stop-NewCollector -IndexJs $new -ExemptIndexJs $old -Dry $false } catch { $threw = $true }
+        $threw | Should Be $false
+    }
+}
+
+Describe 'Stop-NewCollector survivors' {
+    $new = 'D:\AetherBuilds\0.7.6\collector\dist\index.js'
+    $old = 'D:\AetherBuilds\0.7.5\collector\dist\index.js'
+    $global:NcStopped = @()
+    $global:NcImmortal = @()
+    Mock Start-Sleep {}
+    Mock Get-Process { [pscustomobject]@{ Id = $Id } }
+    Mock Stop-Process { $global:NcStopped += [string]$Id }
+    Mock Get-WmiObject { @($global:NcRows | Where-Object { ($global:NcStopped -notcontains [string]$_.ProcessId) -or ($global:NcImmortal -contains [string]$_.ProcessId) }) }
+    It 'throws on an exact-match survivor' {
+        $global:NcRows = @((New-Proc 10 'node.exe' ('node.exe "' + $new + '"')), (New-Proc 12 'node.exe' ('node.exe "' + $old + '"')))
+        $global:NcStopped = @(); $global:NcImmortal = @('10')
+        $msg = ''
+        try { $null = Stop-NewCollector -IndexJs $new -ExemptIndexJs $old -Dry $false } catch { $msg = $_.Exception.Message }
+        $msg | Should Match 'still running after rollback stop: PID 10 '
+    }
+    It 'also throws on a forward-slash survivor the exact matcher misses' {
+        $global:NcRows = @((New-Proc 10 'node.exe' ('node.exe "' + $new + '"')), (New-Proc 20 'node.exe' 'node.exe D:/AetherBuilds/0.7.6/collector/dist/index.js'), (New-Proc 12 'node.exe' ('node.exe "' + $old + '"')))
+        $global:NcStopped = @(); $global:NcImmortal = @()
+        $msg = ''
+        try { $null = Stop-NewCollector -IndexJs $new -ExemptIndexJs $old -Dry $false } catch { $msg = $_.Exception.Message }
+        $msg | Should Match 'PID 20 '
+        $msg | Should Not Match 'PID 12'
+        ($global:NcStopped -join ',') | Should Be '10'
+    }
+    It 'stops nothing in dry-run' {
+        $global:NcRows = @((New-Proc 10 'node.exe' ('node.exe "' + $new + '"')))
+        $global:NcStopped = @()
+        $null = Stop-NewCollector -IndexJs $new -ExemptIndexJs $old -Dry $true
+        $global:NcStopped.Count | Should Be 0
+    }
+}
+
+Describe 'Get-NodeExeFromRunValue' {
+    It 'returns the node path from the headless form' {
+        Get-NodeExeFromRunValue 'conhost.exe --headless "C:\Program Files\nodejs\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"' | Should Be 'C:\Program Files\nodejs\node.exe'
+    }
+    It 'returns $null for an unquoted hand-made value' {
+        Get-NodeExeFromRunValue 'node C:\x\dist\index.js' | Should BeNullOrEmpty
+    }
+    It 'returns $null when there is an extra argument' {
+        Get-NodeExeFromRunValue 'conhost.exe --headless "C:\n\node.exe" "C:\x\dist\index.js" --extra' | Should BeNullOrEmpty
+    }
+    It 'returns $null when the value has a prefix before conhost.exe' {
+        Get-NodeExeFromRunValue 'cmd /c conhost.exe --headless "C:\n\node.exe" "C:\x\dist\index.js"' | Should BeNullOrEmpty
+    }
+    It 'returns $null for an empty value' {
+        Get-NodeExeFromRunValue '' | Should BeNullOrEmpty
+    }
+}
+
+function New-RbJournal($mods) {
+    $oldIdx = 'D:\AetherBuilds\9.9.8\collector\dist\index.js'
+    $j = New-TestJournal ('conhost.exe --headless "C:\n\node.exe" "' + $oldIdx + '"')
+    $j.oldIndex = $oldIdx
+    if ($mods) { foreach ($k in @($mods.Keys)) { $j[$k] = $mods[$k] } }
+    $j
+}
+
+Describe 'Test-JournalShape' {
+    It 'accepts a good journal, in memory and after a JSON round trip' {
+        Test-JournalShape (New-RbJournal @{}) | Should BeNullOrEmpty
+        Test-JournalShape ((New-RbJournal @{}) | ConvertTo-Json -Depth 3 | ConvertFrom-Json) | Should BeNullOrEmpty
+    }
+    It 'rejects a missing field' {
+        $j = New-RbJournal @{}; $j.Remove('phase')
+        Test-JournalShape $j | Should Match "'phase' is missing"
+    }
+    It 'rejects a DateTime-typed timestamp' {
+        Test-JournalShape (New-RbJournal @{ startedUtc = [DateTime]::UtcNow }) | Should Match 'timestamp'
+    }
+}
+
+Describe 'Test-JournalKillable' {
+    $cases = @(
+        @{ n = 'a relative path'; m = @{ indexJs = 'dist\index.js' }; r = 'not an absolute path' },
+        @{ n = 'a path with ..'; m = @{ indexJs = 'D:\AetherBuilds\9.9.9\collector\..\collector\dist\index.js' }; r = 'normalised' },
+        @{ n = 'forward slashes'; m = @{ indexJs = 'D:/AetherBuilds/9.9.9/collector/dist/index.js' }; r = 'normalised' },
+        @{ n = 'a wrong tail'; m = @{ indexJs = 'D:\AetherBuilds\9.9.9\collector\dist\other.js' }; r = 'does not end in' },
+        @{ n = 'indexJs not stage + \dist\index.js'; m = @{ stage = 'D:\AetherBuilds\9.9.9\x\collector' }; r = 'not stage' },
+        @{ n = 'a stage not ending \<version>\collector'; m = @{ version = '9.9.9'; stage = 'D:\AetherBuilds\9.9.8\collector'; indexJs = 'D:\AetherBuilds\9.9.8\collector\dist\index.js'; oldIndex = $null; oldRun = $null }; r = 'stage does not end in' },
+        @{ n = 'indexJs equal to the journal oldIndex'; m = @{ oldIndex = 'D:\AetherBuilds\9.9.9\collector\dist\index.js'; oldRun = $null }; r = "old collector" },
+        @{ n = 'indexJs equal to the index parsed from oldRun'; m = @{ oldIndex = $null; oldRun = 'conhost.exe --headless "C:\n\node.exe" "d:\aetherbuilds\9.9.9\collector\dist\index.js"' }; r = 'old collector' }
+    )
+    foreach ($c in $cases) {
+        It ('rejects ' + $c.n) {
+            Test-JournalKillable (New-RbJournal $c.m) | Should Match $c.r
+        }
+    }
+    It 'accepts a good journal' {
+        Test-JournalKillable (New-RbJournal @{}) | Should BeNullOrEmpty
+    }
+}
+
+Describe 'Test-JournalRestorable' {
+    It 'rejects an empty newRunValue' { Test-JournalRestorable (New-RbJournal @{ newRunValue = '' }) | Should Match 'newRunValue' }
+    It 'rejects a non-string newRunValue' { Test-JournalRestorable (New-RbJournal @{ newRunValue = 5 }) | Should Match 'newRunValue' }
+    It 'rejects a non-string, non-null oldRun' { Test-JournalRestorable (New-RbJournal @{ oldRun = 5 }) | Should Match 'oldRun' }
+    It 'accepts oldRun = empty string and oldRun = $null' {
+        Test-JournalRestorable (New-RbJournal @{ oldRun = '' }) | Should BeNullOrEmpty
+        Test-JournalRestorable (New-RbJournal @{ oldRun = $null }) | Should BeNullOrEmpty
+    }
+}
+
+Describe 'Test-JournalRenamable (real temp dirs)' {
+    $rroot = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-rn-' + [guid]::NewGuid().ToString('N'))
+    $global:RedeployTempPaths += @($rroot)
+    $good = Join-Path $rroot '9.9.9\collector'
+    $wrongLeaf = Join-Path $rroot '9.9.9\other'
+    $wrongParent = Join-Path $rroot '1.1.1\collector'
+    $target = Join-Path $rroot 'junction-target'
+    $link = Join-Path $rroot '8.8.8\collector'
+    foreach ($d in $good, $wrongLeaf, $wrongParent, $target, (Join-Path $rroot '8.8.8')) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+    $junctionOk = $false
+    try {
+        & cmd.exe /c mklink /J "$link" "$target" 2>&1 | Out-Null
+        $junctionOk = (Test-Path -LiteralPath $link) -and ((Get-Item -LiteralPath $link -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    } catch { $junctionOk = $false }
+    function New-RnJournal($stage, $mods) {
+        $m = @{ stage = $stage; indexJs = $stage + '\dist\index.js'; oldIndex = 'D:\elsewhere\9.9.8\collector\dist\index.js'; oldRun = $null }
+        if ($mods) { foreach ($k in @($mods.Keys)) { $m[$k] = $mods[$k] } }
+        New-RbJournal $m
+    }
+    It 'accepts a real stage dir this run created' { Test-JournalRenamable (New-RnJournal $good $null) | Should BeNullOrEmpty }
+    It 'rejects stageCreated = $false' { Test-JournalRenamable (New-RnJournal $good @{ stageCreated = $false }) | Should Match 'did not create' }
+    It 'rejects a stage whose leaf is not collector' { Test-JournalRenamable (New-RnJournal $wrongLeaf $null) | Should Match "leaf is not 'collector'" }
+    It 'rejects a stage whose parent leaf is not the version' { Test-JournalRenamable (New-RnJournal $wrongParent $null) | Should Match 'parent is not the version' }
+    It 'rejects an oldIndex under the stage (journal value)' {
+        Test-JournalRenamable (New-RnJournal $good @{ oldIndex = ($good + '\dist\index.js') }) | Should Match 'under the stage'
+    }
+    It 'rejects an oldIndex under the stage (parsed from oldRun)' {
+        Test-JournalRenamable (New-RnJournal $good @{ oldIndex = $null; oldRun = ('conhost.exe --headless "C:\n\node.exe" "' + $good + '\dist\index.js"') }) | Should Match 'under the stage'
+    }
+    It 'rejects a stage that is a reparse point (skipped if mklink /J cannot be created)' -Skip:(-not $junctionOk) {
+        Test-JournalRenamable (New-RnJournal $link @{ version = '8.8.8' }) | Should Match 'reparse point'
+    }
+    if ($junctionOk) { & cmd.exe /c rmdir "$link" | Out-Null }
+}
+
 foreach ($p in @($global:RedeployTempPaths)) { if ($p) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $p } }
 
 Describe 'temp cleanup' {
