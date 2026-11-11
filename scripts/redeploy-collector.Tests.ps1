@@ -975,6 +975,26 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $global:RbRun.Length | Should Be 0
         $r.RC | Should Be 0
     }
+    It 'R3: oldWasRunning with an empty old Run value -> nothing to relaunch, not a problem: RC 0, no Start, no empty manual line' {
+        $c = New-RbCase @{ oldWasRunning = $true; oldRun = ''; oldIndex = $null } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 0
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'nothing to relaunch'
+        $r.Out | Should Not Match 'start it by hand: \s*$'
+        Test-Path $c.JP | Should Be $false
+    }
+    It 'R2: the Run value deleted by someone else (oldRun non-null) -> says absent, no write, RC 3, journal kept' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $null
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^(Set|Remove)$' | Should Be 0
+        $r.RC | Should Be 3
+        $r.Out | Should Match 'the Run value is absent, expected the old or the new value'
+        $r.Out | Should Not Match 'Current <>'
+        Test-Path $c.JP | Should Be $true
+    }
     It 'R3: relaunches the old collector (headless form, index exists), alive -> RC 0' {
         $c = New-RbCase @{} $null 'String'
         $global:RbRun = $c.NewRun

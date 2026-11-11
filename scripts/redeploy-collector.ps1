@@ -546,6 +546,9 @@ function Invoke-Rollback {
                     $readBack = Get-RunValueNow
                     if (-not ($readBack -is [string]) -or -not ($readBack -ceq $oldRun)) { throw "Run key read-back mismatch: wrote <$oldRun>, read <$readBack>" }
                 }
+            } elseif ($null -eq $cur) {
+                $problems += 'R2 not written (the Run value is absent, expected the old or the new value)'
+                Write-Output "WARNING: R2 not written: the Run value is absent, expected the old or the new value (someone else deleted it). Old $oldTxt; new <$newRun>. A human decides."
             } else {
                 $problems += 'R2 not written (the Run value is neither the old nor the new value)'
                 Write-Output "WARNING: R2 not written: the Run value was changed by someone else. Current <$cur>; old $oldTxt; new <$newRun>. A human decides."
@@ -563,6 +566,8 @@ function Invoke-Rollback {
         Write-Output 'WARNING: R3 skipped: the new collector may still be running, so a second writer is not safe.'
     } elseif (-not (Get-JournalField $Journal 'oldWasRunning')) {
         Write-Output 'the old collector was not running before this run; not started'
+    } elseif ([string]::IsNullOrEmpty($oldRun)) {
+        Write-Output 'R3: the old Run value is empty or absent, so the old collector was not launched via the Run key; nothing to relaunch.'
     } else {
         try {
             $manual = "start it by hand: $oldRun"
