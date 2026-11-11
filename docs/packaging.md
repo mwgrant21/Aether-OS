@@ -184,6 +184,10 @@ Update and uninstall: the helper is an `Aether OS.exe` process under `$INSTDIR`,
 
 UNVERIFIED / UNEXERCISED until the live T8 report: that a packaged `Aether OS.exe` with `ELECTRON_RUN_AS_NODE=1` loads the built ESM `app.asar/out/main/pty-owner.js` and resolves `node-pty` from the unpacked tree; that the helper survives a Quit-less main death when started from the packaged app (job breakaway, both the Start-menu and post-install launch routes); helper cold-start latency. See `docs/privacy-and-data.md` section 21.
 
+## Redeploying the collector (Windows)
+
+`scripts/redeploy-collector.ps1` replaces the by-hand redeploy: from a clean checkout it runs `npm ci` and `npm run build` in `collector/`, stages the full `dist` tree (minus `*.test.js`) plus `package.json` at `D:\AetherBuilds\<version>\collector`, backs up `~/.aether-os/collector.db`, stops only the processes whose command line matches the staged `...\collector\...index.js` path, repoints the HKCU Run key `AetherCollector`, starts the collector headless via `conhost.exe`, and checks that `usage_events` grows. `-DryRun` (alias `-WhatIf`) prints every step and changes nothing; `-Version` defaults to `package.json`. Tests: `Invoke-Pester scriptsedeploy-collector.Tests.ps1`.
+
 ## Versioning
 
 The version lives in one place, `package.json`, and everything else derives from
