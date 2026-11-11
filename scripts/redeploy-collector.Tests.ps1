@@ -94,11 +94,15 @@ Describe 'Stop-OldCollector dry run' {
 }
 
 Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
-    $db = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-db-' + [guid]::NewGuid().ToString('N') + '.db')
+    $fdir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-ft-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $fdir | Out-Null
+    $db = Join-Path $fdir 'collector.db'
+    $jp = Get-JournalPath -ExpectedDbPath $db
     Set-Content -Path $db -Value 'x'
     $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
-    $global:RedeployTempPaths += @($db)
+    $global:RedeployTempPaths += @($fdir)
     $global:RedeployRunValue = $oldValue
+    Mock Test-OldCollectorRunning { $true }
     Mock Get-RunKeyKind { 'String' }
     Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
     Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
@@ -113,6 +117,8 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
 
     It 'reads the baseline after the stop, then reports a crashed new collector as failure with recovery text' {
         Mock Test-CollectorAlive { $false }
+        Remove-Journal -Path $jp
+
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 3 | Out-String
         $out | Should Match 'new collector is not running'
         $out | Should Match 'RECOVERY: old Run value was <conhost.exe --headless'
@@ -125,6 +131,8 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     It 'treats alive-but-no-rows as success (idle machine)' {
         $global:RedeployRunValue = $oldValue
         Mock Test-CollectorAlive { $true }
+        Remove-Journal -Path $jp
+
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'new collector started; no events in 1 s'
         $out | Should Match 'Done\.'
@@ -136,6 +144,8 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     It 'writes the Run value as REG_SZ' {
         $global:RedeployRunValue = $oldValue
         Mock Test-CollectorAlive { $true }
+        Remove-Journal -Path $jp
+
         Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-Null
         Assert-MockCalled Set-ItemProperty -ParameterFilter { $Type -eq 'String' } -Times 1
     }
@@ -143,6 +153,8 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
         $global:RedeployRunValue = $oldValue
         Mock Set-ItemProperty {}
         Mock Test-CollectorAlive { $true }
+        Remove-Journal -Path $jp
+
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'read-back mismatch'
         $out | Should Not Match 'Done\.'
@@ -151,6 +163,8 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     It 'treats an empty old Run value as present, not absent' {
         $global:RedeployRunValue = ''
         Mock Test-CollectorAlive { $false }
+        Remove-Journal -Path $jp
+
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'RECOVERY: old Run value was <>'
         $out | Should Not Match 'no old Run value existed'
@@ -158,6 +172,8 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     # Last in this Describe: its Mock Get-FreeBytes persists for the Its after it.
     It 'fails before stopping anything when free space is short' {
         Mock Get-FreeBytes { [int64]0 }
+        Remove-Journal -Path $jp
+
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
         $out | Should Match 'not enough free space'
         $out | Should Not Match 'RECOVERY'
@@ -165,12 +181,15 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
 }
 
 Describe 'Invoke-Redeploy preflight guards (nothing may be changed)' {
-    $db = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-db-' + [guid]::NewGuid().ToString('N') + '.db')
+    $pdir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-pt-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $pdir | Out-Null
+    $db = Join-Path $pdir 'collector.db'
     Set-Content -Path $db -Value 'x'
     $root = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-root-' + [guid]::NewGuid().ToString('N'))
-    $global:RedeployTempPaths += @($db, $root)
+    $global:RedeployTempPaths += @($pdir, $root)
     $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
     $global:RedeployRunValue = $oldValue
+    Mock Test-OldCollectorRunning { $true }
     Mock Get-RunKeyKind { 'String' }
     Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
     Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
@@ -310,6 +329,7 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
     Set-Content -Path $db -Value 'x'
     $jp = Get-JournalPath -ExpectedDbPath $db
     $root = Join-Path $gdir 'root'
+    Mock Test-OldCollectorRunning { $true }
     $global:RedeployRunValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
     Mock Get-RunKeyKind { 'String' }
     Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
@@ -379,6 +399,181 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
         Assert-MockCalled Invoke-BuildAndStage -Times 0
     }
 }
+Describe 'Test-OldCollectorRunning' {
+    Mock Get-WmiObject { @(New-Proc 10 'node.exe' 'node.exe D:\AetherBuilds\0.7.5\collector\dist\index.js'), (New-Proc 11 'node.exe' 'node.exe C:\dev\old\collector\dist\index.js') }
+    It 'is true for a collector under the stage root or the old Run index.js, false otherwise' {
+        (Test-OldCollectorRunning -StageRoot 'D:\AetherBuilds' -ExtraIndexJs $null) | Should Be $true
+        (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs 'C:\dev\old\collector\dist\index.js') | Should Be $true
+        (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs $null) | Should Be $false
+    }
+}
+
+Describe 'Invoke-Redeploy journal phase order (Write-Journal / Remove-Journal recorded, not written)' {
+    $odir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-ot-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $odir | Out-Null
+    $global:RedeployTempPaths += @($odir)
+    $db = Join-Path $odir 'collector.db'
+    Set-Content -Path $db -Value 'x'
+    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    $global:RedeployOrder = @()
+    $global:RedeployThrowPhase = $null
+    $global:RedeployThrowDelete = $false
+    $global:RedeployRows = 0
+    Mock Test-OldCollectorRunning { $true }
+    Mock Get-RunKeyKind { 'String' }
+    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
+    Mock Set-ItemProperty { $global:RedeployOrder += 'set-run'; $global:RedeployRunValue = $Value }
+    Mock Start-Process { $global:RedeployOrder += 'start' }
+    Mock Start-Sleep {}
+    Mock Copy-Item {}
+    Mock Invoke-BuildAndStage {}
+    Mock Get-FreeBytes { [int64]1GB }
+    Mock Stop-OldCollector { $global:RedeployOrder += 'stop' }
+    Mock Test-CollectorAlive { $global:RedeployOrder += 'alive'; $true }
+    Mock Get-RowCount { $global:RedeployOrder += 'rows'; $global:RedeployRows++; if ($global:RedeployRows -eq 1) { [int64]100 } else { [int64]101 } }
+    Mock Write-Journal {
+        $global:RedeployOrder += ('j:' + $Journal.phase)
+        if ($global:RedeployThrowPhase -eq $Journal.phase) { throw 'disk full' }
+    }
+    Mock Remove-Journal { $global:RedeployOrder += 'delete'; if ($global:RedeployThrowDelete) { throw 'file locked' } }
+    function Start-OrderRun {
+        $global:RedeployOrder = @(); $global:RedeployRows = 0; $global:RedeployRunValue = $oldValue
+        $script:RC = 99
+        Invoke-Redeploy -Version '9.9.9' -StageRoot (Join-Path $odir 'root') -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+    }
+
+    It 'writes each phase BEFORE the step it names: stopping before the kill, verified before the delete' {
+        $out = Start-OrderRun
+        ($global:RedeployOrder -join ',') | Should Be 'j:stopping,stop,j:stopped,j:backed-up,rows,j:repointing,set-run,j:repointed,start,j:launched,alive,rows,j:verified,delete'
+        $out | Should Match 'rows grew 100 -> 101'
+        $script:RC | Should Be 0
+    }
+    It 'aborts before stopping anything when the stopping write throws (fail closed)' {
+        $global:RedeployThrowPhase = 'stopping'
+        $out = Start-OrderRun
+        $global:RedeployThrowPhase = $null
+        ($global:RedeployOrder -join ',') | Should Be 'j:stopping'
+        $out | Should Match 'ERROR: disk full'
+        $out | Should Not Match 'RECOVERY'
+        $script:RC | Should Be 1
+    }
+    It 'keeps RC 0 and warns not to run -Rollback when the verified write throws' {
+        $global:RedeployThrowPhase = 'verified'
+        $out = Start-OrderRun
+        $global:RedeployThrowPhase = $null
+        $out | Should Match 'do NOT run -Rollback'
+        $out | Should Match 'Done\.'
+        $out | Should Not Match 'ERROR'
+        $script:RC | Should Be 0
+    }
+    It 'keeps RC 0 and warns not to run -Rollback when the journal delete throws' {
+        $global:RedeployThrowDelete = $true
+        $out = Start-OrderRun
+        $global:RedeployThrowDelete = $false
+        $out | Should Match 'do NOT run -Rollback'
+        $out | Should Not Match 'ERROR'
+        $script:RC | Should Be 0
+    }
+}
+
+Describe 'Invoke-Redeploy journal contents and verify-loop tolerance (real journal in a temp dir)' {
+    $rdir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-rt-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $rdir | Out-Null
+    $global:RedeployTempPaths += @($rdir)
+    $db = Join-Path $rdir 'collector.db'
+    Set-Content -Path $db -Value 'x'
+    $jp = Get-JournalPath -ExpectedDbPath $db
+    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    $global:RedeployRunValue = $oldValue
+    $global:RedeployRows = 0
+    $global:RedeployAliveCalls = 0
+    Mock Test-OldCollectorRunning { $true }
+    Mock Get-RunKeyKind { 'String' }
+    Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
+    Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
+    Mock Start-Process {}
+    Mock Start-Sleep {}
+    Mock Copy-Item {}
+    Mock Invoke-BuildAndStage {}
+    Mock Get-FreeBytes { [int64]1GB }
+    Mock Stop-OldCollector {}
+    function Start-RealRun {
+        Remove-Journal -Path $jp
+        $global:RedeployRunValue = $oldValue; $global:RedeployRows = 0; $global:RedeployAliveCalls = 0
+        $script:RC = 99
+        Invoke-Redeploy -Version '9.9.9' -StageRoot (Join-Path $rdir 'root') -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+    }
+
+    It 'deletes the journal after a verified deploy' {
+        Mock Get-RowCount { $global:RedeployRows++; if ($global:RedeployRows -eq 1) { [int64]100 } else { [int64]101 } }
+        Mock Test-CollectorAlive { $true }
+        $out = Start-RealRun
+        $out | Should Match 'Done\.'
+        Test-Path $jp | Should Be $false
+    }
+    It 'survives a throwing verify-loop sample (one throw then growth) and prints rows grew' {
+        Mock Get-RowCount { $global:RedeployRows++; if ($global:RedeployRows -eq 1) { [int64]100 } elseif ($global:RedeployRows -eq 2) { throw 'row count query failed' } else { [int64]101 } }
+        Mock Test-CollectorAlive { $true }
+        $out = Start-RealRun
+        $out | Should Match 'row count sample failed: row count query failed'
+        $out | Should Match 'rows grew 100 -> 101'
+        $out | Should Not Match 'ERROR'
+        $script:RC | Should Be 0
+    }
+    It 'ends as the idle success when every sample throws and the collector is alive' {
+        Mock Get-RowCount { $global:RedeployRows++; if ($global:RedeployRows -eq 1) { [int64]100 } else { throw 'row count query failed' } }
+        Mock Test-CollectorAlive { $true }
+        $out = Start-RealRun
+        $out | Should Match 'new collector started; no events in 1 s'
+        $out | Should Not Match 'ERROR'
+        $script:RC | Should Be 0
+    }
+    It 'still fails when the collector dies during the wait (liveness stays fatal)' {
+        Mock Get-RowCount { $global:RedeployRows++; if ($global:RedeployRows -eq 1) { [int64]100 } else { throw 'row count query failed' } }
+        Mock Test-CollectorAlive { $global:RedeployAliveCalls++; $global:RedeployAliveCalls -eq 1 }
+        $out = Start-RealRun
+        $out | Should Match 'new collector died while waiting for events'
+        $script:RC | Should Be 1
+    }
+    It 'leaves the journal at phase repointed with the rollback fields when Start-Process throws' {
+        Mock Get-RowCount { [int64]100 }
+        Mock Test-CollectorAlive { $true }
+        Mock Start-Process { throw 'cannot start' }
+        $out = Start-RealRun
+        $out | Should Match 'ERROR: cannot start'
+        $j = Read-Journal -Path $jp
+        $j.phase | Should Be 'repointed'
+        ($j.oldRun -ceq $oldValue) | Should Be $true
+        $j.newRunValue | Should Match 'index\.js"$'
+        $j.bak | Should Match '\.pre-9\.9\.9-.*\.bak$'
+        $j.oldWasRunning | Should Be $true
+        $j.stageCreated | Should Be $true
+        $j.version | Should Be '9.9.9'
+        ($j.stage -like '*9.9.9\collector') | Should Be $true
+        Remove-Journal -Path $jp
+    }
+    It 'records oldWasRunning=false and keeps an empty old Run value (not null) in the journal' {
+        Mock Test-OldCollectorRunning { $false }
+        Mock Start-Process { throw 'cannot start' }
+        Remove-Journal -Path $jp
+        $global:RedeployRunValue = ''
+        $script:RC = 99
+        Invoke-Redeploy -Version '9.9.9' -StageRoot (Join-Path $rdir 'root') -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-Null
+        $j = Read-Journal -Path $jp
+        $j.oldWasRunning | Should Be $false
+        ($null -eq $j.oldRun) | Should Be $false
+        Remove-Journal -Path $jp
+    }
+    # Last: this Mock Get-FreeBytes persists for any It after it.
+    It 'leaves no journal and prints no RECOVERY when free space is short' {
+        Mock Get-FreeBytes { [int64]0 }
+        $out = Start-RealRun
+        $out | Should Match 'not enough free space'
+        $out | Should Not Match 'RECOVERY'
+        Test-Path $jp | Should Be $false
+    }
+}
+
 foreach ($p in @($global:RedeployTempPaths)) { if ($p) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $p } }
 
 Describe 'temp cleanup' {
@@ -401,6 +596,11 @@ Describe 'dry run' {
     }
     It 'changes nothing' {
         Test-Path $tmp | Should Be $false
+        Test-Path (Join-Path $env:USERPROFILE '.aether-os\redeploy-journal.json') | Should Be $false
+    }
+    It 'prints the journal lines but writes no journal' {
+        $out | Should Match '\[DRY-RUN\] write journal .*redeploy-journal\.json \(phase stopping \.\.\. verified\)'
+        $out | Should Match '\[DRY-RUN\] delete journal'
     }
     It 'rejects a bad version with exit 2' {
         & $ps -NoProfile -ExecutionPolicy Bypass -File $script -DryRun -Version 'x y' | Out-Null

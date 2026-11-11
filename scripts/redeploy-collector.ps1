@@ -15,6 +15,9 @@
     After the stop, any node.exe still running a collector index.js fails the run.
     On failure it prints the backup path and, if the stop already ran, how to
     restore the old Run value.
+    From the stop onward a journal (~\.aether-os\redeploy-journal.json) records the
+    phase before each irreversible step; it is deleted after a verified deploy and
+    left open on failure (and then blocks the next deploy).
     -DryRun (alias -WhatIf) prints every action and changes nothing.
 .PARAMETER Version
     Defaults to "version" in the repo-root package.json.
@@ -242,6 +245,22 @@ function Test-CollectorAlive {
     @((Get-WmiObject Win32_Process) | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like $pat }).Count -gt 0
 }
 
+function Test-OldCollectorRunning {
+    # Read-only. Same matcher as Stop-OldCollector: every collector under <StageRoot>\*collector*index.js*
+    # plus the old Run value's index.js, so it may be a different version than the Run value names.
+    param([string]$StageRoot, [string]$ExtraIndexJs)
+    $procs = @(Get-CollectorProcessMatch -Processes @(Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID -ExtraIndexJs $ExtraIndexJs)
+    [bool]($procs.Count -gt 0)
+}
+
+function Set-JournalPhase {
+    # Stamps the phase on the in-memory journal and persists it. Call BEFORE the step the phase names.
+    param([string]$Path, $Journal, [string]$Phase)
+    $Journal.phase = $Phase
+    $Journal.phaseUtc = [DateTime]::UtcNow.ToString('o')
+    Write-Journal -Path $Path -Journal $Journal
+}
+
 function Invoke-Redeploy {
     param([string]$Version, [string]$StageRoot, [string]$DbPath, [bool]$Dry, [int]$VerifySeconds,
           [string]$ExpectedDbPath = (Join-Path $env:USERPROFILE '.aether-os\collector.db'))
@@ -283,6 +302,8 @@ function Invoke-Redeploy {
     }
 
     $stopRan = $false
+    $journalPath = Get-JournalPath -ExpectedDbPath $ExpectedDbPath
+    $journal = $null
     $bak = "$DbPath.pre-$Version-$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
     try {
         Write-Output '===== Step 1: build + stage ====='
@@ -297,23 +318,37 @@ function Invoke-Redeploy {
         Write-Output '===== Step 2: free-space check ====='
         if ($Dry) {
             Write-Output "[DRY-RUN] require free space on the db drive >= 2x (db + -wal)"
+            Write-Output "[DRY-RUN] write journal $journalPath (phase stopping ... verified)"
         } else {
             if (-not (Test-Path $DbPath)) { throw "db not found: $DbPath" }
             $need = 2 * (Get-DbBackupBytes $DbPath)
             $free = Get-FreeBytes $DbPath
             if ($free -lt $need) { throw "not enough free space for backup: need $need bytes, have $free" }
             Write-Output "ok: need $need bytes, free $free"
+            # Copy-aside state for rollback. Step 1 ran, so this run created the stage (preflight guarantees it was absent or empty).
+            $now = [DateTime]::UtcNow.ToString('o')
+            $journal = [ordered]@{
+                schema = 1; version = $Version; startedUtc = $now; phase = 'stopping'; phaseUtc = $now
+                stage = $stage; stageCreated = $true; indexJs = $indexJs; nodeExe = $nodeExe; newRunValue = $runValue
+                oldRun = $oldRun; oldIndex = $oldIndex
+                oldWasRunning = (Test-OldCollectorRunning -StageRoot $StageRoot -ExtraIndexJs $oldIndex)
+                db = $DbPath; bak = $null
+            }
         }
 
         Write-Output '===== Step 3: stop old collector ====='
+        # Written before the kill; if this throws nothing has been stopped (fail closed).
+        if (-not $Dry) { Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'stopping' }
         $stopRan = $true
         Stop-OldCollector -StageRoot $StageRoot -ExtraIndexJs $oldIndex -Dry $Dry
+        if (-not $Dry) { Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'stopped' }
 
         Write-Output '===== Step 4: back up db (after stop; db + -wal, not -shm) ====='
         Invoke-Step "copy $DbPath (+ -wal if present) -> $bak" {
             Copy-Item $DbPath $bak
             if (Test-Path "$DbPath-wal") { Copy-Item "$DbPath-wal" "$bak-wal" }
         } $Dry
+        if (-not $Dry) { $journal.bak = $bak; Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'backed-up' }
 
         Write-Output '===== Step 5: baseline row count ====='
         $before = $null
@@ -322,16 +357,19 @@ function Invoke-Redeploy {
 
         Write-Output '===== Step 6: repoint Run key ====='
         Invoke-Step "set $RunKeyPath\$RunKeyName = $runValue" {
+            Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'repointing'
             Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value $runValue -Type String
             $readBack = (Get-ItemProperty -Path $RunKeyPath -Name $RunKeyName).$RunKeyName
             if (-not ($readBack -is [string]) -or -not ($readBack -ceq $runValue)) {
                 throw "Run key read-back mismatch: wrote <$runValue>, read <$readBack>"
             }
+            Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'repointed'
         } $Dry
 
         Write-Output '===== Step 7: start ====='
         Invoke-Step "Start-Process conhost.exe --headless `"$nodeExe`" `"$indexJs`" (cwd $stage)" {
             Start-Process conhost.exe -ArgumentList '--headless', "`"$nodeExe`"", "`"$indexJs`"" -WorkingDirectory $stage
+            Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'launched'
         } $Dry
 
         Write-Output '===== Step 8: verify ====='
@@ -345,14 +383,24 @@ function Invoke-Redeploy {
             $grew = $false
             while ((Get-Date) -lt $deadline) {
                 Start-Sleep -Seconds 3
-                $now = Get-RowCount $DbPath
-                if ($now -gt $before) { Write-Output "rows grew $before -> $now"; $grew = $true; break }
+                # A throwing sample is "no sample": it never fails the deploy (only liveness does).
+                $rows = $null
+                try { $rows = Get-RowCount $DbPath } catch { Write-Output "row count sample failed: $($_.Exception.Message)" }
+                if ($null -ne $rows -and $rows -gt $before) { Write-Output "rows grew $before -> $rows"; $grew = $true; break }
             }
             if (-not $grew) {
                 if (-not (Test-CollectorAlive $indexJs)) { throw 'new collector died while waiting for events' }
                 Write-Output "new collector started; no events in $VerifySeconds s (idle machine?)"
             }
+            # The deploy has succeeded here: a journal failure only warns and never changes RC.
+            try {
+                Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'verified'
+                Remove-Journal -Path $journalPath
+            } catch {
+                Write-Output "WARNING: could not finalize the journal $journalPath ($($_.Exception.Message)). The deploy succeeded; do NOT run -Rollback; delete the journal file by hand."
+            }
         }
+        if ($Dry) { Write-Output "[DRY-RUN] delete journal $journalPath" }
         Write-Output 'Done.'
         $script:RC = 0; return
     } catch {
