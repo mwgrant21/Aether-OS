@@ -6,6 +6,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+### Fixed
+- Background agents now appear in the fleet view. Their `claude agents --json` rows carry `state` instead of `status`, which made both collectors report schema drift every poll and drop the card.
+
 ## [0.7.6] - 2026-11-10
 
 ### Added
