@@ -571,7 +571,7 @@ function Invoke-Rollback {
     } else {
         try {
             $manual = "start it by hand: $oldRun"
-            $existing = @(Get-ExactIndexProcessMatch -Processes @(Get-WmiObject Win32_Process) -IndexJs $oldIdx -ExcludePid $PID)
+            $existing = @(Get-ExactIndexProcessMatch -Processes @(Get-WmiObject Win32_Process) -IndexJs $oldIdx -ExcludePid $PID | Where-Object { $_.Name -eq 'node.exe' })
             $node = Get-NodeExeFromRunValue $oldRun
             if ($existing.Count -gt 0) {
                 $ranOld = $true

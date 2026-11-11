@@ -1038,6 +1038,25 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r.RC | Should Be 0
         $r.Out | Should Match 'already running'
     }
+    It 'R3: an old node and its conhost both alive -> still never started again, RC 0' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $global:RbProcs += (New-Proc 60 'node.exe' ('"C:\n\node.exe" "' + $c.OldIdx + '"'))
+        $global:RbProcs += (New-Proc 61 'conhost.exe' ('conhost.exe --headless "C:\n\node.exe" "' + $c.OldIdx + '"'))
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 0
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'already running'
+    }
+    It 'R3: only the old conhost is alive (its node exited) -> the old collector is relaunched once, RC 0' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $global:RbProcs += (New-Proc 61 'conhost.exe' ('conhost.exe --headless "C:\n\node.exe" "' + $c.OldIdx + '"'))
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 1
+        $r.RC | Should Be 0
+        $r.Out | Should Not Match 'already running'
+    }
     It 'R3: re-running the engine after an RC 3 does not start a second old collector' {
         $c = New-RbCase @{} $null 'String'
         $global:RbRun = 'conhost.exe --headless "C:\other\node.exe" "C:\other\index.js"'
