@@ -20,7 +20,9 @@ async function scanJsonlFile(
     const event = parseTranscriptLine(line);
     if (!event) continue;
     const key = event.kind === 'assistant' ? event.messageKey : null;
-    if (key) {
+    // A line without usage neither reserves the key nor counts as a repeat, so a
+    // later line of the same message that carries usage is still counted.
+    if (key && event.usage) {
       if (seenKeys.has(key)) {
         events.push({ ...event, usage: null });
         continue;

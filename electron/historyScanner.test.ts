@@ -198,6 +198,34 @@ describe('scanAllProjects streamed-message dedupe', () => {
     expect(events.filter((e) => e.usage !== null)).toHaveLength(4);
   });
 
+  it('does not let a usage-less line reserve the key of a later line with usage', async () => {
+    const noUsage = JSON.stringify({
+      type: 'assistant',
+      sessionId: 'session-1',
+      timestamp: '2026-08-01T12:00:00.000Z',
+      requestId: 'req_1',
+      message: { id: 'msg_1', model: 'claude-sonnet-4-5', content: [] },
+    });
+    const withUsage = JSON.stringify({
+      type: 'assistant',
+      sessionId: 'session-1',
+      timestamp: '2026-08-01T12:00:00.000Z',
+      requestId: 'req_1',
+      message: {
+        id: 'msg_1',
+        model: 'claude-sonnet-4-5',
+        usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        content: [],
+      },
+    });
+    const root = await projectWith({ 'session-1.jsonl': [noUsage, withUsage] });
+
+    const events = await scanAllProjects(root);
+    expect(events).toHaveLength(2);
+    expect(events.reduce((sum, e) => sum + (e.usage?.inputTokens ?? 0), 0)).toBe(100);
+    expect(events.reduce((sum, e) => sum + (e.usage?.outputTokens ?? 0), 0)).toBe(50);
+  });
+
   it('feeds computeWeeklyTokens the single-count value', async () => {
     const line = streamedLine({ outputTokens: 100, messageId: 'msg_1', requestId: 'req_1' });
     const root = await projectWith({ 'session-1.jsonl': [line, line, line] });
