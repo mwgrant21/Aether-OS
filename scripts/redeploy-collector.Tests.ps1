@@ -770,6 +770,332 @@ Describe 'Test-JournalRenamable (real temp dirs)' {
     if ($junctionOk) { & cmd.exe /c rmdir "$link" | Out-Null }
 }
 
+$global:RbCalls = @(); $global:RbRun = $null; $global:RbKind = 'String'; $global:RbProcs = @(); $global:RbDead = @(); $global:RbImmortal = @()
+$global:RbRenameThrows = $false; $global:RbStartAlive = $true; $global:RbOldIdx = ''
+
+function New-RbCase($mods, $run, $kind, [bool]$junction) {
+    # A real temp tree: <dir>\9.9.9\collector (new stage), <dir>\9.9.8\collector\dist\index.js (old), a journal file.
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-rb-' + [guid]::NewGuid().ToString('N'))
+    $global:RedeployTempPaths += @($dir)
+    $stage = Join-Path $dir '9.9.9\collector'
+    $oldIdx = Join-Path $dir '9.9.8\collector\dist\index.js'
+    New-Item -ItemType Directory -Force -Path (Join-Path $dir '9.9.8\collector\dist') | Out-Null
+    Set-Content -Path $oldIdx -Value 'old'
+    if ($junction) {
+        $target = Join-Path $dir 'junction-target'
+        New-Item -ItemType Directory -Force -Path (Join-Path $target 'dist'), (Join-Path $dir '9.9.9') | Out-Null
+        & cmd.exe /c mklink /J "$stage" "$target" 2>&1 | Out-Null
+    } else {
+        New-Item -ItemType Directory -Force -Path (Join-Path $stage 'dist') | Out-Null
+    }
+    Set-Content -Path (Join-Path $stage 'dist\index.js') -Value 'new'
+    $ix = $stage + '\dist\index.js'
+    $oldRun = 'conhost.exe --headless "C:\n\node.exe" "' + $oldIdx + '"'
+    $m = @{ stage = $stage; indexJs = $ix; oldRun = $oldRun; oldIndex = $oldIdx; newRunValue = (Get-RunKeyValue -IndexJs $ix -NodeExe 'C:\n\node.exe'); phase = 'repointed' }
+    if ($mods) { foreach ($k in @($mods.Keys)) { $m[$k] = $mods[$k] } }
+    $jp = Join-Path $dir 'redeploy-journal.json'
+    $j = New-RbJournal $m
+    if ($j.Contains('phase') -and $null -eq $j['phase']) { $j.Remove('phase') }
+    Write-Journal -Path $jp -Journal $j
+    $global:RbCalls = @(); $global:RbDead = @(); $global:RbImmortal = @(); $global:RbRenameThrows = $false; $global:RbStartAlive = $true
+    $global:RbOldIdx = $oldIdx; $global:RbKind = $kind
+    $global:RbRun = $run
+    $global:RbProcs = @(
+        (New-Proc 10 'node.exe' ('"C:\n\node.exe" "' + $ix + '"')),
+        (New-Proc 11 'conhost.exe' ('conhost.exe --headless "C:\n\node.exe" "' + $ix + '"'))
+    )
+    @{ Dir = $dir; JP = $jp; Stage = $stage; OldIdx = $oldIdx; NewRun = $m.newRunValue; OldRun = $m.oldRun; Ix = $ix }
+}
+
+function Invoke-RbEngine($case, [bool]$dry) {
+    $j = Read-Journal -Path $case.JP
+    $script:RC = 99
+    $out = Invoke-Rollback -Journal $j -JournalPath $case.JP -Dry $dry | Out-String
+    @{ Out = $out; RC = $script:RC }
+}
+
+function Get-RbCount([string]$pattern) { @($global:RbCalls | Where-Object { $_ -match $pattern }).Count }
+
+Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journal and stage are real temp dirs)' {
+    $newR = 'conhost.exe --headless "C:\n\node.exe" "X"'
+    Mock Start-Sleep {}
+    Mock Get-Process { [pscustomobject]@{ Id = $Id } }
+    Mock Stop-Process { $global:RbCalls += "Stop:$Id"; $global:RbDead += [string]$Id }
+    Mock Start-Process {
+        $global:RbCalls += 'Start'
+        if ($global:RbStartAlive) { $global:RbProcs += (New-Proc 50 'node.exe' ('"C:\n\node.exe" "' + $global:RbOldIdx + '"')) }
+    }
+    Mock Get-WmiObject { @($global:RbProcs | Where-Object { ($global:RbDead -notcontains [string]$_.ProcessId) -or ($global:RbImmortal -contains [string]$_.ProcessId) }) }
+    Mock Get-RunKeyKind { $global:RbKind }
+    Mock Get-ItemProperty { if ($null -eq $global:RbRun) { $null } else { [pscustomobject]@{ AetherCollector = $global:RbRun } } }
+    Mock Set-ItemProperty { $global:RbCalls += 'Set'; $global:RbRun = $Value }
+    Mock Remove-ItemProperty { $global:RbCalls += 'Remove'; $global:RbRun = $null }
+    Mock Rename-Item {
+        $global:RbCalls += 'Rename'
+        if ($global:RbRenameThrows) { throw 'rename denied' }
+        [IO.Directory]::Move($LiteralPath, (Join-Path (Split-Path $LiteralPath) $NewName))
+    }
+
+    $probe = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-jx-' + [guid]::NewGuid().ToString('N'))
+    $global:RedeployTempPaths += @($probe)
+    New-Item -ItemType Directory -Force -Path (Join-Path $probe 'target') | Out-Null
+    $junctionOk = $false
+    try {
+        & cmd.exe /c mklink /J (Join-Path $probe 'link') (Join-Path $probe 'target') 2>&1 | Out-Null
+        $junctionOk = (Test-Path -LiteralPath (Join-Path $probe 'link')) -and ((Get-Item -LiteralPath (Join-Path $probe 'link') -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    } catch { $junctionOk = $false }
+    if ($junctionOk) { & cmd.exe /c rmdir (Join-Path $probe 'link') | Out-Null }
+
+    It 'R-pre: a verified journal is deleted, nothing is stopped, started, set or removed, RC 0' {
+        $c = New-RbCase @{ phase = 'verified' } $null 'String'
+        $r = Invoke-RbEngine $c $false
+        $r.Out | Should Match 'deploy completed, stale journal removed'
+        $r.RC | Should Be 0
+        Test-Path $c.JP | Should Be $false
+        Get-RbCount '.' | Should Be 0
+    }
+    It 'R2: current == new value -> restored with Set and read back, RC 0, journal deleted' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Set$' | Should Be 1
+        Get-RbCount '^Remove$' | Should Be 0
+        $global:RbRun | Should Be $c.OldRun
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'ROLLBACK COMPLETE: previous Run value restored, old collector was not running before'
+        Test-Path $c.JP | Should Be $false
+    }
+    It 'R2: current == old value -> no write, RC 0' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.OldRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^(Set|Remove)$' | Should Be 0
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'already the old value'
+    }
+    It 'R2: current is neither old nor new -> no write, RC 3, both values printed, journal kept' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = 'conhost.exe --headless "C:\other\node.exe" "C:\other\index.js"'
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^(Set|Remove)$' | Should Be 0
+        $global:RbRun | Should Be 'conhost.exe --headless "C:\other\node.exe" "C:\other\index.js"'
+        $r.RC | Should Be 3
+        $r.Out | Should Match ([regex]::Escape($c.OldRun))
+        $r.Out | Should Match ([regex]::Escape($c.NewRun))
+        $r.Out | Should Match 'ROLLBACK INCOMPLETE'
+        $r.Out | Should Match 'RECOVERY: 1\.'
+        Test-Path $c.JP | Should Be $true
+    }
+    It 'R2: a value that differs from the new value only in case is "neither": no write, RC 3' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.NewRun.ToUpper()
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^(Set|Remove)$' | Should Be 0
+        $r.RC | Should Be 3
+    }
+    It 'R2: current kind is not String -> no write, RC 3' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'ExpandString'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^(Set|Remove)$' | Should Be 0
+        $r.RC | Should Be 3
+        $r.Out | Should Match 'ExpandString'
+    }
+    It 'R2: oldRun = $null -> Remove-ItemProperty (not Set), value gone, RC 0' {
+        $c = New-RbCase @{ oldWasRunning = $false; oldRun = $null; oldIndex = $null } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Remove$' | Should Be 1
+        Get-RbCount '^Set$' | Should Be 0
+        $global:RbRun | Should BeNullOrEmpty
+        $r.RC | Should Be 0
+    }
+    It 'R2: oldRun = empty string is a real value -> restored with Set (not Remove)' {
+        $c = New-RbCase @{ oldWasRunning = $false; oldRun = ''; oldIndex = $null } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Set$' | Should Be 1
+        Get-RbCount '^Remove$' | Should Be 0
+        ($global:RbRun -is [string]) | Should Be $true
+        $global:RbRun.Length | Should Be 0
+        $r.RC | Should Be 0
+    }
+    It 'R3: relaunches the old collector (headless form, index exists), alive -> RC 0' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 1
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'ROLLBACK COMPLETE: previous Run value restored, old collector running'
+    }
+    It 'R3: relaunch but not alive -> RC 3 with the manual command' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $global:RbStartAlive = $false
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 1
+        $r.RC | Should Be 3
+        $r.Out | Should Match 'start it by hand: conhost\.exe --headless'
+    }
+    It 'R3: oldWasRunning = $false -> not started, RC 0' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 0
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'not running before this run; not started'
+    }
+    It 'R3: an unquoted hand-made old Run value cannot be relaunched -> RC 3 with the manual command, no Start' {
+        $handMade = 'node.exe D:\x\collector\dist\index.js'
+        $c = New-RbCase @{ oldRun = $handMade } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 0
+        $r.RC | Should Be 3
+        $r.Out | Should Match 'start it by hand: node\.exe D:\\x'
+    }
+    It 'R3: an old collector that is already alive (exact token) is never started again, RC 0' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $global:RbProcs += (New-Proc 60 'node.exe' ('"C:\n\node.exe" "' + $c.OldIdx + '"'))
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Start$' | Should Be 0
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'already running'
+    }
+    It 'R3: re-running the engine after an RC 3 does not start a second old collector' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = 'conhost.exe --headless "C:\other\node.exe" "C:\other\index.js"'
+        $r1 = Invoke-RbEngine $c $false
+        $r2 = Invoke-RbEngine $c $false
+        $r1.RC | Should Be 3
+        $r2.RC | Should Be 3
+        Get-RbCount '^Start$' | Should Be 1
+    }
+    It 'R1 survivor: R2 still writes the Run value, R3 and R4 are NOT run, RC 3' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $global:RbImmortal = @('10')
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Set$' | Should Be 1
+        $global:RbRun | Should Be $c.OldRun
+        Get-RbCount '^Start$' | Should Be 0
+        Get-RbCount '^Rename$' | Should Be 0
+        Test-Path $c.Stage | Should Be $true
+        $r.RC | Should Be 3
+        $r.Out | Should Match 'R3 skipped'
+        Test-Path $c.JP | Should Be $true
+    }
+    It 'invalid kill fields: R1 skipped (no Stop), R2 still runs, R3 and R4 skipped, RC 3' {
+        $c = New-RbCase @{ indexJs = 'D:\other\collector\dist\index.js' } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        Get-RbCount '^Stop:' | Should Be 0
+        Get-RbCount '^Set$' | Should Be 1
+        Get-RbCount '^Start$' | Should Be 0
+        Get-RbCount '^Rename$' | Should Be 0
+        $r.RC | Should Be 3
+        $r.Out | Should Match 'R1 skipped'
+    }
+    It 'R4: renames the real stage dir to collector.failed-* and keeps its contents' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.OldRun
+        $r = Invoke-RbEngine $c $false
+        $r.RC | Should Be 0
+        Test-Path $c.Stage | Should Be $false
+        $moved = @(Get-ChildItem -LiteralPath (Join-Path $c.Dir '9.9.9') -Directory | Where-Object { $_.Name -like 'collector.failed-*' })
+        $moved.Count | Should Be 1
+        Test-Path (Join-Path $moved[0].FullName 'dist\index.js') | Should Be $true
+    }
+    It 'R4: a reparse-point stage is skipped with a warning, RC unaffected (skipped if mklink /J fails)' -Skip:(-not $junctionOk) {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String' $true
+        try {
+            $global:RbRun = $c.OldRun
+            $r = Invoke-RbEngine $c $false
+            $r.RC | Should Be 0
+            Get-RbCount '^Rename$' | Should Be 0
+            $r.Out | Should Match 'R4 skipped: stage dir is a reparse point'
+            Test-Path (Join-Path $c.Dir 'junction-target\dist\index.js') | Should Be $true
+        } finally { & cmd.exe /c rmdir "$($c.Stage)" | Out-Null }
+    }
+    It 'R4: a rename failure is a warning only, RC stays 0' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.OldRun
+        $global:RbRenameThrows = $true
+        $r = Invoke-RbEngine $c $false
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'R4 could not move the stage dir aside'
+        Test-Path $c.Stage | Should Be $true
+    }
+    It 'shape failure: RC 3, nothing touched, journal kept' {
+        $c = New-RbCase @{ phase = $null } $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $false
+        $r.RC | Should Be 3
+        $r.Out | Should Match "'phase' is missing"
+        Get-RbCount '.' | Should Be 0
+        $global:RbRun | Should Be $c.NewRun
+        Test-Path $c.JP | Should Be $true
+    }
+    It 'R5: the journal is deleted when everything succeeded and kept when it did not' {
+        $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = $c.OldRun
+        $null = Invoke-RbEngine $c $false
+        Test-Path $c.JP | Should Be $false
+        $c2 = New-RbCase @{ oldWasRunning = $false } $null 'String'
+        $global:RbRun = 'something else'
+        $r2 = Invoke-RbEngine $c2 $false
+        $r2.RC | Should Be 3
+        Test-Path $c2.JP | Should Be $true
+    }
+    It '-Dry makes zero Stop / Start / Set / Remove / Rename calls, prints [DRY-RUN] for R1-R5, RC 0' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $true
+        Get-RbCount '.' | Should Be 0
+        $r.RC | Should Be 0
+        foreach ($s in 'R1', 'R2', 'R3', 'R4', 'R5') { $r.Out | Should Match ('\[DRY-RUN\] ' + $s) }
+        Test-Path $c.JP | Should Be $true
+        Test-Path $c.Stage | Should Be $true
+        $global:RbRun | Should Be $c.NewRun
+    }
+    It 'Invoke-RollbackCommand: no journal -> RC 2 "no redeploy journal"; unparseable -> RC 2 "journal unreadable"; a verified journal -> RC 0' {
+        $c = New-RbCase @{ phase = 'verified' } $null 'String'
+        $db = Join-Path $c.Dir 'collector.db'
+        Remove-Item -LiteralPath $c.JP
+        $script:RC = 99
+        $out = Invoke-RollbackCommand -Dry $false -ExpectedDbPath $db | Out-String
+        $script:RC | Should Be 2
+        $out | Should Match 'no redeploy journal'
+        [IO.File]::WriteAllText((Get-JournalPath -ExpectedDbPath $db), '{ not json')
+        $script:RC = 99
+        $out = Invoke-RollbackCommand -Dry $false -ExpectedDbPath $db | Out-String
+        $script:RC | Should Be 2
+        $out | Should Match 'journal unreadable'
+        Remove-Item -LiteralPath (Get-JournalPath -ExpectedDbPath $db)
+        $j = New-RbJournal @{ phase = 'verified' }
+        Write-Journal -Path (Get-JournalPath -ExpectedDbPath $db) -Journal $j
+        $script:RC = 99
+        $out = Invoke-RollbackCommand -Dry $false -ExpectedDbPath $db | Out-String
+        $script:RC | Should Be 0
+        $out | Should Match 'stale journal removed'
+        Get-RbCount '.' | Should Be 0
+    }
+}
+
+Describe '-Rollback launch mode (child powershell.exe; nothing to roll back)' {
+    $realJournal = Join-Path $env:USERPROFILE '.aether-os\redeploy-journal.json'
+    $skip = Test-Path -LiteralPath $realJournal
+    if ($skip) { Write-Output "SKIPPED: a real journal exists at $realJournal; this test never creates or touches one." }
+    It 'exits 2 with "no redeploy journal" when there is no journal' -Skip:$skip {
+        $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $out = & $ps -NoProfile -ExecutionPolicy Bypass -File $script -Rollback -DryRun 2>&1 | Out-String
+        $LASTEXITCODE | Should Be 2
+        $out | Should Match 'no redeploy journal'
+        Test-Path -LiteralPath $realJournal | Should Be $false
+    }
+}
+
 foreach ($p in @($global:RedeployTempPaths)) { if ($p) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $p } }
 
 Describe 'temp cleanup' {

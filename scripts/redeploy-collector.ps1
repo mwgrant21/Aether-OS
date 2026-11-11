@@ -18,11 +18,19 @@
     From the stop onward a journal (~\.aether-os\redeploy-journal.json) records the
     phase before each irreversible step; it is deleted after a verified deploy and
     left open on failure (and then blocks the next deploy).
+    -Rollback reads that journal and undoes an unfinished deploy: stops the NEW
+    collector (exact index.js match), restores the old Run value only if it still
+    holds the value this script wrote (compare-and-swap), relaunches the old
+    collector once (never a second copy), moves the staged dir aside, then deletes
+    the journal. It never restores the db (the backup path is printed). Idempotent.
     -DryRun (alias -WhatIf) prints every action and changes nothing.
 .PARAMETER Version
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
     Defaults to D:\AetherBuilds.
+.PARAMETER Rollback
+    Undo an unfinished deploy from ~\.aether-os\redeploy-journal.json. Needs no
+    -Version/-StageRoot/-DbPath. With -DryRun it prints each rollback step only.
 .NOTES
     Exit codes: 0 success (or dry run, or new collector alive but no events yet),
     1 failure (build/stage/backup/stop/start/verify), 2 bad input
@@ -31,7 +39,10 @@
     ~\.aether-os\collector.db, Run command over 260 characters, an existing
     ~\.aether-os\redeploy-journal.json, a non-REG_SZ Run value, -VerifySeconds
     outside 1..60; all checked before
-    anything is changed).
+    anything is changed), or -Rollback with no journal / an unreadable journal.
+    3 rollback incomplete: a manual step is needed (RECOVERY lines are printed)
+    and the journal is left open. -Rollback exits 0 when complete or when it only
+    removed a stale journal of a deploy that had verified.
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
@@ -42,7 +53,8 @@ param(
     [string]$DbPath = (Join-Path $env:USERPROFILE '.aether-os\collector.db'),
     [Alias('WhatIf')]
     [switch]$DryRun,
-    [int]$VerifySeconds = 30
+    [int]$VerifySeconds = 30,
+    [switch]$Rollback
 )
 
 $ErrorActionPreference = 'Stop'
@@ -415,6 +427,193 @@ function Test-JournalRenamable {
     return $null
 }
 
+$RelaunchWaitSeconds = 2   # pause between relaunching the old collector and its liveness check
+
+function Get-RunValueNow {
+    # Current Run value, or $null when absent. An empty string is a real value, not absent.
+    $p = Get-ItemProperty -Path $RunKeyPath -Name $RunKeyName -ErrorAction SilentlyContinue
+    if ($p) { return $p.$RunKeyName }
+    return $null
+}
+
+function Write-RecoveryText {
+    # Printed only with exit 3. Order matters: check, old value, stop the NEW collector before starting the old one, db, re-run.
+    param($Journal, [string]$JournalPath)
+    $oldRun = Get-JournalField $Journal 'oldRun'
+    $ix = Get-JournalField $Journal 'indexJs'
+    $bak = Get-JournalField $Journal 'bak'
+    Write-Output "RECOVERY: 1. Check the Run value first: Get-ItemProperty -Path '$RunKeyPath' -Name '$RunKeyName'"
+    if ($null -eq $oldRun) {
+        Write-Output "RECOVERY: 2. There was no old Run value; remove the current one: Remove-ItemProperty -Path '$RunKeyPath' -Name '$RunKeyName'"
+    } else {
+        Write-Output "RECOVERY: 2. The old Run value was <$oldRun>; restore it: Set-ItemProperty -Path '$RunKeyPath' -Name '$RunKeyName' -Value '$($oldRun.Replace("'", "''"))' -Type String"
+    }
+    Write-Output "RECOVERY: 3. Stop the NEW collector (index.js $ix) BEFORE starting the old one: two collectors writing one db break the single-writer assumption."
+    Write-Output "RECOVERY: 4. The db backup is at $bak and is NOT restored automatically. If the old collector exits right after it is relaunched, the db may have been migrated by the new one; the backup is at $bak"
+    Write-Output "RECOVERY: 5. After fixing, re-run scripts\redeploy-collector.ps1 -Rollback (it is idempotent); the journal $JournalPath is left open."
+}
+
+function Invoke-Rollback {
+    # Reports the outcome ONLY through $script:RC (0 complete, 3 incomplete), never by returning a value.
+    # Each step is idempotent. R2 runs even when R1 failed; R3 and R4 are skipped when R1 failed.
+    param($Journal, [string]$JournalPath, [bool]$Dry)
+    if ((Get-JournalField $Journal 'phase') -eq 'verified') {
+        if ($Dry) { Write-Output "[DRY-RUN] delete stale journal $JournalPath" } else { Remove-Journal -Path $JournalPath }
+        Write-Output 'deploy completed, stale journal removed'
+        $script:RC = 0; return
+    }
+    $bad = Test-JournalShape $Journal
+    if ($bad) {
+        Write-Output "ROLLBACK INCOMPLETE: journal is not valid ($bad); nothing was touched."
+        Write-Output "RECOVERY: check the Run value by hand (Get-ItemProperty -Path '$RunKeyPath' -Name '$RunKeyName'), then delete $JournalPath by hand."
+        $script:RC = 3; return
+    }
+    $oldRun = Get-JournalField $Journal 'oldRun'
+    $newRun = Get-JournalField $Journal 'newRunValue'
+    $ix = Get-JournalField $Journal 'indexJs'
+    $stage = Get-JournalField $Journal 'stage'
+    $oldIdx = Get-JournalField $Journal 'oldIndex'
+    if (-not $oldIdx -and $oldRun) { $oldIdx = Get-IndexJsFromRunValue $oldRun }
+    $problems = @()
+    $r1ok = $true
+
+    Write-Output '===== R1: stop the new collector ====='
+    $why = Test-JournalKillable $Journal
+    if ($why) {
+        $r1ok = $false; $problems += "R1 skipped ($why)"
+        Write-Output "WARNING: R1 skipped, the journal fields do not allow a kill: $why"
+    } else {
+        if ($Dry) { Write-Output "[DRY-RUN] R1 stop the new collector $ix (never the old one)" }
+        try { Stop-NewCollector -IndexJs $ix -ExemptIndexJs $oldIdx -Dry $Dry }
+        catch { $r1ok = $false; $problems += "R1 failed ($($_.Exception.Message))"; Write-Output "WARNING: R1 failed: $($_.Exception.Message)" }
+    }
+
+    Write-Output '===== R2: restore the Run value ====='
+    $why = Test-JournalRestorable $Journal
+    if ($why) {
+        $problems += "R2 skipped ($why)"
+        Write-Output "WARNING: R2 skipped: $why"
+    } else {
+        try {
+            $cur = Get-RunValueNow
+            $kind = Get-RunKeyKind
+            $oldTxt = if ($null -eq $oldRun) { '<absent>' } else { "<$oldRun>" }
+            if ($null -ne $cur -and $kind -ne 'String') {
+                $problems += "R2 not written (the Run value is $kind, not REG_SZ)"
+                Write-Output "WARNING: R2 not written: the Run value is $kind, not REG_SZ. Current <$cur>; old $oldTxt; new <$newRun>."
+            } elseif ($null -eq $oldRun -and $null -eq $cur) {
+                Write-Output 'R2: the Run value is already absent (the old state); no write.'
+            } elseif ($null -ne $oldRun -and $cur -ceq $oldRun) {
+                Write-Output 'R2: the Run value is already the old value; no write.'
+            } elseif ($null -ne $cur -and $cur -ceq $newRun) {
+                if ($Dry) {
+                    Write-Output "[DRY-RUN] R2 restore the Run value to $oldTxt"
+                } elseif ($null -eq $oldRun) {
+                    Write-Output "[RUN] remove $RunKeyPath\$RunKeyName"
+                    Remove-ItemProperty -Path $RunKeyPath -Name $RunKeyName
+                    if ($null -ne (Get-RunValueNow)) { throw 'Run key read-back mismatch: the value is still present after removal' }
+                } else {
+                    Write-Output "[RUN] set $RunKeyPath\$RunKeyName = $oldRun"
+                    Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value $oldRun -Type String
+                    $readBack = Get-RunValueNow
+                    if (-not ($readBack -is [string]) -or -not ($readBack -ceq $oldRun)) { throw "Run key read-back mismatch: wrote <$oldRun>, read <$readBack>" }
+                }
+            } else {
+                $problems += 'R2 not written (the Run value is neither the old nor the new value)'
+                Write-Output "WARNING: R2 not written: the Run value was changed by someone else. Current <$cur>; old $oldTxt; new <$newRun>. A human decides."
+            }
+        } catch {
+            $problems += "R2 failed ($($_.Exception.Message))"
+            Write-Output "WARNING: R2 failed: $($_.Exception.Message)"
+        }
+    }
+
+    Write-Output '===== R3: relaunch the old collector ====='
+    $ranOld = $false
+    if (-not $r1ok) {
+        $problems += 'R3 skipped (the new collector may still be running)'
+        Write-Output 'WARNING: R3 skipped: the new collector may still be running, so a second writer is not safe.'
+    } elseif (-not (Get-JournalField $Journal 'oldWasRunning')) {
+        Write-Output 'the old collector was not running before this run; not started'
+    } else {
+        try {
+            $manual = "start it by hand: $oldRun"
+            $existing = @(Get-ExactIndexProcessMatch -Processes @(Get-WmiObject Win32_Process) -IndexJs $oldIdx -ExcludePid $PID)
+            $node = Get-NodeExeFromRunValue $oldRun
+            if ($existing.Count -gt 0) {
+                $ranOld = $true
+                Write-Output "R3: the old collector is already running (PID $($existing[0].ProcessId)); not started again."
+            } elseif (-not $oldIdx -or -not $node -or -not (Test-Path -LiteralPath $oldIdx)) {
+                $problems += "R3 cannot relaunch the old collector ($manual)"
+                Write-Output "WARNING: R3 cannot relaunch: no usable old index.js / node.exe in the old Run value or the index.js is missing; $manual"
+            } elseif ($Dry) {
+                Write-Output "[DRY-RUN] R3 Start-Process conhost.exe --headless `"$node`" `"$oldIdx`" (cwd $(Split-Path (Split-Path $oldIdx)))"
+            } else {
+                Write-Output "[RUN] Start-Process conhost.exe --headless `"$node`" `"$oldIdx`""
+                Start-Process conhost.exe -ArgumentList '--headless', "`"$node`"", "`"$oldIdx`"" -WorkingDirectory (Split-Path (Split-Path $oldIdx))
+                Start-Sleep -Seconds $RelaunchWaitSeconds
+                if (Test-CollectorAlive $oldIdx) { $ranOld = $true; Write-Output 'R3: the old collector is running.' }
+                else { $problems += "R3 old collector is not running after relaunch ($manual)"; Write-Output "WARNING: R3 the old collector is not running after relaunch; $manual" }
+            }
+        } catch {
+            $problems += "R3 failed ($($_.Exception.Message))"
+            Write-Output "WARNING: R3 failed: $($_.Exception.Message)"
+        }
+    }
+
+    Write-Output '===== R4: move the staged dir aside ====='
+    if (-not $r1ok) {
+        Write-Output 'R4 skipped: the new collector may still be running.'
+    } else {
+        $why = Test-JournalRenamable $Journal
+        if ($why) {
+            Write-Output "WARNING: R4 skipped: $why"
+        } else {
+            $newName = 'collector.failed-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+            if ($Dry) {
+                Write-Output "[DRY-RUN] R4 rename $stage -> $newName"
+            } else {
+                try {
+                    Write-Output "[RUN] rename $stage -> $newName"
+                    Rename-Item -LiteralPath $stage -NewName $newName
+                } catch {
+                    Write-Output "WARNING: R4 could not move the stage dir aside ($($_.Exception.Message)); by hand: Rename-Item -LiteralPath '$stage' -NewName '$newName'"
+                }
+            }
+        }
+    }
+
+    Write-Output '===== R5: journal ====='
+    if ($problems.Count -eq 0) {
+        if ($Dry) { Write-Output "[DRY-RUN] R5 delete journal $JournalPath" }
+        else {
+            try { Remove-Journal -Path $JournalPath; Write-Output "journal deleted: $JournalPath" }
+            catch { Write-Output "WARNING: could not delete the journal $JournalPath ($($_.Exception.Message)); delete it by hand." }
+        }
+        if ($ranOld) { Write-Output 'ROLLBACK COMPLETE: previous Run value restored, old collector running' }
+        else { Write-Output 'ROLLBACK COMPLETE: previous Run value restored, old collector was not running before' }
+        $script:RC = 0
+    } else {
+        Write-Output "ROLLBACK INCOMPLETE: $($problems -join '; ')"
+        Write-RecoveryText -Journal $Journal -JournalPath $JournalPath
+        $script:RC = 3
+    }
+}
+
+function Invoke-RollbackCommand {
+    param([bool]$Dry, [string]$ExpectedDbPath = (Join-Path $env:USERPROFILE '.aether-os\collector.db'))
+    $journalPath = Get-JournalPath -ExpectedDbPath $ExpectedDbPath
+    try { $journal = Read-Journal -Path $journalPath }
+    catch { Write-Output "ERROR: $($_.Exception.Message)"; $script:RC = 2; return }
+    if ($null -eq $journal) {
+        Write-Output "ERROR: no redeploy journal at $journalPath; nothing to roll back."
+        $script:RC = 2; return
+    }
+    if ($Dry) { Write-Output 'DRY-RUN: nothing will be changed.' }
+    Write-Output '===== Rollback ====='
+    Invoke-Rollback -Journal $journal -JournalPath $journalPath -Dry $Dry
+}
+
 function Invoke-Redeploy {
     param([string]$Version, [string]$StageRoot, [string]$DbPath, [bool]$Dry, [int]$VerifySeconds,
           [string]$ExpectedDbPath = (Join-Path $env:USERPROFILE '.aether-os\collector.db'))
@@ -574,6 +773,7 @@ function Invoke-Redeploy {
 
 if ($MyInvocation.InvocationName -ne '.') {
     $script:RC = 1
-    Invoke-Redeploy -Version $Version -StageRoot $StageRoot -DbPath $DbPath -Dry ([bool]$DryRun) -VerifySeconds $VerifySeconds
+    if ($Rollback) { Invoke-RollbackCommand -Dry ([bool]$DryRun) }
+    else { Invoke-Redeploy -Version $Version -StageRoot $StageRoot -DbPath $DbPath -Dry ([bool]$DryRun) -VerifySeconds $VerifySeconds }
     exit $script:RC
 }
