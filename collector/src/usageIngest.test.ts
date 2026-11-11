@@ -105,6 +105,54 @@ describe('ingestUsageEvent', () => {
   });
 });
 
+describe('ingestUsageEvent message_key dedupe', () => {
+  const count = (db: ReturnType<typeof freshDb>) => (db.prepare('SELECT COUNT(*) as c FROM usage_events').get() as any).c;
+
+  it('the same messageKey twice stores one row and the second call returns false', () => {
+    const db = freshDb();
+    expect(ingestUsageEvent(db, assistantEvent({ messageKey: 'msg:req' }), 'p/a.jsonl')).toBe(true);
+    expect(ingestUsageEvent(db, assistantEvent({ messageKey: 'msg:req' }), 'p/a.jsonl')).toBe(false);
+    expect(count(db)).toBe(1);
+    expect((db.prepare('SELECT message_key FROM usage_events').get() as any).message_key).toBe('msg:req');
+    db.close();
+  });
+
+  it('a different requestId part is a different message', () => {
+    const db = freshDb();
+    ingestUsageEvent(db, assistantEvent({ messageKey: 'msg:r1' }), 'p/a.jsonl');
+    ingestUsageEvent(db, assistantEvent({ messageKey: 'msg:r2' }), 'p/a.jsonl');
+    expect(count(db)).toBe(2);
+    db.close();
+  });
+
+  it('events without a messageKey are not deduped', () => {
+    const db = freshDb();
+    expect(ingestUsageEvent(db, assistantEvent(), 'p/a.jsonl')).toBe(true);
+    expect(ingestUsageEvent(db, assistantEvent({ messageKey: null }), 'p/a.jsonl')).toBe(true);
+    expect(count(db)).toBe(2);
+    db.close();
+  });
+
+  it('migrate adds the column and exactly one unique index, idempotently, on an existing DB', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-usageingest-'));
+    const db = openDatabase(join(dir, 'old.db'));
+    migrate(db);
+    // Rebuild usage_events as a pre-column table that already holds a row.
+    db.exec('DROP INDEX IF EXISTS idx_usage_events_message_key; ALTER TABLE usage_events DROP COLUMN message_key');
+    db.exec(`INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)
+             VALUES (1, 'm', 1, 1, 0, 0)`);
+    migrate(db);
+    migrate(db);
+    const cols = (db.prepare("PRAGMA table_info('usage_events')").all() as any[]).map((c) => c.name);
+    expect(cols).toContain('message_key');
+    const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_usage_events_message_key'").all();
+    expect(idx).toHaveLength(1);
+    expect(db.prepare("SELECT sql FROM sqlite_master WHERE name='idx_usage_events_message_key'").get()).toMatchObject({ sql: expect.stringContaining('UNIQUE') });
+    expect(count(db)).toBe(1);
+    db.close();
+  });
+});
+
 describe('ingestDispatchEvent', () => {
   it('records exact tag-provided values when an Agent dispatch is closed by its task-notification', () => {
     const db = freshDb();

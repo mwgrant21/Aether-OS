@@ -29,6 +29,20 @@ describe('parseTranscriptLine', () => {
     });
   });
 
+  it('derives messageKey "msg:req" from message.id and requestId on an assistant line', () => {
+    const line = JSON.stringify({ type: 'assistant', requestId: 'req', message: { id: 'msg', content: [] } });
+    expect(parseTranscriptLine(line)?.messageKey).toBe('msg:req');
+  });
+
+  it('uses an empty requestId part when absent, and no messageKey without message.id', () => {
+    const noReq = JSON.stringify({ type: 'assistant', message: { id: 'msg', content: [] } });
+    expect(parseTranscriptLine(noReq)?.messageKey).toBe('msg:');
+    const noId = JSON.stringify({ type: 'assistant', requestId: 'req', message: { content: [] } });
+    expect(parseTranscriptLine(noId)?.messageKey ?? null).toBeNull();
+    const emptyId = JSON.stringify({ type: 'assistant', requestId: 'req', message: { id: '', content: [] } });
+    expect(parseTranscriptLine(emptyId)?.messageKey ?? null).toBeNull();
+  });
+
   it('parses an assistant line missing usage as usage: null', () => {
     const line = JSON.stringify({ type: 'assistant', sessionId: 's1', message: { model: 'x', content: [] } });
     const result = parseTranscriptLine(line);

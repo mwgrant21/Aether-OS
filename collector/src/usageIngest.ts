@@ -15,9 +15,12 @@ import { medianOf, BASELINE_WINDOW } from './severity/baselineMath.js';
 export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent, sourceFileRel: string): boolean {
   if (event.kind !== 'assistant' || event.usage === null || event.timestamp === null) return false;
 
-  db.prepare(
-    `INSERT INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_file_rel)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  // Streamed lines of one message share a messageKey; the unique index
+  // idx_usage_events_message_key makes the repeat a no-op. Keyless events (NULL
+  // is distinct in a unique index) always insert.
+  const result = db.prepare(
+    `INSERT OR IGNORE INTO usage_events (occurred_at_ms, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, source_file_rel, message_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.timestamp.getTime(),
     event.model,
@@ -25,9 +28,10 @@ export function ingestUsageEvent(db: DatabaseSync, event: TranscriptEvent, sourc
     event.usage.outputTokens,
     event.usage.cacheCreationInputTokens,
     event.usage.cacheReadInputTokens,
-    sourceFileRel
+    sourceFileRel,
+    event.messageKey ?? null
   );
-  return true;
+  return Number(result.changes) > 0;
 }
 
 // Dispatch completion, ported from the already-shipped reference implementation

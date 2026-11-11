@@ -55,6 +55,10 @@ export interface TranscriptEvent {
   // Transient: NEVER persisted, NEVER logged, same contract as humanText. The
   // parser does not truncate; consumers bound it. Absent key when not a hand-back.
   handback?: { agentId: string; reportText: string };
+  // "<message.id>:<requestId or ''>" on an assistant line whose message.id is a
+  // non-empty string; Claude Code streams one message as several lines sharing
+  // it. Absent/null otherwise (such lines are not deduped).
+  messageKey?: string | null;
 }
 
 // Tolerant read of a hand-back origin; never throws, null on any wrong shape.
@@ -108,6 +112,10 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
     const toolUses = content
       .filter((item: any) => item.type === 'tool_use')
       .map((item: any) => ({ id: item.id, name: item.name, input: item.input }));
+    const messageKey =
+      typeof msg.id === 'string' && msg.id !== ''
+        ? `${msg.id}:${typeof json.requestId === 'string' ? json.requestId : ''}`
+        : null;
     return {
       kind: 'assistant',
       sessionId,
@@ -119,6 +127,7 @@ export function parseTranscriptLine(rawLine: string): TranscriptEvent | null {
       toolResults: [],
       humanText: null,
       originKind: (json.origin && json.origin.kind) || null,
+      ...(messageKey === null ? {} : { messageKey }),
     };
   }
 
