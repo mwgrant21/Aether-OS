@@ -6,6 +6,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+### Added
+- `backfill-usage` in the Node collector CLI: a dry-run-by-default repair that rebuilds the dedupe key for pre-0.7.6 usage rows from their transcripts and removes streamed duplicates. Rows whose transcripts no longer exist are left unchanged and reported.
+
 ## [0.7.6] - 2026-11-10
 
 ### Added
