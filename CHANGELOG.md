@@ -6,7 +6,11 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-10
+
 ### Added
+- Statusline warns when a session context passes 300k tokens, on the Aether line and on chained lines (#222).
+- Boards note a range override on panels whose default range differs (#222).
 - CI: a non-required Windows e2e job (#216).
 
 ### Changed
@@ -15,6 +19,8 @@ pre-1.0 semver as described in `docs/packaging.md`.
 - PTY owner helper: follow-ups, and a helper launched during a quit wait is now ended (#210, #220).
 
 ### Fixed
+- Streamed assistant usage is counted once, not once per streamed chunk: the widget history scan, the Node collector and the Go collector dedupe on a shared `message_key` unique index. Existing `usage_events` rows keep NULL keys and are not backfilled (#222).
+- The cache hit rate starter board includes cache creation tokens in its denominator (#222).
 - The Codex ACP client survives child and stdin errors and decodes UTF-8 incrementally (#211).
 - Collector interval ticks are guarded, and the Go fleet poll times out (#212).
 - Optimize shows $/wk as a per-week average, not the all-time total (#213).
@@ -214,7 +220,8 @@ The first tagged release. It folds in the 0.1.0 scaffold (history starts 2026-07
 ### Removed
 - The Anthropic SDK, the model call path and `.env` key loading; chat replies use the local responder (API teardown).
 
-[Unreleased]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.2...v0.7.3
