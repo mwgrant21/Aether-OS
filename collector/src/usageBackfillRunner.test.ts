@@ -5,7 +5,7 @@ import { join } from 'path';
 import type { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
 import { openDatabase, migrate } from './schema.js';
-import { runUsageBackfill, USAGE_TEXT, type RunnerEnv } from './usageBackfillRunner.js';
+import { runUsageBackfill, defaultVerifyBackup, USAGE_TEXT, type RunnerEnv } from './usageBackfillRunner.js';
 import { DbChangedError, AssertionError } from './usageBackfill.js';
 
 const require = createRequire(import.meta.url);
@@ -128,6 +128,14 @@ describe('runUsageBackfill', () => {
     expect(runUsageBackfill(args(f, '--apply'), f.env)).toBe(4);
     expect(baks(f)).toEqual([]);
     expect(stats(f.dbPath)).toEqual(before);
+  });
+
+  it('default verification rejects a backup whose row count or token sum differs from the snapshot', () => {
+    const f = fixture(null);
+    const snap = { maxId: 2, count: 2, nullKeyCount: 2, tokensTotal: 30, heartbeat: null };
+    expect(defaultVerifyBackup(f.dbPath, snap)).toBe(true);
+    expect(defaultVerifyBackup(f.dbPath, { ...snap, tokensTotal: 31 })).toBe(false);
+    expect(defaultVerifyBackup(f.dbPath, { ...snap, count: 3 })).toBe(false);
   });
 
   it('does not delete a pre-existing .bak when the target name is taken', () => {

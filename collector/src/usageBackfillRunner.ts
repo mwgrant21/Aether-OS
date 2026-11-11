@@ -98,7 +98,7 @@ function defaultFreeBytes(dir: string): number {
 const TOKEN_SUM =
   'COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0) + COALESCE(SUM(cache_creation_input_tokens),0) + COALESCE(SUM(cache_read_input_tokens),0)';
 
-function defaultVerifyBackup(backupPath: string, snap: BackfillSnapshot): boolean {
+export function defaultVerifyBackup(backupPath: string, snap: BackfillSnapshot): boolean {
   const db: DatabaseSync = new (require('node:sqlite').DatabaseSync)(backupPath, { readOnly: true });
   try {
     const qc = db.prepare('PRAGMA quick_check').all() as Array<Record<string, unknown>>;
