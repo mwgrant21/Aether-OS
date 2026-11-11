@@ -99,13 +99,23 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     $db = Join-Path $fdir 'collector.db'
     $jp = Get-JournalPath -ExpectedDbPath $db
     Set-Content -Path $db -Value 'x'
-    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    # The old index.js must exist on disk or the auto-rollback's R3 reports "cannot relaunch".
+    $oldIdx = Join-Path $fdir 'oldcoll\collector\dist\index.js'
+    New-Item -ItemType Directory -Force -Path (Split-Path $oldIdx) | Out-Null
+    Set-Content -Path $oldIdx -Value 'old'
+    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "' + $oldIdx + '"'
     $global:RedeployTempPaths += @($fdir)
     $global:RedeployRunValue = $oldValue
+    Mock Get-WmiObject { @() }
+    Mock Get-Process {}
+    Mock Stop-Process {}
+    Mock Rename-Item {}
     Mock Test-OldCollectorRunning { $true }
     Mock Get-RunKeyKind { 'String' }
     Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
-    Mock Set-ItemProperty { $global:RedeployRunValue = $Value }
+    $global:RedeployFailSecondSet = $false
+    $global:RedeploySetCalls = 0
+    Mock Set-ItemProperty { $global:RedeploySetCalls++; if ($global:RedeployFailSecondSet -and $global:RedeploySetCalls -ge 2) { throw 'access denied' }; $global:RedeployRunValue = $Value }
     Mock Start-Process {}
     Mock Start-Sleep {}
     Mock Copy-Item {}
@@ -115,18 +125,40 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
     $script:counts = @()
     Mock Get-RowCount { $script:counts += 'read'; [int64]100 }
 
-    It 'reads the baseline after the stop, then reports a crashed new collector as failure with recovery text' {
-        Mock Test-CollectorAlive { $false }
+    It 'reads the baseline after the stop, then reports a crashed new collector as failure and rolls back (RC 1, old Run value back)' {
+        Mock Test-CollectorAlive { $IndexJs -like '*\oldcoll\*' }
         Remove-Journal -Path $jp
+        $script:RC = 99
 
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 3 | Out-String
         $out | Should Match 'new collector is not running'
-        $out | Should Match 'RECOVERY: old Run value was <conhost.exe --headless'
         $out | Should Match 'Backup path: '
         $out | Should Match '\.pre-9\.9\.9-'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Not Match 'RECOVERY'
+        ($global:RedeployRunValue -ceq $oldValue) | Should Be $true
+        $script:RC | Should Be 1
+        Test-Path $jp | Should Be $false
         Assert-MockCalled Stop-OldCollector -Times 1
-        Assert-MockCalled Start-Process -Times 1
+        Assert-MockCalled Start-Process -Times 2   # the deploy's start + the rollback's relaunch of the old collector
         Assert-MockCalled Get-RowCount -Times 1
+    }
+    It 'prints the RECOVERY text and exits 3 with the journal kept when the rollback itself fails (double fault)' {
+        $global:RedeployRunValue = $oldValue
+        $global:RedeploySetCalls = 0; $global:RedeployFailSecondSet = $true
+        Mock Test-CollectorAlive { $IndexJs -like '*\oldcoll\*' }
+        Remove-Journal -Path $jp
+        $script:RC = 99
+
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 3 | Out-String
+        $out | Should Match 'ROLLBACK INCOMPLETE'
+        $out | Should Match 'RECOVERY: 2\. The old Run value was <conhost.exe --headless'
+        $out | Should Match 'RECOVERY: 3\. Stop the NEW collector'
+        $out | Should Match 'the db may have been migrated by the new one'
+        $global:RedeployFailSecondSet = $false
+        $script:RC | Should Be 3
+        Test-Path $jp | Should Be $true
+        Remove-Journal -Path $jp
     }
     It 'treats alive-but-no-rows as success (idle machine)' {
         $global:RedeployRunValue = $oldValue
@@ -149,9 +181,10 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
         Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-Null
         Assert-MockCalled Set-ItemProperty -ParameterFilter { $Type -eq 'String' } -Times 1
     }
-    It 'fails step 6 when the read-back differs from what was written' {
+    It 'fails step 6 when the read-back differs from what was written (rollback sees the old value, writes nothing)' {
         $global:RedeployRunValue = $oldValue
-        Mock Set-ItemProperty {}
+        $global:RedeploySetCalls = 0
+        Mock Set-ItemProperty { $global:RedeploySetCalls++ }
         Mock Test-CollectorAlive { $true }
         Remove-Journal -Path $jp
 
@@ -159,15 +192,26 @@ Describe 'Invoke-Redeploy failure handling (all side effects mocked)' {
         $out | Should Match 'read-back mismatch'
         $out | Should Not Match 'Done\.'
         $out | Should Not Match 'Step 7'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $global:RedeploySetCalls | Should Be 1   # the deploy's write only; the rollback saw the old value and wrote nothing
+        Test-Path $jp | Should Be $false
     }
-    It 'treats an empty old Run value as present, not absent' {
+    It 'restores an empty old Run value as the empty string (present, not absent)' {
         $global:RedeployRunValue = ''
+        $global:RedeploySetCalls = 0
+        Mock Set-ItemProperty { $global:RedeploySetCalls++; $global:RedeployRunValue = $Value }
+        Mock Test-OldCollectorRunning { $false }
         Mock Test-CollectorAlive { $false }
         Remove-Journal -Path $jp
+        $script:RC = 99
 
         $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'D:\AetherBuilds' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
-        $out | Should Match 'RECOVERY: old Run value was <>'
-        $out | Should Not Match 'no old Run value existed'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Not Match 'RECOVERY'
+        $global:RedeploySetCalls | Should Be 2
+        ($global:RedeployRunValue -is [string]) | Should Be $true
+        $global:RedeployRunValue.Length | Should Be 0
+        $script:RC | Should Be 1
     }
     # Last in this Describe: its Mock Get-FreeBytes persists for the Its after it.
     It 'fails before stopping anything when free space is short' {
@@ -419,6 +463,7 @@ Describe 'Invoke-Redeploy journal phase order (Write-Journal / Remove-Journal re
     $global:RedeployThrowPhase = $null
     $global:RedeployThrowDelete = $false
     $global:RedeployRows = 0
+    Mock Rename-Item {}
     Mock Test-OldCollectorRunning { $true }
     Mock Get-RunKeyKind { 'String' }
     Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
@@ -483,10 +528,18 @@ Describe 'Invoke-Redeploy journal contents and verify-loop tolerance (real journ
     $db = Join-Path $rdir 'collector.db'
     Set-Content -Path $db -Value 'x'
     $jp = Get-JournalPath -ExpectedDbPath $db
-    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    # The old index.js must exist on disk or the auto-rollback's R3 reports "cannot relaunch".
+    $oldIdx = Join-Path $rdir 'oldcoll\collector\dist\index.js'
+    New-Item -ItemType Directory -Force -Path (Split-Path $oldIdx) | Out-Null
+    Set-Content -Path $oldIdx -Value 'old'
+    $oldValue = 'conhost.exe --headless "C:\n\node.exe" "' + $oldIdx + '"'
     $global:RedeployRunValue = $oldValue
     $global:RedeployRows = 0
     $global:RedeployAliveCalls = 0
+    Mock Get-WmiObject { @() }
+    Mock Get-Process {}
+    Mock Stop-Process {}
+    Mock Rename-Item {}
     Mock Test-OldCollectorRunning { $true }
     Mock Get-RunKeyKind { 'String' }
     Mock Get-ItemProperty { [pscustomobject]@{ AetherCollector = $global:RedeployRunValue } }
@@ -530,7 +583,7 @@ Describe 'Invoke-Redeploy journal contents and verify-loop tolerance (real journ
     }
     It 'still fails when the collector dies during the wait (liveness stays fatal)' {
         Mock Get-RowCount { $global:RedeployRows++; if ($global:RedeployRows -eq 1) { [int64]100 } else { throw 'row count query failed' } }
-        Mock Test-CollectorAlive { $global:RedeployAliveCalls++; $global:RedeployAliveCalls -eq 1 }
+        Mock Test-CollectorAlive { if ($IndexJs -like '*\oldcoll\*') { return $true }; $global:RedeployAliveCalls++; $global:RedeployAliveCalls -eq 1 }
         $out = Start-RealRun
         $out | Should Match 'new collector died while waiting for events'
         $script:RC | Should Be 1
@@ -541,6 +594,7 @@ Describe 'Invoke-Redeploy journal contents and verify-loop tolerance (real journ
         Mock Start-Process { throw 'cannot start' }
         $out = Start-RealRun
         $out | Should Match 'ERROR: cannot start'
+        $out | Should Match 'ROLLBACK INCOMPLETE'   # the rollback's own relaunch of the old collector throws too, so the journal stays
         $j = Read-Journal -Path $jp
         $j.phase | Should Be 'repointed'
         ($j.oldRun -ceq $oldValue) | Should Be $true
@@ -555,6 +609,7 @@ Describe 'Invoke-Redeploy journal contents and verify-loop tolerance (real journ
     It 'records oldWasRunning=false and keeps an empty old Run value (not null) in the journal' {
         Mock Test-OldCollectorRunning { $false }
         Mock Start-Process { throw 'cannot start' }
+        Mock Invoke-Rollback {}   # keep the journal on disk so its contents can be read
         Remove-Journal -Path $jp
         $global:RedeployRunValue = ''
         $script:RC = 99
@@ -1080,6 +1135,192 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $script:RC | Should Be 0
         $out | Should Match 'stale journal removed'
         Get-RbCount '.' | Should Be 0
+    }
+}
+
+Describe 'Invoke-Redeploy auto-rollback fault injection (everything mocked; journal, stage and old index.js are real temp files)' {
+    $ftdir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-fi-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $ftdir | Out-Null
+    $global:RedeployTempPaths += @($ftdir)
+    $db = Join-Path $ftdir 'collector.db'
+    Set-Content -Path $db -Value 'x'
+    $jp = Get-JournalPath -ExpectedDbPath $db
+    $oldIdx = Join-Path $ftdir 'oldcoll\collector\dist\index.js'
+    New-Item -ItemType Directory -Force -Path (Split-Path $oldIdx) | Out-Null
+    Set-Content -Path $oldIdx -Value 'old'
+    $global:FtOld = 'conhost.exe --headless "C:\n\node.exe" "' + $oldIdx + '"'
+    $global:FtRun = $global:FtOld
+    $global:FtSets = 0; $global:FtSetThrowAt = 0; $global:FtSetNoWrite = $false
+    $global:FtStarts = 0; $global:FtStartThrowAt = 0
+    $global:FtRows = 0; $global:FtRowThrowAt = 0
+    $global:FtStops = 0; $global:FtNewAlive = $true; $global:FtBuildThrows = $false; $global:FtThrowPhases = @()
+    Mock Test-OldCollectorRunning { $true }
+    Mock Get-RunKeyKind { 'String' }
+    Mock Get-ItemProperty { if ($null -eq $global:FtRun) { $null } else { [pscustomobject]@{ AetherCollector = $global:FtRun } } }
+    Mock Set-ItemProperty {
+        $global:FtSets++
+        if ($global:FtSetThrowAt -eq $global:FtSets) { throw 'registry write denied' }
+        if (-not $global:FtSetNoWrite) { $global:FtRun = $Value }
+    }
+    Mock Start-Process { $global:FtStarts++; if ($global:FtStartThrowAt -eq $global:FtStarts) { throw 'cannot start' } }
+    Mock Start-Sleep {}
+    Mock Copy-Item {}
+    Mock Get-FreeBytes { [int64]1GB }
+    Mock Stop-OldCollector { $global:FtStops++ }
+    Mock Get-WmiObject { @() }
+    Mock Get-Process {}
+    Mock Stop-Process {}
+    Mock Rename-Item { [IO.Directory]::Move($LiteralPath, (Join-Path (Split-Path $LiteralPath) $NewName)) }
+    Mock Invoke-BuildAndStage {
+        New-Item -ItemType Directory -Force -Path (Join-Path $Stage 'dist') | Out-Null
+        Set-Content -Path (Join-Path $Stage 'dist\index.js') -Value 'new'
+        if ($global:FtBuildThrows) { throw 'npm build failed' }
+    }
+    Mock Test-CollectorAlive { if ($IndexJs -like '*\oldcoll\*') { return $true }; $global:FtNewAlive }
+    Mock Get-RowCount {
+        $global:FtRows++
+        if ($global:FtRowThrowAt -eq $global:FtRows) { throw 'row count query failed' }
+        if ($global:FtRows -eq 1) { [int64]100 } else { [int64]101 }
+    }
+    Mock Write-Journal {
+        if ($global:FtThrowPhases -contains $Journal.phase) { throw 'disk full' }
+        Set-Content -LiteralPath $Path -Value ($Journal | ConvertTo-Json)
+    }
+    function New-FtRoot { Join-Path $ftdir ([guid]::NewGuid().ToString('N')) }
+    function Reset-Ft {
+        Remove-Journal -Path $jp
+        $global:FtRun = $global:FtOld
+        $global:FtSets = 0; $global:FtSetThrowAt = 0; $global:FtSetNoWrite = $false
+        $global:FtStarts = 0; $global:FtStartThrowAt = 0
+        $global:FtRows = 0; $global:FtRowThrowAt = 0
+        $global:FtStops = 0; $global:FtNewAlive = $true; $global:FtBuildThrows = $false; $global:FtThrowPhases = @()
+    }
+    function Start-FtDeploy($root) {
+        $script:RC = 99
+        Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+    }
+    function Test-StageAside($root) {
+        (-not (Test-Path -LiteralPath (Join-Path $root '9.9.9\collector'))) -and (@(Get-ChildItem -LiteralPath (Join-Path $root '9.9.9') -Filter 'collector.failed-*').Count -eq 1)
+    }
+
+    It 'baseline Get-RowCount throws (phase backed-up): Run never written, rolled back, RC 1, journal removed, stage aside' {
+        Reset-Ft; $global:FtRowThrowAt = 1; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ERROR: row count query failed'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Not Match 'RECOVERY'
+        $global:FtSets | Should Be 0
+        ($global:FtRun -ceq $global:FtOld) | Should Be $true
+        $script:RC | Should Be 1
+        Test-Path $jp | Should Be $false
+        Test-StageAside $root | Should Be $true
+    }
+    It 'Set-ItemProperty throws (phase repointing): CAS sees the old value, no restore write, RC 1' {
+        Reset-Ft; $global:FtSetThrowAt = 1; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ERROR: registry write denied'
+        $out | Should Match 'already the old value'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $global:FtSets | Should Be 1
+        ($global:FtRun -ceq $global:FtOld) | Should Be $true
+        $script:RC | Should Be 1
+        Test-Path $jp | Should Be $false
+    }
+    It 'read-back mismatch (phase repointing): no restore write, RC 1, never reaches Start-Process for the new collector' {
+        Reset-Ft; $global:FtSetNoWrite = $true; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'read-back mismatch'
+        $out | Should Match 'already the old value'
+        $global:FtSets | Should Be 1
+        $global:FtStarts | Should Be 1   # only the rollback's relaunch of the old collector
+        ($global:FtRun -ceq $global:FtOld) | Should Be $true
+        $script:RC | Should Be 1
+        Test-Path $jp | Should Be $false
+    }
+    It 'Start-Process throws (phase repointed): the Run value is restored with a write, RC 1' {
+        Reset-Ft; $global:FtStartThrowAt = 1; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ERROR: cannot start'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $global:FtSets | Should Be 2
+        ($global:FtRun -ceq $global:FtOld) | Should Be $true
+        $script:RC | Should Be 1
+        Test-Path $jp | Should Be $false
+        Test-StageAside $root | Should Be $true
+    }
+    It 'new collector dead at verify (phase launched): Run restored, old collector relaunched, RC 1' {
+        Reset-Ft; $global:FtNewAlive = $false; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'new collector is not running'
+        $out | Should Match 'ROLLBACK COMPLETE: previous Run value restored, old collector running'
+        $global:FtSets | Should Be 2
+        $global:FtStarts | Should Be 2
+        ($global:FtRun -ceq $global:FtOld) | Should Be $true
+        $script:RC | Should Be 1
+        Test-Path $jp | Should Be $false
+    }
+    It 'double fault: the rollback restore throws -> RC 3, journal kept, RECOVERY has the old value, stop-new-first and the migrated-db sentence' {
+        Reset-Ft; $global:FtNewAlive = $false; $global:FtSetThrowAt = 2; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ROLLBACK INCOMPLETE'
+        $out | Should Match 'R2 failed \(registry write denied\)'
+        $out | Should Match ('RECOVERY: 2\. The old Run value was <' + [regex]::Escape($global:FtOld))
+        $out | Should Match 'RECOVERY: 3\. Stop the NEW collector'
+        $out | Should Match 'the db may have been migrated by the new one'
+        $script:RC | Should Be 3
+        Test-Path $jp | Should Be $true
+        Remove-Journal -Path $jp
+    }
+    It 'pre-journal failure (build throws): stage aside, no journal, no rollback, no RECOVERY, nothing stopped, RC 1' {
+        Reset-Ft; $global:FtBuildThrows = $true; $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ERROR: npm build failed'
+        $out | Should Not Match 'RECOVERY'
+        $out | Should Not Match 'Rollback'
+        Test-Path $jp | Should Be $false
+        $global:FtStops | Should Be 0
+        $global:FtSets | Should Be 0
+        $script:RC | Should Be 1
+        Test-StageAside $root | Should Be $true
+    }
+    It 'a failed journal-open write (stopping) is pre-journal: nothing stopped, stage aside, RC 1' {
+        Reset-Ft; $global:FtThrowPhases = @('stopping'); $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ERROR: disk full'
+        $out | Should Not Match 'RECOVERY'
+        $global:FtStops | Should Be 0
+        $global:FtSets | Should Be 0
+        $script:RC | Should Be 1
+        Test-StageAside $root | Should Be $true
+    }
+    It 'a second same-version run after an auto-rolled-back failure does not hit the stage-dir refusal' {
+        Reset-Ft; $global:FtNewAlive = $false; $root = New-FtRoot
+        Start-FtDeploy $root | Out-Null
+        $script:RC | Should Be 1
+        Reset-Ft
+        $out = Start-FtDeploy $root
+        $out | Should Not Match 'stage directory already exists'
+        $out | Should Match 'Done\.'
+        $script:RC | Should Be 0
+    }
+    It 'later journal writes are best-effort: a throwing stopped / backed-up / repointed / launched write warns and the deploy succeeds' {
+        foreach ($phase in 'stopped', 'backed-up', 'repointed', 'launched') {
+            Reset-Ft; $global:FtThrowPhases = @($phase); $root = New-FtRoot
+            $out = Start-FtDeploy $root
+            $out | Should Match ("WARNING: could not write journal phase '" + $phase + "'")
+            $out | Should Match 'Done\.'
+            $out | Should Not Match 'ERROR'
+            $script:RC | Should Be 0
+        }
+    }
+    It 'the repointing write stays fail-closed: when it throws the Run value is never written, rolled back, RC 1' {
+        Reset-Ft; $global:FtThrowPhases = @('repointing'); $root = New-FtRoot
+        $out = Start-FtDeploy $root
+        $out | Should Match 'ERROR: disk full'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $global:FtSets | Should Be 0
+        ($global:FtRun -ceq $global:FtOld) | Should Be $true
+        $script:RC | Should Be 1
     }
 }
 

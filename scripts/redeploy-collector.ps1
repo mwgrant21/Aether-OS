@@ -13,11 +13,13 @@
     '*<StageRoot>\*collector*index.js*' or the index.js path in the current Run
     value; node first, then conhost; never by name alone, never this script.
     After the stop, any node.exe still running a collector index.js fails the run.
-    On failure it prints the backup path and, if the stop already ran, how to
-    restore the old Run value.
-    From the stop onward a journal (~\.aether-os\redeploy-journal.json) records the
-    phase before each irreversible step; it is deleted after a verified deploy and
-    left open on failure (and then blocks the next deploy).
+    On failure it prints the backup path. From the stop onward a journal
+    (~\.aether-os\redeploy-journal.json) records the phase before each irreversible
+    step; it is deleted after a verified deploy. If the deploy fails once the journal
+    is open, the same rollback as -Rollback runs automatically (exit 1 when it
+    completes; exit 3, journal left open and RECOVERY lines printed, when it does
+    not; an open journal blocks the next deploy). A failure before the journal
+    opens changed nothing but the stage dir, which is renamed aside (exit 1).
     -Rollback reads that journal and undoes an unfinished deploy: stops the NEW
     collector (exact index.js match), restores the old Run value only if it still
     holds the value this script wrote (compare-and-swap), relaunches the old
@@ -33,15 +35,17 @@
     -Version/-StageRoot/-DbPath. With -DryRun it prints each rollback step only.
 .NOTES
     Exit codes: 0 success (or dry run, or new collector alive but no events yet),
-    1 failure (build/stage/backup/stop/start/verify), 2 bad input
+    1 failure (build/stage/backup/stop/start/verify; nothing changed, or changed
+    and fully rolled back), 2 bad input
     (package.json or collector\ missing, bad version, or a preflight guard: stage
     dir already non-empty or in use by the current Run value, -DbPath other than
     ~\.aether-os\collector.db, Run command over 260 characters, an existing
     ~\.aether-os\redeploy-journal.json, a non-REG_SZ Run value, -VerifySeconds
     outside 1..60; all checked before
     anything is changed), or -Rollback with no journal / an unreadable journal.
-    3 rollback incomplete: a manual step is needed (RECOVERY lines are printed)
-    and the journal is left open. -Rollback exits 0 when complete or when it only
+    3 rollback incomplete, from -Rollback or from a failed deploy's automatic
+    rollback: a manual step is needed (RECOVERY lines are printed) and the journal
+    is left open. -Rollback exits 0 when complete or when it only
     removed a stale journal of a deploy that had verified.
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
@@ -271,6 +275,30 @@ function Set-JournalPhase {
     $Journal.phase = $Phase
     $Journal.phaseUtc = [DateTime]::UtcNow.ToString('o')
     Write-Journal -Path $Path -Journal $Journal
+}
+
+function Set-JournalPhaseLagging {
+    # For phases after the Run write is guarded: a failed write only leaves the file one phase behind
+    # (the in-memory journal still drives auto-rollback; -Rollback's compare-and-swap copes), so it warns and continues.
+    param([string]$Path, $Journal, [string]$Phase)
+    try { Set-JournalPhase -Path $Path -Journal $Journal -Phase $Phase }
+    catch { Write-Output "WARNING: could not write journal phase '$Phase' to $Path ($($_.Exception.Message)); continuing, the file lags one phase." }
+}
+
+function Move-FailedStageAside {
+    # Failure BEFORE the journal opened: the only change is the stage dir this run created. Rename it aside
+    # (never delete) so a same-version rerun is not blocked by the non-empty-stage refusal. Best effort.
+    param([string]$Stage, [string]$Version, $OldRun, $OldIndex)
+    $probe = [ordered]@{ stageCreated = $true; stage = $Stage; version = $Version; oldRun = $OldRun; oldIndex = $OldIndex }
+    $why = Test-JournalRenamable $probe
+    if ($why) { Write-Output "stage dir not moved aside: $why"; return }
+    $newName = 'collector.failed-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    try {
+        Write-Output "[RUN] rename $Stage -> $newName"
+        Rename-Item -LiteralPath $Stage -NewName $newName
+    } catch {
+        Write-Output "WARNING: could not move the stage dir aside ($($_.Exception.Message)); by hand: Rename-Item -LiteralPath '$Stage' -NewName '$newName'"
+    }
 }
 
 $StopNewWaitSeconds = 1   # pause between the rollback stop and the survivor check
@@ -694,14 +722,14 @@ function Invoke-Redeploy {
         if (-not $Dry) { Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'stopping' }
         $stopRan = $true
         Stop-OldCollector -StageRoot $StageRoot -ExtraIndexJs $oldIndex -Dry $Dry
-        if (-not $Dry) { Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'stopped' }
+        if (-not $Dry) { Set-JournalPhaseLagging -Path $journalPath -Journal $journal -Phase 'stopped' }
 
         Write-Output '===== Step 4: back up db (after stop; db + -wal, not -shm) ====='
         Invoke-Step "copy $DbPath (+ -wal if present) -> $bak" {
             Copy-Item $DbPath $bak
             if (Test-Path "$DbPath-wal") { Copy-Item "$DbPath-wal" "$bak-wal" }
         } $Dry
-        if (-not $Dry) { $journal.bak = $bak; Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'backed-up' }
+        if (-not $Dry) { $journal.bak = $bak; Set-JournalPhaseLagging -Path $journalPath -Journal $journal -Phase 'backed-up' }
 
         Write-Output '===== Step 5: baseline row count ====='
         $before = $null
@@ -716,13 +744,13 @@ function Invoke-Redeploy {
             if (-not ($readBack -is [string]) -or -not ($readBack -ceq $runValue)) {
                 throw "Run key read-back mismatch: wrote <$runValue>, read <$readBack>"
             }
-            Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'repointed'
+            Set-JournalPhaseLagging -Path $journalPath -Journal $journal -Phase 'repointed'
         } $Dry
 
         Write-Output '===== Step 7: start ====='
         Invoke-Step "Start-Process conhost.exe --headless `"$nodeExe`" `"$indexJs`" (cwd $stage)" {
             Start-Process conhost.exe -ArgumentList '--headless', "`"$nodeExe`"", "`"$indexJs`"" -WorkingDirectory $stage
-            Set-JournalPhase -Path $journalPath -Journal $journal -Phase 'launched'
+            Set-JournalPhaseLagging -Path $journalPath -Journal $journal -Phase 'launched'
         } $Dry
 
         Write-Output '===== Step 8: verify ====='
@@ -759,13 +787,24 @@ function Invoke-Redeploy {
     } catch {
         Write-Output "ERROR: $($_.Exception.Message)"
         Write-Output "Backup path: $bak"
-        if ($stopRan) {
-            if ($null -ne $oldRun) {
-                Write-Output "RECOVERY: old Run value was <$oldRun>; restore with Set-ItemProperty -Path $RunKeyPath -Name $RunKeyName -Value '$oldRun'; backup at $bak"
-            } else {
-                Write-Output "RECOVERY: no old Run value existed; backup at $bak"
+        if ($stopRan -and $null -ne $journal) {
+            # The journal is open (phase stopping or later, never verified here): roll back from the in-memory copy.
+            # RC starts at 3 so anything Invoke-Rollback does not settle fails safe; only a complete rollback lowers it to 1.
+            Write-Output '===== Rollback ====='
+            $script:RC = 3
+            try { Invoke-Rollback -Journal $journal -JournalPath $journalPath -Dry $false }
+            catch {
+                Write-Output "ROLLBACK INCOMPLETE: $($_.Exception.Message)"
+                Write-RecoveryText -Journal $journal -JournalPath $journalPath
+                $script:RC = 3
             }
-            Write-Output 'RECOVERY: the old collector was stopped; start the previous version by hand if needed.'
+            if ($script:RC -eq 0) { $script:RC = 1 }
+            return
+        }
+        # The journal never opened: nothing but the stage dir changed. No rollback, no RECOVERY text.
+        if (-not $Dry) {
+            try { Move-FailedStageAside -Stage $stage -Version $Version -OldRun $oldRun -OldIndex $oldIndex }
+            catch { Write-Output "WARNING: could not check the stage dir ($($_.Exception.Message))" }
         }
         $script:RC = 1; return
     }
