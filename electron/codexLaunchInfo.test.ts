@@ -79,11 +79,13 @@ async function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
   return pred();
 }
 
-// Windows PowerShell on a cold hosted runner spends 20-70s on its first cmdlet
-// rebuilding the module analysis cache under LOCALAPPDATA (windows-build once
-// hit the 30s bound on the first test below). Pointing the cache at a temp
-// file and warming it once in beforeAll keeps that one-off cost out of the
-// bounded probes, so they exercise resolution, not PowerShell cold start.
+// windows-build once hit the 30s bound on the first test below, on a cold
+// hosted runner. The suspected cause is Windows PowerShell building its module
+// analysis cache on first use. PowerShell only persists that cache from a
+// process that lives past ~10s (the write is queued on a delay), so the
+// beforeAll warm-up below keeps its process alive long enough to write the
+// file at this temp path. Only a windows-build CI run confirms this fixes the
+// cold-runner case; local runs are always warm and cannot reproduce it.
 function rawEnv(...dirs: string[]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: [...dirs, BASE_PATH].join(delimiter) };
   if (win32) env.PSModuleAnalysisCachePath = path.join(root, 'ps-analysis-cache');
@@ -111,9 +113,15 @@ beforeAll(async () => {
   writeShim(projectBin, '0.153.2');
   writeShim(globalBin, '0.154.0');
   if (win32) {
-    // Warm the cache; outcome is irrelevant, the generous bound is not the production one.
-    const [file, args] = shellInvocation(platform, {}, RESOLVE, false);
-    await runBoundedCommand(file, args, rawEnv(projectBin, globalBin), root, 110_000).catch(() => undefined);
+    // Warm the cache in a process that outlives the ~10s delayed cache write;
+    // outcome is irrelevant, the generous bound is not the production one.
+    await runBoundedCommand(
+      'powershell.exe',
+      ['-NonInteractive', '-NoProfile', '-Command', 'Get-Command aether-cache-warm-nonexistent -ErrorAction SilentlyContinue | Out-Null; Start-Sleep -Seconds 15'],
+      rawEnv(projectBin, globalBin),
+      root,
+      110_000,
+    ).catch(() => undefined);
   }
 }, 120_000);
 
