@@ -64,6 +64,11 @@ type Event struct {
 	// every branch (matching transcriptParser.ts); only the 'user' branch's
 	// value is load-bearing -- it marks dispatch completions.
 	OriginKind *string
+	// MessageKey is "<message.id>:<requestId or ''>", set only on assistant
+	// events whose message.id is a non-empty string; nil otherwise (such
+	// lines are not deduped). Claude Code streams one API response as several
+	// transcript lines sharing this key. Same contract as the TS collector.
+	MessageKey *string
 }
 
 // ParseTranscriptLine parses one raw JSONL line into an Event. Returns nil
@@ -101,6 +106,14 @@ func ParseTranscriptLine(rawLine string) *Event {
 		usage := parseUsage(message["usage"])
 		content := asArray(message["content"])
 		toolUses := extractToolUses(content)
+		var messageKey *string
+		if id := stringField(message, "id"); id != nil {
+			k := *id + ":"
+			if req := stringField(obj, "requestId"); req != nil {
+				k += *req
+			}
+			messageKey = &k
+		}
 		return &Event{
 			Kind:        "assistant",
 			SessionID:   sessionID,
@@ -112,6 +125,7 @@ func ParseTranscriptLine(rawLine string) *Event {
 			ToolResults: []ToolResult{},
 			HumanText:   nil,
 			OriginKind:  originKind,
+			MessageKey:  messageKey,
 		}
 	}
 

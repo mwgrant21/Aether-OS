@@ -55,6 +55,25 @@ func TestParseTranscriptLine_AssistantMissingUsage(t *testing.T) {
 	}
 }
 
+func TestParseTranscriptLine_MessageKeyFromIdAndRequestId(t *testing.T) {
+	line := `{"type":"assistant","requestId":"req","message":{"id":"msg","content":[]}}`
+	r := ParseTranscriptLine(line)
+	if r == nil || r.MessageKey == nil || *r.MessageKey != "msg:req" {
+		t.Errorf("MessageKey = %v, want msg:req", r.MessageKey)
+	}
+	r = ParseTranscriptLine(`{"type":"assistant","message":{"id":"msg","content":[]}}`)
+	if r.MessageKey == nil || *r.MessageKey != "msg:" {
+		t.Errorf("MessageKey without requestId = %v, want msg:", r.MessageKey)
+	}
+}
+
+func TestParseTranscriptLine_MessageKeyNilWithoutId(t *testing.T) {
+	r := ParseTranscriptLine(`{"type":"assistant","requestId":"req","message":{"content":[]}}`)
+	if r == nil || r.MessageKey != nil {
+		t.Errorf("MessageKey = %v, want nil", r.MessageKey)
+	}
+}
+
 func TestParseTranscriptLine_UserLine(t *testing.T) {
 	line := `{"type":"user","sessionId":"s1","message":{"content":"hello"}}`
 	result := ParseTranscriptLine(line)
