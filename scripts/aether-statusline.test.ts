@@ -51,7 +51,7 @@ describe('aether-statusline.mjs context warning', () => {
     homes.push(home);
     return runScript(home, { AETHER_STATUSLINE_NO_PERSIST: '1' }, payload, args);
   };
-  const chain = ['--chain', Buffer.from('echo CHAINED').toString('base64')];
+  const chain = ['--chain', Buffer.from(`node -e "process.stdin.resume();process.stdin.on('end',()=>console.log('CHAINED'))"`).toString('base64')];
 
   it('warns at or over the threshold', () => {
     const r = run(usage(10, 50_000, 260_000));
