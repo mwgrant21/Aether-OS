@@ -17,8 +17,7 @@ export const STARTER_BOARDS: DashboardSpec[] = [
         sql: `SELECT model, ${TOKEN_SUMS} FROM usage_events WHERE occurred_at_ms >= :since GROUP BY model`,
         cost: { basis: 'exact', groupBy: 'model' }, x: 'model', y: ['usd'] },
       { id: 'cache-hit-rate', title: 'Cache hit rate by day', type: 'line', range: '30d',
-        // Intentionally differs from src/shared/cacheHitRate.ts: reads / (input + cache creation + reads). Fresh input_tokens is a few thousand
-        // against ~10^8 cache reads, so the reads / (input + reads) form rendered a flat ~0.9999 every day; counting creation makes it move.
+        // Deliberately differs from src/shared/cacheHitRate.ts (reads / (input + reads), a flat ~0.9999): creation is counted in the denominator.
         sql: `SELECT ${DAY} AS day, SUM(cache_read_input_tokens) * 1.0 / NULLIF(SUM(input_tokens) + SUM(cache_creation_input_tokens) + SUM(cache_read_input_tokens), 0) AS hit_rate
           FROM usage_events WHERE occurred_at_ms >= :since GROUP BY day ORDER BY day`,
         x: 'day', y: ['hit_rate'] },

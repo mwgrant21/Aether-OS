@@ -9,6 +9,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 ### Added
 - `backfill-usage` in the Node collector CLI: a dry-run-by-default repair that rebuilds the dedupe key for pre-0.7.6 usage rows from their transcripts and removes streamed duplicates. Rows whose transcripts no longer exist are left unchanged and reported.
 
+### Fixed
+- Background agents now appear in the desktop fleet view. Their `claude agents --json` rows carry `state` instead of `status`, which made both collectors report schema drift every poll and drop the card.
+
 ## [0.7.6] - 2026-11-10
 
 ### Added
