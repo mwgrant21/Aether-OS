@@ -5,16 +5,35 @@ import { parseTranscriptLine, type TranscriptEvent } from './transcriptParser';
 // Reads one .jsonl file and appends every parseable line's event to `events`.
 // Shared by the top-level session scan and the subagent-file scan below so
 // both paths parse identically.
-async function scanJsonlFile(filePath: string, events: TranscriptEvent[]): Promise<void> {
+//
+// `seenKeys` is shared by every file in one scanAllProjects call. A streamed
+// assistant message is written as several lines with the same usage; only the
+// first keeps its usage. Repeats stay in the stream (their toolUses, timestamp
+// and model are distinct per line) with `usage` nulled so totals count once.
+async function scanJsonlFile(
+  filePath: string,
+  events: TranscriptEvent[],
+  seenKeys: Set<string>,
+): Promise<void> {
   const content = await fsp.readFile(filePath, 'utf8');
   for (const line of content.split('\n')) {
     const event = parseTranscriptLine(line);
-    if (event) events.push(event);
+    if (!event) continue;
+    const key = event.kind === 'assistant' ? event.messageKey : null;
+    if (key) {
+      if (seenKeys.has(key)) {
+        events.push({ ...event, usage: null });
+        continue;
+      }
+      seenKeys.add(key);
+    }
+    events.push(event);
   }
 }
 
 export async function scanAllProjects(projectsRoot: string): Promise<TranscriptEvent[]> {
   const events: TranscriptEvent[] = [];
+  const seenKeys = new Set<string>();
   let projectDirs;
   try {
     projectDirs = await fsp.readdir(projectsRoot, { withFileTypes: true });
@@ -29,7 +48,7 @@ export async function scanAllProjects(projectsRoot: string): Promise<TranscriptE
     const files = await fsp.readdir(dirPath);
     for (const file of files) {
       if (!file.endsWith('.jsonl')) continue;
-      await scanJsonlFile(path.join(dirPath, file), events);
+      await scanJsonlFile(path.join(dirPath, file), events, seenKeys);
 
       // Per electron/transcriptReader.ts's documented on-disk layout, a
       // top-level session file <sessionId>.jsonl has its dispatched
@@ -55,7 +74,7 @@ export async function scanAllProjects(projectsRoot: string): Promise<TranscriptE
       }
       for (const subFile of subagentFiles) {
         if (!subFile.endsWith('.jsonl')) continue;
-        await scanJsonlFile(path.join(subagentsDir, subFile), events);
+        await scanJsonlFile(path.join(subagentsDir, subFile), events, seenKeys);
       }
     }
   }
