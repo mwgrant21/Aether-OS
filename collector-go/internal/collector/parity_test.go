@@ -54,6 +54,7 @@ type parityDispatch struct {
 	ToolUses       *int64   `json:"tool_uses"`
 	DurationMs     *int64   `json:"duration_ms"`
 	AgentID        *string  `json:"agent_id"`
+	TaskKind       *string  `json:"task_kind"`
 	SessionID      *string  `json:"session_id"`
 	MedianMsAtEval *float64 `json:"median_ms_at_eval"`
 }
@@ -261,7 +262,7 @@ func dispatchJSON(d parityDispatch) string {
 func queryDispatches(t *testing.T, db *sql.DB) map[string]parityDispatch {
 	t.Helper()
 	rows, err := db.Query(`SELECT tool_use_id, exit_state, severity, dispatch_status, tokens, tool_uses, duration_ms,
-	                              agent_id, session_id, median_ms_at_eval
+	                              agent_id, task_kind, session_id, median_ms_at_eval
 	                       FROM dispatches`)
 	if err != nil {
 		t.Fatalf("query dispatches: %v", err)
@@ -272,9 +273,9 @@ func queryDispatches(t *testing.T, db *sql.DB) map[string]parityDispatch {
 		var id string
 		var d parityDispatch
 		var sev, tok, uses, dur sql.NullInt64
-		var status, agent, session sql.NullString
+		var status, agent, kind, session sql.NullString
 		var median sql.NullFloat64
-		if err := rows.Scan(&id, &d.ExitState, &sev, &status, &tok, &uses, &dur, &agent, &session, &median); err != nil {
+		if err := rows.Scan(&id, &d.ExitState, &sev, &status, &tok, &uses, &dur, &agent, &kind, &session, &median); err != nil {
 			t.Fatalf("scan dispatches: %v", err)
 		}
 		if sev.Valid {
@@ -294,6 +295,9 @@ func queryDispatches(t *testing.T, db *sql.DB) map[string]parityDispatch {
 		}
 		if agent.Valid {
 			d.AgentID = &agent.String
+		}
+		if kind.Valid {
+			d.TaskKind = &kind.String
 		}
 		if session.Valid {
 			d.SessionID = &session.String

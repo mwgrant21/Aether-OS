@@ -89,7 +89,7 @@ describe('cross-collector parity', () => {
         db
           .prepare(
             `SELECT tool_use_id, exit_state, severity, dispatch_status, tokens, tool_uses, duration_ms,
-                    agent_id, session_id, median_ms_at_eval
+                    agent_id, task_kind, session_id, median_ms_at_eval
              FROM dispatches ORDER BY tool_use_id`,
           )
           .all() as Record<string, unknown>[]

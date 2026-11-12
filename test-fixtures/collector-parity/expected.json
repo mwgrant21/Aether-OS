@@ -69,6 +69,7 @@
       "tool_uses": 1,
       "duration_ms": 1000,
       "agent_id": "reviewer",
+      "task_kind": "reviewer",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -80,6 +81,7 @@
       "tool_uses": 1,
       "duration_ms": 1000,
       "agent_id": "reviewer",
+      "task_kind": "reviewer",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -91,6 +93,7 @@
       "tool_uses": 1,
       "duration_ms": 1000,
       "agent_id": "reviewer",
+      "task_kind": "reviewer",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -102,6 +105,7 @@
       "tool_uses": 1,
       "duration_ms": 1000,
       "agent_id": "reviewer",
+      "task_kind": "reviewer",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -113,6 +117,7 @@
       "tool_uses": 1,
       "duration_ms": 1000,
       "agent_id": "reviewer",
+      "task_kind": "reviewer",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -124,6 +129,7 @@
       "tool_uses": 1,
       "duration_ms": 3001,
       "agent_id": "reviewer",
+      "task_kind": "reviewer",
       "session_id": "sess-2",
       "median_ms_at_eval": 1000
     },
@@ -135,6 +141,7 @@
       "tool_uses": null,
       "duration_ms": null,
       "agent_id": "general-purpose",
+      "task_kind": "general-purpose",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -146,6 +153,7 @@
       "tool_uses": null,
       "duration_ms": null,
       "agent_id": "general-purpose",
+      "task_kind": "general-purpose",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -157,6 +165,7 @@
       "tool_uses": null,
       "duration_ms": null,
       "agent_id": "general-purpose",
+      "task_kind": "general-purpose",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -168,6 +177,7 @@
       "tool_uses": 1,
       "duration_ms": 500,
       "agent_id": "general-purpose",
+      "task_kind": "general-purpose",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -179,6 +189,7 @@
       "tool_uses": null,
       "duration_ms": null,
       "agent_id": "general-purpose",
+      "task_kind": "general-purpose",
       "session_id": "sess-2",
       "median_ms_at_eval": null
     },
@@ -190,6 +201,7 @@
       "tool_uses": 2,
       "duration_ms": 800,
       "agent_id": null,
+      "task_kind": null,
       "session_id": "sess-2",
       "median_ms_at_eval": null
     }

@@ -648,10 +648,25 @@ func TestIngestDispatchEvent_MedianIgnoresUnusableRows(t *testing.T) {
 func TestIngestDispatchEvent_MedianNeverSeesSelfOrFuture(t *testing.T) {
 	db := freshUsageDB(t)
 	seedCompletedPriors(t, db, 5)
-	seedDispatch(t, db, "future", "general-purpose", "ok", "completed", 1, 50000)
+	// Enough later-ended slow rows that counting them would move the median.
+	for i := 0; i < 5; i++ {
+		seedDispatch(t, db, "future_"+itoa(i), "general-purpose", "ok", "completed", 100000, int64(50000+i))
+	}
 	ingestAt(t, db, "tu_1", 13000, completedBody(3001))
 	assertSeverity(t, db, "tu_1", "ok", 2, fp(1000))
 	// Re-ingesting the same notification now has tu_1 in the table: no change.
+	ingestAt(t, db, "tu_1", 13000, completedBody(3001))
+	assertSeverity(t, db, "tu_1", "ok", 2, fp(1000))
+}
+
+func TestIngestDispatchEvent_MedianExcludesSameMillisecondRows(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 5)
+	// Rows ending in the SAME millisecond as the one under evaluation are not
+	// "before" it: the comparison is strict.
+	for i := 0; i < 5; i++ {
+		seedDispatch(t, db, "same_"+itoa(i), "general-purpose", "ok", "completed", 100000, 13000)
+	}
 	ingestAt(t, db, "tu_1", 13000, completedBody(3001))
 	assertSeverity(t, db, "tu_1", "ok", 2, fp(1000))
 }
