@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -33,14 +34,29 @@ type parityTokenTotals struct {
 }
 
 type parityGolden struct {
-	UsageEvents         int64               `json:"usageEvents"`
-	UsageTokenTotals    parityTokenTotals   `json:"usageTokenTotals"`
-	ToolCalls           int64               `json:"toolCalls"`
-	TranscriptFiles     []string            `json:"transcriptFiles"`
-	SchemaVersion       int                 `json:"schemaVersion"`
-	ToolCallSourceFiles map[string]string   `json:"toolCallSourceFiles"`
-	UsageSourceFiles    []string            `json:"usageSourceFiles"`
-	Columns             map[string][]string `json:"columns"`
+	UsageEvents         int64                     `json:"usageEvents"`
+	UsageTokenTotals    parityTokenTotals         `json:"usageTokenTotals"`
+	ToolCalls           int64                     `json:"toolCalls"`
+	TranscriptFiles     []string                  `json:"transcriptFiles"`
+	SchemaVersion       int                       `json:"schemaVersion"`
+	ToolCallSourceFiles map[string]string         `json:"toolCallSourceFiles"`
+	UsageSourceFiles    []string                  `json:"usageSourceFiles"`
+	Columns             map[string][]string       `json:"columns"`
+	Dispatches          map[string]parityDispatch `json:"dispatches"`
+}
+
+// parityDispatch is one dispatches row; pointer fields are SQL NULL when nil.
+type parityDispatch struct {
+	ExitState      string   `json:"exit_state"`
+	Severity       *int64   `json:"severity"`
+	DispatchStatus *string  `json:"dispatch_status"`
+	Tokens         *int64   `json:"tokens"`
+	ToolUses       *int64   `json:"tool_uses"`
+	DurationMs     *int64   `json:"duration_ms"`
+	AgentID        *string  `json:"agent_id"`
+	TaskKind       *string  `json:"task_kind"`
+	SessionID      *string  `json:"session_id"`
+	MedianMsAtEval *float64 `json:"median_ms_at_eval"`
 }
 
 func fixtureDir(t *testing.T) string {
@@ -205,6 +221,23 @@ func TestCrossCollectorParity(t *testing.T) {
 		}
 	}
 
+	// Dispatch rows (#107, #65): NULL (never 0) for absent usage, status and
+	// exit_state parsed from the notification, severity, median, and the
+	// opener's session and subagent_type. The Node collector asserts the same.
+	gotDispatches := queryDispatches(t, db)
+	if !reflect.DeepEqual(gotDispatches, golden.Dispatches) {
+		for id, want := range golden.Dispatches {
+			if got, ok := gotDispatches[id]; !ok || !reflect.DeepEqual(got, want) {
+				t.Errorf("dispatches[%s] = %s, golden = %s", id, dispatchJSON(got), dispatchJSON(want))
+			}
+		}
+		for id := range gotDispatches {
+			if _, ok := golden.Dispatches[id]; !ok {
+				t.Errorf("dispatches[%s] present but not in golden", id)
+			}
+		}
+	}
+
 	// The load-bearing assertion: both collectors write to the same database,
 	// so a file keyed two different ways is scanned twice and double counted.
 	// The golden stores forward slashes; normalise this platform's separator.
@@ -219,6 +252,65 @@ func TestCrossCollectorParity(t *testing.T) {
 			t.Errorf("transcript_files[%d] = %q, golden = %q", i, got[i], want[i])
 		}
 	}
+}
+
+func dispatchJSON(d parityDispatch) string {
+	b, _ := json.Marshal(d)
+	return string(b)
+}
+
+func queryDispatches(t *testing.T, db *sql.DB) map[string]parityDispatch {
+	t.Helper()
+	rows, err := db.Query(`SELECT tool_use_id, exit_state, severity, dispatch_status, tokens, tool_uses, duration_ms,
+	                              agent_id, task_kind, session_id, median_ms_at_eval
+	                       FROM dispatches`)
+	if err != nil {
+		t.Fatalf("query dispatches: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]parityDispatch{}
+	for rows.Next() {
+		var id string
+		var d parityDispatch
+		var sev, tok, uses, dur sql.NullInt64
+		var status, agent, kind, session sql.NullString
+		var median sql.NullFloat64
+		if err := rows.Scan(&id, &d.ExitState, &sev, &status, &tok, &uses, &dur, &agent, &kind, &session, &median); err != nil {
+			t.Fatalf("scan dispatches: %v", err)
+		}
+		if sev.Valid {
+			d.Severity = &sev.Int64
+		}
+		if status.Valid {
+			d.DispatchStatus = &status.String
+		}
+		if tok.Valid {
+			d.Tokens = &tok.Int64
+		}
+		if uses.Valid {
+			d.ToolUses = &uses.Int64
+		}
+		if dur.Valid {
+			d.DurationMs = &dur.Int64
+		}
+		if agent.Valid {
+			d.AgentID = &agent.String
+		}
+		if kind.Valid {
+			d.TaskKind = &kind.String
+		}
+		if session.Valid {
+			d.SessionID = &session.String
+		}
+		if median.Valid {
+			d.MedianMsAtEval = &median.Float64
+		}
+		out[id] = d
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
 }
 
 func queryTranscriptFiles(t *testing.T, db *sql.DB) []string {
