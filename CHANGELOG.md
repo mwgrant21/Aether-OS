@@ -9,6 +9,7 @@ pre-1.0 semver as described in `docs/packaging.md`.
 ### Added
 - `scripts/redeploy-collector.ps1` now journals each step (`~\.aether-os\redeploy-journal.json`) and rolls a failed deploy back automatically (exit 1, or 3 with RECOVERY steps when it cannot), adds a `-Rollback` command and a `-VerifySeconds` window (1..60), and refuses more unsafe inputs up front. The database is never restored.
 - `backfill-usage` in the Node collector CLI: a dry-run-by-default repair that rebuilds the dedupe key for pre-0.7.6 usage rows from their transcripts and removes streamed duplicates. Rows whose transcripts no longer exist are left unchanged and reported.
+- `dedupe-legacy-usage` in the Node collector CLI: an opt-in, manual, dry-run-by-default cleanup of the legacy usage rows whose transcripts no longer exist, using an approximate same-file/model/tokens-within-60-seconds rule. It never touches keyed rows, needs `backfill-usage` run first, and its apply needs the operator's own dry-run counts (`--expect-delete`, `--expect-token-mass`) and takes a verified backup first. Individual deletes are not verified and totals will not be exact.
 
 ### Changed
 - Memory extraction now runs isolated from your Claude Code configuration: it is refused unless Claude Code reports a subscription login, user settings are not loaded and the empty working folder leaves no project settings; MCP servers, slash commands and auto-memory are off and hooks are disabled (`~/.claude/CLAUDE.md` may still be loaded; none of this is checked on a live run) (#111).
