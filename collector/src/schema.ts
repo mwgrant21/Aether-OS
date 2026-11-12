@@ -26,8 +26,15 @@ export function openDatabase(dbPath: string): DatabaseSync {
   // memoryStore.ts already did this for memory.db; collector.db was the
   // remaining gap, so the two stores behaved differently under contention.
   // The file is also switched to WAL (see enableWalBestEffort below).
-  db.exec('PRAGMA busy_timeout = 5000');
-  enableWalBestEffort(db, dbPath);
+  try {
+    db.exec('PRAGMA busy_timeout = 5000');
+    enableWalBestEffort(db, dbPath);
+  } catch (e) {
+    // The caller never receives the handle on a throw, so close it here (it would
+    // otherwise leak until GC and keep the file open on Windows). Rethrow the ORIGINAL.
+    try { db.close(); } catch { /* the original error is the one that matters */ }
+    throw e;
+  }
   return db;
 }
 
