@@ -124,7 +124,7 @@ Retry notes: after exit 5 (database changed, nothing written) a verified `.bak` 
 and a same-second rerun exits 4 until you keep or delete that file. If the database stays locked
 for the 5 second busy timeout at the start of the write, the run exits 1 and also leaves a
 verified `.bak`. A run that finds nothing to delete still takes a backup; delete the extras by
-hand. `wal_checkpoint(TRUNCATE)` after the commit is best effort, and the database file does not
+hand. A crash between claiming the backup name and the `VACUUM INTO` leaves a 0-byte `.bak`; a same-second rerun then exits 4 and leaves it untouched. A 0-byte `.bak` is a crash leftover to delete, never a valid backup (the verified backup has the same row count as the database). `wal_checkpoint(TRUNCATE)` after the commit is best effort, and the database file does not
 shrink (no VACUUM).
 
 Rollback: stop the collector, move aside `<db>-wal` and `<db>-shm` beside the database (a
