@@ -98,12 +98,15 @@ func IngestDispatchEvent(db *sql.DB, history *ToolCallHistory, event *Event) (bo
 	endedAtMs := event.Timestamp.UnixMilli()
 
 	_, err := db.Exec(
-		`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, exit_state, dispatch_status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
+		   agent_id, task_kind, session_id, retries, exit_state, dispatch_status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(tool_use_id) DO UPDATE SET tokens = excluded.tokens, tool_uses = excluded.tool_uses,
 		   duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms,
-		   exit_state = excluded.exit_state, dispatch_status = excluded.dispatch_status`,
-		dispatchToolUseID, tokens, toolUses, durationMs, open.StartedAt, endedAtMs, exitState, string(outcome.Status),
+		   agent_id = excluded.agent_id, task_kind = excluded.task_kind, session_id = excluded.session_id,
+		   retries = excluded.retries, exit_state = excluded.exit_state, dispatch_status = excluded.dispatch_status`,
+		dispatchToolUseID, tokens, toolUses, durationMs, open.StartedAt, endedAtMs,
+		open.SubagentType, open.SubagentType, open.SessionID, 0, exitState, string(outcome.Status),
 	)
 	if err != nil {
 		return false, err

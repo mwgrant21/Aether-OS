@@ -56,6 +56,19 @@ func openDispatch(toolUseID string, startedAtMs int64, toolName string) *ToolCal
 	return UpdateHistory(CreateEmptyHistory(), []Event{event}, startedAtMs)
 }
 
+// openDispatchWith opens an Agent tool call carrying the given input and the
+// session id of the opening assistant event.
+func openDispatchWith(toolUseID string, startedAtMs int64, input map[string]interface{}, sessionID string) *ToolCallHistory {
+	ts := time.UnixMilli(startedAtMs).UTC()
+	event := Event{
+		Kind:      "assistant",
+		Timestamp: &ts,
+		SessionID: &sessionID,
+		ToolUses:  []ToolUse{{ID: toolUseID, Name: "Agent", Input: input}},
+	}
+	return UpdateHistory(CreateEmptyHistory(), []Event{event}, startedAtMs)
+}
+
 func completionEvent(toolUseID string, endedAtMs int64, tokens, toolUses, durationMs int) *Event {
 	ts := time.UnixMilli(endedAtMs).UTC()
 	origin := "task-notification"
@@ -482,5 +495,48 @@ func TestIngestDispatchEvent_NeverPersistsRawText(t *testing.T) {
 		if c == "raw_text" || c == "notification_text" {
 			t.Fatalf("unexpected raw-text column persisted: %s", c)
 		}
+	}
+}
+
+func readDispatchIdentity(t *testing.T, db *sql.DB, id string) (agent, kind, session sql.NullString, retries int) {
+	t.Helper()
+	err := db.QueryRow("SELECT agent_id, task_kind, session_id, retries FROM dispatches WHERE tool_use_id = ?", id).
+		Scan(&agent, &kind, &session, &retries)
+	if err != nil {
+		t.Fatalf("query %s: %v", id, err)
+	}
+	return
+}
+
+func TestIngestDispatchEvent_RecordsAgentKindAndOpeningSession(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatchWith("tu_1", 1000, map[string]interface{}{"subagent_type": "general-purpose"}, "sess-open")
+	event := notify("tu_1", 13000, "<status>completed</status>")
+	other := "sess-notification"
+	event.SessionID = &other
+	if _, err := IngestDispatchEvent(db, history, event); err != nil {
+		t.Fatal(err)
+	}
+	agent, kind, session, retries := readDispatchIdentity(t, db, "tu_1")
+	if agent.String != "general-purpose" || kind.String != "general-purpose" || !agent.Valid || !kind.Valid {
+		t.Fatalf("agent=%v kind=%v", agent, kind)
+	}
+	if session.String != "sess-open" {
+		t.Fatalf("session_id = %v, want the opening event's sess-open", session)
+	}
+	if retries != 0 {
+		t.Fatalf("retries = %d", retries)
+	}
+}
+
+func TestIngestDispatchEvent_NoSubagentTypeStoresNullAgent(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatchWith("tu_1", 1000, map[string]interface{}{"description": "d"}, "sess-open")
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, "")); err != nil {
+		t.Fatal(err)
+	}
+	agent, kind, session, _ := readDispatchIdentity(t, db, "tu_1")
+	if agent.Valid || kind.Valid || session.String != "sess-open" {
+		t.Fatalf("agent=%v kind=%v session=%v", agent, kind, session)
 	}
 }
