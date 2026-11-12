@@ -106,6 +106,17 @@ describe('guiSession.start', () => {
     expect(s.session.start(req('p1'))).toEqual({ ok: true, reused: true });
     expect(calls).toBe(2);
   });
+  it('keeps forwarding the old session output and exit after a failed replacement', () => {
+    let calls = 0;
+    const olds: FP[] = [];
+    const s = setup({ spawn: () => { if (++calls === 2) throw new Error('boom'); const p = fakePty(); olds.push(p); return p as unknown as GuiPty; } });
+    s.session.start(req('p1'));
+    s.session.start(req('p2'));
+    s.sent.length = 0;
+    olds[0]!.fireData('x');
+    olds[0]!.fireExit();
+    expect(s.sent).toEqual([[GUI_CHANNELS.data, 'x'], [GUI_CHANNELS.exit, undefined]]);
+  });
   it('forwards data, alive and exit on their channels', () => {
     const s = setup();
     s.session.start(req('p1'));

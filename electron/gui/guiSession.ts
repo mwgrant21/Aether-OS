@@ -27,7 +27,8 @@ const isDim = (v: unknown): v is number => typeof v === 'number' && Number.isInt
 
 export function createGuiSession(d: GuiSessionDeps): GuiSession {
   let runningProjectId: string | null | undefined; // undefined = no session
-  let gen = 0;
+  let gen = 0; // id of the session whose handlers may forward
+  let seq = 0; // monotonic id source, never rewound
   let pendingEnter = false;
   let cancelEnter: (() => void) | null = null;
   let disposed = false;
@@ -56,8 +57,9 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
       return { ok: true, reused: true };
     }
     clearEnter();
-    gen += 1;
-    const myGen = gen;
+    const prev = gen;
+    const myGen = ++seq;
+    gen = myGen;
     try {
       d.lifecycle.start(
         () => d.spawn({ cwd, cols, rows, sessionId: d.randomUUID() }),
@@ -74,6 +76,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
         { cols, rows },
       );
     } catch {
+      gen = prev; // the old pty may still be live; the failed new pty's late handlers stay dropped
       d.log?.('gui session: start failed');
       return { ok: false, reason: 'spawn-failed' };
     }
@@ -114,7 +117,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   function dispose(): void {
     if (disposed) return;
     disposed = true;
-    gen += 1;
+    gen = ++seq;
     clearEnter();
     try { d.lifecycle.kill(); } catch { d.log?.('gui session: kill failed'); }
   }
