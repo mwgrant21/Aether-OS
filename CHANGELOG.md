@@ -7,7 +7,7 @@ pre-1.0 semver as described in `docs/packaging.md`.
 ## [Unreleased]
 
 ### Added
-- Aether GUI variant (off by default; set `AETHER_GUI=1` at launch): a separate chat-style shell with left navigation, pinned project folders and a composer over an interactive `claude` session. Slice 1: Search, Artifacts, Scheduled, Design and Customize are placeholders; chats are not persisted; no model/effort picker yet.
+- Aether GUI variant (off by default; set `AETHER_GUI=1` at launch): a separate chat-style shell with left navigation, pinned project folders and a composer over an interactive `claude` session. Slice 1: Search, Artifacts, Scheduled, Design and Customize are placeholders; chats are not persisted; no model/effort picker yet. A chat that fails to start now ends the previous chat instead of leaving it running, and the composer stays disabled while Claude's folder-trust prompt is on screen.
 - `scripts/redeploy-collector.ps1` now journals each step (`~\.aether-os\redeploy-journal.json`) and rolls a failed deploy back automatically (exit 1, or 3 with RECOVERY steps when it cannot), adds a `-Rollback` command and a `-VerifySeconds` window (1..60), and refuses more unsafe inputs up front. The database is never restored.
 - `backfill-usage` in the Node collector CLI: a dry-run-by-default repair that rebuilds the dedupe key for pre-0.7.6 usage rows from their transcripts and removes streamed duplicates. Rows whose transcripts no longer exist are left unchanged and reported.
 
