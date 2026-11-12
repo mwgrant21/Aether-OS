@@ -97,7 +97,15 @@ describe('memory extraction gate (#104)', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-test-should-not-leak';
   });
 
+  // #111: the extractor's neutral cwd lives under %ProgramData%. Windows keeps the real one (a temp dir
+  // here sits under the profile, whose CLAUDE.md/.claude the cwd check would rightly refuse); elsewhere
+  // ProgramData is unset, so point it at a temp dir.
+  beforeEach(() => {
+    if (process.platform !== 'win32') process.env.ProgramData = join(dir, 'programdata');
+  });
+
   afterEach(() => {
+    if (process.platform !== 'win32') delete process.env.ProgramData;
     if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = savedKey;
     rmSync(dir, { recursive: true, force: true });

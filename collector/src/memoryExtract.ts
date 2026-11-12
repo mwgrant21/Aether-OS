@@ -22,6 +22,8 @@
  */
 
 import { execFile } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { buildExtractorPrompt, type ExtractorPromptInput } from './memoryExtractPrompt.js';
 import { parseExtractorOutput } from './memoryExtractParser.js';
@@ -128,27 +130,142 @@ export async function checkSubscriptionAuth(authStatus: AuthStatusFn): Promise<v
   throw new ExtractRefusedError(Object.hasOwn(AUTH_METHOD_REFUSALS, method) ? AUTH_METHOD_REFUSALS[method] : 'auth_method_unknown');
 }
 
-export interface ExtractExecDeps {
-  authStatus?: AuthStatusFn;
+/**
+ * Settings sources the child loads. `project`, not `user` (user = ~/.claude/settings.json, where env
+ * keys, apiKeyHelper, plugins and hooks live) and not `""` (undocumented, may mean "all"). With the
+ * empty neutral cwd below, `project` loads no settings file at all. What stays loaded regardless:
+ * managed/policy settings (cannot be excluded) and our own --settings JSON.
+ * UNVERIFIED without a model call: that the subscription login still resolves under `project`.
+ * Falling back to `user` is NOT a one-constant switch: `user` reloads settings `env` and
+ * `apiKeyHelper`, which would then have to be overridden in --settings or the design re-reviewed.
+ */
+export const EXTRACT_SETTING_SOURCES = 'project';
+
+/** No MCP servers. UNVERIFIED: that an empty `mcpServers` object is accepted (if not: exec_failed, fail closed). */
+export const EXTRACT_EMPTY_MCP_CONFIG = '{"mcpServers":{}}';
+
+/**
+ * The `-p` argv. Order matters: the prompt stays right after `-p`, and `--mcp-config` is variadic
+ * (swallows following non-flag tokens), so it must be followed by another `--flag`, never be last.
+ * JSON values are single argv elements: execFile has no shell, so no quoting or escaping.
+ */
+export function buildExtractArgs(prompt: string): string[] {
+  return [
+    '-p', prompt,
+    '--model', 'haiku', '--output-format', 'text',
+    '--setting-sources', EXTRACT_SETTING_SOURCES,
+    '--settings', EXTRACT_CHILD_SETTINGS,
+    '--strict-mcp-config', '--mcp-config', EXTRACT_EMPTY_MCP_CONFIG,
+    '--disable-slash-commands',
+  ];
 }
 
-/** The real call: a cheap headless model invocation, no interactive session. */
+/** `<ProgramData>\AetherOS\memory-extract-cwd`. Never under the user profile or %TEMP%: Claude Code loads CLAUDE.md from every ancestor of its cwd. */
+export function extractCwdPath(programData: string): string {
+  return join(programData, 'AetherOS', 'memory-extract-cwd');
+}
+
+/** True when `dir` holds a CLAUDE.md, CLAUDE.local.md, .claude/CLAUDE.md or a .claude/settings*.json that Claude Code would load. */
+export function ancestorHasMemoryFile(dir: string): boolean {
+  if (existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, 'CLAUDE.local.md'))) return true;
+  const dotClaude = join(dir, '.claude');
+  if (!existsSync(dotClaude)) return false;
+  try {
+    return readdirSync(dotClaude).some((n) => /^settings.*\.json$/i.test(n) || n.toLowerCase() === 'claude.md');
+  } catch {
+    return true; // unreadable .claude dir: cannot prove it is empty, refuse
+  }
+}
+
+export interface PrepareExtractCwdOptions {
+  /** Defaults to %ProgramData%. An explicit `undefined` means "unset" (no fallback to anything else). */
+  programData?: string;
+  ancestorHasMemory?: (dir: string) => boolean;
+}
+
+function sameDir(a: string, b: string): boolean {
+  const norm = (p: string): string => p.replace(/[\\/]+$/, '').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Resolve, create (lazily) and verify the neutral cwd; synchronous and cheap so it runs again right
+ * before EACH spawn. Refuses (no fallback to temp/home/cwd, which would reopen the ancestor-CLAUDE.md hole):
+ * cwd_unavailable (no ProgramData / cannot create), cwd_unsafe (not a plain directory, link/junction, or
+ * realpath differs: a swapped ancestor), cwd_dirty (not strictly EMPTY: any planted file, including a
+ * claude.exe, .claude or CLAUDE.md), cwd_ancestor_memory (CLAUDE.md / .claude memory or settings in the
+ * dir or any ancestor up to the root). Assumes a single-user machine: another local account with write
+ * access to the folder could still race the checks; no ACL hardening is done here.
+ */
+export function prepareExtractCwd(opts: PrepareExtractCwdOptions = {}): string {
+  const programData = Object.hasOwn(opts, 'programData') ? opts.programData : process.env.ProgramData;
+  if (!programData) throw new ExtractRefusedError('cwd_unavailable');
+  const dir = extractCwdPath(programData);
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    throw new ExtractRefusedError('cwd_unavailable');
+  }
+
+  let real: string;
+  try {
+    const st = lstatSync(dir);
+    if (!st.isDirectory() || st.isSymbolicLink()) throw new ExtractRefusedError('cwd_unsafe');
+    real = realpathSync(dir);
+  } catch (err) {
+    throw err instanceof ExtractRefusedError ? err : new ExtractRefusedError('cwd_unsafe');
+  }
+  if (!sameDir(real, dir)) throw new ExtractRefusedError('cwd_unsafe');
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    throw new ExtractRefusedError('cwd_unsafe');
+  }
+  if (entries.length !== 0) throw new ExtractRefusedError('cwd_dirty');
+
+  const hasMemory = opts.ancestorHasMemory ?? ancestorHasMemoryFile;
+  for (let d = dir; ; d = dirname(d)) {
+    if (hasMemory(d)) throw new ExtractRefusedError('cwd_ancestor_memory');
+    if (dirname(d) === d) break; // drive root: dirname is a fixed point
+  }
+  return dir;
+}
+
+export interface ExtractExecDeps {
+  authStatus?: AuthStatusFn;
+  /** Returns the verified neutral cwd or throws ExtractRefusedError. Called before EACH spawn. */
+  cwd?: () => string;
+}
+
+/**
+ * The real call: a cheap headless model invocation, no interactive session. Order per item:
+ * verify cwd -> `claude auth status --json` (subscription only) -> verify cwd again -> `claude -p`.
+ * The cwd is re-verified before each spawn (TOCTOU). Any refusal throws ExtractRefusedError, no spawn.
+ */
 export async function defaultExtractExec(prompt: string, deps: ExtractExecDeps = {}): Promise<{ stdout: string }> {
+  const getCwd = deps.cwd ?? (() => prepareExtractCwd());
+
+  const authCwd = getCwd();
   const authStatus: AuthStatusFn =
     deps.authStatus ??
     (() =>
       execFileAsync('claude', ['auth', 'status', '--json'], {
         env: isolatedExtractEnv(),
+        cwd: authCwd,
         windowsHide: true,
         timeout: AUTH_STATUS_TIMEOUT_MS,
       }));
   await checkSubscriptionAuth(authStatus);
 
-  const { stdout } = await execFileAsync(
-    'claude',
-    ['-p', prompt, '--model', 'haiku', '--output-format', 'text', '--settings', EXTRACT_CHILD_SETTINGS],
-    { env: isolatedExtractEnv(), windowsHide: true, timeout: EXTRACT_TIMEOUT_MS }
-  );
+  const cwd = getCwd();
+  const { stdout } = await execFileAsync('claude', buildExtractArgs(prompt), {
+    env: isolatedExtractEnv(),
+    cwd,
+    windowsHide: true,
+    timeout: EXTRACT_TIMEOUT_MS,
+  });
   return { stdout };
 }
 
