@@ -668,6 +668,77 @@ describe('AetherChoice host wiring in main.ts (null runtime is a no-op)', () => 
     expect(frame).toBeLessThan(gate.indexOf('narrationDurationBaseline.flush()'));
   });
 
+  // Text-only wiring pin (proves the call site's shape, not behavior): the dispose is reachable only from the
+  // held baseline flush, after the owner frame, and skipped when the helper is on. The cancel-safety half
+  // (comm gate before baseline gate in before-quit) is pinned by communicationBridge/preload.test.ts.
+  it('wires disposeTerminalsAtQuit once, inside the baseline flush, after the owner frame, helper-off only', () => {
+    let gate = '';
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.getText(ast) === 'createFlushQuitGate') gate = node.getText(ast);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect(gate.match(/disposeTerminalsAtQuit\(\)/g)).toHaveLength(1);
+    expect(gate).toMatch(/ownerClient \? Promise\.resolve\(\) : disposeTerminalsAtQuit\(\)/);
+    expect(gate.indexOf('disposeTerminalsAtQuit()')).toBeGreaterThan(gate.indexOf('ownerClient.shutdown()'));
+  });
+
+  it('keeps the dispose bound inside the 1500 ms baseline gate with at least a 150 ms margin', () => {
+    const bound = Number(constFor('PTY_DISPOSE_BOUND_MS'));
+    expect(Number.isInteger(bound)).toBe(true);
+    expect(1500 - bound).toBeGreaterThanOrEqual(150); // 1500 = baselineQuitGate's bound in main.ts
+  });
+
+  describe('disposeTerminalsAtQuit (executed)', () => {
+    function disposeFixture(opts: { env?: string; disposeAll?: () => Promise<unknown> } = {}) {
+      const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.getText(ast) === 'disposeTerminalsAtQuit');
+      if (!fn) throw new Error('Missing top-level function disposeTerminalsAtQuit');
+      const disposeAll = vi.fn(opts.disposeAll ?? (async () => ({ running: 2, exited: 1, timedOut: 1, failed: 0 })));
+      const write = vi.fn();
+      const sandbox = {
+        terminalHub: { readPort: () => ({ list: () => [{ state: 'running' }, { state: 'exited' }, { state: 'running' }] }), disposeAll },
+        diagLog: { write }, PTY_DISPOSE_BOUND_MS: 1300, Date,
+        process: { env: opts.env === undefined ? {} : { AETHER_QUIT_DISPOSE_PTYS: opts.env } },
+      };
+      const run = runInNewContext(ts.transpileModule(`(${fn.getText(ast)})`, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+      }).outputText, sandbox) as () => Promise<void>;
+      return { run, disposeAll, write };
+    }
+
+    it('env var off (default): disposes nothing, still writes the begin/end diag pair', async () => {
+      const f = disposeFixture();
+      await f.run();
+      expect(f.disposeAll).not.toHaveBeenCalled();
+      expect(f.write).toHaveBeenCalledTimes(2);
+      expect(f.write.mock.calls[0][0]).toMatch(/^\[diag\] pty dispose at quit begin slots=2 dispose=off at=\d{4}-/);
+      expect(f.write.mock.calls[1][0]).toMatch(/^\[diag\] pty dispose at quit end exited=0 timedOut=0 ms=\d+ dispose=off at=\d{4}-/);
+    });
+
+    it('any value other than 1 stays off', async () => {
+      const f = disposeFixture({ env: 'true' });
+      await f.run();
+      expect(f.disposeAll).not.toHaveBeenCalled();
+    });
+
+    it('env var 1: disposes once with the bound and reports the counts', async () => {
+      const f = disposeFixture({ env: '1' });
+      await f.run();
+      expect(f.disposeAll).toHaveBeenCalledTimes(1);
+      expect(f.disposeAll).toHaveBeenCalledWith(1300);
+      expect(f.write.mock.calls[0][0]).toMatch(/begin slots=2 dispose=on at=/);
+      expect(f.write.mock.calls[1][0]).toMatch(/end exited=1 timedOut=1 ms=\d+ dispose=on at=/);
+    });
+
+    it('a rejecting disposeAll still resolves and logs one threw line', async () => {
+      const f = disposeFixture({ env: '1', disposeAll: async () => { throw new Error('boom'); } });
+      await expect(f.run()).resolves.toBeUndefined();
+      const lines = f.write.mock.calls.map(c => c[0] as string);
+      expect(lines.filter(l => /pty dispose at quit threw at=/.test(l))).toHaveLength(1);
+      expect(lines.some(l => /pty dispose at quit end/.test(l))).toBe(false);
+    });
+  });
+
   it('guards the helper launch with quitting and the feature with AETHER_PTY_OWNER=1 on win32', () => {
     const adopt = source.slice(source.indexOf('async function adoptAtStartup'), source.indexOf('const claudeStartHandlers'));
     expect(adopt).toMatch(/if \(quitting\) return;\s+const ok = await ensureOwner/);

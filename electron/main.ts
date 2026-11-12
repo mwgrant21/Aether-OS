@@ -773,6 +773,9 @@ const baselineQuitGate = createFlushQuitGate(async () => {
   await Promise.allSettled([
     // Owner helper first so its frame goes out before the slower stops; rides this gate's bound.
     ownerClient ? (PTY_OWNER_ON_QUIT === 'shutdown' ? ownerClient.shutdown() : ownerClient.release()) : Promise.resolve(),
+    // In-process ptys only (helper OFF): with AETHER_QUIT_DISPOSE_PTYS=1, end them and wait, bounded (#230).
+    // The diag pair is written either way. With the helper ON its shutdown frame above ends them.
+    ownerClient ? Promise.resolve() : disposeTerminalsAtQuit(),
     narrationDurationBaseline.flush(),
     aetherChoice ? aetherChoice.flush() : Promise.resolve(),
     // The voice gateway stops its Claude child inside the same held quit; skipped unless the private dir is ready.
@@ -1411,6 +1414,24 @@ ipcMain.handle('app:getVersion', () => {
 // ptyLifecycle.ts. Extracted from this file so that rule is unit-testable
 // without loading main.ts (and node-pty) in the test environment.
 const terminalHub = createTerminalHub();
+// Bound for ending in-process ptys at quit: node-pty's own conout drain is a 1000 ms timer and the 1500 ms
+// baseline quit gate is the hard cap, so this leaves a 200 ms margin.
+const PTY_DISPOSE_BOUND_MS = 1300;
+// Called from the held baseline quit flush (after the communication gate authorized the quit). Writes a begin/end
+// diag pair always; kills the terminals' ptys only when AETHER_QUIT_DISPOSE_PTYS=1 (default off, e2e only). Never rejects.
+async function disposeTerminalsAtQuit(): Promise<void> {
+  try {
+    const t0 = Date.now();
+    const enabled = process.env.AETHER_QUIT_DISPOSE_PTYS === '1';
+    const mode = enabled ? 'on' : 'off';
+    const slots = terminalHub.readPort().list().filter(s => s.state === 'running').length;
+    diagLog.write(`[diag] pty dispose at quit begin slots=${slots} dispose=${mode} at=${new Date().toISOString()}`);
+    const r = enabled ? await terminalHub.disposeAll(PTY_DISPOSE_BOUND_MS) : { exited: 0, timedOut: 0 };
+    diagLog.write(`[diag] pty dispose at quit end exited=${r.exited} timedOut=${r.timedOut} ms=${Date.now() - t0} dispose=${mode} at=${new Date().toISOString()}`);
+  } catch {
+    diagLog.write(`[diag] pty dispose at quit threw at=${new Date().toISOString()}`);
+  }
+}
 // Quit ENDS terminals (settled). Feature is OFF unless AETHER_PTY_OWNER=1 on win32.
 const PTY_OWNER_ON_QUIT: 'shutdown' | 'release' = 'shutdown';
 const ptyOwnerEnabled = process.platform === 'win32' && process.env.AETHER_PTY_OWNER === '1';
