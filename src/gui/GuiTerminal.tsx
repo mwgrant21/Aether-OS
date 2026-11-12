@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { fonts } from '../styles/tokens';
+import { readScreenText, type ScreenBufferLike } from './trustPrompt';
 import { useColors } from '../components/shared/useColors';
 import '@xterm/xterm/css/xterm.css';
 
@@ -10,6 +11,8 @@ export interface GuiTerminalHandle {
   size(): { cols: number; rows: number };
   /** Clear the screen (used before a restart). */
   reset(): void;
+  /** Text of the visible viewport rows ('' when the terminal is not mounted). */
+  screenText(): string;
 }
 
 interface GuiTerminalProps {
@@ -38,6 +41,8 @@ export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(funct
     () => ({
       size: () => ({ cols: termRef.current?.cols ?? 80, rows: termRef.current?.rows ?? 24 }),
       reset: () => termRef.current?.reset(),
+      screenText: () =>
+        readScreenText(termRef.current?.buffer?.active as ScreenBufferLike | undefined, termRef.current?.rows ?? 0),
     }),
     [],
   );

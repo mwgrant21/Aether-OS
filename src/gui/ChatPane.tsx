@@ -6,6 +6,7 @@ import { fonts, radii } from '../styles/tokens';
 import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
 import { createReadyGate, type ReadyGate } from './readyGate';
+import { createTrustWatcher, type TrustWatcher } from './trustPrompt';
 import { useGuiProjects } from './useGuiProjects';
 
 interface ChatPaneProps {
@@ -36,9 +37,11 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const [hint, setHint] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stopped, setStopped] = useState(false);
+  const [trustShown, setTrustShown] = useState(false);
 
   const termRef = useRef<GuiTerminalHandle>(null);
   const gateRef = useRef<ReadyGate | null>(null);
+  const watcherRef = useRef<TrustWatcher | null>(null);
   const mounted = useRef(false);
   const startSeq = useRef(0);
   const cancelHint = useRef<(() => void) | null>(null);
@@ -59,6 +62,8 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     const gui = window.aetherElectron?.gui;
     const gate = gateRef.current;
     if (!gui || !gate) return;
+    watcherRef.current?.reset();
+    setTrustShown(false);
     const mySeq = ++startSeq.current;
     gate.reset();
     clearHint();
@@ -97,6 +102,11 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       onReady: () => setReady(true),
     });
     gateRef.current = gate;
+    watcherRef.current = createTrustWatcher({
+      schedule,
+      readScreen: () => termRef.current?.screenText() ?? '',
+      onChange: setTrustShown,
+    });
     // Deferred so StrictMode's discarded first run never reaches gui.start (a second start would be
     // answered reused:true and force the composer ready); the child has subscribed onData by then.
     let cancelled = false;
@@ -109,6 +119,8 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       clearHint();
       gate.dispose();
       gateRef.current = null;
+      watcherRef.current?.dispose();
+      watcherRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ChatPane is keyed by projectId: one start per mount
   }, []);
@@ -117,12 +129,15 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     clearHint();
     setHint(false);
     gateRef.current?.feed();
+    watcherRef.current?.feed();
   }, [clearHint]);
 
   const onExit = useCallback(() => {
     startSeq.current += 1;
     clearHint();
     gateRef.current?.reset(); // clears pending quiet/ceiling timers
+    watcherRef.current?.reset();
+    setTrustShown(false);
     setReady(false);
     setHint(false);
     setStopped(true);
@@ -142,10 +157,10 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     }
   };
 
-  const enabled = live && ready;
+  const enabled = live && ready && !trustShown;
   const placeholder = stopped ? 'Claude is not running' : 'Starting Claude...';
   const hintText = hint && !ready && !error ? 'No output from Claude yet. Type in the pane.' : null;
-  const message = error ?? hintText;
+  const message = error ?? (trustShown ? "Answer Claude's trust prompt in the pane first" : hintText);
 
   return (
     <div data-testid="chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>

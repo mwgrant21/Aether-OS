@@ -12,12 +12,20 @@ const mocks = vi.hoisted(() => ({
   data: undefined as ((input: string) => void) | undefined,
   resize: undefined as ((s: { cols: number; rows: number }) => void) | undefined,
   order: [] as string[],
+  screen: [] as string[],
 }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
     options = {};
+    buffer = {
+      active: {
+        viewportY: 0,
+        getLine: (y: number) =>
+          mocks.screen[y] === undefined ? undefined : { translateToString: () => mocks.screen[y]!, isWrapped: false },
+      },
+    };
     write = mocks.write;
     reset = mocks.reset;
     dispose = mocks.dispose;
@@ -98,6 +106,18 @@ const flush = async () => {
     await Promise.resolve();
   });
 };
+const PROMPT = [
+  'Accessing workspace:',
+  'C:\Users\Matt',
+  "Quick safety check: Is this a project you created or one you trust?",
+  '> No, exit',
+  '  Yes, I trust this folder',
+];
+const TRUST_HINT = "Answer Claude's trust prompt in the pane first";
+const advance = (ms: number) =>
+  act(async () => {
+    vi.advanceTimersByTime(ms);
+  });
 const box = () => screen.getByLabelText('Message') as HTMLTextAreaElement;
 
 beforeEach(() => {
@@ -106,6 +126,7 @@ beforeEach(() => {
   mocks.reset.mockClear();
   mocks.dispose.mockClear();
   mocks.fitTo = undefined;
+  mocks.screen = [];
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 });
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 600 });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -305,5 +326,90 @@ describe('ChatPane', () => {
     expect(unsubData).toHaveBeenCalledTimes(1);
     expect(unsubExit).toHaveBeenCalledTimes(1);
     expect(mocks.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  describe('trust prompt gate', () => {
+    it('keeps the composer disabled and shows the hint while the prompt is on screen before ready', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PROMPT;
+      act(() => chunk!('prompt'));
+      await advance(1700);
+      expect(box().disabled).toBe(true);
+      expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+    });
+
+    it('re-enables only after the screen is clear and 1.5 s quiet', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PROMPT;
+      act(() => chunk!('prompt'));
+      await advance(300);
+      expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+      mocks.screen = ['> '];
+      act(() => chunk!('redraw'));
+      await advance(1400);
+      expect(box().disabled).toBe(true);
+      await advance(200);
+      expect(box().disabled).toBe(false);
+      expect(screen.queryByText(TRUST_HINT)).toBeNull();
+    });
+
+    it('disables the composer again when the prompt appears after the ready gate fired', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = ['banner'];
+      act(() => chunk!('banner'));
+      await advance(1700);
+      expect(box().disabled).toBe(false);
+      mocks.screen = PROMPT;
+      act(() => chunk!('prompt'));
+      await advance(300);
+      expect(box().disabled).toBe(true);
+      expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+    });
+
+    it('stays disabled when chunks keep arriving every 200 ms for 10 s over the prompt', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PROMPT;
+      for (let t = 0; t < 10000; t += 200) {
+        act(() => chunk!('spin'));
+        await advance(200);
+      }
+      expect(box().disabled).toBe(true);
+      expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+    });
+
+    it('onExit clears the hint, and Restart starts again with it still clear', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PROMPT;
+      act(() => chunk!('prompt'));
+      await advance(300);
+      expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+      mocks.screen = [];
+      act(() => exit!());
+      expect(screen.queryByText(TRUST_HINT)).toBeNull();
+      expect(screen.getByText('Restart')).toBeTruthy();
+      fireEvent.click(screen.getByText('Restart'));
+      expect(screen.queryByText(TRUST_HINT)).toBeNull();
+      await flush();
+      expect(gui.start).toHaveBeenCalledTimes(2);
+    });
+
+    it('a reused session with an empty screen is enabled immediately and shows no trust hint', async () => {
+      install({ ok: true, reused: true });
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      await advance(300);
+      expect(box().disabled).toBe(false);
+      expect(screen.queryByText(TRUST_HINT)).toBeNull();
+    });
   });
 });
