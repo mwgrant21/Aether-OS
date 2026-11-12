@@ -29,8 +29,14 @@
 .PARAMETER Version
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
-    Defaults to D:\AetherBuilds. A relative path is resolved against the current
-    PowerShell location; forward slashes are normalised.
+    Defaults to D:\AetherBuilds. A relative path (x, .\x, ..\x) is resolved against
+    the current PowerShell location; forward slashes are normalised. An empty or
+    whitespace-only value, and drive-relative (C:x) or root-relative (\x, /x)
+    values, are refused (exit 2 under -File; see .NOTES for -Command). The
+    drive/root-relative shapes would resolve against the process working
+    directory. -StageRoot with no value at all is a parameter-binding error
+    (exit 1). Use a full path (C:\..., \\server\share\...) or a relative one.
+    Not read by -Rollback, so it is not checked there.
 .PARAMETER Rollback
     Undo an unfinished deploy from ~\.aether-os\redeploy-journal.json. Needs no
     -Version/-StageRoot/-DbPath. With -DryRun it prints each rollback step only.
@@ -42,14 +48,19 @@
     dir already non-empty or in use by the current Run value, -DbPath other than
     ~\.aether-os\collector.db, Run command over 260 characters, an existing
     ~\.aether-os\redeploy-journal.json, a non-REG_SZ Run value, -VerifySeconds
-    outside 1..60, or an unparseable -StageRoot; all checked before
+    outside 1..60, or an empty, drive-relative, root-relative or unparseable
+    -StageRoot; all checked before
     anything is changed), or -Rollback with no journal / an unreadable journal.
     3 rollback incomplete, from -Rollback or from a failed deploy's automatic
     rollback: a manual step is needed (RECOVERY lines are printed) and the journal
     is left open. -Rollback exits 0 when complete or when it only
     removed a stale journal of a deploy that had verified.
-    -DryRun -Rollback always exits 0 once the journal is readable; read the printed
-    lines for what a real run would leave undone.
+    -DryRun -Rollback exits 0 (not 3) once the journal is readable, even when the
+    previewed rollback would be incomplete; read the printed lines for what a real
+    run would leave undone. A missing or unreadable journal still exits 2.
+    The process exit code is 2 under -File. Under -Command (including -Command -
+    on stdin) it is 1 for any non-zero exit, unless the command ends with
+    `exit $LASTEXITCODE` (measured on 5.1 with a -StageRoot C:x refusal).
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
@@ -671,6 +682,16 @@ function Invoke-Redeploy {
     if (-not $Version) { $Version = (Get-Content -Raw $pkgPath | ConvertFrom-Json).version }
     if ($Version -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$') {
         Write-Output "ERROR: bad version '$Version'"
+        $script:RC = 2; return
+    }
+    if ([string]::IsNullOrWhiteSpace($StageRoot)) {
+        Write-Output 'ERROR: -StageRoot must not be empty. Nothing was changed.'
+        $script:RC = 2; return
+    }
+    # Drive-relative (C:x) and root-relative (\x, /x) shapes resolve against the .NET process cwd, not the
+    # PowerShell location. \\server\share and //server/share (two leading separators) stay accepted.
+    if ($StageRoot -match '^[A-Za-z]:(?![\\/])' -or $StageRoot -match '^[\\/](?![\\/])') {
+        Write-Output "ERROR: -StageRoot '$StageRoot' is drive-relative or root-relative and would resolve against the process working directory. Use a full path (C:\...) or a path relative to the current directory. Nothing was changed."
         $script:RC = 2; return
     }
     try {

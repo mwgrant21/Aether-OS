@@ -437,6 +437,32 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
         Assert-MockCalled Invoke-BuildAndStage -Times 0
         Assert-MockCalled Stop-OldCollector -Times 0
     }
+    It 'an empty or whitespace-only -StageRoot is exit 2 and never becomes the current directory' {
+        foreach ($empty in '', ' ', "`t  ") {
+            $script:RC = 99
+            Push-Location $gdir
+            try { $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $empty -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String } finally { Pop-Location }
+            $script:RC | Should Be 2
+            $out | Should Match 'ERROR: -StageRoot must not be empty\. Nothing was changed\.'
+            $out | Should Not Match 'Stage:'
+            Test-Path (Join-Path $gdir '9.9.9') | Should Be $false
+        }
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Stop-OldCollector -Times 0
+    }
+    It 'refuses drive-relative and root-relative -StageRoot values with exit 2, also under -DryRun' {
+        foreach ($amb in 'C:x', 'c:x\y', 'C:', '\x', '/x', '\x\y') {
+            foreach ($dry in $false, $true) {
+                $script:RC = 99
+                $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $amb -DbPath $db -ExpectedDbPath $db -Dry $dry -VerifySeconds 1 | Out-String
+                $script:RC | Should Be 2
+                $out | Should Match ([regex]::Escape("ERROR: -StageRoot '$amb' is drive-relative or root-relative and would resolve against the process working directory. Use a full path (C:\...) or a path relative to the current directory. Nothing was changed."))
+                $out | Should Not Match 'Stage:'
+            }
+        }
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Stop-OldCollector -Times 0
+    }
     It 'also refuses an unparseable journal' {
         [IO.File]::WriteAllText($jp, 'garbage {')
         $script:RC = 99
@@ -469,6 +495,20 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
         $out | Should Match 'outside 1\.\.60'
         Assert-MockCalled Stop-OldCollector -Times 0
         Assert-MockCalled Invoke-BuildAndStage -Times 0
+    }
+    # Dry runs reach the (mocked) stop step, so this stays after every Assert-MockCalled -Times 0 above.
+    It 'still accepts fully qualified, UNC, plain relative and trailing-slash -StageRoot values (dry run)' {
+        Mock Get-RunKeyKind { 'String' }
+        Push-Location $gdir
+        try {
+            foreach ($ok in 'C:\sr-x', 'C:/sr-x', '\\srv\share\sr-x', '//srv/share/sr-x', 'sr-x', '.\sr-x', '..\sr-x', 'C:\sr-x\') {
+                $script:RC = 99
+                $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $ok -DbPath $db -ExpectedDbPath $db -Dry $true -VerifySeconds 1 | Out-String
+                $out | Should Not Match 'ERROR: -StageRoot'
+                $out | Should Match 'Stage:   (\\\\srv\\share|[A-Za-z]:)\\'
+                $script:RC | Should Not Be 2
+            }
+        } finally { Pop-Location }
     }
 }
 Describe 'Test-OldCollectorRunning' {
