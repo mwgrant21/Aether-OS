@@ -37,8 +37,11 @@ describe('projectsStore', () => {
   it('list() and add results carry no path', async () => {
     const s = store();
     const r = await s.add(work);
-    expect(JSON.stringify(r)).not.toContain(dir);
-    expect(JSON.stringify(s.list())).not.toContain(dir);
+    const escaped = JSON.stringify(dir).slice(1, -1); // JSON doubles Windows backslashes
+    expect(JSON.stringify(r)).not.toContain(escaped);
+    expect(JSON.stringify(s.list())).not.toContain(escaped);
+    expect(Object.keys(s.list()[0]).sort()).toEqual(['id', 'name']);
+    expect(r.ok && Object.keys(r.project).sort()).toEqual(['id', 'name']);
   });
 
   it('reads a corrupt, oversize or wrong-version file as empty and a later add still works', async () => {
