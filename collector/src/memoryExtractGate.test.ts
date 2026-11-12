@@ -20,6 +20,13 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, execFile: execFileMock };
 });
+// startCollector has no seam for the extractor's cwd check, so the host's real ancestors are masked
+// here: existsSync reports no CLAUDE.md / CLAUDE.local.md / .claude anywhere. Everything else is real.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const memoryNames = /(^|[\\/])(CLAUDE\.md|CLAUDE\.local\.md|\.claude)$/i;
+  return { ...actual, existsSync: (p: Parameters<typeof actual.existsSync>[0]) => !memoryNames.test(String(p)) && actual.existsSync(p) };
+});
 
 import { startCollector, memoryExtractionTick } from './index.js';
 import { createMemoryStore } from './memoryStore.js';
@@ -57,7 +64,7 @@ function taskNotificationLine(toolUseId: string, timestamp: string): string {
   });
 }
 
-type ExecCall = { file: string; args: string[]; opts: { env?: NodeJS.ProcessEnv } | undefined };
+type ExecCall = { file: string; args: string[]; opts: { env?: NodeJS.ProcessEnv; cwd?: string } | undefined };
 
 function claudePromptCalls(): ExecCall[] {
   return (execFileMock.mock.calls as unknown[][])
@@ -97,15 +104,17 @@ describe('memory extraction gate (#104)', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-test-should-not-leak';
   });
 
-  // #111: the extractor's neutral cwd lives under %ProgramData%. Windows keeps the real one (a temp dir
-  // here sits under the profile, whose CLAUDE.md/.claude the cwd check would rightly refuse); elsewhere
-  // ProgramData is unset, so point it at a temp dir.
+  // #111: the extractor's neutral cwd lives under %ProgramData%. Point it at a temp dir on every OS so the
+  // real ProgramData folder is never created or inspected (host ancestors are masked by the fs mock above).
+  let savedProgramData: string | undefined;
   beforeEach(() => {
-    if (process.platform !== 'win32') process.env.ProgramData = join(dir, 'programdata');
+    savedProgramData = process.env.ProgramData;
+    process.env.ProgramData = join(dir, 'programdata');
   });
 
   afterEach(() => {
-    if (process.platform !== 'win32') delete process.env.ProgramData;
+    if (savedProgramData === undefined) delete process.env.ProgramData;
+    else process.env.ProgramData = savedProgramData;
     if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = savedKey;
     rmSync(dir, { recursive: true, force: true });
@@ -135,6 +144,8 @@ describe('memory extraction gate (#104)', () => {
     const calls = claudePromptCalls();
     expect(calls).toHaveLength(1);
     expect(calls[0].opts?.env).toBeDefined();
+    // The verified neutral cwd is the injected temp one, not the real ProgramData.
+    expect(calls[0].opts?.cwd).toBe(join(dir, 'programdata', 'AetherOS', 'memory-extract-cwd'));
     // Guards against over-correcting the lazy open: real work still creates the store.
     expect(existsSync(join(dir, 'memory.db'))).toBe(true);
     expect(calls[0].opts?.env?.ANTHROPIC_API_KEY).toBeUndefined();
