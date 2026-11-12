@@ -673,6 +673,16 @@ function Invoke-Redeploy {
         Write-Output "ERROR: bad version '$Version'"
         $script:RC = 2; return
     }
+    if ([string]::IsNullOrWhiteSpace($StageRoot)) {
+        Write-Output 'ERROR: -StageRoot must not be empty. Nothing was changed.'
+        $script:RC = 2; return
+    }
+    # Drive-relative (C:x) and root-relative (\x, /x) shapes resolve against the .NET process cwd, not the
+    # PowerShell location. \\server\share and //server/share (two leading separators) stay accepted.
+    if ($StageRoot -match '^[A-Za-z]:(?![\\/])' -or $StageRoot -match '^[\\/](?![\\/])') {
+        Write-Output "ERROR: -StageRoot '$StageRoot' is drive-relative or root-relative and would resolve against the process working directory. Use a full path (C:\...) or a path relative to the current directory. Nothing was changed."
+        $script:RC = 2; return
+    }
     try {
         if (-not [IO.Path]::IsPathRooted($StageRoot)) { $StageRoot = Join-Path (Get-Location).Path $StageRoot }
         $StageRoot = [IO.Path]::GetFullPath($StageRoot)
