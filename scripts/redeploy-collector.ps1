@@ -561,7 +561,7 @@ function Invoke-Rollback {
     }
 
     Write-Output '===== R3: relaunch the old collector ====='
-    $ranOld = $false
+    $oldTail = 'old collector was not running before'
     if (-not $r1ok) {
         $problems += 'R3 skipped (the new collector may still be running)'
         Write-Output 'WARNING: R3 skipped: the new collector may still be running, so a second writer is not safe.'
@@ -569,24 +569,26 @@ function Invoke-Rollback {
         Write-Output 'the old collector was not running before this run; not started'
     } elseif ([string]::IsNullOrEmpty($oldRun)) {
         Write-Output 'R3: the old Run value is empty or absent, so the old collector was not launched via the Run key; nothing to relaunch.'
+        $oldTail = 'old collector was running before but has no Run-key launch command, so it was not relaunched; start it by hand if you need it'
     } else {
         try {
             $manual = "check that no collector (a node.exe running an index.js) is already running, then start it by hand: $oldRun"
             $existing = @(Get-ExactIndexProcessMatch -Processes @(Get-WmiObject Win32_Process) -IndexJs $oldIdx -ExcludePid $PID | Where-Object { $_.Name -eq 'node.exe' })
             $node = Get-NodeExeFromRunValue $oldRun
             if ($existing.Count -gt 0) {
-                $ranOld = $true
+                $oldTail = 'old collector running'
                 Write-Output "R3: the old collector is already running (PID $($existing[0].ProcessId)); not started again."
             } elseif (-not $oldIdx -or -not $node -or -not (Test-Path -LiteralPath $oldIdx)) {
                 $problems += "R3 cannot relaunch the old collector ($manual)"
                 Write-Output "WARNING: R3 cannot relaunch: no usable old index.js / node.exe in the old Run value or the index.js is missing; $manual"
             } elseif ($Dry) {
+                $oldTail = 'old collector would be relaunched'
                 Write-Output "[DRY-RUN] R3 Start-Process conhost.exe --headless `"$node`" `"$oldIdx`" (cwd $(Split-Path (Split-Path $oldIdx)))"
             } else {
                 Write-Output "[RUN] Start-Process conhost.exe --headless `"$node`" `"$oldIdx`""
                 Start-Process conhost.exe -ArgumentList '--headless', "`"$node`"", "`"$oldIdx`"" -WorkingDirectory (Split-Path (Split-Path $oldIdx))
                 Start-Sleep -Seconds $RelaunchWaitSeconds
-                if (Test-CollectorAlive $oldIdx) { $ranOld = $true; Write-Output 'R3: the old collector is running.' }
+                if (Test-CollectorAlive $oldIdx) { $oldTail = 'old collector running'; Write-Output 'R3: the old collector is running.' }
                 else { $problems += "R3 old collector is not running after relaunch ($manual)"; Write-Output "WARNING: R3 the old collector is not running after relaunch; $manual" }
             }
         } catch {
@@ -624,8 +626,7 @@ function Invoke-Rollback {
             try { Remove-Journal -Path $JournalPath; Write-Output "journal deleted: $JournalPath" }
             catch { Write-Output "WARNING: could not delete the journal $JournalPath ($($_.Exception.Message)); delete it by hand." }
         }
-        if ($ranOld) { Write-Output 'ROLLBACK COMPLETE: previous Run value restored, old collector running' }
-        else { Write-Output 'ROLLBACK COMPLETE: previous Run value restored, old collector was not running before' }
+        Write-Output "ROLLBACK COMPLETE: previous Run value restored, $oldTail"
         $script:RC = 0
     } else {
         Write-Output "ROLLBACK INCOMPLETE: $($problems -join '; ')"

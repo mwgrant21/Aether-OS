@@ -995,6 +995,8 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r.RC | Should Be 0
         $r.Out | Should Match 'nothing to relaunch'
         $r.Out | Should Not Match 'start it by hand: \s*$'
+        $r.Out | Should Not Match 'was not running before'
+        $r.Out | Should Match 'was running before but has no Run-key launch command'
         Test-Path $c.JP | Should Be $false
     }
     It 'R2: the Run value deleted by someone else (oldRun non-null) -> says absent, no write, RC 3, journal kept' {
@@ -1024,6 +1026,15 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r.RC | Should Be 3
         $r.Out | Should Match 'check that no collector'
         $r.Out | Should Match 'start it by hand: conhost\.exe --headless'
+    }
+    It 'R3: dry run with a relaunchable old collector -> says it would be relaunched, never "not running before", RC 0, nothing touched' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $true
+        $r.RC | Should Be 0
+        $r.Out | Should Not Match 'was not running before'
+        $r.Out | Should Match 'would be relaunched'
+        Get-RbCount '.' | Should Be 0
     }
     It 'R3: oldWasRunning = $false -> not started, RC 0' {
         $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
