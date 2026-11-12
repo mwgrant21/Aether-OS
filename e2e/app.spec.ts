@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { launchApp } from './electronHelpers';
+import { launchApp, closeApp } from './electronHelpers';
 
 // Narrow structural view for browser callbacks: this e2e TypeScript project
 // does not load the renderer's global Window augmentation.
@@ -43,7 +43,7 @@ test.describe('Aether OS smoke', () => {
     try {
       await expect(window.locator('body')).toBeVisible();
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 
@@ -55,15 +55,17 @@ test.describe('Aether OS smoke', () => {
         if (msg.type() === 'error') consoleErrors.push(msg.text());
       });
 
-      const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
-      for (const tab of SIDEBAR_TABS) {
-        await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
-        await window.waitForTimeout(200);
-      }
+      await test.step('click tabs', async () => {
+        const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
+        for (const tab of SIDEBAR_TABS) {
+          await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
+          await window.waitForTimeout(200);
+        }
+      });
 
       expect(consoleErrors).toEqual([]);
     } finally {
-      await app.close();
+      await test.step('close', () => closeApp(app, test.info().title));
     }
   });
 
@@ -88,7 +90,7 @@ test.describe('Aether OS smoke', () => {
         expect(text).toContain('AETHER_E2E_CLAUDE_FIXTURE_REAL_PTY_NO_MODEL');
       }).toPass({ timeout: 10000 });
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 
@@ -126,7 +128,7 @@ test.describe('Aether OS smoke', () => {
       expect(results.replacement.output).toContain('AETHER_E2E_CODEX_FIXTURE_REAL_PTY_NO_MODEL');
       expect(results.replacement.pid).not.toBe(results.first.pid);
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
   test('isolated instances display distinct safe identities without launching a session', async () => {
@@ -156,10 +158,10 @@ test.describe('Aether OS smoke', () => {
         // Reading the second instance never changes the first instance identity.
         await expect(first.window.getByTestId('communication-session-identity')).toContainText(statuses[0].instanceLabel);
       } finally {
-        await second.app.close();
+        await closeApp(second.app, `${test.info().title} #2`, { timeoutMs: 6_000 });
       }
     } finally {
-      await first.app.close();
+      await closeApp(first.app, `${test.info().title} #1`, { timeoutMs: 6_000 });
     }
   });
   test('the dashboard metrics row renders real-usage data', async () => {
@@ -168,7 +170,7 @@ test.describe('Aether OS smoke', () => {
       await window.locator('[data-testid="sidebar-nav"]').getByRole('button', { name: 'Dashboard', exact: true }).click();
       await expect(window.getByText('Tokens used')).toBeVisible({ timeout: 15000 });
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 });

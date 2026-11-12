@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { launchApp } from './electronHelpers';
+import { launchApp, closeApp } from './electronHelpers';
 import { RENDERER_CSP_PROD } from '../vite-plugins/rendererCsp';
 
 type Violation = { violatedDirective: string; blockedURI: string };
@@ -38,7 +38,7 @@ test.describe('Renderer CSP (built app over file://)', () => {
       expect(content).toBe(RENDERER_CSP_PROD);
       expect(window.url().startsWith('file:')).toBe(true);
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 
@@ -66,7 +66,7 @@ test.describe('Renderer CSP (built app over file://)', () => {
       expect(directives.some(d => d.startsWith('script-src'))).toBe(true);
       expect(directives.some(d => d.startsWith('connect-src'))).toBe(true);
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 
@@ -80,18 +80,20 @@ test.describe('Renderer CSP (built app over file://)', () => {
       await app.context().addInitScript(RECORD_VIOLATIONS);
       await window.reload();
       await window.waitForLoadState('domcontentloaded');
-      const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
-      for (const tab of SIDEBAR_TABS) {
-        await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
-        await window.waitForTimeout(200);
-      }
-      await sidebarNav.getByRole('button', { name: 'Terminal Alpha', exact: true }).click();
-      await window.locator('.xterm-screen').first().waitFor({ state: 'visible', timeout: 10000 });
-      await window.waitForTimeout(500);
+      await test.step('click tabs', async () => {
+        const sidebarNav = window.locator('[data-testid="sidebar-nav"]');
+        for (const tab of SIDEBAR_TABS) {
+          await sidebarNav.getByRole('button', { name: tab, exact: true }).click();
+          await window.waitForTimeout(200);
+        }
+        await sidebarNav.getByRole('button', { name: 'Terminal Alpha', exact: true }).click();
+        await window.locator('.xterm-screen').first().waitFor({ state: 'visible', timeout: 10000 });
+        await window.waitForTimeout(500);
+      });
       expect(await violations(window)).toEqual([]);
       expect(consoleErrors.filter(t => /Content Security Policy|Refused to/.test(t))).toEqual([]);
     } finally {
-      await app.close();
+      await test.step('close', () => closeApp(app, test.info().title));
     }
   });
 
@@ -108,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => { new Image().src = 'https:/
       const seen = await violations(window);
       expect(seen.some(v => v.violatedDirective.startsWith('img-src'))).toBe(true);
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 
@@ -127,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => { new Image().src = 'https:/
       expect(loaded).toBe(true);
       expect(await violations(window)).toEqual([]);
     } finally {
-      await app.close();
+      await closeApp(app, test.info().title);
     }
   });
 });
