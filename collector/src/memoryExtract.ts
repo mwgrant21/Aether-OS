@@ -34,6 +34,9 @@ const execFileAsync = promisify(execFile);
 // that into billed API usage, so these are stripped from the child. Duplicated
 // from electron/ptyManager.ts (the collector never imports from electron).
 const SCRUBBED_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+// Bedrock / Vertex / Foundry switches (CLAUDE_CODE_USE_BEDROCK, ...): provider billing, not the subscription.
+const SCRUBBED_ENV_PREFIXES = ['CLAUDE_CODE_USE_'];
+// CLAUDE_CODE_OAUTH_TOKEN is deliberately NOT scrubbed: it is the subscription setup token.
 
 // Exported for the test. Matches case-insensitively: process.env is a plain object once
 // copied, but Windows resolves env names case-insensitively, so `Anthropic_Api_Key` would
@@ -41,8 +44,23 @@ const SCRUBBED_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 
 export function scrubbedEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source };
   for (const key of Object.keys(env)) {
-    if (SCRUBBED_ENV_KEYS.has(key.toUpperCase())) delete env[key];
+    const upper = key.toUpperCase();
+    if (SCRUBBED_ENV_KEYS.has(upper) || SCRUBBED_ENV_PREFIXES.some((p) => upper.startsWith(p))) delete env[key];
   }
+  return env;
+}
+
+/**
+ * Env for BOTH the `auth status` call and the `-p` call: billing/provider variables scrubbed,
+ * auto-memory forced off. Any differently-cased existing key is deleted first so Windows never
+ * sees two spellings of the same name. The parent env is not mutated.
+ */
+export function isolatedExtractEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = scrubbedEnv(source);
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'CLAUDE_CODE_DISABLE_AUTO_MEMORY') delete env[key];
+  }
+  env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
   return env;
 }
 
@@ -51,15 +69,85 @@ export type ExtractExecFn = (prompt: string) => Promise<{ stdout: string }>;
 /** Upper bound for one extraction child; execFile kills it with SIGTERM (err.killed = true). */
 export const EXTRACT_TIMEOUT_MS = 90_000;
 
+/** Upper bound for the per-item `claude auth status --json` check. */
+export const AUTH_STATUS_TIMEOUT_MS = 15_000;
+
 /** The user's hooks hung the headless child (measured: >90 s hooks on, 27.8 s hooks off). */
 export const EXTRACT_CHILD_SETTINGS = '{"disableAllHooks":true}';
 
+/**
+ * The call was deliberately not made. `reason` is one of a closed set of fixed strings and is
+ * all that ever reaches the log: never err.message, stdout, stderr, a path or prompt text.
+ */
+export class ExtractRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(reason);
+    this.name = 'ExtractRefusedError';
+  }
+}
+
+export type AuthStatusFn = () => Promise<{ stdout: string }>;
+
+const AUTH_METHOD_REFUSALS: Readonly<Record<string, string>> = {
+  api_key: 'auth_api_key',
+  api_key_helper: 'auth_api_key_helper',
+  third_party: 'auth_third_party',
+  none: 'auth_none',
+};
+
+/**
+ * Fail-closed subscription gate. Only an exit-0 `claude auth status --json` whose `authMethod` is
+ * exactly `claude.ai` or `oauth_token` returns; everything else throws ExtractRefusedError.
+ * Exact-match and case-sensitive on purpose (allow-list, not deny-list).
+ * UNVERIFIED without a model call: that `auth status` makes no model call, and that its
+ * `authMethod` is the credential a later `-p` run actually uses. It also cannot be given
+ * --setting-sources, so a user with an apiKeyHelper only in ~/.claude/settings.json is refused
+ * (auth_api_key_helper) even though the child excludes user settings; that false refusal is accepted.
+ */
+export async function checkSubscriptionAuth(authStatus: AuthStatusFn): Promise<void> {
+  let stdout: unknown;
+  try {
+    stdout = (await authStatus()).stdout;
+  } catch (err) {
+    // err may be undefined/null/a string: optional chaining, never a TypeError that skips the refusal.
+    const e = err as { killed?: unknown; code?: unknown } | null | undefined;
+    if (e?.killed === true) throw new ExtractRefusedError('auth_status_timeout');
+    if (typeof e?.code === 'number') throw new ExtractRefusedError('auth_status_exit');
+    throw new ExtractRefusedError('auth_status_error');
+  }
+
+  let method: unknown;
+  try {
+    const parsed: unknown = JSON.parse(stdout as string);
+    method = typeof parsed === 'object' && parsed !== null ? (parsed as { authMethod?: unknown }).authMethod : undefined;
+  } catch {
+    method = undefined;
+  }
+  if (typeof method !== 'string') throw new ExtractRefusedError('auth_status_unparseable');
+  if (method === 'claude.ai' || method === 'oauth_token') return;
+  throw new ExtractRefusedError(Object.hasOwn(AUTH_METHOD_REFUSALS, method) ? AUTH_METHOD_REFUSALS[method] : 'auth_method_unknown');
+}
+
+export interface ExtractExecDeps {
+  authStatus?: AuthStatusFn;
+}
+
 /** The real call: a cheap headless model invocation, no interactive session. */
-export async function defaultExtractExec(prompt: string): Promise<{ stdout: string }> {
+export async function defaultExtractExec(prompt: string, deps: ExtractExecDeps = {}): Promise<{ stdout: string }> {
+  const authStatus: AuthStatusFn =
+    deps.authStatus ??
+    (() =>
+      execFileAsync('claude', ['auth', 'status', '--json'], {
+        env: isolatedExtractEnv(),
+        windowsHide: true,
+        timeout: AUTH_STATUS_TIMEOUT_MS,
+      }));
+  await checkSubscriptionAuth(authStatus);
+
   const { stdout } = await execFileAsync(
     'claude',
     ['-p', prompt, '--model', 'haiku', '--output-format', 'text', '--settings', EXTRACT_CHILD_SETTINGS],
-    { env: scrubbedEnv(), windowsHide: true, timeout: EXTRACT_TIMEOUT_MS }
+    { env: isolatedExtractEnv(), windowsHide: true, timeout: EXTRACT_TIMEOUT_MS }
   );
   return { stdout };
 }
@@ -97,6 +185,9 @@ export async function runExtractor(
   try {
     stdout = (await execFn(prompt)).stdout;
   } catch (err) {
+    if (err instanceof ExtractRefusedError) {
+      return { ...emptyApplyResult(), parseError: `exec_refused: ${err.reason}` };
+    }
     // Never err.message / err.cmd: execFile puts the full prompt (run text) in both.
     const e = err as { killed?: unknown; code?: unknown } | null;
     const reason =

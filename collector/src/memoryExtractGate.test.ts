@@ -81,7 +81,9 @@ describe('memory extraction gate (#104)', () => {
     // No promisify.custom: promisify resolves with the object handed to the callback.
     execFileMock.mockImplementation((...a: unknown[]) => {
       const cb = a[a.length - 1];
-      if (typeof cb === 'function') cb(null, { stdout: '[]', stderr: '' });
+      // `claude auth status --json` (the #111 subscription gate) must report a subscription login.
+      const stdout = (a[1] as string[])[0] === 'auth' ? '{"authMethod":"claude.ai"}' : '[]';
+      if (typeof cb === 'function') cb(null, { stdout, stderr: '' });
     });
     dir = mkdtempSync(join(tmpdir(), 'aether-gate-'));
     settingsPath = join(dir, 'collector-settings.json');

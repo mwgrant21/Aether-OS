@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore } from './memoryStore.js';
-import { runExtractor, defaultExtractExec, EXTRACT_TIMEOUT_MS } from './memoryExtract.js';
+import {
+  runExtractor,
+  defaultExtractExec,
+  EXTRACT_TIMEOUT_MS,
+  AUTH_STATUS_TIMEOUT_MS,
+  ExtractRefusedError,
+} from './memoryExtract.js';
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', async (importOriginal) => {
@@ -175,12 +181,115 @@ describe('defaultExtractExec', () => {
       const cb = a[a.length - 1];
       if (typeof cb === 'function') cb(null, { stdout: '[]', stderr: '' });
     });
-    await defaultExtractExec('hello');
+    await defaultExtractExec('hello', { authStatus: async () => ({ stdout: '{"authMethod":"claude.ai"}' }) });
     const [file, args, opts] = execFileMock.mock.calls[0] as [string, string[], { timeout?: number }];
     expect(file).toBe('claude');
     const i = args.indexOf('--settings');
     expect(i).toBeGreaterThan(-1);
     expect(args[i + 1]).toBe('{"disableAllHooks":true}');
     expect(opts.timeout).toBe(EXTRACT_TIMEOUT_MS);
+  });
+});
+
+type ExecCall = [string, string[], { env?: NodeJS.ProcessEnv; timeout?: number; windowsHide?: boolean }];
+
+function mockClaudeOk(): void {
+  execFileMock.mockReset();
+  execFileMock.mockImplementation((...a: unknown[]) => {
+    const cb = a[a.length - 1];
+    if (typeof cb === 'function') cb(null, { stdout: '[]', stderr: '' });
+  });
+}
+
+function promptSpawns(): number {
+  return execFileMock.mock.calls.filter((c) => (c[1] as string[])[0] === '-p').length;
+}
+
+describe('defaultExtractExec subscription-only auth gate (#111)', () => {
+  const refusals: Array<[string, () => Promise<{ stdout: string }>, string]> = [
+    ['api_key', async () => ({ stdout: '{"authMethod":"api_key"}' }), 'auth_api_key'],
+    ['api_key_helper', async () => ({ stdout: '{"authMethod":"api_key_helper"}' }), 'auth_api_key_helper'],
+    ['third_party', async () => ({ stdout: '{"authMethod":"third_party"}' }), 'auth_third_party'],
+    ['none', async () => ({ stdout: '{"authMethod":"none"}' }), 'auth_none'],
+    ['unknown method', async () => ({ stdout: '{"authMethod":"something_new"}' }), 'auth_method_unknown'],
+    ['non-JSON stdout', async () => ({ stdout: 'Logged in as x' }), 'auth_status_unparseable'],
+    ['JSON without authMethod', async () => ({ stdout: '{"loggedIn":true}' }), 'auth_status_unparseable'],
+    ['BOM prefix', async () => ({ stdout: '﻿{"authMethod":"claude.ai"}' }), 'auth_status_unparseable'],
+    ['trailing text', async () => ({ stdout: '{"authMethod":"claude.ai"} trailing' }), 'auth_status_unparseable'],
+    ['wrong casing', async () => ({ stdout: '{"authMethod":"Claude.ai"}' }), 'auth_method_unknown'],
+    ['array authMethod', async () => ({ stdout: '{"authMethod":["claude.ai"]}' }), 'auth_status_unparseable'],
+    ['JSON null', async () => ({ stdout: 'null' }), 'auth_status_unparseable'],
+    ['non-string stdout', async () => ({ stdout: undefined as unknown as string }), 'auth_status_unparseable'],
+    ['non-zero exit', () => Promise.reject({ code: 1 }), 'auth_status_exit'],
+    ['timeout', () => Promise.reject({ killed: true, code: null }), 'auth_status_timeout'],
+    ['ENOENT', () => Promise.reject({ code: 'ENOENT' }), 'auth_status_error'],
+    ['reject undefined', () => Promise.reject(undefined), 'auth_status_error'],
+    ['reject null', () => Promise.reject(null), 'auth_status_error'],
+    ['reject string', () => Promise.reject('boom'), 'auth_status_error'],
+    ['reject number', () => Promise.reject(7), 'auth_status_error'],
+  ];
+
+  it.each(refusals)('refuses %s with its fixed reason and never spawns -p', async (_name, authStatus, reason) => {
+    mockClaudeOk();
+    const err = await defaultExtractExec('p', { authStatus }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExtractRefusedError);
+    expect((err as ExtractRefusedError).reason).toBe(reason);
+    expect((err as ExtractRefusedError).message).toBe(reason);
+    expect(promptSpawns()).toBe(0);
+  });
+
+  it.each(['claude.ai', 'oauth_token'])('proceeds for the subscription method %s, spawning -p once', async (method) => {
+    mockClaudeOk();
+    const out = await defaultExtractExec('p', { authStatus: async () => ({ stdout: `{"authMethod":"${method}"}` }) });
+    expect(out.stdout).toBe('[]');
+    expect(promptSpawns()).toBe(1);
+  });
+
+  it('runExtractor maps a refusal to exec_refused with no prompt text and a fresh rejected array', async () => {
+    const { store, cleanup } = tempStore();
+    try {
+      const secret = 'SECRET-RUN-TEXT-xyz';
+      const a = await runExtractor(
+        { store, writer: 'CINDER', sourceKind: 'run', runSummary: secret, existingMemories: [] },
+        async () => { throw new ExtractRefusedError('auth_api_key'); },
+      );
+      const b = await runExtractor(
+        { store, writer: 'CINDER', sourceKind: 'run', runSummary: secret, existingMemories: [] },
+        async () => { throw new ExtractRefusedError('auth_api_key'); },
+      );
+      expect(a.parseError).toBe('exec_refused: auth_api_key');
+      expect(a.parseError).not.toContain(secret);
+      expect(a.added).toBe(0);
+      expect(a.rejected).toEqual([]);
+      expect(a.rejected).not.toBe(b.rejected);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('the default auth runner launches claude auth status --json with a scrubbed env and a bounded timeout', async () => {
+    const saved: Record<string, string | undefined> = {};
+    const sentinels = { ANTHROPIC_API_KEY: 'sk-sentinel', CLAUDE_CODE_USE_BEDROCK: '1' };
+    for (const [k, v] of Object.entries(sentinels)) { saved[k] = process.env[k]; process.env[k] = v; }
+    try {
+      execFileMock.mockReset();
+      execFileMock.mockImplementation((...a: unknown[]) => {
+        const cb = a[a.length - 1];
+        const args = a[1] as string[];
+        const stdout = args[0] === 'auth' ? '{"authMethod":"claude.ai"}' : '[]';
+        if (typeof cb === 'function') cb(null, { stdout, stderr: '' });
+      });
+      await defaultExtractExec('p');
+      const authCall = execFileMock.mock.calls.find((c) => (c[1] as string[])[0] === 'auth') as ExecCall;
+      expect(authCall[0]).toBe('claude');
+      expect(authCall[1]).toEqual(['auth', 'status', '--json']);
+      expect(authCall[2].timeout).toBe(AUTH_STATUS_TIMEOUT_MS);
+      expect(authCall[2].windowsHide).toBe(true);
+      const keys = Object.keys(authCall[2].env ?? {}).map((k) => k.toUpperCase());
+      expect(keys).not.toContain('ANTHROPIC_API_KEY');
+      expect(keys.filter((k) => k.startsWith('CLAUDE_CODE_USE_'))).toEqual([]);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
   });
 });
