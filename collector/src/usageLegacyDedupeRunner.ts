@@ -202,9 +202,11 @@ export function runLegacyUsageDedupe(argv: string[], env: LegacyDedupeRunnerEnv 
               throw new BackupError();
             }
             if (!(free >= needed)) throw new BackupError();
-            // Claim the destination atomically: an exclusive create fails (EEXIST) on any
-            // existing path, including a dangling symlink, so cleanup only ever removes a
-            // file this run created. The earlier lstat check does not establish ownership.
+            // Claim the destination atomically: the exclusive create ('wx') is the ownership
+            // claim, and on POSIX it fails (EEXIST) on any existing path, so cleanup only ever
+            // removes a file this run created. It is not what covers a pre-existing symlink:
+            // on Windows 'wx' can follow a dangling symlink created after the lstat precheck
+            // (pathTaken above), and that precheck is what rejects links that already exist.
             try {
               closeSync(openSync(backupPath, 'wx'));
             } catch {
