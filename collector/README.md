@@ -82,10 +82,15 @@ What is and is not known:
   (timestamp, model, tokens) tuple maps to more than one message id, so "0 false positives on
   163k rows" is biased and is not a guarantee.
 - The rule was calibrated on 2026-10-13+ rows and is applied to rows from 2026-09-11 to
-  2026-10-12 (older Claude Code builds). That transfer is unverified. The only check is yours:
-  read the dry-run shape and compare it with the prediction of about 52k pairs, 5.9k triples
-  and a largest cluster of about 19 (`clusterPairs`, `clusterTriples`, `maxClusterSize`).
-  Do not apply if it is far off.
+  2026-10-12 (older Claude Code builds). That transfer is unverified. The only check is yours,
+  and it is made against the TARGET shape, not the calibration shape. Calibration set (163k
+  ground-truthed rows from 2026-10-13 onward): 52,392 pairs, 5,865 triples, largest cluster
+  19. Expected target (about 50.8k rows; a PREDICTION with no ground truth): about 16.5k
+  pairs, about 3.4k triples, largest cluster about 14, about 25.9k rows to delete and about
+  5e9 tokens. Compare your dry-run `clusterPairs`, `clusterTriples`, `maxClusterSize`,
+  `rowsToDelete` and `deleteTokenMass` with the target figures. A large departure (far more
+  deletes, or a largest cluster beyond about 30, which the code refuses anyway) means do not
+  apply.
 - Survivors are the earliest streamed row and may carry partial output (943 groups in the
   calibration differed). They keep a NULL `message_key`. Duplicates of one message across two
   transcript files are not caught. Totals will not be exact.

@@ -99,7 +99,7 @@ describe('runLegacyUsageDedupe', () => {
   });
 
   it('fails closed (exit 3) on a missing or non-numeric heartbeat', () => {
-    for (const hb of [null, 'not-a-number', '']) {
+    for (const hb of [null, 'not-a-number', '', ' 12 ', '12 ', ' 12']) {
       const f = fixture(hb);
       const before = stats(f.dbPath);
       expect(runLegacyUsageDedupe(args(f, ...APPLY), f.env), String(hb)).toBe(3);

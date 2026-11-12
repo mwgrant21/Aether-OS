@@ -162,7 +162,7 @@ export function runLegacyUsageDedupe(argv: string[], env: LegacyDedupeRunnerEnv 
         return fail('cannot read heartbeat', 1);
       }
       // Strict digits only: Number('') is 0, which would read as "stopped long ago".
-      const last = hb && /^\d{1,16}$/.test(String(hb.value).trim()) ? Number(String(hb.value).trim()) : NaN;
+      const last = hb && /^\d{1,16}$/.test(String(hb.value)) ? Number(hb.value) : NaN;
       // Fail closed: a missing or non-numeric heartbeat is not proof the collector is stopped.
       // A heartbeat in the future (clock skew) is also treated as fresh.
       if (!Number.isFinite(last)) {
