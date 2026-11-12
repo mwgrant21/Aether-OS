@@ -429,6 +429,14 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
             Remove-Item -Recurse -Force -LiteralPath (Join-Path $root '9.9.9') -ErrorAction SilentlyContinue
         }
     }
+    It 'an unparseable -StageRoot is exit 2 before anything is built or changed' {
+        $script:RC = 99
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'C:\a|b' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $script:RC | Should Be 2
+        $out | Should Match 'ERROR: -StageRoot'
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Stop-OldCollector -Times 0
+    }
     It 'also refuses an unparseable journal' {
         [IO.File]::WriteAllText($jp, 'garbage {')
         $script:RC = 99
@@ -1270,7 +1278,7 @@ Describe 'Invoke-Redeploy auto-rollback fault injection (everything mocked; jour
     Mock Start-Sleep {}
     Mock Copy-Item {}
     Mock Get-FreeBytes { [int64]1GB }
-    Mock Stop-OldCollector { $global:FtStops++ }
+    Mock Stop-OldCollector { $global:FtStops++; $global:FtStopRoot = $StageRoot }
     Mock Get-WmiObject { @() }
     Mock Get-Process {}
     Mock Stop-Process {}
@@ -1340,6 +1348,27 @@ Describe 'Invoke-Redeploy auto-rollback fault injection (everything mocked; jour
         ($global:FtRun -ceq $global:FtOld) | Should Be $true
         $script:RC | Should Be 1
         Test-Path $jp | Should Be $false
+    }
+    It 'forward-slash -StageRoot is normalised: journal path is killable, rollback runs R1/R3/R4, RC 1' {
+        Reset-Ft; $global:FtStartThrowAt = 1; $root = (New-FtRoot) -replace '\\', '/'
+        $out = Start-FtDeploy $root
+        $script:RC | Should Be 1
+        $out | Should Not Match 'R1 skipped'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Match 'Stage:   [A-Za-z]:\\'
+        $out | Should Not Match 'Stage:   [^\r\n]*/'
+        $global:FtStopRoot | Should Not Match '/'
+        Test-StageAside ($root -replace '/', '\') | Should Be $true
+    }
+    It 'relative -StageRoot is resolved against the PowerShell location: rollback runs R1/R3/R4, RC 1' {
+        Reset-Ft; $global:FtStartThrowAt = 1; $rel = [guid]::NewGuid().ToString('N')
+        Push-Location $ftdir
+        try { $out = Start-FtDeploy $rel } finally { Pop-Location }
+        $script:RC | Should Be 1
+        $out | Should Not Match 'R1 skipped'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Match 'Stage:   [A-Za-z]:\\'
+        Test-StageAside (Join-Path $ftdir $rel) | Should Be $true
     }
     It 'Start-Process throws (phase repointed): the Run value is restored with a write, RC 1' {
         Reset-Ft; $global:FtStartThrowAt = 1; $root = New-FtRoot

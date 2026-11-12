@@ -29,7 +29,8 @@
 .PARAMETER Version
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
-    Defaults to D:\AetherBuilds.
+    Defaults to D:\AetherBuilds. A relative path is resolved against the current
+    PowerShell location; forward slashes are normalised.
 .PARAMETER Rollback
     Undo an unfinished deploy from ~\.aether-os\redeploy-journal.json. Needs no
     -Version/-StageRoot/-DbPath. With -DryRun it prints each rollback step only.
@@ -41,7 +42,7 @@
     dir already non-empty or in use by the current Run value, -DbPath other than
     ~\.aether-os\collector.db, Run command over 260 characters, an existing
     ~\.aether-os\redeploy-journal.json, a non-REG_SZ Run value, -VerifySeconds
-    outside 1..60; all checked before
+    outside 1..60, or an unparseable -StageRoot; all checked before
     anything is changed), or -Rollback with no journal / an unreadable journal.
     3 rollback incomplete, from -Rollback or from a failed deploy's automatic
     rollback: a manual step is needed (RECOVERY lines are printed) and the journal
@@ -670,6 +671,13 @@ function Invoke-Redeploy {
     if (-not $Version) { $Version = (Get-Content -Raw $pkgPath | ConvertFrom-Json).version }
     if ($Version -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$') {
         Write-Output "ERROR: bad version '$Version'"
+        $script:RC = 2; return
+    }
+    try {
+        if (-not [IO.Path]::IsPathRooted($StageRoot)) { $StageRoot = Join-Path (Get-Location).Path $StageRoot }
+        $StageRoot = [IO.Path]::GetFullPath($StageRoot)
+    } catch {
+        Write-Output "ERROR: -StageRoot '$StageRoot' is not a valid path ($($_.Exception.Message)). Nothing was changed."
         $script:RC = 2; return
     }
     $stage = Join-Path (Join-Path $StageRoot $Version) 'collector'
