@@ -380,7 +380,7 @@ export function createMemoryStore(dbPath: string, opts: MemoryStoreOptions = {})
     return buildMemoryStore(db, opts);
   } catch (e) {
     // Setup failed after the open: close the handle (it would otherwise leak on
-    // every retry and keep the file locked on Windows), then surface the ORIGINAL error.
+    // every retry and hold the file open until garbage collection), then surface the ORIGINAL error.
     try { db.close(); } catch { /* the original error is the one that matters */ }
     throw e;
   }

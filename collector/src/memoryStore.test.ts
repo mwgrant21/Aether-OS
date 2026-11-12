@@ -570,7 +570,7 @@ describe('createMemoryStore open failure', () => {
     }
   });
 
-  it('rethrows the original error and closes the handle when setup fails after open', () => {
+  it('rethrows the original error and calls close once when setup fails after open', () => {
     // Runtime require, not a static import: Vite strips the node: prefix off node:sqlite.
     const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
     const d = mkdtempSync(join(tmpdir(), 'aether-mem-bad-'));
@@ -579,7 +579,7 @@ describe('createMemoryStore open failure', () => {
       const p = join(d, 'memory.db');
       writeFileSync(p, 'this is not a sqlite database, '.repeat(20));
       expect(() => createMemoryStore(p)).toThrow(/not a database/i);
-      // Proves close() was called once on the failed open's handle; it does not observe OS-level file locks.
+      // Proves only that close() was called once (the spy is on the prototype, so it does not say which handle); it does not observe OS-level file locks.
       expect(closeSpy).toHaveBeenCalledTimes(1);
     } finally {
       closeSpy.mockRestore();
