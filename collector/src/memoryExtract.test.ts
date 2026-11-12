@@ -503,10 +503,12 @@ describe('spawn argv and binary resolution (#111)', () => {
     expect(JSON.parse(out)).toEqual(json);
   });
 
-  // A1 probe: on Windows a bare `claude` is NOT resolved from the child's cwd by this libuv; PATH decides.
-  // A harmless node.exe copy stands in for claude, so the real binary is never run. The empty-cwd rule
-  // stays regardless of this result.
-  it.skipIf(process.platform !== 'win32')('a claude.exe planted in the child cwd is not what execFile("claude") resolves', () => {
+  // Characterization, not a pin on which one wins: on some Node versions a bare `claude` is resolved from
+  // the child's cwd before PATH (CI), on others PATH wins (Node 26 locally). That is why the neutral cwd
+  // must be strictly empty; the planted-claude.exe refusal is the `cwd_dirty` test in prepareExtractCwd above.
+  // A harmless node.exe copy stands in for claude and PATH holds only the stand-in dir, so the real binary
+  // is unreachable.
+  it.skipIf(process.platform !== 'win32')('execFile("claude") resolves one of the two stand-ins, never anything else', () => {
     const root = mkdtempSync(join(tmpdir(), 'aether-probe-'));
     try {
       const cwdDir = join(root, 'cwd');
@@ -521,7 +523,7 @@ describe('spawn argv and binary resolution (#111)', () => {
       for (const k of Object.keys(env)) if (/^path$/i.test(k)) delete env[k];
       env.PATH = pathDir;
       const out = execFileSync('claude', ['-p', 'process.execPath'], { cwd: cwdDir, env, encoding: 'utf8' });
-      expect(out.trim()).toBe(join(pathDir, 'claude.exe'));
+      expect([join(cwdDir, 'claude.exe'), join(pathDir, 'claude.exe')]).toContain(out.trim());
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

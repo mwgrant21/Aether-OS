@@ -690,7 +690,9 @@ standard as the §18 `Hooks disabled.` bullet). The argv, pinned in
   fallback: the call is refused (`cwd_unavailable`). Before each spawn (the auth check and the `-p`
   call, so a swap between them is caught) the collector checks that it is a real directory, not a
   link or junction, and that its real path matches (`cwd_unsafe`); that it is strictly empty, so a
-  planted `claude.exe`, `.claude` or `CLAUDE.md` refuses (`cwd_dirty`); and that neither it nor any
+  planted `claude.exe`, `.claude` or `CLAUDE.md` refuses (`cwd_dirty`; on some Node versions a
+  `claude.exe` in the working folder is resolved before `PATH`, which is why the folder must be
+  strictly empty); and that neither it nor any
   ancestor up to the drive root holds a `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` or
   `.claude/settings*.json` (`cwd_ancestor_memory`). Aether never deletes the folder; it stays empty
   and is safe to delete (it is recreated on next use). This assumes a single-user machine: another

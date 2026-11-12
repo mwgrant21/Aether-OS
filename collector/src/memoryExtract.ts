@@ -192,7 +192,8 @@ function sameDir(a: string, b: string): boolean {
  * Resolve, create (lazily) and verify the neutral cwd; synchronous and cheap so it runs again right
  * before EACH spawn. Refuses (no fallback to temp/home/cwd, which would reopen the ancestor-CLAUDE.md hole):
  * cwd_unavailable (no ProgramData / cannot create), cwd_unsafe (not a plain directory, link/junction, or
- * realpath differs: a swapped ancestor), cwd_dirty (not strictly EMPTY: any planted file, including a
+ * realpath differs: a swapped ancestor), cwd_dirty (not strictly EMPTY: on some Node versions a claude.exe
+ * in the working folder is resolved before PATH for a bare `claude`; any planted file, including a
  * claude.exe, .claude or CLAUDE.md), cwd_ancestor_memory (CLAUDE.md / .claude memory or settings in the
  * dir or any ancestor up to the root). Assumes a single-user machine: another local account with write
  * access to the folder could still race the checks; no ACL hardening is done here.
