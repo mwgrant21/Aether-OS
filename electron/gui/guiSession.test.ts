@@ -14,7 +14,7 @@ function fakePty() {
 }
 type FP = ReturnType<typeof fakePty>;
 
-// Mimics PtyLifecycle: spawn new first, then kill old; write goes to the active pty.
+// Mimics PtyLifecycle: spawn new first, then kill old; write goes to the active pty. kill() leaves current non-null until the pty's own exit fires (as the real one), so live() must rely on the session's alive flag.
 function fakeLifecycle() {
   let active: FP | null = null;
   const lc: GuiLifecycle = {
@@ -46,18 +46,19 @@ function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDir
   const sent: Array<[string, unknown]> = [];
   const timers: Array<{ fn: () => void; ms: number; cancelled: boolean }> = [];
   const log = vi.fn();
+  const flags = { aliveThrows: false };
   let n = 0;
   const session = createGuiSession({
     lifecycle, spawn,
     projectPath: (id) => (id === 'p1' ? 'C:/secret/one' : id === 'p2' ? 'C:/secret/two' : id === 'gone' ? 'C:/secret/gone' : undefined),
     isDirectory: over?.isDirectory ?? ((p) => p !== 'C:/secret/gone'),
-    send: (c, p) => { sent.push([c, p]); },
+    send: (c, p) => { if (flags.aliveThrows && c === GUI_CHANNELS.alive) throw new Error('alive failed'); sent.push([c, p]); },
     randomUUID: () => `sid-${++n}`,
     schedule: (fn, ms) => { const t = { fn, ms, cancelled: false }; timers.push(t); return () => { t.cancelled = true; }; },
     log,
   });
   const fire = (i: number) => { if (!timers[i]!.cancelled) timers[i]!.fn(); };
-  return { session, lifecycle, spawn, ptys, sent, timers, log, fire };
+  return { session, lifecycle, spawn, ptys, sent, timers, log, fire, flags };
 }
 const req = (projectId: string | null, cols = 80, rows = 24) => ({ projectId, cols, rows });
 
@@ -97,25 +98,93 @@ describe('guiSession.start', () => {
     expect(s.spawn).toHaveBeenCalledTimes(2);
     expect(s.ptys[0]!.kill).toHaveBeenCalled();
   });
-  it('does not advance runningProjectId when a replacement spawn throws', () => {
+  // spawn that throws on the listed call numbers; every pty it does create is pushed to `made`
+  const flaky = (failOn: number[], made: FP[]) => {
     let calls = 0;
-    const s = setup({ spawn: () => { if (++calls === 2) throw new Error('boom'); return fakePty() as unknown as GuiPty; } });
+    return () => { if (failOn.includes(++calls)) throw new Error('boom'); const p = fakePty(); made.push(p); return p as unknown as GuiPty; };
+  };
+  it('ends the old session when a replacement spawn throws, so the same project spawns again', () => {
+    const olds: FP[] = [];
+    const s = setup({ spawn: flaky([2], olds) });
     s.session.start(req('p1'));
     expect(s.session.start(req('p2'))).toEqual({ ok: false, reason: 'spawn-failed' });
-    expect(s.session.live()).toBe(true);
-    expect(s.session.start(req('p1'))).toEqual({ ok: true, reused: true });
-    expect(calls).toBe(2);
+    expect(s.session.live()).toBe(false);
+    expect(olds[0]!.kill).toHaveBeenCalled();
+    expect(s.session.start(req('p1'))).toEqual({ ok: true, reused: false });
+    expect(s.spawn).toHaveBeenCalledTimes(3);
   });
-  it('keeps forwarding the old session output and exit after a failed replacement', () => {
-    let calls = 0;
+  it('drops the old session output and exit after a failed replacement', () => {
     const olds: FP[] = [];
-    const s = setup({ spawn: () => { if (++calls === 2) throw new Error('boom'); const p = fakePty(); olds.push(p); return p as unknown as GuiPty; } });
+    const s = setup({ spawn: flaky([2], olds) });
     s.session.start(req('p1'));
     s.session.start(req('p2'));
     s.sent.length = 0;
-    olds[0]!.fireData('x');
+    olds[0]!.fireData('x'); // the fake kill() leaves the old pty wired, so only the gen check drops this
     olds[0]!.fireExit();
-    expect(s.sent).toEqual([[GUI_CHANNELS.data, 'x'], [GUI_CHANNELS.exit, undefined]]);
+    expect(s.sent).toEqual([]);
+  });
+  it('keeps ids monotonic: after a failed start, a later start forwards and the old pty stays dropped', () => {
+    const made: FP[] = [];
+    const s = setup({ spawn: flaky([2], made) });
+    s.session.start(req('p1'));
+    s.session.start(req('p2'));
+    expect(s.session.start(req('p1'))).toEqual({ ok: true, reused: false });
+    s.sent.length = 0;
+    made[0]!.fireData('old');
+    made[1]!.fireData('new');
+    expect(s.sent).toEqual([[GUI_CHANNELS.data, 'new']]);
+  });
+  it('a rejected start ends the live session: kill once, nothing live, nothing forwarded, same project spawns again', () => {
+    for (const bad of [req('nope'), req('gone'), req('p1', 0, 24), null]) {
+      const s = setup();
+      s.session.start(req('p1'));
+      s.sent.length = 0;
+      expect(s.session.start(bad).ok).toBe(false);
+      expect(s.ptys[0]!.kill).toHaveBeenCalledTimes(1);
+      expect(s.session.live()).toBe(false);
+      expect(s.session.write('x')).toBe(false);
+      expect(s.session.submit('x')).toBe(false);
+      s.ptys[0]!.fireData('stale');
+      expect(s.sent).toEqual([]);
+      expect(s.session.start(req('p1'))).toEqual({ ok: true, reused: false });
+      expect(s.spawn).toHaveBeenCalledTimes(2);
+    }
+  });
+  it('a rejected start with nothing live does not call kill and does not throw', () => {
+    const s = setup();
+    const kill = vi.spyOn(s.lifecycle, 'kill');
+    expect(() => s.session.start(req('nope'))).not.toThrow();
+    expect(kill).not.toHaveBeenCalled();
+  });
+  it('a rejected start cancels a pending multi-line Enter', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.submit('a\nb');
+    s.session.start(req('nope'));
+    expect(s.timers[0]!.cancelled).toBe(true);
+    s.timers[0]!.fn(); // even a timer that still fires must not write
+    expect(s.ptys[0]!.write).toHaveBeenCalledTimes(1);
+  });
+  it('kills the new pty when the alive notification throws after it was wired, and forwards nothing from it', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.sent.length = 0;
+    s.flags.aliveThrows = true;
+    expect(s.session.start(req('p2'))).toEqual({ ok: false, reason: 'spawn-failed' });
+    expect(s.ptys[1]!.kill).toHaveBeenCalled();
+    expect(s.session.live()).toBe(false);
+    s.ptys[1]!.fireData('late');
+    s.ptys[1]!.fireExit();
+    expect(s.sent).toEqual([]);
+  });
+  it('swallows a throwing kill during a rejected start, keeps the reason, and logs no path', () => {
+    const kill = vi.fn(() => { throw new Error('C:/secret/one'); });
+    const s = setup({ kill });
+    s.session.start(req('p1'));
+    expect(s.session.start(req('nope'))).toEqual({ ok: false, reason: 'unknown-project' });
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(s.log).toHaveBeenCalled();
+    expect(JSON.stringify(s.log.mock.calls)).not.toContain('secret');
   });
   it('forwards data, alive and exit on their channels', () => {
     const s = setup();

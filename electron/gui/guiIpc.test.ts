@@ -18,7 +18,7 @@ function setup(opts: { trusted?: boolean; store?: 'ok' | 'none'; picked?: string
   };
   const session = {
     start: vi.fn(() => ({ ok: true as const, reused: false })),
-    write: vi.fn(() => true), resize: vi.fn(), submit: vi.fn(() => true), live: vi.fn(() => true), dispose: vi.fn(),
+    write: vi.fn(() => true), resize: vi.fn(), submit: vi.fn(() => true), live: vi.fn(() => true), dispose: vi.fn(), stop: vi.fn(),
   };
   const pickFolder = vi.fn(async () => (opts.picked === undefined ? DIR : opts.picked));
   const getStore = vi.fn(async () => (opts.store === 'none' ? null : (store as never)));

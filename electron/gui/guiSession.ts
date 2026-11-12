@@ -20,7 +20,7 @@ export interface GuiSessionDeps {
 }
 export interface GuiSession {
   start(req: unknown): StartResult; write(input: unknown): boolean; resize(c: unknown, r: unknown): void;
-  submit(text: unknown): boolean; live(): boolean; dispose(): void;
+  submit(text: unknown): boolean; live(): boolean; stop(): void; dispose(): void;
 }
 
 const isDim = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 1000;
@@ -32,6 +32,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   let pendingEnter = false;
   let cancelEnter: (() => void) | null = null;
   let disposed = false;
+  let alive = false; // false from stop()/exit even while lifecycle.current is still non-null (kill() does not null it until the pty exits)
 
   const clearEnter = (): void => {
     const c = cancelEnter;
@@ -39,25 +40,34 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     pendingEnter = false;
     c?.();
   };
-  const live = (): boolean => d.lifecycle.current !== null;
+  const live = (): boolean => alive && d.lifecycle.current !== null;
+
+  // Ends whatever GUI pty is running. seq only ever grows, so no handler of an earlier pty can forward again.
+  function stop(): void {
+    gen = ++seq;
+    clearEnter();
+    runningProjectId = undefined;
+    alive = false;
+    if (d.lifecycle.current === null) return;
+    try { d.lifecycle.kill(); } catch { d.log?.('gui session: kill failed'); }
+  }
 
   function start(req: unknown): StartResult {
     if (disposed) return { ok: false, reason: 'unavailable' };
-    if (typeof req !== 'object' || req === null) return { ok: false, reason: 'bad-request' };
+    if (typeof req !== 'object' || req === null) { stop(); return { ok: false, reason: 'bad-request' }; }
     const { projectId, cols, rows } = req as Record<string, unknown>;
-    if (!(projectId === null || typeof projectId === 'string') || !isDim(cols) || !isDim(rows)) return { ok: false, reason: 'bad-request' };
+    if (!(projectId === null || typeof projectId === 'string') || !isDim(cols) || !isDim(rows)) { stop(); return { ok: false, reason: 'bad-request' }; }
     let cwd: string | undefined;
     if (projectId !== null) {
       cwd = d.projectPath(projectId);
-      if (cwd === undefined) return { ok: false, reason: 'unknown-project' };
-      if (!d.isDirectory(cwd)) return { ok: false, reason: 'missing-dir' };
+      if (cwd === undefined) { stop(); return { ok: false, reason: 'unknown-project' }; }
+      if (!d.isDirectory(cwd)) { stop(); return { ok: false, reason: 'missing-dir' }; }
     }
     if (live() && runningProjectId === projectId) {
       d.send(GUI_CHANNELS.alive);
       return { ok: true, reused: true };
     }
     clearEnter();
-    const prev = gen;
     const myGen = ++seq;
     gen = myGen;
     try {
@@ -69,6 +79,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
           onExit: () => {
             if (myGen !== gen) return;
             runningProjectId = undefined;
+            alive = false;
             clearEnter();
             d.send(GUI_CHANNELS.exit);
           },
@@ -76,11 +87,12 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
         { cols, rows },
       );
     } catch {
-      gen = prev; // the old pty may still be live; the failed new pty's late handlers stay dropped
+      stop(); // a failed start leaves nothing live; handlers of the failed new pty and the old one stay dropped
       d.log?.('gui session: start failed');
       return { ok: false, reason: 'spawn-failed' };
     }
     runningProjectId = projectId;
+    alive = true;
     return { ok: true, reused: false };
   }
 
@@ -119,8 +131,9 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     disposed = true;
     gen = ++seq;
     clearEnter();
+    alive = false;
     try { d.lifecycle.kill(); } catch { d.log?.('gui session: kill failed'); }
   }
 
-  return { start, write, resize, submit, live, dispose };
+  return { start, write, resize, submit, live, stop, dispose };
 }
