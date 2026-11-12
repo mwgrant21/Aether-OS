@@ -137,6 +137,7 @@ import { CommunicationGrantControl } from './communicationBridge/grantControl';
 import { rendererEntryName, guiVariantEnabled } from './gui/entry';
 import { createProjectsStore } from './gui/projectsStore';
 import { createGuiSession, type GuiSession } from './gui/guiSession';
+import { guiLaunchCommand } from './gui/guiLaunch';
 import { registerGuiIpc } from './gui/guiIpc';
 import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
@@ -1727,7 +1728,7 @@ if (guiVariantEnabled(process.env)) {
       kill: () => { try { guiLifecycle.current?.kill(); } catch { /* ignore */ } },
     },
     // Plain spawnPty, no bridge, so the cwd below is never combined with a bridge launch.
-    spawn: ({ cwd, cols, rows, sessionId }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, buildClaudeLaunchCommand(sessionId, true), cwd),
+    spawn: ({ cwd, cols, rows, sessionId }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildClaudeLaunchCommand(sessionId, true), process.platform), cwd),
     projectPath: (id) => guiStore?.pathOf(id),
     isDirectory: (p) => { try { return statSync(p).isDirectory(); } catch { return false; } },
     // Must not throw: a throw inside PtyLifecycle.start's onAlive would make guiSession drop the new pty's output.
