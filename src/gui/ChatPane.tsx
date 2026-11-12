@@ -44,6 +44,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const watcherRef = useRef<TrustWatcher | null>(null);
   const mounted = useRef(false);
   const startSeq = useRef(0);
+  const restartedOnReuse = useRef(false); // a reused start restarts the session at most once per mount
   const cancelHint = useRef<(() => void) | null>(null);
   const onLiveChangeRef = useRef(onLiveChange);
   onLiveChangeRef.current = onLiveChange;
@@ -58,7 +59,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     cancelHint.current = null;
   }, []);
 
-  const begin = useCallback(() => {
+  const begin = useCallback((replace = false) => {
     const gui = window.aetherElectron?.gui;
     const gate = gateRef.current;
     if (!gui || !gate) return;
@@ -79,14 +80,20 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       setStopped(true);
       setLiveBoth(false);
     };
-    gui.start({ projectId, cols, rows }).then(
+    gui.start(replace ? { projectId, cols, rows, restart: true } : { projectId, cols, rows }).then(
       (r: StartResult) => {
         if (!mounted.current || mySeq !== startSeq.current) return;
         if (!r.ok) return fail(r.reason);
         setLiveBoth(true);
         if (r.reused) {
-          clearHint(); // a reused session emits no chunk; it is ready now
-          gate.forceReady();
+          // The renderer has a fresh empty terminal, so a prompt the session is waiting on cannot be seen
+          // and the composer must not enable. Replace the session once and let the normal ready gate run;
+          // a second reused answer keeps the composer disabled (the no-output hint still shows).
+          if (!restartedOnReuse.current) {
+            restartedOnReuse.current = true;
+            termRef.current?.reset();
+            begin(true);
+          }
         }
       },
       () => {

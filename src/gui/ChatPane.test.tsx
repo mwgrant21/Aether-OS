@@ -21,7 +21,7 @@ vi.mock('@xterm/xterm', () => ({
     options = {};
     buffer = {
       active: {
-        viewportY: 0,
+        baseY: 0,
         getLine: (y: number) =>
           mocks.screen[y] === undefined ? undefined : { translateToString: () => mocks.screen[y]!, isWrapped: false },
       },
@@ -239,11 +239,47 @@ describe('ChatPane', () => {
     expect(box().disabled).toBe(false);
   });
 
-  it('a reused session enables the composer immediately with no chunk', async () => {
+  it('a normal first start is sent without restart and enables after the quiet window', async () => {
+    install();
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+    expect(gui.start.mock.calls[0]![0]).not.toHaveProperty('restart');
+    expect(mocks.reset).not.toHaveBeenCalled();
+    expect(box().disabled).toBe(true);
+    act(() => chunk!('hello'));
+    await advance(1700);
+    expect(box().disabled).toBe(false);
+  });
+
+  it('a reused start restarts the session once and the composer waits for the ready gate on the new one', async () => {
+    install();
+    gui.start
+      .mockImplementationOnce(() => Promise.resolve({ ok: true, reused: true }))
+      .mockImplementation(() => Promise.resolve({ ok: true, reused: false }));
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(gui.start.mock.calls[1]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, restart: true });
+    expect(mocks.reset).toHaveBeenCalledTimes(1);
+    expect(box().disabled).toBe(true); // not forced ready
+    await advance(5000);
+    expect(box().disabled).toBe(true);
+    act(() => chunk!('banner'));
+    await advance(1700);
+    expect(box().disabled).toBe(false);
+  });
+
+  it('a second reused answer does not restart again, keeps the composer disabled and shows the hint', async () => {
     install({ ok: true, reused: true });
     render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
-    expect(box().disabled).toBe(false);
+    await flush();
+    await advance(16000);
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(box().disabled).toBe(true);
+    expect(screen.getByText('No output from Claude yet. Type in the pane.')).toBeTruthy();
   });
 
   it('shows the no-output hint after 15 s and keeps the composer disabled', async () => {
@@ -260,9 +296,11 @@ describe('ChatPane', () => {
   });
 
   it('submit calls gui.submit with the text', async () => {
-    install({ ok: true, reused: true });
+    install();
     render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
+    act(() => chunk!('hello'));
+    await advance(1700);
     fireEvent.change(box(), { target: { value: 'do the thing' } });
     fireEvent.keyDown(box(), { key: 'Enter' });
     await flush();
@@ -293,10 +331,12 @@ describe('ChatPane', () => {
   });
 
   it('onExit disables the composer and shows Restart, which starts again', async () => {
-    install({ ok: true, reused: true });
+    install();
     const onLive = vi.fn();
     render(<ChatPane projectId="p1" onLiveChange={onLive} />);
     await flush();
+    act(() => chunk!('hello'));
+    await advance(1700);
     expect(box().disabled).toBe(false);
     act(() => exit!());
     expect(mocks.write).toHaveBeenCalledWith('\r\n[process exited]\r\n');
@@ -403,14 +443,6 @@ describe('ChatPane', () => {
       expect(gui.start).toHaveBeenCalledTimes(2);
     });
 
-    it('a reused session with an empty screen is enabled immediately and shows no trust hint', async () => {
-      install({ ok: true, reused: true });
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
-      await flush();
-      await advance(300);
-      expect(box().disabled).toBe(false);
-      expect(screen.queryByText(TRUST_HINT)).toBeNull();
-    });
   });
 
   describe('placeholder', () => {
@@ -425,7 +457,7 @@ describe('ChatPane', () => {
     });
 
     it('reads Claude is not running after the process exits', async () => {
-      install({ ok: true, reused: true });
+      install();
       render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       act(() => exit!());

@@ -1,13 +1,16 @@
 export interface ScreenBufferLike {
-  viewportY: number;
+  baseY: number;
   getLine(y: number): { translateToString(trimRight?: boolean): string } | undefined;
 }
 
-/** Viewport rows [0, rows) joined with '\n'. An undefined buffer (terminal not mounted) reads as ''. */
+/**
+ * The live screen (rows baseY..baseY+rows-1) joined with '\n'. Reads from baseY, not viewportY, so
+ * scrolling the pane into history cannot hide or clear the prompt. An undefined buffer reads as ''.
+ */
 export function readScreenText(buf: ScreenBufferLike | undefined, rows: number): string {
   if (!buf) return '';
   const out: string[] = [];
-  for (let y = 0; y < rows; y++) out.push(buf.getLine(buf.viewportY + y)?.translateToString(true) ?? '');
+  for (let y = 0; y < rows; y++) out.push(buf.getLine(buf.baseY + y)?.translateToString(true) ?? '');
   return out.join('\n');
 }
 

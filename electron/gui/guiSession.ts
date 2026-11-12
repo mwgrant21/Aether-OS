@@ -55,7 +55,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   function start(req: unknown): StartResult {
     if (disposed) return { ok: false, reason: 'unavailable' };
     if (typeof req !== 'object' || req === null) { stop(); return { ok: false, reason: 'bad-request' }; }
-    const { projectId, cols, rows } = req as Record<string, unknown>;
+    const { projectId, cols, rows, restart } = req as Record<string, unknown>;
     if (!(projectId === null || typeof projectId === 'string') || !isDim(cols) || !isDim(rows)) { stop(); return { ok: false, reason: 'bad-request' }; }
     let cwd: string | undefined;
     if (projectId !== null) {
@@ -63,7 +63,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
       if (cwd === undefined) { stop(); return { ok: false, reason: 'unknown-project' }; }
       if (!d.isDirectory(cwd)) { stop(); return { ok: false, reason: 'missing-dir' }; }
     }
-    if (live() && runningProjectId === projectId) {
+    if (restart !== true && live() && runningProjectId === projectId) {
       d.send(GUI_CHANNELS.alive);
       return { ok: true, reused: true };
     }

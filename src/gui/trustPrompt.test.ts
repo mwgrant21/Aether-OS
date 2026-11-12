@@ -85,10 +85,25 @@ describe('detection on a headless xterm screen', () => {
   });
 });
 
+describe('scroll independence', () => {
+  it('still detects the live prompt after the pane is scrolled into history', async () => {
+    const t = new Terminal({ cols: 40, rows: 10, scrollback: 100, allowProposedApi: true }) as HTerm & { scrollLines(n: number): void };
+    const write = (d: string) => new Promise<void>((r) => t.write(d, r));
+    const history = Array.from({ length: 60 }, (_, i) => `history line ${i}`).join('\r\n');
+    await write(history + '\r\n' + PROMPT_LINES.join('\r\n'));
+    const buf = t.buffer.active as ScreenBufferLike & { viewportY: number };
+    expect(isTrustPromptText(readScreenText(buf, 10))).toBe(true);
+    t.scrollLines(-30);
+    expect(buf.viewportY).toBeLessThan(buf.baseY); // really scrolled into history
+    expect(isTrustPromptText(readScreenText(buf, 10))).toBe(true);
+    t.dispose();
+  });
+});
+
 describe('readScreenText', () => {
   it('returns empty for an undefined buffer and pads missing rows', () => {
     expect(readScreenText(undefined, 3)).toBe('');
-    const buf: ScreenBufferLike = { viewportY: 2, getLine: (y) => (y === 2 ? { translateToString: () => 'a' } : undefined) };
+    const buf: ScreenBufferLike = { baseY: 2, getLine: (y) => (y === 2 ? { translateToString: () => 'a' } : undefined) };
     expect(readScreenText(buf, 2)).toBe('a\n');
   });
 });

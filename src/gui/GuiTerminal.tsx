@@ -11,7 +11,7 @@ export interface GuiTerminalHandle {
   size(): { cols: number; rows: number };
   /** Clear the screen (used before a restart). */
   reset(): void;
-  /** Text of the visible viewport rows ('' when the terminal is not mounted). */
+  /** Text of the live screen rows, independent of scroll position ('' when the terminal is not mounted). */
   screenText(): string;
 }
 

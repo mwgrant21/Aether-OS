@@ -2,7 +2,7 @@ export interface UiProject { id: string; name: string }          // name = basen
 export type AddProjectResult =
   | { ok: true; project: UiProject }
   | { ok: false; reason: 'canceled' | 'not-a-directory' | 'duplicate' | 'too-many' | 'write-failed' | 'unavailable' }; // unavailable = private dir ACL not confirmed (fail closed)
-export type StartRequest = { projectId: string | null; cols: number; rows: number }; // null = "New" chat in the home dir
+export type StartRequest = { projectId: string | null; cols: number; rows: number; restart?: boolean }; // null = "New" chat in the home dir; restart = replace a live session instead of reusing it
 export type StartResult =
   | { ok: true; reused: boolean }                                 // reused = same project already live; nothing restarted
   | { ok: false; reason: 'bad-request' | 'unknown-project' | 'missing-dir' | 'spawn-failed' | 'unavailable' };

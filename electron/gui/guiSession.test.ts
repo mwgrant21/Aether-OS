@@ -91,6 +91,13 @@ describe('guiSession.start', () => {
     expect(s.spawn).toHaveBeenCalledTimes(1);
     expect(s.sent).toEqual([[GUI_CHANNELS.alive, undefined]]);
   });
+  it('restart:true replaces a live session of the same project instead of reusing it', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    expect(s.session.start({ ...req('p1'), restart: true })).toEqual({ ok: true, reused: false });
+    expect(s.spawn).toHaveBeenCalledTimes(2);
+    expect(s.ptys[0]!.kill).toHaveBeenCalled();
+  });
   it('replaces the session for a different project and kills the old pty', () => {
     const s = setup();
     s.session.start(req('p1'));
