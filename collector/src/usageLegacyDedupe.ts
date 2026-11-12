@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { sameSnapshot, snapshotOf, type BackfillSnapshot } from './usageBackfill.js';
+import { AssertionError, DbChangedError, sameSnapshot, snapshotOf, type BackfillSnapshot } from './usageBackfill.js';
 
 /**
  * Opt-in, APPROXIMATE dedupe of the legacy NULL-key usage_events rows that the
@@ -48,16 +48,6 @@ export class PlanOutOfBoundsError extends Error {
     super(`plan out of bounds: ${reason}`);
     this.name = 'PlanOutOfBoundsError';
     this.reason = reason;
-  }
-}
-
-/** Thrown before COMMIT when a post-write assertion fails; carries only the assertion id. */
-export class DedupeAssertionError extends Error {
-  readonly assertion: string;
-  constructor(assertion: string) {
-    super(`assertion ${assertion} failed, nothing written`);
-    this.name = 'DedupeAssertionError';
-    this.assertion = assertion;
   }
 }
 
@@ -247,7 +237,65 @@ export function dedupeLegacyUsage(db: DatabaseSync, opts: LegacyDedupeOptions): 
     }
     const { snap, report } = plan;
     if (!apply) return report;
-    throw new Error('apply not implemented');
+
+    if (!report.backfillMarkerPresent) throw new PrerequisiteError();
+    if (!Number.isInteger(opts.expectDelete) || !Number.isInteger(opts.expectTokenMass)) {
+      throw new PlanOutOfBoundsError('expect-required');
+    }
+    if (report.maxClusterSize > MAX_CLUSTER_SIZE) throw new PlanOutOfBoundsError('cluster-size');
+    if (report.maxClusterSpanMs > MAX_CLUSTER_SPAN_MS) throw new PlanOutOfBoundsError('cluster-span');
+    if (report.rowsToDelete > MAX_DELETE_FRACTION * report.rowsConsidered) throw new PlanOutOfBoundsError('fraction');
+    if (report.rowsToDelete !== opts.expectDelete) throw new PlanOutOfBoundsError('expect-delete');
+    if (report.deleteTokenMass !== opts.expectTokenMass) throw new PlanOutOfBoundsError('expect-token-mass');
+
+    opts.onSnapshot?.(snap);
+    opts.testHooks?.beforeLock?.();
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!sameSnapshot(snap, snapshotOf(db))) throw new DbChangedError();
+      const del = db.prepare('DELETE FROM usage_events WHERE id = ? AND message_key IS NULL');
+      let deleted = 0;
+      for (const id of plan.deleteIds) deleted += Number(del.run(id).changes);
+      db.prepare("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('usage_legacy_dedupe_v1', ?)").run(
+        JSON.stringify({
+          atMs: Date.now(),
+          rowsDeleted: report.rowsToDelete,
+          deleteTokenMass: report.deleteTokenMass,
+          windowMs: WINDOW_MS,
+          rule: RULE,
+        })
+      );
+      opts.testHooks?.afterWrites?.(db);
+      const after = snapshotOf(db);
+      if (deleted !== report.rowsToDelete) throw new AssertionError('i');
+      if (after.count !== snap.count - report.rowsToDelete) throw new AssertionError('ii');
+      if (after.tokensTotal !== report.totalTokensAfter) throw new AssertionError('iii');
+      // Keyed rows untouched and exactly the planned number of NULL-key rows gone.
+      if (after.nullKeyCount !== snap.nullKeyCount - report.rowsToDelete) throw new AssertionError('iv');
+      if (after.count - after.nullKeyCount !== snap.count - snap.nullKeyCount) throw new AssertionError('iv');
+      // Independent of the plan's bookkeeping: re-run the planner under the lock.
+      // A correct delete leaves nothing further to delete.
+      if (computePlan(db, 'apply').report.rowsToDelete !== 0) throw new AssertionError('v');
+      // Every cluster's kept row is still there and every deleted row is gone.
+      const has = db.prepare('SELECT 1 AS x FROM usage_events WHERE id = ?');
+      for (const id of plan.keptIds) if (has.get(id) === undefined) throw new AssertionError('vi');
+      for (const id of plan.deleteIds) if (has.get(id) !== undefined) throw new AssertionError('vi');
+      db.exec('COMMIT');
+    } catch (err) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
+    try {
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      // best effort
+    }
+    return report;
   } finally {
     if (!apply && queryOnlyBefore === 0) db.exec('PRAGMA query_only = OFF');
   }
