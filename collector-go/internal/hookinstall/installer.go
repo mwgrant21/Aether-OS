@@ -213,14 +213,20 @@ var backupPathFn = backupPathFor
 
 func writeBackup(settingsPath, raw string) (string, error) {
 	backupPath := backupPathFn(settingsPath)
+	// Mode choice, identical in all three copies (#71): the target's permission
+	// bits (os.Stat follows a symlink, so it is the real file's), Perm() so
+	// setuid/setgid/sticky never carry over, plus owner read+write so a backup of
+	// a read-only (0444) target is still one the user can delete or overwrite.
+	// Group/other bits are never widened beyond the source. Applied at creation
+	// only, no chmod after: the umask can only narrow it. Unknown source: 0600,
+	// never the umask default.
+	mode := os.FileMode(0600)
+	if info, err := os.Stat(settingsPath); err == nil {
+		mode = info.Mode().Perm() | 0600
+	}
 	// Exclusive create: never overwrite an earlier backup, which may be the
 	// user's pristine file (#60).
-	// 0666 for the same reason as createMode: it mirrors Node's writeFile
-	// default and is narrowed by the umask the same way. Carrying the SOURCE
-	// file's mode onto the backup would be better still -- a 0600 settings.json
-	// currently gets a 0644 backup beside it -- but that gap is shared with
-	// both TS copies and is tracked separately, not fixed asymmetrically here.
-	if err := writeFileExcl(backupPath, []byte(raw), 0666); err != nil {
+	if err := writeFileExcl(backupPath, []byte(raw), mode); err != nil {
 		return "", err
 	}
 	return backupPath, nil

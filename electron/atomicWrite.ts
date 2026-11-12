@@ -70,11 +70,23 @@ export async function resolveRealPath(targetPath: string, depth = 0, origin = ta
 
 /**
  * Copies `raw` to a uniquely named sibling and returns its path. Created
- * exclusively, so it can never overwrite an earlier backup.
+ * exclusively, so it can never overwrite an earlier backup. The backup gets the
+ * target's permission bits at creation (#71): it holds the same bytes, so a
+ * 0600 settings.json must not leave a world-readable copy beside it.
  */
 export async function writeBackup(targetPath: string, raw: string, marker: string): Promise<string> {
   const backupPath = uniqueSiblingPath(targetPath, marker);
-  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx' });
+  // Mode choice: the target's permission bits (stat follows a symlink, so it is the real file's),
+  // masked to 0777 so setuid/setgid/sticky never carry over, plus owner read+write so a backup of a
+  // read-only (0444) target is still one the user can delete or overwrite. Group/other bits are never
+  // widened beyond the source. Set at creation only, no chmod after: the umask can only narrow it.
+  let mode = 0o600;
+  try {
+    mode = ((await fsp.stat(targetPath)).mode & 0o777) | 0o600;
+  } catch {
+    // Unknown source: stay conservative rather than fall back to the umask.
+  }
+  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx', mode });
   return backupPath;
 }
 

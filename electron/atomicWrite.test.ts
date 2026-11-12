@@ -359,3 +359,70 @@ describe('resolveRealPath: the symlink depth cap fails loudly (#72)', () => {
     expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 });
+
+// The backup holds the same bytes as the target, so it must not be MORE
+// readable than the target (#71). Windows reports 0666 for any writable file,
+// so the mode assertions only mean something on POSIX. They never depend on the
+// ambient umask: each target is chmod-ed explicitly, and the expectation is the
+// requested creation mode filtered by whatever the umask is. (The 0644 case
+// only distinguishes "mode threaded through" from "hardcoded 0600" under a
+// umask that keeps group read; it is still correct, just weaker, under 077.)
+describe('writeBackup: the backup inherits the target mode (#71)', () => {
+  const afterUmask = (mode: number) => mode & ~process.umask();
+  const modeOf = (p: string) => statSync(p).mode & 0o7777;
+
+  it.skipIf(process.platform === 'win32')('gives a 0600 target a 0600 backup', async () => {
+    const target = freshTarget('{"secret":true}');
+    chmodSync(target, 0o600);
+    const backupPath = await writeBackup(target, '{"secret":true}', 'ttbak');
+    expect(modeOf(backupPath)).toBe(afterUmask(0o600));
+  });
+
+  it.skipIf(process.platform === 'win32')('gives a 0644 target a 0644 backup, not a hardcoded 0600', async () => {
+    const target = freshTarget('{}');
+    chmodSync(target, 0o644);
+    const backupPath = await writeBackup(target, '{}', 'ttbak');
+    expect(modeOf(backupPath)).toBe(afterUmask(0o644));
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps owner read+write on a backup of a read-only target', async () => {
+    const target = freshTarget('{}');
+    chmodSync(target, 0o444);
+    try {
+      const backupPath = await writeBackup(target, '{}', 'ttbak');
+      expect(modeOf(backupPath)).toBe(afterUmask(0o644));
+    } finally {
+      chmodSync(target, 0o644);
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('drops setuid/setgid/sticky bits from the source mode', async () => {
+    const target = freshTarget('{}');
+    chmodSync(target, 0o4644);
+    try {
+      const backupPath = await writeBackup(target, '{}', 'ttbak');
+      expect(modeOf(backupPath)).toBe(afterUmask(0o644));
+    } finally {
+      chmodSync(target, 0o644);
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('defaults to 0600 when the target cannot be stat-ed', async () => {
+    const target = freshTarget();
+    expect(existsSync(target)).toBe(false);
+    const backupPath = await writeBackup(target, '{}', 'ttbak');
+    expect(modeOf(backupPath)).toBe(afterUmask(0o600));
+  });
+
+  it.skipIf(process.platform === 'win32' || !symlinkSupported)(
+    'reads the mode of the real file behind a symlinked target',
+    async () => {
+      const real = freshTarget('{}');
+      chmodSync(real, 0o600);
+      const link = join(dirname(real), 'link.json');
+      symlinkSync(real, link);
+      const backupPath = await writeBackup(link, '{}', 'ttbak');
+      expect(modeOf(backupPath)).toBe(afterUmask(0o600));
+    }
+  );
+});

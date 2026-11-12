@@ -1162,3 +1162,123 @@ func TestWriteSettingsAtomically_DeepChainLeavesEveryLinkAndTheDestinationAlone(
 		t.Errorf("temp file left behind: %v", tmp)
 	}
 }
+
+// Backup mode (#71). The expectation never depends on the ambient umask: each
+// source is chmod-ed explicitly, and the expected mode is the requested creation
+// mode filtered by the umask as observed on a probe file created with 0666.
+// Only the rw bits are compared; the 0644 case distinguishes "mode threaded
+// through" from "hardcoded 0600" only under a umask that keeps group read.
+// Windows reports 0666 for any writable file, so these skip there.
+func backupModeExpectation(t *testing.T) func(os.FileMode) os.FileMode {
+	t.Helper()
+	probe := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(probe, nil, 0666); err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	info, err := os.Stat(probe)
+	if err != nil {
+		t.Fatalf("probe stat: %v", err)
+	}
+	kept := info.Mode().Perm() // 0666 &^ umask
+	return func(m os.FileMode) os.FileMode { return m & kept }
+}
+
+func backupModeOf(t *testing.T, settingsPath string) os.FileMode {
+	t.Helper()
+	backupPath, err := writeBackup(settingsPath, "{}")
+	if err != nil {
+		t.Fatalf("writeBackup: %v", err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatalf("stat backup: %v", err)
+	}
+	if info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		t.Errorf("backup carries special bits: %v", info.Mode())
+	}
+	return info.Mode().Perm()
+}
+
+func TestWriteBackup_GivesA0600TargetA0600Backup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0600); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_GivesA0644TargetA0644BackupNotAHardcoded0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0644); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_KeepsOwnerReadWriteOnABackupOfAReadOnlyTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0444); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(p, 0644) }()
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0644); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_DropsSpecialBitsFromTheSourceMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no setuid/setgid/sticky bits")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0644|os.ModeSetuid); err != nil {
+		t.Skipf("cannot set the setuid bit here: %v", err)
+	}
+	defer func() { _ = os.Chmod(p, 0644) }()
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0644); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_DefaultsTo0600WhenTheTargetCannotBeStatted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPath(t) // never created
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0600); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_ReadsTheModeOfTheRealFileBehindASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	real := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(real, 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(real), "link.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backupModeOf(t, link), backupModeExpectation(t)(0600); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
