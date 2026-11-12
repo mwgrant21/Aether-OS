@@ -21,6 +21,11 @@ async function main() {
     process.exitCode = runUsageBackfill(process.argv.slice(3));
     return;
   }
+  if (command === 'dedupe-legacy-usage') {
+    const { runLegacyUsageDedupe } = await import('./usageLegacyDedupeRunner.js');
+    process.exitCode = runLegacyUsageDedupe(process.argv.slice(3));
+    return;
+  }
 
   if (!existsSync(scriptPath)) {
     console.error(`aether-hook-emit.mjs not found at ${scriptPath} -- refusing to modify settings.json`);
@@ -77,8 +82,9 @@ async function main() {
   }
 
   console.error(
-    'usage: node dist/cli.js <status|install-hooks|uninstall-hooks|install-autostart|uninstall-autostart|backfill-usage [--apply]>\n' +
-      '  backfill-usage --help  explains the usage-row repair, its backup and rollback'
+    'usage: node dist/cli.js <status|install-hooks|uninstall-hooks|install-autostart|uninstall-autostart|backfill-usage [--apply]|dedupe-legacy-usage [--apply]>\n' +
+      '  backfill-usage --help  explains the usage-row repair, its backup and rollback\n' +
+      '  dedupe-legacy-usage --help  explains the approximate dedupe of unrecoverable legacy rows'
   );
   process.exitCode = 1;
 }
