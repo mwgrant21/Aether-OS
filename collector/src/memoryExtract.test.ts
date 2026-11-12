@@ -515,7 +515,12 @@ describe('spawn argv and binary resolution (#111)', () => {
       mkdirSync(pathDir);
       copyFileSync(process.execPath, join(cwdDir, 'claude.exe'));
       copyFileSync(process.execPath, join(pathDir, 'claude.exe'));
-      const out = execFileSync('claude', ['-p', 'process.execPath'], { cwd: cwdDir, env: { ...process.env, PATH: pathDir }, encoding: 'utf8' });
+      // Exactly one PATH key (Windows env names are case-insensitive: `Path` + `PATH` would be ambiguous),
+      // and PATH holds only the stand-in directory, so the real claude is unreachable.
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      for (const k of Object.keys(env)) if (/^path$/i.test(k)) delete env[k];
+      env.PATH = pathDir;
+      const out = execFileSync('claude', ['-p', 'process.execPath'], { cwd: cwdDir, env, encoding: 'utf8' });
       expect(out.trim()).toBe(join(pathDir, 'claude.exe'));
     } finally {
       rmSync(root, { recursive: true, force: true });

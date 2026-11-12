@@ -183,7 +183,7 @@ describe('MemoryExtractionCard disclosure wording', () => {
       screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and CLAUDE_CODE_USE_\* variables are removed from its environment/),
     ).toBeTruthy();
     expect(screen.queryByText(/API keys are stripped/i)).toBeNull();
-    expect(screen.getByText(/runs in an empty working folder with your user and project settings files, MCP servers, slash commands and auto-memory switched off and hooks disabled \(set by flag, not checked on a live run\)/)).toBeTruthy();
+    expect(screen.getByText(/runs in an empty working folder: your user settings are not loaded, the empty folder leaves no project settings, and MCP servers, slash commands and auto-memory are switched off and hooks disabled \(set by flag, not checked on a live run\)\. That the login Claude Code reports is the one the call then uses is also unverified\./)).toBeTruthy();
     expect(screen.getByText(/Your personal ~\/\.claude\/CLAUDE\.md \(and any managed CLAUDE\.md\) may still be loaded, and if it is, that text is sent along with the dispatch/)).toBeTruthy();
     expect(screen.queryByText(/runs your configured hooks/)).toBeNull();
     expect(screen.queryByText(/Claude Code also adds its own context/)).toBeNull();
