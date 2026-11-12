@@ -11,6 +11,7 @@ pre-1.0 semver as described in `docs/packaging.md`.
 - `backfill-usage` in the Node collector CLI: a dry-run-by-default repair that rebuilds the dedupe key for pre-0.7.6 usage rows from their transcripts and removes streamed duplicates. Rows whose transcripts no longer exist are left unchanged and reported.
 
 ### Fixed
+- `scripts/redeploy-collector.ps1`: a relative `-StageRoot` is now resolved against the current PowerShell location (it previously made automatic rollback skip its stop, relaunch and rename steps), and a forward-slash `-StageRoot` is normalised to backslashes (it previously was not matched when looking for running collectors); an open journal is reported before the stage-in-use guard; a lone conhost no longer counts as a running collector; `-DryRun -Rollback` exits 0; the rollback and recovery messages no longer claim the old collector was not running when it was.
 - Background agents now appear in the desktop fleet view. Their `claude agents --json` rows carry `state` instead of `status`, which made both collectors report schema drift every poll and drop the card.
 
 ## [0.7.6] - 2026-11-10
