@@ -127,6 +127,11 @@ verified `.bak`. A run that finds nothing to delete still takes a backup; delete
 hand. `wal_checkpoint(TRUNCATE)` after the commit is best effort, and the database file does not
 shrink (no VACUUM).
 
+A crash between claiming the backup name and the `VACUUM INTO` leaves a 0-byte `.bak`; a
+same-second rerun then exits 4 and leaves it untouched. A 0-byte `.bak` is a crash leftover to
+delete, never a valid backup (a verified backup has the same `usage_events` row count and token
+sum as the database).
+
 Rollback: stop the collector, move aside `<db>-wal` and `<db>-shm` beside the database (a
 stale WAL replayed over a restored main file corrupts it), then copy the `.bak` over
 `collector.db`. This is clean ONLY before the collector restarts. After a restart the gap
