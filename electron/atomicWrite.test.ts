@@ -426,3 +426,48 @@ describe('writeBackup: the backup inherits the target mode (#71)', () => {
     }
   );
 });
+
+describe('writeBackup: failure cleanup and error text (#67)', () => {
+  it('removes a partial backup created by a write that then failed, and wraps the error', async () => {
+    const target = freshTarget('keep');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.ttbak-')) {
+        await realWriteFile(file, '', 'utf8');
+        throw Object.assign(new Error('ENOSPC: simulated write failure'), { code: 'ENOSPC' });
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      await expect(writeBackup(target, 'keep', 'ttbak')).rejects.toMatchObject({
+        message: 'could not write backup: ENOSPC: simulated write failure',
+        code: 'ENOSPC',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    // A truncated file under the backup name would be mistaken for a good backup.
+    expect(siblings(target, 'ttbak')).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe('keep');
+  });
+
+  it("never deletes another writer's backup when the exclusive create loses the name (EEXIST)", async () => {
+    const target = freshTarget('original');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    let contested = '';
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      contested = String(file);
+      await realWriteFile(contested, 'pristine', 'utf8');
+      return realWriteFile(file, data, options);
+    });
+    try {
+      await expect(writeBackup(target, 'newer', 'ttbak')).rejects.toMatchObject({
+        message: expect.stringMatching(/^could not write backup: .*EEXIST/),
+        code: 'EEXIST',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(contested, 'utf8')).toBe('pristine');
+  });
+});

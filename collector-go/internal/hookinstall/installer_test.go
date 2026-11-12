@@ -1282,3 +1282,76 @@ func TestWriteBackup_ReadsTheModeOfTheRealFileBehindASymlink(t *testing.T) {
 		t.Errorf("backup mode = %o, want %o", got, want)
 	}
 }
+
+// Issue #67: a backup write that fails after creating the file must not leave a
+// truncated backup under the backup name, except on a lost exclusive create
+// (ErrExist), where the file is another writer's and must survive.
+func TestWriteBackup_RemovesAPartialBackupAndWrapsTheError(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := backupWriteFn
+	backupWriteFn = func(name string, data []byte, perm os.FileMode) error {
+		if err := os.WriteFile(name, nil, 0600); err != nil {
+			t.Fatalf("stage partial: %v", err)
+		}
+		return os.ErrClosed
+	}
+	defer func() { backupWriteFn = orig }()
+
+	_, err := writeBackup(settingsPath, "{}")
+	if err == nil {
+		t.Fatalf("writeBackup succeeded, want the write failure")
+	}
+	if want := "could not write backup: " + os.ErrClosed.Error(); err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("wrapped error lost its cause: %v", err)
+	}
+	if left := backupsBeside(t, settingsPath); len(left) != 0 {
+		t.Errorf("partial backup left behind: %v", left)
+	}
+}
+
+func TestWriteBackup_NeverDeletesAFileItLostTheNameTo(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	fixed := settingsPath + ".aetherbak-fixed"
+	origPath, origWrite := backupPathFn, backupWriteFn
+	backupPathFn = func(string) string { return fixed }
+	backupWriteFn = func(name string, data []byte, perm os.FileMode) error { return os.ErrExist }
+	defer func() { backupPathFn, backupWriteFn = origPath, origWrite }()
+	if err := os.WriteFile(fixed, []byte("pristine"), 0644); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	_, err := writeBackup(settingsPath, "newer")
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err = %v, want errors.Is(err, os.ErrExist)", err)
+	}
+	if !strings.HasPrefix(err.Error(), "could not write backup: ") {
+		t.Errorf("err = %q, want the could-not-write-backup prefix", err.Error())
+	}
+	if got := readRaw(t, fixed); got != "pristine" {
+		t.Errorf("the other writer's backup changed or was removed: %q", got)
+	}
+}
+
+// The real O_EXCL path, no seam: the clobber refusal carries the same wrapped
+// text and the pristine file survives.
+func TestWriteBackup_RealExclusiveCreateRefusalIsWrappedAndKeepsPristine(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	fixed := settingsPath + ".aetherbak-fixed"
+	orig := backupPathFn
+	backupPathFn = func(string) string { return fixed }
+	defer func() { backupPathFn = orig }()
+	if err := os.WriteFile(fixed, []byte("pristine"), 0644); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	_, err := writeBackup(settingsPath, "newer")
+	if err == nil || !strings.HasPrefix(err.Error(), "could not write backup: ") || !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err = %v, want a wrapped os.ErrExist", err)
+	}
+	if got := readRaw(t, fixed); got != "pristine" {
+		t.Errorf("existing backup changed: %q", got)
+	}
+}

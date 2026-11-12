@@ -89,7 +89,20 @@ export async function writeBackup(targetPath: string, raw: string, marker: strin
   } catch {
     // Unknown source: stay conservative rather than fall back to the umask.
   }
-  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx', mode });
+  try {
+    await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx', mode });
+  } catch (err) {
+    // Same rule as the temp file in writeFileAtomically: EEXIST means the name is another writer's
+    // (possibly the user's pristine first backup, #60) so leave it; anything else may have created a
+    // truncated file under our unique name, which a user would mistake for a good backup (#67).
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== 'EEXIST') await fsp.rm(backupPath, { force: true }).catch(() => undefined);
+    const wrapped: NodeJS.ErrnoException = new Error(
+      `could not write backup: ${(err as Error | undefined)?.message ?? String(err)}`
+    );
+    wrapped.code = code;
+    throw wrapped;
+  }
   return backupPath;
 }
 

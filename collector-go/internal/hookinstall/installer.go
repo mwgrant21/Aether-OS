@@ -211,6 +211,11 @@ func marshalSettingsJSON(v interface{}) ([]byte, error) {
 // uses backupPathFor.
 var backupPathFn = backupPathFor
 
+// backupWriteFn is a seam so tests can fail the backup write part-way. It is
+// separate from writeFileFn on purpose: tests fail the TEMP write through that
+// one and expect the backup to have succeeded first.
+var backupWriteFn = writeFileExcl
+
 func writeBackup(settingsPath, raw string) (string, error) {
 	backupPath := backupPathFn(settingsPath)
 	// Mode choice, identical in all three copies (#71): the target's permission
@@ -226,8 +231,16 @@ func writeBackup(settingsPath, raw string) (string, error) {
 	}
 	// Exclusive create: never overwrite an earlier backup, which may be the
 	// user's pristine file (#60).
-	if err := writeFileExcl(backupPath, []byte(raw), mode); err != nil {
-		return "", err
+	if err := backupWriteFn(backupPath, []byte(raw), mode); err != nil {
+		// Same rule as the temp file in writeSettingsAtomically: a lost exclusive
+		// create (ErrExist) means the name is another writer's, possibly the
+		// user's pristine first backup, so leave it; anything else may have
+		// created a truncated file under our unique name, which a user would
+		// mistake for a good backup (#67).
+		if !errors.Is(err, os.ErrExist) {
+			_ = os.Remove(backupPath)
+		}
+		return "", fmt.Errorf("could not write backup: %w", err)
 	}
 	return backupPath, nil
 }
