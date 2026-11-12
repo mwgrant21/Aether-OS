@@ -30,10 +30,12 @@
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
     Defaults to D:\AetherBuilds. A relative path (x, .\x, ..\x) is resolved against
-    the current PowerShell location; forward slashes are normalised. An empty or
-    whitespace-only value, and drive-relative (C:x) or root-relative (\x, /x) values,
+    the current PowerShell location; forward slashes are normalised. A whitespace-only
+    value, an empty one passed in-session, and drive-relative (C:x) or root-relative (\x, /x) values,
     are refused with exit 2 (they would resolve against the process working
-    directory). Use a full path (C:\..., \\server\share\...) or a relative one.
+    directory). A literal empty string on the powershell.exe -File command line is
+    dropped by PowerShell before the script runs and fails parameter binding (exit
+    1). Use a full path (C:\..., \\server\share\...) or a relative one.
     Not read by -Rollback, so it is not checked there.
 .PARAMETER Rollback
     Undo an unfinished deploy from ~\.aether-os\redeploy-journal.json. Needs no
@@ -56,7 +58,9 @@
     -DryRun -Rollback exits 0 (not 3) once the journal is readable, even when the
     previewed rollback would be incomplete; read the printed lines for what a real
     run would leave undone. A missing or unreadable journal still exits 2.
-    Exit 2 is only reliable under -File; under -Command it becomes 1.
+    The process exit code is 2 under -File. Under -Command (including -Command -
+    on stdin) it is 1 for any non-zero exit, unless the command ends with
+    `exit $LASTEXITCODE` (measured on 5.1 with a -StageRoot C:x refusal).
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
