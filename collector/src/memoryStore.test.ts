@@ -570,7 +570,7 @@ describe('createMemoryStore open failure', () => {
     }
   });
 
-  it('rethrows the original error and closes the handle when setup fails after open', () => {
+  it('rethrows the original error and calls close once when setup fails after open', () => {
     // Runtime require, not a static import: Vite strips the node: prefix off node:sqlite.
     const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
     const d = mkdtempSync(join(tmpdir(), 'aether-mem-bad-'));
