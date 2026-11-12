@@ -43,7 +43,10 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: resolve(__dirname, 'index.html'),
+        input: {
+          index: resolve(__dirname, 'index.html'),
+          gui: resolve(__dirname, 'gui.html'),
+        },
       },
     },
     plugins: [react(), rendererCspPlugin()],

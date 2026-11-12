@@ -134,6 +134,7 @@ import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import { CommunicationGrantControl } from './communicationBridge/grantControl';
+import { rendererEntryName } from './gui/entry';
 import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
 const require = createRequire(import.meta.url);
@@ -402,7 +403,14 @@ function createWindow(): void {
     if (mainWindow === win) mainWindow = null;
   });
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
+  if (rendererEntryName(process.env) === 'gui.html') {
+    const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
+    if (rendererUrl) {
+      win.loadURL(new URL('gui.html', rendererUrl.endsWith('/') ? rendererUrl : rendererUrl + '/').href);
+    } else {
+      win.loadFile(join(__dirname, '../renderer/gui.html'));
+    }
+  } else if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
