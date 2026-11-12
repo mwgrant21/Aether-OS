@@ -7,7 +7,7 @@
 // the off-cases from passing vacuously: if the mock, fixture, or timing stopped
 // producing an exec at all, the control fails.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -125,6 +125,8 @@ describe('memory extraction gate (#104)', () => {
     const calls = claudePromptCalls();
     expect(calls).toHaveLength(1);
     expect(calls[0].opts?.env).toBeDefined();
+    // Guards against over-correcting the lazy open: real work still creates the store.
+    expect(existsSync(join(dir, 'memory.db'))).toBe(true);
     expect(calls[0].opts?.env?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(calls[0].opts?.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(calls[0].opts?.env?.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -137,6 +139,7 @@ describe('memory extraction gate (#104)', () => {
     await sleep(300);
     stop();
     expect(claudePromptCalls()).toEqual([]);
+    expect(existsSync(join(dir, 'memory.db'))).toBe(false);
   });
 
   it('setting explicitly false -> no claude -p exec', async () => {
@@ -144,6 +147,18 @@ describe('memory extraction gate (#104)', () => {
     const stop = start();
     await sleep(300);
     stop();
+    expect(claudePromptCalls()).toEqual([]);
+    expect(existsSync(join(dir, 'memory.db'))).toBe(false);
+  });
+
+  it('setting ON but nothing to extract -> memory.db not created', async () => {
+    rmSync(join(dir, 'projects'), { recursive: true, force: true });
+    mkdirSync(join(dir, 'projects'), { recursive: true });
+    writeFileSync(settingsPath, '{"memoryExtractionEnabled":true}', 'utf8');
+    const stop = start();
+    await sleep(300);
+    stop();
+    expect(existsSync(join(dir, 'memory.db'))).toBe(false);
     expect(claudePromptCalls()).toEqual([]);
   });
 
@@ -211,6 +226,21 @@ describe('memory extraction gate (#104)', () => {
     expect(claudePromptCalls()).toEqual([]);
   });
 
+  it('runtime toggle: OFF at start, then ON with work -> memory.db created only then, exactly one exec', async () => {
+    rmSync(join(dir, 'projects'), { recursive: true, force: true });
+    mkdirSync(join(dir, 'projects'), { recursive: true });
+    const stop = startSlowDrain();
+    await sleep(150);
+    expect(existsSync(join(dir, 'memory.db'))).toBe(false);
+    writeFileSync(settingsPath, '{"memoryExtractionEnabled":true}', 'utf8');
+    writeFixture();
+    await waitUntilScanned();
+    await sleep(600); // past the 400 ms drain
+    stop();
+    expect(existsSync(join(dir, 'memory.db'))).toBe(true);
+    expect(claudePromptCalls()).toHaveLength(1);
+  });
+
   it('item staged while on but turned off before the drain is never sent', async () => {
     rmSync(join(dir, 'projects'), { recursive: true, force: true });
     mkdirSync(join(dir, 'projects'), { recursive: true });
@@ -253,6 +283,22 @@ describe('memoryExtractionTick', () => {
     await memoryExtractionTick(store, queue, join(dir, 'missing.json'), execFn);
     expect(execFn).not.toHaveBeenCalled();
     expect(queue.size()).toBe(0);
+    store.close();
+  });
+
+  it('accepts a lazy store getter: not called when disabled, called when enabled with an item', async () => {
+    const store = createMemoryStore(join(dir, 'memory.db'));
+    const getter = vi.fn(() => store);
+    const execFn = vi.fn(async () => ({ stdout: '[]' }));
+    const off = queueWithOneItem();
+    await memoryExtractionTick(getter, off, join(dir, 'missing.json'), execFn);
+    expect(getter).not.toHaveBeenCalled();
+    expect(off.size()).toBe(0);
+    const settings = join(dir, 'collector-settings.json');
+    writeFileSync(settings, '{"memoryExtractionEnabled":true}', 'utf8');
+    await memoryExtractionTick(getter, queueWithOneItem(), settings, execFn);
+    expect(getter).toHaveBeenCalledTimes(1);
+    expect(execFn).toHaveBeenCalledTimes(1);
     store.close();
   });
 

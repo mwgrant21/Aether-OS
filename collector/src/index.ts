@@ -49,8 +49,10 @@ export async function pollAndUpsertFleet(
 // queue, so an item staged while on and still waiting when the user turns it off
 // (including mid-batch, while an earlier item's `claude -p` is awaited) is dropped
 // without reaching the extractor: "off" means off at the moment of each exec.
+// The store may be a getter, resolved only after that per-item check, so a collector
+// with extraction off (or on with nothing to extract) never opens memory.db.
 export async function memoryExtractionTick(
-  store: MemoryStore,
+  store: MemoryStore | (() => MemoryStore),
   queue: MemoryExtractQueue,
   settingsPath: string,
   execFn?: ExtractExecFn,
@@ -61,7 +63,8 @@ export async function memoryExtractionTick(
     if (!readMemoryExtractionEnabled(settingsPath)) return;
     const single = createMemoryExtractQueue();
     single.push(item);
-    await drainMemoryExtractQueue(store, single, execFn, onIssue);
+    const s = typeof store === 'function' ? store() : store;
+    await drainMemoryExtractQueue(s, single, execFn, onIssue);
   }
 }
 
@@ -101,7 +104,10 @@ export function startCollector(options: {
   const db = openDatabase(options.dbPath);
   migrate(db);
 
-  const memoryStore = createMemoryStore(options.memoryDbPath);
+  // Opened on the first drained item while extraction is ON, not at startup, so
+  // memory.db does not exist for installs that never enable it.
+  let memoryStore: MemoryStore | null = null;
+  const getMemoryStore = (): MemoryStore => (memoryStore ??= createMemoryStore(options.memoryDbPath));
   const extractQueue = createMemoryExtractQueue();
 
   const stopTailer = startSpoolTailer(db, options.spoolDir, options.tailIntervalMs);
@@ -143,13 +149,13 @@ export function startCollector(options: {
     );
   }, options.fleetPollIntervalMs);
 
-  memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
+  memoryExtractionTick(getMemoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
     logDrift(db, Date.now(), d)
   ).catch((err) =>
     console.error('[aether-collector] memory extraction failed:', err)
   );
   const memoryExtractTimer = setInterval(() => {
-    memoryExtractionTick(memoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
+    memoryExtractionTick(getMemoryStore,extractQueue, options.collectorSettingsPath, undefined, (d) =>
       logDrift(db, Date.now(), d)
     ).catch((err) =>
       console.error('[aether-collector] memory extraction failed:', err)
@@ -162,7 +168,7 @@ export function startCollector(options: {
     clearInterval(transcriptScanTimer);
     clearInterval(fleetPollTimer);
     clearInterval(memoryExtractTimer);
-    memoryStore.close();
+    memoryStore?.close();
     db.close();
   };
 }
