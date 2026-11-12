@@ -317,8 +317,9 @@ describe('startCollector migrate failure', () => {
       expect(caught).toBe(boom);
       // close() ran exactly once, on the instance whose migrate exec threw; it does not observe OS-level file locks.
       expect(closeSpy).toHaveBeenCalledTimes(1);
-      const failed = execSpy.mock.contexts[execSpy.mock.contexts.length - 1];
-      expect(closeSpy.mock.contexts[0]).toBe(failed);
+      const idx = execSpy.mock.results.findIndex((r) => r.type === 'throw');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(closeSpy.mock.contexts[0]).toBe(execSpy.mock.contexts[idx]);
     } finally {
       closeSpy.mockRestore();
       execSpy.mockRestore();
