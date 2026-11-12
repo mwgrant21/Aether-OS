@@ -10,6 +10,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 - `scripts/redeploy-collector.ps1` now journals each step (`~\.aether-os\redeploy-journal.json`) and rolls a failed deploy back automatically (exit 1, or 3 with RECOVERY steps when it cannot), adds a `-Rollback` command and a `-VerifySeconds` window (1..60), and refuses more unsafe inputs up front. The database is never restored.
 - `backfill-usage` in the Node collector CLI: a dry-run-by-default repair that rebuilds the dedupe key for pre-0.7.6 usage rows from their transcripts and removes streamed duplicates. Rows whose transcripts no longer exist are left unchanged and reported.
 
+### Changed
+- Memory extraction now runs isolated from your Claude Code configuration: it is refused unless Claude Code reports a subscription login, user and project settings sources, MCP servers, slash commands and auto-memory are off, hooks are disabled and it runs in an empty working folder (`~/.claude/CLAUDE.md` may still be loaded; none of this is checked on a live run) (#111).
+
 ### Fixed
 - Background agents now appear in the desktop fleet view. Their `claude agents --json` rows carry `state` instead of `status`, which made both collectors report schema drift every poll and drop the card.
 

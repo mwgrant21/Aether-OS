@@ -11,8 +11,9 @@ subagent dispatches, behavioral anomaly detection over that stream, and a Comms 
 mission-control intelligence (AETHER) and every agent reply through a local, deterministic
 responder — no SDK or HTTP model call, no API key, no direct paid API call path (Stage 13.5; see
 `docs/roadmap.md` §3.5). That is not the same as "never bills": Claude CLI sessions you run, and
-the opt-in paths named below, use your own Claude Code configuration, which can bill API usage if
-you set it up that way. There is also an Android companion app (see Phone, below). The opt-in
+the other opt-in paths named below, use your own Claude Code configuration, so billing follows
+how you set that up (the opt-in memory extraction named below is refused unless
+Claude Code reports a subscription login). There is also an Android companion app (see Phone, below). The opt-in
 exceptions and the two opt-in tailnet listeners are spelled out in the privacy section below and
 in `docs/privacy-and-data.md`.
 
@@ -104,8 +105,9 @@ local, deterministic responder with no network request.
 **Opt-in background exception, named in #104 (2026-10-01):** the collector's memory extractor
 (`collector/src/memoryExtract.ts`) runs `claude -p --model haiku` over completed subagent
 dispatches. It is OFF by default, enabled only from Settings after a disclosure, and sends the
-dispatch result text plus up to 20 prior memories through the Claude CLI under your Claude Code
-configuration (which can bill API usage if you set it up that way). The gate takes effect only
+dispatch result text plus up to 20 prior memories through the Claude CLI. It is refused unless
+Claude Code reports a subscription login; whether the call then uses that credential is not
+checked on a live run. The gate takes effect only
 once the collector is rebuilt or reinstalled. See `docs/privacy-and-data.md` §14; any literal
 `claude` process launch outside a reviewed allow-list fails `src/shared/noApiCalls.test.ts`.
 
