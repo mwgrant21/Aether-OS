@@ -1022,6 +1022,7 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r = Invoke-RbEngine $c $false
         Get-RbCount '^Start$' | Should Be 1
         $r.RC | Should Be 3
+        $r.Out | Should Match 'check that no collector'
         $r.Out | Should Match 'start it by hand: conhost\.exe --headless'
     }
     It 'R3: oldWasRunning = $false -> not started, RC 0' {
@@ -1039,6 +1040,7 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r = Invoke-RbEngine $c $false
         Get-RbCount '^Start$' | Should Be 0
         $r.RC | Should Be 3
+        $r.Out | Should Match 'check that no collector'
         $r.Out | Should Match 'start it by hand: node\.exe D:\\x'
     }
     It 'R3: an old collector that is already alive (exact token) is never started again, RC 0' {

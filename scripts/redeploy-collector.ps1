@@ -571,7 +571,7 @@ function Invoke-Rollback {
         Write-Output 'R3: the old Run value is empty or absent, so the old collector was not launched via the Run key; nothing to relaunch.'
     } else {
         try {
-            $manual = "start it by hand: $oldRun"
+            $manual = "check that no collector (a node.exe running an index.js) is already running, then start it by hand: $oldRun"
             $existing = @(Get-ExactIndexProcessMatch -Processes @(Get-WmiObject Win32_Process) -IndexJs $oldIdx -ExcludePid $PID | Where-Object { $_.Name -eq 'node.exe' })
             $node = Get-NodeExeFromRunValue $oldRun
             if ($existing.Count -gt 0) {
