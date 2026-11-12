@@ -686,3 +686,87 @@ describe('terminalHub writePort', () => {
     expect(Object.keys(createTerminalHub().writePort())).toEqual(['write']);
   });
 });
+
+describe('terminalHub disposeAll', () => {
+  const startAll = (hub: ReturnType<typeof createTerminalHub>) => {
+    const ptys = { claude: fakePty(), terminal2: fakePty(), codex: fakePty() };
+    for (const id of ['claude', 'terminal2', 'codex'] as const) hub.slot(id).start(() => ptys[id], handlers());
+    return ptys;
+  };
+
+  it('kills every running slot once and counts the exits', async () => {
+    const hub = createTerminalHub();
+    const ptys = startAll(hub);
+    const p = hub.disposeAll(1000);
+    for (const pty of Object.values(ptys)) { expect(pty.kill).toHaveBeenCalledTimes(1); pty.fireExit(); }
+    await expect(p).resolves.toEqual({ running: 3, exited: 3, timedOut: 0, failed: 0 });
+  });
+
+  it('ignores never-started and already-exited slots', async () => {
+    const hub = createTerminalHub();
+    const dead = fakePty(), live = fakePty();
+    hub.slot('claude').start(() => dead, handlers());
+    dead.fireExit();
+    hub.slot('codex').start(() => live, handlers());
+    const p = hub.disposeAll(1000);
+    expect(dead.kill).not.toHaveBeenCalled();
+    expect(live.kill).toHaveBeenCalledTimes(1);
+    live.fireExit();
+    await expect(p).resolves.toEqual({ running: 1, exited: 1, timedOut: 0, failed: 0 });
+  });
+
+  it('is bounded: a pty that never exits (kill deferred, not ready) times out and leaves no timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const hub = createTerminalHub();
+      const stuck = fakePty(); // kill() is a no-op: node-pty defers kill until the pty's first data
+      hub.slot('terminal2').start(() => stuck, handlers());
+      let settled = false;
+      const p = hub.disposeAll(1300).then((r) => { settled = true; return r; });
+      await vi.advanceTimersByTimeAsync(1299);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(p).resolves.toEqual({ running: 1, exited: 0, timedOut: 1, failed: 0 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('never throws: a kill that throws is counted and the other slots are still killed', async () => {
+    const hub = createTerminalHub();
+    const ptys = startAll(hub);
+    (ptys.claude.kill as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('boom'); });
+    const p = hub.disposeAll(1000);
+    ptys.terminal2.fireExit(); ptys.codex.fireExit();
+    await expect(p).resolves.toEqual({ running: 3, exited: 2, timedOut: 0, failed: 1 });
+    expect(ptys.terminal2.kill).toHaveBeenCalledTimes(1);
+    expect(ptys.codex.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts an exit fired synchronously inside kill() and leaves no timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const hub = createTerminalHub();
+      const pty = fakePty();
+      (pty.kill as ReturnType<typeof vi.fn>).mockImplementation(() => pty.fireExit());
+      hub.slot('claude').start(() => pty, handlers());
+      await expect(hub.disposeAll(1000)).resolves.toEqual({ running: 1, exited: 1, timedOut: 0, failed: 0 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a second call after the exits kills nothing; a late exit after the timeout is harmless', async () => {
+    vi.useFakeTimers();
+    try {
+      const hub = createTerminalHub();
+      const pty = fakePty();
+      hub.slot('claude').start(() => pty, handlers());
+      const first = hub.disposeAll(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(first).resolves.toMatchObject({ timedOut: 1 });
+      pty.fireExit(); // arrives after the bound resolved
+      await expect(hub.disposeAll(100)).resolves.toEqual({ running: 0, exited: 0, timedOut: 0, failed: 0 });
+      expect(pty.kill).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
