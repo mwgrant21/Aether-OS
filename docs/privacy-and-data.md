@@ -24,8 +24,8 @@ session cookie; it never binds a wildcard or LAN address. Phone control (§17) s
 model; it removes the model entirely.
 
 **Aether has no SDK, HTTP or key-loading path to billed model APIs.** (The opt-in Claude CLI
-path in §14 is a different thing: it can bill API usage, depending on how Claude Code is
-configured.) Stage 13.5 removed the Anthropic SDK,
+path in §14 is a different thing: it is refused unless Claude Code reports a subscription
+login, and whether the call then uses that credential is not checked on a live run.) Stage 13.5 removed the Anthropic SDK,
 chat API proxy, and `.env` key loading. The legacy deterministic Comms responder stays local.
 Two independently default-off features can send content to OpenAI under the operator's Codex
 subscription: manual verification (§9) and Claude-requested consultations (§13). Neither toggle
@@ -36,8 +36,8 @@ to summarize them.
 extractor (`collector/src/memoryExtract.ts`) calls `claude -p --model haiku`. It shipped with
 Stage 13 and went unnoticed against the Stage 13.5 "no model call site" claim until issue #104;
 it is now off by default and gated behind a Settings toggle. It goes through the Claude CLI,
-not an SDK or HTTP call site, but it can still bill API usage depending on how Claude Code is
-configured; §14 states exactly what is sent and under which conditions.
+not an SDK or HTTP call site, and it is refused unless Claude Code reports a subscription login
+(whether the call then uses that credential is not checked on a live run); §14 states exactly what is sent and under which conditions.
 
 The embedded Claude terminal sends prompts to Anthropic under the user's Claude Code login.
 Aether strips API-key, auth-token and base-URL overrides from the launch environment; the
@@ -643,21 +643,69 @@ restart. With the setting off nothing is staged and nothing is sent: the transcr
 extraction queue, and a drain tick also discards anything already queued rather than sending it.
 `CostGuardCard` lists the row as a network surface.
 
-**What is sent, and to whom.** To Anthropic, or whichever provider Claude Code is configured
-for (see below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification; when that result is the harness stub or empty, the subagent's own hand-back report, at most 8,000 characters, is sent instead) plus up to 20
+**What is sent, and to whom.** To Anthropic under a Claude subscription login (see Isolation
+below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification; when that result is the harness stub or empty, the subagent's own hand-back report, at most 8,000 characters, is sent instead) plus up to 20
 memories previously extracted for that agent. Aether-initiated with no human typing the turn,
 which is what makes it a distinct boundary, like §12. It is usually sent within about 30 seconds
 of the dispatch completing.
 
-**What else `claude -p` brings along.** The call is a real Claude Code invocation: it also loads
-the user's CLAUDE.md and auto-memory context and runs the user's configured hooks on every call.
-None of that is controlled by Aether.
+**Isolation (issue #111).** The call is a real Claude Code invocation, so it is isolated from the
+user's Claude Code configuration by flags, environment and working directory. None of this is
+checked directly on a live run: the evidence is the flags and their documented effects (the same
+standard as the §18 `Hooks disabled.` bullet). The argv, pinned in
+`collector/src/memoryExtract.test.ts`, is `-p <prompt> --model haiku --output-format text
+--setting-sources project --settings {"disableAllHooks":true} --strict-mcp-config --mcp-config
+{"mcpServers":{}} --disable-slash-commands`, launched with no shell.
 
-**Which login, and can it bill.** Only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
-`ANTHROPIC_BASE_URL` are removed from the call's environment. Otherwise it uses whatever Claude
-Code is set up to use: the subscription login, an `apiKeyHelper`, an `env` key in Claude Code
-settings, or Bedrock/Vertex. So it CAN bill API usage; "your Claude account" is the common case,
-not a guarantee. Isolating the call from that ambient configuration is tracked in #111.
+- **Subscription login required.** Before every call (per item, no cache) the collector runs
+  `claude auth status --json` in the same environment and working directory and refuses unless it
+  exits 0 with `authMethod` exactly `claude.ai` or `oauth_token`. Anything else, including a future
+  value, a timeout (15 s), a non-zero exit, a launch error or unparseable output, refuses and no
+  `-p` process is started. Refusals are logged as `exec_refused: <reason>` with a fixed reason:
+  `auth_api_key`, `auth_api_key_helper`, `auth_third_party`, `auth_none`, `auth_method_unknown`,
+  `auth_status_timeout`, `auth_status_exit`, `auth_status_error`, `auth_status_unparseable`, or
+  one of the working-folder reasons below. Unverified: that `auth status` makes no model call, and
+  that its `authMethod` is the credential the later `-p` run actually uses. `auth status` cannot be
+  given `--setting-sources`, so it also reads user settings: a user whose `apiKeyHelper` lives only
+  in `~/.claude/settings.json` is refused (`auth_api_key_helper`) even though the `-p` child
+  excludes user settings. That false refusal is accepted as the conservative direction.
+- **Environment.** Removed, case-insensitively: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL` and every `CLAUDE_CODE_USE_*` variable (Bedrock/Vertex/Foundry switches).
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` is set. `CLAUDE_CODE_OAUTH_TOKEN` (a subscription setup token)
+  is kept. The collector's own environment is not modified.
+- **Settings, MCP, slash commands.** `--setting-sources project` loads no user settings (where
+  `env` keys, `apiKeyHelper`, plugins and hooks live) and, because the working folder is empty, no
+  project settings either; `--settings {"disableAllHooks":true}` disables hooks;
+  `--strict-mcp-config` with an empty `mcpServers` object loads no MCP servers;
+  `--disable-slash-commands` turns off skills and commands. Managed/policy settings
+  (`C:\Program Files\ClaudeCode`) cannot be excluded and remain in effect; whether they can
+  re-enable hooks is unverified. Unverified: that an empty `mcpServers` object is accepted, that
+  the subscription login still resolves under `project`, and the exact `project` semantics. If a
+  live run forces a fallback to `--setting-sources user`, that is not a one-word switch: `user`
+  reloads settings `env` and `apiKeyHelper`, which would then have to be overridden in `--settings`
+  or the design re-reviewed.
+- **Working folder.** `%ProgramData%\AetherOS\memory-extract-cwd`, created lazily and never under
+  the user profile or `%TEMP%`, because Claude Code loads `CLAUDE.md` from every ancestor of its
+  working directory. If `ProgramData` is unset or the folder cannot be created there is no
+  fallback: the call is refused (`cwd_unavailable`). Before each spawn (the auth check and the `-p`
+  call, so a swap between them is caught) the collector checks that it is a real directory, not a
+  link or junction, and that its real path matches (`cwd_unsafe`); that it is strictly empty, so a
+  planted `claude.exe`, `.claude` or `CLAUDE.md` refuses (`cwd_dirty`; on some Node versions a
+  `claude.exe` in the working folder is resolved before `PATH`, which is why the folder must be
+  strictly empty); and that neither it nor any
+  ancestor up to the drive root holds a `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` or
+  `.claude/settings*.json` (`cwd_ancestor_memory`). Aether never deletes the folder; it stays empty
+  and is safe to delete (it is recreated on next use). This assumes a single-user machine: another
+  local account with write access to that folder, or able to pre-create it, could plant files, and
+  the per-call checks narrow that to a race without closing it. No ACL hardening is done.
+- **What still loads.** `~/.claude/CLAUDE.md` and any managed `CLAUDE.md` MAY still be loaded, and
+  if so that text is sent along with the dispatch; under `--setting-sources project` it may not load
+  at all, which is unverified. The call still writes an ordinary Claude session transcript under
+  `~/.claude/projects/` for the working folder (`--no-session-persistence` is not used).
+- **Which login, and can it bill.** The gate above means the call is not made on an API key,
+  `apiKeyHelper`, Bedrock/Vertex/Foundry or `ANTHROPIC_BASE_URL` setup that Claude Code reports.
+  Whether `-p` then uses the credential `auth status` reported is not checked on a live run, so
+  this is a strong guard, not a guarantee.
 
 **What is stored.** Model-written memory atoms in `~/.aether-os/memory.db`. They derive from
 transcript content, which strains the Stage 14 "never in `~/.aether-os/`" amendment in §4; this
@@ -679,8 +727,11 @@ extracts unconditionally.
 **Guard.** `src/shared/noApiCalls.test.ts` fails on any literal `claude` process launch
 (`spawn`, `exec*`, `fork`, including promisified and aliased forms) outside an exact-path
 allow-list: the §12 adapter, `collector/src/fleetPoll.ts` (`claude agents --json` session
-listing; no prompt, no model; argv pinned), and `memoryExtract.ts`. A launch whose command is a
-variable is out of reach of a literal-string guard.
+listing; no prompt, no model; argv pinned), and `memoryExtract.ts`, which now makes two literal
+launches (`auth status --json` and `-p`) under its unchanged allow-list entry. The `-p` argv pin
+lives in `collector/src/memoryExtract.test.ts`, not in `noApiCalls.test.ts`, which pins only
+`fleetPoll.ts`'s argv. A launch whose command is a variable is out of reach of a literal-string
+guard.
 
 ## 15. Boards and the aether-data MCP server — operator-driven read boundary
 
