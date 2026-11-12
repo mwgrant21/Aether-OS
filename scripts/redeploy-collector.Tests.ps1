@@ -1349,7 +1349,7 @@ Describe 'Invoke-Redeploy auto-rollback fault injection (everything mocked; jour
         $script:RC | Should Be 1
         Test-Path $jp | Should Be $false
     }
-    It 'forward-slash -StageRoot is normalised: journal path is killable, rollback runs R1/R3/R4, RC 1' {
+    It 'forward-slash -StageRoot is normalised before Stop-OldCollector sees it' {
         Reset-Ft; $global:FtStartThrowAt = 1; $root = (New-FtRoot) -replace '\\', '/'
         $out = Start-FtDeploy $root
         $script:RC | Should Be 1
