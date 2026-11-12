@@ -203,7 +203,8 @@ jobs:
             foreach ($f in (Get-ChildItem -Path $root.FullName -Recurse -File -Filter 'diag.log*' -ErrorAction SilentlyContinue)) {
               # upload-artifact@v4 skips dot-prefixed path segments (.aether-os), so strip leading dots.
               $segs = $f.FullName.Substring($root.FullName.Length).TrimStart('\', '/') -split '[\\/]'
-              $rel = ($segs | ForEach-Object { $_.TrimStart('.') }) -join '\'
+              # A segment made only of dots (e.g. '...') is empty after the strip: drop it so the join never yields 'a\\b'.
+              $rel = ($segs | ForEach-Object { $_.TrimStart('.') } | Where-Object { $_ }) -join '\'
               $dest = Join-Path (Join-Path 'e2e-diag' $root.Name) $rel
               # '.aether-os' and 'aether-os' would now map to one path: never overwrite, suffix instead.
               $n = 0

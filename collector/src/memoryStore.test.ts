@@ -574,15 +574,21 @@ describe('createMemoryStore open failure', () => {
     // Runtime require, not a static import: Vite strips the node: prefix off node:sqlite.
     const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
     const d = mkdtempSync(join(tmpdir(), 'aether-mem-bad-'));
+    const execSpy = vi.spyOn(DatabaseSync.prototype, 'exec');
     const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close');
     try {
       const p = join(d, 'memory.db');
       writeFileSync(p, 'this is not a sqlite database, '.repeat(20));
       expect(() => createMemoryStore(p)).toThrow(/not a database/i);
-      // Proves only that close() was called once (the spy is on the prototype, so it does not say which handle); it does not observe OS-level file locks.
+      // Proves close() was called exactly once, on the very instance whose exec threw;
+      // it does not observe OS-level file locks.
       expect(closeSpy).toHaveBeenCalledTimes(1);
+      const failedIdx = execSpy.mock.results.findIndex((r) => r.type === 'throw');
+      expect(failedIdx).toBeGreaterThanOrEqual(0);
+      expect(closeSpy.mock.contexts[0]).toBe(execSpy.mock.contexts[failedIdx]);
     } finally {
       closeSpy.mockRestore();
+      execSpy.mockRestore();
       try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup must not mask the assertions */ }
     }
   });

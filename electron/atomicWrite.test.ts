@@ -396,6 +396,22 @@ describe('writeBackup: the backup inherits the target mode (#71)', () => {
     }
   });
 
+  // The test below can only fail as root: Linux strips setuid on the first non-empty write by an
+  // unprivileged user, so the on-disk mode hides a wrongly requested one. This one checks the mode
+  // the open call asks for, with stat faked so it also runs where chmod cannot set setuid.
+  it('requests a creation mode without setuid/setgid/sticky bits', async () => {
+    const statSpy = vi.spyOn(fsp, 'stat').mockResolvedValue({ mode: 0o107644 } as never);
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    try {
+      await writeBackup(join(tmpdir(), 'aether-mode-request', 'target.json'), '{}', 'ttbak');
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      expect(writeSpy.mock.calls[0][2]).toMatchObject({ flag: 'wx', mode: 0o644 });
+    } finally {
+      writeSpy.mockRestore();
+      statSpy.mockRestore();
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('drops setuid/setgid/sticky bits from the source mode', async () => {
     const target = freshTarget('{}');
     chmodSync(target, 0o4644);

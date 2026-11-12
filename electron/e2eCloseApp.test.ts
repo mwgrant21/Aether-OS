@@ -62,6 +62,29 @@ describe('closeApp', () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
+  it('does not kill when the process already exited via a signal', async () => {
+    const kill = vi.fn();
+    const log = vi.fn();
+    const p = closeApp(fakeApp(() => new Promise<void>(() => {}), { signalCode: 'SIGTERM' }), 'lbl', { kill, log });
+    const assertion = expect(p).rejects.toThrow('app.close() did not exit within 10s');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+    expect(kill).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('[e2e-close-kill] lbl skipped: process already exited');
+  });
+
+  it('does not kill on a non-win32 platform', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const kill = vi.fn();
+    const log = vi.fn();
+    const p = closeApp(fakeApp(() => new Promise<void>(() => {})), 'lbl', { kill, log });
+    const assertion = expect(p).rejects.toThrow('app.close() did not exit within 10s');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+    expect(kill).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('[e2e-close-kill] lbl skipped: not win32');
+  });
+
   it('propagates a fast close rejection unchanged without killing', async () => {
     const kill = vi.fn();
     const boom = new Error('close blew up');

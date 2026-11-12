@@ -102,7 +102,13 @@ export function startCollector(options: {
   collectorSettingsPath: string;
 }): () => void {
   const db = openDatabase(options.dbPath);
-  migrate(db);
+  try {
+    migrate(db);
+  } catch (e) {
+    // The caller never receives the handle on a throw, so close it here. Rethrow the ORIGINAL.
+    try { db.close(); } catch { /* the original error is the one that matters */ }
+    throw e;
+  }
 
   // Opened on the first drained item while extraction is ON, not at startup, so
   // memory.db does not exist for installs that never enable it.
