@@ -409,6 +409,26 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
         [IO.File]::ReadAllText($jp) | Should Be $before
         Remove-Journal -Path $jp
     }
+    It 'an open journal is reported (naming -Rollback) before the non-empty stage guard' {
+        $stageDir = Join-Path $root '9.9.9\collector'
+        try {
+            New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+            Set-Content -Path (Join-Path $stageDir 'f.txt') -Value 'x'
+            $j = New-TestJournal $null
+            $j.phase = 'repointed'
+            Write-Journal -Path $jp -Journal $j
+            $script:RC = 99
+            $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+            $script:RC | Should Be 2
+            $out | Should Match 'unfinished redeploy journal exists'
+            $out | Should Match '-Rollback'
+            $out | Should Not Match 'already exists and is not empty'
+            Assert-MockCalled Stop-OldCollector -Times 0
+        } finally {
+            Remove-Journal -Path $jp
+            Remove-Item -Recurse -Force -LiteralPath (Join-Path $root '9.9.9') -ErrorAction SilentlyContinue
+        }
+    }
     It 'also refuses an unparseable journal' {
         [IO.File]::WriteAllText($jp, 'garbage {')
         $script:RC = 99

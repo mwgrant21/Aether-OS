@@ -150,6 +150,16 @@ function Get-PreflightError {
     # (empty JournalPath skips the journal guard; empty RunKind = Run value absent).
     param([string]$Stage, [string]$OldIndex, [string]$DbPath, [string]$ExpectedDbPath, [string]$RunValue,
           [string]$JournalPath, [string]$RunKind, [int]$VerifySeconds = 30)
+    # The open-journal guard runs first: an unfinished redeploy means the state is unknown, so
+    # every other advice (e.g. "pass a different -Version") would be premature.
+    if ($JournalPath -and (Test-Path -LiteralPath $JournalPath)) {
+        try {
+            $j = Read-Journal -Path $JournalPath
+            return "an unfinished redeploy journal exists: $JournalPath (phase $($j.phase), version $($j.version)). Run scripts\redeploy-collector.ps1 -Rollback to restore the previous state, or delete the file by hand only after checking the HKCU Run value. Nothing was changed."
+        } catch {
+            return "$($_.Exception.Message). Check the HKCU Run value, then delete the file by hand. Nothing was changed."
+        }
+    }
     $inUse = $false
     try {
         $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
@@ -171,14 +181,6 @@ function Get-PreflightError {
     }
     if ($RunValue.Length -gt $MaxRunCommandLength) {
         return "Run-key command is $($RunValue.Length) characters; Windows ignores commands over $MaxRunCommandLength at logon. Use a shorter -StageRoot. Nothing was changed."
-    }
-    if ($JournalPath -and (Test-Path -LiteralPath $JournalPath)) {
-        try {
-            $j = Read-Journal -Path $JournalPath
-            return "an unfinished redeploy journal exists: $JournalPath (phase $($j.phase), version $($j.version)). Run scripts\redeploy-collector.ps1 -Rollback to restore the previous state, or delete the file by hand only after checking the HKCU Run value. Nothing was changed."
-        } catch {
-            return "$($_.Exception.Message). Check the HKCU Run value, then delete the file by hand. Nothing was changed."
-        }
     }
     if ($RunKind -and $RunKind -ne 'String') {
         return "the Run value $RunKeyName is $RunKind, not REG_SZ; this script only round-trips REG_SZ. Recreate it as REG_SZ by hand first. Nothing was changed."
