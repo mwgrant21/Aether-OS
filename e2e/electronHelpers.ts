@@ -3,6 +3,9 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+export { closeApp } from './closeApp';
+export type { ClosableApp, CloseAppOptions } from './closeApp';
+
 export interface LaunchedApp { app: ElectronApplication; window: Page }
 
 /** Actual built main/preload/renderer, isolated from operator data and model CLIs.
