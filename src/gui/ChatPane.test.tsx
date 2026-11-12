@@ -412,4 +412,61 @@ describe('ChatPane', () => {
       expect(screen.queryByText(TRUST_HINT)).toBeNull();
     });
   });
+
+  describe('placeholder', () => {
+    it('reads Starting Claude... before ready and Message Claude after the quiet window', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      expect(box().placeholder).toBe('Starting Claude...');
+      act(() => chunk!('hello'));
+      await advance(1700);
+      expect(box().placeholder).toBe('Message Claude');
+    });
+
+    it('reads Claude is not running after the process exits', async () => {
+      install({ ok: true, reused: true });
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      act(() => exit!());
+      expect(box().placeholder).toBe('Claude is not running');
+    });
+
+    it('reads Waiting for your answer in the pane while the trust prompt shows', async () => {
+      install();
+      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PROMPT;
+      act(() => chunk!('prompt'));
+      await advance(300);
+      expect(box().placeholder).toBe('Waiting for your answer in the pane');
+    });
+  });
+
+  describe('unmount races', () => {
+    it('ignores a start reply that arrives after unmount', async () => {
+      let reply!: (r: StartResult) => void;
+      install(new Promise<StartResult>((r) => (reply = r)));
+      const onLive = vi.fn();
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { unmount } = render(<ChatPane projectId="p1" onLiveChange={onLive} />);
+      await flush();
+      expect(gui.start).toHaveBeenCalledTimes(1);
+      unmount();
+      reply({ ok: true, reused: true });
+      await flush();
+      expect(onLive).not.toHaveBeenCalledWith(true);
+      expect(err).not.toHaveBeenCalled();
+      expect(gui.write).not.toHaveBeenCalled();
+      err.mockRestore();
+    });
+
+    it('never calls start when unmounted in the same tick as render', async () => {
+      install();
+      const { unmount } = render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      unmount();
+      await flush();
+      expect(gui.start).not.toHaveBeenCalled();
+    });
+  });
 });

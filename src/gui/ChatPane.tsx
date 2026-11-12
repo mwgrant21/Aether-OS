@@ -158,7 +158,13 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   };
 
   const enabled = live && ready && !trustShown;
-  const placeholder = stopped ? 'Claude is not running' : 'Starting Claude...';
+  const placeholder = stopped
+    ? 'Claude is not running'
+    : trustShown
+      ? 'Waiting for your answer in the pane'
+      : !enabled
+        ? 'Starting Claude...'
+        : 'Message Claude';
   const hintText = hint && !ready && !error ? 'No output from Claude yet. Type in the pane.' : null;
   const message = error ?? (trustShown ? "Answer Claude's trust prompt in the pane first" : hintText);
 
