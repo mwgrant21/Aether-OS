@@ -30,7 +30,7 @@ nested path cannot produce the golden figures by accident.
 database and asserts against it:
 
 - `collector/src/parity.test.ts` (vitest)
-- `collector-go/internal/transcript/parity_test.go` (go test)
+- `collector-go/internal/collector/parity_test.go` (go test)
 
 Neither suite runs the other. They agree by both asserting the same file,
 which keeps the check language-agnostic and needs no cross-process
@@ -57,8 +57,12 @@ being one.
 
 ## Deliberately not covered
 
-Dispatch completions and Memory Layer 2 extraction. Both are top-level-only
-in the Node collector by design — a dispatch completion appears in the
-*parent* transcript, not in the subagent's own file — and neither is wired
-in the Go collector yet. Adding them to this golden would encode an
-expectation neither implementation is meant to meet today.
+Dispatch rows ARE covered (the `dispatches` block in `expected.json`, from
+`corpus/my-project/sess-2.jsonl`): NULL, not 0, for absent usage; the
+notification `<status>` parsed into `exit_state` and `dispatch_status`;
+severity and the per-agent median baseline; `session_id`, `agent_id` and
+`task_kind` from the opening tool_use. Still not covered: the tool-error
+floor, the rescore pass, the stale-dispatch sweep, background (async-launch)
+dispatches, and Memory Layer 2 extraction. Those are either Node-only today
+or not wired in the Go collector, so adding them would encode an expectation
+neither implementation is meant to meet.

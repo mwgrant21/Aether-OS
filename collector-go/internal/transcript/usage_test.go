@@ -56,6 +56,19 @@ func openDispatch(toolUseID string, startedAtMs int64, toolName string) *ToolCal
 	return UpdateHistory(CreateEmptyHistory(), []Event{event}, startedAtMs)
 }
 
+// openDispatchWith opens an Agent tool call carrying the given input and the
+// session id of the opening assistant event.
+func openDispatchWith(toolUseID string, startedAtMs int64, input map[string]interface{}, sessionID string) *ToolCallHistory {
+	ts := time.UnixMilli(startedAtMs).UTC()
+	event := Event{
+		Kind:      "assistant",
+		Timestamp: &ts,
+		SessionID: &sessionID,
+		ToolUses:  []ToolUse{{ID: toolUseID, Name: "Agent", Input: input}},
+	}
+	return UpdateHistory(CreateEmptyHistory(), []Event{event}, startedAtMs)
+}
+
 func completionEvent(toolUseID string, endedAtMs int64, tokens, toolUses, durationMs int) *Event {
 	ts := time.UnixMilli(endedAtMs).UTC()
 	origin := "task-notification"
@@ -237,6 +250,13 @@ func TestIngestDispatchEvent_RecordsExactTagValues(t *testing.T) {
 	if tokens != 12345 || toolUses != 7 || durationMs != 4321 || startedAt != 1000 || endedAt != 13000 {
 		t.Fatalf("unexpected row: tokens=%d toolUses=%d durationMs=%d startedAt=%d endedAt=%d", tokens, toolUses, durationMs, startedAt, endedAt)
 	}
+	var status string
+	if err := db.QueryRow("SELECT dispatch_status FROM dispatches WHERE tool_use_id = ?", "tu_1").Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "unknown" {
+		t.Fatalf("dispatch_status = %q, want unknown", status)
+	}
 }
 
 func TestIngestDispatchEvent_NoMatchingOpenDispatch(t *testing.T) {
@@ -312,22 +332,102 @@ func TestIngestDispatchEvent_NoTimestamp(t *testing.T) {
 	}
 }
 
-func TestIngestDispatchEvent_DefaultsMissingNumericTagsToZero(t *testing.T) {
+// notify builds a task-notification event whose text is the tool-use-id tag
+// followed by body.
+func notify(toolUseID string, endedAtMs int64, body string) *Event {
+	ts := time.UnixMilli(endedAtMs).UTC()
+	origin := "task-notification"
+	text := "<tool-use-id>" + toolUseID + "</tool-use-id>" + body
+	return &Event{Kind: "user", Timestamp: &ts, OriginKind: &origin, HumanText: &text}
+}
+
+type dispatchRow struct {
+	tokens, toolUses, durationMs sql.NullInt64
+	exitState                    string
+	status                       sql.NullString
+}
+
+func readDispatchRow(t *testing.T, db *sql.DB, id string) dispatchRow {
+	t.Helper()
+	var r dispatchRow
+	err := db.QueryRow("SELECT tokens, tool_uses, duration_ms, exit_state, dispatch_status FROM dispatches WHERE tool_use_id = ?", id).
+		Scan(&r.tokens, &r.toolUses, &r.durationMs, &r.exitState, &r.status)
+	if err != nil {
+		t.Fatalf("query %s: %v", id, err)
+	}
+	return r
+}
+
+// assertRow checks exit_state, dispatch_status and that usage is either all
+// present (usage=true) or all NULL, never 0.
+func assertRow(t *testing.T, r dispatchRow, exit, status string, usage bool) {
+	t.Helper()
+	if r.exitState != exit || r.status.String != status {
+		t.Fatalf("exit_state=%q dispatch_status=%q, want %q/%q", r.exitState, r.status.String, exit, status)
+	}
+	all := r.tokens.Valid && r.toolUses.Valid && r.durationMs.Valid
+	none := !r.tokens.Valid && !r.toolUses.Valid && !r.durationMs.Valid
+	if (usage && !all) || (!usage && !none) {
+		t.Fatalf("usage valid = %v/%v/%v, want usage=%v", r.tokens.Valid, r.toolUses.Valid, r.durationMs.Valid, usage)
+	}
+}
+
+func TestIngestDispatchEvent_MissingUsageTagsStoreNull(t *testing.T) {
 	db := freshUsageDB(t)
 	history := openDispatch("tu_1", 1000, "")
-	text := "<tool-use-id>tu_1</tool-use-id>"
-	event := completionEvent("tu_1", 13000, 1, 1, 1)
-	event.HumanText = &text
-	ingested, err := IngestDispatchEvent(db, history, event)
-	if err != nil || !ingested {
-		t.Fatalf("expected ingested=true, err=nil, got ingested=%v err=%v", ingested, err)
+	if ok, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, "")); err != nil || !ok {
+		t.Fatalf("ingested=%v err=%v", ok, err)
 	}
-	var tokens, toolUses, durationMs int
-	if err := db.QueryRow("SELECT tokens, tool_uses, duration_ms FROM dispatches WHERE tool_use_id = ?", "tu_1").Scan(&tokens, &toolUses, &durationMs); err != nil {
-		t.Fatalf("query: %v", err)
+	assertRow(t, readDispatchRow(t, db, "tu_1"), "ok", "unknown", false)
+}
+
+func TestIngestDispatchEvent_FailedStatus(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatch("tu_1", 1000, "")
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, "<status>failed</status><summary>boom</summary>")); err != nil {
+		t.Fatal(err)
 	}
-	if tokens != 0 || toolUses != 0 || durationMs != 0 {
-		t.Fatalf("expected zero defaults, got tokens=%d toolUses=%d durationMs=%d", tokens, toolUses, durationMs)
+	assertRow(t, readDispatchRow(t, db, "tu_1"), "error", "failed", false)
+}
+
+func TestIngestDispatchEvent_KilledStatus(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatch("tu_1", 1000, "")
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, "<status>killed</status>")); err != nil {
+		t.Fatal(err)
+	}
+	assertRow(t, readDispatchRow(t, db, "tu_1"), "killed", "killed", false)
+}
+
+func TestIngestDispatchEvent_UnrecognisedStatusKeepsUsage(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatch("tu_1", 1000, "")
+	body := "<status>running</status><subagent_tokens>5</subagent_tokens><tool_uses>1</tool_uses><duration_ms>500</duration_ms>"
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, body)); err != nil {
+		t.Fatal(err)
+	}
+	r := readDispatchRow(t, db, "tu_1")
+	assertRow(t, r, "ok", "unknown", true)
+	if r.tokens.Int64 != 5 || r.toolUses.Int64 != 1 || r.durationMs.Int64 != 500 {
+		t.Fatalf("usage = %+v", r)
+	}
+}
+
+func TestIngestDispatchEvent_ReingestRefreshesStatusAndUsage(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatch("tu_1", 1000, "")
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, "<status>failed</status>")); err != nil {
+		t.Fatal(err)
+	}
+	body := "<status>completed</status><subagent_tokens>9</subagent_tokens><tool_uses>2</tool_uses><duration_ms>700</duration_ms>"
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 14000, body)); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, db, "dispatches", 1)
+	r := readDispatchRow(t, db, "tu_1")
+	assertRow(t, r, "ok", "completed", true)
+	if r.tokens.Int64 != 9 || r.durationMs.Int64 != 700 {
+		t.Fatalf("usage = %+v", r)
 	}
 }
 
@@ -396,4 +496,187 @@ func TestIngestDispatchEvent_NeverPersistsRawText(t *testing.T) {
 			t.Fatalf("unexpected raw-text column persisted: %s", c)
 		}
 	}
+}
+
+func readDispatchIdentity(t *testing.T, db *sql.DB, id string) (agent, kind, session sql.NullString, retries int) {
+	t.Helper()
+	err := db.QueryRow("SELECT agent_id, task_kind, session_id, retries FROM dispatches WHERE tool_use_id = ?", id).
+		Scan(&agent, &kind, &session, &retries)
+	if err != nil {
+		t.Fatalf("query %s: %v", id, err)
+	}
+	return
+}
+
+func TestIngestDispatchEvent_RecordsAgentKindAndOpeningSession(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatchWith("tu_1", 1000, map[string]interface{}{"subagent_type": "general-purpose"}, "sess-open")
+	event := notify("tu_1", 13000, "<status>completed</status>")
+	other := "sess-notification"
+	event.SessionID = &other
+	if _, err := IngestDispatchEvent(db, history, event); err != nil {
+		t.Fatal(err)
+	}
+	agent, kind, session, retries := readDispatchIdentity(t, db, "tu_1")
+	if agent.String != "general-purpose" || kind.String != "general-purpose" || !agent.Valid || !kind.Valid {
+		t.Fatalf("agent=%v kind=%v", agent, kind)
+	}
+	if session.String != "sess-open" {
+		t.Fatalf("session_id = %v, want the opening event's sess-open", session)
+	}
+	if retries != 0 {
+		t.Fatalf("retries = %d", retries)
+	}
+}
+
+func TestIngestDispatchEvent_NoSubagentTypeStoresNullAgent(t *testing.T) {
+	db := freshUsageDB(t)
+	history := openDispatchWith("tu_1", 1000, map[string]interface{}{"description": "d"}, "sess-open")
+	if _, err := IngestDispatchEvent(db, history, notify("tu_1", 13000, "")); err != nil {
+		t.Fatal(err)
+	}
+	agent, kind, session, _ := readDispatchIdentity(t, db, "tu_1")
+	if agent.Valid || kind.Valid || session.String != "sess-open" {
+		t.Fatalf("agent=%v kind=%v session=%v", agent, kind, session)
+	}
+}
+
+// seedDispatch inserts a closed dispatch row directly, like usageIngest.test.ts.
+func seedDispatch(t *testing.T, db *sql.DB, id string, agent any, exit string, status any, durationMs any, endedAtMs int64) {
+	t.Helper()
+	_, err := db.Exec(
+		`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms, agent_id, exit_state, dispatch_status)
+		 VALUES (?, 1, 1, ?, 0, ?, ?, ?, ?)`,
+		id, durationMs, endedAtMs, agent, exit, status,
+	)
+	if err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+func seedCompletedPriors(t *testing.T, db *sql.DB, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		seedDispatch(t, db, "prior_"+itoa(i), "general-purpose", "ok", "completed", 1000, int64(100+i))
+	}
+}
+
+func readSeverity(t *testing.T, db *sql.DB, id string) (exit string, severity sql.NullInt64, median sql.NullFloat64) {
+	t.Helper()
+	err := db.QueryRow("SELECT exit_state, severity, median_ms_at_eval FROM dispatches WHERE tool_use_id = ?", id).Scan(&exit, &severity, &median)
+	if err != nil {
+		t.Fatalf("query %s: %v", id, err)
+	}
+	return
+}
+
+func completedBody(durationMs int) string {
+	return "<status>completed</status><subagent_tokens>10</subagent_tokens><tool_uses>1</tool_uses><duration_ms>" + itoa(durationMs) + "</duration_ms>"
+}
+
+func assertSeverity(t *testing.T, db *sql.DB, id, wantExit string, wantSev int, wantMedian *float64) {
+	t.Helper()
+	exit, sev, med := readSeverity(t, db, id)
+	if exit != wantExit || !sev.Valid || int(sev.Int64) != wantSev {
+		t.Fatalf("%s: exit=%q severity=%v, want %q/%d", id, exit, sev, wantExit, wantSev)
+	}
+	if (wantMedian == nil) == med.Valid || (wantMedian != nil && med.Float64 != *wantMedian) {
+		t.Fatalf("%s: median = %v, want %v", id, med, wantMedian)
+	}
+}
+
+func ingestAt(t *testing.T, db *sql.DB, id string, endedAt int64, body string) {
+	t.Helper()
+	history := openDispatch(id, 1000, "")
+	if ok, err := IngestDispatchEvent(db, history, notify(id, endedAt, body)); err != nil || !ok {
+		t.Fatalf("ingest %s: ok=%v err=%v", id, ok, err)
+	}
+}
+
+func TestIngestDispatchEvent_FailedIsSeverity4(t *testing.T) {
+	db := freshUsageDB(t)
+	ingestAt(t, db, "tu_1", 13000, "<status>failed</status>")
+	assertSeverity(t, db, "tu_1", "error", 4, nil)
+}
+
+func TestIngestDispatchEvent_KilledIsSeverity2(t *testing.T) {
+	db := freshUsageDB(t)
+	ingestAt(t, db, "tu_1", 13000, "<status>killed</status>")
+	assertSeverity(t, db, "tu_1", "killed", 2, nil)
+}
+
+func TestIngestDispatchEvent_OnlyCompletedGetsSlowness(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 5)
+	ingestAt(t, db, "tu_run", 13000, "<status>running</status><subagent_tokens>1</subagent_tokens><tool_uses>1</tool_uses><duration_ms>9000</duration_ms>")
+	assertSeverity(t, db, "tu_run", "ok", 1, fp(1000))
+}
+
+func TestIngestDispatchEvent_SlowCompletedAfterFivePriors(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 5)
+	ingestAt(t, db, "tu_slow", 13000, completedBody(3001))
+	assertSeverity(t, db, "tu_slow", "ok", 2, fp(1000))
+}
+
+func TestIngestDispatchEvent_FourPriorsGiveNoMedian(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 4)
+	ingestAt(t, db, "tu_slow", 13000, completedBody(9000))
+	assertSeverity(t, db, "tu_slow", "ok", 1, nil)
+}
+
+func TestIngestDispatchEvent_MedianIgnoresUnusableRows(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 4) // four good rows: one short of the minimum
+	seedDispatch(t, db, "z0", "general-purpose", "ok", "completed", 0, 200)
+	seedDispatch(t, db, "znull", "general-purpose", "ok", "completed", nil, 201)
+	seedDispatch(t, db, "zerr", "general-purpose", "error", "failed", 1000, 202)
+	seedDispatch(t, db, "zfailedok", "general-purpose", "ok", "failed", 1000, 203)
+	seedDispatch(t, db, "zunk", "general-purpose", "ok", "unknown", 1000, 204)
+	seedDispatch(t, db, "zother", "reviewer", "ok", "completed", 1000, 205)
+	seedDispatch(t, db, "znoagent", nil, "ok", "completed", 1000, 206)
+	ingestAt(t, db, "tu_a", 13000, completedBody(9000))
+	assertSeverity(t, db, "tu_a", "ok", 1, nil)
+
+	// A NULL dispatch_status (history before the column) DOES count: fifth sample.
+	seedDispatch(t, db, "legacy", "general-purpose", "ok", nil, 1000, 207)
+	ingestAt(t, db, "tu_b", 14000, completedBody(9000))
+	assertSeverity(t, db, "tu_b", "ok", 2, fp(1000))
+}
+
+func TestIngestDispatchEvent_MedianNeverSeesSelfOrFuture(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 5)
+	// Enough later-ended slow rows that counting them would move the median.
+	for i := 0; i < 5; i++ {
+		seedDispatch(t, db, "future_"+itoa(i), "general-purpose", "ok", "completed", 100000, int64(50000+i))
+	}
+	ingestAt(t, db, "tu_1", 13000, completedBody(3001))
+	assertSeverity(t, db, "tu_1", "ok", 2, fp(1000))
+	// Re-ingesting the same notification now has tu_1 in the table: no change.
+	ingestAt(t, db, "tu_1", 13000, completedBody(3001))
+	assertSeverity(t, db, "tu_1", "ok", 2, fp(1000))
+}
+
+func TestIngestDispatchEvent_MedianExcludesSameMillisecondRows(t *testing.T) {
+	db := freshUsageDB(t)
+	seedCompletedPriors(t, db, 5)
+	// Rows ending in the SAME millisecond as the one under evaluation are not
+	// "before" it: the comparison is strict.
+	for i := 0; i < 5; i++ {
+		seedDispatch(t, db, "same_"+itoa(i), "general-purpose", "ok", "completed", 100000, 13000)
+	}
+	ingestAt(t, db, "tu_1", 13000, completedBody(3001))
+	assertSeverity(t, db, "tu_1", "ok", 2, fp(1000))
+}
+
+func TestIngestDispatchEvent_LateCompletionReplacesFatal(t *testing.T) {
+	db := freshUsageDB(t)
+	seedDispatch(t, db, "tu_1", "general-purpose", "fatal", "failed", nil, 5000)
+	if _, err := db.Exec("UPDATE dispatches SET severity = 4 WHERE tool_use_id = 'tu_1'"); err != nil {
+		t.Fatal(err)
+	}
+	ingestAt(t, db, "tu_1", 13000, completedBody(500))
+	assertSeverity(t, db, "tu_1", "ok", 1, nil)
 }

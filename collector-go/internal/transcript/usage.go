@@ -6,7 +6,6 @@ package transcript
 import (
 	"database/sql"
 	"regexp"
-	"strconv"
 )
 
 // IngestUsageEvent mirrors usageIngest.ts's ingestUsageEvent. Returns
@@ -47,12 +46,7 @@ func IngestUsageEvent(db *sql.DB, event *Event, sourceFileRel string) (bool, err
 	return n > 0, nil
 }
 
-var (
-	toolUseIDTag  = regexp.MustCompile(`<tool-use-id>(.*?)</tool-use-id>`)
-	tokensTag     = regexp.MustCompile(`<subagent_tokens>(\d+)</subagent_tokens>`)
-	toolUsesTag   = regexp.MustCompile(`<tool_uses>(\d+)</tool_uses>`)
-	durationMsTag = regexp.MustCompile(`<duration_ms>(\d+)</duration_ms>`)
-)
+var toolUseIDTag = regexp.MustCompile(`<tool-use-id>(.*?)</tool-use-id>`)
 
 // IngestDispatchEvent mirrors usageIngest.ts's ingestDispatchEvent, ported
 // from the already-shipped reference implementation in
@@ -88,26 +82,36 @@ func IngestDispatchEvent(db *sql.DB, history *ToolCallHistory, event *Event) (bo
 		return false, nil
 	}
 
-	tokens := 0
-	if m := tokensTag.FindStringSubmatch(content); m != nil {
-		tokens, _ = strconv.Atoi(m[1])
-	}
-	toolUses := 0
-	if m := toolUsesTag.FindStringSubmatch(content); m != nil {
-		toolUses, _ = strconv.Atoi(m[1])
-	}
-	durationMs := 0
-	if m := durationMsTag.FindStringSubmatch(content); m != nil {
-		durationMs, _ = strconv.Atoi(m[1])
+	outcome := ParseDispatchOutcome(content)
+	// Absent usage is NULL, never 0 (CLAUDE.md: no observed data is null).
+	var tokens, toolUses, durationMs any
+	if outcome.Usage != nil {
+		tokens, toolUses, durationMs = outcome.Usage.Tokens, outcome.Usage.ToolUses, outcome.Usage.DurationMs
 	}
 	endedAtMs := event.Timestamp.UnixMilli()
+	// Only completed runs are scored for slowness: unknown stays at 1.
+	var elapsedMs int64
+	if outcome.Status == StatusCompleted && outcome.Usage != nil {
+		elapsedMs = outcome.Usage.DurationMs
+	}
+	baseline, err := MedianDurationMsFor(db, open.SubagentType, dispatchToolUseID, endedAtMs)
+	if err != nil {
+		return false, err
+	}
+	exit := ExitStateForStatus(outcome.Status)
+	severity, median := ComputeSeverity(exit, elapsedMs, baseline)
 
-	_, err := db.Exec(
-		`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms)
-		 VALUES (?, ?, ?, ?, ?, ?)
+	_, err = db.Exec(
+		`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
+		   agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval, dispatch_status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(tool_use_id) DO UPDATE SET tokens = excluded.tokens, tool_uses = excluded.tool_uses,
-		   duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms`,
+		   duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms,
+		   agent_id = excluded.agent_id, task_kind = excluded.task_kind, session_id = excluded.session_id,
+		   retries = excluded.retries, exit_state = excluded.exit_state, severity = excluded.severity,
+		   median_ms_at_eval = excluded.median_ms_at_eval, dispatch_status = excluded.dispatch_status`,
 		dispatchToolUseID, tokens, toolUses, durationMs, open.StartedAt, endedAtMs,
+		open.SubagentType, open.SubagentType, open.SessionID, 0, string(exit), severity, median, string(outcome.Status),
 	)
 	if err != nil {
 		return false, err

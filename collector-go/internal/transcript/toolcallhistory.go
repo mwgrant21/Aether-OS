@@ -28,6 +28,11 @@ type OpenToolCall struct {
 	ToolName  string
 	FilePath  *string
 	StartedAt int64
+	// SubagentType is the tool_use input's string subagent_type (empty string
+	// kept), nil when absent or not a string. SessionID is the session of the
+	// assistant event that carried the tool_use.
+	SubagentType *string
+	SessionID    *string
 }
 
 // ToolCallHistory mirrors toolCallHistory.ts's ToolCallHistory.
@@ -152,7 +157,16 @@ func UpdateHistory(history *ToolCallHistory, events []Event, nowMs int64) *ToolC
 			if event.Timestamp != nil {
 				startedAt = event.Timestamp.UnixMilli()
 			}
-			newOpen[toolUse.ID] = OpenToolCall{ToolName: toolUse.Name, FilePath: filePath, StartedAt: startedAt}
+			var subagentType *string
+			if m, ok := toolUse.Input.(map[string]interface{}); ok {
+				if s, ok := m["subagent_type"].(string); ok {
+					subagentType = &s
+				}
+			}
+			newOpen[toolUse.ID] = OpenToolCall{
+				ToolName: toolUse.Name, FilePath: filePath, StartedAt: startedAt,
+				SubagentType: subagentType, SessionID: event.SessionID,
+			}
 		}
 
 		for _, toolResult := range event.ToolResults {

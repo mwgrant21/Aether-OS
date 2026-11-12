@@ -326,6 +326,34 @@ export function buildFixture(root, baseMs) {
         'Agent finished <tool-use-id>tu-agent-1</tool-use-id> <subagent_tokens>48210</subagent_tokens> <tool_uses>7</tool_uses> <duration_ms>91234</duration_ms>',
     },
   });
+  // Dispatches whose notification reports failed / killed / an unrecognised
+  // status (#107, #65): exit_state, dispatch_status, severity, NULL usage and
+  // the opener's session_id and agent_id must match across both collectors.
+  const weirdUsage = '<subagent_tokens>5</subagent_tokens><tool_uses>1</tool_uses><duration_ms>500</duration_ms>';
+  [
+    ['tu-agent-failed', '<status>failed</status><summary>boom</summary><result>it broke</result>', -79.9],
+    ['tu-agent-killed', '<status>killed</status><summary>stopped</summary>', -79.7],
+    ['tu-agent-weird', '<status>weird</status>' + weirdUsage, -79.5],
+  ].forEach(([id, body, offset]) => {
+    alphaLines.push({
+      type: 'assistant',
+      sessionId: 'alpha',
+      timestamp: iso(baseMs, offset),
+      cwd: ALPHA_CWD,
+      message: {
+        model: 'claude-sonnet-4-5',
+        content: [{ type: 'tool_use', id, name: 'Agent', input: { description: 'x', subagent_type: 'general-purpose' } }],
+      },
+    });
+    alphaLines.push({
+      type: 'user',
+      sessionId: 'alpha',
+      timestamp: iso(baseMs, offset + 0.1),
+      cwd: ALPHA_CWD,
+      origin: { kind: 'task-notification' },
+      message: { content: '<tool-use-id>' + id + '</tool-use-id>' + body },
+    });
+  });
   // An absolute path on a different drive: toProjectRelative must NULL it.
   alphaLines.push({
     type: 'assistant',
