@@ -1239,6 +1239,9 @@ func TestWriteBackup_KeepsOwnerReadWriteOnABackupOfAReadOnlyTarget(t *testing.T)
 	}
 }
 
+// This test can only fail as root: Linux strips setuid on the first non-empty
+// write by an unprivileged user, so the on-disk mode hides a wrongly requested
+// one. The test after it checks the mode the backup writer is asked for.
 func TestWriteBackup_DropsSpecialBitsFromTheSourceMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no setuid/setgid/sticky bits")
@@ -1260,6 +1263,31 @@ func TestWriteBackup_DefaultsTo0600WhenTheTargetCannotBeStatted(t *testing.T) {
 	p := tempSettingsPath(t) // never created
 	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0600); got != want {
 		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_RequestsACreationModeWithoutSpecialBits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no setuid/setgid/sticky bits")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0644|os.ModeSetuid); err != nil {
+		t.Skipf("cannot set the setuid bit here: %v", err)
+	}
+	defer func() { _ = os.Chmod(p, 0644) }()
+	var requested os.FileMode
+	orig := backupWriteFn
+	backupWriteFn = func(name string, data []byte, perm os.FileMode) error {
+		requested = perm
+		return nil
+	}
+	defer func() { backupWriteFn = orig }()
+
+	if _, err := writeBackup(p, "{}"); err != nil {
+		t.Fatalf("writeBackup: %v", err)
+	}
+	if requested != 0644 {
+		t.Errorf("requested creation mode = %v, want %v", requested, os.FileMode(0644))
 	}
 }
 
