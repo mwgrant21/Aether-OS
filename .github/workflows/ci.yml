@@ -201,8 +201,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path e2e-diag | Out-Null
           foreach ($root in (Get-ChildItem -Path $env:TEMP -Directory -Filter 'aether-e2e-*' -ErrorAction SilentlyContinue)) {
             foreach ($f in (Get-ChildItem -Path $root.FullName -Recurse -File -Filter 'diag.log*' -ErrorAction SilentlyContinue)) {
-              $rel = $f.FullName.Substring($root.FullName.Length).TrimStart('\', '/')
+              # upload-artifact@v4 skips dot-prefixed path segments (.aether-os), so strip leading dots.
+              $segs = $f.FullName.Substring($root.FullName.Length).TrimStart('\', '/') -split '[\\/]'
+              $rel = ($segs | ForEach-Object { $_.TrimStart('.') }) -join '\'
               $dest = Join-Path (Join-Path 'e2e-diag' $root.Name) $rel
+              # '.aether-os' and 'aether-os' would now map to one path: never overwrite, suffix instead.
+              $n = 0
+              while (Test-Path -LiteralPath $dest) { $n++; $dest = (Join-Path (Join-Path 'e2e-diag' $root.Name) $rel) + ".dup$n" }
               New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
               Copy-Item -LiteralPath $f.FullName -Destination $dest -ErrorAction Continue
             }
