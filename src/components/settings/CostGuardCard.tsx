@@ -49,8 +49,9 @@ export function CostGuardCard() {
         key-reachable path left for Aether to call the Anthropic API directly. Opt-in
         memory extraction is the one background, Aether-initiated Claude model call: when ON, the
         collector sends dispatch result text to your Claude account through the claude CLI (only
-        ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its
-        environment; otherwise it uses Claude Code's own setup). Cross-engine
+        when Claude Code reports a subscription login; ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
+        ANTHROPIC_BASE_URL and CLAUDE_CODE_USE_* are removed from its environment, and your
+        personal ~/.claude/CLAUDE.md may still be loaded). Cross-engine
         verification and opted-in Claude–Codex consultations use external clients and your
         subscriptions. Communication starts require an allowance;
         enabling its preference alone does not make a consultation.

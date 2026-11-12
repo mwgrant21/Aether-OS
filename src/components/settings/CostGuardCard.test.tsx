@@ -107,15 +107,16 @@ describe('CostGuardCard hint wording', () => {
 });
 
 describe('CostGuardCard env-scrub wording', () => {
-  it('names the three removed variables instead of claiming API keys are stripped', () => {
+  it('states the subscription-login gate and the removed variables instead of claiming API keys are stripped', () => {
     render(
       <AetherStoreProvider>
         <CostGuardCard />
       </AetherStoreProvider>,
     );
     expect(
-      screen.getByText(/only ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses Claude Code's own setup/),
+      screen.getByText(/only when Claude Code reports a subscription login; ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and CLAUDE_CODE_USE_\* are removed from its environment, and your personal ~\/\.claude\/CLAUDE\.md may still be loaded/),
     ).toBeTruthy();
+    expect(screen.queryByText(/otherwise it uses Claude Code's own setup/)).toBeNull();
     expect(screen.queryByText(/API keys stripped/i)).toBeNull();
   });
 });

@@ -364,7 +364,8 @@ extractor (`collector/src/memoryExtract.ts`, `claude -p --model haiku` through t
 a surviving model call that the guard could not see, so "no model call site left" did not hold.
 It is now opt-in and OFF by default (`docs/privacy-and-data.md` §14) and the guard flags any
 literal `claude` launch outside an allow-list; it is still a Claude-CLI path rather than an SDK or
-HTTP one, and it can bill API usage depending on Claude Code's configuration.
+HTTP one, and it is refused unless Claude Code reports a subscription login (the credential it
+then uses is not checked on a live run).
 
 **Status: shipped.** `@anthropic-ai/sdk` is out of `package.json`; the model call path
 (`chatCore.ts`, `claudeClient.ts`, `systemPrompt.ts`, `chatProxyPlugin.ts`, the `chat:*` IPC pair)

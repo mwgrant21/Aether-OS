@@ -172,17 +172,22 @@ describe('MemoryExtractionCard unknown state (#104 hydration)', () => {
 });
 
 describe('MemoryExtractionCard disclosure wording', () => {
-  it('states exactly which env vars are removed and that Claude Code adds its own context and hooks', async () => {
+  it('states the subscription-only gate, the removed env vars, the isolation and that ~/.claude/CLAUDE.md may still load', async () => {
     installBridge({ get: vi.fn().mockResolvedValue(false), set: vi.fn() });
     renderBoth();
     fireEvent.click(await within(cardHeader()).findByText('ENABLE'));
     expect(
-      screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are removed from its environment; otherwise it uses whatever Claude Code is set up to use \(your login, or an apiKeyHelper, settings key or Bedrock\/Vertex if you configured one\)/),
+      screen.getByText(/skips the call unless that is a Claude subscription login \(claude\.ai or a setup token\); an API key, apiKeyHelper or Bedrock\/Vertex login is refused/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and CLAUDE_CODE_USE_\* variables are removed from its environment/),
     ).toBeTruthy();
     expect(screen.queryByText(/API keys are stripped/i)).toBeNull();
-    expect(
-      screen.getByText(/Claude Code also adds its own context to each call \(for example your CLAUDE\.md files\) and runs your configured hooks\./),
-    ).toBeTruthy();
+    expect(screen.getByText(/runs in an empty working folder: your user settings are not loaded, the empty folder leaves no project settings, and MCP servers, slash commands and auto-memory are switched off and hooks disabled \(set by flag, not checked on a live run\)\. That the login Claude Code reports is the one the call then uses is also unverified\./)).toBeTruthy();
+    expect(screen.getByText(/Your personal ~\/\.claude\/CLAUDE\.md \(and any managed CLAUDE\.md\) may still be loaded, and if it is, that text is sent along with the dispatch/)).toBeTruthy();
+    expect(screen.queryByText(/runs your configured hooks/)).toBeNull();
+    expect(screen.queryByText(/Claude Code also adds its own context/)).toBeNull();
+    expect(screen.queryByText(/otherwise it uses whatever Claude Code is set up to use/)).toBeNull();
     expect(screen.getByText(/dispatches the collector picks up after you enable it/)).toBeTruthy();
   });
 });

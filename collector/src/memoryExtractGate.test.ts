@@ -81,7 +81,9 @@ describe('memory extraction gate (#104)', () => {
     // No promisify.custom: promisify resolves with the object handed to the callback.
     execFileMock.mockImplementation((...a: unknown[]) => {
       const cb = a[a.length - 1];
-      if (typeof cb === 'function') cb(null, { stdout: '[]', stderr: '' });
+      // `claude auth status --json` (the #111 subscription gate) must report a subscription login.
+      const stdout = (a[1] as string[])[0] === 'auth' ? '{"authMethod":"claude.ai"}' : '[]';
+      if (typeof cb === 'function') cb(null, { stdout, stderr: '' });
     });
     dir = mkdtempSync(join(tmpdir(), 'aether-gate-'));
     settingsPath = join(dir, 'collector-settings.json');
@@ -95,7 +97,15 @@ describe('memory extraction gate (#104)', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-test-should-not-leak';
   });
 
+  // #111: the extractor's neutral cwd lives under %ProgramData%. Windows keeps the real one (a temp dir
+  // here sits under the profile, whose CLAUDE.md/.claude the cwd check would rightly refuse); elsewhere
+  // ProgramData is unset, so point it at a temp dir.
+  beforeEach(() => {
+    if (process.platform !== 'win32') process.env.ProgramData = join(dir, 'programdata');
+  });
+
   afterEach(() => {
+    if (process.platform !== 'win32') delete process.env.ProgramData;
     if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = savedKey;
     rmSync(dir, { recursive: true, force: true });
