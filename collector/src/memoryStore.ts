@@ -376,6 +376,17 @@ export interface MemoryStoreOptions {
  */
 export function createMemoryStore(dbPath: string, opts: MemoryStoreOptions = {}) {
   const db = openDatabase(dbPath);
+  try {
+    return buildMemoryStore(db, opts);
+  } catch (e) {
+    // Setup failed after the open: close the handle (it would otherwise leak on
+    // every retry and keep the file locked on Windows), then surface the ORIGINAL error.
+    try { db.close(); } catch { /* the original error is the one that matters */ }
+    throw e;
+  }
+}
+
+function buildMemoryStore(db: DatabaseSync, opts: MemoryStoreOptions) {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA busy_timeout = 5000'); // DIVERGENCE: Miriel omits this.
   db.exec(SCHEMA);

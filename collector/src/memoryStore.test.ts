@@ -6,10 +6,12 @@
  * worse than no memory at all."
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import {
   createMemoryStore,
   findForbiddenContent,
@@ -553,5 +555,35 @@ describe('scorePrivateCandidate', () => {
     const neverReferenced = row({ reference_count: 0 });
     const heavilyReferenced = row({ reference_count: 500 });
     expect(scorePrivateCandidate(neverReferenced, NOW)).toBe(scorePrivateCandidate(heavilyReferenced, NOW));
+  });
+});
+
+describe('createMemoryStore open failure', () => {
+  it('returns a usable store on the normal path', () => {
+    const d = mkdtempSync(join(tmpdir(), 'aether-mem-ok-'));
+    const s = createMemoryStore(join(d, 'memory.db'), { now: () => clock });
+    try {
+      expect(s.applyOps([decision('usable')], steward).added).toBe(1);
+    } finally {
+      s.close();
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it('rethrows the original error and closes the handle when setup fails after open', () => {
+    // Runtime require, not a static import: Vite strips the node: prefix off node:sqlite.
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
+    const d = mkdtempSync(join(tmpdir(), 'aether-mem-bad-'));
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close');
+    try {
+      const p = join(d, 'memory.db');
+      writeFileSync(p, 'this is not a sqlite database, '.repeat(20));
+      expect(() => createMemoryStore(p)).toThrow(/not a database/i);
+      // Proves close() was called once on the failed open's handle; it does not observe OS-level file locks.
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSpy.mockRestore();
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup must not mask the assertions */ }
+    }
   });
 });
