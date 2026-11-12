@@ -53,12 +53,51 @@ describe('GuiComposer', () => {
 
   it('disabled blocks submit and shows the placeholder', () => {
     const onSubmit = vi.fn();
-    render(<GuiComposer disabled placeholder="Starting Claude..." onSubmit={onSubmit} />);
+    const { rerender } = render(<GuiComposer disabled={false} placeholder="Starting Claude..." onSubmit={onSubmit} />);
+    type('typed first');
+    rerender(<GuiComposer disabled placeholder="Starting Claude..." onSubmit={onSubmit} />);
     expect(box().placeholder).toBe('Starting Claude...');
     expect(box().disabled).toBe(true);
     fireEvent.keyDown(box(), { key: 'Enter' });
     fireEvent.click(screen.getByLabelText('Send'));
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('a second Enter while a submit is in flight is ignored', () => {
+    const onSubmit = vi.fn(() => new Promise<boolean>(() => {}));
+    render(<GuiComposer disabled={false} onSubmit={onSubmit} />);
+    type('once');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the text when onSubmit rejects or throws', async () => {
+    const onSubmit = vi.fn().mockRejectedValueOnce(new Error('x')).mockImplementationOnce(() => {
+      throw new Error('y');
+    });
+    render(<GuiComposer disabled={false} onSubmit={onSubmit} />);
+    type('keep');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+    expect(box().value).toBe('keep');
+  });
+
+  it('does not clear text edited while the submit was in flight', async () => {
+    let resolve!: (v: boolean) => void;
+    const onSubmit = vi.fn(() => new Promise<boolean>((r) => (resolve = r)));
+    render(<GuiComposer disabled={false} onSubmit={onSubmit} />);
+    type('first');
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    type('first and more');
+    resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(box().value).toBe('first and more');
   });
 
   it('Send button submits', () => {

@@ -33,7 +33,15 @@ export function GuiComposer({ disabled, placeholder, onSubmit, leading }: GuiCom
     if (disabled || busy.current || text.trim() === '') return;
     busy.current = true;
     try {
-      if ((await onSubmit(text)) === true) setText('');
+      const sent = text;
+      let ok = false;
+      try {
+        ok = (await onSubmit(sent)) === true;
+      } catch {
+        ok = false; // a throwing or rejecting onSubmit counts as not sent
+      }
+      // Clear only if the user has not edited the box while the submit was in flight.
+      if (ok && ref.current?.value === sent) setText('');
     } finally {
       busy.current = false;
     }
