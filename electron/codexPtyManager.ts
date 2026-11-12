@@ -2,6 +2,7 @@ import * as pty from 'node-pty';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCodexHome } from './crossEngine/acpProcess';
+import { deleteEnvKeysIgnoreCase } from './envScrub';
 
 // The terminal ALWAYS starts a fresh codex session -- matching ptyManager.ts's
 // identical decision for claude: never add resume flags.
@@ -140,7 +141,7 @@ export function buildCodexPtyEnv(
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   const env = stripNpmBinPathEntries(source, platform);
-  for (const key of BILLING_AUTH_ENV_VARS) delete env[key];
+  deleteEnvKeysIgnoreCase(env, BILLING_AUTH_ENV_VARS);
   // Codex is not an Alpha/Beta terminal; never inherit that identity or the
   // board CLI path that goes with it.
   delete env.AETHER_TERMINAL;

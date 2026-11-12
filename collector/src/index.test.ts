@@ -54,7 +54,7 @@ describe('startCollector', () => {
     stop();
   });
 
-  it('opens a memory store at the configured path and closes it on stop', () => {
+  it('does not create memory.db at startup, and stop() is safe when the store was never opened', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aether-collector-index-mem-'));
     const stop = startCollector({
       dbPath: join(dir, 'collector.db'),
@@ -70,7 +70,7 @@ describe('startCollector', () => {
       collectorSettingsPath: join(dir, 'collector-settings.json'),
     });
 
-    expect(existsSync(join(dir, 'memory.db'))).toBe(true);
+    expect(existsSync(join(dir, 'memory.db'))).toBe(false);
     expect(() => stop()).not.toThrow();
     // A second start against the same path must succeed (proves stop() actually
     // closed the file handle rather than leaking it).
