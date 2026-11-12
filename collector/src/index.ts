@@ -155,7 +155,7 @@ export function startCollector(options: {
     console.error('[aether-collector] memory extraction failed:', err)
   );
   const memoryExtractTimer = setInterval(() => {
-    memoryExtractionTick(getMemoryStore,extractQueue, options.collectorSettingsPath, undefined, (d) =>
+    memoryExtractionTick(getMemoryStore, extractQueue, options.collectorSettingsPath, undefined, (d) =>
       logDrift(db, Date.now(), d)
     ).catch((err) =>
       console.error('[aether-collector] memory extraction failed:', err)
