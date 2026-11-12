@@ -661,7 +661,10 @@ not a guarantee. Isolating the call from that ambient configuration is tracked i
 
 **What is stored.** Model-written memory atoms in `~/.aether-os/memory.db`. They derive from
 transcript content, which strains the Stage 14 "never in `~/.aether-os/`" amendment in §4; this
-section names that tension and does not resolve it.
+section names that tension and does not resolve it. `memory.db` is created the first time the
+collector drains an extraction item with the setting ON. With the setting OFF (the default), or ON
+with nothing to extract, the collector never creates it, and a file left by an earlier version or
+by earlier use stays on disk, empty or not, until the operator deletes it.
 
 **Backfill.** Scan offsets persist in `collector.db` (`transcript_files.last_offset`) and only
 advance when a scan runs. Dispatches the collector scans while the setting is off are not
