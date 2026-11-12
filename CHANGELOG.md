@@ -14,6 +14,7 @@ pre-1.0 semver as described in `docs/packaging.md`.
 - Memory extraction now runs isolated from your Claude Code configuration: it is refused unless Claude Code reports a subscription login, user settings are not loaded and the empty working folder leaves no project settings; MCP servers, slash commands and auto-memory are off and hooks are disabled (`~/.claude/CLAUDE.md` may still be loaded; none of this is checked on a live run) (#111).
 
 ### Fixed
+- `scripts/redeploy-collector.ps1`: a relative `-StageRoot` is now resolved against the current PowerShell location (it previously made automatic rollback skip its stop, relaunch and rename steps), and a forward-slash `-StageRoot` is normalised to backslashes (it previously was not matched when looking for running collectors); an open journal is reported before the stage-in-use guard; a lone conhost no longer counts as a running collector; `-DryRun -Rollback` exits 0; the rollback and recovery messages no longer claim the old collector was not running when it was.
 - Background agents now appear in the desktop fleet view. Their `claude agents --json` rows carry `state` instead of `status`, which made both collectors report schema drift every poll and drop the card.
 
 ## [0.7.6] - 2026-11-10

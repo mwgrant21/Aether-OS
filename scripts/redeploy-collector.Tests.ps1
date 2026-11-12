@@ -409,6 +409,34 @@ Describe 'Invoke-Redeploy new preflight guards (journal, Run kind, -VerifySecond
         [IO.File]::ReadAllText($jp) | Should Be $before
         Remove-Journal -Path $jp
     }
+    It 'an open journal is reported (naming -Rollback) before the non-empty stage guard' {
+        $stageDir = Join-Path $root '9.9.9\collector'
+        try {
+            New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+            Set-Content -Path (Join-Path $stageDir 'f.txt') -Value 'x'
+            $j = New-TestJournal $null
+            $j.phase = 'repointed'
+            Write-Journal -Path $jp -Journal $j
+            $script:RC = 99
+            $out = Invoke-Redeploy -Version '9.9.9' -StageRoot $root -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+            $script:RC | Should Be 2
+            $out | Should Match 'unfinished redeploy journal exists'
+            $out | Should Match '-Rollback'
+            $out | Should Not Match 'already exists and is not empty'
+            Assert-MockCalled Stop-OldCollector -Times 0
+        } finally {
+            Remove-Journal -Path $jp
+            Remove-Item -Recurse -Force -LiteralPath (Join-Path $root '9.9.9') -ErrorAction SilentlyContinue
+        }
+    }
+    It 'an unparseable -StageRoot is exit 2 before anything is built or changed' {
+        $script:RC = 99
+        $out = Invoke-Redeploy -Version '9.9.9' -StageRoot 'C:\a|b' -DbPath $db -ExpectedDbPath $db -Dry $false -VerifySeconds 1 | Out-String
+        $script:RC | Should Be 2
+        $out | Should Match 'ERROR: -StageRoot'
+        Assert-MockCalled Invoke-BuildAndStage -Times 0
+        Assert-MockCalled Stop-OldCollector -Times 0
+    }
     It 'also refuses an unparseable journal' {
         [IO.File]::WriteAllText($jp, 'garbage {')
         $script:RC = 99
@@ -449,6 +477,18 @@ Describe 'Test-OldCollectorRunning' {
         (Test-OldCollectorRunning -StageRoot 'D:\AetherBuilds' -ExtraIndexJs $null) | Should Be $true
         (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs 'C:\dev\old\collector\dist\index.js') | Should Be $true
         (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs $null) | Should Be $false
+    }
+}
+Describe 'Test-OldCollectorRunning counts node.exe only' {
+    $conhost = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    It 'a lone conhost row (stage match or Run index.js match) is not a running collector' {
+        Mock Get-WmiObject { @(New-Proc 10 'conhost.exe' $conhost) }
+        (Test-OldCollectorRunning -StageRoot 'D:\AetherBuilds' -ExtraIndexJs $null) | Should Be $false
+        (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs 'D:\AetherBuilds\0.7.5\collector\dist\index.js') | Should Be $false
+    }
+    It 'a node row alongside a conhost row is a running collector' {
+        Mock Get-WmiObject { @((New-Proc 10 'conhost.exe' $conhost), (New-Proc 11 'node.exe' 'node.exe D:\AetherBuilds\0.7.5\collector\dist\index.js')) }
+        (Test-OldCollectorRunning -StageRoot 'D:\AetherBuilds' -ExtraIndexJs $null) | Should Be $true
     }
 }
 
@@ -909,6 +949,26 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         Test-Path $c.JP | Should Be $false
         Get-RbCount '.' | Should Be 0
     }
+    It 'dry run with a validator failure: RC 0, "would be INCOMPLETE" plus RECOVERY lines, nothing touched, journal kept' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = 'something else'
+        $r = Invoke-RbEngine $c $true
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'would be INCOMPLETE'
+        $r.Out | Should Match 'RECOVERY: 1\.'
+        $r.Out | Should Not Match 'ROLLBACK INCOMPLETE'
+        Get-RbCount '.' | Should Be 0
+        Test-Path $c.JP | Should Be $true
+    }
+    It 'dry run with a bad-shape journal: RC 0, "would be INCOMPLETE", nothing touched, journal kept' {
+        $c = New-RbCase @{ phase = $null } $null 'String'
+        $r = Invoke-RbEngine $c $true
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'would be INCOMPLETE'
+        $r.Out | Should Not Match 'ROLLBACK INCOMPLETE'
+        Get-RbCount '.' | Should Be 0
+        Test-Path $c.JP | Should Be $true
+    }
     It 'R2: current == new value -> restored with Set and read back, RC 0, journal deleted' {
         $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
         $global:RbRun = $c.NewRun
@@ -983,6 +1043,8 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r.RC | Should Be 0
         $r.Out | Should Match 'nothing to relaunch'
         $r.Out | Should Not Match 'start it by hand: \s*$'
+        $r.Out | Should Not Match 'was not running before'
+        $r.Out | Should Match 'was running before but has no Run-key launch command'
         Test-Path $c.JP | Should Be $false
     }
     It 'R2: the Run value deleted by someone else (oldRun non-null) -> says absent, no write, RC 3, journal kept' {
@@ -1010,7 +1072,17 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r = Invoke-RbEngine $c $false
         Get-RbCount '^Start$' | Should Be 1
         $r.RC | Should Be 3
+        $r.Out | Should Match 'check that no collector'
         $r.Out | Should Match 'start it by hand: conhost\.exe --headless'
+    }
+    It 'R3: dry run with a relaunchable old collector -> says it would be relaunched, never "not running before", RC 0, nothing touched' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = $c.NewRun
+        $r = Invoke-RbEngine $c $true
+        $r.RC | Should Be 0
+        $r.Out | Should Not Match 'was not running before'
+        $r.Out | Should Match 'would be relaunched'
+        Get-RbCount '.' | Should Be 0
     }
     It 'R3: oldWasRunning = $false -> not started, RC 0' {
         $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
@@ -1027,6 +1099,7 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         $r = Invoke-RbEngine $c $false
         Get-RbCount '^Start$' | Should Be 0
         $r.RC | Should Be 3
+        $r.Out | Should Match 'check that no collector'
         $r.Out | Should Match 'start it by hand: node\.exe D:\\x'
     }
     It 'R3: an old collector that is already alive (exact token) is never started again, RC 0' {
@@ -1205,7 +1278,7 @@ Describe 'Invoke-Redeploy auto-rollback fault injection (everything mocked; jour
     Mock Start-Sleep {}
     Mock Copy-Item {}
     Mock Get-FreeBytes { [int64]1GB }
-    Mock Stop-OldCollector { $global:FtStops++ }
+    Mock Stop-OldCollector { $global:FtStops++; $global:FtStopRoot = $StageRoot }
     Mock Get-WmiObject { @() }
     Mock Get-Process {}
     Mock Stop-Process {}
@@ -1275,6 +1348,27 @@ Describe 'Invoke-Redeploy auto-rollback fault injection (everything mocked; jour
         ($global:FtRun -ceq $global:FtOld) | Should Be $true
         $script:RC | Should Be 1
         Test-Path $jp | Should Be $false
+    }
+    It 'forward-slash -StageRoot is normalised before Stop-OldCollector sees it' {
+        Reset-Ft; $global:FtStartThrowAt = 1; $root = (New-FtRoot) -replace '\\', '/'
+        $out = Start-FtDeploy $root
+        $script:RC | Should Be 1
+        $out | Should Not Match 'R1 skipped'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Match 'Stage:   [A-Za-z]:\\'
+        $out | Should Not Match 'Stage:   [^\r\n]*/'
+        $global:FtStopRoot | Should Not Match '/'
+        Test-StageAside ($root -replace '/', '\') | Should Be $true
+    }
+    It 'relative -StageRoot is resolved against the PowerShell location: rollback runs R1/R3/R4, RC 1' {
+        Reset-Ft; $global:FtStartThrowAt = 1; $rel = [guid]::NewGuid().ToString('N')
+        Push-Location $ftdir
+        try { $out = Start-FtDeploy $rel } finally { Pop-Location }
+        $script:RC | Should Be 1
+        $out | Should Not Match 'R1 skipped'
+        $out | Should Match 'ROLLBACK COMPLETE'
+        $out | Should Match 'Stage:   [A-Za-z]:\\'
+        Test-StageAside (Join-Path $ftdir $rel) | Should Be $true
     }
     It 'Start-Process throws (phase repointed): the Run value is restored with a write, RC 1' {
         Reset-Ft; $global:FtStartThrowAt = 1; $root = New-FtRoot
