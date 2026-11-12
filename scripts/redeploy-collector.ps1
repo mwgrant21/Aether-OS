@@ -30,12 +30,12 @@
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
     Defaults to D:\AetherBuilds. A relative path (x, .\x, ..\x) is resolved against
-    the current PowerShell location; forward slashes are normalised. A whitespace-only
-    value, an empty one passed in-session, and drive-relative (C:x) or root-relative (\x, /x) values,
-    are refused with exit 2 (they would resolve against the process working
-    directory). A literal empty string on the powershell.exe -File command line is
-    dropped by PowerShell before the script runs and fails parameter binding (exit
-    1). Use a full path (C:\..., \\server\share\...) or a relative one.
+    the current PowerShell location; forward slashes are normalised. An empty or
+    whitespace-only value, and drive-relative (C:x) or root-relative (\x, /x)
+    values, are refused (exit 2 under -File; see .NOTES for -Command). The
+    drive/root-relative shapes would resolve against the process working
+    directory. -StageRoot with no value at all is a parameter-binding error
+    (exit 1). Use a full path (C:\..., \\server\share\...) or a relative one.
     Not read by -Rollback, so it is not checked there.
 .PARAMETER Rollback
     Undo an unfinished deploy from ~\.aether-os\redeploy-journal.json. Needs no
