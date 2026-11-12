@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { StartResult } from '../../electron/gui/guiTypes';
@@ -171,6 +172,52 @@ describe('ChatPane', () => {
     expect(box().disabled).toBe(false);
   });
 
+  it('StrictMode: start is called once, after onData, and the composer waits for the quiet window', async () => {
+    install();
+    gui.start
+      .mockImplementationOnce(() => {
+        mocks.order.push('start');
+        return Promise.resolve({ ok: true, reused: false });
+      })
+      .mockImplementation(() => {
+        mocks.order.push('start');
+        return Promise.resolve({ ok: true, reused: true });
+      });
+    render(
+      <StrictMode>
+        <ChatPane projectId="p1" onLiveChange={vi.fn()} />
+      </StrictMode>,
+    );
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+    expect(mocks.order.indexOf('onData')).toBeLessThan(mocks.order.indexOf('start'));
+    expect(box().disabled).toBe(true);
+    act(() => chunk!('banner'));
+    await act(async () => {
+      vi.advanceTimersByTime(1400);
+    });
+    expect(box().disabled).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(box().disabled).toBe(false);
+  });
+
+  it('enables after the reply when the quiet timer fired before the start reply resolved', async () => {
+    let reply!: (r: StartResult) => void;
+    install(new Promise<StartResult>((r) => (reply = r)));
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => chunk!('early'));
+    await act(async () => {
+      vi.advanceTimersByTime(1600);
+    });
+    expect(box().disabled).toBe(true); // not live yet
+    reply({ ok: true, reused: false });
+    await flush();
+    expect(box().disabled).toBe(false);
+  });
+
   it('a reused session enables the composer immediately with no chunk', async () => {
     install({ ok: true, reused: true });
     render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
@@ -186,7 +233,8 @@ describe('ChatPane', () => {
     await act(async () => {
       vi.advanceTimersByTime(15000);
     });
-    expect(screen.getByText('No output from Claude yet. Type in the pane or press Restart.')).toBeTruthy();
+    expect(screen.getByText('No output from Claude yet. Type in the pane.')).toBeTruthy();
+    expect(screen.queryByText('Restart')).toBeNull();
     expect(box().disabled).toBe(true);
   });
 

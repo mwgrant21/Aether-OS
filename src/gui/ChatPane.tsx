@@ -39,7 +39,6 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
 
   const termRef = useRef<GuiTerminalHandle>(null);
   const gateRef = useRef<ReadyGate | null>(null);
-  const liveRef = useRef(false);
   const mounted = useRef(false);
   const startSeq = useRef(0);
   const cancelHint = useRef<(() => void) | null>(null);
@@ -47,7 +46,6 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   onLiveChangeRef.current = onLiveChange;
 
   const setLiveBoth = useCallback((v: boolean) => {
-    liveRef.current = v;
     setLive(v);
     onLiveChangeRef.current(v);
   }, []);
@@ -96,13 +94,17 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     mounted.current = true;
     const gate = createReadyGate({
       schedule,
-      onReady: () => {
-        if (liveRef.current) setReady(true);
-      },
+      onReady: () => setReady(true),
     });
     gateRef.current = gate;
-    begin();
+    // Deferred so StrictMode's discarded first run never reaches gui.start (a second start would be
+    // answered reused:true and force the composer ready); the child has subscribed onData by then.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) begin();
+    });
     return () => {
+      cancelled = true;
       mounted.current = false;
       clearHint();
       gate.dispose();
@@ -142,7 +144,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
 
   const enabled = live && ready;
   const placeholder = stopped ? 'Claude is not running' : 'Starting Claude...';
-  const hintText = hint && !ready && !error ? 'No output from Claude yet. Type in the pane or press Restart.' : null;
+  const hintText = hint && !ready && !error ? 'No output from Claude yet. Type in the pane.' : null;
   const message = error ?? hintText;
 
   return (
@@ -154,7 +156,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       {(message || stopped) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 24px', color: colors.textMuted, font: `500 13px/1.4 ${fonts.ui}` }}>
           {message && <span role="status">{message}</span>}
-          {stopped || hintText ? (
+          {stopped ? (
             <Button
               onClick={restart}
               style={{ padding: '4px 12px', borderRadius: radii.chip, font: `600 13px/1.2 ${fonts.ui}`, color: colors.textPrimary, border: `1px solid ${colors.chromeBorder}`, background: 'transparent' }}
