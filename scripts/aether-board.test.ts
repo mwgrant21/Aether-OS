@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -179,6 +180,29 @@ describe('aether-board clear', () => {
     expect(run(home, 'alpha', 'clear').status).toBe(0);
     expect(lstatSync(fileOf(home, 'alpha')).isSymbolicLink()).toBe(true);
     expect(JSON.parse(readFileSync(real, 'utf8')).terminal).toBe('alpha');
+  });
+
+  // 34 links is above the 32-hop cap and below both Linux's own limit of 40 and
+  // Windows' 63, so the CLI sees a plain missing file on every platform. The
+  // cap must fail the write (exit 4, ELOOP) instead of renaming over a hop.
+  it.skipIf(!symlinkSupported)('exits 4 with ELOOP on a symlink chain deeper than the cap and touches no link', () => {
+    const home = newHome();
+    mkdirSync(dirOf(home), { recursive: true });
+    const missing = join(home, 'missing-alpha.json');
+    const links = Array.from({ length: 34 }, (_, i) => (i === 0 ? fileOf(home, 'alpha') : join(dirOf(home), `chain${i}`)));
+    const targets = links.map((_, i) => (i === links.length - 1 ? missing : links[i + 1]));
+    links.forEach((l, i) => symlinkSync(targets[i], l));
+
+    const r = run(home, 'alpha', 'clear');
+
+    expect(r.status).toBe(4);
+    expect(r.stderr).toContain('aether-board: write failed (ELOOP)');
+    links.forEach((l, i) => {
+      expect(lstatSync(l).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(l)).toBe(targets[i]);
+    });
+    expect(existsSync(missing)).toBe(false);
+    expect(readdirSync(dirOf(home)).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
   });
 });
 
