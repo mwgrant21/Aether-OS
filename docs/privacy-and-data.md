@@ -703,9 +703,10 @@ standard as the §18 `Hooks disabled.` bullet). The argv, pinned in
   at all, which is unverified. The call still writes an ordinary Claude session transcript under
   `~/.claude/projects/` for the working folder (`--no-session-persistence` is not used).
 - **Which login, and can it bill.** The gate above means the call is not made on an API key,
-  `apiKeyHelper` or Bedrock/Vertex/Foundry setup that Claude Code reports. `auth status` does not
-  report an `ANTHROPIC_BASE_URL` override; only the environment scrub above removes it from the
-  `-p` child. Whether `-p` then uses the credential `auth status` reported is not checked on a live run, so
+  `apiKeyHelper` or Bedrock/Vertex/Foundry setup that Claude Code reports. Both the `auth status`
+  call and the `-p` call run with `ANTHROPIC_BASE_URL` removed from their environment (the
+  environment scrub above), and the gate reads only `authMethod`; whether `auth status` itself
+  reflects a base-URL override is unverified. Whether `-p` then uses the credential `auth status` reported is not checked on a live run, so
   this is a strong guard, not a guarantee.
 
 **What is stored.** Model-written memory atoms in `~/.aether-os/memory.db`. They derive from
