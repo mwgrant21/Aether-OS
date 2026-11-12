@@ -250,23 +250,37 @@ func uniqueSiblingPath(settingsPath, marker string) string {
 // itself, silently disconnecting the repo. A DANGLING link resolves to its
 // intended destination, not to the link, so the first write creates what the
 // user pointed at; only a path that is not a link falls back to itself, which
-// is the plain new-file case. The depth cap makes a symlink loop terminate.
-func resolveRealPath(settingsPath string, depth int) string {
-	if real, err := filepath.EvalSymlinks(settingsPath); err == nil {
-		return real
+// is the plain new-file case. The depth cap makes a symlink loop terminate, and
+// it fails loudly: a chain still being followed after 32 hops returns
+// errSymlinkDepth naming the path the CALLER passed, never the hop it stopped
+// at, because writing there would rename over a link mid-chain (#72). The text
+// is byte-identical to the Node copies'.
+func resolveRealPath(settingsPath string) (string, error) {
+	return resolveRealPathFrom(settingsPath, settingsPath, 0)
+}
+
+var errSymlinkDepth = errors.New("ELOOP: too many levels of symbolic links")
+
+func resolveRealPathFrom(origin, cur string, depth int) (string, error) {
+	if real, err := filepath.EvalSymlinks(cur); err == nil {
+		return real, nil
 	}
-	if depth < 32 {
-		if info, err := os.Lstat(settingsPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			if link, err := os.Readlink(settingsPath); err == nil {
-				next := link
-				if !filepath.IsAbs(next) {
-					next = filepath.Join(filepath.Dir(settingsPath), next)
-				}
-				return resolveRealPath(next, depth+1)
-			}
-		}
+	info, err := os.Lstat(cur)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return cur, nil
 	}
-	return settingsPath
+	link, err := os.Readlink(cur)
+	if err != nil {
+		return cur, nil
+	}
+	if depth >= 32 {
+		return "", fmt.Errorf("%w, resolve '%s'", errSymlinkDepth, origin)
+	}
+	next := link
+	if !filepath.IsAbs(next) {
+		next = filepath.Join(filepath.Dir(cur), next)
+	}
+	return resolveRealPathFrom(origin, next, depth+1)
 }
 
 func tempPathFor(settingsPath string) string { return uniqueSiblingPath(settingsPath, "aethertmp") }
@@ -294,7 +308,10 @@ func writeFileExcl(name string, data []byte, perm os.FileMode) error {
 // one is re-created deliberately below -- except ACLs and xattrs, which Go
 // cannot copy any more than Node can (see #69).
 func writeSettingsAtomically(settingsPath, content string) error {
-	realPath := resolveRealPath(settingsPath, 0)
+	realPath, err := resolveRealPath(settingsPath)
+	if err != nil {
+		return err
+	}
 
 	var mode os.FileMode
 	haveMode := false

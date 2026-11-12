@@ -2,6 +2,8 @@ package hookinstall
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1028,5 +1030,135 @@ func TestWriteSettingsAtomically_CreatesTheTempFileWithTheTargetMode(t *testing.
 	}
 	if sawMode.Perm() != 0600 {
 		t.Errorf("temp file created with mode %o, want 600", sawMode.Perm())
+	}
+}
+
+// danglingChain builds c0 -> c1 -> ... -> c(n-1) -> <dir>/missing.json with
+// absolute link targets. It ends at a MISSING file on purpose: a chain ending at
+// a real file resolves through EvalSymlinks (whose own cap is 255), so the cap
+// under test would never be reached.
+func danglingChain(t *testing.T, n int) (dir, missing string, links, targets []string) {
+	t.Helper()
+	dir = t.TempDir()
+	missing = filepath.Join(dir, "missing.json")
+	for i := 0; i < n; i++ {
+		links = append(links, filepath.Join(dir, fmt.Sprintf("c%d", i)))
+	}
+	for i, l := range links {
+		target := missing
+		if i < n-1 {
+			target = links[i+1]
+		}
+		targets = append(targets, target)
+		if err := os.Symlink(target, l); err != nil {
+			t.Fatalf("symlink %s: %v", l, err)
+		}
+	}
+	return dir, missing, links, targets
+}
+
+func symlinkLoop(t *testing.T) (dir, a, b string) {
+	t.Helper()
+	dir = t.TempDir()
+	a = filepath.Join(dir, "a")
+	b = filepath.Join(dir, "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Fatalf("symlink a: %v", err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Fatalf("symlink b: %v", err)
+	}
+	return dir, a, b
+}
+
+func assertELOOPFor(t *testing.T, err error, origin string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("err = nil, want the ELOOP depth error")
+	}
+	if !errors.Is(err, errSymlinkDepth) {
+		t.Errorf("err = %v, want errors.Is(err, errSymlinkDepth)", err)
+	}
+	want := "ELOOP: too many levels of symbolic links, resolve '" + origin + "'"
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q (the ORIGINAL path, byte-identical to Node)", err.Error(), want)
+	}
+}
+
+func assertChainIntact(t *testing.T, links, targets []string) {
+	t.Helper()
+	for i, l := range links {
+		info, err := os.Lstat(l)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s is no longer a symlink", l)
+			continue
+		}
+		if got, err := os.Readlink(l); err != nil || got != targets[i] {
+			t.Errorf("readlink %s = %q (%v), want %q", l, got, err, targets[i])
+		}
+	}
+}
+
+func TestResolveRealPath_LoopFailsWithELOOPNamingTheOriginalPath(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	_, a, _ := symlinkLoop(t)
+	_, err := resolveRealPath(a)
+	assertELOOPFor(t, err, a)
+}
+
+func TestResolveRealPath_ChainDeeperThanTheCapFailsWithELOOP(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	_, _, links, _ := danglingChain(t, 34)
+	_, err := resolveRealPath(links[0])
+	assertELOOPFor(t, err, links[0])
+}
+
+// The cap is 32 hops in all three copies: 32 links resolve to the missing
+// destination, 33 do not.
+func TestResolveRealPath_CapIsThirtyTwoHops(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	_, missing, links, _ := danglingChain(t, 32)
+	got, err := resolveRealPath(links[0])
+	if err != nil || got != missing {
+		t.Errorf("32-link chain = %q, %v; want %q, nil", got, err, missing)
+	}
+	_, _, tooDeep, _ := danglingChain(t, 33)
+	if _, err := resolveRealPath(tooDeep[0]); !errors.Is(err, errSymlinkDepth) {
+		t.Errorf("33-link chain err = %v, want errSymlinkDepth", err)
+	}
+}
+
+func TestWriteSettingsAtomically_LoopLeavesEveryLinkAlone(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	dir, a, b := symlinkLoop(t)
+	err := writeSettingsAtomically(a, "x")
+	assertELOOPFor(t, err, a)
+	assertChainIntact(t, []string{a, b}, []string{b, a})
+	if tmp := tempFilesBeside(t, filepath.Join(dir, "x")); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_DeepChainLeavesEveryLinkAndTheDestinationAlone(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	dir, missing, links, targets := danglingChain(t, 34)
+	err := writeSettingsAtomically(links[0], "x")
+	assertELOOPFor(t, err, links[0])
+	assertChainIntact(t, links, targets)
+	if _, statErr := os.Lstat(missing); !os.IsNotExist(statErr) {
+		t.Errorf("the missing destination was created (or stat failed oddly): %v", statErr)
+	}
+	if tmp := tempFilesBeside(t, filepath.Join(dir, "x")); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
 	}
 }

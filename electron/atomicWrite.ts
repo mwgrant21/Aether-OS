@@ -35,9 +35,12 @@ export function uniqueSiblingPath(targetPath: string, marker: string): string {
  * A DANGLING link resolves to its intended destination, not to the link, so
  * the first write creates what the user pointed at. Only a path that is not a
  * link at all falls back to itself, which is the plain new-file case. The
- * depth cap makes a symlink loop terminate rather than recurse forever.
+ * depth cap makes a symlink loop terminate rather than recurse forever, and it
+ * fails loudly: a chain still being followed after 32 hops throws ELOOP naming
+ * the path the CALLER passed. Returning the hop it stopped at instead would
+ * make the writer rename over a link in the middle of the chain (#72).
  */
-export async function resolveRealPath(targetPath: string, depth = 0): Promise<string> {
+export async function resolveRealPath(targetPath: string, depth = 0, origin = targetPath): Promise<string> {
   try {
     return await fsp.realpath(targetPath);
   } catch {
@@ -46,18 +49,22 @@ export async function resolveRealPath(targetPath: string, depth = 0): Promise<st
     // missing. Falling back to the path itself would be right for the first
     // and wrong for the second: it would replace the link with a regular file
     // and leave the destination the user pointed at still absent.
-    if (depth < 32) {
-      try {
-        if ((await fsp.lstat(targetPath)).isSymbolicLink()) {
-          const link = await fsp.readlink(targetPath);
-          const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
-          return await resolveRealPath(next, depth + 1);
-        }
-      } catch {
-        // Not a link, or unreadable: fall through to the path itself.
-      }
+    let link: string | undefined;
+    try {
+      if ((await fsp.lstat(targetPath)).isSymbolicLink()) link = await fsp.readlink(targetPath);
+    } catch {
+      // Not a link, or unreadable: fall through to the path itself.
     }
-    return targetPath;
+    if (link === undefined) return targetPath;
+    // Outside the try above on purpose: its catch would swallow this.
+    if (depth >= 32) {
+      const err: NodeJS.ErrnoException = new Error(`ELOOP: too many levels of symbolic links, resolve '${origin}'`);
+      err.code = 'ELOOP';
+      err.path = origin;
+      throw err;
+    }
+    const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
+    return await resolveRealPath(next, depth + 1, origin);
   }
 }
 

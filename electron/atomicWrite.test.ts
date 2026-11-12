@@ -8,6 +8,7 @@ import {
   lstatSync,
   statSync,
   symlinkSync,
+  readlinkSync,
   chmodSync,
   linkSync,
   statSync as fsStatSync,
@@ -287,4 +288,74 @@ describe('writeFileAtomically: symlinks and permissions', () => {
       expect(readFileSync(target, 'utf8')).toBe('still secret');
     }
   );
+});
+
+// A chain c0 -> c1 -> ... -> c(n-1) -> <dir>/missing.json, absolute link targets.
+// It must END at a missing file: a chain ending at a real file resolves through
+// realpath on Windows (so the cap is never reached) and hits the kernel's own
+// limit of 40 on Linux, which would make these cases platform-dependent.
+function danglingChain(n: number): { dir: string; missing: string; links: string[]; targets: string[] } {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-symlink-chain-'));
+  const missing = join(dir, 'missing.json');
+  const links = Array.from({ length: n }, (_, i) => join(dir, `c${i}`));
+  const targets = links.map((_, i) => (i === n - 1 ? missing : links[i + 1]));
+  links.forEach((l, i) => symlinkSync(targets[i], l));
+  return { dir, missing, links, targets };
+}
+
+function symlinkLoop(): { dir: string; a: string; b: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-symlink-loop-'));
+  const a = join(dir, 'a');
+  const b = join(dir, 'b');
+  symlinkSync(b, a);
+  symlinkSync(a, b);
+  return { dir, a, b };
+}
+
+describe('resolveRealPath: the symlink depth cap fails loudly (#72)', () => {
+  it.skipIf(!symlinkSupported)('rejects a symlink loop with ELOOP naming the original path', async () => {
+    const { a } = symlinkLoop();
+    await expect(resolveRealPath(a)).rejects.toMatchObject({
+      code: 'ELOOP',
+      path: a,
+      message: `ELOOP: too many levels of symbolic links, resolve '${a}'`,
+    });
+  });
+
+  it.skipIf(!symlinkSupported)('rejects a chain deeper than the cap that ends at a missing file', async () => {
+    const { links } = danglingChain(34);
+    await expect(resolveRealPath(links[0])).rejects.toMatchObject({
+      code: 'ELOOP',
+      path: links[0],
+      message: `ELOOP: too many levels of symbolic links, resolve '${links[0]}'`,
+    });
+  });
+
+  it.skipIf(!symlinkSupported)('pins the cap at 32 hops: 32 links resolve to the missing file, 33 do not', async () => {
+    const ok = danglingChain(32);
+    expect(await resolveRealPath(ok.links[0])).toBe(ok.missing);
+    const tooDeep = danglingChain(33);
+    await expect(resolveRealPath(tooDeep.links[0])).rejects.toMatchObject({ code: 'ELOOP' });
+  });
+
+  it.skipIf(!symlinkSupported)('writeFileAtomically leaves every link and the destination alone on a loop', async () => {
+    const { dir, a, b } = symlinkLoop();
+    await expect(writeFileAtomically(a, 'x')).rejects.toMatchObject({ code: 'ELOOP' });
+    expect(lstatSync(a).isSymbolicLink()).toBe(true);
+    expect(lstatSync(b).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(a)).toBe(b);
+    expect(readlinkSync(b)).toBe(a);
+    expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
+  it.skipIf(!symlinkSupported)('writeFileAtomically leaves every link and the destination alone on a deep chain', async () => {
+    const { dir, missing, links, targets } = danglingChain(34);
+    await expect(writeFileAtomically(links[0], 'x')).rejects.toMatchObject({ code: 'ELOOP' });
+    links.forEach((l, i) => {
+      expect(lstatSync(l).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(l)).toBe(targets[i]);
+    });
+    expect(existsSync(missing)).toBe(false);
+    expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
 });
