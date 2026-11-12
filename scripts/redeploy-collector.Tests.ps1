@@ -451,6 +451,18 @@ Describe 'Test-OldCollectorRunning' {
         (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs $null) | Should Be $false
     }
 }
+Describe 'Test-OldCollectorRunning counts node.exe only' {
+    $conhost = 'conhost.exe --headless "C:\n\node.exe" "D:\AetherBuilds\0.7.5\collector\dist\index.js"'
+    It 'a lone conhost row (stage match or Run index.js match) is not a running collector' {
+        Mock Get-WmiObject { @(New-Proc 10 'conhost.exe' $conhost) }
+        (Test-OldCollectorRunning -StageRoot 'D:\AetherBuilds' -ExtraIndexJs $null) | Should Be $false
+        (Test-OldCollectorRunning -StageRoot 'E:\Elsewhere' -ExtraIndexJs 'D:\AetherBuilds\0.7.5\collector\dist\index.js') | Should Be $false
+    }
+    It 'a node row alongside a conhost row is a running collector' {
+        Mock Get-WmiObject { @((New-Proc 10 'conhost.exe' $conhost), (New-Proc 11 'node.exe' 'node.exe D:\AetherBuilds\0.7.5\collector\dist\index.js')) }
+        (Test-OldCollectorRunning -StageRoot 'D:\AetherBuilds' -ExtraIndexJs $null) | Should Be $true
+    }
+}
 
 Describe 'Invoke-Redeploy journal phase order (Write-Journal / Remove-Journal recorded, not written)' {
     $odir = Join-Path ([IO.Path]::GetTempPath()) ('redeploy-ot-' + [guid]::NewGuid().ToString('N'))

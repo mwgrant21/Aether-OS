@@ -264,8 +264,9 @@ function Test-CollectorAlive {
 function Test-OldCollectorRunning {
     # Read-only. Same matcher as Stop-OldCollector: every collector under <StageRoot>\*collector*index.js*
     # plus the old Run value's index.js, so it may be a different version than the Run value names.
+    # Counts node.exe only (a lone conhost.exe is not a running collector), mirroring R3's own check.
     param([string]$StageRoot, [string]$ExtraIndexJs)
-    $procs = @(Get-CollectorProcessMatch -Processes @(Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID -ExtraIndexJs $ExtraIndexJs)
+    $procs = @(Get-CollectorProcessMatch -Processes @(Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID -ExtraIndexJs $ExtraIndexJs | Where-Object { $_.Name -eq 'node.exe' })
     [bool]($procs.Count -gt 0)
 }
 
