@@ -504,7 +504,7 @@ describe('spawn argv and binary resolution (#111)', () => {
   });
 
   // Characterization, not a pin on which one wins: on some Node versions a bare `claude` is resolved from
-  // the child's cwd before PATH (CI), on others PATH wins (Node 26 locally). That is why the neutral cwd
+  // the child's cwd before PATH, on others PATH wins. That is why the neutral cwd
   // must be strictly empty; the planted-claude.exe refusal is the `cwd_dirty` test in prepareExtractCwd above.
   // A harmless node.exe copy stands in for claude and PATH holds only the stand-in dir, so the real binary
   // is unreachable.
