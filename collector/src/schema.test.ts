@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { openDatabase, migrate, getSchemaVersion, SCHEMA_VERSION, stampFleetHeartbeat } from './schema.js';
 
 const require = createRequire(import.meta.url);
@@ -75,6 +76,48 @@ describe('schema', () => {
     // A UNC path cannot be created here; mkdirSync/open fails before or after the guard,
     // so only assert the guard itself does not add a throw of its own on the in-memory case.
     expect(() => openDatabase(':memory:')).not.toThrow();
+  });
+
+  it('openDatabase rethrows the original error and closes the handle that failed when busy_timeout throws', () => {
+    const { DatabaseSync } = require('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
+    const boom = new Error('boom: busy_timeout failed');
+    const realExec = DatabaseSync.prototype.exec;
+    const execSpy = vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (this: DatabaseSyncType, sql: string) {
+      if (sql.includes('busy_timeout')) throw boom;
+      return realExec.call(this, sql);
+    });
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close');
+    const path = tempDbPath();
+    try {
+      let caught: unknown;
+      try { openDatabase(path); } catch (e) { caught = e; }
+      expect(caught).toBe(boom);
+      // Proves close() ran exactly once, on the very instance whose busy_timeout exec threw;
+      // it does not observe OS-level file locks.
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      const failed = execSpy.mock.contexts[0];
+      expect(closeSpy.mock.contexts[0]).toBe(failed);
+    } finally {
+      closeSpy.mockRestore();
+      execSpy.mockRestore();
+      try { rmSync(dirname(path), { recursive: true, force: true }); } catch { /* cleanup must not mask the assertions */ }
+    }
+  });
+
+  it('openDatabase on success returns a usable open handle and does not close it', () => {
+    const { DatabaseSync } = require('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close');
+    const path = tempDbPath();
+    let db: DatabaseSyncType | undefined;
+    try {
+      db = openDatabase(path);
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(db.prepare('SELECT 1 AS one').get()).toEqual({ one: 1 });
+    } finally {
+      closeSpy.mockRestore();
+      try { db?.close(); } catch { /* ignore */ }
+      try { rmSync(dirname(path), { recursive: true, force: true }); } catch { /* cleanup must not mask the assertions */ }
+    }
   });
 
   it('creates all expected tables and the version row on first migrate', () => {
