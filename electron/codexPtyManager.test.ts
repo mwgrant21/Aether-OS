@@ -21,6 +21,26 @@ describe('buildCodexPtyEnv', () => {
     expect(env.PATH).toBe('/usr/bin');
   });
 
+  it('strips mixed-case spellings of every billing variable and keeps the rest', () => {
+    const source: Record<string, string> = {
+      Openai_Api_Key: 'sk-mixed',
+      codex_api_key: 'ck-lower',
+      Openai_Base_Url: 'https://proxy.example',
+      PATH: '/usr/bin',
+      Home: 'home-dir',
+    };
+    for (const key of BLOCKED) source[key.toLowerCase()] = 'leaked-value';
+    const before = Object.keys(source).length;
+
+    const env = buildCodexPtyEnv(source, 'C:/fake/codex-home');
+    const upper = Object.keys(env).map((k) => k.toUpperCase());
+    for (const key of BLOCKED) expect(upper).not.toContain(key);
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.Home).toBe('home-dir');
+    expect(source.Openai_Api_Key).toBe('sk-mixed');
+    expect(Object.keys(source)).toHaveLength(before);
+  });
+
   it('does not mutate the source env object', () => {
     const source = { OPENAI_API_KEY: 'sk-openai-secret' };
     buildCodexPtyEnv(source, 'C:/fake/codex-home');

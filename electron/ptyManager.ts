@@ -2,6 +2,7 @@ import * as pty from 'node-pty';
 import os from 'node:os';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { deleteEnvKeysIgnoreCase } from './envScrub';
 
 // The terminal ALWAYS starts a fresh claude session -- never add
 // resume flags (--continue/--resume/-c/-r) here, matching this app's
@@ -23,7 +24,7 @@ const API_KEY_ENV_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPI
 
 export function buildPtyEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...source };
-  for (const key of API_KEY_ENV_VARS) delete env[key];
+  deleteEnvKeysIgnoreCase(env, API_KEY_ENV_VARS);
   // Drop a stale identity inherited from Aether's own parent shell; the real one
   // comes from terminalIdentityEnv (explicit identity wins over inherited env).
   delete env.AETHER_TERMINAL;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { buildClaudeLaunchCommand, buildPtyEnv, buildPtyLaunchSpec, buildUnsetCommand, launchLine, resolveBoardCliPath, terminalIdentityEnv } from './ptyManager';
 
@@ -18,6 +19,36 @@ describe('buildPtyEnv', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.PATH).toBe('/usr/bin');
+  });
+
+  it('strips mixed-case spellings of the billing variables (Windows env names are case-insensitive) and keeps the rest', () => {
+    const source = {
+      Anthropic_Api_Key: 'sk-mixed',
+      anthropic_auth_token: 'tok-lower',
+      Anthropic_Base_Url: 'https://proxy.example',
+      PATH: '/usr/bin',
+      Home: 'home-dir',
+    };
+    const env = buildPtyEnv(source);
+    const upper = Object.keys(env).map((k) => k.toUpperCase());
+    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) expect(upper).not.toContain(name);
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.Home).toBe('home-dir');
+    expect(source.Anthropic_Api_Key).toBe('sk-mixed');
+    expect(Object.keys(source)).toHaveLength(5);
+  });
+
+  it.skipIf(process.platform !== 'win32')('a real child process does not see a mixed-case billing variable', () => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.Anthropic_Api_Key = 'sk-e2e-sentinel';
+    try {
+      const env = buildPtyEnv(process.env);
+      const out = execFileSync(process.execPath, ['-e', 'console.log(String(process.env.ANTHROPIC_API_KEY))'], { env, encoding: 'utf8' });
+      expect(out.trim()).toBe('undefined');
+    } finally {
+      if (prev === undefined) delete process.env.Anthropic_Api_Key;
+      else process.env.Anthropic_Api_Key = prev;
+    }
   });
 
   it('sets COLORTERM=truecolor, overwriting any existing value', () => {
