@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, existsSync, mkdirSync, utimesSync } from 'fs';
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync, utimesSync, rmSync } from 'fs';
+import { createRequire } from 'node:module';
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { startCollector, pollAndUpsertFleet } from './index.js';
@@ -277,6 +279,50 @@ describe('startCollector interval guards', () => {
     } finally {
       stop?.();
       errSpy.mockRestore();
+    }
+  });
+});
+
+describe('startCollector migrate failure', () => {
+  it('closes the handle that failed and rethrows the original error when migrate throws after open', () => {
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-migratefail-'));
+    const boom = new Error('boom: migrate failed');
+    const realExec = DatabaseSync.prototype.exec;
+    // migrate's first statement creates schema_meta; openDatabase's own PRAGMA exec must pass.
+    const execSpy = vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (this: DatabaseSyncType, sql: string) {
+      if (sql.includes('schema_meta')) throw boom;
+      return realExec.call(this, sql);
+    });
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close');
+    try {
+      let caught: unknown;
+      try {
+        startCollector({
+          dbPath: join(dir, 'collector.db'),
+          spoolDir: join(dir, 'spool'),
+          tailIntervalMs: 1_000_000,
+          compactIntervalMs: 1_000_000,
+          projectsRoot: join(dir, 'projects'),
+          transcriptScanIntervalMs: 1_000_000,
+          ownSessionFilePath: join(dir, 'own-session.json'),
+          fleetPollIntervalMs: 1_000_000,
+          memoryDbPath: join(dir, 'memory.db'),
+          memoryExtractIntervalMs: 1_000_000,
+          collectorSettingsPath: join(dir, 'collector-settings.json'),
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBe(boom);
+      // close() ran exactly once, on the instance whose migrate exec threw; it does not observe OS-level file locks.
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      const failed = execSpy.mock.contexts[execSpy.mock.contexts.length - 1];
+      expect(closeSpy.mock.contexts[0]).toBe(failed);
+    } finally {
+      closeSpy.mockRestore();
+      execSpy.mockRestore();
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* cleanup must not mask the assertions */ }
     }
   });
 });
