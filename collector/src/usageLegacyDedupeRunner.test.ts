@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, symlinkSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -128,6 +128,29 @@ describe('runLegacyUsageDedupe', () => {
     expect(runLegacyUsageDedupe(args(f, ...APPLY), f.env)).toBe(4);
     expect(readFileSync(join(f.dir, name)).equals(bytes)).toBe(true);
     expect(stats(f.dbPath).count).toBe(2);
+  });
+
+  it('never deletes a backup another invocation created after the existence check (exit 4)', () => {
+    const name = 'collector.db.pre-legacy-dedupe-20261111120000.bak';
+    const f = fixture(NOW - 90_000, {
+      freeBytes: () => {
+        writeFileSync(join(f.dir, name), 'other invocation backup');
+        return Number.MAX_SAFE_INTEGER;
+      },
+    });
+    const before = stats(f.dbPath);
+    expect(runLegacyUsageDedupe(args(f, ...APPLY), f.env)).toBe(4);
+    expect(readFileSync(join(f.dir, name), 'utf8')).toBe('other invocation backup');
+    expect(stats(f.dbPath)).toEqual(before);
+  });
+
+  it('claims an empty file and vacuums into it; a failure after the claim removes only our own file', () => {
+    const f = fixture(NOW - 90_000, { verifyBackup: () => false });
+    expect(runLegacyUsageDedupe(args(f, ...APPLY), f.env)).toBe(4);
+    expect(baks(f)).toEqual([]);
+    const ok = fixture(NOW - 90_000);
+    expect(runLegacyUsageDedupe(args(ok, ...APPLY), ok.env)).toBe(0);
+    expect(stats(join(ok.dir, baks(ok)[0])).count).toBe(2);
   });
 
   it('treats a dangling symlink at the backup path as taken (exit 4)', () => {

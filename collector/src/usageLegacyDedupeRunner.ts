@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'node:module';
-import { existsSync, lstatSync, statSync, unlinkSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openDryRunHandle, DbChangedError, AssertionError } from './usageBackfill.js';
@@ -202,9 +202,18 @@ export function runLegacyUsageDedupe(argv: string[], env: LegacyDedupeRunnerEnv 
               throw new BackupError();
             }
             if (!(free >= needed)) throw new BackupError();
+            // Claim the destination atomically: an exclusive create fails (EEXIST) on any
+            // existing path, including a dangling symlink, so cleanup only ever removes a
+            // file this run created. The earlier lstat check does not establish ownership.
+            try {
+              closeSync(openSync(backupPath, 'wx'));
+            } catch {
+              backupPath = undefined; // not ours: never delete it
+              throw new BackupError();
+            }
+            createdBackup = true;
             try {
               const target = backupPath.replace(/'/g, "''");
-              createdBackup = true;
               db!.exec(`VACUUM INTO '${target}'`);
               if (!(env.verifyBackup ?? defaultVerifyBackup)(backupPath, snap)) throw new BackupError();
             } catch {
