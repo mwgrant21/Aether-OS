@@ -10,8 +10,12 @@ import { deleteEnvKeysIgnoreCase } from './envScrub';
 // terminal never opens on a stale session. --session-id with a fresh uuid
 // still starts a new session; it only fixes the transcript's file name so the
 // pinned terminal's tracker can find it exactly (see liveAgentTracker.ts).
-export function buildClaudeLaunchCommand(sessionId?: string): string {
-  return sessionId ? `claude --session-id ${sessionId}\r` : 'claude\r';
+//
+// exitWithClaude (opt-in, default off): append `; exit` so the shell ends when
+// claude does; the pty lifecycle's exit event fires only on shell exit.
+export function buildClaudeLaunchCommand(sessionId?: string, exitWithClaude = false): string {
+  const base = sessionId ? `claude --session-id ${sessionId}` : 'claude';
+  return exitWithClaude ? `${base}; exit\r` : `${base}\r`;
 }
 
 // Env vars that, if inherited from the operator's shell, would let the
@@ -110,7 +114,7 @@ export interface PtyLaunchSpec {
   writes: string[];
 }
 
-export function buildPtyLaunchSpec(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string): PtyLaunchSpec {
+export function buildPtyLaunchSpec(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string, cwd?: string): PtyLaunchSpec {
   if (bridge && process.platform !== 'win32') throw new Error('BRIDGE_LAUNCH_PLATFORM_UNSUPPORTED');
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
   const env = bridge ? { ...bridge.env } : { ...buildPtyEnv(), ...extraEnv };
@@ -118,7 +122,7 @@ export function buildPtyLaunchSpec(cols = 100, rows = 30, bridge?: BridgePtyLaun
   return {
     file: shell,
     args: bridge ? ['-NoExit', '-File', bridge.scriptPath] : [],
-    cwd: os.homedir(),
+    cwd: cwd ?? os.homedir(),
     env,
     cols,
     rows,
@@ -126,8 +130,8 @@ export function buildPtyLaunchSpec(cols = 100, rows = 30, bridge?: BridgePtyLaun
   };
 }
 
-export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string) {
-  const spec = buildPtyLaunchSpec(cols, rows, bridge, sessionId, extraEnv, launchCommand);
+export function spawnPty(cols = 100, rows = 30, bridge?: BridgePtyLaunch, sessionId?: string, extraEnv?: NodeJS.ProcessEnv, launchCommand?: string, cwd?: string) {
+  const spec = buildPtyLaunchSpec(cols, rows, bridge, sessionId, extraEnv, launchCommand, cwd);
   const ptyProcess = pty.spawn(spec.file, spec.args, {
     name: 'xterm-color',
     cols: spec.cols,
