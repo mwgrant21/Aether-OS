@@ -38,9 +38,12 @@ export function uniqueSiblingPath(targetPath: string, marker: string): string {
  * A DANGLING link resolves to its intended destination, not to the link, so
  * the first write creates what the user pointed at. Only a path that is not a
  * link at all falls back to itself, which is the plain new-file case. The
- * depth cap makes a symlink loop terminate rather than recurse forever.
+ * depth cap makes a symlink loop terminate rather than recurse forever, and it
+ * fails loudly: a chain still being followed after 32 hops throws ELOOP naming
+ * the path the CALLER passed. Returning the hop it stopped at instead would
+ * make the writer rename over a link in the middle of the chain (#72).
  */
-export async function resolveRealPath(targetPath: string, depth = 0): Promise<string> {
+export async function resolveRealPath(targetPath: string, depth = 0, origin = targetPath): Promise<string> {
   try {
     return await fsp.realpath(targetPath);
   } catch {
@@ -49,28 +52,57 @@ export async function resolveRealPath(targetPath: string, depth = 0): Promise<st
     // missing. Falling back to the path itself would be right for the first
     // and wrong for the second: it would replace the link with a regular file
     // and leave the destination the user pointed at still absent.
-    if (depth < 32) {
-      try {
-        if ((await fsp.lstat(targetPath)).isSymbolicLink()) {
-          const link = await fsp.readlink(targetPath);
-          const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
-          return await resolveRealPath(next, depth + 1);
-        }
-      } catch {
-        // Not a link, or unreadable: fall through to the path itself.
-      }
+    let link: string | undefined;
+    try {
+      if ((await fsp.lstat(targetPath)).isSymbolicLink()) link = await fsp.readlink(targetPath);
+    } catch {
+      // Not a link, or unreadable: fall through to the path itself.
     }
-    return targetPath;
+    if (link === undefined) return targetPath;
+    // Outside the try above on purpose: its catch would swallow this.
+    if (depth >= 32) {
+      const err: NodeJS.ErrnoException = new Error(`ELOOP: too many levels of symbolic links, resolve '${origin}'`);
+      err.code = 'ELOOP';
+      err.path = origin;
+      throw err;
+    }
+    const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
+    return await resolveRealPath(next, depth + 1, origin);
   }
 }
 
 /**
  * Copies `raw` to a uniquely named sibling and returns its path. Created
- * exclusively, so it can never overwrite an earlier backup.
+ * exclusively, so it can never overwrite an earlier backup. The backup gets the
+ * target's permission bits at creation (#71): it holds the same bytes, so a
+ * 0600 settings.json must not leave a world-readable copy beside it.
  */
 export async function writeBackup(targetPath: string, raw: string, marker: string): Promise<string> {
   const backupPath = uniqueSiblingPath(targetPath, marker);
-  await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx' });
+  // Mode choice: the target's permission bits (stat follows a symlink, so it is the real file's),
+  // masked to 0777 so setuid/setgid/sticky never carry over, plus owner read+write so a backup of a
+  // read-only (0444) target is still one the user can delete or overwrite. Group/other bits are never
+  // widened beyond the source. Set at creation only, no chmod after: the umask can only narrow it.
+  let mode = 0o600;
+  try {
+    mode = ((await fsp.stat(targetPath)).mode & 0o777) | 0o600;
+  } catch {
+    // Unknown source: stay conservative rather than fall back to the umask.
+  }
+  try {
+    await fsp.writeFile(backupPath, raw, { encoding: 'utf8', flag: 'wx', mode });
+  } catch (err) {
+    // Same rule as the temp file in writeFileAtomically: EEXIST means the name is another writer's
+    // (possibly the user's pristine first backup, #60) so leave it; anything else may have created a
+    // truncated file under our unique name, which a user would mistake for a good backup (#67).
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== 'EEXIST') await fsp.rm(backupPath, { force: true }).catch(() => undefined);
+    const wrapped: NodeJS.ErrnoException = new Error(
+      `could not write backup: ${(err as Error | undefined)?.message ?? String(err)}`
+    );
+    wrapped.code = code;
+    throw wrapped;
+  }
   return backupPath;
 }
 

@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  writeFileSync,
+  promises as fsp,
+} from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import {
@@ -659,5 +670,108 @@ describe('hookInstaller: top-level hooks that is not a plain object (#58)', () =
     const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(written.model).toBe('opus');
     for (const eventName of MANAGED_HOOK_EVENTS) expect(written.hooks[eventName]).toHaveLength(1);
+  });
+});
+
+// Creating a symlink needs privilege on Windows; probe once so these cases skip
+// locally and still run on the Linux CI lanes where they matter.
+const symlinkSupported = (() => {
+  try {
+    const d = mkdtempSync(join(tmpdir(), 'aether-collector-hook-symlink-probe-'));
+    writeFileSync(join(d, 'real'), 'x', 'utf8');
+    symlinkSync(join(d, 'real'), join(d, 'link'));
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+const siblingsBeside = (p: string, marker: string) =>
+  readdirSync(dirname(p)).filter((f) => f.includes(`.${marker}-`));
+
+describe('hookInstaller: symlinked and read-only settings.json (#73)', () => {
+  it.skipIf(!symlinkSupported)('writes through a symlinked settings.json and keeps the link', async () => {
+    const realPath = tempSettingsPath('{"model":"opus"}');
+    const linkDir = mkdtempSync(join(tmpdir(), 'aether-collector-hook-link-'));
+    const link = join(linkDir, 'settings.json');
+    symlinkSync(realPath, link);
+
+    const result = await installHooks(link, SCRIPT_PATH);
+
+    expect(result.ok).toBe(true);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    const written = JSON.parse(readFileSync(realPath, 'utf8'));
+    expect(written.model).toBe('opus');
+    for (const eventName of MANAGED_HOOK_EVENTS) {
+      expect(written.hooks[eventName][0].hooks[0].command).toContain(SCRIPT_PATH);
+    }
+    // Not asserting WHERE the backup lands (hookInstaller backs up beside the
+    // link path; guidanceWriter beside the real path), only that it holds the
+    // original bytes.
+    expect(readFileSync(result.backupPath as string, 'utf8')).toBe('{"model":"opus"}');
+    expect(siblingsBeside(realPath, 'aethertmp')).toEqual([]);
+    expect(siblingsBeside(link, 'aethertmp')).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('reports the exact EACCES text for a read-only settings.json', async () => {
+    const settingsPath = tempSettingsPath('{}');
+    chmodSync(settingsPath, 0o444);
+    try {
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      // Exact on purpose: no `Error: ` prefix, no backupPath key. The Go
+      // collector pins the same string byte for byte.
+      expect(result).toEqual({
+        ok: false,
+        error: `EACCES: permission denied, write '${await fsp.realpath(settingsPath)}'`,
+      });
+      expect(readFileSync(settingsPath, 'utf8')).toBe('{}');
+    } finally {
+      chmodSync(settingsPath, 0o644);
+    }
+  });
+
+  // Extra, beyond #73's stated list: the end-to-end result of #72 and #67.
+  // 34 links is above the 32-hop cap and below both Linux's limit of 40 and
+  // Windows' 63, so readFile sees a plain missing file on every platform. The
+  // chain never existed as a file, so no backup is taken.
+  it.skipIf(!symlinkSupported)('reports ELOOP for a symlink chain deeper than the cap and touches nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aether-collector-hook-chain-'));
+    const missing = join(dir, 'missing.json');
+    const links = Array.from({ length: 34 }, (_, i) => join(dir, i === 0 ? 'settings.json' : `c${i}`));
+    const targets = links.map((_, i) => (i === links.length - 1 ? missing : links[i + 1]));
+    links.forEach((l, i) => symlinkSync(targets[i], l));
+
+    const result = await installHooks(links[0], SCRIPT_PATH);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^ELOOP: too many levels of symbolic links, resolve '/);
+    links.forEach((l, i) => {
+      expect(lstatSync(l).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(l)).toBe(targets[i]);
+    });
+    expect(existsSync(missing)).toBe(false);
+    expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-') || f.includes('.aetherbak-'))).toEqual([]);
+  });
+
+  // Extra, beyond #73's stated list.
+  it('reports a backup that fails mid-write as could-not-write-backup and leaves nothing behind', async () => {
+    const settingsPath = tempSettingsPath('{"model":"opus"}');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.aetherbak-')) {
+        await realWriteFile(file, '', 'utf8');
+        throw new Error('ENOSPC: simulated write failure');
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      const result = await installHooks(settingsPath, SCRIPT_PATH);
+      expect(result).toEqual({ ok: false, error: 'could not write backup: ENOSPC: simulated write failure' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{"model":"opus"}');
+    expect(siblingsBeside(settingsPath, 'aetherbak')).toEqual([]);
+    expect(siblingsBeside(settingsPath, 'aethertmp')).toEqual([]);
   });
 });

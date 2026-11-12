@@ -211,17 +211,36 @@ func marshalSettingsJSON(v interface{}) ([]byte, error) {
 // uses backupPathFor.
 var backupPathFn = backupPathFor
 
+// backupWriteFn is a seam so tests can fail the backup write part-way. It is
+// separate from writeFileFn on purpose: tests fail the TEMP write through that
+// one and expect the backup to have succeeded first.
+var backupWriteFn = writeFileExcl
+
 func writeBackup(settingsPath, raw string) (string, error) {
 	backupPath := backupPathFn(settingsPath)
+	// Mode choice, identical in all three copies (#71): the target's permission
+	// bits (os.Stat follows a symlink, so it is the real file's), Perm() so
+	// setuid/setgid/sticky never carry over, plus owner read+write so a backup of
+	// a read-only (0444) target is still one the user can delete or overwrite.
+	// Group/other bits are never widened beyond the source. Applied at creation
+	// only, no chmod after: the umask can only narrow it. Unknown source: 0600,
+	// never the umask default.
+	mode := os.FileMode(0600)
+	if info, err := os.Stat(settingsPath); err == nil {
+		mode = info.Mode().Perm() | 0600
+	}
 	// Exclusive create: never overwrite an earlier backup, which may be the
 	// user's pristine file (#60).
-	// 0666 for the same reason as createMode: it mirrors Node's writeFile
-	// default and is narrowed by the umask the same way. Carrying the SOURCE
-	// file's mode onto the backup would be better still -- a 0600 settings.json
-	// currently gets a 0644 backup beside it -- but that gap is shared with
-	// both TS copies and is tracked separately, not fixed asymmetrically here.
-	if err := writeFileExcl(backupPath, []byte(raw), 0666); err != nil {
-		return "", err
+	if err := backupWriteFn(backupPath, []byte(raw), mode); err != nil {
+		// Same rule as the temp file in writeSettingsAtomically: a lost exclusive
+		// create (ErrExist) means the name is another writer's, possibly the
+		// user's pristine first backup, so leave it; anything else may have
+		// created a truncated file under our unique name, which a user would
+		// mistake for a good backup (#67).
+		if !errors.Is(err, os.ErrExist) {
+			_ = os.Remove(backupPath)
+		}
+		return "", fmt.Errorf("could not write backup: %w", err)
 	}
 	return backupPath, nil
 }
@@ -229,6 +248,9 @@ func writeBackup(settingsPath, raw string) (string, error) {
 // renameFile is a seam so tests can force the rename step to fail without
 // OS-specific tricks; production always uses os.Rename.
 var renameFile = os.Rename
+
+// chmodFile is the same kind of seam for the mode-restoring chmod of the temp file.
+var chmodFile = os.Chmod
 
 // writeFileFn is the same kind of seam for the temp-file write.
 var writeFileFn = writeFileExcl
@@ -250,23 +272,37 @@ func uniqueSiblingPath(settingsPath, marker string) string {
 // itself, silently disconnecting the repo. A DANGLING link resolves to its
 // intended destination, not to the link, so the first write creates what the
 // user pointed at; only a path that is not a link falls back to itself, which
-// is the plain new-file case. The depth cap makes a symlink loop terminate.
-func resolveRealPath(settingsPath string, depth int) string {
-	if real, err := filepath.EvalSymlinks(settingsPath); err == nil {
-		return real
+// is the plain new-file case. The depth cap makes a symlink loop terminate, and
+// it fails loudly: a chain still being followed after 32 hops returns
+// errSymlinkDepth naming the path the CALLER passed, never the hop it stopped
+// at, because writing there would rename over a link mid-chain (#72). The text
+// is byte-identical to the Node copies'.
+func resolveRealPath(settingsPath string) (string, error) {
+	return resolveRealPathFrom(settingsPath, settingsPath, 0)
+}
+
+var errSymlinkDepth = errors.New("ELOOP: too many levels of symbolic links")
+
+func resolveRealPathFrom(origin, cur string, depth int) (string, error) {
+	if real, err := filepath.EvalSymlinks(cur); err == nil {
+		return real, nil
 	}
-	if depth < 32 {
-		if info, err := os.Lstat(settingsPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			if link, err := os.Readlink(settingsPath); err == nil {
-				next := link
-				if !filepath.IsAbs(next) {
-					next = filepath.Join(filepath.Dir(settingsPath), next)
-				}
-				return resolveRealPath(next, depth+1)
-			}
-		}
+	info, err := os.Lstat(cur)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return cur, nil
 	}
-	return settingsPath
+	link, err := os.Readlink(cur)
+	if err != nil {
+		return cur, nil
+	}
+	if depth >= 32 {
+		return "", fmt.Errorf("%w, resolve '%s'", errSymlinkDepth, origin)
+	}
+	next := link
+	if !filepath.IsAbs(next) {
+		next = filepath.Join(filepath.Dir(cur), next)
+	}
+	return resolveRealPathFrom(origin, next, depth+1)
 }
 
 func tempPathFor(settingsPath string) string { return uniqueSiblingPath(settingsPath, "aethertmp") }
@@ -294,7 +330,10 @@ func writeFileExcl(name string, data []byte, perm os.FileMode) error {
 // one is re-created deliberately below -- except ACLs and xattrs, which Go
 // cannot copy any more than Node can (see #69).
 func writeSettingsAtomically(settingsPath, content string) error {
-	realPath := resolveRealPath(settingsPath, 0)
+	realPath, err := resolveRealPath(settingsPath)
+	if err != nil {
+		return err
+	}
 
 	var mode os.FileMode
 	haveMode := false
@@ -356,7 +395,7 @@ func writeSettingsAtomically(settingsPath, content string) error {
 	}
 	if haveMode {
 		// Make a permissive mode exact where umask would have narrowed it.
-		if err := os.Chmod(tmpPath, mode); err != nil {
+		if err := chmodFile(tmpPath, mode); err != nil {
 			_ = os.Remove(tmpPath)
 			return err
 		}
