@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -553,5 +553,31 @@ describe('scorePrivateCandidate', () => {
     const neverReferenced = row({ reference_count: 0 });
     const heavilyReferenced = row({ reference_count: 500 });
     expect(scorePrivateCandidate(neverReferenced, NOW)).toBe(scorePrivateCandidate(heavilyReferenced, NOW));
+  });
+});
+
+describe('createMemoryStore open failure', () => {
+  it('returns a usable store on the normal path', () => {
+    const d = mkdtempSync(join(tmpdir(), 'aether-mem-ok-'));
+    const s = createMemoryStore(join(d, 'memory.db'), { now: () => clock });
+    try {
+      expect(s.applyOps([decision('usable')], steward).added).toBe(1);
+    } finally {
+      s.close();
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it('rethrows the original error and closes the handle when setup fails after open', () => {
+    const d = mkdtempSync(join(tmpdir(), 'aether-mem-bad-'));
+    try {
+      const p = join(d, 'memory.db');
+      writeFileSync(p, 'this is not a sqlite database, '.repeat(20));
+      expect(() => createMemoryStore(p)).toThrow(/not a database/i);
+      // A leaked handle keeps the file locked on win32, so the rename fails.
+      expect(() => renameSync(p, join(d, 'moved.db'))).not.toThrow();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
