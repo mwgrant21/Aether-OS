@@ -1355,3 +1355,108 @@ func TestWriteBackup_RealExclusiveCreateRefusalIsWrappedAndKeepsPristine(t *test
 		t.Errorf("existing backup changed: %q", got)
 	}
 }
+
+func TestWriteSettingsAtomically_ChmodFailureReportsAndCleansUp(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "keep")
+	orig := chmodFile
+	chmodFile = func(string, os.FileMode) error { return os.ErrPermission }
+	defer func() { chmodFile = orig }()
+
+	err := writeSettingsAtomically(settingsPath, "new")
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("err = %v, want the chmod failure", err)
+	}
+	if got := readRaw(t, settingsPath); got != "keep" {
+		t.Errorf("target changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+		t.Errorf("temp file left behind after chmod failure: %v", tmp)
+	}
+}
+
+// With no existing file there is no mode to carry, so the temp file is created
+// with 0666 (Node's writeFile default, narrowed by the umask the same way).
+func TestWriteSettingsAtomically_CreatesAnAbsentTargetWithTheDefault0666(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	var sawMode os.FileMode
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		sawMode = perm
+		return writeFileExcl(name, data, perm)
+	}
+	defer func() { writeFileFn = orig }()
+
+	if err := writeSettingsAtomically(settingsPath, "fresh"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if sawMode != 0666 {
+		t.Errorf("temp file created with mode %o, want 666", sawMode)
+	}
+	if got := readRaw(t, settingsPath); got != "fresh" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+func TestInstallHooks_WritesThroughASymlinkedSettingsJSON(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	realFile := tempSettingsPathWithContent(t, `{"model":"opus"}`)
+	link := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.Symlink(realFile, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	result := InstallHooks(link, scriptPath)
+	if !result.OK {
+		t.Fatalf("InstallHooks failed: %s", result.Error)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("link was replaced instead of written through")
+	}
+	written := readWritten(t, realFile)
+	if written["model"] != "opus" {
+		t.Errorf("model = %v, want opus preserved", written["model"])
+	}
+	if _, ok := written["hooks"]; !ok {
+		t.Errorf("real file has no hooks after install through the link")
+	}
+	if tmp := tempFilesBeside(t, realFile); len(tmp) != 0 {
+		t.Errorf("temp file beside the real file: %v", tmp)
+	}
+	if tmp := tempFilesBeside(t, link); len(tmp) != 0 {
+		t.Errorf("temp file beside the link: %v", tmp)
+	}
+}
+
+// The exact text, no wrapper and no `Error: ` prefix: collector/src/hookInstaller.test.ts
+// pins the same string for the Node copy.
+func TestInstallHooks_ReadOnlyTargetReportsTheNodeEACCESText(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the read-only bit, so this asserts nothing there")
+	}
+	target := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(target, 0444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer func() { _ = os.Chmod(target, 0644) }()
+	if f, err := os.OpenFile(target, os.O_WRONLY, 0); err == nil {
+		_ = f.Close()
+		t.Skip("this platform lets a read-only file be opened for writing")
+	}
+	realPath, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatalf("evalsymlinks: %v", err)
+	}
+
+	result := InstallHooks(target, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true against a read-only target")
+	}
+	if want := "EACCES: permission denied, write '" + realPath + "'"; result.Error != want {
+		t.Errorf("Error = %q, want %q", result.Error, want)
+	}
+	if got := readRaw(t, target); got != "{}" {
+		t.Errorf("target changed: %q", got)
+	}
+}

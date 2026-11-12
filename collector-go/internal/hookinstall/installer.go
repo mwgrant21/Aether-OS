@@ -249,6 +249,9 @@ func writeBackup(settingsPath, raw string) (string, error) {
 // OS-specific tricks; production always uses os.Rename.
 var renameFile = os.Rename
 
+// chmodFile is the same kind of seam for the mode-restoring chmod of the temp file.
+var chmodFile = os.Chmod
+
 // writeFileFn is the same kind of seam for the temp-file write.
 var writeFileFn = writeFileExcl
 
@@ -392,7 +395,7 @@ func writeSettingsAtomically(settingsPath, content string) error {
 	}
 	if haveMode {
 		// Make a permissive mode exact where umask would have narrowed it.
-		if err := os.Chmod(tmpPath, mode); err != nil {
+		if err := chmodFile(tmpPath, mode); err != nil {
 			_ = os.Remove(tmpPath)
 			return err
 		}

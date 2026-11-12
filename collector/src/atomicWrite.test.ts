@@ -471,3 +471,31 @@ describe('writeBackup: failure cleanup and error text (#67)', () => {
     expect(readFileSync(contested, 'utf8')).toBe('pristine');
   });
 });
+
+describe('writeFileAtomically: chmod failure and create mode (#73)', () => {
+  it('reports a chmod failure, leaves the target byte-identical, and removes its temp file', async () => {
+    const target = freshTarget('keep');
+    const spy = vi.spyOn(fsp, 'chmod').mockRejectedValueOnce(new Error('EPERM: simulated chmod failure'));
+    try {
+      await expect(writeFileAtomically(target, 'new')).rejects.toThrow('EPERM: simulated chmod failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(target, 'utf8')).toBe('keep');
+    expect(siblings(target, 'aethertmp')).toEqual([]);
+  });
+
+  it('passes no mode when creating a target that does not exist yet, so the default applies', async () => {
+    const target = freshTarget();
+    const spy = vi.spyOn(fsp, 'writeFile');
+    try {
+      await writeFileAtomically(target, 'fresh');
+      const call = spy.mock.calls.find((c) => String(c[0]).includes('.aethertmp-'));
+      expect(call).toBeDefined();
+      expect(call?.[2]).not.toHaveProperty('mode');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(target, 'utf8')).toBe('fresh');
+  });
+});
