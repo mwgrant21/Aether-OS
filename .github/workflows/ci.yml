@@ -191,11 +191,30 @@ jobs:
       - name: E2E native specs (informational)
         continue-on-error: true
         run: npx playwright test --grep-invert "Aether OS smoke|Renderer CSP"
+      # Non-fatal: copies only the app's diag.log* (never whole temp roots, which hold a
+      # permission-server secret) so a close hang can be diagnosed from the artifact.
+      - name: Collect e2e diag logs
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path e2e-diag | Out-Null
+          foreach ($root in (Get-ChildItem -Path $env:TEMP -Directory -Filter 'aether-e2e-*' -ErrorAction SilentlyContinue)) {
+            foreach ($f in (Get-ChildItem -Path $root.FullName -Recurse -File -Filter 'diag.log*' -ErrorAction SilentlyContinue)) {
+              $rel = $f.FullName.Substring($root.FullName.Length).TrimStart('\', '/')
+              $dest = Join-Path (Join-Path 'e2e-diag' $root.Name) $rel
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
+              Copy-Item -LiteralPath $f.FullName -Destination $dest -ErrorAction Continue
+            }
+          }
+          exit 0
       - name: Upload e2e output
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
-          path: test-results/
+          path: |
+            test-results/
+            e2e-diag/
           if-no-files-found: ignore
           retention-days: 7
