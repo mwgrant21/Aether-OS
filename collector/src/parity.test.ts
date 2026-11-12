@@ -9,7 +9,7 @@ import { scanTranscriptsOnce } from './transcriptScan.js';
 /**
  * Node half of the cross-collector parity harness.
  * See test-fixtures/collector-parity/README.md for why this exists.
- * The Go half is collector-go/internal/transcript/parity_test.go; neither
+ * The Go half is collector-go/internal/collector/parity_test.go; neither
  * runs the other, they agree by both asserting expected.json.
  */
 const fixtureRoot = fileURLToPath(new URL('../../test-fixtures/collector-parity/', import.meta.url));
@@ -80,6 +80,22 @@ describe('cross-collector parity', () => {
       .map((r) => (r.source_file_rel === null ? '<NULL>' : r.source_file_rel.split(sep).join('/')))
       .sort();
     expect(usageSources).toEqual([...expected.usageSourceFiles].sort());
+
+    // Dispatch rows (#107, #65): NULL (never 0) for absent usage, status and
+    // exit_state parsed from the notification, severity, median, and the
+    // opener's session and subagent_type. The Go collector asserts the same.
+    const dispatches = Object.fromEntries(
+      (
+        db
+          .prepare(
+            `SELECT tool_use_id, exit_state, severity, dispatch_status, tokens, tool_uses, duration_ms,
+                    agent_id, task_kind, session_id, median_ms_at_eval
+             FROM dispatches ORDER BY tool_use_id`,
+          )
+          .all() as Record<string, unknown>[]
+      ).map(({ tool_use_id, ...cols }) => [tool_use_id as string, cols]),
+    );
+    expect(dispatches).toEqual(expected.dispatches);
 
     db.close();
   });

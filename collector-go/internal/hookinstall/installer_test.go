@@ -2,6 +2,8 @@ package hookinstall
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1028,5 +1030,461 @@ func TestWriteSettingsAtomically_CreatesTheTempFileWithTheTargetMode(t *testing.
 	}
 	if sawMode.Perm() != 0600 {
 		t.Errorf("temp file created with mode %o, want 600", sawMode.Perm())
+	}
+}
+
+// danglingChain builds c0 -> c1 -> ... -> c(n-1) -> <dir>/missing.json with
+// absolute link targets. It ends at a MISSING file on purpose: a chain ending at
+// a real file resolves through EvalSymlinks (whose own cap is 255), so the cap
+// under test would never be reached.
+func danglingChain(t *testing.T, n int) (dir, missing string, links, targets []string) {
+	t.Helper()
+	dir = t.TempDir()
+	missing = filepath.Join(dir, "missing.json")
+	for i := 0; i < n; i++ {
+		links = append(links, filepath.Join(dir, fmt.Sprintf("c%d", i)))
+	}
+	for i, l := range links {
+		target := missing
+		if i < n-1 {
+			target = links[i+1]
+		}
+		targets = append(targets, target)
+		if err := os.Symlink(target, l); err != nil {
+			t.Fatalf("symlink %s: %v", l, err)
+		}
+	}
+	return dir, missing, links, targets
+}
+
+func symlinkLoop(t *testing.T) (dir, a, b string) {
+	t.Helper()
+	dir = t.TempDir()
+	a = filepath.Join(dir, "a")
+	b = filepath.Join(dir, "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Fatalf("symlink a: %v", err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Fatalf("symlink b: %v", err)
+	}
+	return dir, a, b
+}
+
+func assertELOOPFor(t *testing.T, err error, origin string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("err = nil, want the ELOOP depth error")
+	}
+	if !errors.Is(err, errSymlinkDepth) {
+		t.Errorf("err = %v, want errors.Is(err, errSymlinkDepth)", err)
+	}
+	want := "ELOOP: too many levels of symbolic links, resolve '" + origin + "'"
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q (the ORIGINAL path, byte-identical to Node)", err.Error(), want)
+	}
+}
+
+func assertChainIntact(t *testing.T, links, targets []string) {
+	t.Helper()
+	for i, l := range links {
+		info, err := os.Lstat(l)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s is no longer a symlink", l)
+			continue
+		}
+		if got, err := os.Readlink(l); err != nil || got != targets[i] {
+			t.Errorf("readlink %s = %q (%v), want %q", l, got, err, targets[i])
+		}
+	}
+}
+
+func TestResolveRealPath_LoopFailsWithELOOPNamingTheOriginalPath(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	_, a, _ := symlinkLoop(t)
+	_, err := resolveRealPath(a)
+	assertELOOPFor(t, err, a)
+}
+
+func TestResolveRealPath_ChainDeeperThanTheCapFailsWithELOOP(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	_, _, links, _ := danglingChain(t, 34)
+	_, err := resolveRealPath(links[0])
+	assertELOOPFor(t, err, links[0])
+}
+
+// The cap is 32 hops in all three copies: 32 links resolve to the missing
+// destination, 33 do not.
+func TestResolveRealPath_CapIsThirtyTwoHops(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	_, missing, links, _ := danglingChain(t, 32)
+	got, err := resolveRealPath(links[0])
+	if err != nil || got != missing {
+		t.Errorf("32-link chain = %q, %v; want %q, nil", got, err, missing)
+	}
+	_, _, tooDeep, _ := danglingChain(t, 33)
+	if _, err := resolveRealPath(tooDeep[0]); !errors.Is(err, errSymlinkDepth) {
+		t.Errorf("33-link chain err = %v, want errSymlinkDepth", err)
+	}
+}
+
+func TestWriteSettingsAtomically_LoopLeavesEveryLinkAlone(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	dir, a, b := symlinkLoop(t)
+	err := writeSettingsAtomically(a, "x")
+	assertELOOPFor(t, err, a)
+	assertChainIntact(t, []string{a, b}, []string{b, a})
+	if tmp := tempFilesBeside(t, filepath.Join(dir, "x")); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+func TestWriteSettingsAtomically_DeepChainLeavesEveryLinkAndTheDestinationAlone(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	dir, missing, links, targets := danglingChain(t, 34)
+	err := writeSettingsAtomically(links[0], "x")
+	assertELOOPFor(t, err, links[0])
+	assertChainIntact(t, links, targets)
+	if _, statErr := os.Lstat(missing); !os.IsNotExist(statErr) {
+		t.Errorf("the missing destination was created (or stat failed oddly): %v", statErr)
+	}
+	if tmp := tempFilesBeside(t, filepath.Join(dir, "x")); len(tmp) != 0 {
+		t.Errorf("temp file left behind: %v", tmp)
+	}
+}
+
+// Backup mode (#71). The expectation never depends on the ambient umask: each
+// source is chmod-ed explicitly, and the expected mode is the requested creation
+// mode filtered by the umask as observed on a probe file created with 0666.
+// Only the rw bits are compared; the 0644 case distinguishes "mode threaded
+// through" from "hardcoded 0600" only under a umask that keeps group read.
+// Windows reports 0666 for any writable file, so these skip there.
+func backupModeExpectation(t *testing.T) func(os.FileMode) os.FileMode {
+	t.Helper()
+	probe := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(probe, nil, 0666); err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	info, err := os.Stat(probe)
+	if err != nil {
+		t.Fatalf("probe stat: %v", err)
+	}
+	kept := info.Mode().Perm() // 0666 &^ umask
+	return func(m os.FileMode) os.FileMode { return m & kept }
+}
+
+func backupModeOf(t *testing.T, settingsPath string) os.FileMode {
+	t.Helper()
+	backupPath, err := writeBackup(settingsPath, "{}")
+	if err != nil {
+		t.Fatalf("writeBackup: %v", err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatalf("stat backup: %v", err)
+	}
+	if info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		t.Errorf("backup carries special bits: %v", info.Mode())
+	}
+	return info.Mode().Perm()
+}
+
+func TestWriteBackup_GivesA0600TargetA0600Backup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0600); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_GivesA0644TargetA0644BackupNotAHardcoded0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0644); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_KeepsOwnerReadWriteOnABackupOfAReadOnlyTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0444); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(p, 0644) }()
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0644); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+// This test can only fail as root: Linux strips setuid on the first non-empty
+// write by an unprivileged user, so the on-disk mode hides a wrongly requested
+// one. The test after it checks the mode the backup writer is asked for.
+func TestWriteBackup_DropsSpecialBitsFromTheSourceMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no setuid/setgid/sticky bits")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0644|os.ModeSetuid); err != nil {
+		t.Skipf("cannot set the setuid bit here: %v", err)
+	}
+	defer func() { _ = os.Chmod(p, 0644) }()
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0644); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_DefaultsTo0600WhenTheTargetCannotBeStatted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	p := tempSettingsPath(t) // never created
+	if got, want := backupModeOf(t, p), backupModeExpectation(t)(0600); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestWriteBackup_RequestsACreationModeWithoutSpecialBits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no setuid/setgid/sticky bits")
+	}
+	p := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(p, 0644|os.ModeSetuid); err != nil {
+		t.Skipf("cannot set the setuid bit here: %v", err)
+	}
+	defer func() { _ = os.Chmod(p, 0644) }()
+	var requested os.FileMode
+	orig := backupWriteFn
+	backupWriteFn = func(name string, data []byte, perm os.FileMode) error {
+		requested = perm
+		return nil
+	}
+	defer func() { backupWriteFn = orig }()
+
+	if _, err := writeBackup(p, "{}"); err != nil {
+		t.Fatalf("writeBackup: %v", err)
+	}
+	if requested != 0644 {
+		t.Errorf("requested creation mode = %v, want %v", requested, os.FileMode(0644))
+	}
+}
+
+func TestWriteBackup_ReadsTheModeOfTheRealFileBehindASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0666 for any writable file regardless of chmod")
+	}
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	real := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(real, 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(real), "link.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := backupModeOf(t, link), backupModeExpectation(t)(0600); got != want {
+		t.Errorf("backup mode = %o, want %o", got, want)
+	}
+}
+
+// Issue #67: a backup write that fails after creating the file must not leave a
+// truncated backup under the backup name, except on a lost exclusive create
+// (ErrExist), where the file is another writer's and must survive.
+func TestWriteBackup_RemovesAPartialBackupAndWrapsTheError(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	orig := backupWriteFn
+	backupWriteFn = func(name string, data []byte, perm os.FileMode) error {
+		if err := os.WriteFile(name, nil, 0600); err != nil {
+			t.Fatalf("stage partial: %v", err)
+		}
+		return os.ErrClosed
+	}
+	defer func() { backupWriteFn = orig }()
+
+	_, err := writeBackup(settingsPath, "{}")
+	if err == nil {
+		t.Fatalf("writeBackup succeeded, want the write failure")
+	}
+	if want := "could not write backup: " + os.ErrClosed.Error(); err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("wrapped error lost its cause: %v", err)
+	}
+	if left := backupsBeside(t, settingsPath); len(left) != 0 {
+		t.Errorf("partial backup left behind: %v", left)
+	}
+}
+
+func TestWriteBackup_NeverDeletesAFileItLostTheNameTo(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	fixed := settingsPath + ".aetherbak-fixed"
+	origPath, origWrite := backupPathFn, backupWriteFn
+	backupPathFn = func(string) string { return fixed }
+	backupWriteFn = func(name string, data []byte, perm os.FileMode) error { return os.ErrExist }
+	defer func() { backupPathFn, backupWriteFn = origPath, origWrite }()
+	if err := os.WriteFile(fixed, []byte("pristine"), 0644); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	_, err := writeBackup(settingsPath, "newer")
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err = %v, want errors.Is(err, os.ErrExist)", err)
+	}
+	if !strings.HasPrefix(err.Error(), "could not write backup: ") {
+		t.Errorf("err = %q, want the could-not-write-backup prefix", err.Error())
+	}
+	if got := readRaw(t, fixed); got != "pristine" {
+		t.Errorf("the other writer's backup changed or was removed: %q", got)
+	}
+}
+
+// The real O_EXCL path, no seam: the clobber refusal carries the same wrapped
+// text and the pristine file survives.
+func TestWriteBackup_RealExclusiveCreateRefusalIsWrappedAndKeepsPristine(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "{}")
+	fixed := settingsPath + ".aetherbak-fixed"
+	orig := backupPathFn
+	backupPathFn = func(string) string { return fixed }
+	defer func() { backupPathFn = orig }()
+	if err := os.WriteFile(fixed, []byte("pristine"), 0644); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	_, err := writeBackup(settingsPath, "newer")
+	if err == nil || !strings.HasPrefix(err.Error(), "could not write backup: ") || !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err = %v, want a wrapped os.ErrExist", err)
+	}
+	if got := readRaw(t, fixed); got != "pristine" {
+		t.Errorf("existing backup changed: %q", got)
+	}
+}
+
+func TestWriteSettingsAtomically_ChmodFailureReportsAndCleansUp(t *testing.T) {
+	settingsPath := tempSettingsPathWithContent(t, "keep")
+	orig := chmodFile
+	chmodFile = func(string, os.FileMode) error { return os.ErrPermission }
+	defer func() { chmodFile = orig }()
+
+	err := writeSettingsAtomically(settingsPath, "new")
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("err = %v, want the chmod failure", err)
+	}
+	if got := readRaw(t, settingsPath); got != "keep" {
+		t.Errorf("target changed: %q", got)
+	}
+	if tmp := tempFilesBeside(t, settingsPath); len(tmp) != 0 {
+		t.Errorf("temp file left behind after chmod failure: %v", tmp)
+	}
+}
+
+// With no existing file there is no mode to carry, so the temp file is created
+// with 0666 (Node's writeFile default, narrowed by the umask the same way).
+func TestWriteSettingsAtomically_CreatesAnAbsentTargetWithTheDefault0666(t *testing.T) {
+	settingsPath := tempSettingsPath(t)
+	var sawMode os.FileMode
+	orig := writeFileFn
+	writeFileFn = func(name string, data []byte, perm os.FileMode) error {
+		sawMode = perm
+		return writeFileExcl(name, data, perm)
+	}
+	defer func() { writeFileFn = orig }()
+
+	if err := writeSettingsAtomically(settingsPath, "fresh"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if sawMode != 0666 {
+		t.Errorf("temp file created with mode %o, want 666", sawMode)
+	}
+	if got := readRaw(t, settingsPath); got != "fresh" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+func TestInstallHooks_WritesThroughASymlinkedSettingsJSON(t *testing.T) {
+	if !symlinkSupported(t) {
+		t.Skip("symlink creation not permitted here")
+	}
+	realFile := tempSettingsPathWithContent(t, `{"model":"opus"}`)
+	link := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.Symlink(realFile, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	result := InstallHooks(link, scriptPath)
+	if !result.OK {
+		t.Fatalf("InstallHooks failed: %s", result.Error)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("link was replaced instead of written through")
+	}
+	written := readWritten(t, realFile)
+	if written["model"] != "opus" {
+		t.Errorf("model = %v, want opus preserved", written["model"])
+	}
+	if _, ok := written["hooks"]; !ok {
+		t.Errorf("real file has no hooks after install through the link")
+	}
+	if tmp := tempFilesBeside(t, realFile); len(tmp) != 0 {
+		t.Errorf("temp file beside the real file: %v", tmp)
+	}
+	if tmp := tempFilesBeside(t, link); len(tmp) != 0 {
+		t.Errorf("temp file beside the link: %v", tmp)
+	}
+}
+
+// The exact text, no wrapper and no `Error: ` prefix: collector/src/hookInstaller.test.ts
+// pins the same string for the Node copy.
+func TestInstallHooks_ReadOnlyTargetReportsTheNodeEACCESText(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the read-only bit, so this asserts nothing there")
+	}
+	target := tempSettingsPathWithContent(t, "{}")
+	if err := os.Chmod(target, 0444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer func() { _ = os.Chmod(target, 0644) }()
+	if f, err := os.OpenFile(target, os.O_WRONLY, 0); err == nil {
+		_ = f.Close()
+		t.Skip("this platform lets a read-only file be opened for writing")
+	}
+	realPath, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatalf("evalsymlinks: %v", err)
+	}
+
+	result := InstallHooks(target, scriptPath)
+	if result.OK {
+		t.Fatalf("OK = true against a read-only target")
+	}
+	if want := "EACCES: permission denied, write '" + realPath + "'"; result.Error != want {
+		t.Errorf("Error = %q, want %q", result.Error, want)
+	}
+	if got := readRaw(t, target); got != "{}" {
+		t.Errorf("target changed: %q", got)
 	}
 }

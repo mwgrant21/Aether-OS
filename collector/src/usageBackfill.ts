@@ -194,7 +194,7 @@ interface LegacyRow {
 
 const tupleKey = (ms: number, model: string | null, t: number[]) => JSON.stringify([ms, model, t[0], t[1], t[2], t[3]]);
 
-function snapshotOf(db: DatabaseSync): BackfillSnapshot {
+export function snapshotOf(db: DatabaseSync): BackfillSnapshot {
   const r = db
     .prepare(
       `SELECT COALESCE(MAX(id), 0) AS maxId, COUNT(*) AS count,
@@ -215,7 +215,7 @@ function snapshotOf(db: DatabaseSync): BackfillSnapshot {
   };
 }
 
-const sameSnapshot = (a: BackfillSnapshot, b: BackfillSnapshot) =>
+export const sameSnapshot = (a: BackfillSnapshot, b: BackfillSnapshot) =>
   a.maxId === b.maxId &&
   a.count === b.count &&
   a.nullKeyCount === b.nullKeyCount &&

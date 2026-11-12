@@ -161,3 +161,29 @@ func TestUpdateHistory_CapsAtHistoryMaxEvents(t *testing.T) {
 		t.Fatalf("expected history capped at %d, got %d", HistoryMaxEvents, len(history.Events))
 	}
 }
+
+func TestUpdateHistory_RecordsSubagentTypeAndSessionOnOpen(t *testing.T) {
+	t0 := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	mk := func(id string, input interface{}, session *string) Event {
+		return Event{Kind: "assistant", Timestamp: &t0, SessionID: session, ToolUses: []ToolUse{{ID: id, Name: "Agent", Input: input}}}
+	}
+	history := UpdateHistory(CreateEmptyHistory(), []Event{
+		mk("tu_typed", map[string]interface{}{"subagent_type": "reviewer"}, strp("s1")),
+		mk("tu_empty", map[string]interface{}{"subagent_type": ""}, nil),
+		mk("tu_missing", map[string]interface{}{"description": "d"}, nil),
+		mk("tu_nonstring", map[string]interface{}{"subagent_type": 7}, nil),
+	}, t0.UnixMilli())
+
+	typed := history.OpenByToolUseID["tu_typed"]
+	if typed.SubagentType == nil || *typed.SubagentType != "reviewer" || typed.SessionID == nil || *typed.SessionID != "s1" {
+		t.Fatalf("typed = %+v", typed)
+	}
+	if e := history.OpenByToolUseID["tu_empty"]; e.SubagentType == nil || *e.SubagentType != "" || e.SessionID != nil {
+		t.Fatalf("empty-string subagent_type must be kept, session nil: %+v", e)
+	}
+	for _, id := range []string{"tu_missing", "tu_nonstring"} {
+		if e := history.OpenByToolUseID[id]; e.SubagentType != nil {
+			t.Fatalf("%s: SubagentType = %q, want nil", id, *e.SubagentType)
+		}
+	}
+}

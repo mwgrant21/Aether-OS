@@ -8,6 +8,7 @@ import {
   lstatSync,
   statSync,
   symlinkSync,
+  readlinkSync,
   chmodSync,
   linkSync,
   statSync as fsStatSync,
@@ -287,4 +288,230 @@ describe('writeFileAtomically: symlinks and permissions', () => {
       expect(readFileSync(target, 'utf8')).toBe('still secret');
     }
   );
+});
+
+// A chain c0 -> c1 -> ... -> c(n-1) -> <dir>/missing.json, absolute link targets.
+// It must END at a missing file: a chain ending at a real file resolves through
+// realpath on Windows (so the cap is never reached) and hits the kernel's own
+// limit of 40 on Linux, which would make these cases platform-dependent.
+function danglingChain(n: number): { dir: string; missing: string; links: string[]; targets: string[] } {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-symlink-chain-'));
+  const missing = join(dir, 'missing.json');
+  const links = Array.from({ length: n }, (_, i) => join(dir, `c${i}`));
+  const targets = links.map((_, i) => (i === n - 1 ? missing : links[i + 1]));
+  links.forEach((l, i) => symlinkSync(targets[i], l));
+  return { dir, missing, links, targets };
+}
+
+function symlinkLoop(): { dir: string; a: string; b: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'aether-symlink-loop-'));
+  const a = join(dir, 'a');
+  const b = join(dir, 'b');
+  symlinkSync(b, a);
+  symlinkSync(a, b);
+  return { dir, a, b };
+}
+
+describe('resolveRealPath: the symlink depth cap fails loudly (#72)', () => {
+  it.skipIf(!symlinkSupported)('rejects a symlink loop with ELOOP naming the original path', async () => {
+    const { a } = symlinkLoop();
+    await expect(resolveRealPath(a)).rejects.toMatchObject({
+      code: 'ELOOP',
+      path: a,
+      message: `ELOOP: too many levels of symbolic links, resolve '${a}'`,
+    });
+  });
+
+  it.skipIf(!symlinkSupported)('rejects a chain deeper than the cap that ends at a missing file', async () => {
+    const { links } = danglingChain(34);
+    await expect(resolveRealPath(links[0])).rejects.toMatchObject({
+      code: 'ELOOP',
+      path: links[0],
+      message: `ELOOP: too many levels of symbolic links, resolve '${links[0]}'`,
+    });
+  });
+
+  it.skipIf(!symlinkSupported)('pins the cap at 32 hops: 32 links resolve to the missing file, 33 do not', async () => {
+    const ok = danglingChain(32);
+    expect(await resolveRealPath(ok.links[0])).toBe(ok.missing);
+    const tooDeep = danglingChain(33);
+    await expect(resolveRealPath(tooDeep.links[0])).rejects.toMatchObject({ code: 'ELOOP' });
+  });
+
+  it.skipIf(!symlinkSupported)('writeFileAtomically leaves every link and the destination alone on a loop', async () => {
+    const { dir, a, b } = symlinkLoop();
+    await expect(writeFileAtomically(a, 'x')).rejects.toMatchObject({ code: 'ELOOP' });
+    expect(lstatSync(a).isSymbolicLink()).toBe(true);
+    expect(lstatSync(b).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(a)).toBe(b);
+    expect(readlinkSync(b)).toBe(a);
+    expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+
+  it.skipIf(!symlinkSupported)('writeFileAtomically leaves every link and the destination alone on a deep chain', async () => {
+    const { dir, missing, links, targets } = danglingChain(34);
+    await expect(writeFileAtomically(links[0], 'x')).rejects.toMatchObject({ code: 'ELOOP' });
+    links.forEach((l, i) => {
+      expect(lstatSync(l).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(l)).toBe(targets[i]);
+    });
+    expect(existsSync(missing)).toBe(false);
+    expect(readdirSync(dir).filter((f) => f.includes('.aethertmp-'))).toEqual([]);
+  });
+});
+
+// The backup holds the same bytes as the target, so it must not be MORE
+// readable than the target (#71). Windows reports 0666 for any writable file,
+// so the mode assertions only mean something on POSIX. They never depend on the
+// ambient umask: each target is chmod-ed explicitly, and the expectation is the
+// requested creation mode filtered by whatever the umask is. (The 0644 case
+// only distinguishes "mode threaded through" from "hardcoded 0600" under a
+// umask that keeps group read; it is still correct, just weaker, under 077.)
+describe('writeBackup: the backup inherits the target mode (#71)', () => {
+  const afterUmask = (mode: number) => mode & ~process.umask();
+  const modeOf = (p: string) => statSync(p).mode & 0o7777;
+
+  it.skipIf(process.platform === 'win32')('gives a 0600 target a 0600 backup', async () => {
+    const target = freshTarget('{"secret":true}');
+    chmodSync(target, 0o600);
+    const backupPath = await writeBackup(target, '{"secret":true}', 'ttbak');
+    expect(modeOf(backupPath)).toBe(afterUmask(0o600));
+  });
+
+  it.skipIf(process.platform === 'win32')('gives a 0644 target a 0644 backup, not a hardcoded 0600', async () => {
+    const target = freshTarget('{}');
+    chmodSync(target, 0o644);
+    const backupPath = await writeBackup(target, '{}', 'ttbak');
+    expect(modeOf(backupPath)).toBe(afterUmask(0o644));
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps owner read+write on a backup of a read-only target', async () => {
+    const target = freshTarget('{}');
+    chmodSync(target, 0o444);
+    try {
+      const backupPath = await writeBackup(target, '{}', 'ttbak');
+      expect(modeOf(backupPath)).toBe(afterUmask(0o644));
+    } finally {
+      chmodSync(target, 0o644);
+    }
+  });
+
+  // The test below can only fail as root: Linux strips setuid on the first non-empty write by an
+  // unprivileged user, so the on-disk mode hides a wrongly requested one. This one checks the mode
+  // the open call asks for, with stat faked so it also runs where chmod cannot set setuid.
+  it('requests a creation mode without setuid/setgid/sticky bits', async () => {
+    const statSpy = vi.spyOn(fsp, 'stat').mockResolvedValue({ mode: 0o107644 } as never);
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    try {
+      await writeBackup(join(tmpdir(), 'aether-mode-request', 'target.json'), '{}', 'ttbak');
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      expect(writeSpy.mock.calls[0][2]).toMatchObject({ flag: 'wx', mode: 0o644 });
+    } finally {
+      writeSpy.mockRestore();
+      statSpy.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('drops setuid/setgid/sticky bits from the source mode', async () => {
+    const target = freshTarget('{}');
+    chmodSync(target, 0o4644);
+    try {
+      const backupPath = await writeBackup(target, '{}', 'ttbak');
+      expect(modeOf(backupPath)).toBe(afterUmask(0o644));
+    } finally {
+      chmodSync(target, 0o644);
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('defaults to 0600 when the target cannot be stat-ed', async () => {
+    const target = freshTarget();
+    expect(existsSync(target)).toBe(false);
+    const backupPath = await writeBackup(target, '{}', 'ttbak');
+    expect(modeOf(backupPath)).toBe(afterUmask(0o600));
+  });
+
+  it.skipIf(process.platform === 'win32' || !symlinkSupported)(
+    'reads the mode of the real file behind a symlinked target',
+    async () => {
+      const real = freshTarget('{}');
+      chmodSync(real, 0o600);
+      const link = join(dirname(real), 'link.json');
+      symlinkSync(real, link);
+      const backupPath = await writeBackup(link, '{}', 'ttbak');
+      expect(modeOf(backupPath)).toBe(afterUmask(0o600));
+    }
+  );
+});
+
+describe('writeBackup: failure cleanup and error text (#67)', () => {
+  it('removes a partial backup created by a write that then failed, and wraps the error', async () => {
+    const target = freshTarget('keep');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      if (String(file).includes('.ttbak-')) {
+        await realWriteFile(file, '', 'utf8');
+        throw Object.assign(new Error('ENOSPC: simulated write failure'), { code: 'ENOSPC' });
+      }
+      return realWriteFile(file, data, options);
+    });
+    try {
+      await expect(writeBackup(target, 'keep', 'ttbak')).rejects.toMatchObject({
+        message: 'could not write backup: ENOSPC: simulated write failure',
+        code: 'ENOSPC',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    // A truncated file under the backup name would be mistaken for a good backup.
+    expect(siblings(target, 'ttbak')).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe('keep');
+  });
+
+  it("never deletes another writer's backup when the exclusive create loses the name (EEXIST)", async () => {
+    const target = freshTarget('original');
+    const realWriteFile = fsp.writeFile.bind(fsp);
+    let contested = '';
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file: any, data: any, options?: any) => {
+      contested = String(file);
+      await realWriteFile(contested, 'pristine', 'utf8');
+      return realWriteFile(file, data, options);
+    });
+    try {
+      await expect(writeBackup(target, 'newer', 'ttbak')).rejects.toMatchObject({
+        message: expect.stringMatching(/^could not write backup: .*EEXIST/),
+        code: 'EEXIST',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(contested, 'utf8')).toBe('pristine');
+  });
+});
+
+describe('writeFileAtomically: chmod failure and create mode (#73)', () => {
+  it('reports a chmod failure, leaves the target byte-identical, and removes its temp file', async () => {
+    const target = freshTarget('keep');
+    const spy = vi.spyOn(fsp, 'chmod').mockRejectedValueOnce(new Error('EPERM: simulated chmod failure'));
+    try {
+      await expect(writeFileAtomically(target, 'new')).rejects.toThrow('EPERM: simulated chmod failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(target, 'utf8')).toBe('keep');
+    expect(siblings(target, 'aethertmp')).toEqual([]);
+  });
+
+  it('passes no mode when creating a target that does not exist yet, so the default applies', async () => {
+    const target = freshTarget();
+    const spy = vi.spyOn(fsp, 'writeFile');
+    try {
+      await writeFileAtomically(target, 'fresh');
+      const call = spy.mock.calls.find((c) => String(c[0]).includes('.aethertmp-'));
+      expect(call).toBeDefined();
+      expect(call?.[2]).not.toHaveProperty('mode');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(target, 'utf8')).toBe('fresh');
+  });
 });

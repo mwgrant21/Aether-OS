@@ -59,7 +59,15 @@ describe('atomicWrite parity between the Electron and collector copies', () => {
     // run-parity.mjs compares CLI behaviour and has no symlink, hard-link, mode
     // or read-only case at all, so do not read it as covering these.
     // It is not a proof of equivalence, but it fails loudly if a rule is deleted.
-    for (const marker of ['resolveRealPath', 'hardLinked', 'linkCountOf', 'EACCES']) {
+    // The two error texts below are pinned across all three copies (#72, #67).
+    for (const marker of [
+      'resolveRealPath',
+      'hardLinked',
+      'linkCountOf',
+      'EACCES',
+      'could not write backup',
+      'ELOOP: too many levels of symbolic links',
+    ]) {
       expect(go).toContain(marker);
     }
   });

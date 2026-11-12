@@ -84,13 +84,13 @@ function parseArgs(argv: string[]): Args | null {
   return a;
 }
 
-const utcStamp = (ms: number) =>
+export const utcStamp = (ms: number) =>
   new Date(ms)
     .toISOString()
     .replace(/[-:T]/g, '')
     .slice(0, 14);
 
-function defaultFreeBytes(dir: string): number {
+export function defaultFreeBytes(dir: string): number {
   const s = statfsSync(dir);
   return Number(s.bavail) * Number(s.bsize);
 }

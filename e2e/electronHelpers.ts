@@ -31,6 +31,7 @@ export async function launchApp(): Promise<LaunchedApp> {
   env.LOCALAPPDATA = join(root, 'AppData', 'Local');
   env.CLAUDE_CONFIG_DIR = join(root, '.claude');
   env.CODEX_HOME = join(root, '.codex');
+  env.AETHER_QUIT_DISPOSE_PTYS = '1'; // gated quit-time pty disposal (#230); off for real users
   const windows = process.env.SystemRoot || 'C:\\Windows';
   env.PATH = [bin, join(windows, 'System32', 'WindowsPowerShell', 'v1.0'), join(windows, 'System32'), windows].join(';');
   const entry = join(root, 'bootstrap.cjs');

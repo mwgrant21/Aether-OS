@@ -15,6 +15,9 @@ export type SlotEvent =
 
 export type SlotListener = (event: SlotEvent) => void;
 
+export type SlotDisposeResult = 'idle' | 'exited' | 'timeout' | 'failed';
+export interface DisposeSummary { running: number; exited: number; timedOut: number; failed: number }
+
 const DEFAULT_COLS = 100; // what spawnPty defaults to
 const DEFAULT_ROWS = 30;
 
@@ -107,6 +110,22 @@ export class TerminalSlot extends PtyLifecycle {
 
   setRestarter(fn: () => void): void { this.restarter = fn; }
 
+  /** Ask a live pty to end and wait, at most `timeoutMs`, for its exit event. Never rejects. 'timeout' also
+   *  covers a pty whose kill() node-pty defers until the pty's first data. Subscribe, then arm the timer, then
+   *  kill(), so an exit fired synchronously inside kill() is seen and the timer is cleared. */
+  dispose(timeoutMs: number): Promise<SlotDisposeResult> {
+    const live = this.current;
+    if (!live) return Promise.resolve('idle');
+    return new Promise<SlotDisposeResult>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let off: () => void = () => {};
+      const done = (r: SlotDisposeResult): void => { clearTimeout(timer); off(); resolve(r); };
+      off = this.observe((e) => { if (e.kind === 'state' && e.state === 'exited') done('exited'); });
+      timer = setTimeout(() => done('timeout'), timeoutMs);
+      try { live.kill(); } catch { done('failed'); }
+    });
+  }
+
   /** True only for a bare Enter on an exited slot that has a restarter registered. */
   restartsOn(d: string): boolean { return this.state === 'exited' && this.restarter !== null && d === '\r'; }
 
@@ -168,6 +187,8 @@ export interface TerminalHub {
   readPort(): TerminalReadPort;
   /** Write-only handle for the phone input router: `write` to a running slot, nothing else (no slot, no hub). */
   writePort(): TerminalWritePort;
+  /** Kill every live slot pty and wait up to `timeoutMs` for the exits. Never rejects. */
+  disposeAll(timeoutMs: number): Promise<DisposeSummary>;
 }
 
 const NOOP_ATTACHMENT: TerminalAttachment = { detach() { /* nothing attached */ } };
@@ -384,5 +405,11 @@ export function createTerminalHub(opts: { createMirror?: MirrorFactory } = {}): 
     },
   };
 
-  return { slot: (id) => slots.get(id) as TerminalSlot, readPort: () => port, writePort: () => writePort };
+  async function disposeAll(timeoutMs: number): Promise<DisposeSummary> {
+    const results = await Promise.all([...slots.values()].map((s) => s.dispose(timeoutMs)));
+    const count = (r: SlotDisposeResult): number => results.filter((x) => x === r).length;
+    return { running: results.length - count('idle'), exited: count('exited'), timedOut: count('timeout'), failed: count('failed') };
+  }
+
+  return { slot: (id) => slots.get(id) as TerminalSlot, readPort: () => port, writePort: () => writePort, disposeAll };
 }

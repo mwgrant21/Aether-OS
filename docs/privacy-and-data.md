@@ -644,8 +644,8 @@ restart. With the setting off nothing is staged and nothing is sent: the transcr
 extraction queue, and a drain tick also discards anything already queued rather than sending it.
 `CostGuardCard` lists the row as a network surface.
 
-**What is sent, and to whom.** To Anthropic under a Claude subscription login (see Isolation
-below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification; when that result is the harness stub or empty, the subagent's own hand-back report, at most 8,000 characters, is sent instead) plus up to 20
+**What is sent, and to whom.** To Anthropic, and intended to be billed under a Claude subscription login
+(see Isolation below), from the collector, per qualifying dispatch: the agent id, the dispatch result text (`extractDispatchResultText` of the task-notification; when that result is the harness stub or empty, the subagent's own hand-back report, at most 8,000 characters, is sent instead) plus up to 20
 memories previously extracted for that agent. Aether-initiated with no human typing the turn,
 which is what makes it a distinct boundary, like §12. It is usually sent within about 30 seconds
 of the dispatch completing.
@@ -704,9 +704,11 @@ standard as the §18 `Hooks disabled.` bullet). The argv, pinned in
   at all, which is unverified. The call still writes an ordinary Claude session transcript under
   `~/.claude/projects/` for the working folder (`--no-session-persistence` is not used).
 - **Which login, and can it bill.** The gate above means the call is not made on an API key,
-  `apiKeyHelper`, Bedrock/Vertex/Foundry or `ANTHROPIC_BASE_URL` setup that Claude Code reports.
-  Whether `-p` then uses the credential `auth status` reported is not checked on a live run, so
-  this is a strong guard, not a guarantee.
+  `apiKeyHelper` or Bedrock/Vertex/Foundry setup that Claude Code reports. Both the `auth status`
+  call and the `-p` call run with `ANTHROPIC_BASE_URL` removed from their environment (the
+  environment scrub above), and the gate reads only `authMethod`; whether `auth status` itself
+  reflects a base-URL override is unverified. Whether `-p` then uses the credential `auth status`
+  reported is not checked on a live run, so this is a strong guard, not a guarantee.
 
 **What is stored.** Model-written memory atoms in `~/.aether-os/memory.db`. They derive from
 transcript content, which strains the Stage 14 "never in `~/.aether-os/`" amendment in §4; this
