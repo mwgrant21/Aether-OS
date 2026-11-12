@@ -88,25 +88,30 @@ func IngestDispatchEvent(db *sql.DB, history *ToolCallHistory, event *Event) (bo
 	if outcome.Usage != nil {
 		tokens, toolUses, durationMs = outcome.Usage.Tokens, outcome.Usage.ToolUses, outcome.Usage.DurationMs
 	}
-	exitState := "ok"
-	switch outcome.Status {
-	case StatusFailed:
-		exitState = "error"
-	case StatusKilled:
-		exitState = "killed"
-	}
 	endedAtMs := event.Timestamp.UnixMilli()
+	// Only completed runs are scored for slowness: unknown stays at 1.
+	var elapsedMs int64
+	if outcome.Status == StatusCompleted && outcome.Usage != nil {
+		elapsedMs = outcome.Usage.DurationMs
+	}
+	baseline, err := MedianDurationMsFor(db, open.SubagentType, dispatchToolUseID, endedAtMs)
+	if err != nil {
+		return false, err
+	}
+	exit := ExitStateForStatus(outcome.Status)
+	severity, median := ComputeSeverity(exit, elapsedMs, baseline)
 
-	_, err := db.Exec(
+	_, err = db.Exec(
 		`INSERT INTO dispatches (tool_use_id, tokens, tool_uses, duration_ms, started_at_ms, ended_at_ms,
-		   agent_id, task_kind, session_id, retries, exit_state, dispatch_status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   agent_id, task_kind, session_id, retries, exit_state, severity, median_ms_at_eval, dispatch_status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(tool_use_id) DO UPDATE SET tokens = excluded.tokens, tool_uses = excluded.tool_uses,
 		   duration_ms = excluded.duration_ms, ended_at_ms = excluded.ended_at_ms,
 		   agent_id = excluded.agent_id, task_kind = excluded.task_kind, session_id = excluded.session_id,
-		   retries = excluded.retries, exit_state = excluded.exit_state, dispatch_status = excluded.dispatch_status`,
+		   retries = excluded.retries, exit_state = excluded.exit_state, severity = excluded.severity,
+		   median_ms_at_eval = excluded.median_ms_at_eval, dispatch_status = excluded.dispatch_status`,
 		dispatchToolUseID, tokens, toolUses, durationMs, open.StartedAt, endedAtMs,
-		open.SubagentType, open.SubagentType, open.SessionID, 0, exitState, string(outcome.Status),
+		open.SubagentType, open.SubagentType, open.SessionID, 0, string(exit), severity, median, string(outcome.Status),
 	)
 	if err != nil {
 		return false, err
