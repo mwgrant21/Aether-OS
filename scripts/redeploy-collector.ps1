@@ -29,7 +29,8 @@
 .PARAMETER Version
     Defaults to "version" in the repo-root package.json.
 .PARAMETER StageRoot
-    Defaults to D:\AetherBuilds.
+    Defaults to D:\AetherBuilds. A relative path is resolved against the current
+    PowerShell location; forward slashes are normalised.
 .PARAMETER Rollback
     Undo an unfinished deploy from ~\.aether-os\redeploy-journal.json. Needs no
     -Version/-StageRoot/-DbPath. With -DryRun it prints each rollback step only.
@@ -41,12 +42,14 @@
     dir already non-empty or in use by the current Run value, -DbPath other than
     ~\.aether-os\collector.db, Run command over 260 characters, an existing
     ~\.aether-os\redeploy-journal.json, a non-REG_SZ Run value, -VerifySeconds
-    outside 1..60; all checked before
+    outside 1..60, or an unparseable -StageRoot; all checked before
     anything is changed), or -Rollback with no journal / an unreadable journal.
     3 rollback incomplete, from -Rollback or from a failed deploy's automatic
     rollback: a manual step is needed (RECOVERY lines are printed) and the journal
     is left open. -Rollback exits 0 when complete or when it only
     removed a stale journal of a deploy that had verified.
+    -DryRun -Rollback always exits 0 once the journal is readable; read the printed
+    lines for what a real run would leave undone.
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
@@ -150,6 +153,16 @@ function Get-PreflightError {
     # (empty JournalPath skips the journal guard; empty RunKind = Run value absent).
     param([string]$Stage, [string]$OldIndex, [string]$DbPath, [string]$ExpectedDbPath, [string]$RunValue,
           [string]$JournalPath, [string]$RunKind, [int]$VerifySeconds = 30)
+    # The open-journal guard runs first: an unfinished redeploy means the state is unknown, so
+    # every other advice (e.g. "pass a different -Version") would be premature.
+    if ($JournalPath -and (Test-Path -LiteralPath $JournalPath)) {
+        try {
+            $j = Read-Journal -Path $JournalPath
+            return "an unfinished redeploy journal exists: $JournalPath (phase $($j.phase), version $($j.version)). Run scripts\redeploy-collector.ps1 -Rollback to restore the previous state, or delete the file by hand only after checking the HKCU Run value. Nothing was changed."
+        } catch {
+            return "$($_.Exception.Message). Check the HKCU Run value, then delete the file by hand. Nothing was changed."
+        }
+    }
     $inUse = $false
     try {
         $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd('\')
@@ -171,14 +184,6 @@ function Get-PreflightError {
     }
     if ($RunValue.Length -gt $MaxRunCommandLength) {
         return "Run-key command is $($RunValue.Length) characters; Windows ignores commands over $MaxRunCommandLength at logon. Use a shorter -StageRoot. Nothing was changed."
-    }
-    if ($JournalPath -and (Test-Path -LiteralPath $JournalPath)) {
-        try {
-            $j = Read-Journal -Path $JournalPath
-            return "an unfinished redeploy journal exists: $JournalPath (phase $($j.phase), version $($j.version)). Run scripts\redeploy-collector.ps1 -Rollback to restore the previous state, or delete the file by hand only after checking the HKCU Run value. Nothing was changed."
-        } catch {
-            return "$($_.Exception.Message). Check the HKCU Run value, then delete the file by hand. Nothing was changed."
-        }
     }
     if ($RunKind -and $RunKind -ne 'String') {
         return "the Run value $RunKeyName is $RunKind, not REG_SZ; this script only round-trips REG_SZ. Recreate it as REG_SZ by hand first. Nothing was changed."
@@ -264,8 +269,9 @@ function Test-CollectorAlive {
 function Test-OldCollectorRunning {
     # Read-only. Same matcher as Stop-OldCollector: every collector under <StageRoot>\*collector*index.js*
     # plus the old Run value's index.js, so it may be a different version than the Run value names.
+    # Counts node.exe only (a lone conhost.exe is not a running collector), mirroring R3's own check.
     param([string]$StageRoot, [string]$ExtraIndexJs)
-    $procs = @(Get-CollectorProcessMatch -Processes @(Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID -ExtraIndexJs $ExtraIndexJs)
+    $procs = @(Get-CollectorProcessMatch -Processes @(Get-WmiObject Win32_Process) -StageRoot $StageRoot -ExcludePid $PID -ExtraIndexJs $ExtraIndexJs | Where-Object { $_.Name -eq 'node.exe' })
     [bool]($procs.Count -gt 0)
 }
 
@@ -465,7 +471,7 @@ function Get-RunValueNow {
 }
 
 function Write-RecoveryText {
-    # Printed only with exit 3. Order matters: check, old value, stop the NEW collector before starting the old one, db, re-run.
+    # Printed with exit 3, and in a dry run that previews an incomplete rollback. Order matters: check, old value, stop the NEW collector before starting the old one, db, re-run.
     param($Journal, [string]$JournalPath)
     $oldRun = Get-JournalField $Journal 'oldRun'
     $ix = Get-JournalField $Journal 'indexJs'
@@ -482,7 +488,7 @@ function Write-RecoveryText {
 }
 
 function Invoke-Rollback {
-    # Reports the outcome ONLY through $script:RC (0 complete, 3 incomplete), never by returning a value.
+    # Reports the outcome ONLY through $script:RC (0 complete, 3 incomplete; a dry run is always 0), never by returning a value.
     # Each step is idempotent. R2 runs even when R1 failed; R3 and R4 are skipped when R1 failed.
     param($Journal, [string]$JournalPath, [bool]$Dry)
     if ((Get-JournalField $Journal 'phase') -eq 'verified') {
@@ -492,9 +498,11 @@ function Invoke-Rollback {
     }
     $bad = Test-JournalShape $Journal
     if ($bad) {
-        Write-Output "ROLLBACK INCOMPLETE: journal is not valid ($bad); nothing was touched."
+        if ($Dry) { Write-Output "DRY-RUN: a real rollback would be INCOMPLETE: journal is not valid ($bad); nothing was touched." }
+        else { Write-Output "ROLLBACK INCOMPLETE: journal is not valid ($bad); nothing was touched." }
         Write-Output "RECOVERY: check the Run value by hand (Get-ItemProperty -Path '$RunKeyPath' -Name '$RunKeyName'), then delete $JournalPath by hand."
-        $script:RC = 3; return
+        if ($Dry) { $script:RC = 0 } else { $script:RC = 3 }
+        return
     }
     $oldRun = Get-JournalField $Journal 'oldRun'
     $newRun = Get-JournalField $Journal 'newRunValue'
@@ -560,7 +568,7 @@ function Invoke-Rollback {
     }
 
     Write-Output '===== R3: relaunch the old collector ====='
-    $ranOld = $false
+    $oldTail = 'old collector was not running before'
     if (-not $r1ok) {
         $problems += 'R3 skipped (the new collector may still be running)'
         Write-Output 'WARNING: R3 skipped: the new collector may still be running, so a second writer is not safe.'
@@ -568,24 +576,26 @@ function Invoke-Rollback {
         Write-Output 'the old collector was not running before this run; not started'
     } elseif ([string]::IsNullOrEmpty($oldRun)) {
         Write-Output 'R3: the old Run value is empty or absent, so the old collector was not launched via the Run key; nothing to relaunch.'
+        $oldTail = 'old collector was running before but has no Run-key launch command, so it was not relaunched; start it by hand if you need it'
     } else {
         try {
-            $manual = "start it by hand: $oldRun"
+            $manual = "check that no collector (a node.exe running an index.js) is already running, then start it by hand: $oldRun"
             $existing = @(Get-ExactIndexProcessMatch -Processes @(Get-WmiObject Win32_Process) -IndexJs $oldIdx -ExcludePid $PID | Where-Object { $_.Name -eq 'node.exe' })
             $node = Get-NodeExeFromRunValue $oldRun
             if ($existing.Count -gt 0) {
-                $ranOld = $true
+                $oldTail = 'old collector running'
                 Write-Output "R3: the old collector is already running (PID $($existing[0].ProcessId)); not started again."
             } elseif (-not $oldIdx -or -not $node -or -not (Test-Path -LiteralPath $oldIdx)) {
                 $problems += "R3 cannot relaunch the old collector ($manual)"
                 Write-Output "WARNING: R3 cannot relaunch: no usable old index.js / node.exe in the old Run value or the index.js is missing; $manual"
             } elseif ($Dry) {
+                $oldTail = 'old collector would be relaunched'
                 Write-Output "[DRY-RUN] R3 Start-Process conhost.exe --headless `"$node`" `"$oldIdx`" (cwd $(Split-Path (Split-Path $oldIdx)))"
             } else {
                 Write-Output "[RUN] Start-Process conhost.exe --headless `"$node`" `"$oldIdx`""
                 Start-Process conhost.exe -ArgumentList '--headless', "`"$node`"", "`"$oldIdx`"" -WorkingDirectory (Split-Path (Split-Path $oldIdx))
                 Start-Sleep -Seconds $RelaunchWaitSeconds
-                if (Test-CollectorAlive $oldIdx) { $ranOld = $true; Write-Output 'R3: the old collector is running.' }
+                if (Test-CollectorAlive $oldIdx) { $oldTail = 'old collector running'; Write-Output 'R3: the old collector is running.' }
                 else { $problems += "R3 old collector is not running after relaunch ($manual)"; Write-Output "WARNING: R3 the old collector is not running after relaunch; $manual" }
             }
         } catch {
@@ -623,13 +633,13 @@ function Invoke-Rollback {
             try { Remove-Journal -Path $JournalPath; Write-Output "journal deleted: $JournalPath" }
             catch { Write-Output "WARNING: could not delete the journal $JournalPath ($($_.Exception.Message)); delete it by hand." }
         }
-        if ($ranOld) { Write-Output 'ROLLBACK COMPLETE: previous Run value restored, old collector running' }
-        else { Write-Output 'ROLLBACK COMPLETE: previous Run value restored, old collector was not running before' }
+        Write-Output "ROLLBACK COMPLETE: previous Run value restored, $oldTail"
         $script:RC = 0
     } else {
-        Write-Output "ROLLBACK INCOMPLETE: $($problems -join '; ')"
+        if ($Dry) { Write-Output "DRY-RUN: a real rollback would be INCOMPLETE: $($problems -join '; ')" }
+        else { Write-Output "ROLLBACK INCOMPLETE: $($problems -join '; ')" }
         Write-RecoveryText -Journal $Journal -JournalPath $JournalPath
-        $script:RC = 3
+        if ($Dry) { $script:RC = 0 } else { $script:RC = 3 }
     }
 }
 
@@ -661,6 +671,13 @@ function Invoke-Redeploy {
     if (-not $Version) { $Version = (Get-Content -Raw $pkgPath | ConvertFrom-Json).version }
     if ($Version -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$') {
         Write-Output "ERROR: bad version '$Version'"
+        $script:RC = 2; return
+    }
+    try {
+        if (-not [IO.Path]::IsPathRooted($StageRoot)) { $StageRoot = Join-Path (Get-Location).Path $StageRoot }
+        $StageRoot = [IO.Path]::GetFullPath($StageRoot)
+    } catch {
+        Write-Output "ERROR: -StageRoot '$StageRoot' is not a valid path ($($_.Exception.Message)). Nothing was changed."
         $script:RC = 2; return
     }
     $stage = Join-Path (Join-Path $StageRoot $Version) 'collector'
