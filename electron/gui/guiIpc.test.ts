@@ -79,6 +79,16 @@ describe('registerGuiIpc', () => {
     expect(s.session.start).toHaveBeenCalledWith(home);
   });
 
+  it('a trusted project start with no store stops the session; a home start with no store does not', async () => {
+    const s = setup({ store: 'none' });
+    expect(await s.handlers.get(C.start)!(ev, { projectId: 'i1', cols: 80, rows: 24 })).toEqual({ ok: false, reason: 'unavailable' });
+    expect(s.session.stop).toHaveBeenCalledTimes(1);
+    expect(s.session.start).not.toHaveBeenCalled();
+    await s.handlers.get(C.start)!(ev, { projectId: null, cols: 80, rows: 24 });
+    expect(s.session.start).toHaveBeenCalledTimes(1);
+    expect(s.session.stop).toHaveBeenCalledTimes(1);
+  });
+
   it('remove validates the id type; start/submit/write/resize forward raw payloads', async () => {
     const s = setup();
     expect(await s.handlers.get(C.projectsRemove)!(ev, 5)).toBe(false);

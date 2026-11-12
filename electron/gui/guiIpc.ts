@@ -45,7 +45,10 @@ export function registerGuiIpc(ipc: Pick<IpcMain, 'handle' | 'on'>, o: GuiIpcDep
     if (!o.isTrusted(e)) return { ok: false, reason: 'bad-request' };
     const projectId = typeof req === 'object' && req !== null ? (req as { projectId?: unknown }).projectId : undefined;
     // A project start needs the store (path lookup); the home-dir "New" chat does not.
-    if (typeof projectId === 'string' && !(await o.getStore())) return { ok: false, reason: 'unavailable' };
+    if (typeof projectId === 'string' && !(await o.getStore())) {
+      o.session.stop(); // this rejection never reaches session.start, so end the live chat here (trusted senders only)
+      return { ok: false, reason: 'unavailable' };
+    }
     return o.session.start(req);
   });
 
