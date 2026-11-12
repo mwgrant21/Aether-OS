@@ -168,7 +168,7 @@ function emptyEntry(terminal, nowMs) {
 // ---------------------------------------------------------------------------------------
 // PARITY: atomic writer. Source of truth: uniqueSiblingPath / resolveRealPath /
 // writeFileAtomically in electron/atomicWrite.ts (same aethertmp marker, same rules:
-// follow symlinks incl. dangling, keep mode bits, refuse a read-only target with EACCES,
+// follow symlinks incl. dangling (ELOOP past 32 hops), keep mode bits, refuse a read-only target with EACCES,
 // write a hard-linked target in place, otherwise tmp sibling + chmod + rename, and remove
 // the tmp on any failure except a lost exclusive create).
 // ---------------------------------------------------------------------------------------
@@ -176,22 +176,27 @@ function uniqueSiblingPath(targetPath, marker) {
   return `${targetPath}.${marker}-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
 }
 
-function resolveRealPath(targetPath, depth = 0) {
+function resolveRealPath(targetPath, depth = 0, origin = targetPath) {
   try {
     return realpathSync(targetPath);
   } catch {
-    if (depth < 32) {
-      try {
-        if (lstatSync(targetPath).isSymbolicLink()) {
-          const link = readlinkSync(targetPath);
-          const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
-          return resolveRealPath(next, depth + 1);
-        }
-      } catch {
-        // Not a link, or unreadable: fall through to the path itself.
-      }
+    let link;
+    try {
+      if (lstatSync(targetPath).isSymbolicLink()) link = readlinkSync(targetPath);
+    } catch {
+      // Not a link, or unreadable: fall through to the path itself.
     }
-    return targetPath;
+    if (link === undefined) return targetPath;
+    // The cap fails loudly (#72): returning the hop would let the writer rename over a
+    // link in the middle of the chain. persist() maps this to exit 4 (write failed).
+    if (depth >= 32) {
+      const err = new Error(`ELOOP: too many levels of symbolic links, resolve '${origin}'`);
+      err.code = 'ELOOP';
+      err.path = origin;
+      throw err;
+    }
+    const next = isAbsolute(link) ? link : resolve(dirname(targetPath), link);
+    return resolveRealPath(next, depth + 1, origin);
   }
 }
 
