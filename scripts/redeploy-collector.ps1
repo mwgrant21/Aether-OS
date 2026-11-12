@@ -47,6 +47,8 @@
     rollback: a manual step is needed (RECOVERY lines are printed) and the journal
     is left open. -Rollback exits 0 when complete or when it only
     removed a stale journal of a deploy that had verified.
+    -DryRun -Rollback always exits 0 once the journal is readable; read the printed
+    lines for what a real run would leave undone.
     PowerShell 5.1. The Run key value matches the hand-made one:
     conhost.exe --headless "<node.exe>" "<staged index.js>"
 #>
@@ -468,7 +470,7 @@ function Get-RunValueNow {
 }
 
 function Write-RecoveryText {
-    # Printed only with exit 3. Order matters: check, old value, stop the NEW collector before starting the old one, db, re-run.
+    # Printed with exit 3, and in a dry run that previews an incomplete rollback. Order matters: check, old value, stop the NEW collector before starting the old one, db, re-run.
     param($Journal, [string]$JournalPath)
     $oldRun = Get-JournalField $Journal 'oldRun'
     $ix = Get-JournalField $Journal 'indexJs'
@@ -485,7 +487,7 @@ function Write-RecoveryText {
 }
 
 function Invoke-Rollback {
-    # Reports the outcome ONLY through $script:RC (0 complete, 3 incomplete), never by returning a value.
+    # Reports the outcome ONLY through $script:RC (0 complete, 3 incomplete; a dry run is always 0), never by returning a value.
     # Each step is idempotent. R2 runs even when R1 failed; R3 and R4 are skipped when R1 failed.
     param($Journal, [string]$JournalPath, [bool]$Dry)
     if ((Get-JournalField $Journal 'phase') -eq 'verified') {
@@ -495,9 +497,11 @@ function Invoke-Rollback {
     }
     $bad = Test-JournalShape $Journal
     if ($bad) {
-        Write-Output "ROLLBACK INCOMPLETE: journal is not valid ($bad); nothing was touched."
+        if ($Dry) { Write-Output "DRY-RUN: a real rollback would be INCOMPLETE: journal is not valid ($bad); nothing was touched." }
+        else { Write-Output "ROLLBACK INCOMPLETE: journal is not valid ($bad); nothing was touched." }
         Write-Output "RECOVERY: check the Run value by hand (Get-ItemProperty -Path '$RunKeyPath' -Name '$RunKeyName'), then delete $JournalPath by hand."
-        $script:RC = 3; return
+        if ($Dry) { $script:RC = 0 } else { $script:RC = 3 }
+        return
     }
     $oldRun = Get-JournalField $Journal 'oldRun'
     $newRun = Get-JournalField $Journal 'newRunValue'
@@ -631,9 +635,10 @@ function Invoke-Rollback {
         Write-Output "ROLLBACK COMPLETE: previous Run value restored, $oldTail"
         $script:RC = 0
     } else {
-        Write-Output "ROLLBACK INCOMPLETE: $($problems -join '; ')"
+        if ($Dry) { Write-Output "DRY-RUN: a real rollback would be INCOMPLETE: $($problems -join '; ')" }
+        else { Write-Output "ROLLBACK INCOMPLETE: $($problems -join '; ')" }
         Write-RecoveryText -Journal $Journal -JournalPath $JournalPath
-        $script:RC = 3
+        if ($Dry) { $script:RC = 0 } else { $script:RC = 3 }
     }
 }
 

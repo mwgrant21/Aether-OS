@@ -941,6 +941,26 @@ Describe 'Invoke-Rollback engine (every process / registry cmdlet mocked; journa
         Test-Path $c.JP | Should Be $false
         Get-RbCount '.' | Should Be 0
     }
+    It 'dry run with a validator failure: RC 0, "would be INCOMPLETE" plus RECOVERY lines, nothing touched, journal kept' {
+        $c = New-RbCase @{} $null 'String'
+        $global:RbRun = 'something else'
+        $r = Invoke-RbEngine $c $true
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'would be INCOMPLETE'
+        $r.Out | Should Match 'RECOVERY: 1\.'
+        $r.Out | Should Not Match 'ROLLBACK INCOMPLETE'
+        Get-RbCount '.' | Should Be 0
+        Test-Path $c.JP | Should Be $true
+    }
+    It 'dry run with a bad-shape journal: RC 0, "would be INCOMPLETE", nothing touched, journal kept' {
+        $c = New-RbCase @{ phase = $null } $null 'String'
+        $r = Invoke-RbEngine $c $true
+        $r.RC | Should Be 0
+        $r.Out | Should Match 'would be INCOMPLETE'
+        $r.Out | Should Not Match 'ROLLBACK INCOMPLETE'
+        Get-RbCount '.' | Should Be 0
+        Test-Path $c.JP | Should Be $true
+    }
     It 'R2: current == new value -> restored with Set and read back, RC 0, journal deleted' {
         $c = New-RbCase @{ oldWasRunning = $false } $null 'String'
         $global:RbRun = $c.NewRun
