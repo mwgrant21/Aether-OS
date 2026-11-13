@@ -1,11 +1,11 @@
 import { frameComposerInput } from './composerInput';
 import {
-  GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS, GUI_CHANNELS, GUI_DEFAULT_PERMISSION_MODE, GUI_NEW_KEY, isGuiPermissionMode,
+  GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS, GUI_CHANNELS, GUI_DEFAULT_PERMISSION_MODE, GUI_NEW_KEY, GUI_KILL_WAIT_MS, isGuiPermissionMode,
   type GuiPermissionMode, type StartResult,
 } from './guiTypes';
 
 // Structural stand-ins for PtyLike / PtyLifecycle: this file must not import the pty modules (controlBoundary test).
-export interface GuiPty { onData(cb: (d: string) => void): void; onExit(cb: () => void): void; kill(): void; write(i: string): void; resize(c: number, r: number): void }
+export interface GuiPty { onData(cb: (d: string) => void): void; onExit(cb: () => void): void; kill(): void; write(i: string): void; resize(c: number, r: number): void; resume?(): void }
 export interface GuiLifecycle {
   readonly current: unknown | null;
   start(spawn: () => GuiPty, h: { onData: (d: string) => void; onAlive: () => void; onExit: () => void }, size?: { cols: number; rows: number }): unknown;
@@ -26,9 +26,27 @@ export interface GuiSessionDeps {
   log?: (l: string) => void;
 }
 export interface GuiSession {
-  start(req: unknown): StartResult; write(input: unknown): boolean; resize(c: unknown, r: unknown): void;
+  start(req: unknown): Promise<StartResult>; write(input: unknown): boolean; resize(c: unknown, r: unknown): void;
   submit(text: unknown): boolean; live(): boolean; stop(): void; dispose(): void;
 }
+
+// Forwards to the real pty and registers exactly ONE onExit on it (RemotePty keeps a single callback), so the session
+// can tell when a killed pty has really gone. resume() is forwarded because PtyLifecycle calls it after wiring.
+export function trackExit(p: GuiPty): { pty: GuiPty; gone: Promise<void>; isGone: () => boolean } {
+  let isGone = false;
+  let markGone: () => void = () => {};
+  const gone = new Promise<void>((r) => { markGone = r; });
+  const pty: GuiPty = {
+    onData: (cb) => p.onData(cb),
+    onExit: (cb) => p.onExit(() => { isGone = true; markGone(); cb(); }),
+    kill: () => p.kill(),
+    write: (i) => p.write(i),
+    resize: (c, r) => p.resize(c, r),
+    resume: () => (p as { resume?: () => void }).resume?.(),
+  };
+  return { pty, gone, isGone: () => isGone };
+}
+type Tracked = ReturnType<typeof trackExit>;
 
 const isDim = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 1000;
 
@@ -41,6 +59,8 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   let disposed = false;
   // Conversation id per key (project id, or GUI_NEW_KEY). In memory only; stop/exit never clear it so an ended chat can resume.
   const resumeIds = new Map<string, string>();
+  let active: Tracked | null = null; // the pty the lifecycle currently holds
+  let dying: Tracked | null = null;  // a killed pty whose exit has not fired yet: the next start waits for it (bounded)
   let alive = false; // false from stop()/exit even while lifecycle.current is still non-null (kill() does not null it until the pty exits)
 
   const clearEnter = (): void => {
@@ -59,9 +79,16 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     alive = false;
     if (d.lifecycle.current === null) return;
     try { d.lifecycle.kill(); } catch { d.log?.('gui session: kill failed'); }
+    if (active && !active.isGone()) dying = active;
   }
 
-  function start(req: unknown): StartResult {
+  // Resolves when the killed pty has exited or GUI_KILL_WAIT_MS has passed, whichever is first.
+  const waitForExit = (t: Tracked): Promise<void> => new Promise((res) => {
+    const cancel = d.schedule(res, GUI_KILL_WAIT_MS);
+    void t.gone.then(() => { cancel(); res(); });
+  });
+
+  async function start(req: unknown): Promise<StartResult> {
     if (disposed) return { ok: false, reason: 'unavailable' };
     if (typeof req !== 'object' || req === null) { stop(); return { ok: false, reason: 'bad-request' }; }
     const { projectId, cols, rows, restart, resume, mode: reqMode } = req as Record<string, unknown>;
@@ -87,16 +114,29 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     clearEnter();
     const myGen = ++seq;
     gen = myGen;
+    // Kill the old pty first and, if it has not exited, wait for it so two claudes never share one conversation.
+    if (d.lifecycle.current !== null && active && !active.isGone() && dying !== active) {
+      alive = false;
+      runningProjectId = undefined;
+      try { d.lifecycle.kill(); } catch { d.log?.('gui session: kill failed'); }
+      dying = active;
+    }
+    if (dying && !dying.isGone()) {
+      await waitForExit(dying);
+      if (myGen !== gen || disposed) return { ok: false, reason: 'superseded' };
+    }
+    dying = null;
     // Selector: fresh -> new id (recorded after the spawn succeeded); resume -> the known id, else --continue.
     const knownId = resume === true && d.resumeById ? resumeIds.get(key) : undefined;
     const freshId = resume === true ? undefined : d.randomUUID();
+    let spawned: Tracked | null = null;
     try {
       d.lifecycle.start(
-        () => d.spawn(
+        () => (spawned = trackExit(d.spawn(
           freshId !== undefined ? { cwd, cols, rows, mode, sessionId: freshId }
             : knownId !== undefined ? { cwd, cols, rows, mode, resumeId: knownId }
               : { cwd, cols, rows, mode, continueLast: true },
-        ),
+        ))).pty,
         {
           onData: (data) => { if (myGen === gen) d.send(GUI_CHANNELS.data, data); },
           onAlive: () => { if (myGen === gen) d.send(GUI_CHANNELS.alive); },
@@ -112,9 +152,11 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
       );
     } catch {
       stop(); // a failed start leaves nothing live; handlers of the failed new pty and the old one stay dropped
+      if (spawned && !(spawned as Tracked).isGone()) dying = spawned;
       d.log?.('gui session: start failed');
       return { ok: false, reason: 'spawn-failed' };
     }
+    active = spawned;
     if (freshId !== undefined) resumeIds.set(key, freshId);
     runningProjectId = projectId;
     alive = true;
