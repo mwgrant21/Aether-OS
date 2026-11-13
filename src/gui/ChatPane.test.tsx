@@ -1,14 +1,35 @@
-import { StrictMode } from 'react';
+import { StrictMode, useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { StartResult } from '../../electron/gui/guiTypes';
-import { ChatPane } from './ChatPane';
+import { ChatPane, type ChatPaneStatus } from './ChatPane';
+
+// ChatPane's mode is controlled: the harness plays GuiApp's part and keeps it in state.
+const onStatus = vi.fn<(s: ChatPaneStatus) => void>();
+type PaneProps = Partial<ComponentProps<typeof ChatPane>> & { projectId: string | null };
+function Pane({ mode: initialMode, onModeChange, ...p }: PaneProps) {
+  const [mode, setMode] = useState(initialMode ?? 'auto');
+  return (
+    <ChatPane
+      active
+      onStatus={onStatus}
+      {...p}
+      mode={mode}
+      onModeChange={(m) => {
+        setMode(m);
+        onModeChange?.(m);
+      }}
+    />
+  );
+}
+
 
 const mocks = vi.hoisted(() => ({
   write: vi.fn(),
   reset: vi.fn(),
   dispose: vi.fn(),
   fitTo: undefined as { cols: number; rows: number } | undefined,
+  fits: 0,
   data: undefined as ((input: string) => void) | undefined,
   resize: undefined as ((s: { cols: number; rows: number }) => void) | undefined,
   order: [] as string[],
@@ -47,6 +68,7 @@ vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
     term?: { cols: number; rows: number };
     fit() {
+      mocks.fits += 1;
       if (mocks.fitTo && this.term) {
         this.term.cols = mocks.fitTo.cols;
         this.term.rows = mocks.fitTo.rows;
@@ -125,11 +147,13 @@ const advance = (ms: number) =>
 const box = () => screen.getByLabelText('Message') as HTMLTextAreaElement;
 
 beforeEach(() => {
+  onStatus.mockClear();
   vi.useFakeTimers();
   mocks.write.mockClear();
   mocks.reset.mockClear();
   mocks.dispose.mockClear();
   mocks.fitTo = undefined;
+  mocks.fits = 0;
   mocks.screen = [];
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 });
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 600 });
@@ -148,7 +172,7 @@ describe('ChatPane', () => {
   it('subscribes onData before start, and starts once with the project id and fitted size', async () => {
     install();
     mocks.fitTo = { cols: 100, rows: 30 };
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(1);
     expect(gui.start).toHaveBeenCalledWith({ projectId: 'p1', cols: 100, rows: 30, mode: 'auto' });
@@ -159,7 +183,7 @@ describe('ChatPane', () => {
   it('reports live and keeps the composer disabled until output then 1500 ms of quiet', async () => {
     install();
     const onLive = vi.fn();
-    render(<ChatPane projectId={null} onLiveChange={onLive} />);
+    render(<Pane projectId={null} onLiveChange={onLive} />);
     await flush();
     expect(onLive).toHaveBeenCalledWith(true);
     expect(box().disabled).toBe(true);
@@ -181,7 +205,7 @@ describe('ChatPane', () => {
 
   it('enables the composer at the 8 s ceiling when output never goes quiet', async () => {
     install();
-    render(<ChatPane projectId={null} onLiveChange={vi.fn()} />);
+    render(<Pane projectId={null} onLiveChange={vi.fn()} />);
     await flush();
     for (let t = 0; t < 7000; t += 1000) {
       act(() => chunk!('spin'));
@@ -210,7 +234,7 @@ describe('ChatPane', () => {
       });
     render(
       <StrictMode>
-        <ChatPane projectId="p1" onLiveChange={vi.fn()} />
+        <Pane projectId="p1" onLiveChange={vi.fn()} />
       </StrictMode>,
     );
     await flush();
@@ -231,7 +255,7 @@ describe('ChatPane', () => {
   it('enables after the reply when the quiet timer fired before the start reply resolved', async () => {
     let reply!: (r: StartResult) => void;
     install(new Promise<StartResult>((r) => (reply = r)));
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     act(() => chunk!('early'));
     await act(async () => {
@@ -245,7 +269,7 @@ describe('ChatPane', () => {
 
   it('a normal first start is sent without restart and enables after the quiet window', async () => {
     install();
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(1);
     expect(gui.start.mock.calls[0]![0]).not.toHaveProperty('restart');
@@ -261,7 +285,7 @@ describe('ChatPane', () => {
     gui.start
       .mockImplementationOnce(() => Promise.resolve({ ok: true, reused: true }))
       .mockImplementation(() => Promise.resolve({ ok: true, reused: false }));
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(2);
@@ -281,7 +305,7 @@ describe('ChatPane', () => {
     gui.start
       .mockImplementationOnce(() => Promise.resolve({ ok: true, reused: true }))
       .mockImplementation(() => new Promise<StartResult>((r) => (replyRestart = r)));
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(2);
@@ -300,7 +324,7 @@ describe('ChatPane', () => {
 
   it('a second reused answer does not restart again, keeps the composer disabled and shows the hint', async () => {
     install({ ok: true, reused: true });
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     await flush();
     await advance(16000);
@@ -311,7 +335,7 @@ describe('ChatPane', () => {
 
   it('shows the no-output hint after 15 s and keeps the composer disabled', async () => {
     install();
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     expect(screen.queryByText(/No output from Claude yet/)).toBeNull();
     await act(async () => {
@@ -324,7 +348,7 @@ describe('ChatPane', () => {
 
   it('submit calls gui.submit with the text', async () => {
     install();
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     act(() => chunk!('hello'));
     await advance(1700);
@@ -336,7 +360,7 @@ describe('ChatPane', () => {
 
   it('typed xterm data goes to gui.write and resizes to gui.resize', async () => {
     install();
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     mocks.data!('y');
     expect(gui.write).toHaveBeenCalledWith('p1', 'y');
@@ -346,7 +370,7 @@ describe('ChatPane', () => {
 
   it('write, resize and submit of the New chat carry the new key', async () => {
     install();
-    render(<ChatPane projectId={null} onLiveChange={vi.fn()} />);
+    render(<Pane projectId={null} onLiveChange={vi.fn()} />);
     await flush();
     act(() => chunk!('hello'));
     await advance(1600);
@@ -362,7 +386,7 @@ describe('ChatPane', () => {
 
   it('ignores data and exit events for another key', async () => {
     install();
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     act(() => chunk!('other chat output', 'p2'));
     expect(mocks.write).not.toHaveBeenCalledWith('other chat output');
@@ -377,7 +401,7 @@ describe('ChatPane', () => {
 
   it('too-many-live shows its text and Restart', async () => {
     install({ ok: false, reason: 'too-many-live' });
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     expect(screen.getByText('Too many chats are working. Wait for one to finish.')).toBeTruthy();
     expect(screen.getByText('Restart')).toBeTruthy();
@@ -386,7 +410,7 @@ describe('ChatPane', () => {
   it('a superseded start reply is a no-op: no error, no Restart', async () => {
     install({ ok: false, reason: 'superseded' });
     const onLive = vi.fn();
-    render(<ChatPane projectId="p1" onLiveChange={onLive} />);
+    render(<Pane projectId="p1" onLiveChange={onLive} />);
     await flush();
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.queryByText('Restart')).toBeNull();
@@ -399,7 +423,7 @@ describe('ChatPane', () => {
   ] as const)('start failure %s shows the reason and the composer stays disabled', async (reason, text) => {
     install({ ok: false, reason });
     const onLive = vi.fn();
-    render(<ChatPane projectId="p1" onLiveChange={onLive} />);
+    render(<Pane projectId="p1" onLiveChange={onLive} />);
     await flush();
     expect(screen.getByText(text)).toBeTruthy();
     expect(box().disabled).toBe(true);
@@ -409,7 +433,7 @@ describe('ChatPane', () => {
   it('onExit disables the composer and shows Restart, which starts again', async () => {
     install();
     const onLive = vi.fn();
-    render(<ChatPane projectId="p1" onLiveChange={onLive} />);
+    render(<Pane projectId="p1" onLiveChange={onLive} />);
     await flush();
     act(() => chunk!('hello'));
     await advance(1700);
@@ -428,7 +452,7 @@ describe('ChatPane', () => {
     install();
     Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 0 });
     mocks.fitTo = { cols: 1, rows: 1 };
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     expect(gui.start).toHaveBeenCalledWith({ projectId: 'p1', cols: 80, rows: 24, mode: 'auto' });
     expect(gui.resize).not.toHaveBeenCalled();
@@ -436,7 +460,7 @@ describe('ChatPane', () => {
 
   it('unmount unsubscribes and disposes the terminal', async () => {
     install();
-    const { unmount } = render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    const { unmount } = render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     unmount();
     expect(unsubData).toHaveBeenCalledTimes(1);
@@ -447,7 +471,7 @@ describe('ChatPane', () => {
   describe('trust prompt gate', () => {
     it('keeps the composer disabled and shows the hint while the prompt is on screen before ready', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       mocks.screen = PROMPT;
       act(() => chunk!('prompt'));
@@ -458,7 +482,7 @@ describe('ChatPane', () => {
 
     it('re-enables only after the screen is clear and 1.5 s quiet', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       mocks.screen = PROMPT;
       act(() => chunk!('prompt'));
@@ -475,7 +499,7 @@ describe('ChatPane', () => {
 
     it('disables the composer again when the prompt appears after the ready gate fired', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       mocks.screen = ['banner'];
       act(() => chunk!('banner'));
@@ -490,7 +514,7 @@ describe('ChatPane', () => {
 
     it('stays disabled when chunks keep arriving every 200 ms for 10 s over the prompt', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       mocks.screen = PROMPT;
       for (let t = 0; t < 10000; t += 200) {
@@ -503,7 +527,7 @@ describe('ChatPane', () => {
 
     it('onExit clears the hint, and Restart starts again with it still clear', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       mocks.screen = PROMPT;
       act(() => chunk!('prompt'));
@@ -524,7 +548,7 @@ describe('ChatPane', () => {
   describe('placeholder', () => {
     it('reads Starting Claude... before ready and Message Claude after the quiet window', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       expect(box().placeholder).toBe('Starting Claude...');
       act(() => chunk!('hello'));
@@ -534,7 +558,7 @@ describe('ChatPane', () => {
 
     it('reads Claude is not running after the process exits', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       act(() => exit!());
       expect(box().placeholder).toBe('Claude is not running');
@@ -542,7 +566,7 @@ describe('ChatPane', () => {
 
     it('reads Waiting for your answer in the pane while the trust prompt shows', async () => {
       install();
-      render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
       mocks.screen = PROMPT;
       act(() => chunk!('prompt'));
@@ -557,7 +581,7 @@ describe('ChatPane', () => {
       install(new Promise<StartResult>((r) => (reply = r)));
       const onLive = vi.fn();
       const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const { unmount } = render(<ChatPane projectId="p1" onLiveChange={onLive} />);
+      const { unmount } = render(<Pane projectId="p1" onLiveChange={onLive} />);
       await flush();
       expect(gui.start).toHaveBeenCalledTimes(1);
       unmount();
@@ -571,7 +595,7 @@ describe('ChatPane', () => {
 
     it('never calls start when unmounted before the deferred start microtask runs', async () => {
       install();
-      const { unmount } = render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+      const { unmount } = render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       unmount();
       await flush();
       expect(gui.start).not.toHaveBeenCalled();
@@ -583,7 +607,7 @@ describe('ChatPane permission mode', () => {
   const picker = (label: string) => screen.getByLabelText(`Permission mode: ${label}`);
   const ready = async () => {
     install();
-    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     act(() => chunk!('hello'));
     await advance(1700);
@@ -740,5 +764,56 @@ describe('ChatPane permission mode', () => {
     fireEvent.click(screen.getByText('Switch'));
     await flush();
     expect(gui.start.mock.calls[4]![0]).toMatchObject({ restart: true, resume: false, mode: 'manual' });
+  });
+});
+
+describe('ChatPane as one of several panes', () => {
+  it('reports live, state, hasSent and settled through onStatus', async () => {
+    install();
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    expect(onStatus.mock.calls.at(-1)![0]).toEqual({ live: true, state: 'idle', trusted: true, hasSent: false, settled: false });
+    act(() => chunk!('hello'));
+    await advance(1700);
+    fireEvent.change(box(), { target: { value: 'go' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+    expect(onStatus.mock.calls.at(-1)![0]).toMatchObject({ state: 'working', hasSent: true, settled: false });
+    await advance(3100);
+    expect(onStatus.mock.calls.at(-1)![0]).toMatchObject({ state: 'idle', hasSent: true });
+    await advance(3100);
+    expect(onStatus.mock.calls.at(-1)![0]).toMatchObject({ state: 'idle', settled: true });
+  });
+
+  it('the first start passes resume and the controlled mode; a resumed pane already holds a conversation', async () => {
+    install();
+    render(<Pane projectId="p1" resume mode="plan" onLiveChange={vi.fn()} />);
+    await flush();
+    expect(gui.start.mock.calls[0]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, mode: 'plan', resume: true });
+    expect(onStatus.mock.calls.at(-1)![0]).toMatchObject({ hasSent: true });
+  });
+
+  it('a hidden pane stays mounted and keeps absorbing output; toggling it hidden then shown never fits a 0-size host', async () => {
+    install();
+    let size = 800;
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => size });
+    let observed: (() => void) | undefined;
+    vi.stubGlobal('ResizeObserver', class { constructor(cb: () => void) { observed = cb; } observe() {} disconnect() {} });
+    const { rerender } = render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    const fitsShown = mocks.fits;
+    size = 0;
+    rerender(<Pane projectId="p1" active={false} onLiveChange={vi.fn()} />);
+    act(() => observed!());
+    expect(screen.getByTestId('chat-pane').style.display).toBe('none');
+    expect(mocks.fits).toBe(fitsShown); // no fit while the host measures 0x0
+    act(() => chunk!('while hidden'));
+    expect(mocks.write).toHaveBeenCalledWith('while hidden');
+    size = 800;
+    rerender(<Pane projectId="p1" active onLiveChange={vi.fn()} />);
+    act(() => observed!());
+    expect(mocks.fits).toBe(fitsShown + 1);
+    expect(screen.getByTestId('chat-pane').style.display).toBe('flex');
+    expect(gui.resize).not.toHaveBeenCalled();
   });
 });

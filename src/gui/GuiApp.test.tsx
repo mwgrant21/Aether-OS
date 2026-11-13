@@ -2,11 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { GuiApp } from './GuiApp';
 
+import type { ChatPaneStatus } from './ChatPane';
+
 const mounts = { mount: 0, unmount: 0 };
+// Test doubles for the panes' reports, keyed by chat key ('new' or a project id).
+const reportStatus = new Map<string, (s: ChatPaneStatus) => void>();
+const reportMode = new Map<string, (m: string) => void>();
 vi.mock('./ChatPane', async () => {
   const { useEffect } = await import('react');
   return {
-    ChatPane: ({ projectId, onLiveChange }: { projectId: string | null; onLiveChange: (b: boolean) => void }) => {
+    ChatPane: ({ projectId, active, resume, mode, onModeChange, onStatus }: {
+      projectId: string | null; active: boolean; resume?: boolean; mode: string;
+      onModeChange: (m: string) => void; onStatus: (s: ChatPaneStatus) => void;
+    }) => {
+      const key = projectId ?? 'new';
+      reportStatus.set(key, onStatus);
+      reportMode.set(key, onModeChange);
       useEffect(() => {
         mounts.mount += 1;
         return () => {
@@ -14,9 +25,8 @@ vi.mock('./ChatPane', async () => {
         };
       }, []);
       return (
-        <div data-testid="chat-pane">
+        <div data-testid="chat-pane" data-key={key} data-active={String(active)} data-resume={String(resume)} data-mode={mode} style={{ display: active ? 'block' : 'none' }}>
           chat:{String(projectId)}
-          <button onClick={() => onLiveChange(true)}>go-live</button>
         </div>
       );
     },
@@ -26,6 +36,7 @@ vi.mock('./ChatPane', async () => {
 type AddResult = { ok: true; project: { id: string; name: string } } | { ok: false; reason: string };
 const gui = {
   projects: { list: vi.fn(), add: vi.fn(), remove: vi.fn() },
+  stop: vi.fn(),
 };
 const win = { minimize: vi.fn(), toggleMaximize: vi.fn(), close: vi.fn() };
 
@@ -43,6 +54,9 @@ beforeEach(() => {
   ]);
   gui.projects.add.mockReset();
   gui.projects.remove.mockReset();
+  gui.stop.mockReset();
+  reportStatus.clear();
+  reportMode.clear();
   Object.values(win).forEach((f) => f.mockReset());
   Object.defineProperty(window, 'aetherElectron', { configurable: true, value: { gui, window: win } });
 });
@@ -53,7 +67,11 @@ afterEach(() => {
   delete (window as unknown as { aetherElectron?: unknown }).aetherElectron;
 });
 
-const pane = () => screen.getByTestId('chat-pane');
+const panesEl = () => screen.queryAllByTestId('chat-pane');
+const paneOf = (key: string) => panesEl().find((e) => e.getAttribute('data-key') === key);
+const pane = () => panesEl().find((e) => e.getAttribute('data-active') === 'true')!;
+const report = (key: string, st: Partial<ChatPaneStatus>) =>
+  act(() => reportStatus.get(key)!({ live: true, state: 'idle', trusted: true, hasSent: false, settled: false, ...st }));
 
 describe('GuiApp shell', () => {
   it('renders all seven nav labels with New selected and stubs for the rest', async () => {
@@ -107,34 +125,113 @@ describe('GuiApp shell', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('asks before switching while live, and stays when cancelled', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+
+  it('switching away from an idle chat stops it, unmounts its pane and never asks', async () => {
+    const confirm = vi.spyOn(window, 'confirm');
     await renderApp();
-    fireEvent.click(screen.getByText('go-live'));
-    fireEvent.click(screen.getByRole('button', { name: 'alpha' }));
-    expect(confirm).toHaveBeenCalledWith('End the current chat? Its Claude session will stop.');
-    expect(pane().textContent).toContain('chat:null');
-    expect(mounts.unmount).toBe(0);
+    click('alpha');
+    report('p1', { hasSent: true });
+    click('beta');
+    expect(gui.stop).toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeUndefined();
+    expect(pane().textContent).toContain('chat:p2');
+    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('switches when the confirm is accepted, and does not ask when not live', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('returning resumes only a chat that had sent a turn; New always resumes', async () => {
     await renderApp();
-    fireEvent.click(screen.getByRole('button', { name: 'alpha' }));
-    expect(confirm).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText('go-live'));
-    fireEvent.click(screen.getByRole('button', { name: 'beta' }));
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(pane().textContent).toContain('chat:p2');
+    expect(paneOf('new')!.getAttribute('data-resume')).toBe('true');
+    click('alpha');
+    report('p1', { hasSent: true });
+    click('beta');
+    report('p2', { hasSent: false });
+    click('alpha');
+    expect(paneOf('p1')!.getAttribute('data-resume')).toBe('true');
+    expect(paneOf('p2')).toBeUndefined(); // never used: stopped on the switch
+    click('beta');
+    expect(paneOf('p2')!.getAttribute('data-resume')).toBe('false');
+    click('New');
+    expect(paneOf('new')!.getAttribute('data-resume')).toBe('true'); // New, even though it never sent a turn
+  });
+
+  it.each(['working', 'waiting'] as const)('switching away from a %s chat keeps it running, hidden, and switching back reuses the pane', async (state) => {
+    await renderApp();
+    click('alpha');
+    report('p1', { state, hasSent: true });
+    const mountedBefore = mounts.mount;
+    click('beta');
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')!.getAttribute('data-active')).toBe('false');
+    expect(paneOf('p1')!.style.display).toBe('none');
+    click('alpha');
+    expect(pane().getAttribute('data-key')).toBe('p1');
+    expect(mounts.mount).toBe(mountedBefore + 1); // only beta mounted; alpha's pane was reused
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+  });
+
+  it('with auto-stop off an idle chat that has sent a turn is not stopped; one that has not is', async () => {
+    await renderApp();
+    click('alpha');
+    report('p1', { trusted: false, hasSent: true });
+    click('beta');
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeTruthy();
+    report('p2', { trusted: false, hasSent: false });
+    click('alpha');
+    expect(gui.stop).toHaveBeenCalledWith('p2');
+    expect(paneOf('p2')).toBeUndefined();
+  });
+
+  it("a chat's mode survives an idle stop and return", async () => {
+    await renderApp();
+    click('alpha');
+    act(() => reportMode.get('p1')!('plan'));
+    expect(paneOf('p1')!.getAttribute('data-mode')).toBe('plan');
+    report('p1', { hasSent: true });
+    click('beta');
+    expect(paneOf('p1')).toBeUndefined();
+    click('alpha');
+    expect(paneOf('p1')!.getAttribute('data-mode')).toBe('plan');
+    expect(paneOf('p2')).toBeUndefined();
   });
 
   it('does nothing when clicking the already-open chat', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     await renderApp();
-    fireEvent.click(screen.getByText('go-live'));
-    fireEvent.click(screen.getByRole('button', { name: 'New' }));
-    expect(confirm).not.toHaveBeenCalled();
+    report('new', { state: 'working' });
+    click('New');
+    expect(gui.stop).not.toHaveBeenCalled();
     expect(mounts.mount).toBe(1);
+  });
+
+  it('unpinning an idle chat stops it silently', async () => {
+    const confirm = vi.spyOn(window, 'confirm');
+    gui.projects.remove.mockResolvedValue(true);
+    await renderApp();
+    click('alpha');
+    report('p1', { hasSent: true });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Remove alpha' })));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(gui.projects.remove).toHaveBeenCalledWith('p1');
+    expect(gui.stop).toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeUndefined();
+  });
+
+  it('unpinning a busy chat asks first and respects Cancel', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    gui.projects.remove.mockResolvedValue(true);
+    await renderApp();
+    click('alpha');
+    report('p1', { state: 'working', hasSent: true });
+    click('beta'); // alpha keeps running in the background
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Remove alpha' })));
+    expect(confirm).toHaveBeenCalledWith('This chat is working. Remove it anyway? Its Claude will stop.');
+    expect(gui.projects.remove).not.toHaveBeenCalled();
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Remove alpha' })));
+    expect(gui.projects.remove).toHaveBeenCalledWith('p1');
+    expect(gui.stop).toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeUndefined();
   });
 
   it('removing the open project goes to New', async () => {
