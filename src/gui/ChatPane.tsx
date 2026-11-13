@@ -317,7 +317,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     setStopped(true);
     setLiveBoth(false);
     if (retryFresh) {
-      // A resume that ended before ready (the conversation could not be reopened): start a new one, once.
+      // A resume that could not reopen the conversation (ended before ready, or printed "No conversation found"): start a new one, once.
       hasSentRef.current = false;
       setHasSent(false);
       dropData.current = true;
