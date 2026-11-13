@@ -5,7 +5,7 @@ import { useColors } from '../components/shared/useColors';
 import { fonts } from '../styles/tokens';
 import { GUI_BG_MARKER_RELIABLE } from './busyGate';
 import { ChatPane, type ChatPaneStatus } from './ChatPane';
-import { GuiNav } from './GuiNav';
+import { GuiNav, type NavStatus } from './GuiNav';
 import { useGuiProjects } from './useGuiProjects';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
@@ -21,6 +21,7 @@ export function GuiApp() {
   const [panes, setPanes] = useState<string[]>([GUI_NEW_KEY]);
   const [chatKey, setChatKey] = useState<string>(GUI_NEW_KEY);
   const [stub, setStub] = useState<string | null>(null);
+  const [navStatus, setNavStatus] = useState<Record<string, NavStatus | undefined>>({}); // dot per chat
   const [modes, setModes] = useState<Record<string, GuiPermissionMode>>({}); // per chat; survives an idle-stop and return
   // Decisions read refs, not state: they must see the state at the instant of the click.
   const panesRef = useRef(panes);
@@ -36,11 +37,14 @@ export function GuiApp() {
     setChatKey(nextKey);
   };
 
+  const setDot = (key: string, st: NavStatus | undefined): void => setNavStatus((prev) => (prev[key] === st ? prev : { ...prev, [key]: st }));
+
   /** Stops the chat's Claude and drops its pane, remembering whether it holds a conversation to resume. */
   const endChat = (key: string, panesNow: string[]): string[] => {
     window.aetherElectron?.gui?.stop(key);
     resumable.current[key] = statusRef.current[key]?.hasSent === true;
     delete statusRef.current[key];
+    setDot(key, undefined);
     return panesNow.filter((k) => k !== key);
   };
 
@@ -53,6 +57,7 @@ export function GuiApp() {
       next = [...next, key];
     }
     commit(next, key);
+    setNavStatus((prev) => (prev[key] === 'ready' ? { ...prev, [key]: undefined } : prev)); // opening a chat clears its "reply ready" mark
   };
 
   const openChat = useCallback((id: string | null) => {
@@ -71,6 +76,27 @@ export function GuiApp() {
     }
     activate(target, next);
   }, []);
+
+  /** A chat's pane reported. A background chat that settled (idle, quiet, idle again) while auto-stop is on stops itself. */
+  const onPaneStatus = (key: string, st: ChatPaneStatus): void => {
+    statusRef.current[key] = st;
+    const background = key !== chatKeyRef.current;
+    const autoStop = st.trusted && GUI_BG_MARKER_RELIABLE;
+    if (background && st.settled && st.state === 'idle' && autoStop && panesRef.current.includes(key)) {
+      commit(endChat(key, panesRef.current), chatKeyRef.current);
+      if (st.hasSent) setDot(key, 'ready');
+      return;
+    }
+    if (st.state === 'working' || st.state === 'waiting') setDot(key, st.state);
+    else setNavStatus((prev) => (prev[key] === 'ready' || prev[key] === undefined ? prev : { ...prev, [key]: undefined }));
+  };
+
+  /** Stop chat (auto-stop off): ends the chat; when it was the open one the New chat is shown. */
+  const stopChat = (key: string): void => {
+    const next = endChat(key, panesRef.current);
+    if (chatKeyRef.current === key) activate(GUI_NEW_KEY, next);
+    else commit(next, chatKeyRef.current);
+  };
 
   const unpin = useCallback(
     async (id: string) => {
@@ -138,6 +164,7 @@ export function GuiApp() {
           onStub={setStub}
           onProject={openChat}
           onUnpin={(id) => void unpin(id)}
+          status={navStatus}
         />
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <div style={{ flex: 1, minHeight: 0, display: stub === null ? 'flex' : 'none', flexDirection: 'column' }}>
@@ -149,9 +176,8 @@ export function GuiApp() {
                 resume={resumeFor.current[k]}
                 mode={modes[k] ?? GUI_DEFAULT_PERMISSION_MODE}
                 onModeChange={(m) => setModes((prev) => ({ ...prev, [k]: m }))}
-                onStatus={(st) => {
-                  statusRef.current[k] = st;
-                }}
+                onStatus={(st) => onPaneStatus(k, st)}
+                onStopChat={() => stopChat(k)}
               />
             ))}
           </div>

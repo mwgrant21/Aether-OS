@@ -4,6 +4,12 @@ import { GuiApp } from './GuiApp';
 
 import type { ChatPaneStatus } from './ChatPane';
 
+const flags = vi.hoisted(() => ({ markerReliable: true }));
+vi.mock('./busyGate', async (orig) => {
+  const m = await orig<typeof import('./busyGate')>();
+  return { ...m, get GUI_BG_MARKER_RELIABLE() { return flags.markerReliable; } };
+});
+
 const mounts = { mount: 0, unmount: 0 };
 // Test doubles for the panes' reports, keyed by chat key ('new' or a project id).
 const reportStatus = new Map<string, (s: ChatPaneStatus) => void>();
@@ -11,9 +17,9 @@ const reportMode = new Map<string, (m: string) => void>();
 vi.mock('./ChatPane', async () => {
   const { useEffect } = await import('react');
   return {
-    ChatPane: ({ projectId, active, resume, mode, onModeChange, onStatus }: {
+    ChatPane: ({ projectId, active, resume, mode, onModeChange, onStatus, onStopChat }: {
       projectId: string | null; active: boolean; resume?: boolean; mode: string;
-      onModeChange: (m: string) => void; onStatus: (s: ChatPaneStatus) => void;
+      onModeChange: (m: string) => void; onStatus: (s: ChatPaneStatus) => void; onStopChat?: () => void;
     }) => {
       const key = projectId ?? 'new';
       reportStatus.set(key, onStatus);
@@ -27,6 +33,7 @@ vi.mock('./ChatPane', async () => {
       return (
         <div data-testid="chat-pane" data-key={key} data-active={String(active)} data-resume={String(resume)} data-mode={mode} style={{ display: active ? 'block' : 'none' }}>
           chat:{String(projectId)}
+          {onStopChat && <button onClick={onStopChat}>stop-chat:{key}</button>}
         </div>
       );
     },
@@ -55,6 +62,7 @@ beforeEach(() => {
   gui.projects.add.mockReset();
   gui.projects.remove.mockReset();
   gui.stop.mockReset();
+  flags.markerReliable = true;
   reportStatus.clear();
   reportMode.clear();
   Object.values(win).forEach((f) => f.mockReset());
@@ -242,6 +250,69 @@ describe('GuiApp shell', () => {
     expect(gui.projects.remove).toHaveBeenCalledWith('p1');
     expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull();
     expect(pane().textContent).toContain('chat:null');
+  });
+
+  const dots = () => screen.queryAllByRole('img').map((e) => e.getAttribute('aria-label'));
+
+  it('shows working, needs you and reply ready dots after the chat names', async () => {
+    await renderApp();
+    click('alpha');
+    report('p1', { state: 'working', hasSent: true });
+    expect(dots()).toEqual(['working']);
+    report('p1', { state: 'waiting', hasSent: true });
+    expect(dots()).toEqual(['needs you']);
+    click('beta');
+    report('p1', { state: 'idle', hasSent: true }); // back to idle but not settled: no mark, not stopped
+    expect(dots()).toEqual([]);
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    report('p1', { state: 'idle', hasSent: true, settled: true });
+    expect(dots()).toEqual(['reply ready']);
+  });
+
+  it('a background chat stops itself only once settled, marks reply ready, and the mark clears when opened', async () => {
+    await renderApp();
+    click('alpha');
+    report('p1', { state: 'working', hasSent: true });
+    click('beta');
+    report('p1', { state: 'idle', hasSent: true, settled: false }); // idle read only: the settle window may still be cancelled
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeTruthy();
+    report('p1', { state: 'idle', hasSent: true, settled: true });
+    expect(gui.stop).toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeUndefined();
+    expect(dots()).toEqual(['reply ready']);
+    click('alpha');
+    expect(dots()).toEqual([]);
+    expect(paneOf('p1')!.getAttribute('data-resume')).toBe('true');
+  });
+
+  it('a waiting background chat shows needs you and is never stopped', async () => {
+    await renderApp();
+    click('alpha');
+    report('p1', { state: 'waiting', hasSent: true });
+    click('beta');
+    report('p1', { state: 'waiting', hasSent: true, settled: true });
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    expect(dots()).toEqual(['needs you']);
+  });
+
+  it.each([
+    ['an untrusted gate', () => report('p1', { trusted: false, hasSent: true, settled: true })],
+    ['no reliable background marker', () => { flags.markerReliable = false; report('p1', { hasSent: true, settled: true }); }],
+  ])('with %s nothing self-stops, and Stop chat ends the chat', async (_name, settle) => {
+    await renderApp();
+    click('alpha');
+    report('p1', { state: 'working', hasSent: true });
+    click('beta');
+    settle();
+    expect(gui.stop).not.toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeTruthy();
+    fireEvent.click(screen.getByText('stop-chat:p1'));
+    expect(gui.stop).toHaveBeenCalledWith('p1');
+    expect(paneOf('p1')).toBeUndefined();
+    expect(pane().textContent).toContain('chat:p2'); // the open chat is untouched
+    click('alpha');
+    expect(paneOf('p1')!.getAttribute('data-resume')).toBe('true');
   });
 
   it('title strip window controls call the existing window api', async () => {

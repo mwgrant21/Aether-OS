@@ -2,10 +2,13 @@ import type { CSSProperties } from 'react';
 import { Button } from '../components/shared/Button';
 import { useColors } from '../components/shared/useColors';
 import { fonts, radii } from '../styles/tokens';
+import { GUI_NEW_KEY } from '../../electron/gui/guiTypes';
 import type { GuiProjectsApi } from './useGuiProjects';
 
 const STUBS_ABOVE = ['Search'] as const;
 const STUBS_BELOW = ['Artifacts', 'Scheduled', 'Design', 'Customize'] as const;
+
+export type NavStatus = 'working' | 'waiting' | 'ready';
 
 interface GuiNavProps {
   projects: GuiProjectsApi;
@@ -17,10 +20,37 @@ interface GuiNavProps {
   onStub: (name: string) => void;
   onProject: (id: string) => void;
   onUnpin: (id: string) => void;
+  /** Per chat key (project id or GUI_NEW_KEY): a dot after the name. */
+  status?: Record<string, NavStatus | undefined>;
 }
 
-export function GuiNav({ projects, chatId, stub, onNew, onStub, onProject, onUnpin }: GuiNavProps) {
+export function GuiNav({ projects, chatId, stub, onNew, onStub, onProject, onUnpin, status = {} }: GuiNavProps) {
   const colors = useColors();
+  const dot = (key: string) => {
+    const st = status[key];
+    if (!st) return null;
+    const label = st === 'working' ? 'working' : st === 'waiting' ? 'needs you' : 'reply ready';
+    const color = st === 'waiting' ? colors.warn : colors.accentCyan;
+    return (
+      <span
+        role="img"
+        aria-label={label}
+        title={label}
+        style={{
+          display: 'inline-block',
+          width: 8,
+          height: 8,
+          flex: 'none',
+          margin: '0 4px 0 8px',
+          boxSizing: 'border-box',
+          borderRadius: '50%',
+          verticalAlign: 'middle',
+          background: st === 'ready' ? 'transparent' : color,
+          border: st === 'ready' ? `2px solid ${color}` : 'none',
+        }}
+      />
+    );
+  };
   const item = (active: boolean): CSSProperties => ({
     display: 'block',
     width: '100%',
@@ -58,9 +88,12 @@ export function GuiNav({ projects, chatId, stub, onNew, onStub, onProject, onUnp
         background: colors.chromeBg,
       }}
     >
-      <Button onClick={onNew} style={item(newActive)} hoverStyle={hover} aria-current={newActive ? 'page' : undefined}>
-        New
-      </Button>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <Button onClick={onNew} style={{ ...item(newActive), flex: 1, minWidth: 0 }} hoverStyle={hover} aria-current={newActive ? 'page' : undefined}>
+          New
+        </Button>
+        {dot(GUI_NEW_KEY)}
+      </div>
       {STUBS_ABOVE.map(stubButton)}
 
       <div
@@ -107,6 +140,7 @@ export function GuiNav({ projects, chatId, stub, onNew, onStub, onProject, onUnp
             >
               {p.name}
             </Button>
+            {dot(p.id)}
             <Button
               onClick={() => onUnpin(p.id)}
               aria-label={`Remove ${p.name}`}

@@ -3,7 +3,7 @@ import { GUI_NEW_KEY, GUI_NO_OUTPUT_HINT_MS, type GuiPermissionMode, type StartR
 import { Button } from '../components/shared/Button';
 import { useColors } from '../components/shared/useColors';
 import { fonts, radii } from '../styles/tokens';
-import { createBusyGate, type BusyGate, type BusyState } from './busyGate';
+import { GUI_BG_MARKER_RELIABLE, createBusyGate, type BusyGate, type BusyState } from './busyGate';
 import { ConfirmPopup } from './ConfirmPopup';
 import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
@@ -34,6 +34,8 @@ interface ChatPaneProps {
   onModeChange: (mode: GuiPermissionMode) => void;
   onStatus: (status: ChatPaneStatus) => void;
   onLiveChange?: (live: boolean) => void;
+  /** Offered (as a Stop chat button) only while auto-stop is off and the chat holds a conversation. */
+  onStopChat?: () => void;
 }
 
 const FAIL_TEXT: Record<string, string> = {
@@ -56,7 +58,7 @@ const schedule = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(t);
 };
 
-export function ChatPane({ projectId, active, resume, mode, onModeChange, onStatus, onLiveChange }: ChatPaneProps) {
+export function ChatPane({ projectId, active, resume, mode, onModeChange, onStatus, onLiveChange, onStopChat }: ChatPaneProps) {
   const colors = useColors();
   const { projects } = useGuiProjects();
   const sessionKey = projectId ?? GUI_NEW_KEY;
@@ -316,12 +318,29 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       : !enabled
         ? 'Starting Claude...'
         : 'Message Claude';
+  const autoStopOff = !busyTrusted || !GUI_BG_MARKER_RELIABLE;
+  const canStopChat = onStopChat !== undefined && autoStopOff && hasSent && live;
   const hintText = hint && !ready && !error ? 'No output from Claude yet. Type in the pane.' : null;
-  const message = error ?? (trustShown ? "Answer Claude's trust prompt in the pane first" : hintText);
+  const message =
+    error ??
+    (trustShown
+      ? "Answer Claude's trust prompt in the pane first"
+      : (hintText ?? (!busyTrusted ? "Auto-stop is off: Aether could not recognise Claude's working screen." : null)));
 
   return (
     <div data-testid="chat-pane" style={{ display: active ? 'flex' : 'none', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <div style={{ padding: '10px 24px', color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 24px' }}>
+        <span style={{ color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</span>
+        {canStopChat && (
+          <Button
+            onClick={onStopChat}
+            style={{ font: `600 13px/1 ${fonts.ui}`, color: colors.accentCyan, padding: '4px 6px' }}
+            hoverStyle={{ color: colors.textPrimary }}
+          >
+            Stop chat
+          </Button>
+        )}
+      </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         <GuiTerminal ref={termRef} sessionKey={sessionKey} onChunk={onChunk} onExit={onExit} acceptData={acceptData} onTyped={onTyped} />
       </div>

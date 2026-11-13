@@ -4,6 +4,12 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { StartResult } from '../../electron/gui/guiTypes';
 import { ChatPane, type ChatPaneStatus } from './ChatPane';
 
+const flags = vi.hoisted(() => ({ markerReliable: true }));
+vi.mock('./busyGate', async (orig) => {
+  const m = await orig<typeof import('./busyGate')>();
+  return { ...m, get GUI_BG_MARKER_RELIABLE() { return flags.markerReliable; } };
+});
+
 // ChatPane's mode is controlled: the harness plays GuiApp's part and keeps it in state.
 const onStatus = vi.fn<(s: ChatPaneStatus) => void>();
 type PaneProps = Partial<ComponentProps<typeof ChatPane>> & { projectId: string | null };
@@ -23,6 +29,7 @@ function Pane({ mode: initialMode, onModeChange, ...p }: PaneProps) {
   );
 }
 
+const lastStatus = (): ChatPaneStatus => onStatus.mock.calls.at(-1)![0];
 
 const mocks = vi.hoisted(() => ({
   write: vi.fn(),
@@ -148,6 +155,7 @@ const box = () => screen.getByLabelText('Message') as HTMLTextAreaElement;
 
 beforeEach(() => {
   onStatus.mockClear();
+  flags.markerReliable = true;
   vi.useFakeTimers();
   mocks.write.mockClear();
   mocks.reset.mockClear();
@@ -815,5 +823,73 @@ describe('ChatPane as one of several panes', () => {
     expect(mocks.fits).toBe(fitsShown + 1);
     expect(screen.getByTestId('chat-pane').style.display).toBe('flex');
     expect(gui.resize).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChatPane auto-stop off', () => {
+  const NOTICE = "Auto-stop is off: Aether could not recognise Claude's working screen.";
+  const send = async () => {
+    fireEvent.change(box(), { target: { value: 'go' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+  };
+  const start = async (props: Partial<ComponentProps<typeof ChatPane>> = {}) => {
+    install();
+    const onStopChat = vi.fn();
+    render(<Pane projectId="p1" onStopChat={onStopChat} {...props} />);
+    await flush();
+    act(() => chunk!('hello'));
+    await advance(1700);
+    return onStopChat;
+  };
+  // The canary: output for over 4 s of a turn with every screen read idle (the mocked screen is empty).
+  const blind = async () => {
+    for (let i = 0; i < 6; i++) {
+      act(() => chunk!('spin'));
+      await advance(1000);
+    }
+  };
+
+  it('shows the notice and Stop chat after the canary fires on a chat that sent a turn; Stop chat calls onStopChat', async () => {
+    const onStopChat = await start();
+    expect(screen.queryByText('Stop chat')).toBeNull(); // nothing sent yet
+    await send();
+    expect(screen.queryByText('Stop chat')).toBeNull(); // auto-stop still on
+    await blind();
+    expect(screen.getByText(NOTICE)).toBeTruthy();
+    expect(lastStatus().trusted).toBe(false);
+    fireEvent.click(screen.getByText('Stop chat'));
+    expect(onStopChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('with no reliable background marker Stop chat shows on a chat that sent a turn, without the canary notice', async () => {
+    flags.markerReliable = false;
+    await start();
+    expect(screen.queryByText('Stop chat')).toBeNull();
+    await send();
+    expect(screen.getByText('Stop chat')).toBeTruthy();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it('a resumed pane (already holds a conversation) shows Stop chat when auto-stop is off; a never-used one does not', async () => {
+    flags.markerReliable = false;
+    await start({ resume: true });
+    expect(screen.getByText('Stop chat')).toBeTruthy();
+    cleanup();
+    await start();
+    expect(screen.queryByText('Stop chat')).toBeNull();
+  });
+
+  it('a chunk between the idle read and the settle window delays settled', async () => {
+    await start();
+    await send();
+    await advance(3100); // quiet: idle read
+    expect(lastStatus().settled).toBe(false);
+    await advance(2000);
+    act(() => chunk!('late'));
+    await advance(2000); // 4 s after idle but only 2 s after the last chunk
+    expect(lastStatus().settled).toBe(false);
+    await advance(1100);
+    expect(lastStatus().settled).toBe(true);
   });
 });
