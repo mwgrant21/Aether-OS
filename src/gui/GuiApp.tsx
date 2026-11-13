@@ -29,6 +29,7 @@ export function GuiApp() {
   const statusRef = useRef<Record<string, ChatPaneStatus>>({});
   const resumable = useRef<Record<string, boolean>>({}); // a pinned chat stopped idle that holds a conversation to resume
   const resumeFor = useRef<Record<string, boolean>>({ [GUI_NEW_KEY]: true }); // the resume flag each pane was mounted with
+  const epoch = useRef<Record<string, number>>({}); // bumped when a chat ends, so a pane re-added under the same key remounts instead of being reused
 
   const commit = (nextPanes: string[], nextKey: string): void => {
     panesRef.current = nextPanes;
@@ -44,6 +45,7 @@ export function GuiApp() {
     window.aetherElectron?.gui?.stop(key);
     resumable.current[key] = statusRef.current[key]?.hasSent === true;
     delete statusRef.current[key];
+    epoch.current[key] = (epoch.current[key] ?? 0) + 1;
     setDot(key, undefined);
     return panesNow.filter((k) => k !== key);
   };
@@ -108,6 +110,10 @@ export function GuiApp() {
       if (next.includes(id)) next = endChat(id, next);
       delete resumable.current[id];
       delete resumeFor.current[id];
+      setModes((prev) => {
+        const { [id]: _gone, ...rest } = prev;
+        return rest;
+      });
       if (chatKeyRef.current === id) {
         setStub(null);
         activate(GUI_NEW_KEY, next);
@@ -170,7 +176,7 @@ export function GuiApp() {
           <div style={{ flex: 1, minHeight: 0, display: stub === null ? 'flex' : 'none', flexDirection: 'column' }}>
             {panes.map((k) => (
               <ChatPane
-                key={k}
+                key={`${k}:${epoch.current[k] ?? 0}`}
                 projectId={k === GUI_NEW_KEY ? null : k}
                 active={k === chatKey}
                 resume={resumeFor.current[k]}

@@ -315,6 +315,18 @@ describe('GuiApp shell', () => {
     expect(paneOf('p1')!.getAttribute('data-resume')).toBe('true');
   });
 
+  it('Stop chat on the open New chat stops it and mounts a fresh pane instead of reusing the old one', async () => {
+    await renderApp();
+    report('new', { trusted: false, hasSent: true });
+    const before = mounts.mount;
+    fireEvent.click(screen.getByText('stop-chat:new'));
+    expect(gui.stop).toHaveBeenCalledTimes(1);
+    expect(gui.stop).toHaveBeenCalledWith('new');
+    expect(mounts.mount).toBe(before + 1);
+    expect(mounts.unmount).toBe(1);
+    expect(pane().getAttribute('data-key')).toBe('new');
+  });
+
   it('title strip window controls call the existing window api', async () => {
     await renderApp();
     fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
