@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { claudeInputReady } from './inputBox';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { claudeInputReady, createInputBoxGate } from './inputBox';
 
 const RULE = '\u2500'.repeat(100);
 const PTR = '\u276f';
@@ -110,5 +110,133 @@ describe('claudeInputReady', () => {
     const history = ['Claude Code v2.1.325', PTR + ' earlier prompt', '\u25cf earlier answer', ''];
     expect(claudeInputReady(screen(...history, ...BOX_325))).toBe(true);
     expect(claudeInputReady(screen(...history))).toBe(false);
+  });
+});
+
+describe('createInputBoxGate', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const schedule = (fn: () => void, ms: number) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  };
+  const BOX = screen(...BOX_323);
+
+  function make(initial = PS_ONLY) {
+    const state = { screen: initial };
+    const readScreen = vi.fn(() => state.screen);
+    const onVisible = vi.fn();
+    const gate = createInputBoxGate({ schedule, readScreen, onVisible });
+    return { gate, state, readScreen, onVisible };
+  }
+
+  it('never reads or fires before the first feed', () => {
+    const { readScreen, onVisible } = make(BOX);
+    vi.advanceTimersByTime(600_000);
+    expect(readScreen).not.toHaveBeenCalled();
+    expect(onVisible).not.toHaveBeenCalled();
+  });
+
+  it('fires box at the second consecutive true poll, exactly once', () => {
+    const { gate, onVisible } = make(BOX);
+    gate.feed();
+    vi.advanceTimersByTime(250);
+    expect(onVisible).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+    expect(onVisible).toHaveBeenCalledWith('box');
+    vi.advanceTimersByTime(60_000);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires box on the second poll that sees a late box with no further chunks', () => {
+    const { gate, state, onVisible } = make();
+    gate.feed();
+    vi.advanceTimersByTime(1000);
+    state.screen = BOX;
+    vi.advanceTimersByTime(250);
+    expect(onVisible).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    expect(onVisible).toHaveBeenCalledWith('box');
+  });
+
+  it('resets the streak when a true poll is followed by a false one', () => {
+    const { gate, state, onVisible } = make(BOX);
+    gate.feed();
+    vi.advanceTimersByTime(250);
+    state.screen = PS_ONLY;
+    vi.advanceTimersByTime(250);
+    state.screen = BOX;
+    vi.advanceTimersByTime(250);
+    expect(onVisible).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    expect(onVisible).toHaveBeenCalledWith('box');
+  });
+
+  it('still fires the ceiling at 8000 when only one true poll was seen', () => {
+    const { gate, state, onVisible } = make(BOX);
+    gate.feed();
+    vi.advanceTimersByTime(250);
+    state.screen = PS_ONLY;
+    vi.advanceTimersByTime(7749);
+    expect(onVisible).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+    expect(onVisible).toHaveBeenCalledWith('ceiling');
+  });
+
+  it('fires ceiling at exactly 8000 after the first chunk when the box never shows', () => {
+    const { gate, onVisible } = make();
+    gate.feed();
+    vi.advanceTimersByTime(7999);
+    expect(onVisible).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+    expect(onVisible).toHaveBeenCalledWith('ceiling');
+    vi.advanceTimersByTime(60_000);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not move the ceiling on later feeds', () => {
+    const { gate, onVisible } = make();
+    gate.feed();
+    vi.advanceTimersByTime(7000);
+    gate.feed();
+    vi.advanceTimersByTime(999);
+    expect(onVisible).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onVisible).toHaveBeenCalledWith('ceiling');
+  });
+
+  it('reads no screen after fire or after dispose', () => {
+    const a = make(BOX);
+    a.gate.feed();
+    vi.advanceTimersByTime(500);
+    const reads = a.readScreen.mock.calls.length;
+    vi.advanceTimersByTime(60_000);
+    expect(a.readScreen).toHaveBeenCalledTimes(reads);
+
+    const b = make();
+    b.gate.feed();
+    vi.advanceTimersByTime(250);
+    b.gate.dispose();
+    const readsB = b.readScreen.mock.calls.length;
+    vi.advanceTimersByTime(60_000);
+    expect(b.readScreen).toHaveBeenCalledTimes(readsB);
+    expect(b.onVisible).not.toHaveBeenCalled();
+  });
+
+  it('re-arms the ceiling and allows a second fire after reset', () => {
+    const { gate, onVisible } = make();
+    gate.feed();
+    vi.advanceTimersByTime(8000);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+    gate.reset();
+    gate.feed();
+    vi.advanceTimersByTime(7999);
+    expect(onVisible).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(onVisible).toHaveBeenCalledTimes(2);
   });
 });
