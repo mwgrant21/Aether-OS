@@ -5,12 +5,19 @@ export type AddProjectResult =
 export type StartRequest = { projectId: string | null; cols: number; rows: number; restart?: boolean; resume?: boolean; mode?: GuiPermissionMode }; // null = "New" chat; restart = replace a live session instead of reusing it
 export type StartResult =
   | { ok: true; reused: boolean }                                 // reused = same project already live; nothing restarted
-  | { ok: false; reason: 'bad-request' | 'unknown-project' | 'missing-dir' | 'spawn-failed' | 'unavailable' | 'superseded' }; // superseded = a later start/stop/dispose arrived while this start waited for the old pty to exit
+  | { ok: false; reason: 'bad-request' | 'unknown-project' | 'missing-dir' | 'spawn-failed' | 'unavailable' | 'superseded' | 'too-many-live' }; // too-many-live = GUI_MAX_LIVE_SESSIONS chats already live; superseded = a later start/stop/dispose arrived while this start waited for the old pty to exit
 export const GUI_CHANNELS = {
   projectsList: 'gui:projects:list', projectsAdd: 'gui:projects:add', projectsRemove: 'gui:projects:remove',
-  start: 'gui:session:start', write: 'gui:session:write', resize: 'gui:session:resize', submit: 'gui:session:submit',
+  start: 'gui:session:start', stop: 'gui:session:stop', write: 'gui:session:write', resize: 'gui:session:resize', submit: 'gui:session:submit',
   data: 'gui:session:data', alive: 'gui:session:alive', exit: 'gui:session:exit',
 } as const;
+// Wire payloads main -> renderer: every session event names the chat it belongs to.
+export type GuiDataPayload = { key: string; d: string };
+export type GuiKeyPayload = { key: string }; // alive / exit
+export const GUI_MAX_LIVE_SESSIONS = 4;   // live chats at once (slots, including one still waiting for its predecessor to exit)
+export const GUI_MAX_PROCESSES = 6;      // live + killed-but-not-yet-exited GUI claude ptys at once
+export const GUI_DYING_MAX_MS = 10000;   // a killed pty that has not exited after this long stops counting as dying
+export const GUI_TREE_KILL_MAX_MS = 1500; // guiSession's own bound on the async tree kill (main's taskkill times out at 1000), so a hung one can never leave the pty alive
 export const GUI_MAX_PROJECTS = 50;
 export const GUI_SUBMIT_GAP_MS = 50;       // pause between the paste block and the Enter of a multi-line submit
 export const GUI_MAX_WRITE_CHARS = 65536;  // cap on one raw write from the renderer

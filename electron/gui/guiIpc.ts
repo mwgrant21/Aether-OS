@@ -1,10 +1,12 @@
 import type { IpcMain } from 'electron';
 import type { createProjectsStore } from './projectsStore';
 import type { GuiSession } from './guiSession';
-import { GUI_CHANNELS, type AddProjectResult, type StartResult, type UiProject } from './guiTypes';
+import { GUI_CHANNELS, GUI_NEW_KEY, type AddProjectResult, type StartResult, type UiProject } from './guiTypes';
 
 type Store = ReturnType<typeof createProjectsStore>;
 type Sender = { sender: unknown; senderFrame: unknown };
+// A chat key is a project id or GUI_NEW_KEY: a string of 1-64 chars.
+const isKey = (k: unknown): k is string => typeof k === 'string' && k.length >= 1 && k.length <= 64;
 
 export interface GuiIpcDeps {
   isTrusted: (e: Sender) => boolean;
@@ -46,22 +48,28 @@ export function registerGuiIpc(ipc: Pick<IpcMain, 'handle' | 'on'>, o: GuiIpcDep
     const projectId = typeof req === 'object' && req !== null ? (req as { projectId?: unknown }).projectId : undefined;
     // Both a project start (path lookup) and the New chat (owned folder, created only after the private-dir ACL settled) need the store.
     if ((typeof projectId === 'string' || projectId === null) && !(await o.getStore())) {
-      o.session.stop(); // this rejection never reaches session.start, so end the live chat here (trusted senders only)
+      const key = projectId ?? GUI_NEW_KEY;
+      if (isKey(key)) o.session.stop(key); // this rejection never reaches session.start, so end THIS key's chat here (trusted senders only); other keys are untouched
       return { ok: false, reason: 'unavailable' };
     }
     return o.session.start(req);
   });
 
-  ipc.handle(C.submit, (e, text: unknown): boolean => (o.isTrusted(e) ? o.session.submit(text) : false));
+  ipc.handle(C.submit, (e, key: unknown, text: unknown): boolean => (o.isTrusted(e) && isKey(key) ? o.session.submit(key, text) : false));
 
-  ipc.on(C.write, (e, input: unknown) => {
-    if (!o.isTrusted(e)) return;
-    o.session.write(input);
+  ipc.on(C.stop, (e, key: unknown) => {
+    if (!o.isTrusted(e) || !isKey(key)) return;
+    o.session.stop(key);
   });
 
-  ipc.on(C.resize, (e, size: unknown) => {
-    if (!o.isTrusted(e)) return;
+  ipc.on(C.write, (e, key: unknown, input: unknown) => {
+    if (!o.isTrusted(e) || !isKey(key)) return;
+    o.session.write(key, input);
+  });
+
+  ipc.on(C.resize, (e, key: unknown, size: unknown) => {
+    if (!o.isTrusted(e) || !isKey(key)) return;
     const s = typeof size === 'object' && size !== null ? (size as { cols?: unknown; rows?: unknown }) : {};
-    o.session.resize(s.cols, s.rows);
+    o.session.resize(key, s.cols, s.rows);
   });
 }
