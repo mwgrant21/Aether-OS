@@ -35,7 +35,7 @@ function fakeLifecycle() {
   return lc;
 }
 
-function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDirectory?: (p: string) => boolean }) {
+function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDirectory?: (p: string) => boolean; newChatDir?: () => string | undefined }) {
   const lifecycle = fakeLifecycle();
   if (over?.kill) lifecycle.kill = over.kill;
   const ptys: FP[] = [];
@@ -52,6 +52,7 @@ function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDir
     lifecycle, spawn,
     projectPath: (id) => (id === 'p1' ? 'C:/secret/one' : id === 'p2' ? 'C:/secret/two' : id === 'gone' ? 'C:/secret/gone' : undefined),
     isDirectory: over?.isDirectory ?? ((p) => p !== 'C:/secret/gone'),
+    newChatDir: over?.newChatDir,
     send: (c, p) => { if (flags.aliveThrows && c === GUI_CHANNELS.alive) throw new Error('alive failed'); sent.push([c, p]); },
     randomUUID: () => `sid-${++n}`,
     schedule: (fn, ms) => { const t = { fn, ms, cancelled: false }; timers.push(t); return () => { t.cancelled = true; }; },
@@ -73,6 +74,23 @@ describe('guiSession.start', () => {
     const s = setup();
     s.session.start(req(null));
     expect(s.spawn.mock.calls[0]![0]).toMatchObject({ cwd: undefined });
+  });
+  it('New chat spawns in the owned dir; a project keeps its own cwd', () => {
+    const s = setup({ newChatDir: () => 'C:/owned/gui-chat' });
+    s.session.start(req(null));
+    expect(s.spawn.mock.calls[0]![0]).toMatchObject({ cwd: 'C:/owned/gui-chat' });
+    s.session.start(req('p1'));
+    expect(s.spawn.mock.calls[1]![0]).toMatchObject({ cwd: 'C:/secret/one' });
+  });
+  it('New chat with no usable owned dir is unavailable, spawns nothing and stops the live session', () => {
+    for (const dir of [undefined, 'C:/secret/gone']) {
+      const s = setup({ newChatDir: () => dir });
+      s.session.start(req('p1'));
+      expect(s.session.start(req(null))).toEqual({ ok: false, reason: 'unavailable' });
+      expect(s.spawn).toHaveBeenCalledTimes(1);
+      expect(s.ptys[0]!.kill).toHaveBeenCalled();
+      expect(s.session.live()).toBe(false);
+    }
   });
   it('rejects unknown project, missing dir and bad requests without spawning', () => {
     const s = setup();

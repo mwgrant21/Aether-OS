@@ -5,7 +5,7 @@ import { stopAllQueries } from './dashboards/runQuery';
 import { STARTER_BOARDS } from '../src/shared/dashboards/starters';
 import { RANGES, type Range } from '../src/shared/dashboards/spec';
 import { join, dirname } from 'path';
-import { existsSync, readFileSync, rmSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
 import { resolveBoardCliPath, spawnPty, buildClaudeLaunchCommand, buildPtyLaunchSpec, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
@@ -1740,6 +1740,7 @@ if (guiVariantEnabled(process.env)) {
   // Lazy: the file is not read until the private-dir ACL is confirmed (a planted path would become claude's cwd).
   const getGuiStore = (): Promise<ReturnType<typeof createProjectsStore> | null> =>
     (guiStorePromise ??= guiDirReady.then((ok) => (ok ? (guiStore = createProjectsStore({ dir: aetherOsDir })) : null)));
+  const guiEnsureDir = (dir: string): string | undefined => { try { mkdirSync(dir, { recursive: true }); return dir; } catch { return undefined; } };
   const guiSession = createGuiSession({
     lifecycle: {
       get current() { return guiLifecycle.current; },
@@ -1752,6 +1753,7 @@ if (guiVariantEnabled(process.env)) {
     spawn: ({ cwd, cols, rows, sessionId }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildClaudeLaunchCommand(sessionId, true), process.platform), cwd),
     projectPath: (id) => guiStore?.pathOf(id),
     isDirectory: (p) => { try { return statSync(p).isDirectory(); } catch { return false; } },
+    newChatDir: () => (guiStore ? guiEnsureDir(join(aetherOsDir, 'gui-chat')) : undefined),
     // Must not throw: a throw inside PtyLifecycle.start's onAlive would make guiSession drop the new pty's output.
     send: (channel, payload) => { try { sendToWindow(channel, payload); } catch { /* ignore */ } },
     randomUUID: () => crypto.randomUUID(),
