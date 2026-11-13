@@ -18,3 +18,11 @@ export const GUI_MAX_COMPOSER_CHARS = 20000;
 export const GUI_READY_QUIET_MS = 1500;    // composer enables after this much PTY silence following first output
 export const GUI_READY_CEILING_MS = 8000;  // ...or this long after first output at the latest, even if output never goes quiet
 export const GUI_NO_OUTPUT_HINT_MS = 15000; // no output at all this long after start: show a hint (composer stays disabled)
+// Closed allow-list of CLI permission modes the GUI may pass to claude. Anything else is refused.
+export const GUI_PERMISSION_MODES = ['manual', 'acceptEdits', 'plan', 'auto'] as const;
+export type GuiPermissionMode = (typeof GUI_PERMISSION_MODES)[number];
+export const GUI_DEFAULT_PERMISSION_MODE: GuiPermissionMode = 'auto';
+export const isGuiPermissionMode = (v: unknown): v is GuiPermissionMode =>
+  typeof v === 'string' && (GUI_PERMISSION_MODES as readonly string[]).includes(v);
+export const GUI_NEW_KEY = 'new';          // per-key conversation key of the New chat (project ids are UUIDs, so no collision)
+export const GUI_RESUME_BY_ID = true;      // PROVISIONAL until probe P2: true = resume with --resume <uuid>, false = --continue fallback
