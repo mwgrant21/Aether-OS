@@ -18,8 +18,8 @@ export interface GuiTerminalHandle {
 interface GuiTerminalProps {
   /** The chat this terminal shows: events for any other key are ignored and input is sent under it. */
   sessionKey: string;
-  /** Called once per PTY data chunk (after it was written to the terminal). */
-  onChunk: () => void;
+  /** Called once per PTY data chunk (after it was written to the terminal), with the raw chunk text. */
+  onChunk: (d: string) => void;
   /** Called when the session process exits (after the banner was written). */
   onExit: () => void;
   /** Returns false to drop a chunk entirely (not written, no onChunk). */
@@ -75,7 +75,7 @@ export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(funct
       if (key !== sessionKey) return;
       if (cbs.current.acceptData?.() === false) return;
       term.write(d);
-      cbs.current.onChunk();
+      cbs.current.onChunk(d);
     });
     const offExit = gui.onExit((key) => {
       if (key !== sessionKey) return;

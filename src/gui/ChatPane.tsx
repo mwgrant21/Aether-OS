@@ -9,7 +9,7 @@ import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
 import { MODE_LABELS, ModePicker } from './ModePicker';
 import { createReadyGate, type ReadyGate } from './readyGate';
-import { createTrustWatcher, type TrustWatcher } from './trustPrompt';
+import { createTrustWatcher, isTrustPromptText, type TrustWatcher } from './trustPrompt';
 import { useGuiProjects } from './useGuiProjects';
 
 export interface ChatPaneStatus {
@@ -51,8 +51,17 @@ interface BeginOptions {
   replace?: boolean;
   resume?: boolean;
   mode?: GuiPermissionMode;
+  modeSwitch?: boolean; // this launch is a permission-mode switch: its failure keeps the switch's own revert path
   noRetry?: boolean; // a user-initiated start: a resume that fails is not retried fresh here (Restart has its own rule)
   fallbackNote?: boolean; // this start is the automatic fresh retry of a failed resume
+}
+
+const TAIL_CAP = 2000;
+// claude's own message when the conversation to resume does not exist (ANSI stripped, last 400 chars only).
+function resumeFailedText(tail: string): boolean {
+  // eslint-disable-next-line no-control-regex -- ANSI escape sequences
+  const plain = tail.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, '').replace(/\s+/g, ' ');
+  return /No conversation found/i.test(plain.slice(-400));
 }
 
 const schedule = (fn: () => void, ms: number): (() => void) => {
@@ -91,6 +100,10 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   const hasSentRef = useRef(resume === true);
   const readyRef = useRef(false);
   const resumedStartRef = useRef(false); // the current start asked claude to resume
+  const trustShownRef = useRef(false); // claude's trust prompt is on screen (mirrors trustShown for onTyped)
+  const tailRef = useRef(''); // bounded tail of the current start's raw output
+  const turnSentThisStart = useRef(false); // a turn was submitted or typed since the current start began
+  const modeSwitchRef = useRef(false); // the current start is a mode switch; survives onReady, reset by the next start
   const retryFreshRef = useRef(false); // the current start was a resume that may be retried fresh once if it ends before ready
   const resumeFailures = useRef(0); // consecutive resume starts that ended before ready
   const mounted = useRef(false);
@@ -123,6 +136,11 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     cancelHint.current = null;
   }, []);
 
+  const setTrustShownBoth = useCallback((v: boolean) => {
+    trustShownRef.current = v;
+    setTrustShown(v);
+  }, []);
+
   const begin = useCallback((opts: boolean | BeginOptions = {}) => {
     const o: BeginOptions = typeof opts === 'boolean' ? { replace: opts } : opts;
     const replace = o.replace === true;
@@ -130,13 +148,16 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     const gate = gateRef.current;
     if (!gui || !gate) return;
     watcherRef.current?.reset();
-    setTrustShown(false);
+    setTrustShownBoth(false);
     const mySeq = ++startSeq.current;
     gate.reset();
     busyRef.current?.reset();
     setSettled(false);
     readyRef.current = false;
+    tailRef.current = '';
+    turnSentThisStart.current = false;
     resumedStartRef.current = o.resume === true;
+    modeSwitchRef.current = o.modeSwitch === true;
     retryFreshRef.current = o.resume === true && o.noRetry !== true;
     setResumeNote(o.fallbackNote === true);
     clearHint();
@@ -183,7 +204,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
         }
       },
     );
-  }, [projectId, clearHint, setLiveBoth]);
+  }, [projectId, clearHint, setLiveBoth, setTrustShownBoth]);
 
   useEffect(() => {
     mounted.current = true;
@@ -216,7 +237,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     watcherRef.current = createTrustWatcher({
       schedule,
       readScreen: () => termRef.current?.screenText() ?? '',
-      onChange: setTrustShown,
+      onChange: setTrustShownBoth,
     });
     // Deferred so StrictMode's discarded first run never reaches gui.start (a second start would be
     // answered reused:true and force the composer ready); the child has subscribed onData by then.
@@ -238,7 +259,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ChatPane is keyed by projectId: one start per mount
   }, []);
 
-  const onChunk = useCallback(() => {
+  const onChunk = useCallback((d: string) => {
+    tailRef.current = (tailRef.current + d).slice(-TAIL_CAP);
     clearHint();
     setHint(false);
     gateRef.current?.feed();
@@ -247,19 +269,26 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   }, [clearHint]);
 
   const sentSomething = useCallback(() => {
+    turnSentThisStart.current = true;
     hasSentRef.current = true;
     setHasSent(true);
     busyRef.current?.turnStarted();
   }, []);
 
   const onTyped = useCallback((input: string) => {
-    if (/[\r\n]/.test(input)) sentSomething();
+    // The Enter that answers claude's folder-trust prompt is not a message. The watcher's shown flag stays set until
+    // 1.5 s of silence, so ask the live screen whether the dialog is still up.
+    const answeringTrust = trustShownRef.current && isTrustPromptText(termRef.current?.screenText() ?? '');
+    if (/[\r\n]/.test(input) && !answeringTrust) sentSomething();
   }, [sentSomething]);
 
   const acceptData = useCallback(() => !dropData.current, []);
 
   const onExit = useCallback(() => {
     let retryFresh = false;
+    // The gate can fire on shell quiet, and if it does so before claude prints its error, a resume failure is also read from the output.
+    const textFail =
+      resumedStartRef.current && !modeSwitchRef.current && !turnSentThisStart.current && resumeFailedText(tailRef.current);
     if (!readyRef.current) {
       // Ended before the ready gate: a mode switch that claude refused or a resume that failed.
       const to = pendingRef.current;
@@ -270,6 +299,15 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       }
       if (to || resumedStartRef.current) resumeFailures.current += 1;
       retryFresh = !to && retryFreshRef.current;
+    } else if (textFail) {
+      resumeFailures.current += 1;
+      retryFresh = retryFreshRef.current;
+    }
+    if (textFail && !retryFresh) {
+      // A failed resume is definitive: no automatic retry here (Restart owns it), and the next Restart starts fresh.
+      resumeFailures.current = 2;
+      hasSentRef.current = false;
+      setHasSent(false);
     }
     startSeq.current += 1;
     dropData.current = false;
@@ -278,20 +316,20 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     busyRef.current?.reset();
     setSettled(false);
     watcherRef.current?.reset();
-    setTrustShown(false);
+    setTrustShownBoth(false);
     setReady(false);
     setHint(false);
     setStopped(true);
     setLiveBoth(false);
     if (retryFresh) {
-      // A resume that ended before ready (the conversation could not be reopened): start a new one, once.
+      // A resume that could not reopen the conversation (ended before ready, or printed "No conversation found"): start a new one, once.
       hasSentRef.current = false;
       setHasSent(false);
       dropData.current = true;
       termRef.current?.reset();
       begin({ replace: true, resume: false, mode: modeRef.current, fallbackNote: true });
     }
-  }, [clearHint, setLiveBoth, begin]);
+  }, [clearHint, setLiveBoth, begin, setTrustShownBoth]);
 
   const restart = (): void => {
     termRef.current?.reset();
@@ -314,7 +352,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     setPendingSwitch(to);
     dropData.current = true;
     termRef.current?.reset();
-    begin({ replace: true, resume: hasSentRef.current, mode: to });
+    begin({ replace: true, resume: hasSentRef.current, mode: to, modeSwitch: true });
   };
 
   const confirmFreshStart = (): void => {
