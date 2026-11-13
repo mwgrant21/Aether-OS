@@ -1732,10 +1732,9 @@ ipcMain.on('terminal2Pty:resize', (_event, { cols, rows }: { cols: number; rows:
   terminal2PtyLifecycle.resize(cols, rows);
 });
 
-// GUI variant (AETHER_GUI=1): own PTY lifecycle (not a hub slot, so never visible to the phone gateway), the pinned-folder
+// GUI variant (AETHER_GUI=1): own PTY lifecycles (not hub slots, so never visible to the phone gateway), the pinned-folder
 // store and the gui:* IPC. With the flag off none of this runs: no handler, and gui-projects.json is never read or written.
 if (guiVariantEnabled(process.env)) {
-  const guiLifecycle = new PtyLifecycle();
   let guiStore: ReturnType<typeof createProjectsStore> | null = null;
   let guiStorePromise: Promise<ReturnType<typeof createProjectsStore> | null> | undefined;
   // Lazy: the file is not read until the private-dir ACL is confirmed (a planted path would become claude's cwd).
@@ -1743,12 +1742,16 @@ if (guiVariantEnabled(process.env)) {
     (guiStorePromise ??= guiDirReady.then((ok) => (ok ? (guiStore = createProjectsStore({ dir: aetherOsDir })) : null)));
   const guiEnsureDir = (dir: string): string | undefined => { try { mkdirSync(dir, { recursive: true }); return dir; } catch { return undefined; } };
   const guiSession = createGuiSession({
-    lifecycle: {
-      get current() { return guiLifecycle.current; },
-      start: (spawn, handlers, size) => guiLifecycle.start(spawn, handlers, size),
-      write: (i) => guiLifecycle.write(i),
-      resize: (c, r) => guiLifecycle.resize(c, r),
-      kill: () => { try { guiLifecycle.current?.kill(); } catch { /* ignore */ } },
+    // One PtyLifecycle per chat slot (not hub slots, so never visible to the phone gateway). Kill identity is the slot's own GUI-owned pty.
+    createLifecycle: () => {
+      const l = new PtyLifecycle();
+      return {
+        get current() { return l.current; },
+        start: (spawn, handlers, size) => l.start(spawn, handlers, size),
+        write: (i) => l.write(i),
+        resize: (c, r) => l.resize(c, r),
+        kill: () => { try { l.current?.kill(); } catch { /* ignore */ } },
+      };
     },
     // Plain spawnPty, no bridge, so the cwd below is never combined with a bridge launch.
     spawn: ({ cwd, cols, rows, mode, sessionId, resumeId, continueLast }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildGuiClaudeCommand({ mode, sessionId, resumeId, continueLast }), process.platform), cwd),
