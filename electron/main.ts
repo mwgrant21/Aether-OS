@@ -68,7 +68,7 @@ import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INT
 import { createTickCompletionHandler } from './liveTickCompletions';
 import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
 import { createFlushQuitGate } from './flushQuitGate';
-import { spawn as spawnChild } from 'node:child_process';
+import { spawn as spawnChild, execFile as execFileChild, execFileSync as execFileSyncChild } from 'node:child_process';
 import { createOwnerClient } from './ptyOwner/ownerClient';
 import { ensureOwner } from './ptyOwner/ownerLauncher';
 import { adoptOwned, type AdoptTarget } from './ptyOwner/adopt';
@@ -1741,8 +1741,28 @@ if (guiVariantEnabled(process.env)) {
   const getGuiStore = (): Promise<ReturnType<typeof createProjectsStore> | null> =>
     (guiStorePromise ??= guiDirReady.then((ok) => (ok ? (guiStore = createProjectsStore({ dir: aetherOsDir })) : null)));
   const guiEnsureDir = (dir: string): string | undefined => { try { mkdirSync(dir, { recursive: true }); return dir; } catch { return undefined; } };
+  // Tree kill (win32 only): the pid comes from the GUI-owned pty object and nowhere else (no name or command-line lookup, nothing read from a user-writable file).
+  // Absolute System32 path (a bare name would resolve through a user-writable PATH/cwd). Failures are swallowed and logged as a fixed string, never err.message.
+  const guiTaskkill = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+  const guiTreePidOk = (pid: unknown): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 4 && pid !== process.pid;
+  const guiKillTree = (pid: number): Promise<void> => new Promise((resolve) => {
+    if (process.platform !== 'win32' || !guiTreePidOk(pid)) { resolve(); return; }
+    try {
+      execFileChild(guiTaskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 1000 }, (err) => {
+        if (err) diagLog.write(`[diag] gui session: tree kill failed at=${new Date().toISOString()}`);
+        resolve();
+      });
+    } catch { diagLog.write(`[diag] gui session: tree kill failed at=${new Date().toISOString()}`); resolve(); }
+  });
+  const guiKillTreeSync = (pids: number[]): void => {
+    const ok = pids.filter(guiTreePidOk);
+    if (process.platform !== 'win32' || ok.length === 0) return;
+    try {
+      execFileSyncChild(guiTaskkill, [...ok.flatMap((p) => ['/pid', String(p)]), '/T', '/F'], { windowsHide: true, timeout: 1500, stdio: 'ignore' });
+    } catch { diagLog.write(`[diag] gui session: tree kill failed at=${new Date().toISOString()}`); }
+  };
   const guiSession = createGuiSession({
-    // One PtyLifecycle per chat slot (not hub slots, so never visible to the phone gateway). Kill identity is the slot's own GUI-owned pty.
+    // One PtyLifecycle per chat slot (not hub slots, so never visible to the phone gateway). Kills go through guiSession's tracked pty, never through the lifecycle.
     createLifecycle: () => {
       const l = new PtyLifecycle();
       return {
@@ -1750,11 +1770,12 @@ if (guiVariantEnabled(process.env)) {
         start: (spawn, handlers, size) => l.start(spawn, handlers, size),
         write: (i) => l.write(i),
         resize: (c, r) => l.resize(c, r),
-        kill: () => { try { l.current?.kill(); } catch { /* ignore */ } },
       };
     },
     // Plain spawnPty, no bridge, so the cwd below is never combined with a bridge launch.
     spawn: ({ cwd, cols, rows, mode, sessionId, resumeId, continueLast }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildGuiClaudeCommand({ mode, sessionId, resumeId, continueLast }), process.platform), cwd),
+    killTree: guiKillTree,
+    killTreeSync: guiKillTreeSync,
     resumeById: GUI_RESUME_BY_ID,
     projectPath: (id) => guiStore?.pathOf(id),
     isDirectory: (p) => { try { return statSync(p).isDirectory(); } catch { return false; } },

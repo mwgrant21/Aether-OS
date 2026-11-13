@@ -1,16 +1,16 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { createGuiSession, trackExit, type GuiLifecycle, type GuiPty } from './guiSession';
-import { GUI_CHANNELS, GUI_KILL_WAIT_MS, GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS } from './guiTypes';
+import { GUI_CHANNELS, GUI_DYING_MAX_MS, GUI_KILL_WAIT_MS, GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS, GUI_TREE_KILL_MAX_MS } from './guiTypes';
 
 // autoExit: kill() ends the pty at once (the common case); false = a pty that lingers until fireExit (ConPTY exit is async).
-function fakePty(autoExit = true) {
+function fakePty(autoExit = true, pid?: number) {
   let data: (v: string) => void = () => {};
   let exit: () => void = () => {};
   return {
     onData: (cb: typeof data) => { data = cb; }, onExit: (cb: typeof exit) => { exit = cb; },
     kill: vi.fn(() => { if (autoExit) exit(); }), write: vi.fn(), resize: vi.fn(),
-    fireData: (v: string) => data(v), fireExit: () => exit(),
+    fireData: (v: string) => data(v), fireExit: () => exit(), pid,
   };
 }
 type FP = ReturnType<typeof fakePty>;
@@ -31,17 +31,18 @@ function fakeLifecycle() {
     },
     write: (i) => { active?.write(i); },
     resize: (c, r) => { active?.resize(c, r); },
-    kill: () => { active?.kill(); },
   };
   return lc;
 }
 
-function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDirectory?: (p: string) => boolean; newChatDir?: () => string | undefined; resumeById?: boolean; lingering?: boolean }) {
+function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDirectory?: (p: string) => boolean; newChatDir?: () => string | undefined; resumeById?: boolean; lingering?: boolean; killTree?: (pid: number) => Promise<void>; killTreeSync?: (pids: number[]) => void; pid?: (i: number) => number | undefined }) {
   const lifecycles: GuiLifecycle[] = [];
   const ptys: FP[] = [];
   const spawn = vi.fn((a: unknown) => {
     if (over?.spawn) return over.spawn(a);
-    const p = fakePty(!over?.lingering); ptys.push(p); return p as unknown as GuiPty;
+    const p = fakePty(!over?.lingering, over?.pid ? over.pid(ptys.length) : over?.killTree || over?.killTreeSync ? 1000 + ptys.length : undefined);
+    if (over?.kill) p.kill = vi.fn(over.kill);
+    ptys.push(p); return p as unknown as GuiPty;
   });
   const sent: Array<[string, unknown]> = [];
   const timers: Array<{ fn: () => void; ms: number; cancelled: boolean }> = [];
@@ -49,11 +50,11 @@ function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDir
   const flags = { aliveThrows: false };
   let n = 0;
   const session = createGuiSession({
-    createLifecycle: () => { const lc = fakeLifecycle(); if (over?.kill) lc.kill = over.kill; lifecycles.push(lc); return lc; },
+    createLifecycle: () => { const lc = fakeLifecycle(); lifecycles.push(lc); return lc; },
     spawn, resumeById: over?.resumeById ?? true,
     projectPath: (id) => (id === 'p1' ? 'C:/secret/one' : id === 'p2' ? 'C:/secret/two' : id === 'gone' ? 'C:/secret/gone' : /^q[0-9]$/.test(id) ? `C:/secret/${id}` : undefined),
     isDirectory: over?.isDirectory ?? ((p) => p !== 'C:/secret/gone'),
-    newChatDir: over?.newChatDir,
+    newChatDir: over?.newChatDir, killTree: over?.killTree, killTreeSync: over?.killTreeSync,
     send: (c, p) => { if (flags.aliveThrows && c === GUI_CHANNELS.alive) throw new Error('alive failed'); sent.push([c, p]); },
     randomUUID: () => `sid-${++n}`,
     schedule: (fn, ms) => { const t = { fn, ms, cancelled: false }; timers.push(t); return () => { t.cancelled = true; }; },
@@ -647,10 +648,9 @@ describe('guiSession awaited replacement', () => {
     await s.session.start(req('p1'));
     const p = restart(s);
     await tick();
-    expect(s.timers).toHaveLength(1);
-    expect(s.timers[0]!.ms).toBe(GUI_KILL_WAIT_MS);
+    expect(s.timers.filter((t) => t.ms === GUI_KILL_WAIT_MS)).toHaveLength(1);
     expect(s.spawn).toHaveBeenCalledTimes(1);
-    s.fire(0);
+    s.fire(s.timers.findIndex((t) => t.ms === GUI_KILL_WAIT_MS));
     expect(await p).toEqual({ ok: true, reused: false });
     expect(s.spawn).toHaveBeenCalledTimes(2);
   });
@@ -661,7 +661,7 @@ describe('guiSession awaited replacement', () => {
     await tick();
     s.ptys[0]!.fireExit();
     await p;
-    expect(s.timers[0]!.cancelled).toBe(true);
+    expect(s.timers.find((t) => t.ms === GUI_KILL_WAIT_MS)!.cancelled).toBe(true);
   });
   it('a second start during the wait supersedes the first; one spawn in total after the old exit', async () => {
     const s = setup({ lingering: true });
@@ -742,5 +742,188 @@ describe('trackExit', () => {
   it('tolerates a pty without resume()', () => {
     const { resume: _r, ...p } = realPty();
     expect(() => trackExit(p as unknown as GuiPty).pty.resume!()).not.toThrow();
+  });
+});
+
+describe('guiSession dying set and process bound', () => {
+  const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+  // 3 live (p1, p2, q1) plus `dying` stopped-but-not-exited ptys (lingering ptys never exit by themselves)
+  async function threeLive(dying: number) {
+    const s = setup({ lingering: true });
+    for (const k of ['p1', 'p2', 'q1']) await s.session.start(req(k));
+    for (const k of ['q2', 'q3', 'q4'].slice(0, dying)) { await s.session.start(req(k)); s.session.stop(k); }
+    return s;
+  }
+  it('refuses a start at 3 live + 3 dying (total 6) and accepts it at 3 live + 2 dying (total 5)', async () => {
+    const s = await threeLive(3);
+    expect(await s.session.start(req('q5'))).toEqual({ ok: false, reason: 'too-many-live' });
+    expect(s.spawn).toHaveBeenCalledTimes(6);
+    s.ptys[5]!.fireExit(); // one dying pty really exits
+    expect((await s.session.start(req('q5'))).ok).toBe(true);
+  });
+  it('a restart of a live key is refused by the process bound too, and kills nothing when refused', async () => {
+    const s = await threeLive(3);
+    expect(await s.session.start({ ...req('p1'), restart: true })).toEqual({ ok: false, reason: 'too-many-live' });
+    expect(s.ptys[0]!.kill).not.toHaveBeenCalled();
+    expect(s.session.live('p1')).toBe(true);
+  });
+  it('a dying pty that never exits is dropped after GUI_DYING_MAX_MS and stops counting, without logging a path', async () => {
+    const s = await threeLive(3);
+    const t = s.timers.findIndex((x) => x.ms === GUI_DYING_MAX_MS);
+    expect(t).toBeGreaterThanOrEqual(0);
+    s.fire(t);
+    expect(s.log).toHaveBeenCalledWith('gui session: pty did not exit');
+    expect((await s.session.start(req('q5'))).ok).toBe(true);
+  });
+  it('an exit before the timeout cancels the drop timer', async () => {
+    const s = setup({ lingering: true });
+    await s.session.start(req('p1'));
+    s.session.stop('p1');
+    const t = s.timers.find((x) => x.ms === GUI_DYING_MAX_MS)!;
+    s.ptys[0]!.fireExit();
+    await tick();
+    expect(t.cancelled).toBe(true);
+    expect(s.log).not.toHaveBeenCalledWith('gui session: pty did not exit');
+  });
+  it('a same-key start waits for its own dying pty only; another key dying does not delay it', async () => {
+    const s = setup({ lingering: true });
+    await s.session.start(req('p1'));
+    await s.session.start(req('p2'));
+    s.session.stop('p1');
+    s.session.stop('p2');
+    expect((await s.session.start(req('q1'))).ok).toBe(true); // p1/p2 dying do not delay q1
+    const again = s.session.start(req('p1'));
+    await tick();
+    expect(s.spawn).toHaveBeenCalledTimes(3); // p1, p2, q1: p1 again is still waiting
+    s.ptys[0]!.fireExit(); // p1's own pty; p2's pty is still dying
+    expect(await again).toEqual({ ok: true, reused: false });
+  });
+});
+
+describe('guiSession tree kill', () => {
+  const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+  function deferred() { let resolve!: () => void; const p = new Promise<void>((r) => { resolve = r; }); return { p, resolve }; }
+  it('kills the tree BEFORE the pty and the pty kill waits for it', async () => {
+    const order: string[] = [];
+    const d = deferred();
+    const s = setup({ killTree: (pid) => { order.push('tree ' + pid); return d.p; } });
+    await s.session.start(req('p1'));
+    s.ptys[0]!.kill.mockImplementation(() => { order.push('pty'); });
+    s.session.stop('p1');
+    await tick();
+    expect(order).toEqual(['tree 1000']);
+    d.resolve();
+    await tick();
+    expect(order).toEqual(['tree 1000', 'pty']);
+  });
+  it('replacement (restart) tree-kills the old pty once with its own pid, even on a repeated restart', async () => {
+    const calls: number[] = [];
+    const s = setup({ lingering: true, killTree: async (pid) => { calls.push(pid); } });
+    await s.session.start(req('p1'));
+    const first = s.session.start({ ...req('p1'), restart: true });
+    await tick();
+    const second = s.session.start({ ...req('p1'), restart: true });
+    await tick();
+    s.ptys[0]!.fireExit();
+    await Promise.all([first, second]);
+    expect(calls).toEqual([1000]);
+  });
+  it('does not call killTree for a pty that has already exited, and skips the pty kill if it exits during the tree kill', async () => {
+    const killTree = vi.fn(async () => {});
+    const s = setup({ killTree });
+    await s.session.start(req('p1'));
+    s.ptys[0]!.fireExit();
+    s.session.stop('p1');
+    expect(killTree).not.toHaveBeenCalled();
+    const d = deferred();
+    const s2 = setup({ lingering: true, killTree: () => d.p });
+    await s2.session.start(req('p1'));
+    s2.session.stop('p1');
+    s2.ptys[0]!.fireExit();
+    d.resolve();
+    await tick();
+    expect(s2.ptys[0]!.kill).not.toHaveBeenCalled();
+  });
+  it.each([4, 0, 1, -7, 1.5, Number.NaN, undefined, process.pid])('never tree-kills pid %s but still kills the pty', async (pid) => {
+    const killTree = vi.fn(async () => {});
+    const s = setup({ killTree, pid: () => pid });
+    await s.session.start(req('p1'));
+    s.session.stop('p1');
+    expect(killTree).not.toHaveBeenCalled();
+    expect(s.ptys[0]!.kill).toHaveBeenCalledTimes(1);
+  });
+  it('a rejecting, throwing or hanging killTree still reaches pty.kill(); the log carries no error text', async () => {
+    for (const killTree of [() => Promise.reject(new Error('C:/secret/one')), () => { throw new Error('C:/secret/one'); }, () => new Promise<void>(() => {})]) {
+      const s = setup({ lingering: true, killTree: killTree as (pid: number) => Promise<void> });
+      await s.session.start(req('p1'));
+      expect(() => s.session.stop('p1')).not.toThrow();
+      await tick();
+      const bound = s.timers.findIndex((t) => t.ms === GUI_TREE_KILL_MAX_MS);
+      if (bound >= 0) s.fire(bound); // the hanging one: only the session's own bound releases it
+      await tick();
+      expect(s.ptys[0]!.kill).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(s.log.mock.calls)).not.toContain('secret');
+    }
+  });
+  it('the dying entry exists before the tree-kill await, so the cap counts it from the decision', async () => {
+    const d = deferred();
+    const s = setup({ lingering: true, killTree: () => d.p });
+    for (const k of ['p1', 'p2', 'q1', 'q2']) await s.session.start(req(k));
+    s.session.stop('p1');
+    s.session.stop('p2');
+    s.session.stop('q1');
+    expect(await s.session.start(req('q3'))).toEqual({ ok: true, reused: false }); // 1 live + 3 dying + new = fine
+    expect(await s.session.start(req('q4'))).toEqual({ ok: true, reused: false });
+    expect(await s.session.start(req('q5'))).toEqual({ ok: false, reason: 'too-many-live' }); // 3 live + 3 dying
+  });
+  it('a failed start kills the new pty through killTree too', async () => {
+    const calls: number[] = [];
+    const s = setup({ killTree: async (pid) => { calls.push(pid); } });
+    s.flags.aliveThrows = true;
+    expect(await s.session.start(req('p1'))).toEqual({ ok: false, reason: 'spawn-failed' });
+    await tick();
+    expect(calls).toEqual([1000]);
+    expect(s.ptys[0]!.kill).toHaveBeenCalled();
+  });
+});
+
+describe('guiSession dispose tree kill', () => {
+  it('runs one synchronous killTreeSync with every live and dying pid, before any pty kill, then kills the ptys', async () => {
+    const order: string[] = [];
+    const killTreeSync = vi.fn((pids: number[]) => { order.push('tree ' + pids.join(',')); });
+    const s = setup({ lingering: true, killTreeSync });
+    await s.session.start(req('p1'));
+    await s.session.start(req('p2'));
+    await s.session.start(req('q1'));
+    s.session.stop('p1'); // dying, pid 1000
+    s.ptys[2]!.fireExit(); // q1 gone: not included
+    for (const p of s.ptys) p.kill.mockImplementation(() => { order.push('pty'); });
+    s.session.dispose();
+    expect(killTreeSync).toHaveBeenCalledTimes(1);
+    expect(killTreeSync.mock.calls[0]![0].sort()).toEqual([1000, 1001]);
+    expect(order[0]).toMatch(/^tree /);
+    expect(order.slice(1)).toEqual(['pty', 'pty']);
+  });
+  it('swallows a throwing killTreeSync, still kills the ptys, and skips invalid pids', async () => {
+    const killTreeSync = vi.fn(() => { throw new Error('C:/secret/one'); });
+    const s = setup({ killTreeSync, pid: (i) => (i === 0 ? 4 : 2000 + i) });
+    await s.session.start(req('p1'));
+    await s.session.start(req('p2'));
+    expect(() => s.session.dispose()).not.toThrow();
+    expect(killTreeSync).toHaveBeenCalledWith([2001]);
+    for (const p of s.ptys) expect(p.kill).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(s.log.mock.calls)).not.toContain('secret');
+  });
+});
+
+describe('trackExit pid', () => {
+  it('reads pid once, at tracking time, and exposes it', () => {
+    let reads = 0;
+    const p = { onData: vi.fn(), onExit: vi.fn(), kill: vi.fn(), write: vi.fn(), resize: vi.fn(), get pid() { reads++; return 4321; } };
+    const t = trackExit(p as unknown as GuiPty);
+    expect(t.pid).toBe(4321);
+    t.pty.kill();
+    expect(t.pid).toBe(4321);
+    expect(reads).toBe(1);
   });
 });
