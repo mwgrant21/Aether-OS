@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { UiProject, AddProjectResult, StartRequest, StartResult } from './gui/guiTypes';
+import type { UiProject, AddProjectResult, StartRequest, StartResult, GuiDataPayload, GuiKeyPayload } from './gui/guiTypes';
 import type { RealUsageSnapshot, FleetSessionRow, PlanUsageSyncResult } from '../src/state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
@@ -175,21 +175,23 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       remove: (id: string): Promise<boolean> => ipcRenderer.invoke('gui:projects:remove', id),
     },
     start: (opts: StartRequest): Promise<StartResult> => ipcRenderer.invoke('gui:session:start', opts),
-    write: (input: string) => ipcRenderer.send('gui:session:write', input),
-    resize: (cols: number, rows: number) => ipcRenderer.send('gui:session:resize', { cols, rows }),
-    submit: (text: string): Promise<boolean> => ipcRenderer.invoke('gui:session:submit', text),
-    onData: (callback: (data: string) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
+    // Every session call and event carries the chat key (project id or 'new'); main validates it.
+    write: (key: string, input: string) => ipcRenderer.send('gui:session:write', key, input),
+    resize: (key: string, cols: number, rows: number) => ipcRenderer.send('gui:session:resize', key, { cols, rows }),
+    submit: (key: string, text: string): Promise<boolean> => ipcRenderer.invoke('gui:session:submit', key, text),
+    stop: (key: string) => ipcRenderer.send('gui:session:stop', key),
+    onData: (callback: (key: string, data: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: GuiDataPayload) => callback(p.key, p.d);
       ipcRenderer.on('gui:session:data', listener);
       return () => ipcRenderer.removeListener('gui:session:data', listener);
     },
-    onAlive: (callback: () => void) => {
-      const listener = () => callback();
+    onAlive: (callback: (key: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: GuiKeyPayload) => callback(p.key);
       ipcRenderer.on('gui:session:alive', listener);
       return () => ipcRenderer.removeListener('gui:session:alive', listener);
     },
-    onExit: (callback: () => void) => {
-      const listener = () => callback();
+    onExit: (callback: (key: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: GuiKeyPayload) => callback(p.key);
       ipcRenderer.on('gui:session:exit', listener);
       return () => ipcRenderer.removeListener('gui:session:exit', listener);
     },

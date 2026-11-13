@@ -55,9 +55,13 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }));
 
-type Cb = (d?: string) => void;
-let chunk: Cb | undefined;
-let exit: Cb | undefined;
+type Cb = (key: string, d?: string) => void;
+let dataCb: Cb | undefined;
+let exitCb: Cb | undefined;
+// The key the pane under test speaks for: its start request names the project (null = New chat).
+const paneKey = (): string => (gui.start.mock.calls.at(-1)?.[0] as { projectId: string | null } | undefined)?.projectId ?? 'new';
+const chunk = ((d?: string, key?: string) => dataCb!(key ?? paneKey(), d)) as ((d?: string, key?: string) => void) | undefined;
+const exit = ((key?: string) => exitCb!(key ?? paneKey())) as ((key?: string) => void) | undefined;
 let unsubData: ReturnType<typeof vi.fn>;
 let unsubExit: ReturnType<typeof vi.fn>;
 let gui: {
@@ -72,8 +76,8 @@ let gui: {
 };
 
 function install(startResult: StartResult | Promise<StartResult> = { ok: true, reused: false }) {
-  chunk = undefined;
-  exit = undefined;
+  dataCb = undefined;
+  exitCb = undefined;
   unsubData = vi.fn();
   unsubExit = vi.fn();
   mocks.order.length = 0;
@@ -88,12 +92,12 @@ function install(startResult: StartResult | Promise<StartResult> = { ok: true, r
     submit: vi.fn(() => Promise.resolve(true)),
     onData: vi.fn((cb: Cb) => {
       mocks.order.push('onData');
-      chunk = cb;
+      dataCb = cb;
       return unsubData;
     }),
     onAlive: vi.fn(() => () => {}),
     onExit: vi.fn((cb: Cb) => {
-      exit = cb;
+      exitCb = cb;
       return unsubExit;
     }),
   };
@@ -327,7 +331,7 @@ describe('ChatPane', () => {
     fireEvent.change(box(), { target: { value: 'do the thing' } });
     fireEvent.keyDown(box(), { key: 'Enter' });
     await flush();
-    expect(gui.submit).toHaveBeenCalledWith('do the thing');
+    expect(gui.submit).toHaveBeenCalledWith('p1', 'do the thing');
   });
 
   it('typed xterm data goes to gui.write and resizes to gui.resize', async () => {
@@ -335,9 +339,58 @@ describe('ChatPane', () => {
     render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     mocks.data!('y');
-    expect(gui.write).toHaveBeenCalledWith('y');
+    expect(gui.write).toHaveBeenCalledWith('p1', 'y');
     mocks.resize!({ cols: 90, rows: 20 });
-    expect(gui.resize).toHaveBeenCalledWith(90, 20);
+    expect(gui.resize).toHaveBeenCalledWith('p1', 90, 20);
+  });
+
+  it('write, resize and submit of the New chat carry the new key', async () => {
+    install();
+    render(<ChatPane projectId={null} onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => chunk!('hello'));
+    await advance(1600);
+    mocks.data!('y');
+    mocks.resize!({ cols: 90, rows: 20 });
+    expect(gui.write).toHaveBeenCalledWith('new', 'y');
+    expect(gui.resize).toHaveBeenCalledWith('new', 90, 20);
+    fireEvent.change(box(), { target: { value: 'hi' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+    expect(gui.submit).toHaveBeenCalledWith('new', 'hi');
+  });
+
+  it('ignores data and exit events for another key', async () => {
+    install();
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => chunk!('other chat output', 'p2'));
+    expect(mocks.write).not.toHaveBeenCalledWith('other chat output');
+    await advance(2000);
+    expect(box().disabled).toBe(true); // the foreign chunk did not feed the ready gate
+    act(() => exit!('p2'));
+    expect(screen.queryByText('Restart')).toBeNull();
+    expect(mocks.write).not.toHaveBeenCalledWith('\r\n[process exited]\r\n');
+    act(() => chunk!('mine'));
+    expect(mocks.write).toHaveBeenCalledWith('mine');
+  });
+
+  it('too-many-live shows its text and Restart', async () => {
+    install({ ok: false, reason: 'too-many-live' });
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    expect(screen.getByText('Too many chats are working. Wait for one to finish.')).toBeTruthy();
+    expect(screen.getByText('Restart')).toBeTruthy();
+  });
+
+  it('a superseded start reply is a no-op: no error, no Restart', async () => {
+    install({ ok: false, reason: 'superseded' });
+    const onLive = vi.fn();
+    render(<ChatPane projectId="p1" onLiveChange={onLive} />);
+    await flush();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('Restart')).toBeNull();
+    expect(onLive).not.toHaveBeenCalledWith(false);
   });
 
   it.each([

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GUI_DEFAULT_PERMISSION_MODE, GUI_NO_OUTPUT_HINT_MS, type GuiPermissionMode, type StartResult } from '../../electron/gui/guiTypes';
+import { GUI_DEFAULT_PERMISSION_MODE, GUI_NEW_KEY, GUI_NO_OUTPUT_HINT_MS, type GuiPermissionMode, type StartResult } from '../../electron/gui/guiTypes';
 import { Button } from '../components/shared/Button';
 import { useColors } from '../components/shared/useColors';
 import { fonts, radii } from '../styles/tokens';
@@ -23,6 +23,7 @@ const FAIL_TEXT: Record<string, string> = {
   'unknown-project': 'That project is no longer pinned',
   'spawn-failed': 'Claude could not be started',
   'bad-request': 'Claude could not be started',
+  'too-many-live': 'Too many chats are working. Wait for one to finish.',
 };
 
 interface BeginOptions {
@@ -39,6 +40,7 @@ const schedule = (fn: () => void, ms: number): (() => void) => {
 export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const colors = useColors();
   const { projects } = useGuiProjects();
+  const sessionKey = projectId ?? GUI_NEW_KEY;
   const name = projectId === null ? 'New chat' : (projects.find((p) => p.id === projectId)?.name ?? 'Project');
 
   const [live, setLive] = useState(false);
@@ -113,7 +115,10 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       (r: StartResult) => {
         if (!mounted.current || mySeq !== startSeq.current) return;
         if (replace) dropData.current = false;
-        if (!r.ok) return fail(r.reason);
+        if (!r.ok) {
+          if (r.reason === 'superseded') return; // a later start/stop replaced the session this reply was for: nothing to show
+          return fail(r.reason);
+        }
         setLiveBoth(true);
         if (r.reused) {
           // The renderer has a fresh empty terminal, so a prompt the session is waiting on cannot be seen
@@ -251,7 +256,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
 
   const onSubmit = async (text: string): Promise<boolean> => {
     try {
-      const ok = (await window.aetherElectron?.gui?.submit(text)) === true;
+      const ok = (await window.aetherElectron?.gui?.submit(sessionKey, text)) === true;
       if (ok) sentSomething();
       return ok;
     } catch {
@@ -274,7 +279,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     <div data-testid="chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ padding: '10px 24px', color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <GuiTerminal ref={termRef} onChunk={onChunk} onExit={onExit} acceptData={acceptData} onTyped={onTyped} />
+        <GuiTerminal ref={termRef} sessionKey={sessionKey} onChunk={onChunk} onExit={onExit} acceptData={acceptData} onTyped={onTyped} />
       </div>
       {(message || stopped) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 24px', color: colors.textMuted, font: `500 13px/1.4 ${fonts.ui}` }}>
