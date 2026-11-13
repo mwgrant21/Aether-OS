@@ -9,7 +9,7 @@ import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
 import { MODE_LABELS, ModePicker } from './ModePicker';
 import { createReadyGate, type ReadyGate } from './readyGate';
-import { createTrustWatcher, type TrustWatcher } from './trustPrompt';
+import { createTrustWatcher, isTrustPromptText, type TrustWatcher } from './trustPrompt';
 import { useGuiProjects } from './useGuiProjects';
 
 export interface ChatPaneStatus {
@@ -51,6 +51,7 @@ interface BeginOptions {
   replace?: boolean;
   resume?: boolean;
   mode?: GuiPermissionMode;
+  modeSwitch?: boolean; // this launch is a permission-mode switch: its failure keeps the switch's own revert path
   noRetry?: boolean; // a user-initiated start: a resume that fails is not retried fresh here (Restart has its own rule)
   fallbackNote?: boolean; // this start is the automatic fresh retry of a failed resume
 }
@@ -102,6 +103,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   const trustShownRef = useRef(false); // claude's trust prompt is on screen (mirrors trustShown for onTyped)
   const tailRef = useRef(''); // bounded tail of the current start's raw output
   const turnSentThisStart = useRef(false); // a turn was submitted or typed since the current start began
+  const modeSwitchRef = useRef(false); // the current start is a mode switch; survives onReady, reset by the next start
   const retryFreshRef = useRef(false); // the current start was a resume that may be retried fresh once if it ends before ready
   const resumeFailures = useRef(0); // consecutive resume starts that ended before ready
   const mounted = useRef(false);
@@ -155,6 +157,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     tailRef.current = '';
     turnSentThisStart.current = false;
     resumedStartRef.current = o.resume === true;
+    modeSwitchRef.current = o.modeSwitch === true;
     retryFreshRef.current = o.resume === true && o.noRetry !== true;
     setResumeNote(o.fallbackNote === true);
     clearHint();
@@ -273,17 +276,19 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   }, []);
 
   const onTyped = useCallback((input: string) => {
-    // The Enter that answers claude's folder-trust prompt is not a message.
-    if (/[\r\n]/.test(input) && !trustShownRef.current) sentSomething();
+    // The Enter that answers claude's folder-trust prompt is not a message. The watcher's shown flag stays set until
+    // 1.5 s of silence, so ask the live screen whether the dialog is still up.
+    const answeringTrust = trustShownRef.current && isTrustPromptText(termRef.current?.screenText() ?? '');
+    if (/[\r\n]/.test(input) && !answeringTrust) sentSomething();
   }, [sentSomething]);
 
   const acceptData = useCallback(() => !dropData.current, []);
 
   const onExit = useCallback(() => {
     let retryFresh = false;
-    // The gate can fire on shell quiet before claude prints its error, so a resume failure is also read from the output.
+    // The gate can fire on shell quiet, and if it does so before claude prints its error, a resume failure is also read from the output.
     const textFail =
-      resumedStartRef.current && !pendingRef.current && !turnSentThisStart.current && resumeFailedText(tailRef.current);
+      resumedStartRef.current && !modeSwitchRef.current && !turnSentThisStart.current && resumeFailedText(tailRef.current);
     if (!readyRef.current) {
       // Ended before the ready gate: a mode switch that claude refused or a resume that failed.
       const to = pendingRef.current;
@@ -347,7 +352,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     setPendingSwitch(to);
     dropData.current = true;
     termRef.current?.reset();
-    begin({ replace: true, resume: hasSentRef.current, mode: to });
+    begin({ replace: true, resume: hasSentRef.current, mode: to, modeSwitch: true });
   };
 
   const confirmFreshStart = (): void => {

@@ -656,6 +656,20 @@ describe('ChatPane permission mode', () => {
     expect(picker('Auto').getAttribute('aria-disabled')).toBe('true');
   });
 
+  it('a real message typed within 1.5 s of answering the trust prompt counts as a turn', async () => {
+    await ready();
+    mocks.screen = PROMPT;
+    act(() => chunk!('prompt'));
+    await advance(300);
+    act(() => mocks.data!('\r')); // answers the dialog
+    expect(lastStatus().hasSent).toBe(false);
+    mocks.screen = ['> '];
+    act(() => chunk!('redraw'));
+    await advance(300); // the watcher is still shown (needs 1.5 s of silence)
+    act(() => mocks.data!('hello\r'));
+    expect(lastStatus().hasSent).toBe(true);
+  });
+
   it('the Enter that answers the trust prompt is not a turn', async () => {
     await ready();
     mocks.screen = PROMPT;
@@ -995,7 +1009,7 @@ describe('ChatPane Start fresh and resume fallback', () => {
     fireEvent.click(screen.getByLabelText(`Permission mode: ${from}`));
     fireEvent.click(screen.getByText(`● ${to}`));
   };
-  // The live shape: the pty is a shell, so the ready gate fires on shell quiet before claude prints its error.
+  // The live shape: the pty is a shell, so the ready gate can fire on shell quiet if claude prints its error later.
   const resumeDiesAfterGate = async (props: { projectId: string | null }) => {
     install();
     render(<Pane projectId={props.projectId} resume mode="plan" onLiveChange={vi.fn()} />);
@@ -1091,6 +1105,56 @@ describe('ChatPane Start fresh and resume fallback', () => {
     act(() => exit!());
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('a mode-switch resume that fails with "No conversation found" after the ready gate is not retried fresh', async () => {
+    await startPane({ projectId: 'p1' });
+    await send();
+    await advance(3100);
+    choose('Auto', 'Plan');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    act(() => chunk!('Windows PowerShell'));
+    await advance(1700); // the gate fired: onReady cleared the pending switch
+    act(() => chunk!('No conversation found with session ID: x'));
+    act(() => exit!());
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(screen.getByText('Restart')).toBeTruthy();
+  });
+
+  it('stale "No conversation found" text from an earlier start does not retry a later clean resume, and Restart keeps resuming', async () => {
+    await startPane({ projectId: 'p1' });
+    await send();
+    act(() => chunk!('No conversation found')); // printed by a non-resume start
+    act(() => exit!());
+    await flush();
+    fireEvent.click(screen.getByText('Restart'));
+    await flush();
+    expect(gui.start.mock.calls[1]![0]).toMatchObject({ resume: true });
+    act(() => chunk!('Windows PowerShell'));
+    await advance(1700);
+    act(() => exit!());
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2); // tail was reset: no fresh retry
+    fireEvent.click(screen.getByText('Restart'));
+    await flush();
+    expect(gui.start.mock.calls[2]![0]).toMatchObject({ resume: true });
+  });
+
+  it('a non-resume start that printed the phrase leaves the conversation resumable for Restart', async () => {
+    install();
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => chunk!('No conversation found to continue'));
+    await advance(1700);
+    act(() => exit!());
+    await flush();
+    act(() => mocks.data!('hi\r')); // typed while stopped: a conversation exists again
+    fireEvent.click(screen.getByText('Restart'));
+    await flush();
+    expect(gui.start.mock.calls[1]![0]).toMatchObject({ resume: true });
   });
 
   it('a mode-switch failure is not retried here', async () => {
