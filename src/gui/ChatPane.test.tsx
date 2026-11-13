@@ -146,6 +146,27 @@ const PROMPT = [
   '> No, exit',
   '  Yes, I trust this folder',
 ];
+// Claude Code 2.1.323 idle box, rows 25-30 of the saved 100x30 screen (built from escapes).
+const RULE = '\u2500'.repeat(100);
+const BOX_SCREEN = [
+  ' '.repeat(82) + '\u25cf high \u00b7 /effort',
+  RULE,
+  '\u276f\u00a0Try "write a test for <filepath>"',
+  RULE,
+  '',
+  '  \u23f5\u23f5 auto mode on (shift+tab to cycle) \u00b7 \u2190 1 agent',
+];
+// The bare PowerShell launch screen: no input box yet.
+const PS_ONLY = [
+  'Windows PowerShell',
+  'Copyright (C) Microsoft Corporation. All rights reserved.',
+  '',
+  'PS C:\\Users\\Matt\\.aether-os\\gui-chat> Remove-Item Env:\\ANTHROPIC_API_KEY -ErrorAction SilentlyContin',
+  'ue; Remove-Item Env:\\ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue; Remove-Item Env:\\ANTHROPIC_',
+  'BASE_URL -ErrorAction SilentlyContinue',
+  'PS C:\\Users\\Matt\\.aether-os\\gui-chat> Remove-Item Env:\\CLAUDE_CODE_CHILD_SESSION -ErrorAction Silent',
+  'lyContinue; claude --session-id 07faf54b-30fb-4fa7-90a5-ffab1e033c38 --permission-mode auto; exit',
+];
 const TRUST_HINT = "Answer Claude's trust prompt in the pane first";
 const advance = (ms: number) =>
   act(async () => {
@@ -162,7 +183,7 @@ beforeEach(() => {
   mocks.dispose.mockClear();
   mocks.fitTo = undefined;
   mocks.fits = 0;
-  mocks.screen = [];
+  mocks.screen = BOX_SCREEN;
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 });
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 600 });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -496,7 +517,7 @@ describe('ChatPane', () => {
       act(() => chunk!('prompt'));
       await advance(300);
       expect(screen.getByText(TRUST_HINT)).toBeTruthy();
-      mocks.screen = ['> '];
+      mocks.screen = BOX_SCREEN;
       act(() => chunk!('redraw'));
       await advance(1400);
       expect(box().disabled).toBe(true);
@@ -509,7 +530,7 @@ describe('ChatPane', () => {
       install();
       render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
       await flush();
-      mocks.screen = ['banner'];
+      mocks.screen = BOX_SCREEN;
       act(() => chunk!('banner'));
       await advance(1700);
       expect(box().disabled).toBe(false);
@@ -583,6 +604,102 @@ describe('ChatPane', () => {
     });
   });
 
+  describe('input box gate', () => {
+    it('keeps the composer disabled after the ready gate fires on the bare PowerShell screen, until two polls see the box', async () => {
+      install();
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PS_ONLY;
+      act(() => chunk!('hello'));
+      await advance(1700);
+      expect(box().disabled).toBe(true);
+      expect(box().placeholder).toBe('Starting Claude...');
+      mocks.screen = BOX_SCREEN;
+      await advance(250);
+      expect(box().disabled).toBe(true);
+      await advance(250);
+      expect(box().disabled).toBe(false);
+    });
+
+    it('enables at the 8 s ceiling when the box never shows and the stream goes quiet', async () => {
+      install();
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PS_ONLY;
+      act(() => chunk!('hello'));
+      await advance(7999);
+      expect(box().disabled).toBe(true);
+      await advance(1);
+      expect(box().disabled).toBe(false);
+    });
+
+    it('enables at the 8 s ceiling on a stream that never goes quiet, with no box on screen', async () => {
+      install();
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = PS_ONLY;
+      for (let t = 0; t < 7000; t += 1000) {
+        act(() => chunk!('spin'));
+        await advance(1000);
+      }
+      act(() => chunk!('spin'));
+      await advance(999);
+      expect(box().disabled).toBe(true);
+      await advance(1);
+      expect(box().disabled).toBe(false);
+    });
+
+    it('keeps the composer disabled over the trust prompt even with the box on screen, then enables after the clear', async () => {
+      install();
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      mocks.screen = [...PROMPT, ...BOX_SCREEN];
+      act(() => chunk!('prompt'));
+      await advance(1700);
+      expect(box().disabled).toBe(true);
+      expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+      mocks.screen = BOX_SCREEN;
+      act(() => chunk!('redraw'));
+      await advance(1400);
+      expect(box().disabled).toBe(true);
+      await advance(200);
+      expect(box().disabled).toBe(false);
+    });
+
+    it('waits for the new start\'s box again after exit and Restart', async () => {
+      install();
+      render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+      await flush();
+      act(() => chunk!('hello'));
+      await advance(1700);
+      expect(box().disabled).toBe(false);
+      mocks.screen = PS_ONLY;
+      act(() => exit!());
+      fireEvent.click(screen.getByText('Restart'));
+      await flush();
+      act(() => chunk!('hello'));
+      await advance(1700);
+      expect(box().disabled).toBe(true);
+      mocks.screen = BOX_SCREEN;
+      await advance(500);
+      expect(box().disabled).toBe(false);
+    });
+
+    it('a resumed pane showing history but no box stays disabled until the box is drawn', async () => {
+      install();
+      render(<Pane projectId="p1" resume onLiveChange={vi.fn()} />);
+      await flush();
+      const history = ['Claude Code v2.1.325', '❯ earlier prompt', '● earlier answer', ''];
+      mocks.screen = history;
+      act(() => chunk!('history'));
+      await advance(1700);
+      expect(box().disabled).toBe(true);
+      mocks.screen = [...history, ...BOX_SCREEN];
+      await advance(500);
+      expect(box().disabled).toBe(false);
+    });
+  });
+
   describe('unmount races', () => {
     it('ignores a start reply that arrives after unmount', async () => {
       let reply!: (r: StartResult) => void;
@@ -624,7 +741,7 @@ describe('ChatPane permission mode', () => {
     fireEvent.change(box(), { target: { value: text } });
     fireEvent.keyDown(box(), { key: 'Enter' });
     await flush();
-    await advance(3100); // quiet window: the reply "ended" (the mocked screen is empty)
+    await advance(3100); // quiet window: the reply "ended" (the mocked screen is the idle box screen)
   };
   const choose = (from: string, to: string) => {
     fireEvent.click(picker(from));
@@ -663,7 +780,7 @@ describe('ChatPane permission mode', () => {
     await advance(300);
     act(() => mocks.data!('\r')); // answers the dialog
     expect(lastStatus().hasSent).toBe(false);
-    mocks.screen = ['> '];
+    mocks.screen = BOX_SCREEN;
     act(() => chunk!('redraw'));
     await advance(300); // the watcher is still shown (needs 1.5 s of silence)
     act(() => mocks.data!('hello\r'));
@@ -867,7 +984,7 @@ describe('ChatPane auto-stop off', () => {
     await advance(1700);
     return onStopChat;
   };
-  // The canary: output for over 4 s of a turn with every screen read idle (the mocked screen is empty).
+  // The canary: output for over 4 s of a turn with every screen read idle (the mocked screen is the idle box screen).
   const blind = async () => {
     for (let i = 0; i < 6; i++) {
       act(() => chunk!('spin'));
