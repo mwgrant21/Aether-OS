@@ -55,6 +55,14 @@ interface BeginOptions {
   fallbackNote?: boolean; // this start is the automatic fresh retry of a failed resume
 }
 
+const TAIL_CAP = 2000;
+// claude's own message when the conversation to resume does not exist (ANSI stripped, last 400 chars only).
+function resumeFailedText(tail: string): boolean {
+  // eslint-disable-next-line no-control-regex -- ANSI escape sequences
+  const plain = tail.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, '').replace(/\s+/g, ' ');
+  return /No conversation found/i.test(plain.slice(-400));
+}
+
 const schedule = (fn: () => void, ms: number): (() => void) => {
   const t = setTimeout(fn, ms);
   return () => clearTimeout(t);
@@ -91,6 +99,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   const hasSentRef = useRef(resume === true);
   const readyRef = useRef(false);
   const resumedStartRef = useRef(false); // the current start asked claude to resume
+  const tailRef = useRef(''); // bounded tail of the current start's raw output
+  const turnSentThisStart = useRef(false); // a turn was submitted or typed since the current start began
   const retryFreshRef = useRef(false); // the current start was a resume that may be retried fresh once if it ends before ready
   const resumeFailures = useRef(0); // consecutive resume starts that ended before ready
   const mounted = useRef(false);
@@ -136,6 +146,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     busyRef.current?.reset();
     setSettled(false);
     readyRef.current = false;
+    tailRef.current = '';
+    turnSentThisStart.current = false;
     resumedStartRef.current = o.resume === true;
     retryFreshRef.current = o.resume === true && o.noRetry !== true;
     setResumeNote(o.fallbackNote === true);
@@ -238,7 +250,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ChatPane is keyed by projectId: one start per mount
   }, []);
 
-  const onChunk = useCallback(() => {
+  const onChunk = useCallback((d: string) => {
+    tailRef.current = (tailRef.current + d).slice(-TAIL_CAP);
     clearHint();
     setHint(false);
     gateRef.current?.feed();
@@ -247,6 +260,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   }, [clearHint]);
 
   const sentSomething = useCallback(() => {
+    turnSentThisStart.current = true;
     hasSentRef.current = true;
     setHasSent(true);
     busyRef.current?.turnStarted();
@@ -260,6 +274,9 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
 
   const onExit = useCallback(() => {
     let retryFresh = false;
+    // The gate can fire on shell quiet before claude prints its error, so a resume failure is also read from the output.
+    const textFail =
+      resumedStartRef.current && !pendingRef.current && !turnSentThisStart.current && resumeFailedText(tailRef.current);
     if (!readyRef.current) {
       // Ended before the ready gate: a mode switch that claude refused or a resume that failed.
       const to = pendingRef.current;
@@ -270,6 +287,15 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       }
       if (to || resumedStartRef.current) resumeFailures.current += 1;
       retryFresh = !to && retryFreshRef.current;
+    } else if (textFail) {
+      resumeFailures.current += 1;
+      retryFresh = retryFreshRef.current;
+    }
+    if (textFail && !retryFresh) {
+      // A failed resume is definitive: no automatic retry here (Restart owns it), and the next Restart starts fresh.
+      resumeFailures.current = 2;
+      hasSentRef.current = false;
+      setHasSent(false);
     }
     startSeq.current += 1;
     dropData.current = false;
