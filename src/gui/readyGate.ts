@@ -1,6 +1,6 @@
 import { GUI_READY_CEILING_MS, GUI_READY_QUIET_MS } from '../../electron/gui/guiTypes';
 
-export type ReadyReason = 'quiet' | 'ceiling' | 'forced';
+export type ReadyReason = 'quiet' | 'ceiling';
 
 export interface ReadyGateOptions {
   quietMs?: number;
@@ -12,8 +12,6 @@ export interface ReadyGateOptions {
 export interface ReadyGate {
   /** Call once per PTY data chunk. */
   feed(): void;
-  /** Ready now, for a reused session that will never emit a chunk. */
-  forceReady(): void;
   /** New session: clear timers and allow one more ready. */
   reset(): void;
   dispose(): void;
@@ -21,7 +19,7 @@ export interface ReadyGate {
 
 /**
  * Heuristic "claude is ready for input" gate. Never ready before the first
- * chunk (unless forced); fires onReady at most once per session; a stream
+ * chunk; fires onReady at most once per session; a stream
  * that never goes quiet still becomes ready at ceilingMs after the first chunk.
  */
 export function createReadyGate(o: ReadyGateOptions): ReadyGate {
@@ -54,9 +52,6 @@ export function createReadyGate(o: ReadyGateOptions): ReadyGate {
         sawChunk = true;
         cancelCeiling = o.schedule(() => fire('ceiling'), ceilingMs);
       }
-    },
-    forceReady() {
-      fire('forced');
     },
     reset() {
       clear();

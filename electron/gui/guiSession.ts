@@ -103,7 +103,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   }
 
   function resize(c: unknown, r: unknown): void {
-    if (disposed || !isDim(c) || !isDim(r)) return;
+    if (disposed || !isDim(c) || !isDim(r) || !live()) return;
     d.lifecycle.resize(c, r);
   }
 

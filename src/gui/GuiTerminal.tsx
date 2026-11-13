@@ -20,6 +20,8 @@ interface GuiTerminalProps {
   onChunk: () => void;
   /** Called when the session process exits (after the banner was written). */
   onExit: () => void;
+  /** Returns false to drop a chunk entirely (not written, no onChunk). */
+  acceptData?: () => boolean;
 }
 
 /**
@@ -27,12 +29,12 @@ interface GuiTerminalProps {
  * permission prompts are answered by typing here. It only subscribes; the parent calls gui.start
  * afterwards (child effects run before parent effects), so first output is not lost.
  */
-export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(function GuiTerminal({ onChunk, onExit }, ref) {
+export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(function GuiTerminal({ onChunk, onExit, acceptData }, ref) {
   const colors = useColors();
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const cbs = useRef({ onChunk, onExit });
-  cbs.current = { onChunk, onExit };
+  const cbs = useRef({ onChunk, onExit, acceptData });
+  cbs.current = { onChunk, onExit, acceptData };
   const themeRef = useRef({ background: colors.bgTerminal, foreground: colors.textBody });
   themeRef.current = { background: colors.bgTerminal, foreground: colors.textBody };
 
@@ -66,6 +68,7 @@ export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(funct
     fitIfShown();
 
     const offData = gui.onData((d) => {
+      if (cbs.current.acceptData?.() === false) return;
       term.write(d);
       cbs.current.onChunk();
     });

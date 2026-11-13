@@ -50,17 +50,6 @@ describe('createReadyGate', () => {
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
-  it('forceReady fires once immediately and later chunks do not fire again', () => {
-    const { gate, onReady } = make();
-    gate.forceReady();
-    expect(onReady).toHaveBeenCalledTimes(1);
-    expect(onReady).toHaveBeenCalledWith('forced');
-    gate.feed();
-    gate.forceReady();
-    vi.advanceTimersByTime(60_000);
-    expect(onReady).toHaveBeenCalledTimes(1);
-  });
-
   it('reset allows a second ready', () => {
     const { gate, onReady } = make();
     gate.feed();

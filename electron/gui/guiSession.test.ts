@@ -98,6 +98,26 @@ describe('guiSession.start', () => {
     expect(s.spawn).toHaveBeenCalledTimes(2);
     expect(s.ptys[0]!.kill).toHaveBeenCalled();
   });
+  it("restart:'true' (non-boolean) still reuses the live session", () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    expect(s.session.start({ ...req('p1'), restart: 'true' })).toEqual({ ok: true, reused: true });
+    expect(s.spawn).toHaveBeenCalledTimes(1);
+  });
+  it('restart:true with no live session starts normally', () => {
+    const s = setup();
+    expect(s.session.start({ ...req('p1'), restart: true })).toEqual({ ok: true, reused: false });
+    expect(s.spawn).toHaveBeenCalledTimes(1);
+    expect(s.session.live()).toBe(true);
+  });
+  it('restart:true with a throwing spawn ends the session and kills the old pty once', () => {
+    const made: FP[] = [];
+    const s = setup({ spawn: ((calls = 0) => () => { if (++calls === 2) throw new Error('boom'); const p = fakePty(); made.push(p); return p as unknown as GuiPty; })() });
+    s.session.start(req('p1'));
+    expect(s.session.start({ ...req('p1'), restart: true })).toEqual({ ok: false, reason: 'spawn-failed' });
+    expect(s.session.live()).toBe(false);
+    expect(made[0]!.kill).toHaveBeenCalledTimes(1);
+  });
   it('replaces the session for a different project and kills the old pty', () => {
     const s = setup();
     s.session.start(req('p1'));
@@ -236,6 +256,16 @@ describe('guiSession.write and resize', () => {
     s.session.resize('a', 40);
     expect(s.ptys[0]!.resize).toHaveBeenCalledTimes(1);
     expect(s.ptys[0]!.resize).toHaveBeenCalledWith(100, 40);
+  });
+});
+
+describe('guiSession.resize live gate', () => {
+  it('is a no-op once the session was stopped, even while the pty object lingers', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.stop();
+    s.session.resize(100, 40);
+    expect(s.ptys[0]!.resize).not.toHaveBeenCalled();
   });
 });
 

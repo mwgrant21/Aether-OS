@@ -108,7 +108,7 @@ const flush = async () => {
 };
 const PROMPT = [
   'Accessing workspace:',
-  'C:\Users\Matt',
+  'C:\\Users\\Matt',
   "Quick safety check: Is this a project you created or one you trust?",
   '> No, exit',
   '  Yes, I trust this folder',
@@ -267,6 +267,29 @@ describe('ChatPane', () => {
     await advance(5000);
     expect(box().disabled).toBe(true);
     act(() => chunk!('banner'));
+    await advance(1700);
+    expect(box().disabled).toBe(false);
+  });
+
+  it('a chunk between the reused reply and the restart reply is dropped: not written, gate not fed', async () => {
+    let replyRestart!: (r: StartResult) => void;
+    install();
+    gui.start
+      .mockImplementationOnce(() => Promise.resolve({ ok: true, reused: true }))
+      .mockImplementation(() => new Promise<StartResult>((r) => (replyRestart = r)));
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    mocks.write.mockClear();
+    act(() => chunk!('old-pty-tail'));
+    await advance(5000);
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(box().disabled).toBe(true); // gate was not fed, so not ready
+    replyRestart({ ok: true, reused: false });
+    await flush();
+    act(() => chunk!('new banner'));
+    expect(mocks.write).toHaveBeenCalledWith('new banner');
     await advance(1700);
     expect(box().disabled).toBe(false);
   });
@@ -493,7 +516,7 @@ describe('ChatPane', () => {
       err.mockRestore();
     });
 
-    it('never calls start when unmounted in the same tick as render', async () => {
+    it('never calls start when unmounted before the deferred start microtask runs', async () => {
       install();
       const { unmount } = render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
       unmount();
