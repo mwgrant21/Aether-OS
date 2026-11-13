@@ -74,19 +74,27 @@ describe('registerGuiIpc', () => {
     expect(await s.handlers.get(C.projectsRemove)!(ev, 'i1')).toBe(false);
     expect(await s.handlers.get(C.start)!(ev, { projectId: 'i1', cols: 80, rows: 24 })).toEqual({ ok: false, reason: 'unavailable' });
     expect(s.session.start).not.toHaveBeenCalled();
-    const home = { projectId: null, cols: 80, rows: 24 };
-    expect(await s.handlers.get(C.start)!(ev, home)).toEqual({ ok: true, reused: false });
-    expect(s.session.start).toHaveBeenCalledWith(home);
+    expect(await s.handlers.get(C.start)!(ev, { projectId: null, cols: 80, rows: 24 })).toEqual({ ok: false, reason: 'unavailable' });
+    expect(s.session.start).not.toHaveBeenCalled();
   });
 
-  it('a trusted project start with no store stops the session; a home start with no store does not', async () => {
+  it('a trusted start with no store stops the session, for a project and for the New chat', async () => {
     const s = setup({ store: 'none' });
     expect(await s.handlers.get(C.start)!(ev, { projectId: 'i1', cols: 80, rows: 24 })).toEqual({ ok: false, reason: 'unavailable' });
     expect(s.session.stop).toHaveBeenCalledTimes(1);
     expect(s.session.start).not.toHaveBeenCalled();
+    expect(await s.handlers.get(C.start)!(ev, { projectId: null, cols: 80, rows: 24 })).toEqual({ ok: false, reason: 'unavailable' });
+    expect(s.session.stop).toHaveBeenCalledTimes(2);
+    expect(s.session.start).not.toHaveBeenCalled();
+  });
+
+  it('a New chat start awaits getStore before session.start', async () => {
+    const s = setup();
+    const order: string[] = [];
+    s.getStore.mockImplementation((async () => { await Promise.resolve(); order.push('getStore'); return s.store as never; }) as never);
+    s.session.start.mockImplementation((() => { order.push('start'); return { ok: true as const, reused: false }; }) as never);
     await s.handlers.get(C.start)!(ev, { projectId: null, cols: 80, rows: 24 });
-    expect(s.session.start).toHaveBeenCalledTimes(1);
-    expect(s.session.stop).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['getStore', 'start']);
   });
 
   it('remove validates the id type; start/submit/write/resize forward raw payloads', async () => {

@@ -13,6 +13,8 @@ export interface GuiSessionDeps {
   spawn: (a: { cwd?: string; cols: number; rows: number; sessionId: string }) => GuiPty;
   projectPath: (id: string) => string | undefined;
   isDirectory: (p: string) => boolean;
+  /** Aether-owned cwd for the New chat (projectId null). Absent = no cwd; present but undefined/non-directory = unavailable (fail closed). */
+  newChatDir?: () => string | undefined;
   send: (channel: string, payload?: unknown) => void;
   randomUUID: () => string;
   schedule: (fn: () => void, ms: number) => () => void;
@@ -58,7 +60,12 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     const { projectId, cols, rows, restart } = req as Record<string, unknown>;
     if (!(projectId === null || typeof projectId === 'string') || !isDim(cols) || !isDim(rows)) { stop(); return { ok: false, reason: 'bad-request' }; }
     let cwd: string | undefined;
-    if (projectId !== null) {
+    if (projectId === null) {
+      if (d.newChatDir) {
+        cwd = d.newChatDir();
+        if (cwd === undefined || !d.isDirectory(cwd)) { stop(); return { ok: false, reason: 'unavailable' }; }
+      }
+    } else {
       cwd = d.projectPath(projectId);
       if (cwd === undefined) { stop(); return { ok: false, reason: 'unknown-project' }; }
       if (!d.isDirectory(cwd)) { stop(); return { ok: false, reason: 'missing-dir' }; }
