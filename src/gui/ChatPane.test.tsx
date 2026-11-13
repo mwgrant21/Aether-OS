@@ -655,6 +655,18 @@ describe('ChatPane permission mode', () => {
     expect(gui.start.mock.calls[2]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, mode: 'auto', resume: true });
   });
 
+  it('a Switch confirmed after a reply started does nothing', async () => {
+    await ready();
+    choose('Auto', 'Plan');
+    fireEvent.change(box(), { target: { value: 'go' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('a second failed resume makes Restart start fresh', async () => {
     await ready();
     await send();
@@ -669,5 +681,11 @@ describe('ChatPane permission mode', () => {
     await flush();
     expect(gui.start.mock.calls[2]![0]).toMatchObject({ resume: true });
     expect(gui.start.mock.calls[3]![0]).toMatchObject({ resume: false, mode: 'auto' });
+    act(() => chunk!('banner'));
+    await advance(1700);
+    choose('Auto', 'Manual');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    expect(gui.start.mock.calls[4]![0]).toMatchObject({ restart: true, resume: false, mode: 'manual' });
   });
 });

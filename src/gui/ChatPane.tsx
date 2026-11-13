@@ -232,13 +232,16 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const restart = (): void => {
     termRef.current?.reset();
     // Resume the conversation unless it keeps failing to resume: after two failures start fresh, never a dead end.
-    begin({ resume: hasSentRef.current && resumeFailures.current < 2, mode: modeRef.current });
+    const resume = hasSentRef.current && resumeFailures.current < 2;
+    if (!resume) hasSentRef.current = false; // a fresh start is a new empty conversation: the next switch must not resume it
+    begin({ resume, mode: modeRef.current });
   };
 
   const confirmSwitch = (): void => {
     const to = confirmMode;
     setConfirmMode(null);
     if (!to || to === modeRef.current) return;
+    if (busyRef.current?.state() !== 'idle') return; // a reply started while the popup was open: never kill it on a plain switch
     pendingRef.current = to;
     setPendingSwitch(to);
     dropData.current = true;
