@@ -99,6 +99,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   const hasSentRef = useRef(resume === true);
   const readyRef = useRef(false);
   const resumedStartRef = useRef(false); // the current start asked claude to resume
+  const trustShownRef = useRef(false); // claude's trust prompt is on screen (mirrors trustShown for onTyped)
   const tailRef = useRef(''); // bounded tail of the current start's raw output
   const turnSentThisStart = useRef(false); // a turn was submitted or typed since the current start began
   const retryFreshRef = useRef(false); // the current start was a resume that may be retried fresh once if it ends before ready
@@ -133,6 +134,11 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     cancelHint.current = null;
   }, []);
 
+  const setTrustShownBoth = useCallback((v: boolean) => {
+    trustShownRef.current = v;
+    setTrustShown(v);
+  }, []);
+
   const begin = useCallback((opts: boolean | BeginOptions = {}) => {
     const o: BeginOptions = typeof opts === 'boolean' ? { replace: opts } : opts;
     const replace = o.replace === true;
@@ -140,7 +146,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     const gate = gateRef.current;
     if (!gui || !gate) return;
     watcherRef.current?.reset();
-    setTrustShown(false);
+    setTrustShownBoth(false);
     const mySeq = ++startSeq.current;
     gate.reset();
     busyRef.current?.reset();
@@ -195,7 +201,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
         }
       },
     );
-  }, [projectId, clearHint, setLiveBoth]);
+  }, [projectId, clearHint, setLiveBoth, setTrustShownBoth]);
 
   useEffect(() => {
     mounted.current = true;
@@ -228,7 +234,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     watcherRef.current = createTrustWatcher({
       schedule,
       readScreen: () => termRef.current?.screenText() ?? '',
-      onChange: setTrustShown,
+      onChange: setTrustShownBoth,
     });
     // Deferred so StrictMode's discarded first run never reaches gui.start (a second start would be
     // answered reused:true and force the composer ready); the child has subscribed onData by then.
@@ -267,7 +273,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
   }, []);
 
   const onTyped = useCallback((input: string) => {
-    if (/[\r\n]/.test(input)) sentSomething();
+    // The Enter that answers claude's folder-trust prompt is not a message.
+    if (/[\r\n]/.test(input) && !trustShownRef.current) sentSomething();
   }, [sentSomething]);
 
   const acceptData = useCallback(() => !dropData.current, []);
@@ -304,7 +311,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     busyRef.current?.reset();
     setSettled(false);
     watcherRef.current?.reset();
-    setTrustShown(false);
+    setTrustShownBoth(false);
     setReady(false);
     setHint(false);
     setStopped(true);
@@ -317,7 +324,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       termRef.current?.reset();
       begin({ replace: true, resume: false, mode: modeRef.current, fallbackNote: true });
     }
-  }, [clearHint, setLiveBoth, begin]);
+  }, [clearHint, setLiveBoth, begin, setTrustShownBoth]);
 
   const restart = (): void => {
     termRef.current?.reset();

@@ -656,6 +656,17 @@ describe('ChatPane permission mode', () => {
     expect(picker('Auto').getAttribute('aria-disabled')).toBe('true');
   });
 
+  it('the Enter that answers the trust prompt is not a turn', async () => {
+    await ready();
+    mocks.screen = PROMPT;
+    act(() => chunk!('prompt'));
+    await advance(300);
+    expect(screen.getByText(TRUST_HINT)).toBeTruthy();
+    act(() => mocks.data!('\x1b[B'));
+    act(() => mocks.data!('\r'));
+    expect(lastStatus().hasSent).toBe(false);
+  });
+
   it('selecting a mode shows the popup with the exact sentence and never the word will', async () => {
     await ready();
     choose('Auto', 'Plan');
