@@ -34,7 +34,7 @@ export interface BusyNeedles {
   bgTask: readonly RegExp[];
 }
 export const BUSY_NEEDLES: BusyNeedles = {
-  waiting: [/esc to cancel/i, /tab to amend/i, /do you want to proceed\?/i],
+  waiting: [/esc to cancel/i, /tab to amend/i],
   working: [/^\s*[✢✻✽✶·*]\s+\S+…/u],
   bgTask: BG_TASK_NEEDLES,
 };

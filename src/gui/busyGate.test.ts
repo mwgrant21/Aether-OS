@@ -9,7 +9,9 @@ const IDLE = '> \n──────\n  ⏵⏵ auto mode on (shift+tab to cycle)
 const SPINNER = '● Running 1 shell command…\n✻ Churning…\n──────\n> \n  ⏵⏵ auto mode on';
 const DONE_ROW = '✻ Churned for 5s · done 21:40\n> \n  ⏵⏵ auto mode on';
 const PERMISSION = 'Do you want to create a.txt?\n  1. Yes\nEsc to cancel · Tab to amend';
-const PLAN = 'Ready to code?\nEnter to select · ↑/↓ to navigate · Esc to cancel';
+const PERMISSION_PROCEED = 'Do you want to proceed?\n  ❯ 1. Yes\n  2. Yes, allow reading from X\n  3. Yes, and switch to auto mode\nEsc to cancel · Tab to amend';
+const REPLY_PROCEED = '[ASK] How do you want to proceed?\n\n> \n──────\n  ⏵⏵ auto mode on (shift+tab to cycle)';
+const PLAN ='Ready to code?\nEnter to select · ↑/↓ to navigate · Esc to cancel';
 const BG_SHELL_FOOTER = '> \n  ⏵⏵ auto mode on · 1 shell · ↓ to manage';
 const BG_SHELL_DONE = '✻ Cooked for 9s · 1 shell still running\n> ';
 const BG_AGENT = '> \n  ⏵⏵ auto mode on · /tasks to see subagents';
@@ -52,7 +54,11 @@ describe('classifyWorkScreen', () => {
     expect(classifyWorkScreen(SPINNER)).toBe('working');
     expect(classifyWorkScreen(PERMISSION)).toBe('waiting');
     expect(classifyWorkScreen(PLAN)).toBe('waiting');
-    expect(classifyWorkScreen('Do you want to proceed?\n 1. Yes')).toBe('waiting');
+    expect(classifyWorkScreen(PERMISSION_PROCEED)).toBe('waiting');
+  });
+  it('ordinary reply text asking "proceed?" is idle', () => {
+    expect(classifyWorkScreen(REPLY_PROCEED)).toBe('idle');
+    expect(classifyWorkScreen('Do you want to proceed?\n 1. Yes')).toBe('idle');
   });
   it('a footer with esc to cancel alone is waiting', () => {
     expect(classifyWorkScreen('menu\nEsc to cancel')).toBe('waiting');
@@ -120,6 +126,15 @@ describe('createBusyGate', () => {
     s.gate.feed();
     s.advance(GUI_BUSY_QUIET_MS + GUI_BUSY_SETTLE_MS + 50);
     expect(s.gate.state()).toBe('idle');
+    expect(s.onSettled).toHaveBeenCalledTimes(1);
+  });
+  it('a reply ending in a "proceed?" question reads idle and settles', () => {
+    const s = setup(REPLY_PROCEED);
+    s.gate.turnStarted();
+    s.advance(GUI_BUSY_QUIET_MS);
+    expect(s.gate.state()).toBe('idle');
+    expect(s.changes).toEqual(['working', 'idle']);
+    s.advance(GUI_BUSY_SETTLE_MS);
     expect(s.onSettled).toHaveBeenCalledTimes(1);
   });
   it('a dialog moves it to waiting', () => {
