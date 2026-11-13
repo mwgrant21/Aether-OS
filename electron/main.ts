@@ -8,7 +8,7 @@ import { join, dirname } from 'path';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { resolveBoardCliPath, spawnPty, buildClaudeLaunchCommand, buildPtyLaunchSpec, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
+import { resolveBoardCliPath, spawnPty, buildPtyLaunchSpec, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchSpec, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
@@ -137,7 +137,8 @@ import { CommunicationGrantControl } from './communicationBridge/grantControl';
 import { rendererEntryName, guiVariantEnabled } from './gui/entry';
 import { createProjectsStore } from './gui/projectsStore';
 import { createGuiSession, type GuiSession } from './gui/guiSession';
-import { guiLaunchCommand } from './gui/guiLaunch';
+import { guiLaunchCommand, buildGuiClaudeCommand } from './gui/guiLaunch';
+import { GUI_RESUME_BY_ID } from './gui/guiTypes';
 import { registerGuiIpc } from './gui/guiIpc';
 import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
@@ -1750,7 +1751,8 @@ if (guiVariantEnabled(process.env)) {
       kill: () => { try { guiLifecycle.current?.kill(); } catch { /* ignore */ } },
     },
     // Plain spawnPty, no bridge, so the cwd below is never combined with a bridge launch.
-    spawn: ({ cwd, cols, rows, sessionId }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildClaudeLaunchCommand(sessionId, true), process.platform), cwd),
+    spawn: ({ cwd, cols, rows, mode, sessionId, resumeId, continueLast }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildGuiClaudeCommand({ mode, sessionId, resumeId, continueLast }), process.platform), cwd),
+    resumeById: GUI_RESUME_BY_ID,
     projectPath: (id) => guiStore?.pathOf(id),
     isDirectory: (p) => { try { return statSync(p).isDirectory(); } catch { return false; } },
     newChatDir: () => (guiStore ? guiEnsureDir(join(aetherOsDir, 'gui-chat')) : undefined),

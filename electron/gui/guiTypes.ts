@@ -2,10 +2,10 @@ export interface UiProject { id: string; name: string }          // name = basen
 export type AddProjectResult =
   | { ok: true; project: UiProject }
   | { ok: false; reason: 'canceled' | 'not-a-directory' | 'duplicate' | 'too-many' | 'write-failed' | 'unavailable' }; // unavailable = private dir ACL not confirmed (fail closed)
-export type StartRequest = { projectId: string | null; cols: number; rows: number; restart?: boolean }; // null = "New" chat in the home dir; restart = replace a live session instead of reusing it
+export type StartRequest = { projectId: string | null; cols: number; rows: number; restart?: boolean; resume?: boolean; mode?: GuiPermissionMode }; // null = "New" chat; restart = replace a live session instead of reusing it
 export type StartResult =
   | { ok: true; reused: boolean }                                 // reused = same project already live; nothing restarted
-  | { ok: false; reason: 'bad-request' | 'unknown-project' | 'missing-dir' | 'spawn-failed' | 'unavailable' };
+  | { ok: false; reason: 'bad-request' | 'unknown-project' | 'missing-dir' | 'spawn-failed' | 'unavailable' | 'superseded' }; // superseded = a later start/stop/dispose arrived while this start waited for the old pty to exit
 export const GUI_CHANNELS = {
   projectsList: 'gui:projects:list', projectsAdd: 'gui:projects:add', projectsRemove: 'gui:projects:remove',
   start: 'gui:session:start', write: 'gui:session:write', resize: 'gui:session:resize', submit: 'gui:session:submit',
@@ -17,4 +17,13 @@ export const GUI_MAX_WRITE_CHARS = 65536;  // cap on one raw write from the rend
 export const GUI_MAX_COMPOSER_CHARS = 20000;
 export const GUI_READY_QUIET_MS = 1500;    // composer enables after this much PTY silence following first output
 export const GUI_READY_CEILING_MS = 8000;  // ...or this long after first output at the latest, even if output never goes quiet
+export const GUI_KILL_WAIT_MS = 2000;      // a replacing start waits at most this long for the killed pty to exit before spawning
 export const GUI_NO_OUTPUT_HINT_MS = 15000; // no output at all this long after start: show a hint (composer stays disabled)
+// Closed allow-list of CLI permission modes the GUI may pass to claude. Anything else is refused.
+export const GUI_PERMISSION_MODES = ['manual', 'acceptEdits', 'plan', 'auto'] as const;
+export type GuiPermissionMode = (typeof GUI_PERMISSION_MODES)[number];
+export const GUI_DEFAULT_PERMISSION_MODE: GuiPermissionMode = 'auto';
+export const isGuiPermissionMode = (v: unknown): v is GuiPermissionMode =>
+  typeof v === 'string' && (GUI_PERMISSION_MODES as readonly string[]).includes(v);
+export const GUI_NEW_KEY = 'new';          // per-key conversation key of the New chat (project ids are UUIDs, so no collision)
+export const GUI_RESUME_BY_ID = true;      // probe P2 (2026-11-12): --resume <uuid> keeps the id and combines with --permission-mode; false would fall back to --continue

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GUI_NO_OUTPUT_HINT_MS, type StartResult } from '../../electron/gui/guiTypes';
+import { GUI_DEFAULT_PERMISSION_MODE, GUI_NO_OUTPUT_HINT_MS, type GuiPermissionMode, type StartResult } from '../../electron/gui/guiTypes';
 import { Button } from '../components/shared/Button';
 import { useColors } from '../components/shared/useColors';
 import { fonts, radii } from '../styles/tokens';
+import { createBusyGate, type BusyGate, type BusyState } from './busyGate';
+import { ConfirmPopup } from './ConfirmPopup';
 import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
+import { MODE_LABELS, ModePicker } from './ModePicker';
 import { createReadyGate, type ReadyGate } from './readyGate';
 import { createTrustWatcher, type TrustWatcher } from './trustPrompt';
 import { useGuiProjects } from './useGuiProjects';
@@ -22,6 +25,12 @@ const FAIL_TEXT: Record<string, string> = {
   'bad-request': 'Claude could not be started',
 };
 
+interface BeginOptions {
+  replace?: boolean;
+  resume?: boolean;
+  mode?: GuiPermissionMode;
+}
+
 const schedule = (fn: () => void, ms: number): (() => void) => {
   const t = setTimeout(fn, ms);
   return () => clearTimeout(t);
@@ -38,10 +47,21 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const [error, setError] = useState<string | null>(null);
   const [stopped, setStopped] = useState(false);
   const [trustShown, setTrustShown] = useState(false);
+  const [mode, setMode] = useState<GuiPermissionMode>(GUI_DEFAULT_PERMISSION_MODE); // the mode of the running session
+  const [confirmMode, setConfirmMode] = useState<GuiPermissionMode | null>(null); // picked, awaiting the popup answer
+  const [pendingSwitch, setPendingSwitch] = useState<GuiPermissionMode | null>(null); // relaunch in flight, committed at ready
+  const [busy, setBusy] = useState<BusyState>('idle');
 
   const termRef = useRef<GuiTerminalHandle>(null);
   const gateRef = useRef<ReadyGate | null>(null);
   const watcherRef = useRef<TrustWatcher | null>(null);
+  const busyRef = useRef<BusyGate | null>(null);
+  const modeRef = useRef<GuiPermissionMode>(GUI_DEFAULT_PERMISSION_MODE);
+  const pendingRef = useRef<GuiPermissionMode | null>(null);
+  const hasSentRef = useRef(false);
+  const readyRef = useRef(false);
+  const resumedStartRef = useRef(false); // the current start asked claude to resume
+  const resumeFailures = useRef(0); // consecutive resume starts that ended before ready
   const mounted = useRef(false);
   const startSeq = useRef(0);
   const restartedOnReuse = useRef(false); // a reused start restarts the session at most once per mount
@@ -60,7 +80,9 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     cancelHint.current = null;
   }, []);
 
-  const begin = useCallback((replace = false) => {
+  const begin = useCallback((opts: boolean | BeginOptions = {}) => {
+    const o: BeginOptions = typeof opts === 'boolean' ? { replace: opts } : opts;
+    const replace = o.replace === true;
     const gui = window.aetherElectron?.gui;
     const gate = gateRef.current;
     if (!gui || !gate) return;
@@ -68,6 +90,9 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     setTrustShown(false);
     const mySeq = ++startSeq.current;
     gate.reset();
+    busyRef.current?.reset();
+    readyRef.current = false;
+    resumedStartRef.current = o.resume === true;
     clearHint();
     setReady(false);
     setHint(false);
@@ -76,12 +101,15 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     cancelHint.current = schedule(() => setHint(true), GUI_NO_OUTPUT_HINT_MS);
     const { cols, rows } = termRef.current?.size() ?? { cols: 80, rows: 24 };
     const fail = (reason: string): void => {
+      pendingRef.current = null; // a switch that never started leaves the label on the running mode
+      setPendingSwitch(null);
       clearHint();
       setError(FAIL_TEXT[reason] ?? 'Claude could not be started');
       setStopped(true);
       setLiveBoth(false);
     };
-    gui.start(replace ? { projectId, cols, rows, restart: true } : { projectId, cols, rows }).then(
+    const startMode = o.mode ?? modeRef.current;
+    gui.start({ projectId, cols, rows, mode: startMode, ...(replace ? { restart: true } : {}), ...(o.resume === undefined ? {} : { resume: o.resume }) }).then(
       (r: StartResult) => {
         if (!mounted.current || mySeq !== startSeq.current) return;
         if (replace) dropData.current = false;
@@ -112,9 +140,27 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     mounted.current = true;
     const gate = createReadyGate({
       schedule,
-      onReady: () => setReady(true),
+      onReady: () => {
+        readyRef.current = true;
+        resumeFailures.current = 0;
+        const to = pendingRef.current;
+        if (to) {
+          pendingRef.current = null;
+          modeRef.current = to;
+          setMode(to);
+          setPendingSwitch(null);
+        }
+        setReady(true);
+      },
     });
     gateRef.current = gate;
+    busyRef.current = createBusyGate({
+      schedule,
+      readScreen: () => termRef.current?.screenText() ?? '',
+      onChange: setBusy,
+      onSettled: () => {},
+      onTrust: () => {},
+    });
     watcherRef.current = createTrustWatcher({
       schedule,
       readScreen: () => termRef.current?.screenText() ?? '',
@@ -132,6 +178,8 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       clearHint();
       gate.dispose();
       gateRef.current = null;
+      busyRef.current?.dispose();
+      busyRef.current = null;
       watcherRef.current?.dispose();
       watcherRef.current = null;
     };
@@ -143,15 +191,36 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     setHint(false);
     gateRef.current?.feed();
     watcherRef.current?.feed();
+    busyRef.current?.feed();
   }, [clearHint]);
+
+  const sentSomething = useCallback(() => {
+    hasSentRef.current = true;
+    busyRef.current?.turnStarted();
+  }, []);
+
+  const onTyped = useCallback((input: string) => {
+    if (/[\r\n]/.test(input)) sentSomething();
+  }, [sentSomething]);
 
   const acceptData = useCallback(() => !dropData.current, []);
 
   const onExit = useCallback(() => {
+    if (!readyRef.current) {
+      // Ended before the ready gate: a mode switch that claude refused or a resume that failed.
+      const to = pendingRef.current;
+      if (to) {
+        pendingRef.current = null;
+        setPendingSwitch(null);
+        setError(`Could not switch to ${MODE_LABELS[to]}; staying on ${MODE_LABELS[modeRef.current]}`);
+      }
+      if (to || resumedStartRef.current) resumeFailures.current += 1;
+    }
     startSeq.current += 1;
     dropData.current = false;
     clearHint();
     gateRef.current?.reset(); // clears pending quiet/ceiling timers
+    busyRef.current?.reset();
     watcherRef.current?.reset();
     setTrustShown(false);
     setReady(false);
@@ -162,12 +231,29 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
 
   const restart = (): void => {
     termRef.current?.reset();
-    begin();
+    // Resume the conversation unless it keeps failing to resume: after two failures start fresh, never a dead end.
+    const resume = hasSentRef.current && resumeFailures.current < 2;
+    if (!resume) hasSentRef.current = false; // a fresh start is a new empty conversation: the next switch must not resume it
+    begin({ resume, mode: modeRef.current });
+  };
+
+  const confirmSwitch = (): void => {
+    const to = confirmMode;
+    setConfirmMode(null);
+    if (!to || to === modeRef.current) return;
+    if (busyRef.current?.state() !== 'idle') return; // a reply started while the popup was open: never kill it on a plain switch
+    pendingRef.current = to;
+    setPendingSwitch(to);
+    dropData.current = true;
+    termRef.current?.reset();
+    begin({ replace: true, resume: hasSentRef.current, mode: to });
   };
 
   const onSubmit = async (text: string): Promise<boolean> => {
     try {
-      return (await window.aetherElectron?.gui?.submit(text)) === true;
+      const ok = (await window.aetherElectron?.gui?.submit(text)) === true;
+      if (ok) sentSomething();
+      return ok;
     } catch {
       return false;
     }
@@ -188,7 +274,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     <div data-testid="chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ padding: '10px 24px', color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <GuiTerminal ref={termRef} onChunk={onChunk} onExit={onExit} acceptData={acceptData} />
+        <GuiTerminal ref={termRef} onChunk={onChunk} onExit={onExit} acceptData={acceptData} onTyped={onTyped} />
       </div>
       {(message || stopped) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 24px', color: colors.textMuted, font: `500 13px/1.4 ${fonts.ui}` }}>
@@ -203,7 +289,29 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
           ) : null}
         </div>
       )}
-      <GuiComposer disabled={!enabled} placeholder={placeholder} onSubmit={onSubmit} />
+      {confirmMode && (
+        <ConfirmPopup
+          message={`Switch to ${MODE_LABELS[confirmMode]}? Claude restarts and may re-read this thread's context.`}
+          confirmLabel="Switch"
+          onConfirm={confirmSwitch}
+          onCancel={() => setConfirmMode(null)}
+        />
+      )}
+      <GuiComposer
+        disabled={!enabled}
+        placeholder={placeholder}
+        onSubmit={onSubmit}
+        leading={
+          <ModePicker
+            mode={pendingSwitch ?? mode}
+            disabled={!(enabled && busy === 'idle')}
+            hint="Wait for the reply to finish"
+            onSelect={(m) => {
+              if (m !== (pendingSwitch ?? mode)) setConfirmMode(m);
+            }}
+          />
+        }
+      />
     </div>
   );
 }
