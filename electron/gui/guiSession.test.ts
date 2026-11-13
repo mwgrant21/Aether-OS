@@ -35,7 +35,7 @@ function fakeLifecycle() {
   return lc;
 }
 
-function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDirectory?: (p: string) => boolean; newChatDir?: () => string | undefined }) {
+function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDirectory?: (p: string) => boolean; newChatDir?: () => string | undefined; resumeById?: boolean }) {
   const lifecycle = fakeLifecycle();
   if (over?.kill) lifecycle.kill = over.kill;
   const ptys: FP[] = [];
@@ -49,7 +49,7 @@ function setup(over?: { spawn?: (a: unknown) => GuiPty; kill?: () => void; isDir
   const flags = { aliveThrows: false };
   let n = 0;
   const session = createGuiSession({
-    lifecycle, spawn,
+    lifecycle, spawn, resumeById: over?.resumeById ?? true,
     projectPath: (id) => (id === 'p1' ? 'C:/secret/one' : id === 'p2' ? 'C:/secret/two' : id === 'gone' ? 'C:/secret/gone' : undefined),
     isDirectory: over?.isDirectory ?? ((p) => p !== 'C:/secret/gone'),
     newChatDir: over?.newChatDir,
@@ -68,7 +68,7 @@ describe('guiSession.start', () => {
     const s = setup();
     expect(s.session.start(req('p1'))).toEqual({ ok: true, reused: false });
     expect(s.spawn).toHaveBeenCalledTimes(1);
-    expect(s.spawn).toHaveBeenCalledWith({ cwd: 'C:/secret/one', cols: 80, rows: 24, sessionId: 'sid-1' });
+    expect(s.spawn).toHaveBeenCalledWith({ cwd: 'C:/secret/one', cols: 80, rows: 24, sessionId: 'sid-1', mode: 'auto' });
   });
   it('uses an undefined cwd for the home-dir New chat', () => {
     const s = setup();
@@ -373,5 +373,81 @@ describe('guiSession logging', () => {
     s.session.dispose();
     expect(s.log).toHaveBeenCalled();
     expect(JSON.stringify(s.log.mock.calls)).not.toContain('secret');
+  });
+});
+
+describe('guiSession mode and resume ids', () => {
+  const lastSpawn = (s: ReturnType<typeof setup>) => s.spawn.mock.calls.at(-1)![0];
+  it('passes auto when mode is omitted and the explicit mode when given', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    expect(lastSpawn(s)).toMatchObject({ mode: 'auto' });
+    s.session.start({ ...req('p1'), restart: true, mode: 'plan' });
+    expect(lastSpawn(s)).toMatchObject({ mode: 'plan' });
+  });
+  it.each(['default', 7, {}, null])('rejects invalid mode %j without spawning or touching the map', (mode) => {
+    const s = setup();
+    s.session.start(req('p1'));
+    expect(s.session.start({ ...req('p1'), restart: true, resume: true, mode })).toEqual({ ok: false, reason: 'bad-request' });
+    expect(s.spawn).toHaveBeenCalledTimes(1);
+    s.session.start({ ...req('p1'), restart: true, resume: true });
+    expect(lastSpawn(s)).toMatchObject({ resumeId: 'sid-1' });
+  });
+  it('ignores a non-boolean resume', () => {
+    const s = setup();
+    s.session.start({ ...req('p1'), resume: 'true' });
+    expect(lastSpawn(s)).toMatchObject({ sessionId: 'sid-1' });
+    expect(lastSpawn(s)).not.toHaveProperty('continueLast');
+  });
+  it('resume:true passes the id recorded by the fresh start, not a new random one', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.start({ ...req('p1'), restart: true, resume: true, mode: 'manual' });
+    expect(lastSpawn(s)).toEqual({ cwd: 'C:/secret/one', cols: 80, rows: 24, mode: 'manual', resumeId: 'sid-1' });
+  });
+  it('resume:true with no known id passes continueLast and no id', () => {
+    const s = setup();
+    s.session.start({ ...req(null), resume: true });
+    const a = lastSpawn(s);
+    expect(a).toMatchObject({ continueLast: true });
+    expect(a).not.toHaveProperty('sessionId');
+    expect(a).not.toHaveProperty('resumeId');
+  });
+  it('resumeById false passes continueLast even when an id is known', () => {
+    const s = setup({ resumeById: false });
+    s.session.start(req('p1'));
+    s.session.start({ ...req('p1'), restart: true, resume: true });
+    expect(lastSpawn(s)).toMatchObject({ continueLast: true });
+    expect(lastSpawn(s)).not.toHaveProperty('resumeId');
+  });
+  it('keys are separate: a project id never resumes the New chat', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.start({ ...req(null), restart: true, resume: true });
+    expect(lastSpawn(s)).toMatchObject({ continueLast: true });
+  });
+  it('a fresh start after a resume replaces the stored id', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.start({ ...req('p1'), restart: true, resume: true });
+    s.session.start({ ...req('p1'), restart: true });
+    expect(lastSpawn(s)).toMatchObject({ sessionId: 'sid-2' });
+    s.session.start({ ...req('p1'), restart: true, resume: true });
+    expect(lastSpawn(s)).toMatchObject({ resumeId: 'sid-2' });
+  });
+  it('stop and exit do not clear the stored id', () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.stop();
+    s.ptys[0]!.fireExit();
+    s.session.start({ ...req('p1'), resume: true });
+    expect(lastSpawn(s)).toMatchObject({ resumeId: 'sid-1' });
+  });
+  it('a failed spawn records nothing', () => {
+    let first = true;
+    const s = setup({ spawn: () => { if (first) { first = false; throw new Error('boom'); } return fakePty() as unknown as GuiPty; } });
+    expect(s.session.start(req('p1'))).toEqual({ ok: false, reason: 'spawn-failed' });
+    s.session.start({ ...req('p1'), resume: true });
+    expect(lastSpawn(s)).toMatchObject({ continueLast: true });
   });
 });

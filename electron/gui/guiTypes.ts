@@ -2,7 +2,7 @@ export interface UiProject { id: string; name: string }          // name = basen
 export type AddProjectResult =
   | { ok: true; project: UiProject }
   | { ok: false; reason: 'canceled' | 'not-a-directory' | 'duplicate' | 'too-many' | 'write-failed' | 'unavailable' }; // unavailable = private dir ACL not confirmed (fail closed)
-export type StartRequest = { projectId: string | null; cols: number; rows: number; restart?: boolean }; // null = "New" chat in the home dir; restart = replace a live session instead of reusing it
+export type StartRequest = { projectId: string | null; cols: number; rows: number; restart?: boolean; resume?: boolean; mode?: GuiPermissionMode }; // null = "New" chat; restart = replace a live session instead of reusing it
 export type StartResult =
   | { ok: true; reused: boolean }                                 // reused = same project already live; nothing restarted
   | { ok: false; reason: 'bad-request' | 'unknown-project' | 'missing-dir' | 'spawn-failed' | 'unavailable' };
@@ -25,4 +25,4 @@ export const GUI_DEFAULT_PERMISSION_MODE: GuiPermissionMode = 'auto';
 export const isGuiPermissionMode = (v: unknown): v is GuiPermissionMode =>
   typeof v === 'string' && (GUI_PERMISSION_MODES as readonly string[]).includes(v);
 export const GUI_NEW_KEY = 'new';          // per-key conversation key of the New chat (project ids are UUIDs, so no collision)
-export const GUI_RESUME_BY_ID = true;      // PROVISIONAL until probe P2: true = resume with --resume <uuid>, false = --continue fallback
+export const GUI_RESUME_BY_ID = true;      // probe P2 (2026-11-12): --resume <uuid> keeps the id and combines with --permission-mode; false would fall back to --continue

@@ -1,5 +1,8 @@
 import { frameComposerInput } from './composerInput';
-import { GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS, GUI_CHANNELS, type StartResult } from './guiTypes';
+import {
+  GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS, GUI_CHANNELS, GUI_DEFAULT_PERMISSION_MODE, GUI_NEW_KEY, isGuiPermissionMode,
+  type GuiPermissionMode, type StartResult,
+} from './guiTypes';
 
 // Structural stand-ins for PtyLike / PtyLifecycle: this file must not import the pty modules (controlBoundary test).
 export interface GuiPty { onData(cb: (d: string) => void): void; onExit(cb: () => void): void; kill(): void; write(i: string): void; resize(c: number, r: number): void }
@@ -10,7 +13,9 @@ export interface GuiLifecycle {
 }
 export interface GuiSessionDeps {
   lifecycle: GuiLifecycle;
-  spawn: (a: { cwd?: string; cols: number; rows: number; sessionId: string }) => GuiPty;
+  spawn: (a: { cwd?: string; cols: number; rows: number; mode: GuiPermissionMode; sessionId?: string; resumeId?: string; continueLast?: boolean }) => GuiPty;
+  /** true = resume a known conversation with --resume <uuid>; false = fall back to --continue (cwd-scoped). */
+  resumeById: boolean;
   projectPath: (id: string) => string | undefined;
   isDirectory: (p: string) => boolean;
   /** Aether-owned cwd for the New chat (projectId null). Absent = no cwd; present but undefined/non-directory = unavailable (fail closed). */
@@ -34,6 +39,8 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   let pendingEnter = false;
   let cancelEnter: (() => void) | null = null;
   let disposed = false;
+  // Conversation id per key (project id, or GUI_NEW_KEY). In memory only; stop/exit never clear it so an ended chat can resume.
+  const resumeIds = new Map<string, string>();
   let alive = false; // false from stop()/exit even while lifecycle.current is still non-null (kill() does not null it until the pty exits)
 
   const clearEnter = (): void => {
@@ -57,8 +64,11 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
   function start(req: unknown): StartResult {
     if (disposed) return { ok: false, reason: 'unavailable' };
     if (typeof req !== 'object' || req === null) { stop(); return { ok: false, reason: 'bad-request' }; }
-    const { projectId, cols, rows, restart } = req as Record<string, unknown>;
+    const { projectId, cols, rows, restart, resume, mode: reqMode } = req as Record<string, unknown>;
     if (!(projectId === null || typeof projectId === 'string') || !isDim(cols) || !isDim(rows)) { stop(); return { ok: false, reason: 'bad-request' }; }
+    if (reqMode !== undefined && !isGuiPermissionMode(reqMode)) { stop(); return { ok: false, reason: 'bad-request' }; }
+    const mode = reqMode ?? GUI_DEFAULT_PERMISSION_MODE;
+    const key = projectId ?? GUI_NEW_KEY;
     let cwd: string | undefined;
     if (projectId === null) {
       if (d.newChatDir) {
@@ -77,9 +87,16 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     clearEnter();
     const myGen = ++seq;
     gen = myGen;
+    // Selector: fresh -> new id (recorded after the spawn succeeded); resume -> the known id, else --continue.
+    const knownId = resume === true && d.resumeById ? resumeIds.get(key) : undefined;
+    const freshId = resume === true ? undefined : d.randomUUID();
     try {
       d.lifecycle.start(
-        () => d.spawn({ cwd, cols, rows, sessionId: d.randomUUID() }),
+        () => d.spawn(
+          freshId !== undefined ? { cwd, cols, rows, mode, sessionId: freshId }
+            : knownId !== undefined ? { cwd, cols, rows, mode, resumeId: knownId }
+              : { cwd, cols, rows, mode, continueLast: true },
+        ),
         {
           onData: (data) => { if (myGen === gen) d.send(GUI_CHANNELS.data, data); },
           onAlive: () => { if (myGen === gen) d.send(GUI_CHANNELS.alive); },
@@ -98,6 +115,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
       d.log?.('gui session: start failed');
       return { ok: false, reason: 'spawn-failed' };
     }
+    if (freshId !== undefined) resumeIds.set(key, freshId);
     runningProjectId = projectId;
     alive = true;
     return { ok: true, reused: false };
