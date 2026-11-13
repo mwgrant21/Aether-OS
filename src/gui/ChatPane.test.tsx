@@ -1,6 +1,6 @@
 import { StrictMode, useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { StartResult } from '../../electron/gui/guiTypes';
 import { ChatPane, type ChatPaneStatus } from './ChatPane';
 
@@ -891,5 +891,108 @@ describe('ChatPane auto-stop off', () => {
     expect(lastStatus().settled).toBe(false);
     await advance(1100);
     expect(lastStatus().settled).toBe(true);
+  });
+});
+
+describe('ChatPane Start fresh and resume fallback', () => {
+  const SENTENCE = "Start a fresh conversation? The current one stays in Claude's history; this window will not reopen it.";
+  const NOTE = 'Could not resume the previous conversation; started a new one.';
+  const startPane = async (props: Partial<ComponentProps<typeof ChatPane>> & { projectId?: string | null } = {}) => {
+    install();
+    render(<Pane {...props} projectId={props.projectId === undefined ? null : props.projectId} onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => chunk!('hello'));
+    await advance(1700);
+  };
+  const send = async () => {
+    fireEvent.change(box(), { target: { value: 'go' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+  };
+
+  it('shows Start fresh on the New chat only', async () => {
+    await startPane();
+    expect(screen.getByText('Start fresh')).toBeTruthy();
+    cleanup();
+    await startPane({ projectId: 'p1' });
+    expect(screen.queryByText('Start fresh')).toBeNull();
+  });
+
+  it('is disabled with the hint while a reply is working', async () => {
+    await startPane();
+    const btn = screen.getByText('Start fresh') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    await send();
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute('title')).toBe('Wait for the reply to finish');
+    await advance(3100);
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('opens the popup with the exact sentence, and Cancel starts nothing', async () => {
+    await startPane();
+    fireEvent.click(screen.getByText('Start fresh'));
+    expect(screen.getByRole('dialog').textContent).toContain(SENTENCE);
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirming restarts without resume, keeps the mode, and the pane reports no conversation', async () => {
+    await startPane({ mode: 'plan' });
+    await send();
+    await advance(3100);
+    expect(lastStatus().hasSent).toBe(true);
+    fireEvent.click(screen.getByText('Start fresh'));
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Start fresh'));
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(gui.start.mock.calls[1]![0]).toEqual({ projectId: null, cols: 80, rows: 24, mode: 'plan', restart: true, resume: false });
+    expect(mocks.reset).toHaveBeenCalled();
+    expect(lastStatus().hasSent).toBe(false);
+  });
+
+  it('a resume start that exits before ready is retried once without resume, shows the note, and does not loop', async () => {
+    install();
+    render(<Pane projectId="p1" resume mode="plan" onLiveChange={vi.fn()} />);
+    await flush();
+    expect(gui.start.mock.calls[0]![0]).toMatchObject({ resume: true, mode: 'plan' });
+    act(() => exit!());
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(gui.start.mock.calls[1]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, mode: 'plan', restart: true, resume: false });
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    expect(lastStatus().hasSent).toBe(false);
+    act(() => exit!()); // the retry fails too: the normal exit state, no third start
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Restart')).toBeTruthy();
+  });
+
+  it('a non-resume start that exits before ready is not retried', async () => {
+    install();
+    render(<Pane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => exit!());
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Restart')).toBeTruthy();
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
+  it('a mode-switch failure is not retried here', async () => {
+    await startPane({ projectId: 'p1' });
+    await send();
+    await advance(3100);
+    fireEvent.click(screen.getByLabelText('Permission mode: Auto'));
+    fireEvent.click(screen.getByText('● Plan'));
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    expect(gui.start.mock.calls[1]![0]).toMatchObject({ resume: true, mode: 'plan', restart: true });
+    act(() => exit!());
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(screen.getByText('Could not switch to Plan; staying on Auto')).toBeTruthy();
   });
 });
