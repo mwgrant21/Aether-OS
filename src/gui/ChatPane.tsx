@@ -45,6 +45,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const mounted = useRef(false);
   const startSeq = useRef(0);
   const restartedOnReuse = useRef(false); // a reused start restarts the session at most once per mount
+  const dropData = useRef(false); // true from a reused reply until the restart's own start reply: old-PTY output in flight must not reach the new gate
   const cancelHint = useRef<(() => void) | null>(null);
   const onLiveChangeRef = useRef(onLiveChange);
   onLiveChangeRef.current = onLiveChange;
@@ -83,6 +84,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     gui.start(replace ? { projectId, cols, rows, restart: true } : { projectId, cols, rows }).then(
       (r: StartResult) => {
         if (!mounted.current || mySeq !== startSeq.current) return;
+        if (replace) dropData.current = false;
         if (!r.ok) return fail(r.reason);
         setLiveBoth(true);
         if (r.reused) {
@@ -91,13 +93,17 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
           // a second reused answer keeps the composer disabled (the no-output hint still shows).
           if (!restartedOnReuse.current) {
             restartedOnReuse.current = true;
+            dropData.current = true;
             termRef.current?.reset();
             begin(true);
           }
         }
       },
       () => {
-        if (mounted.current && mySeq === startSeq.current) fail('spawn-failed');
+        if (mounted.current && mySeq === startSeq.current) {
+          if (replace) dropData.current = false;
+          fail('spawn-failed');
+        }
       },
     );
   }, [projectId, clearHint, setLiveBoth]);
@@ -139,8 +145,11 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     watcherRef.current?.feed();
   }, [clearHint]);
 
+  const acceptData = useCallback(() => !dropData.current, []);
+
   const onExit = useCallback(() => {
     startSeq.current += 1;
+    dropData.current = false;
     clearHint();
     gateRef.current?.reset(); // clears pending quiet/ceiling timers
     watcherRef.current?.reset();
@@ -179,7 +188,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     <div data-testid="chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ padding: '10px 24px', color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <GuiTerminal ref={termRef} onChunk={onChunk} onExit={onExit} />
+        <GuiTerminal ref={termRef} onChunk={onChunk} onExit={onExit} acceptData={acceptData} />
       </div>
       {(message || stopped) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 24px', color: colors.textMuted, font: `500 13px/1.4 ${fonts.ui}` }}>

@@ -51,6 +51,10 @@ describe('isTrustPromptText', () => {
   it('is true with only two needles', () => {
     expect(isTrustPromptText('Accessing workspace:\n> No, exit')).toBe(true);
   });
+  it('is false for an ordinary sentence containing the words no exit', () => {
+    expect(isTrustPromptText('There is no exit from this loop, so I added a break and there is no exit code to check.')).toBe(false);
+    expect(isTrustPromptText('No, exit is not an option here.')).toBe(false);
+  });
   it('is false with only one needle', () => {
     expect(isTrustPromptText('Yes, I trust this folder')).toBe(false);
     expect(isTrustPromptText('> No, exit')).toBe(false);
@@ -174,6 +178,26 @@ describe('createTrustWatcher', () => {
     h.w.feed();
     expect(h.timers[1]!.cancelled).toBe(true);
     expect(h.timers[2]!.cancelled).toBe(false);
+  });
+
+  it('a feed absorbed by the pending timer schedules one trailing read that catches late text', () => {
+    const h = setup();
+    h.w.feed();
+    h.w.feed(); // lands after the read window opened: absorbed by the pending timer
+    h.fire(0); // reads the old screen
+    expect(h.changes).toEqual([]);
+    expect(h.timers.map((t) => t.ms)).toEqual([250, 250]);
+    h.setScreen(PROMPT); // the late chunk is parsed now
+    h.fire(1);
+    expect(h.changes).toEqual([true]);
+    expect(h.timers).toHaveLength(2); // no further re-arm
+  });
+
+  it('a lone feed does not schedule a trailing read', () => {
+    const h = setup();
+    h.w.feed();
+    h.fire(0);
+    expect(h.timers).toHaveLength(1);
   });
 
   it('reset cancels the timer and later fires do nothing; dispose cancels and ignores feeds', () => {

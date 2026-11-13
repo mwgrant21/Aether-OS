@@ -52,7 +52,9 @@ export interface TrustWatcher {
  * Detection is a throttle: while no prompt is shown a pending read timer is kept (reading the screen
  * is idempotent), so a spinner emitting chunks faster than detectMs cannot starve it. Clearing is a
  * debounce: while shown, every chunk re-arms clearMs so the composer returns only after the screen
- * is clear AND quiet. onChange fires only on a state change; the timer never re-arms itself.
+ * is clear AND quiet. A chunk absorbed by a pending detect timer marks the read dirty: if the screen
+ * is still not a prompt, one trailing read runs a window later, so text that landed just after the read
+ * (or was still being parsed by the terminal) is not missed until the next chunk. onChange fires only on a state change; the timer never re-arms itself.
  */
 export function createTrustWatcher(o: {
   schedule: (fn: () => void, ms: number) => () => void;
@@ -65,6 +67,7 @@ export function createTrustWatcher(o: {
   const clearMs = o.clearMs ?? TRUST_CLEAR_MS;
   let shown = false;
   let disposed = false;
+  let dirty = false;
   let cancel: (() => void) | null = null;
 
   const stop = (): void => {
@@ -73,11 +76,14 @@ export function createTrustWatcher(o: {
   };
   const fire = (): void => {
     cancel = null;
+    const wasDirty = dirty;
+    dirty = false;
     const next = isTrustPromptText(o.readScreen());
     if (next !== shown) {
       shown = next;
       o.onChange(next);
     }
+    if (wasDirty && !shown) cancel = o.schedule(fire, detectMs);
   };
 
   return {
@@ -88,10 +94,13 @@ export function createTrustWatcher(o: {
         cancel = o.schedule(fire, clearMs);
       } else if (!cancel) {
         cancel = o.schedule(fire, detectMs);
+      } else {
+        dirty = true;
       }
     },
     reset() {
       stop();
+      dirty = false;
       shown = false;
     },
     dispose() {
