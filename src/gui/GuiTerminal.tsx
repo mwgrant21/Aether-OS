@@ -22,6 +22,8 @@ interface GuiTerminalProps {
   onExit: () => void;
   /** Returns false to drop a chunk entirely (not written, no onChunk). */
   acceptData?: () => boolean;
+  /** Called with the raw input the user typed in the pane, before it is written to the session. */
+  onTyped?: (input: string) => void;
 }
 
 /**
@@ -29,12 +31,12 @@ interface GuiTerminalProps {
  * permission prompts are answered by typing here. It only subscribes; the parent calls gui.start
  * afterwards (child effects run before parent effects), so first output is not lost.
  */
-export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(function GuiTerminal({ onChunk, onExit, acceptData }, ref) {
+export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(function GuiTerminal({ onChunk, onExit, acceptData, onTyped }, ref) {
   const colors = useColors();
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const cbs = useRef({ onChunk, onExit, acceptData });
-  cbs.current = { onChunk, onExit, acceptData };
+  const cbs = useRef({ onChunk, onExit, acceptData, onTyped });
+  cbs.current = { onChunk, onExit, acceptData, onTyped };
   const themeRef = useRef({ background: colors.bgTerminal, foreground: colors.textBody });
   themeRef.current = { background: colors.bgTerminal, foreground: colors.textBody };
 
@@ -76,7 +78,10 @@ export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(funct
       term.write('\r\n[process exited]\r\n');
       cbs.current.onExit();
     });
-    const typed = term.onData((input) => gui.write(input));
+    const typed = term.onData((input) => {
+      cbs.current.onTyped?.(input);
+      gui.write(input);
+    });
     const resized = term.onResize(({ cols, rows }) => gui.resize(cols, rows));
     const observer = new ResizeObserver(fitIfShown);
     observer.observe(host);

@@ -147,7 +147,7 @@ describe('ChatPane', () => {
     render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(1);
-    expect(gui.start).toHaveBeenCalledWith({ projectId: 'p1', cols: 100, rows: 30 });
+    expect(gui.start).toHaveBeenCalledWith({ projectId: 'p1', cols: 100, rows: 30, mode: 'auto' });
     expect(mocks.order).toEqual(['onData', 'start']);
     expect(screen.getByText('alpha')).toBeTruthy();
   });
@@ -261,7 +261,7 @@ describe('ChatPane', () => {
     await flush();
     await flush();
     expect(gui.start).toHaveBeenCalledTimes(2);
-    expect(gui.start.mock.calls[1]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, restart: true });
+    expect(gui.start.mock.calls[1]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, mode: 'auto', restart: true });
     expect(mocks.reset).toHaveBeenCalledTimes(1);
     expect(box().disabled).toBe(true); // not forced ready
     await advance(5000);
@@ -377,7 +377,7 @@ describe('ChatPane', () => {
     mocks.fitTo = { cols: 1, rows: 1 };
     render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
     await flush();
-    expect(gui.start).toHaveBeenCalledWith({ projectId: 'p1', cols: 80, rows: 24 });
+    expect(gui.start).toHaveBeenCalledWith({ projectId: 'p1', cols: 80, rows: 24, mode: 'auto' });
     expect(gui.resize).not.toHaveBeenCalled();
   });
 
@@ -523,5 +523,151 @@ describe('ChatPane', () => {
       await flush();
       expect(gui.start).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('ChatPane permission mode', () => {
+  const picker = (label: string) => screen.getByLabelText(`Permission mode: ${label}`);
+  const ready = async () => {
+    install();
+    render(<ChatPane projectId="p1" onLiveChange={vi.fn()} />);
+    await flush();
+    act(() => chunk!('hello'));
+    await advance(1700);
+  };
+  const send = async (text = 'go') => {
+    fireEvent.change(box(), { target: { value: text } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+    await advance(3100); // quiet window: the reply "ended" (the mocked screen is empty)
+  };
+  const choose = (from: string, to: string) => {
+    fireEvent.click(picker(from));
+    fireEvent.click(screen.getByText(`● ${to}`));
+  };
+
+  it('shows Auto by default and lists the four modes', async () => {
+    await ready();
+    expect(picker('Auto').textContent).toBe('● Auto ▾');
+    fireEvent.click(picker('Auto'));
+    expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['● Manual', '● Accept edits', '● Plan', '● Auto']);
+  });
+
+  it('is disabled with the busy hint while a turn is working and enabled after the quiet window', async () => {
+    await ready();
+    expect(picker('Auto').getAttribute('aria-disabled')).toBe('false');
+    fireEvent.change(box(), { target: { value: 'go' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await flush();
+    expect(picker('Auto').getAttribute('aria-disabled')).toBe('true');
+    expect(picker('Auto').getAttribute('title')).toBe('Wait for the reply to finish');
+    await advance(3100);
+    expect(picker('Auto').getAttribute('aria-disabled')).toBe('false');
+  });
+
+  it('an Enter typed in the pane also counts as a turn', async () => {
+    await ready();
+    act(() => mocks.data!('hi\r'));
+    expect(picker('Auto').getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('selecting a mode shows the popup with the exact sentence and never the word will', async () => {
+    await ready();
+    choose('Auto', 'Plan');
+    const text = screen.getByRole('dialog').textContent!;
+    expect(text).toContain("Switch to Plan? Claude restarts and may re-read this thread's context.");
+    expect(text).not.toContain('will');
+  });
+
+  it('Cancel and Esc start nothing, and Cancel holds the focus', async () => {
+    await ready();
+    choose('Auto', 'Plan');
+    expect(document.activeElement).toBe(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByText('Cancel'));
+    choose('Auto', 'Manual');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await flush();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+    expect(picker('Auto')).toBeTruthy();
+  });
+
+  it('selecting the current mode is a no-op', async () => {
+    await ready();
+    choose('Auto', 'Auto');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(gui.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('Switch relaunches fresh when nothing was sent, and the label follows once ready', async () => {
+    await ready();
+    choose('Auto', 'Plan');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(2);
+    expect(gui.start.mock.calls[1]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, mode: 'plan', restart: true, resume: false });
+    expect(mocks.reset).toHaveBeenCalled();
+    expect(picker('Plan')).toBeTruthy();
+    act(() => chunk!('banner'));
+    await advance(1700);
+    expect(picker('Plan').getAttribute('aria-disabled')).toBe('false');
+  });
+
+  it('Switch resumes after a message was sent', async () => {
+    await ready();
+    await send();
+    choose('Auto', 'Manual');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    expect(gui.start.mock.calls[1]![0]).toMatchObject({ restart: true, resume: true, mode: 'manual' });
+  });
+
+  it('drops a chunk between Switch and the start reply, and feeds the gate only after the reply', async () => {
+    let reply!: (r: StartResult) => void;
+    await ready();
+    gui.start.mockImplementationOnce(() => new Promise<StartResult>((r) => (reply = r)));
+    choose('Auto', 'Plan');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    mocks.write.mockClear();
+    act(() => chunk!('old-pty-tail'));
+    await advance(5000);
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(box().disabled).toBe(true);
+    reply({ ok: true, reused: false });
+    await flush();
+    act(() => chunk!('new banner'));
+    expect(mocks.write).toHaveBeenCalledWith('new banner');
+  });
+
+  it('exit before ready after a switch reverts the label, shows the error, and Restart resumes with the previous mode', async () => {
+    await ready();
+    await send();
+    choose('Auto', 'Plan');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    act(() => exit!());
+    expect(picker('Auto')).toBeTruthy();
+    expect(screen.getByText('Could not switch to Plan; staying on Auto')).toBeTruthy();
+    fireEvent.click(screen.getByText('Restart'));
+    await flush();
+    expect(gui.start).toHaveBeenCalledTimes(3);
+    expect(gui.start.mock.calls[2]![0]).toEqual({ projectId: 'p1', cols: 80, rows: 24, mode: 'auto', resume: true });
+  });
+
+  it('a second failed resume makes Restart start fresh', async () => {
+    await ready();
+    await send();
+    choose('Auto', 'Plan');
+    fireEvent.click(screen.getByText('Switch'));
+    await flush();
+    act(() => exit!()); // failure 1 (the switch)
+    fireEvent.click(screen.getByText('Restart')); // resume:true
+    await flush();
+    act(() => exit!()); // failure 2 (the resume)
+    fireEvent.click(screen.getByText('Restart'));
+    await flush();
+    expect(gui.start.mock.calls[2]![0]).toMatchObject({ resume: true });
+    expect(gui.start.mock.calls[3]![0]).toMatchObject({ resume: false, mode: 'auto' });
   });
 });
