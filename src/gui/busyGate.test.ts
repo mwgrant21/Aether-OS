@@ -13,6 +13,7 @@ const PLAN = 'Ready to code?\nEnter to select · ↑/↓ to navigate · Esc to c
 const BG_SHELL_FOOTER = '> \n  ⏵⏵ auto mode on · 1 shell · ↓ to manage';
 const BG_SHELL_DONE = '✻ Cooked for 9s · 1 shell still running\n> ';
 const BG_AGENT = '> \n  ⏵⏵ auto mode on · /tasks to see subagents';
+const BG_MONITOR_AGENT = '> \n  ⏵⏵ auto mode on · 1 monitor · ← 1 agent';
 
 function setup(initial = IDLE) {
   let t = 0;
@@ -60,7 +61,10 @@ describe('classifyWorkScreen', () => {
     expect(classifyWorkScreen(BG_SHELL_FOOTER)).toBe('working');
     expect(classifyWorkScreen(BG_SHELL_DONE)).toBe('working');
     expect(classifyWorkScreen(BG_AGENT)).toBe('working');
+    expect(classifyWorkScreen(BG_MONITOR_AGENT)).toBe('working');
+    expect(classifyWorkScreen('> \n  ⏵⏵ auto mode on · 2 monitors · ← 2 agents')).toBe('working');
     expect(classifyWorkScreen('> \n  ⏵⏵ auto mode on · ← 1 agent')).toBe('idle');
+    expect(classifyWorkScreen('> \n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent')).toBe('idle');
     expect(classifyWorkScreen('> \n  ⏵⏵ auto mode on · ← for agents')).toBe('idle');
   });
   it('an empty BG_TASK_NEEDLES never matches', () => {
@@ -105,6 +109,18 @@ describe('createBusyGate', () => {
     s.gate.turnStarted();
     s.advance(GUI_BUSY_QUIET_MS + 50);
     expect(s.gate.state()).toBe('working');
+  });
+  it('a monitor/agent footer keeps it working and unsettled until the screen goes idle', () => {
+    const s = setup(BG_MONITOR_AGENT);
+    s.gate.turnStarted();
+    s.advance(GUI_BUSY_QUIET_MS + GUI_BUSY_SETTLE_MS + 50);
+    expect(s.gate.state()).toBe('working');
+    expect(s.onSettled).not.toHaveBeenCalled();
+    s.setScreen(IDLE);
+    s.gate.feed();
+    s.advance(GUI_BUSY_QUIET_MS + GUI_BUSY_SETTLE_MS + 50);
+    expect(s.gate.state()).toBe('idle');
+    expect(s.onSettled).toHaveBeenCalledTimes(1);
   });
   it('a dialog moves it to waiting', () => {
     const s = setup(PERMISSION);

@@ -17,11 +17,13 @@ export type BusyState = 'idle' | 'working' | 'waiting';
 export const isBusy = (s: BusyState): boolean => s !== 'idle';
 
 // Background tasks that keep a chat busy after the reply ended. Bare "agent", "1 agent" and "for agents"
-// are constant idle noise in the footer and must NOT match.
+// are constant idle noise in the footer and must NOT match; a running background agent shows as the
+// separate footer segment "· 1 monitor ·" instead.
 export const BG_TASK_NEEDLES: readonly RegExp[] = [
   /·\s*\d+ shells?\s*(?:·|$)/i,   // footer segment "· 1 shell ·"
   /still running/i,               // done row "... · 1 shell still running"
   /\/tasks to see subagents/i,    // background agent
+  /·\s*\d+ monitors?\b/i,         // footer segment "· 1 monitor · ← 1 agent" while a background agent runs
 ];
 
 export interface BusyNeedles {
