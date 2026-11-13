@@ -8,6 +8,7 @@ import { ConfirmPopup } from './ConfirmPopup';
 import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
 import { MODE_LABELS, ModePicker } from './ModePicker';
+import { createInputBoxGate, type InputBoxGate } from './inputBox';
 import { createReadyGate, type ReadyGate } from './readyGate';
 import { createTrustWatcher, isTrustPromptText, type TrustWatcher } from './trustPrompt';
 import { useGuiProjects } from './useGuiProjects';
@@ -77,6 +78,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
 
   const [live, setLive] = useState(false);
   const [ready, setReady] = useState(false);
+  const [boxSeen, setBoxSeen] = useState(false); // claude's input box has been drawn (or the ceiling passed) this start
   const [hint, setHint] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stopped, setStopped] = useState(false);
@@ -92,6 +94,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
 
   const termRef = useRef<GuiTerminalHandle>(null);
   const gateRef = useRef<ReadyGate | null>(null);
+  const boxGateRef = useRef<InputBoxGate | null>(null);
   const watcherRef = useRef<TrustWatcher | null>(null);
   const busyRef = useRef<BusyGate | null>(null);
   const modeRef = useRef<GuiPermissionMode>(mode); // the mode of the running session
@@ -151,6 +154,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     setTrustShownBoth(false);
     const mySeq = ++startSeq.current;
     gate.reset();
+    boxGateRef.current?.reset();
+    setBoxSeen(false);
     busyRef.current?.reset();
     setSettled(false);
     readyRef.current = false;
@@ -224,6 +229,12 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       },
     });
     gateRef.current = gate;
+    const boxGate = createInputBoxGate({
+      schedule,
+      readScreen: () => termRef.current?.screenText() ?? '',
+      onVisible: () => setBoxSeen(true),
+    });
+    boxGateRef.current = boxGate;
     busyRef.current = createBusyGate({
       schedule,
       readScreen: () => termRef.current?.screenText() ?? '',
@@ -251,6 +262,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       clearHint();
       gate.dispose();
       gateRef.current = null;
+      boxGate.dispose();
+      boxGateRef.current = null;
       busyRef.current?.dispose();
       busyRef.current = null;
       watcherRef.current?.dispose();
@@ -264,6 +277,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     clearHint();
     setHint(false);
     gateRef.current?.feed();
+    boxGateRef.current?.feed();
     watcherRef.current?.feed();
     busyRef.current?.feed();
   }, [clearHint]);
@@ -313,6 +327,8 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     dropData.current = false;
     clearHint();
     gateRef.current?.reset(); // clears pending quiet/ceiling timers
+    boxGateRef.current?.reset();
+    setBoxSeen(false);
     busyRef.current?.reset();
     setSettled(false);
     watcherRef.current?.reset();
@@ -375,7 +391,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
     }
   };
 
-  const enabled = live && ready && !trustShown;
+  const enabled = live && ready && boxSeen && !trustShown;
   const placeholder = stopped
     ? 'Claude is not running'
     : trustShown
