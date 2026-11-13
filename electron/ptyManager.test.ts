@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { buildClaudeLaunchCommand, buildPtyEnv, buildPtyLaunchSpec, buildUnsetCommand, launchLine, resolveBoardCliPath, terminalIdentityEnv } from './ptyManager';
+import { UNMONITORED_TERMINAL_ENV, buildClaudeLaunchCommand, buildPtyEnv, buildPtyLaunchSpec, buildUnsetCommand, launchLine, resolveBoardCliPath, terminalIdentityEnv } from './ptyManager';
 
 // Guards the 2026-08-04 incident fix: the auto-launched `claude` session must
 // never inherit a paid API key from the operator's own shell environment.
@@ -181,6 +181,27 @@ describe('buildPtyLaunchSpec', () => {
   it('writes a launch command override verbatim as the second write', () => {
     const cmd = 'claude --model sonnet --effort medium\r';
     expect(buildPtyLaunchSpec(100, 30, undefined, id, undefined, cmd).writes[1]).toBe(cmd);
+  });
+
+  it('uses the cwd argument when given and falls back to the home dir when omitted', () => {
+    expect(buildPtyLaunchSpec(100, 30, undefined, id, undefined, undefined, 'C:/some/dir').cwd).toBe('C:/some/dir');
+    expect(buildPtyLaunchSpec(100, 30, undefined, id).cwd).toBe(os.homedir());
+  });
+
+  it('GUI launch shape: exit-with-claude line, keeps HOME/USERPROFILE, strips API key, no weakening flags', () => {
+    vi.stubEnv('HOME', 'h');
+    vi.stubEnv('USERPROFILE', 'u');
+    vi.stubEnv('ANTHROPIC_API_KEY', 'k');
+    const cmd = buildClaudeLaunchCommand(id, true);
+    const spec = buildPtyLaunchSpec(100, 30, undefined, id, UNMONITORED_TERMINAL_ENV, cmd, 'C:/some/dir');
+    expect(spec.env.HOME).toBe('h');
+    expect(spec.env.USERPROFILE).toBe('u');
+    expect(spec.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(spec.env.AETHER_STATUSLINE_NO_PERSIST).toBe('1');
+    expect(spec.env.AETHER_TERMINAL).toBeUndefined();
+    expect(spec.writes[1]).toBe(`claude --session-id ${id}; exit\r`);
+    expect(spec.writes.join('')).not.toMatch(/--bare|--setting-sources|CLAUDE_CONFIG_DIR|\s-p\b|disableAllHooks|strict-mcp-config/);
+    expect(buildClaudeLaunchCommand(id)).toBe(`claude --session-id ${id}\r`);
   });
 
   it.runIf(process.platform === 'win32')('bridge launch: -NoExit -File args, no writes, the bridge env', () => {

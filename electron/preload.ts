@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { UiProject, AddProjectResult, StartRequest, StartResult } from './gui/guiTypes';
 import type { RealUsageSnapshot, FleetSessionRow, PlanUsageSyncResult } from '../src/state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from '../src/state/liveAgentsMath';
 import type { AttachmentInfo } from '../src/components/files/attachmentsMath';
@@ -164,6 +165,33 @@ contextBridge.exposeInMainWorld('aetherElectron', {
       const listener = () => callback();
       ipcRenderer.on('terminal2Pty:alive', listener);
       return () => ipcRenderer.removeListener('terminal2Pty:alive', listener);
+    },
+  },
+  // GUI variant (AETHER_GUI=1): answered only when main registered the gui:* handlers. Ids, text and integers only.
+  gui: {
+    projects: {
+      list: (): Promise<UiProject[]> => ipcRenderer.invoke('gui:projects:list'),
+      add: (): Promise<AddProjectResult> => ipcRenderer.invoke('gui:projects:add'),
+      remove: (id: string): Promise<boolean> => ipcRenderer.invoke('gui:projects:remove', id),
+    },
+    start: (opts: StartRequest): Promise<StartResult> => ipcRenderer.invoke('gui:session:start', opts),
+    write: (input: string) => ipcRenderer.send('gui:session:write', input),
+    resize: (cols: number, rows: number) => ipcRenderer.send('gui:session:resize', { cols, rows }),
+    submit: (text: string): Promise<boolean> => ipcRenderer.invoke('gui:session:submit', text),
+    onData: (callback: (data: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
+      ipcRenderer.on('gui:session:data', listener);
+      return () => ipcRenderer.removeListener('gui:session:data', listener);
+    },
+    onAlive: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('gui:session:alive', listener);
+      return () => ipcRenderer.removeListener('gui:session:alive', listener);
+    },
+    onExit: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('gui:session:exit', listener);
+      return () => ipcRenderer.removeListener('gui:session:exit', listener);
     },
   },
   usage: {

@@ -5,16 +5,16 @@ import { stopAllQueries } from './dashboards/runQuery';
 import { STARTER_BOARDS } from '../src/shared/dashboards/starters';
 import { RANGES, type Range } from '../src/shared/dashboards/spec';
 import { join, dirname } from 'path';
-import { existsSync, readFileSync, rmSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync } from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'node:os';
-import { resolveBoardCliPath, spawnPty, buildPtyLaunchSpec, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
+import { resolveBoardCliPath, spawnPty, buildClaudeLaunchCommand, buildPtyLaunchSpec, terminalIdentityEnv, UNMONITORED_TERMINAL_ENV } from './ptyManager';
 import { createPlanUsageScraper } from './planUsageScraper';
 import { runPlanUsageSync } from './planUsageSync';
 import { spawnCodexPty, buildCodexLaunchSpec, buildCodexLaunchEnv, buildCodexResolveScript, codexPtyCwd } from './codexPtyManager';
 import { getCodexLaunchInfo } from './codexLaunchInfo';
 import { createTerminalHub } from './terminalHub';
-import type { PtyLifecycleHandlers } from './ptyLifecycle';
+import { PtyLifecycle, type PtyLifecycleHandlers } from './ptyLifecycle';
 import { createDesktopFeed } from './desktopFeed';
 import { attachTerminalBoardReset, resetTerminalBoardEntry } from './terminalBoard';
 import { TERMINAL_BOARD_DIR_NAME } from '../src/shared/terminalBoard';
@@ -134,11 +134,20 @@ import { createCommunicationQuitGate } from './communicationBridge/quitGate';
 import { CommunicationSessionControl } from './communicationBridge/sessionControl';
 import { ConnectedPromptObserver } from './communicationBridge/connectedPromptObserver';
 import { CommunicationGrantControl } from './communicationBridge/grantControl';
+import { rendererEntryName, guiVariantEnabled } from './gui/entry';
+import { createProjectsStore } from './gui/projectsStore';
+import { createGuiSession, type GuiSession } from './gui/guiSession';
+import { guiLaunchCommand } from './gui/guiLaunch';
+import { registerGuiIpc } from './gui/guiIpc';
 import { cleanupStaleBridgeLaunches, preflightBridgeLaunch, prepareBridgeLaunch } from './communicationBridge/launchConfig';
 
 const require = createRequire(import.meta.url);
 
 let mainWindow: BrowserWindow | null = null;
+// GUI variant (AETHER_GUI=1 only): resolved from the private-dir ACL chain inside whenReady; stays pending when the flag is off.
+let resolveGuiDirReady!: (ok: boolean) => void;
+const guiDirReady = new Promise<boolean>((r) => { resolveGuiDirReady = r; });
+let guiSessionRef: GuiSession | null = null;
 // Exists before Settings or Terminal mount; disabled until explicit preference sync.
 // U6 prepares its main-only launch before starting the configured Claude client.
 const communicationBridge = new CommunicationBridgeIntegration({
@@ -402,7 +411,14 @@ function createWindow(): void {
     if (mainWindow === win) mainWindow = null;
   });
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
+  if (rendererEntryName(process.env) === 'gui.html') {
+    const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
+    if (rendererUrl) {
+      win.loadURL(new URL('gui.html', rendererUrl.endsWith('/') ? rendererUrl : rendererUrl + '/').href);
+    } else {
+      win.loadFile(join(__dirname, '../renderer/gui.html'));
+    }
+  } else if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
@@ -993,6 +1009,8 @@ app.whenReady().then(async () => {
         `[diag] private-dir failed: ${err instanceof Error ? err.message : String(err)} at=${new Date().toISOString()}`
       );
     });
+  // GUI variant: hand the ACL outcome to the lazy pinned-folder store (flag off: never resolved, nothing reads the file).
+  if (guiVariantEnabled(process.env)) void privateDirReady.then(() => resolveGuiDirReady(privateDirOk));
   // The paired-session store lives in this directory: load it, and let the renderer's
   // mutating remote commands run, only once the user-only ACL has been applied.
   // If the ACL failed, remote stays unavailable for this run: the store is never loaded and the
@@ -1189,6 +1207,7 @@ app.on('before-quit', event => {
   isQuitting = true;
   desktopRetain();
   aetherChoice?.dispose();
+  guiSessionRef?.dispose();
   phoneViewCache.clear();
   agentsDiagFeed.clear();
   stopDashboardsWatch?.();
@@ -1711,6 +1730,46 @@ ipcMain.on('terminal2Pty:write', (_event, input: string) => {
 ipcMain.on('terminal2Pty:resize', (_event, { cols, rows }: { cols: number; rows: number }) => {
   terminal2PtyLifecycle.resize(cols, rows);
 });
+
+// GUI variant (AETHER_GUI=1): own PTY lifecycle (not a hub slot, so never visible to the phone gateway), the pinned-folder
+// store and the gui:* IPC. With the flag off none of this runs: no handler, and gui-projects.json is never read or written.
+if (guiVariantEnabled(process.env)) {
+  const guiLifecycle = new PtyLifecycle();
+  let guiStore: ReturnType<typeof createProjectsStore> | null = null;
+  let guiStorePromise: Promise<ReturnType<typeof createProjectsStore> | null> | undefined;
+  // Lazy: the file is not read until the private-dir ACL is confirmed (a planted path would become claude's cwd).
+  const getGuiStore = (): Promise<ReturnType<typeof createProjectsStore> | null> =>
+    (guiStorePromise ??= guiDirReady.then((ok) => (ok ? (guiStore = createProjectsStore({ dir: aetherOsDir })) : null)));
+  const guiSession = createGuiSession({
+    lifecycle: {
+      get current() { return guiLifecycle.current; },
+      start: (spawn, handlers, size) => guiLifecycle.start(spawn, handlers, size),
+      write: (i) => guiLifecycle.write(i),
+      resize: (c, r) => guiLifecycle.resize(c, r),
+      kill: () => { try { guiLifecycle.current?.kill(); } catch { /* ignore */ } },
+    },
+    // Plain spawnPty, no bridge, so the cwd below is never combined with a bridge launch.
+    spawn: ({ cwd, cols, rows, sessionId }) => spawnPty(cols, rows, undefined, sessionId, UNMONITORED_TERMINAL_ENV, guiLaunchCommand(buildClaudeLaunchCommand(sessionId, true), process.platform), cwd),
+    projectPath: (id) => guiStore?.pathOf(id),
+    isDirectory: (p) => { try { return statSync(p).isDirectory(); } catch { return false; } },
+    // Must not throw: a throw inside PtyLifecycle.start's onAlive would make guiSession drop the new pty's output.
+    send: (channel, payload) => { try { sendToWindow(channel, payload); } catch { /* ignore */ } },
+    randomUUID: () => crypto.randomUUID(),
+    schedule: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
+    log: (l) => diagLog.write(`[diag] ${l} at=${new Date().toISOString()}`),
+  });
+  guiSessionRef = guiSession;
+  registerGuiIpc(ipcMain, {
+    isTrusted: (event) => !!mainWindow && !mainWindow.isDestroyed()
+      && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame,
+    getStore: getGuiStore,
+    session: guiSession,
+    pickFolder: async () => {
+      const r = mainWindow ? await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] }) : await dialog.showOpenDialog({ properties: ['openDirectory'] });
+      return r.canceled ? null : r.filePaths[0] ?? null;
+    },
+  });
+}
 
 // Which `codex` the terminal will launch and its version, answered by a
 // profile-loaded shell running the terminal's own selection script on the

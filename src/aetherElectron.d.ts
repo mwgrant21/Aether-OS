@@ -1,3 +1,4 @@
+import type { UiProject, AddProjectResult, StartRequest, StartResult } from '../electron/gui/guiTypes';
 import type { RealUsageSnapshot, FleetSessionRow, PlanUsageSyncResult } from './state/types';
 import type { RealAgentDispatch, CompletedDispatchUsage, RealActiveWork } from './state/liveAgentsMath';
 import type { AttachmentInfo } from './components/files/attachmentsMath';
@@ -110,6 +111,20 @@ declare global {
         onSnap: (callback: (snap: { cols: number; rows: number; d: string }) => void) => () => void;
         onExit: (callback: () => void) => () => void;
         onAlive: (callback: () => void) => () => void;
+      };
+      gui: {
+        projects: {
+          list: () => Promise<UiProject[]>;
+          add: () => Promise<AddProjectResult>;
+          remove: (id: string) => Promise<boolean>;
+        };
+        start: (opts: StartRequest) => Promise<StartResult>;
+        write: (input: string) => void;
+        resize: (cols: number, rows: number) => void;
+        submit: (text: string) => Promise<boolean>;
+        onData: (callback: (data: string) => void) => () => void;
+        onAlive: (callback: () => void) => () => void;
+        onExit: (callback: () => void) => () => void;
       };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;
