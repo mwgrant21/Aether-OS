@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GUI_DEFAULT_PERMISSION_MODE, GUI_NO_OUTPUT_HINT_MS, type GuiPermissionMode, type StartResult } from '../../electron/gui/guiTypes';
+import { GUI_NEW_KEY, GUI_NO_OUTPUT_HINT_MS, type GuiPermissionMode, type StartResult } from '../../electron/gui/guiTypes';
 import { Button } from '../components/shared/Button';
 import { useColors } from '../components/shared/useColors';
 import { fonts, radii } from '../styles/tokens';
-import { createBusyGate, type BusyGate, type BusyState } from './busyGate';
+import { GUI_BG_MARKER_RELIABLE, createBusyGate, type BusyGate, type BusyState } from './busyGate';
 import { ConfirmPopup } from './ConfirmPopup';
 import { GuiComposer } from './GuiComposer';
 import { GuiTerminal, type GuiTerminalHandle } from './GuiTerminal';
@@ -12,9 +12,30 @@ import { createReadyGate, type ReadyGate } from './readyGate';
 import { createTrustWatcher, type TrustWatcher } from './trustPrompt';
 import { useGuiProjects } from './useGuiProjects';
 
+export interface ChatPaneStatus {
+  live: boolean;
+  state: BusyState;
+  /** false = the busy gate's canary decided it cannot see Claude's working screen. */
+  trusted: boolean;
+  /** The chat holds a conversation (a turn was sent, or this pane resumed one). */
+  hasSent: boolean;
+  /** The busy gate settled (idle, then quiet and idle again): a finished chat. */
+  settled: boolean;
+}
+
 interface ChatPaneProps {
   projectId: string | null;
-  onLiveChange: (live: boolean) => void;
+  /** false = hidden (display:none) but still mounted: the terminal keeps absorbing output and the gates keep running. */
+  active: boolean;
+  /** The first start resumes the conversation of this chat. */
+  resume?: boolean;
+  /** Permission mode, owned by the parent so it survives an idle-stop and return. */
+  mode: GuiPermissionMode;
+  onModeChange: (mode: GuiPermissionMode) => void;
+  onStatus: (status: ChatPaneStatus) => void;
+  onLiveChange?: (live: boolean) => void;
+  /** Offered (as a Stop chat button) only while auto-stop is off and the chat holds a conversation. */
+  onStopChat?: () => void;
 }
 
 const FAIL_TEXT: Record<string, string> = {
@@ -23,12 +44,15 @@ const FAIL_TEXT: Record<string, string> = {
   'unknown-project': 'That project is no longer pinned',
   'spawn-failed': 'Claude could not be started',
   'bad-request': 'Claude could not be started',
+  'too-many-live': 'Too many chats are working. Wait for one to finish.',
 };
 
 interface BeginOptions {
   replace?: boolean;
   resume?: boolean;
   mode?: GuiPermissionMode;
+  noRetry?: boolean; // a user-initiated start: a resume that fails is not retried fresh here (Restart has its own rule)
+  fallbackNote?: boolean; // this start is the automatic fresh retry of a failed resume
 }
 
 const schedule = (fn: () => void, ms: number): (() => void) => {
@@ -36,9 +60,10 @@ const schedule = (fn: () => void, ms: number): (() => void) => {
   return () => clearTimeout(t);
 };
 
-export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
+export function ChatPane({ projectId, active, resume, mode, onModeChange, onStatus, onLiveChange, onStopChat }: ChatPaneProps) {
   const colors = useColors();
   const { projects } = useGuiProjects();
+  const sessionKey = projectId ?? GUI_NEW_KEY;
   const name = projectId === null ? 'New chat' : (projects.find((p) => p.id === projectId)?.name ?? 'Project');
 
   const [live, setLive] = useState(false);
@@ -47,20 +72,26 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const [error, setError] = useState<string | null>(null);
   const [stopped, setStopped] = useState(false);
   const [trustShown, setTrustShown] = useState(false);
-  const [mode, setMode] = useState<GuiPermissionMode>(GUI_DEFAULT_PERMISSION_MODE); // the mode of the running session
+  const [resumeNote, setResumeNote] = useState(false);
+  const [confirmFresh, setConfirmFresh] = useState(false);
   const [confirmMode, setConfirmMode] = useState<GuiPermissionMode | null>(null); // picked, awaiting the popup answer
   const [pendingSwitch, setPendingSwitch] = useState<GuiPermissionMode | null>(null); // relaunch in flight, committed at ready
   const [busy, setBusy] = useState<BusyState>('idle');
+  const [busyTrusted, setBusyTrusted] = useState(true);
+  const [settled, setSettled] = useState(false);
+  const [hasSent, setHasSent] = useState(resume === true); // a resumed pane already holds a conversation
 
   const termRef = useRef<GuiTerminalHandle>(null);
   const gateRef = useRef<ReadyGate | null>(null);
   const watcherRef = useRef<TrustWatcher | null>(null);
   const busyRef = useRef<BusyGate | null>(null);
-  const modeRef = useRef<GuiPermissionMode>(GUI_DEFAULT_PERMISSION_MODE);
+  const modeRef = useRef<GuiPermissionMode>(mode); // the mode of the running session
+  const firstStart = useRef({ resume, mode });
   const pendingRef = useRef<GuiPermissionMode | null>(null);
-  const hasSentRef = useRef(false);
+  const hasSentRef = useRef(resume === true);
   const readyRef = useRef(false);
   const resumedStartRef = useRef(false); // the current start asked claude to resume
+  const retryFreshRef = useRef(false); // the current start was a resume that may be retried fresh once if it ends before ready
   const resumeFailures = useRef(0); // consecutive resume starts that ended before ready
   const mounted = useRef(false);
   const startSeq = useRef(0);
@@ -69,10 +100,22 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const cancelHint = useRef<(() => void) | null>(null);
   const onLiveChangeRef = useRef(onLiveChange);
   onLiveChangeRef.current = onLiveChange;
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+  const onModeChangeRef = useRef(onModeChange);
+  onModeChangeRef.current = onModeChange;
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    onStatusRef.current({ live, state: busy, trusted: busyTrusted, hasSent, settled });
+  }, [live, busy, busyTrusted, hasSent, settled]);
 
   const setLiveBoth = useCallback((v: boolean) => {
     setLive(v);
-    onLiveChangeRef.current(v);
+    onLiveChangeRef.current?.(v);
   }, []);
 
   const clearHint = useCallback(() => {
@@ -91,8 +134,11 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     const mySeq = ++startSeq.current;
     gate.reset();
     busyRef.current?.reset();
+    setSettled(false);
     readyRef.current = false;
     resumedStartRef.current = o.resume === true;
+    retryFreshRef.current = o.resume === true && o.noRetry !== true;
+    setResumeNote(o.fallbackNote === true);
     clearHint();
     setReady(false);
     setHint(false);
@@ -113,7 +159,10 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       (r: StartResult) => {
         if (!mounted.current || mySeq !== startSeq.current) return;
         if (replace) dropData.current = false;
-        if (!r.ok) return fail(r.reason);
+        if (!r.ok) {
+          if (r.reason === 'superseded') return; // a later start/stop replaced the session this reply was for: nothing to show
+          return fail(r.reason);
+        }
         setLiveBoth(true);
         if (r.reused) {
           // The renderer has a fresh empty terminal, so a prompt the session is waiting on cannot be seen
@@ -147,7 +196,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
         if (to) {
           pendingRef.current = null;
           modeRef.current = to;
-          setMode(to);
+          onModeChangeRef.current(to);
           setPendingSwitch(null);
         }
         setReady(true);
@@ -157,9 +206,12 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     busyRef.current = createBusyGate({
       schedule,
       readScreen: () => termRef.current?.screenText() ?? '',
-      onChange: setBusy,
-      onSettled: () => {},
-      onTrust: () => {},
+      onChange: (s) => {
+        setBusy(s);
+        if (s !== 'idle') setSettled(false);
+      },
+      onSettled: () => setSettled(true),
+      onTrust: setBusyTrusted,
     });
     watcherRef.current = createTrustWatcher({
       schedule,
@@ -170,7 +222,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     // answered reused:true and force the composer ready); the child has subscribed onData by then.
     let cancelled = false;
     queueMicrotask(() => {
-      if (!cancelled) begin();
+      if (!cancelled) begin({ resume: firstStart.current.resume, mode: firstStart.current.mode });
     });
     return () => {
       cancelled = true;
@@ -196,6 +248,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
 
   const sentSomething = useCallback(() => {
     hasSentRef.current = true;
+    setHasSent(true);
     busyRef.current?.turnStarted();
   }, []);
 
@@ -206,6 +259,7 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
   const acceptData = useCallback(() => !dropData.current, []);
 
   const onExit = useCallback(() => {
+    let retryFresh = false;
     if (!readyRef.current) {
       // Ended before the ready gate: a mode switch that claude refused or a resume that failed.
       const to = pendingRef.current;
@@ -215,26 +269,40 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
         setError(`Could not switch to ${MODE_LABELS[to]}; staying on ${MODE_LABELS[modeRef.current]}`);
       }
       if (to || resumedStartRef.current) resumeFailures.current += 1;
+      retryFresh = !to && retryFreshRef.current;
     }
     startSeq.current += 1;
     dropData.current = false;
     clearHint();
     gateRef.current?.reset(); // clears pending quiet/ceiling timers
     busyRef.current?.reset();
+    setSettled(false);
     watcherRef.current?.reset();
     setTrustShown(false);
     setReady(false);
     setHint(false);
     setStopped(true);
     setLiveBoth(false);
-  }, [clearHint, setLiveBoth]);
+    if (retryFresh) {
+      // A resume that ended before ready (the conversation could not be reopened): start a new one, once.
+      hasSentRef.current = false;
+      setHasSent(false);
+      dropData.current = true;
+      termRef.current?.reset();
+      begin({ replace: true, resume: false, mode: modeRef.current, fallbackNote: true });
+    }
+  }, [clearHint, setLiveBoth, begin]);
 
   const restart = (): void => {
     termRef.current?.reset();
     // Resume the conversation unless it keeps failing to resume: after two failures start fresh, never a dead end.
     const resume = hasSentRef.current && resumeFailures.current < 2;
-    if (!resume) hasSentRef.current = false; // a fresh start is a new empty conversation: the next switch must not resume it
-    begin({ resume, mode: modeRef.current });
+    if (!resume) {
+      // a fresh start is a new empty conversation: the next switch must not resume it
+      hasSentRef.current = false;
+      setHasSent(false);
+    }
+    begin({ resume, mode: modeRef.current, noRetry: true });
   };
 
   const confirmSwitch = (): void => {
@@ -249,9 +317,19 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
     begin({ replace: true, resume: hasSentRef.current, mode: to });
   };
 
+  const confirmFreshStart = (): void => {
+    setConfirmFresh(false);
+    if (busyRef.current?.state() !== 'idle') return; // a reply started while the popup was open: never kill it on a plain action
+    dropData.current = true;
+    termRef.current?.reset();
+    hasSentRef.current = false;
+    setHasSent(false);
+    begin({ replace: true, resume: false, mode: modeRef.current, noRetry: true });
+  };
+
   const onSubmit = async (text: string): Promise<boolean> => {
     try {
-      const ok = (await window.aetherElectron?.gui?.submit(text)) === true;
+      const ok = (await window.aetherElectron?.gui?.submit(sessionKey, text)) === true;
       if (ok) sentSomething();
       return ok;
     } catch {
@@ -267,14 +345,46 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
       : !enabled
         ? 'Starting Claude...'
         : 'Message Claude';
+  const autoStopOff = !busyTrusted || !GUI_BG_MARKER_RELIABLE;
+  const canStopChat = onStopChat !== undefined && autoStopOff && hasSent && live;
   const hintText = hint && !ready && !error ? 'No output from Claude yet. Type in the pane.' : null;
-  const message = error ?? (trustShown ? "Answer Claude's trust prompt in the pane first" : hintText);
+  const message =
+    error ??
+    (trustShown
+      ? "Answer Claude's trust prompt in the pane first"
+      : resumeNote
+        ? 'Could not resume the previous conversation; started a new one.'
+        : (hintText ?? (!busyTrusted ? "Auto-stop is off: Aether could not recognise Claude's working screen." : null)));
 
   return (
-    <div data-testid="chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <div style={{ padding: '10px 24px', color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</div>
+    <div data-testid="chat-pane" style={{ display: active ? 'flex' : 'none', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 24px' }}>
+        <span style={{ color: colors.textPrimary, font: `600 16px/1.3 ${fonts.ui}` }}>{name}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {projectId === null && (
+          <Button
+            onClick={() => setConfirmFresh(true)}
+            disabled={busy !== 'idle'}
+            title={busy !== 'idle' ? 'Wait for the reply to finish' : undefined}
+            style={{ font: `600 13px/1 ${fonts.ui}`, color: colors.accentCyan, padding: '4px 6px' }}
+            hoverStyle={{ color: colors.textPrimary }}
+          >
+            Start fresh
+          </Button>
+        )}
+        {canStopChat && (
+          <Button
+            onClick={onStopChat}
+            style={{ font: `600 13px/1 ${fonts.ui}`, color: colors.accentCyan, padding: '4px 6px' }}
+            hoverStyle={{ color: colors.textPrimary }}
+          >
+            Stop chat
+          </Button>
+        )}
+        </div>
+      </div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <GuiTerminal ref={termRef} onChunk={onChunk} onExit={onExit} acceptData={acceptData} onTyped={onTyped} />
+        <GuiTerminal ref={termRef} sessionKey={sessionKey} onChunk={onChunk} onExit={onExit} acceptData={acceptData} onTyped={onTyped} />
       </div>
       {(message || stopped) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 24px', color: colors.textMuted, font: `500 13px/1.4 ${fonts.ui}` }}>
@@ -288,6 +398,14 @@ export function ChatPane({ projectId, onLiveChange }: ChatPaneProps) {
             </Button>
           ) : null}
         </div>
+      )}
+      {confirmFresh && (
+        <ConfirmPopup
+          message="Start a fresh conversation? The current one stays in Claude's history; this window will not reopen it."
+          confirmLabel="Start fresh"
+          onConfirm={confirmFreshStart}
+          onCancel={() => setConfirmFresh(false)}
+        />
       )}
       {confirmMode && (
         <ConfirmPopup

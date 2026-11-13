@@ -1,51 +1,127 @@
-import { useCallback, useState, type CSSProperties } from 'react';
+import { useCallback, useRef, useState, type CSSProperties } from 'react';
+import { GUI_DEFAULT_PERMISSION_MODE, GUI_NEW_KEY, type GuiPermissionMode } from '../../electron/gui/guiTypes';
 import { Button } from '../components/shared/Button';
 import { useColors } from '../components/shared/useColors';
 import { fonts } from '../styles/tokens';
-import { ChatPane } from './ChatPane';
-import { GuiNav } from './GuiNav';
+import { GUI_BG_MARKER_RELIABLE } from './busyGate';
+import { ChatPane, type ChatPaneStatus } from './ChatPane';
+import { GuiNav, type NavStatus } from './GuiNav';
 import { useGuiProjects } from './useGuiProjects';
 
 /** Electron's frameless drag region is a vendor CSS property not present in React's CSSProperties type. */
 type AppRegionStyle = CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' };
 
-const END_CHAT_PROMPT = 'End the current chat? Its Claude session will stop.';
+const UNPIN_BUSY_PROMPT = 'This chat is working. Remove it anyway? Its Claude will stop.';
 
 export function GuiApp() {
   const colors = useColors();
   const projects = useGuiProjects();
-  // The chat and the stub page are separate: a stub is an overlay on the chat, so the
-  // ChatPane (and its session UI) stays mounted while a stub is shown.
-  const [chatId, setChatId] = useState<string | null>(null);
+  // Every chat that has a mounted pane. Hidden panes keep running: a busy chat is never stopped by a plain switch.
+  // The stub page is an overlay on the chats, so the panes (and their sessions) stay mounted while one is shown.
+  const [panes, setPanes] = useState<string[]>([GUI_NEW_KEY]);
+  const [chatKey, setChatKey] = useState<string>(GUI_NEW_KEY);
   const [stub, setStub] = useState<string | null>(null);
-  const [live, setLive] = useState(false);
+  const [navStatus, setNavStatus] = useState<Record<string, NavStatus | undefined>>({}); // dot per chat
+  const [modes, setModes] = useState<Record<string, GuiPermissionMode>>({}); // per chat; survives an idle-stop and return
+  // Decisions read refs, not state: they must see the state at the instant of the click.
+  const panesRef = useRef(panes);
+  const chatKeyRef = useRef(chatKey);
+  const statusRef = useRef<Record<string, ChatPaneStatus>>({});
+  const resumable = useRef<Record<string, boolean>>({}); // a pinned chat stopped idle that holds a conversation to resume
+  const resumeFor = useRef<Record<string, boolean>>({ [GUI_NEW_KEY]: true }); // the resume flag each pane was mounted with
+  const epoch = useRef<Record<string, number>>({}); // bumped when a chat ends, so a pane re-added under the same key remounts instead of being reused
 
-  const openChat = useCallback(
-    (id: string | null) => {
-      if (id === chatId) {
-        // Already the open chat: nothing to end; just leave any stub page.
-        setStub(null);
-        return;
-      }
-      if (live && !window.confirm(END_CHAT_PROMPT)) return;
-      setLive(false);
-      setStub(null);
-      setChatId(id);
-    },
-    [chatId, live],
-  );
+  const commit = (nextPanes: string[], nextKey: string): void => {
+    panesRef.current = nextPanes;
+    chatKeyRef.current = nextKey;
+    setPanes(nextPanes);
+    setChatKey(nextKey);
+  };
+
+  const setDot = (key: string, st: NavStatus | undefined): void => setNavStatus((prev) => (prev[key] === st ? prev : { ...prev, [key]: st }));
+
+  /** Stops the chat's Claude and drops its pane, remembering whether it holds a conversation to resume. */
+  const endChat = (key: string, panesNow: string[]): string[] => {
+    window.aetherElectron?.gui?.stop(key);
+    resumable.current[key] = statusRef.current[key]?.hasSent === true;
+    delete statusRef.current[key];
+    epoch.current[key] = (epoch.current[key] ?? 0) + 1;
+    setDot(key, undefined);
+    return panesNow.filter((k) => k !== key);
+  };
+
+  /** Shows the chat's pane, mounting it first when it has none. New always resumes; a pinned chat only when it was stopped holding a conversation. */
+  const activate = (key: string, panesNow: string[]): void => {
+    let next = panesNow;
+    if (!next.includes(key)) {
+      resumeFor.current[key] = key === GUI_NEW_KEY ? true : resumable.current[key] === true;
+      delete resumable.current[key]; // consumed: the new pane's own hasSent decides the next return
+      next = [...next, key];
+    }
+    commit(next, key);
+    setNavStatus((prev) => (prev[key] === 'ready' ? { ...prev, [key]: undefined } : prev)); // opening a chat clears its "reply ready" mark
+  };
+
+  const openChat = useCallback((id: string | null) => {
+    const target = id ?? GUI_NEW_KEY;
+    setStub(null);
+    const prev = chatKeyRef.current;
+    if (target === prev) return; // already the open chat: just leave any stub page
+    let next = panesRef.current;
+    if (next.includes(prev)) {
+      const st = statusRef.current[prev];
+      const idle = (st?.state ?? 'idle') === 'idle';
+      const autoStop = (st?.trusted ?? true) && GUI_BG_MARKER_RELIABLE;
+      // Busy (working or waiting, including a background task) is never stopped. An idle chat is stopped, unless
+      // auto-stop is off and it holds a conversation: then it keeps running until the user stops it.
+      if (idle && (autoStop || st?.hasSent !== true)) next = endChat(prev, next);
+    }
+    activate(target, next);
+  }, []);
+
+  /** A chat's pane reported. A background chat that settled (idle, quiet, idle again) while auto-stop is on stops itself. */
+  const onPaneStatus = (key: string, st: ChatPaneStatus): void => {
+    statusRef.current[key] = st;
+    const background = key !== chatKeyRef.current;
+    const autoStop = st.trusted && GUI_BG_MARKER_RELIABLE;
+    if (background && st.settled && st.state === 'idle' && autoStop && panesRef.current.includes(key)) {
+      commit(endChat(key, panesRef.current), chatKeyRef.current);
+      if (st.hasSent) setDot(key, 'ready');
+      return;
+    }
+    if (st.state === 'working' || st.state === 'waiting') setDot(key, st.state);
+    else setNavStatus((prev) => (prev[key] === 'ready' || prev[key] === undefined ? prev : { ...prev, [key]: undefined }));
+  };
+
+  /** Stop chat (auto-stop off): ends the chat; when it was the open one the New chat is shown. */
+  const stopChat = (key: string): void => {
+    const next = endChat(key, panesRef.current);
+    if (chatKeyRef.current === key) activate(GUI_NEW_KEY, next);
+    else commit(next, chatKeyRef.current);
+  };
 
   const unpin = useCallback(
     async (id: string) => {
-      if (id === chatId && live && !window.confirm(END_CHAT_PROMPT)) return;
+      const busy = panesRef.current.includes(id) && (statusRef.current[id]?.state ?? 'idle') !== 'idle';
+      if (busy && !window.confirm(UNPIN_BUSY_PROMPT)) return;
       const ok = await projects.unpin(id);
-      if (ok && id === chatId) {
-        setLive(false);
+      if (!ok) return;
+      let next = panesRef.current;
+      if (next.includes(id)) next = endChat(id, next);
+      delete resumable.current[id];
+      delete resumeFor.current[id];
+      setModes((prev) => {
+        const { [id]: _gone, ...rest } = prev;
+        return rest;
+      });
+      if (chatKeyRef.current === id) {
         setStub(null);
-        setChatId(null);
+        activate(GUI_NEW_KEY, next);
+      } else {
+        commit(next, chatKeyRef.current);
       }
     },
-    [chatId, live, projects],
+    [projects],
   );
 
   const win = typeof window === 'undefined' ? undefined : window.aetherElectron?.window;
@@ -88,16 +164,28 @@ export function GuiApp() {
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <GuiNav
           projects={projects}
-          chatId={chatId}
+          chatId={chatKey === GUI_NEW_KEY ? null : chatKey}
           stub={stub}
           onNew={() => openChat(null)}
           onStub={setStub}
           onProject={openChat}
           onUnpin={(id) => void unpin(id)}
+          status={navStatus}
         />
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <div style={{ flex: 1, minHeight: 0, display: stub === null ? 'flex' : 'none', flexDirection: 'column' }}>
-            <ChatPane key={chatId ?? 'new'} projectId={chatId} onLiveChange={setLive} />
+            {panes.map((k) => (
+              <ChatPane
+                key={`${k}:${epoch.current[k] ?? 0}`}
+                projectId={k === GUI_NEW_KEY ? null : k}
+                active={k === chatKey}
+                resume={resumeFor.current[k]}
+                mode={modes[k] ?? GUI_DEFAULT_PERMISSION_MODE}
+                onModeChange={(m) => setModes((prev) => ({ ...prev, [k]: m }))}
+                onStatus={(st) => onPaneStatus(k, st)}
+                onStopChat={() => stopChat(k)}
+              />
+            ))}
           </div>
           {stub !== null && (
             <section aria-label={stub} style={{ padding: 32 }}>

@@ -119,12 +119,13 @@ declare global {
           remove: (id: string) => Promise<boolean>;
         };
         start: (opts: StartRequest) => Promise<StartResult>;
-        write: (input: string) => void;
-        resize: (cols: number, rows: number) => void;
-        submit: (text: string) => Promise<boolean>;
-        onData: (callback: (data: string) => void) => () => void;
-        onAlive: (callback: () => void) => () => void;
-        onExit: (callback: () => void) => () => void;
+        write: (key: string, input: string) => void;
+        resize: (key: string, cols: number, rows: number) => void;
+        submit: (key: string, text: string) => Promise<boolean>;
+        stop: (key: string) => void;
+        onData: (callback: (key: string, data: string) => void) => () => void;
+        onAlive: (callback: (key: string) => void) => () => void;
+        onExit: (callback: (key: string) => void) => () => void;
       };
       usage: {
         onSnapshot: (callback: (snapshot: RealUsageSnapshot) => void) => () => void;
