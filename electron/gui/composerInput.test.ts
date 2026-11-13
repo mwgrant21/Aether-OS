@@ -4,15 +4,15 @@ import { frameComposerInput } from './composerInput';
 import { GUI_MAX_COMPOSER_CHARS } from './guiTypes';
 
 describe('frameComposerInput', () => {
-  it('frames a single line as text plus CR in one write', () => {
-    expect(frameComposerInput('hello')).toEqual({ ok: true, writes: ['hello\r'] });
+  it('frames a single line as the text, then a separate Enter', () => {
+    expect(frameComposerInput('hello')).toEqual({ ok: true, writes: ['hello', '\r'] });
   });
   it('frames multi-line text as a bracketed paste then a separate Enter', () => {
     expect(frameComposerInput('a\nb')).toEqual({ ok: true, writes: ['\x1b[200~a\nb\x1b[201~', '\r'] });
   });
   it('strips ESC so a paste terminator cannot be smuggled', () => {
     const r = frameComposerInput('a\x1b[201~b');
-    expect(r).toEqual({ ok: true, writes: ['a[201~b\r'] });
+    expect(r).toEqual({ ok: true, writes: ['a[201~b', '\r'] });
     expect(JSON.stringify(r)).not.toContain('\u001b');
   });
   it('normalises CRLF and lone CR to newlines', () => {
@@ -27,6 +27,6 @@ describe('frameComposerInput', () => {
     expect(frameComposerInput('x'.repeat(GUI_MAX_COMPOSER_CHARS)).ok).toBe(true);
   });
   it('keeps tabs', () => {
-    expect(frameComposerInput('a\tb')).toEqual({ ok: true, writes: ['a\tb\r'] });
+    expect(frameComposerInput('a\tb')).toEqual({ ok: true, writes: ['a\tb', '\r'] });
   });
 });

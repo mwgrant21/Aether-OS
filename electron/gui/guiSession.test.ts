@@ -159,7 +159,7 @@ describe('guiSession.start', () => {
     expect(s.ptys[0]!.resize).not.toHaveBeenCalled();
     expect(s.ptys[1]!.resize).toHaveBeenCalledWith(100, 40);
     expect(s.session.submit('p1', 'hi')).toBe(true);
-    expect(s.ptys[0]!.write).toHaveBeenLastCalledWith('hi\r');
+    expect(s.ptys[0]!.write).toHaveBeenLastCalledWith('hi');
     expect(s.ptys[1]!.write).toHaveBeenCalledTimes(1);
     s.sent.length = 0;
     s.ptys[0]!.fireData('one');
@@ -464,12 +464,22 @@ describe('guiSession.resize live gate', () => {
 });
 
 describe('guiSession.submit', () => {
-  it('writes a single line at once with no timer', async () => {
+  it('writes a single line now and Enter as its own write only after the scheduled gap', async () => {
     const s = setup();
     s.session.start(req('p1'));
     expect(s.session.submit('p1', 'hi')).toBe(true);
-    expect(s.ptys[0]!.write).toHaveBeenCalledWith('hi\r');
-    expect(s.timers).toHaveLength(0);
+    expect(s.ptys[0]!.write.mock.calls).toEqual([['hi']]);
+    expect(s.timers[0]!.ms).toBe(GUI_SUBMIT_GAP_MS);
+    s.fire(0);
+    expect(s.ptys[0]!.write.mock.calls).toEqual([['hi'], ['\r']]);
+  });
+  it('drops the Enter of a single line if the pty exits before the gap, leaving one write and no stale CR', async () => {
+    const s = setup();
+    s.session.start(req('p1'));
+    s.session.submit('p1', 'hi');
+    s.ptys[0]!.fireExit();
+    s.timers[0]!.fn(); // even a timer that still fires must not write
+    expect(s.ptys[0]!.write.mock.calls).toEqual([['hi']]);
   });
   it('sends the paste block now and Enter only after the scheduled gap', async () => {
     const s = setup();
