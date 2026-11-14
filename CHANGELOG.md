@@ -8,6 +8,7 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ### Fixed
 - A second Aether launched on the same data folder now exits immediately instead of booting; `diag.log` now records `before-quit` and `quit` with the exit code.
+- Aether GUI: a message sent right after Claude starts is no longer sometimes left unsent in the box; the terminal pane no longer forwards focus-in/out reports to Claude.
 
 ## [0.7.7] - 2026-11-13
 
