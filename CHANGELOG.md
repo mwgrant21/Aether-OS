@@ -6,10 +6,6 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
-### Fixed
-- A second Aether launched on the same data folder now exits immediately instead of booting; `diag.log` now records `before-quit` and `quit` with the exit code.
-- Aether GUI: a message sent right after Claude starts is no longer sometimes left unsent in the box; the terminal pane no longer forwards focus-in/out reports to Claude.
-
 ## [0.7.7] - 2026-11-13
 
 ### Added
@@ -26,7 +22,7 @@ pre-1.0 semver as described in `docs/packaging.md`.
 - The Optimize re-read rule detail now ends "(savings are a lower bound)". The statusline context warning treats negative context fields as 0 and shows at most 9999K (#226).
 
 ### Fixed
-- Aether GUI variant: a running background subagent no longer lets the chat stop itself early, and reply text that happens to contain "do you want to proceed?" no longer leaves the chat stuck in a waiting state (#254). Known issue: a message sent in the first few seconds after the composer enables can land in the input without being submitted; sending again a few seconds later works.
+- Aether GUI variant: a running background subagent no longer lets the chat stop itself early, and reply text that happens to contain "do you want to proceed?" no longer leaves the chat stuck in a waiting state (#254).
 - Atomic writers (the Electron and collector atomic writers, the Go collector's hook installer, and `scripts/aether-board.mjs`): a dangling or looping symlink chain longer than 32 hops (33+ links) now fails with ELOOP (the writers' own error text names the path you passed), instead of replacing a link in the middle of the chain (#72, #241). The backup of a settings or guidance file is created with the source file's permission bits (`(mode & 0777) | 0600`; 0600 when the source cannot be stat'd) instead of the umask default (#71); the mode is still narrowed by the umask and has no effect on Windows. A backup that fails part-way is removed and the error is reported as `could not write backup: <err>`; an existing backup is never deleted (#67).
 - The Claude and Codex terminals now scrub their billing environment variables case-insensitively (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` for Claude; `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL` and the other Codex billing variables for Codex), so a differently-cased name such as `Anthropic_Api_Key` no longer reaches the terminal on Windows (#113, #233).
 - The collector no longer creates `~/.aether-os/memory.db` at startup while memory extraction is off; the file is created the first time the collector has something to extract with extraction on, and an existing file is kept. On a fresh install with extraction off, the phone Memory view shows "No memory snapshot yet" instead of "No live memories" (#120, #234).
@@ -34,6 +30,8 @@ pre-1.0 semver as described in `docs/packaging.md`.
 - The Go collector's dispatch row now matches the Node collector's: a dispatch with no usage block stores NULL (not 0) tokens, tool uses and duration; it records `exit_state`, `dispatch_status`, session, agent and task kind, and retries (always 0); and it computes severity against the median duration baseline. The tool-error severity floor and the post-ingest rescore are not ported (#107, #65, #239).
 - `scripts/redeploy-collector.ps1`: a relative `-StageRoot` is now resolved against the current PowerShell location (it previously made automatic rollback skip its stop, relaunch and rename steps), and a forward-slash `-StageRoot` is normalised to backslashes (it previously was not matched when looking for running collectors); an open journal is reported before the stage-in-use guard; a lone conhost no longer counts as a running collector; `-DryRun -Rollback` exits 0 (not 3) when the previewed rollback would be incomplete, and a missing or unreadable journal still exits 2; an empty or whitespace-only `-StageRoot`, and a drive-relative (`C:x`) or root-relative (`\x`, `/x`) one, are now refused instead of silently resolving against a directory you did not intend (exit 2 when run with `-File`; under `-Command` the process exit code is 1 unless the command ends with `exit $LASTEXITCODE`); the rollback and recovery messages no longer claim the old collector was not running when it was.
 - Background agents now appear in the desktop fleet view. Their `claude agents --json` rows carry `state` instead of `status`, which made both collectors report schema drift every poll and drop the card.
+- A second Aether launched on the same data folder now exits immediately instead of booting; `diag.log` now records `before-quit` and `quit` with the exit code.
+- Aether GUI: a message sent right after Claude starts is no longer sometimes left unsent in the box; the terminal pane no longer forwards focus-in/out reports to Claude.
 
 ## [0.7.6] - 2026-11-10
 
