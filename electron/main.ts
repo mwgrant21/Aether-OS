@@ -68,6 +68,7 @@ import { createLiveSeverityNarrator, createUnseenStatusReporter, STALL_CHECK_INT
 import { createTickCompletionHandler } from './liveTickCompletions';
 import { createLiveSubagentProgress } from './severity/liveSubagentProgress';
 import { createFlushQuitGate } from './flushQuitGate';
+import { makeGuiKillTree, guiTreePidOk, formatTreeKillFailure } from './gui/guiTreeKill';
 import { spawn as spawnChild, execFile as execFileChild, execFileSync as execFileSyncChild } from 'node:child_process';
 import { createOwnerClient } from './ptyOwner/ownerClient';
 import { ensureOwner } from './ptyOwner/ownerLauncher';
@@ -1765,22 +1766,16 @@ if (guiVariantEnabled(process.env)) {
   // Tree kill (win32 only): the pid comes from the GUI-owned pty object and nowhere else (no name or command-line lookup, nothing read from a user-writable file).
   // Absolute System32 path (a bare name would resolve through a user-writable PATH/cwd). Failures are swallowed and logged as a fixed string, never err.message.
   const guiTaskkill = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-  const guiTreePidOk = (pid: unknown): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 4 && pid !== process.pid;
-  const guiKillTree = (pid: number): Promise<void> => new Promise((resolve) => {
-    if (process.platform !== 'win32' || !guiTreePidOk(pid)) { resolve(); return; }
-    try {
-      execFileChild(guiTaskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 1000 }, (err) => {
-        if (err) diagLog.write(`[diag] gui session: tree kill failed at=${new Date().toISOString()}`);
-        resolve();
-      });
-    } catch { diagLog.write(`[diag] gui session: tree kill failed at=${new Date().toISOString()}`); resolve(); }
+  const guiKillTree = makeGuiKillTree({
+    execFile: (f, a, o, cb) => execFileChild(f, a, o, cb), taskkillPath: guiTaskkill, platform: process.platform, selfPid: process.pid,
+    log: (l) => diagLog.write(`[diag] ${l} at=${new Date().toISOString()}`),
   });
   const guiKillTreeSync = (pids: number[]): void => {
-    const ok = pids.filter(guiTreePidOk);
+    const ok = pids.filter((p) => guiTreePidOk(p, process.pid));
     if (process.platform !== 'win32' || ok.length === 0) return;
     try {
       execFileSyncChild(guiTaskkill, [...ok.flatMap((p) => ['/pid', String(p)]), '/T', '/F'], { windowsHide: true, timeout: 1500, stdio: 'ignore' });
-    } catch { diagLog.write(`[diag] gui session: tree kill failed at=${new Date().toISOString()}`); }
+    } catch (e) { diagLog.write(`[diag] ${formatTreeKillFailure(e)} at=${new Date().toISOString()}`); }
   };
   const guiSession = createGuiSession({
     // One PtyLifecycle per chat slot (not hub slots, so never visible to the phone gateway). Kills go through guiSession's tracked pty, never through the lifecycle.

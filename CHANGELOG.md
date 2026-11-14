@@ -6,6 +6,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+### Changed
+- Aether GUI: the diagnostic log line "gui session: tree kill failed" now also records the taskkill exit code, whether it timed out (killed), the signal and the elapsed milliseconds (never the error message), so a real timeout can be told from taskkill's routine non-zero exit on a tree that was already gone. Logging only: the kill itself and its 1000 ms limit are unchanged.
+
 ## [0.7.8] - 2026-11-14
 
 ### Changed
