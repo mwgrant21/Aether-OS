@@ -6,6 +6,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+### Changed
+- Aether GUI: pressing Enter on the Start fresh confirmation now confirms it (the Cancel button no longer holds the focus there); Escape still cancels. The mode Switch confirmation still defaults to Cancel.
+
 ## [0.7.7] - 2026-11-13
 
 ### Added
