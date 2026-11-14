@@ -8,23 +8,39 @@ interface ConfirmPopupProps {
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Focus the confirm button so Enter confirms. Default false: Cancel holds the focus. */
+  confirmOnEnter?: boolean;
 }
 
-/** Small inline confirm dialog. Cancel holds the focus (the safe default) and Esc cancels. */
-export function ConfirmPopup({ message, confirmLabel, onConfirm, onCancel }: ConfirmPopupProps) {
+/**
+ * Small inline confirm dialog. Esc cancels. By default Cancel holds the focus (the safe default);
+ * with `confirmOnEnter` the confirm button holds it instead, so Enter confirms, and a held
+ * (auto-repeating) Enter is ignored so the keypress that opened the popup cannot confirm it.
+ */
+export function ConfirmPopup({ message, confirmLabel, onConfirm, onCancel, confirmOnEnter = false }: ConfirmPopupProps) {
   const colors = useColors();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const buttonsRef = useRef<HTMLSpanElement>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
 
   useEffect(() => {
-    cancelRef.current?.focus();
+    // The confirm control is the shared Button (no ref forwarding): it is the wrapper's last child.
+    const target = confirmOnEnter ? (buttonsRef.current?.lastElementChild as HTMLElement | null | undefined) : cancelRef.current;
+    target?.focus();
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onCancelRef.current();
     };
+    const onRepeatEnter = (e: KeyboardEvent): void => {
+      if (e.key === 'Enter' && e.repeat) e.preventDefault();
+    };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
+    if (confirmOnEnter) document.addEventListener('keydown', onRepeatEnter, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onRepeatEnter, true);
+    };
+  }, [confirmOnEnter]);
 
   const btn = {
     padding: '4px 12px',
@@ -53,7 +69,7 @@ export function ConfirmPopup({ message, confirmLabel, onConfirm, onCancel }: Con
       }}
     >
       <span>{message}</span>
-      <span style={{ display: 'flex', gap: 8 }}>
+      <span ref={buttonsRef} style={{ display: 'flex', gap: 8 }}>
         <button ref={cancelRef} type="button" onClick={onCancel} style={{ ...btn, cursor: 'pointer' }}>
           Cancel
         </button>

@@ -1080,6 +1080,12 @@ describe('ChatPane Start fresh and resume fallback', () => {
     expect(gui.start).toHaveBeenCalledTimes(1);
   });
 
+  it('the Start fresh popup focuses its confirm button so Enter confirms', async () => {
+    await startPane();
+    fireEvent.click(screen.getByText('Start fresh'));
+    expect(document.activeElement).toBe(within(screen.getByRole('dialog')).getByText('Start fresh'));
+  });
+
   it('confirming restarts without resume, keeps the mode, and the pane reports no conversation', async () => {
     await startPane({ mode: 'plan' });
     await send();

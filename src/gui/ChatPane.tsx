@@ -457,6 +457,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
         <ConfirmPopup
           message="Start a fresh conversation? The current one stays in Claude's history; this window will not reopen it."
           confirmLabel="Start fresh"
+          confirmOnEnter
           onConfirm={confirmFreshStart}
           onCancel={() => setConfirmFresh(false)}
         />
