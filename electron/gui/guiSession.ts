@@ -1,3 +1,4 @@
+import { formatTreeKillFailure } from './guiTreeKill';
 import { frameComposerInput } from './composerInput';
 import {
   GUI_MAX_WRITE_CHARS, GUI_SUBMIT_GAP_MS, GUI_CHANNELS, GUI_DEFAULT_PERMISSION_MODE, GUI_NEW_KEY, GUI_KILL_WAIT_MS, GUI_MAX_LIVE_SESSIONS, GUI_MAX_PROCESSES, GUI_DYING_MAX_MS, GUI_TREE_KILL_MAX_MS, isGuiPermissionMode,
@@ -107,11 +108,11 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     };
     if (!d.killTree || !validPid(t.pid)) { killPty(); return Promise.resolve(); }
     let tree: Promise<void>;
-    try { tree = d.killTree(t.pid); } catch { d.log?.('gui session: tree kill failed'); killPty(); return Promise.resolve(); }
+    try { tree = d.killTree(t.pid); } catch (e) { d.log?.(formatTreeKillFailure(e)); killPty(); return Promise.resolve(); }
     // Bounded here as well as in main: killTree is contractually non-rejecting and time-limited, but the pty kill must not depend on that.
     return new Promise<void>((res) => {
       const cancel = d.schedule(res, GUI_TREE_KILL_MAX_MS);
-      tree.then(() => { cancel(); res(); }, () => { cancel(); d.log?.('gui session: tree kill failed'); res(); });
+      tree.then(() => { cancel(); res(); }, (e) => { cancel(); d.log?.(formatTreeKillFailure(e)); res(); });
     }).then(killPty);
   }
 
@@ -267,7 +268,7 @@ export function createGuiSession(d: GuiSessionDeps): GuiSession {
     slots.clear();
     const pids = [...all].filter((t) => !t.isGone() && validPid(t.pid)).map((t) => t.pid as number);
     if (d.killTreeSync && pids.length > 0) {
-      try { d.killTreeSync(pids); } catch { d.log?.('gui session: tree kill failed'); }
+      try { d.killTreeSync(pids); } catch (e) { d.log?.(formatTreeKillFailure(e)); }
     }
     for (const t of all) {
       t.treeKilled = true;
