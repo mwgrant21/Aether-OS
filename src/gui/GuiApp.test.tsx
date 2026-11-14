@@ -82,6 +82,12 @@ const report = (key: string, st: Partial<ChatPaneStatus>) =>
   act(() => reportStatus.get(key)!({ live: true, state: 'idle', trusted: true, hasSent: false, settled: false, ...st }));
 
 describe('GuiApp shell', () => {
+  it('names the app Aether Chat in the title strip and the navigation label', async () => {
+    await renderApp();
+    expect(screen.getByTestId('gui-title-strip').textContent).toContain('AETHER CHAT');
+    expect(screen.getByRole('navigation', { name: 'Aether Chat navigation' })).toBeTruthy();
+  });
+
   it('renders all seven nav labels with New selected and stubs for the rest', async () => {
     await renderApp();
     for (const n of ['New', 'Search', 'Projects', 'Artifacts', 'Scheduled', 'Design', 'Customize']) {

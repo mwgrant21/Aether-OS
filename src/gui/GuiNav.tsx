@@ -74,7 +74,7 @@ export function GuiNav({ projects, chatId, stub, onNew, onStub, onProject, onUnp
 
   return (
     <nav
-      aria-label="Aether navigation"
+      aria-label="Aether Chat navigation"
       style={{
         width: 260,
         flex: 'none',

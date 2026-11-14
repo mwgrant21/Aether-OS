@@ -408,7 +408,7 @@ export function ChatPane({ projectId, active, resume, mode, onModeChange, onStat
       ? "Answer Claude's trust prompt in the pane first"
       : resumeNote
         ? 'Could not resume the previous conversation; started a new one.'
-        : (hintText ?? (!busyTrusted ? "Auto-stop is off: Aether could not recognise Claude's working screen." : null)));
+        : (hintText ?? (!busyTrusted ? "Auto-stop is off: Aether Chat could not recognise Claude's working screen." : null)));
 
   return (
     <div data-testid="chat-pane" style={{ display: active ? 'flex' : 'none', flexDirection: 'column', height: '100%', minHeight: 0 }}>
