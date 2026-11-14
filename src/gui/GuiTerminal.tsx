@@ -83,6 +83,8 @@ export const GuiTerminal = forwardRef<GuiTerminalHandle, GuiTerminalProps>(funct
       cbs.current.onExit();
     });
     const typed = term.onData((input) => {
+      // xterm answers the TUI's ?1004h with focus reports; they must not reach the pty because they queue ahead of the composer's text+CR.
+      if (input === '[I' || input === '[O') return;
       cbs.current.onTyped?.(input);
       gui.write(sessionKey, input);
     });
