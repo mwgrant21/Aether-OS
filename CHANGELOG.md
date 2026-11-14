@@ -6,6 +6,9 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+### Fixed
+- A second Aether launched on the same data folder now exits immediately instead of booting; `diag.log` now records `before-quit` and `quit` with the exit code.
+
 ## [0.7.7] - 2026-11-13
 
 ### Added

@@ -203,8 +203,16 @@ const iconPath = join(__dirname, '../../build/icon.png');
 // cleanup -- the exact failure this run exists to prevent.
 const isStatuslineUninstallRun = process.argv.includes(STATUSLINE_UNINSTALL_FLAG);
 
-if (!isStatuslineUninstallRun && !app.requestSingleInstanceLock()) {
-  app.quit();
+// Built at module top (not from aetherOsDir, defined further down) so the earliest [diag] site can use it.
+const diagLog = createDiagLog({ dir: join(os.homedir(), '.aether-os') });
+
+// false only for a second instance that lost the lock. The statusline-uninstall run never requests the lock (a stale
+// lock must not block the cleanup), so it counts as "not a loser": gotLock stays true for it and its behaviour is unchanged.
+const gotLock = isStatuslineUninstallRun || app.requestSingleInstanceLock();
+if (!gotLock) {
+  diagLog.write(`[diag] single-instance lock denied, exiting at=${new Date().toISOString()}`);
+  // pre-ready app.exit is a synchronous process exit, so nothing below runs and no quit event fires
+  app.exit(0);
 }
 
 app.on('second-instance', () => {
@@ -213,9 +221,6 @@ app.on('second-instance', () => {
     mainWindow.focus();
   }
 });
-
-// Built at module top (not from aetherOsDir, defined further down) so the earliest [diag] site can use it.
-const diagLog = createDiagLog({ dir: join(os.homedir(), '.aether-os') });
 
 // Issue #22 diagnostics, app-level half (per-window half is in createWindow).
 // The stated hypothesis is that a Windows session lock tears down the GPU
@@ -238,6 +243,7 @@ app.on('child-process-gone', (_event, details) => {
 // Subscribed inside whenReady: powerMonitor is safe to import at module scope
 // but throws if its methods are touched before the app is ready.
 app.whenReady().then(() => {
+  if (!gotLock) return;
   for (const evt of ['lock-screen', 'unlock-screen', 'suspend', 'resume'] as const) {
     // powerMonitor.on is typed as one overload per event literal, so a
     // union loop variable matches none of them; the cast is typing-only.
@@ -950,6 +956,7 @@ async function tickAndPushAgents(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  if (!gotLock) return;
   // An uninstall-cleanup run has no UI and exits as soon as settings.json is
   // repaired. Returning here is what stops a window from flashing up (and the
   // whole app from booting) in the middle of a Windows uninstall.
@@ -1202,6 +1209,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+// Separate listener, registered before the gate handler below so it runs first: before-quit fires 2+ times per real
+// quit (the gates re-issue app.quit()) and also on quits the user cancels; intended.
+app.on('before-quit', () => {
+  diagLog.write(`[diag] before-quit at=${new Date().toISOString()}`);
+});
+
 app.on('before-quit', event => {
   if (!communicationQuitGate(event)) return;
   if (!baselineQuitGate(event)) return;
@@ -1225,10 +1238,13 @@ app.on('before-quit', event => {
     // hook at whatever process next bound that port (security audit
     // 2026-10-04). The HMAC proof already makes a squatter's answer
     // worthless; removing the file also stops the hook from trying.
-    try {
-      rmSync(permissionServerPortPath, { force: true });
-    } catch {
-      // Best effort on quit; the hook rejects an unproven server regardless.
+    // a same-userData loser cannot remove it
+    if (gotLock) {
+      try {
+        rmSync(permissionServerPortPath, { force: true });
+      } catch {
+        // Best effort on quit; the hook rejects an unproven server regardless.
+      }
     }
   }
   // If a cross-engine verification run is active, cancel it so its ACP
@@ -1239,6 +1255,11 @@ app.on('before-quit', event => {
       console.error('crossEngine cancel-on-quit failed:', err);
     });
   }
+});
+
+// Exit-code trace: Electron has no app 'exit' event; 'quit' fires on a real quit (not on Windows shutdown/logoff).
+app.on('quit', (_event, exitCode) => {
+  diagLog.write(`[diag] quit exitCode=${exitCode} at=${new Date().toISOString()}`);
 });
 
 // Renderer-derived phone view payloads. Same trusted-window test as the other channels; anything else is dropped silently.
@@ -1501,7 +1522,7 @@ const connectedPromptObserver = new ConnectedPromptObserver(ptyLifecycle, commun
 let claudeTerminalDimensions = { cols: 100, rows: 30 };
 
 const launchRoot = join(app.getPath('userData'), 'communication-launches');
-const launchMaintenance = app.whenReady().then(() => cleanupStaleBridgeLaunches(launchRoot)).then(() => true, () => false);
+const launchMaintenance = app.whenReady().then(() => (gotLock ? cleanupStaleBridgeLaunches(launchRoot) : undefined)).then(() => true, () => false);
 let connectedExecutable: string | undefined;
 const launchRuntime = { helperPath: join(__dirname, 'communication-mcp.js'), nodePath: process.execPath };
 const communicationSessions = new CommunicationSessionControl({
