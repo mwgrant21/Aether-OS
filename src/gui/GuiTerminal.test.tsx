@@ -49,18 +49,18 @@ afterEach(() => {
 
 describe('GuiTerminal input', () => {
   it('does not forward focus reports', () => {
-    mocks.data!('[I');
-    mocks.data!('[O');
+    mocks.data!('\x1b[I');
+    mocks.data!('\x1b[O');
     expect(gui.write).not.toHaveBeenCalled();
     expect(onTyped).not.toHaveBeenCalled();
   });
 
   it('forwards other input unchanged', () => {
     mocks.data!('y');
-    mocks.data!('[Ix');
+    mocks.data!('\x1b[Ix');
     expect(gui.write).toHaveBeenCalledWith('k1', 'y');
-    expect(gui.write).toHaveBeenCalledWith('k1', '[Ix');
+    expect(gui.write).toHaveBeenCalledWith('k1', '\x1b[Ix');
     expect(onTyped).toHaveBeenCalledWith('y');
-    expect(onTyped).toHaveBeenCalledWith('[Ix');
+    expect(onTyped).toHaveBeenCalledWith('\x1b[Ix');
   });
 });
