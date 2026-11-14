@@ -53,12 +53,20 @@ describe('starter boards', () => {
   itWithAuthorizer('every panel evaluates without error against a collector-shaped db', async () => {
     const now = Date.now();
     const dbPath = createFixtureCollectorDb(now);
-    for (const board of STARTER_BOARDS) {
-      for (const panel of board.panels) {
-        const r = await evaluatePanel(panel, { dbPath, nowMs: now, rowCap: 1000 });
-        expect({ board: board.id, panel: panel.id, error: r.error }).toEqual({ board: board.id, panel: panel.id, error: null });
-        expect(r.rows.length, `${board.id}/${panel.id} returned no rows`).toBeGreaterThan(0);
-      }
+    // Each evaluatePanel spawns a child process; run them concurrently so the
+    // test stays well inside the timeout under full-suite load.
+    const results = await Promise.all(
+      STARTER_BOARDS.flatMap((board) =>
+        board.panels.map(async (panel) => ({
+          board,
+          panel,
+          r: await evaluatePanel(panel, { dbPath, nowMs: now, rowCap: 1000 }),
+        })),
+      ),
+    );
+    for (const { board, panel, r } of results) {
+      expect({ board: board.id, panel: panel.id, error: r.error }).toEqual({ board: board.id, panel: panel.id, error: null });
+      expect(r.rows.length, `${board.id}/${panel.id} returned no rows`).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 });
