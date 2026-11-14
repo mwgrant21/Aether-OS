@@ -969,7 +969,7 @@ describe('ChatPane as one of several panes', () => {
 });
 
 describe('ChatPane auto-stop off', () => {
-  const NOTICE = "Auto-stop is off: Aether could not recognise Claude's working screen.";
+  const NOTICE = "Auto-stop is off: Aether Chat could not recognise Claude's working screen.";
   const send = async () => {
     fireEvent.change(box(), { target: { value: 'go' } });
     fireEvent.keyDown(box(), { key: 'Enter' });

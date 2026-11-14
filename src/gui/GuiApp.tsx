@@ -146,7 +146,7 @@ export function GuiApp() {
       style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: colors.bgBase, color: colors.textBody, font: `500 15px/1.4 ${fonts.ui}` }}
     >
       <div data-testid="gui-title-strip" style={strip}>
-        <span style={{ font: `700 14px/1 ${fonts.ui}`, letterSpacing: 4, color: colors.textPrimary }}>AETHER</span>
+        <span style={{ font: `700 14px/1 ${fonts.ui}`, letterSpacing: 4, color: colors.textPrimary }}>AETHER CHAT</span>
         {win && (
           <div style={noDrag}>
             <Button onClick={() => win.minimize()} aria-label="Minimize" style={ctl} hoverStyle={ctlHover}>

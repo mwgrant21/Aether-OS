@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { guiVariantEnabled, rendererEntryName } from './entry';
 
@@ -13,5 +14,12 @@ describe('guiVariantEnabled / rendererEntryName', () => {
     const env = { AETHER_GUI: '1' } as NodeJS.ProcessEnv;
     expect(guiVariantEnabled(env)).toBe(true);
     expect(rendererEntryName(env)).toBe('gui.html');
+  });
+});
+
+describe('gui.html', () => {
+  it('titles the window Aether Chat', () => {
+    const html = readFileSync(new URL('../../gui.html', import.meta.url), 'utf8');
+    expect(html).toContain('<title>Aether Chat</title>');
   });
 });
