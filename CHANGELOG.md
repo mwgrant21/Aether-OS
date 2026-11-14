@@ -253,7 +253,8 @@ The first tagged release. It folds in the 0.1.0 scaffold (history starts 2026-07
 ### Removed
 - The Anthropic SDK, the model call path and `.env` key loading; chat replies use the local responder (API teardown).
 
-[Unreleased]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.7...HEAD
+[Unreleased]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.8...HEAD
+[0.7.8]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.4...v0.7.5
