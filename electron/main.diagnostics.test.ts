@@ -65,3 +65,38 @@ describe('issue #22 dev-server watch scope', () => {
     expect(viteCfg).toMatch(/\*\*\/out\/\*\*/);
   });
 });
+
+describe('lock-loser exit and quit diagnostics', () => {
+  it('a lock loser exits via app.exit(0), not app.quit()', () => {
+    const block = mainSrc.match(/if \(!gotLock\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(block).toContain('app.exit(0)');
+    expect(block).not.toContain('app.quit(');
+  });
+
+  it('gotLock is module-level and the uninstall run still bypasses the lock', () => {
+    expect(mainSrc).toMatch(/const gotLock = isStatuslineUninstallRun \|\| app\.requestSingleInstanceLock\(\)/);
+    expect(mainSrc).toContain('if (isStatuslineUninstallRun) return;');
+  });
+
+  it('every whenReady body is guarded by gotLock', () => {
+    const parts = mainSrc.split('app.whenReady()').slice(1);
+    expect(parts).toHaveLength(3);
+    for (const part of parts) {
+      expect(part.slice(0, 300)).toContain('gotLock');
+    }
+  });
+
+  it('port-file removal is guarded by gotLock', () => {
+    const idx = mainSrc.indexOf('rmSync(permissionServerPortPath');
+    expect(idx).toBeGreaterThan(0);
+    expect(mainSrc.slice(Math.max(0, idx - 120), idx)).toContain('gotLock');
+  });
+
+  it('before-quit and quit are logged', () => {
+    const idx = mainSrc.indexOf("app.on('before-quit'");
+    expect(idx).toBeGreaterThan(0);
+    expect(mainSrc.slice(idx, idx + 200)).toContain('[diag] before-quit');
+    expect(mainSrc).toMatch(/app\.on\('quit'/);
+    expect(mainSrc).toContain('[diag] quit exitCode=');
+  });
+});
