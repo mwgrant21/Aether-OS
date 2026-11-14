@@ -6,6 +6,8 @@ pre-1.0 semver as described in `docs/packaging.md`.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-11-14
+
 ### Changed
 - Aether GUI: pressing Enter on the Start fresh confirmation now confirms it (the Cancel button no longer holds the focus there); Escape still cancels. The mode Switch confirmation still defaults to Cancel.
 - The Aether GUI variant is now called Aether Chat, to tell it apart from the Aether terminal app. Its window title, title strip, navigation label and the auto-stop notice use the new name. It is still opt-in and launched with AETHER_GUI=1; nothing about how it starts, where it stores pinned folders (~/.aether-os/gui-projects.json) or its settings changed.
@@ -251,7 +253,8 @@ The first tagged release. It folds in the 0.1.0 scaffold (history starts 2026-07
 ### Removed
 - The Anthropic SDK, the model call path and `.env` key loading; chat replies use the local responder (API teardown).
 
-[Unreleased]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.7...HEAD
+[Unreleased]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.8...HEAD
+[0.7.8]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/mwgrant21/Aether-OS/compare/v0.7.4...v0.7.5
